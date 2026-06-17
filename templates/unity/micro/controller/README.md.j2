@@ -1,0 +1,37 @@
+# {{ s.name }} — Unity Character Controller
+
+**Variant:** `{{ variant }}`
+**Input:** `{{ s.input_backend }}`
+**Camera coupling:** `{{ s.camera_coupling }}`
+**Abilities:** {{ s.abilities | join(', ') if s.abilities else '(none)' }}
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your Unity project's `Assets/`.
+{% if s.input_backend == "input_system" %}
+2. Drop `Input/{{ s.name }}.inputactions` into `Assets/` and install the **Input System** package
+   (`com.unity.inputsystem`) if it isn't already installed.
+{% endif %}
+3. Add the `{{ s.name }}` component to any GameObject you want the player to control.
+{% if variant.startswith("vehicle_") %}
+4. The vehicle stub uses `Rigidbody`. Add a Rigidbody + collider to the controlled object.
+{% elif variant.startswith("2d_") %}
+4. Requires `Rigidbody2D` + a 2D collider on the controlled object.
+{% else %}
+4. The `CharacterController` will be added automatically on Awake if missing.
+{% endif %}
+
+## Tuning
+
+| Field          | Default | Notes |
+|----------------|---------|-------|
+| `moveSpeed`    | {{ "%.2f"|format(s.move_speed) }} | base movement speed |
+| `sprintSpeed`  | {{ "%.2f"|format(s.sprint_speed) }} | only used if `sprint` is in abilities |
+{% if "jump" in s.abilities %}
+| `jumpForce`    | {{ "%.2f"|format(s.jump_force) }} | initial upward impulse |
+{% endif %}
+{% if s.ground_check != "collider" %}
+| `groundRayLen` | 1.05 | downward ground-check ray length |
+{% endif %}

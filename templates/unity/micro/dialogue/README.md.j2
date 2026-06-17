@@ -1,0 +1,45 @@
+# {{ s.name }} — Unity Dialogue
+
+**Variant:** `{{ variant }}`
+**Advance:** `{{ s.advance }}`
+**Render:** `{{ s.text_render }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to a GameObject (e.g. an NPC or a DialogueManager).
+3. Wire your UI to the events, then call `StartDialogue()`{% if variant == "barks" %} or `PlayBark()`{% endif %}:
+
+```csharp
+var dlg = GetComponent<{{ s.name }}>();
+dlg.OnLine += (speaker, text) => { nameLabel.text = speaker; bodyLabel.text = text; };
+{% if variant == "branching" %}dlg.OnChoices += labels => BuildChoiceButtons(labels);   // each button calls dlg.Choose(i)
+{% endif %}dlg.OnDialogueEnd += () => panel.SetActive(false);
+dlg.StartDialogue();
+```
+
+## How it advances
+
+{% if variant == "branching" %}
+Branching tree. Each node may offer choices; `OnChoices` gives you the labels, and you call
+`Choose(index)` to follow that branch. A choice with an empty `next` ends the conversation.
+{% elif variant == "cutscene" %}
+Auto-advancing cutscene: lines play on a {{ "%.1f"|format(s.auto_advance_delay) }}s timer — no input needed.
+{% elif variant == "barks" %}
+Random one-off barks: call `PlayBark()` for an ambient line. No progression.
+{% elif variant == "localized" %}
+Linear sequence whose `text` values are **localization keys** — override `Resolve(string)` to map
+them through your string table (e.g. Unity Localization). Call `Advance()` to continue.
+{% else %}
+Linear sequence. Call `Advance()` from your continue button / input to show the next line.
+{% endif %}
+{% if s.text_render == "typewriter" %}
+Text reveals one character at a time at {{ "%.0f"|format(s.text_speed) }} chars/sec (`OnLine` fires repeatedly as it types).
+{% endif %}
+
+## Conversation
+
+{{ s.nodes | length }} node(s), starting at `{{ s.start_node }}`. Edit the baked `_nodes` array in
+`{{ s.name }}.cs` to change the script, or subclass and replace it.

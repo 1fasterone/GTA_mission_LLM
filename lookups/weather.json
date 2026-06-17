@@ -1,0 +1,21 @@
+{
+  "schema_to_native": {
+    "clear":     "CLEAR",
+    "sunny":     "EXTRASUNNY",
+    "overcast":  "OVERCAST",
+    "cloudy":    "CLOUDS",
+    "rain":      "RAIN",
+    "thunder":   "THUNDER",
+    "foggy":     "FOGGY",
+    "fog":       "FOGGY",
+    "smog":      "SMOG",
+    "snow":      "XMAS",
+    "blizzard":  "BLIZZARD",
+    "halloween": "HALLOWEEN"
+  },
+  "valid_native": [
+    "CLEAR", "EXTRASUNNY", "CLOUDS", "OVERCAST", "RAIN",
+    "CLEARING", "THUNDER", "SMOG", "FOGGY", "XMAS",
+    "SNOWLIGHT", "BLIZZARD", "SNOW", "HALLOWEEN"
+  ]
+}

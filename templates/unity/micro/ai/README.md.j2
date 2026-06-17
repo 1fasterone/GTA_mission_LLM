@@ -1,0 +1,46 @@
+# {{ s.name }} — Unity AI Behaviour
+
+**Variant:** `{{ variant }}`
+**Nav backend:** `{{ s.nav_backend }}`
+**Detection:** {{ "%.1f"|format(s.detection_radius) }}m
+**Attack:** {{ "%.1f"|format(s.attack_radius) }}m
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to any GameObject you want to control with this AI.
+{% if s.nav_backend == "navmesh" %}
+3. The GameObject also needs a `NavMeshAgent` (auto-required). Bake a NavMesh in the
+   scene (Window → AI → Navigation).
+{% endif %}
+{% if variant in ("navmesh_patrol", "fsm_guard") %}
+4. Create {{ s.patrol_point_count }} empty GameObjects in the scene as patrol points
+   and drag them into the `patrolPoints` array in the inspector.
+{% endif %}
+5. Tag the player GameObject `{{ s.target_tag }}` so the AI can find it.
+{% if s.use_health_hook %}
+6. Implement a `TakeDamage(float)` method on the player to receive damage from this AI.
+{% endif %}
+
+## States
+{% if variant in ("fsm_guard", "behaviour_tree_lite") %}
+
+| State | Description |
+|-------|-------------|
+{% for st in s.states %}
+| `{{ st.name }}` | {{ st.description }} |
+{% endfor %}
+{% else %}
+
+This variant uses a direct controller — no explicit state enum.
+{% endif %}
+
+## Tuning
+
+| Field              | Default | Notes |
+|--------------------|---------|-------|
+| `detectionRadius`  | {{ "%.1f"|format(s.detection_radius) }} | sight range |
+| `attackRadius`     | {{ "%.1f"|format(s.attack_radius) }} | melee range |
+| `moveSpeed`        | {{ "%.1f"|format(s.move_speed) }} | passed to NavMeshAgent.speed |

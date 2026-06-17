@@ -1,0 +1,28 @@
+# {{ s.name }} — Unity HUD
+
+**Variant:** `{{ variant }}`
+**Backend:** `{{ s.backend }}`
+**Anchor:** `{{ s.anchor }}`
+**Binding:** `{{ s.binding }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+{% if s.backend == "UIToolkit" %}
+2. Drop the `UI/` folder (UXML + USS) into `Assets/UI/`. Make sure the UI Toolkit
+   package is enabled (built in for Unity 6).
+3. Add a `UIDocument` component to a Canvas-less GameObject and assign `{{ s.name }}.uxml`.
+4. Add the `{{ s.name }}` component to the same GameObject and wire its `document` field.
+{% else %}
+2. Add a `Canvas` to your scene if you don't already have one. Set Render Mode to
+   `Screen Space - Overlay`.
+3. Add the `{{ s.name }}` component to a child GameObject under the Canvas and wire
+   the SerializeField references in the inspector.
+{% endif %}
+{% if s.binding == "events" %}
+4. Call the public API (`SetHealth`, `SetAmmo`, `Show`, `Hide`, …) from your game code.
+{% else %}
+4. The HUD polls singletons each frame — adapt the `Update()` body to find your sources.
+{% endif %}

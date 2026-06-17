@@ -1,0 +1,12 @@
+{
+  "name": "golem_01",
+  "asset_type": "character",
+  "style": "realistic",
+  "rig": true,
+  "animations": ["walk", "run", "attack"],
+  "lods": true,
+  "textures": { "resolution": 2048, "bake": true,
+                "material_brief": "a hulking stone golem, cracked granite skin, glowing molten veins" },
+  "geometry_nodes": "human_base",
+  "output": { "fbx": "golem_01.fbx", "textures": "golem_01_textures/", "blend": "golem_01.blend" }
+}

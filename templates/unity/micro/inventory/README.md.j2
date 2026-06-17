@@ -1,0 +1,46 @@
+# {{ s.name }} — Unity Inventory
+
+**Variant:** `{{ variant }}`
+**Stacking:** `{{ s.stacking }}`
+{% if s.sort_mode != "none" %}**Sort:** `{{ s.sort_mode }}`
+{% endif %}
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Create item assets: **Assets → Create → {{ s.name }} → Item Definition** (one per item type).
+3. Add the `{{ s.name }}` component to a persistent GameObject.
+{% if variant == "equipment" %}
+4. Equipment slots: `{{ s.equipment_slots | join(", ") }}`. Use `Equip(slot, item)` / `Unequip(slot)`.
+{% elif variant == "grid" %}
+4. Capacity is `gridWidth × gridHeight` = {{ s.grid_width }}×{{ s.grid_height }} = {{ s.grid_width * s.grid_height }} stacks.
+{% elif variant == "weight_based" %}
+4. Capacity is limited by total weight (`maxWeight` = {{ "%.0f"|format(s.max_weight) }}); `Add` fails when it would overflow.
+{% elif variant == "hotbar" %}
+4. {{ s.slot_count }}-slot hotbar. Use `Select(index)` and read `Selected` for the active stack.
+{% elif variant == "unlimited" %}
+4. No capacity cap — stacks grow freely.
+{% else %}
+4. {{ s.slot_count }} stack slots.
+{% endif %}
+
+## API
+
+{% if variant == "equipment" %}
+- `Equip(string slot, item)` / `Unequip(slot)` / `GetEquipped(slot)` / `IsEquipped(slot)`
+- `Slots` — the configured equipment slots
+{% else %}
+- `Add(item, amount = 1)` → `bool` (false when full{% if variant == "weight_based" %} / over weight{% endif %})
+- `Remove(item, amount = 1)` / `Count(item)` / `Has(item, amount)`
+- `Stacks` — read-only current contents
+{% if variant == "hotbar" %}- `Select(index)` / `Selected` / `SelectedIndex`
+{% endif %}
+{% endif %}
+- `OnChanged` — C# event fired after every mutation; subscribe to refresh UI.
+- `Clear()` — empty the container.
+{% if s.starting_items %}
+
+Suggested starting items: {{ s.starting_items | join(", ") }}.
+{% endif %}

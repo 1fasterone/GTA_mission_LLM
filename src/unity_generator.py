@@ -1,0 +1,1254 @@
+"""
+Unity Project Generator — Step 6.
+Compiles UnitySchema -> full Unity project folder tree.
+No LLM involved — deterministic from schema.
+"""
+
+import hashlib
+import json
+import math
+import re
+from pathlib import Path
+
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
+
+from .unity_schema import ColorPalette, ProceduralMesh, UnitySchema, UnityScript
+from .unity_asset_resolver import resolve_assets
+from .unity_model_resolver import resolve_default_models, models_for_schema
+from .micro.code_fields import lint_extensible
+
+
+# ── GUID generation ────────────────────────────────────────────────────────────
+# Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
+
+def _make_guid(seed: str) -> str:
+    return hashlib.md5(seed.encode("utf-8")).hexdigest()
+
+
+def _make_uuid(pn: str, seed: str) -> str:
+    """Deterministic UUID-shaped string (version 4, variant 10xx) from project + seed."""
+    h = hashlib.md5(f"{pn}/{seed}".encode("utf-8")).hexdigest()
+    return f"{h[:8]}-{h[8:12]}-4{h[13:16]}-a{h[17:20]}-{h[20:32]}"
+
+
+# ── Camera presets per game type ───────────────────────────────────────────────
+
+_CAMERA_PRESETS = {
+    "2D": {
+        "position": "{x: 0, y: 0, z: -10}",
+        "rotation": "{x: 0, y: 0, z: 0, w: 1}",
+        "euler":    "{x: 0, y: 0, z: 0}",
+    },
+    "2.5D": {
+        "position": "{x: 0, y: 3, z: -8}",
+        "rotation": "{x: 0.18198, y: 0, z: 0, w: 0.98325}",
+        "euler":    "{x: 21, y: 0, z: 0}",
+    },
+    "3D": {
+        "position": "{x: 0, y: 5, z: -8}",
+        "rotation": "{x: 0.30072, y: 0, z: 0, w: 0.95372}",
+        "euler":    "{x: 35, y: 0, z: 0}",
+    },
+    "top_down": {
+        "position": "{x: 0, y: 15, z: -3}",
+        "rotation": "{x: 0.96362, y: 0, z: 0, w: 0.26724}",
+        "euler":    "{x: 75, y: 0, z: 0}",
+    },
+    "isometric": {
+        "position": "{x: -10, y: 10, z: -10}",
+        "rotation": "{x: 0.30072, y: -0.43388, z: 0.14645, w: 0.83470}",
+        "euler":    "{x: 35, y: -45, z: 0}",
+    },
+    "VR": {
+        "position": "{x: 0, y: 1.6, z: 0}",
+        "rotation": "{x: 0, y: 0, z: 0, w: 1}",
+        "euler":    "{x: 0, y: 0, z: 0}",
+    },
+}
+
+# ── Script type -> template file ───────────────────────────────────────────────
+
+_SCRIPT_TEMPLATES = {
+    "player":           "PlayerController.cs.j2",
+    "camera":           "CameraFollow.cs.j2",
+    "game_manager":     "GameManager.cs.j2",
+    "enemy":            "EnemyAI.cs.j2",
+    "collectible":      "Collectible.cs.j2",
+    "ui_manager":       "UIManager.cs.j2",
+    "audio_manager":    "AudioManager.cs.j2",
+    "health":           "HealthSystem.cs.j2",
+    "dialogue_manager": "DialogueManager.cs.j2",
+    "mesh_builder":     "MeshBuilder.cs.j2",
+    "material_palette": "MaterialPalette.cs.j2",
+    "custom":           "CustomBehaviour.cs.j2",
+    # level_generator is an Editor script — handled separately in generate()
+}
+
+# ── Visual style -> lighting config ───────────────────────────────────────────
+
+_LIGHTING_BY_STYLE: dict[str, dict] = {
+    "cartoon":   {"intensity": 1.3, "r": 1.0,  "g": 0.98, "b": 0.90, "fog": False},
+    "realistic": {"intensity": 1.0, "r": 1.0,  "g": 0.957,"b": 0.839,"fog": True },
+    "low_poly":  {"intensity": 1.2, "r": 1.0,  "g": 0.95, "b": 0.85, "fog": False},
+    "stylized":  {"intensity": 1.1, "r": 1.0,  "g": 0.90, "b": 0.85, "fog": False},
+    "pixel_art": {"intensity": 1.0, "r": 1.0,  "g": 1.0,  "b": 1.0,  "fog": False},
+    "retro":     {"intensity": 0.95,"r": 1.0,  "g": 0.85, "b": 0.70, "fog": False},
+}
+
+# ── Environment mood: time-of-day sun presets ─────────────────────────────────
+# pitch = sun elevation (low = long shadows); color/intensity set the mood.
+# "day" is None → keep the visual-style lighting (exact pre-environment output).
+
+_TIME_OF_DAY_PRESETS: dict[str, dict | None] = {
+    "dawn":   {"pitch": 15.0, "color": (1.0, 0.75, 0.62), "intensity": 0.9},
+    "day":    None,
+    "sunset": {"pitch": 8.0,  "color": (1.0, 0.45, 0.25), "intensity": 1.0},
+    "night":  {"pitch": 35.0, "color": (0.5, 0.6, 0.9),   "intensity": 0.25},
+}
+
+
+def _sun_rotation(pitch_deg: float, yaw_deg: float = -30.0) -> tuple[str, str]:
+    """Unity light rotation for (pitch, yaw, 0) → (quaternion str, euler-hint str).
+    Unity's Quaternion.Euler order: q = Qy(yaw) * Qx(pitch). Reproduces the
+    template's historical (50, -30, 0) quat bit-for-bit at 8 decimals."""
+    px, yy = math.radians(pitch_deg) / 2.0, math.radians(yaw_deg) / 2.0
+    sx, cx = math.sin(px), math.cos(px)
+    sy, cy = math.sin(yy), math.cos(yy)
+    qw = cy * cx
+    qx = cy * sx
+    qy = sy * cx
+    qz = -sy * sx
+    quat  = (f"{{x: {round(qx, 8)}, y: {round(qy, 8)}, "
+             f"z: {round(qz, 8)}, w: {round(qw, 8)}}}")
+    euler = f"{{x: {round(pitch_deg, 4)}, y: {round(yaw_deg, 4)}, z: 0}}"
+    return quat, euler
+
+
+# ── Unity version -> exact editor build string ─────────────────────────────────
+
+_VERSION_MAP = {
+    "6000.4": ("6000.4.1f1",  "0000000000000"),
+    "6000.1": ("6000.1.4f1",  "0000000000000"),
+    "6000.0": ("6000.0.66f2", "0000000000000"),
+    "2022.3": ("2022.3.62f1", "0000000000000"),
+    "2021.3": ("2021.3.45f1", "0000000000000"),
+}
+
+
+# ── .meta file helpers ─────────────────────────────────────────────────────────
+
+def _meta_file(guid: str) -> str:
+    """MonoImporter .meta for C# scripts."""
+    return (
+        "fileFormatVersion: 2\n"
+        f"guid: {guid}\n"
+        "MonoImporter:\n"
+        "  externalObjects: {}\n"
+        "  serializedVersion: 2\n"
+        "  defaultReferences: []\n"
+        "  executionOrder: 0\n"
+        "  icon: {instanceID: 0}\n"
+        "  userData: \n"
+        "  assetBundleName: \n"
+        "  assetBundleVariant: \n"
+    )
+
+
+def _default_meta(guid: str, *, folder: bool = False) -> str:
+    """DefaultImporter .meta for scenes, folders, and other raw assets."""
+    folder_line = "folderAsset: yes\n" if folder else ""
+    return (
+        "fileFormatVersion: 2\n"
+        f"guid: {guid}\n"
+        f"{folder_line}"
+        "DefaultImporter:\n"
+        "  externalObjects: {}\n"
+        "  userData: \n"
+        "  assetBundleName: \n"
+        "  assetBundleVariant: \n"
+    )
+
+
+def _native_meta(guid: str, main_object_id: int) -> str:
+    """NativeFormatImporter .meta for .inputactions and .prefab files."""
+    return (
+        "fileFormatVersion: 2\n"
+        f"guid: {guid}\n"
+        "NativeFormatImporter:\n"
+        "  externalObjects: {}\n"
+        f"  mainObjectFileID: {main_object_id}\n"
+        "  userData: \n"
+        "  assetBundleName: \n"
+        "  assetBundleVariant: \n"
+    )
+
+
+def _humanoid_model_meta(guid: str, scale: float = 1.0) -> str:
+    """ModelImporter .meta for rigged characters/clips — Humanoid rig
+    (animationType: 3) so any Mixamo-style clip retargets to any character."""
+    return (
+        "fileFormatVersion: 2\n"
+        f"guid: {guid}\n"
+        "ModelImporter:\n"
+        "  serializedVersion: 21300\n"
+        "  internalIDToNameTable: []\n"
+        "  externalObjects: {}\n"
+        "  materials:\n"
+        "    materialImportMode: 1\n"
+        "    materialName: 0\n"
+        "    materialSearch: 1\n"
+        "    materialLocation: 1\n"
+        "  animations:\n"
+        "    legacyGenerateAnimations: 4\n"
+        "    bakeSimulation: 0\n"
+        "    resampleCurves: 1\n"
+        "    optimizeGameObjects: 0\n"
+        "    animationCompression: 1\n"
+        "    animationRotationError: 0.5\n"
+        "    animationPositionError: 0.5\n"
+        "    animationScaleError: 0.5\n"
+        "    animationWrapMode: 0\n"
+        "    clipAnimations: []\n"
+        "    isReadable: 0\n"
+        f"  globalScale: {scale}\n"
+        "  useFileScale: 1\n"
+        "  animationType: 3\n"
+        "  humanoidOversampling: 1\n"
+        "  avatarSetup: 1\n"
+        "  humanDescription:\n"
+        "    serializedVersion: 3\n"
+        "    human: []\n"
+        "    skeleton: []\n"
+        "    armTwist: 0.5\n"
+        "    foreArmTwist: 0.5\n"
+        "    upperLegTwist: 0.5\n"
+        "    legTwist: 0.5\n"
+        "    armStretch: 0.05\n"
+        "    legStretch: 0.05\n"
+        "    feetSpacing: 0\n"
+        "    globalScale: 1\n"
+        "    rootMotionBoneName: \n"
+        "    hasTranslationDoF: 0\n"
+        "    hasExtraRoot: 0\n"
+        "    skeletonHasParents: 1\n"
+        "  platforms: []\n"
+        "  userData: \n"
+        "  assetBundleName: \n"
+        "  assetBundleVariant: \n"
+    )
+
+
+def _model_meta(guid: str) -> str:
+    """ModelImporter .meta for .obj placeholder files."""
+    return (
+        "fileFormatVersion: 2\n"
+        f"guid: {guid}\n"
+        "ModelImporter:\n"
+        "  serializedVersion: 21300\n"
+        "  internalIDToNameTable: []\n"
+        "  externalObjects: {}\n"
+        "  materials:\n"
+        "    materialImportMode: 1\n"
+        "    materialName: 0\n"
+        "    materialSearch: 1\n"
+        "    materialLocation: 1\n"
+        "  animations:\n"
+        "    legacyGenerateAnimations: 4\n"
+        "    bakeSimulation: 0\n"
+        "    resampleCurves: 1\n"
+        "    optimizeGameObjects: 0\n"
+        "    animationCompression: 1\n"
+        "    animationRotationError: 0.5\n"
+        "    animationPositionError: 0.5\n"
+        "    animationScaleError: 0.5\n"
+        "    animationWrapMode: 0\n"
+        "    clipAnimations: []\n"
+        "    isReadable: 0\n"
+        "  platforms: []\n"
+        "  userData: \n"
+        "  assetBundleName: \n"
+        "  assetBundleVariant: \n"
+    )
+
+
+# ── Color helpers ─────────────────────────────────────────────────────────────
+
+def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    """#RRGGBB → (r, g, b) as 0.0–1.0 floats."""
+    h = hex_color.lstrip('#')
+    return (int(h[0:2], 16) / 255.0,
+            int(h[2:4], 16) / 255.0,
+            int(h[4:6], 16) / 255.0)
+
+
+def _unity_color(hex_color: str) -> dict:
+    """#RRGGBB → {r: float, g: float, b: float} Unity dict (rounded to 8 dp)."""
+    r, g, b = _hex_to_rgb(hex_color)
+    return {"r": round(r, 8), "g": round(g, 8), "b": round(b, 8)}
+
+
+def _generate_material(mat_name: str, hex_color: str,
+                        render_pipeline: str, smoothness: float = 0.3) -> str:
+    """Return a .mat file string for the given hex color."""
+    r, g, b = _hex_to_rgb(hex_color)
+    r8, g8, b8 = round(r, 8), round(g, 8), round(b, 8)
+
+    if render_pipeline == "builtin":
+        return (
+            "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n"
+            "--- !u!21 &2100000\nMaterial:\n"
+            "  serializedVersion: 8\n"
+            "  m_ObjectHideFlags: 0\n"
+            "  m_CorrespondingSourceObject: {fileID: 0}\n"
+            "  m_PrefabInstance: {fileID: 0}\n"
+            "  m_PrefabAsset: {fileID: 0}\n"
+            f"  m_Name: {mat_name}\n"
+            "  m_Shader: {fileID: 46, guid: 0000000000000000f000000000000000, type: 0}\n"
+            "  m_ShaderKeywords: _GLOSSYREFLECTIONS_OFF _SPECULARHIGHLIGHTS_OFF\n"
+            "  m_LightmapFlags: 4\n"
+            "  m_EnableInstancing: 0\n"
+            "  m_DoubleSidedGI: 0\n"
+            "  m_CustomRenderQueue: -1\n"
+            "  stringTagMap: {}\n"
+            "  disabledShaderPasses: []\n"
+            "  m_SavedProperties:\n"
+            "    serializedVersion: 3\n"
+            "    m_TexEnvs:\n"
+            "    - _MainTex:\n"
+            "        m_Texture: {fileID: 0}\n"
+            "        m_Scale: {x: 1, y: 1}\n"
+            "        m_Offset: {x: 0, y: 0}\n"
+            "    m_Floats:\n"
+            f"    - _Glossiness: {smoothness}\n"
+            "    - _Metallic: 0\n"
+            "    m_Colors:\n"
+            f"    - _Color: {{r: {r8}, g: {g8}, b: {b8}, a: 1}}\n"
+            f"    - _EmissionColor: {{r: 0, g: 0, b: 0, a: 1}}\n"
+        )
+    elif render_pipeline == "HDRP":
+        # HDRP/Lit shader (guid 6e4ae40…). Minimal opaque-Lit material — HDRP's
+        # MaterialPostprocessor expands the remaining defaults on import. Using the
+        # URP Lit shader here previously fell back to InternalErrorShader (magenta).
+        return (
+            "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n"
+            "--- !u!21 &2100000\nMaterial:\n"
+            "  serializedVersion: 8\n"
+            "  m_ObjectHideFlags: 0\n"
+            "  m_CorrespondingSourceObject: {fileID: 0}\n"
+            "  m_PrefabInstance: {fileID: 0}\n"
+            "  m_PrefabAsset: {fileID: 0}\n"
+            f"  m_Name: {mat_name}\n"
+            "  m_Shader: {fileID: 4800000, guid: 6e4ae4064600d784cac1e41a9e6f2e59, type: 3}\n"
+            "  m_ValidKeywords: []\n"
+            "  m_InvalidKeywords: []\n"
+            "  m_LightmapFlags: 4\n"
+            "  m_EnableInstancingVariants: 0\n"
+            "  m_DoubleSidedGI: 0\n"
+            "  m_CustomRenderQueue: -1\n"
+            "  stringTagMap: {}\n"
+            "  disabledShaderPasses: []\n"
+            "  m_SavedProperties:\n"
+            "    serializedVersion: 3\n"
+            "    m_TexEnvs:\n"
+            "    - _BaseColorMap:\n"
+            "        m_Texture: {fileID: 0}\n"
+            "        m_Scale: {x: 1, y: 1}\n"
+            "        m_Offset: {x: 0, y: 0}\n"
+            "    m_Ints: []\n"
+            "    m_Floats:\n"
+            f"    - _Smoothness: {smoothness}\n"
+            "    - _Metallic: 0\n"
+            "    - _SurfaceType: 0\n"
+            "    - _BlendMode: 0\n"
+            "    m_Colors:\n"
+            f"    - _BaseColor: {{r: {r8}, g: {g8}, b: {b8}, a: 1}}\n"
+            "    - _EmissiveColor: {r: 0, g: 0, b: 0, a: 1}\n"
+        )
+    else:  # URP — URP Lit shader
+        return (
+            "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n"
+            "--- !u!21 &2100000\nMaterial:\n"
+            "  serializedVersion: 8\n"
+            "  m_ObjectHideFlags: 0\n"
+            "  m_CorrespondingSourceObject: {fileID: 0}\n"
+            "  m_PrefabInstance: {fileID: 0}\n"
+            "  m_PrefabAsset: {fileID: 0}\n"
+            f"  m_Name: {mat_name}\n"
+            "  m_Shader: {fileID: 4800000, guid: 933532a4fcc9baf4fa0491de14d08ed7, type: 3}\n"
+            "  m_ShaderKeywords: _ENVIRONMENTREFLECTIONS_OFF _SPECULARHIGHLIGHTS_OFF\n"
+            "  m_LightmapFlags: 4\n"
+            "  m_EnableInstancing: 0\n"
+            "  m_DoubleSidedGI: 0\n"
+            "  m_CustomRenderQueue: -1\n"
+            "  stringTagMap:\n"
+            "    RenderType: Opaque\n"
+            "  disabledShaderPasses: []\n"
+            "  m_SavedProperties:\n"
+            "    serializedVersion: 3\n"
+            "    m_TexEnvs:\n"
+            "    - _BaseMap:\n"
+            "        m_Texture: {fileID: 0}\n"
+            "        m_Scale: {x: 1, y: 1}\n"
+            "        m_Offset: {x: 0, y: 0}\n"
+            "    - _BumpMap:\n"
+            "        m_Texture: {fileID: 0}\n"
+            "        m_Scale: {x: 1, y: 1}\n"
+            "        m_Offset: {x: 0, y: 0}\n"
+            "    m_Floats:\n"
+            f"    - _Smoothness: {smoothness}\n"
+            "    - _Metallic: 0\n"
+            "    m_Colors:\n"
+            f"    - _BaseColor: {{r: {r8}, g: {g8}, b: {b8}, a: 1}}\n"
+            f"    - _EmissionColor: {{r: 0, g: 0, b: 0, a: 1}}\n"
+        )
+
+
+# ── Built-in UGUI script GUIDs (com.unity.ugui, verified on Unity 6000.0) ───────
+# NOTE: currently unused — the scene authors these GUIDs inline in scene.unity.j2.
+# Kept as the single source of truth; GraphicRaycaster/EventSystem GUIDs changed
+# from the old 2021–2022 values, so the inline ones must match these.
+_UGUI_GUIDS = {
+    "CanvasScaler":          "0cd44c1031e13a943bb63640046fad76",
+    "GraphicRaycaster":      "dc42784cf147c0c48a680349fa168899",
+    "EventSystem":           "76c392e42b5098c458856cdf6ecaaaa1",
+    "StandaloneInputModule": "4f231c4fb786f3946a6b90b886c48677",
+    "InputSystemUIInputModule": "01614664b831546d2ae94a42149d80ac",
+}
+
+
+# ── Input Actions builder ──────────────────────────────────────────────────────
+
+def _generate_input_actions(schema: UnitySchema, pn: str) -> str:
+    """Return a .inputactions JSON string tailored to the schema's game type."""
+
+    def u(seed: str) -> str:
+        return _make_uuid(pn, f"ia/{seed}")
+
+    def act(name: str, act_type: str = "Button", control: str = "",
+            initial: bool = False) -> dict:
+        return {
+            "name": name, "type": act_type,
+            "id": u(f"act/{name}"),
+            "expectedControlType": control,
+            "processors": "", "interactions": "",
+            "initialStateCheck": initial,
+        }
+
+    def bind(path: str, action: str, groups: str = "", part_name: str = "",
+             is_composite: bool = False, is_part: bool = False) -> dict:
+        return {
+            "name": part_name,
+            "id": u(f"bind/{action}/{path}"),
+            "path": path,
+            "interactions": "", "processors": "",
+            "groups": groups, "action": action,
+            "isComposite": is_composite,
+            "isPartOfComposite": is_part,
+        }
+
+    def wasd(action_name: str, stick: str = "<Gamepad>/leftStick") -> list:
+        return [
+            bind("2DVector",          action_name, part_name="WASD", is_composite=True),
+            bind("<Keyboard>/w",      action_name, "Keyboard&Mouse", "up",    is_part=True),
+            bind("<Keyboard>/s",      action_name, "Keyboard&Mouse", "down",  is_part=True),
+            bind("<Keyboard>/a",      action_name, "Keyboard&Mouse", "left",  is_part=True),
+            bind("<Keyboard>/d",      action_name, "Keyboard&Mouse", "right", is_part=True),
+            *([bind(stick, action_name, "Gamepad")] if stick else []),
+        ]
+
+    gt     = schema.game_type
+    is_2d  = gt in ("2D", "2.5D")
+    is_vr  = gt == "VR"
+    mobile = schema.platform in ("Android", "iOS")
+
+    # ── Player map ────────────────────────────────────────────────────────────
+    p_acts:  list[dict] = [act("Move", "Value", "Vector2", initial=True)]
+    p_binds: list[dict] = wasd("Move")
+
+    if mobile:
+        p_binds += [
+            bind("2DVector",                         "Move", part_name="Touch", is_composite=True),
+            bind("<Touchscreen>/primaryTouch/delta", "Move", "Touch", "xy", is_part=True),
+        ]
+
+    if is_vr:
+        p_acts  += [act("Trigger", "Button", "Button"), act("Grip", "Button", "Button")]
+        p_binds += [
+            bind("<XRController>{LeftHand}/trigger",  "Trigger", "XRController"),
+            bind("<XRController>{RightHand}/trigger", "Trigger", "XRController"),
+            bind("<XRController>{LeftHand}/grip",     "Grip",    "XRController"),
+            bind("<XRController>{RightHand}/grip",    "Grip",    "XRController"),
+        ]
+    else:
+        if not is_2d:
+            p_acts  += [act("Look", "Value", "Vector2", initial=True)]
+            p_binds += [
+                bind("<Mouse>/delta",        "Look", "Keyboard&Mouse"),
+                bind("<Gamepad>/rightStick", "Look", "Gamepad"),
+            ]
+        p_acts  += [act("Jump",     "Button", "Button")]
+        p_binds += [
+            bind("<Keyboard>/space",       "Jump",     "Keyboard&Mouse"),
+            bind("<Gamepad>/buttonSouth",  "Jump",     "Gamepad"),
+        ]
+        p_acts  += [act("Attack",   "Button", "Button")]
+        p_binds += [
+            bind("<Mouse>/leftButton",     "Attack",   "Keyboard&Mouse"),
+            bind("<Gamepad>/buttonWest",   "Attack",   "Gamepad"),
+        ]
+        p_acts  += [act("Interact", "Button", "Button")]
+        p_binds += [
+            bind("<Keyboard>/e",           "Interact", "Keyboard&Mouse"),
+            bind("<Gamepad>/buttonNorth",  "Interact", "Gamepad"),
+        ]
+
+    p_acts  += [act("Pause", "Button", "Button")]
+    p_binds += [
+        bind("<Keyboard>/escape", "Pause", "Keyboard&Mouse"),
+        bind("<Gamepad>/start",   "Pause", "Gamepad"),
+    ]
+
+    player_map = {
+        "name": "Player", "id": u("map/player"),
+        "actions": p_acts, "bindings": p_binds,
+    }
+
+    # ── UI map ────────────────────────────────────────────────────────────────
+    ui_acts = [
+        act("Navigate",    "Value",       "Vector2", initial=True),
+        act("Submit",      "Button"),
+        act("Cancel",      "Button"),
+        act("Point",       "PassThrough", "Vector2", initial=True),
+        act("Click",       "PassThrough", "Button",  initial=True),
+        act("ScrollWheel", "PassThrough", "Vector2", initial=True),
+    ]
+    ui_binds = [
+        bind("2DVector",              "Navigate", part_name="Arrows", is_composite=True),
+        bind("<Keyboard>/upArrow",    "Navigate", "Keyboard&Mouse", "up",    is_part=True),
+        bind("<Keyboard>/downArrow",  "Navigate", "Keyboard&Mouse", "down",  is_part=True),
+        bind("<Keyboard>/leftArrow",  "Navigate", "Keyboard&Mouse", "left",  is_part=True),
+        bind("<Keyboard>/rightArrow", "Navigate", "Keyboard&Mouse", "right", is_part=True),
+        bind("<Gamepad>/leftStick",   "Navigate", "Gamepad"),
+        bind("<Gamepad>/dpad",        "Navigate", "Gamepad"),
+        bind("<Keyboard>/enter",      "Submit",      "Keyboard&Mouse"),
+        bind("<Gamepad>/buttonSouth", "Submit",      "Gamepad"),
+        bind("<Keyboard>/escape",     "Cancel",      "Keyboard&Mouse"),
+        bind("<Gamepad>/buttonEast",  "Cancel",      "Gamepad"),
+        bind("<Mouse>/position",      "Point",       "Keyboard&Mouse"),
+        bind("<Mouse>/leftButton",    "Click",       "Keyboard&Mouse"),
+        bind("<Mouse>/scroll",        "ScrollWheel", "Keyboard&Mouse"),
+    ]
+    ui_map = {
+        "name": "UI", "id": u("map/ui"),
+        "actions": ui_acts, "bindings": ui_binds,
+    }
+
+    # ── Control schemes ───────────────────────────────────────────────────────
+    def scheme(name: str, *device_paths: str) -> dict:
+        return {
+            "name": name, "id": u(f"scheme/{name}"),
+            "bindingGroup": name,
+            "devices": [
+                {"devicePath": dp, "isOptional": False, "isOR": False}
+                for dp in device_paths
+            ],
+        }
+
+    schemes = [scheme("Keyboard&Mouse", "<Keyboard>", "<Mouse>"), scheme("Gamepad", "<Gamepad>")]
+    if mobile:
+        schemes.append(scheme("Touch", "<Touchscreen>"))
+    if is_vr:
+        schemes.append(scheme("XRController", "<XRController>"))
+
+    return json.dumps(
+        {"name": f"{pn}InputActions", "maps": [player_map, ui_map], "controlSchemes": schemes},
+        indent=4,
+    )
+
+
+def _generate_obj(mesh: ProceduralMesh) -> str:
+    """Minimal quad-plane .obj placeholder — rebuilt at runtime by MeshBuilder.cs."""
+    return (
+        f"# Auto-generated placeholder — {mesh.name}\n"
+        f"# Type: {mesh.mesh_type}  Resolution: {mesh.resolution}\n"
+        "# This geometry is rebuilt at runtime by MeshBuilder.cs\n"
+        f"o {mesh.name}\n"
+        "v -1.0  0.0 -1.0\n"
+        "v  1.0  0.0 -1.0\n"
+        "v  1.0  0.0  1.0\n"
+        "v -1.0  0.0  1.0\n"
+        "vn  0.0  1.0  0.0\n"
+        "vt 0.0 0.0\n"
+        "vt 1.0 0.0\n"
+        "vt 1.0 1.0\n"
+        "vt 0.0 1.0\n"
+        "f 1/1/1 2/2/1 3/3/1 4/4/1\n"
+    )
+
+
+# ── UI Toolkit HUD assets (emitted when a ui_manager script exists, non-VR) ─────
+# These back the HUD_Root → UIDocument the scene template authors. The guids and
+# the UXML's importer-derived sourceAsset fileID (9197481963319205126) are fixed:
+# the UXML content is byte-stable, so Unity's UXML importer reproduces the same
+# fileID on every project, keeping the scene's sourceAsset reference valid.
+_HUD_UXML_GUID         = "c2a4bf7586ffc544d98475ce2234da1f"
+_HUD_PANELSETTINGS_GUID = "89a879e23b1fe464db3acbc7007a2bd1"
+
+_HUD_UXML = (
+    '<ui:UXML xmlns:ui="UnityEngine.UIElements" editor-extension-mode="False">\n'
+    '  <ui:VisualElement name="HUD" style="flex-grow:1; padding:16px;">\n'
+    '    <ui:Label name="ScoreLabel" text="Score: 0" style="color:rgb(255,255,255); font-size:28px; -unity-font-style:bold;"/>\n'
+    '    <ui:Label name="LivesLabel" text="Lives: 3" style="color:rgb(255,255,255); font-size:28px; -unity-font-style:bold;"/>\n'
+    '  </ui:VisualElement>\n'
+    '  <ui:VisualElement name="PausePanel" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; align-items:center; justify-content:center; background-color:rgba(0,0,0,0.6);">\n'
+    '    <ui:Label text="PAUSED" style="color:rgb(255,255,255); font-size:48px;"/>\n'
+    '    <ui:Button name="ResumeButton" text="Resume"/>\n'
+    '    <ui:Button name="RestartButton" text="Restart"/>\n'
+    '    <ui:Button name="MenuButton" text="Main Menu"/>\n'
+    '  </ui:VisualElement>\n'
+    '  <ui:VisualElement name="GameOverPanel" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; align-items:center; justify-content:center; background-color:rgba(0,0,0,0.75);">\n'
+    '    <ui:Label text="GAME OVER" style="color:rgb(255,80,80); font-size:48px;"/>\n'
+    '    <ui:Button name="RestartButton" text="Restart"/>\n'
+    '    <ui:Button name="MenuButton" text="Main Menu"/>\n'
+    '  </ui:VisualElement>\n'
+    '</ui:UXML>'
+)
+
+_HUD_UXML_META = (
+    "fileFormatVersion: 2\n"
+    f"guid: {_HUD_UXML_GUID}\n"
+    "ScriptedImporter:\n"
+    "  internalIDToNameTable: []\n"
+    "  externalObjects: {}\n"
+    "  serializedVersion: 2\n"
+    "  userData: \n"
+    "  assetBundleName: \n"
+    "  assetBundleVariant: \n"
+    "  script: {fileID: 13804, guid: 0000000000000000e000000000000000, type: 0}\n"
+)
+
+_HUD_PANELSETTINGS = (
+    "%YAML 1.1\n"
+    "%TAG !u! tag:unity3d.com,2011:\n"
+    "--- !u!114 &11400000\n"
+    "MonoBehaviour:\n"
+    "  m_ObjectHideFlags: 0\n"
+    "  m_CorrespondingSourceObject: {fileID: 0}\n"
+    "  m_PrefabInstance: {fileID: 0}\n"
+    "  m_PrefabAsset: {fileID: 0}\n"
+    "  m_GameObject: {fileID: 0}\n"
+    "  m_Enabled: 1\n"
+    "  m_EditorHideFlags: 0\n"
+    "  m_Script: {fileID: 19101, guid: 0000000000000000e000000000000000, type: 0}\n"
+    "  m_Name: HUDPanelSettings\n"
+    "  m_EditorClassIdentifier: UnityEngine.dll::UnityEngine.UIElements.PanelSettings\n"
+    "  themeUss: {fileID: -4733365628477956816, guid: 7312b696fbaa8d342bc32d6d1307f3a8, type: 3}\n"
+    "  m_DisableNoThemeWarning: 0\n"
+    "  m_TargetTexture: {fileID: 0}\n"
+    "  m_RenderMode: 0\n"
+    "  m_ColliderUpdateMode: 0\n"
+    "  m_ColliderIsTrigger: 1\n"
+    "  m_ScaleMode: 2\n"
+    "  m_ReferenceSpritePixelsPerUnit: 100\n"
+    "  m_PixelsPerUnit: 100\n"
+    "  m_Scale: 1\n"
+    "  m_ReferenceDpi: 96\n"
+    "  m_FallbackDpi: 96\n"
+    "  m_ReferenceResolution: {x: 1920, y: 1080}\n"
+    "  m_ScreenMatchMode: 0\n"
+    "  m_Match: 0\n"
+    "  m_SortingOrder: 0\n"
+    "  m_TargetDisplay: 0\n"
+    "  m_BindingLogLevel: 0\n"
+    "  m_ClearDepthStencil: 1\n"
+    "  m_ClearColor: 0\n"
+    "  m_ColorClearValue: {r: 0, g: 0, b: 0, a: 0}\n"
+    "  m_VertexBudget: 0\n"
+    "  m_TextureSlotCount: 8\n"
+    "  m_DynamicAtlasSettings:\n"
+    "    m_MinAtlasSize: 64\n"
+    "    m_MaxAtlasSize: 4096\n"
+    "    m_MaxSubTextureSize: 64\n"
+    "    m_ActiveFilters: 31\n"
+    "  m_AtlasBlitShader: {fileID: 9101, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_DefaultShader: {fileID: 9100, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_RuntimeGaussianBlurShader: {fileID: 20300, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_RuntimeColorEffectShader: {fileID: 20301, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_SDFShader: {fileID: 19011, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_BitmapShader: {fileID: 9001, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_SpriteShader: {fileID: 19012, guid: 0000000000000000f000000000000000, type: 0}\n"
+    "  m_ICUDataAsset: {fileID: 0}\n"
+    "  forceGammaRendering: 0\n"
+    "  textSettings: {fileID: 0}\n"
+)
+
+_HUD_PANELSETTINGS_META = (
+    "fileFormatVersion: 2\n"
+    f"guid: {_HUD_PANELSETTINGS_GUID}\n"
+    "NativeFormatImporter:\n"
+    "  externalObjects: {}\n"
+    "  mainObjectFileID: 11400000\n"
+    "  userData: \n"
+    "  assetBundleName: \n"
+    "  assetBundleVariant: \n"
+)
+
+
+class UnityProjectGenerator:
+    def __init__(self, template_dir: str = "templates/unity"):
+        tpl_path = Path(template_dir)
+        # Single environment searches root templates then scripts/ subdirectory.
+        # ChoiceLoader tries loaders in order, so root templates take priority.
+        self._env = Environment(
+            loader        = ChoiceLoader([
+                FileSystemLoader(str(tpl_path)),
+                FileSystemLoader(str(tpl_path / "scripts")),
+                FileSystemLoader(str(tpl_path / "editor")),
+            ]),
+            undefined     = StrictUndefined,
+            trim_blocks   = True,
+            lstrip_blocks = True,
+        )
+        self.template_dir = tpl_path
+
+    # ── public entry point ─────────────────────────────────────────────────────
+
+    def generate(self, schema: UnitySchema, manifest_deps: dict[str, str],
+                 lookups_dir: str = "lookups",
+                 kenney_source_dir: str | None = None,
+                 composed_units: list | None = None,
+                 model_source_dir: str | None = None) -> dict[str, str]:
+        """
+        Returns {relative_path: file_content} for every file in the project.
+        Caller writes the dict to disk.
+
+        `composed_units` (from MicroComposer.plan) are spliced into each scene as a
+        `_GameSystems` GameObject carrying one MonoBehaviour per composed micro,
+        referenced by its deterministic .cs.meta GUID.
+        """
+        files: dict[str, str] = {}
+        pn = schema.project_name
+
+        # ── Custom-script lint pass ───────────────────────────────────────────
+        # LLM-authored C# fragments are defensively cleaned before any render
+        # (same battle-tested pass the micro generators run in default_fix).
+        # Done here — not in the pipeline — so unity-validate and the webui get
+        # it too. CustomBehaviour.cs.j2 emits no fields of its own, so the only
+        # reserved name is nothing; usings dedupe against the template's.
+        for s in schema.scripts:
+            if s.type == "custom":
+                lint_extensible(s, reserved_fields=set(),
+                                template_usings={"UnityEngine"})
+                # A custom script can only attach to the Player if one exists.
+                if s.attach_to == "player" and not any(
+                        x.type == "player" for x in schema.scripts):
+                    s.attach_to = "systems"
+
+        # ── Entity behavior reconciliation ────────────────────────────────────
+        # `behavior` must name a class that actually exists or AddComponent
+        # silently no-ops (hit live: LLM invented "AIWaypointDriver" while the
+        # composed AI class was "EnemyAI" → rivals never moved). Unknown names
+        # rewire to the composed AI class, else an enemy-type script, else "".
+        if schema.entities:
+            known = {s.name for s in schema.scripts}
+            ai_fallback = next((s.name for s in schema.scripts if s.type == "enemy"), "")
+            for u in (composed_units or []):
+                known.add(u.class_name)
+                if u.kind == "ai":
+                    ai_fallback = u.class_name
+            for e in schema.entities:
+                if e.behavior and e.behavior not in known:
+                    e.behavior = ai_fallback if e.kind == "enemy" else ""
+
+        # ── Kenney asset resolution ───────────────────────────────────────────
+        kenney_assets = resolve_assets(schema, lookups_dir=lookups_dir,
+                                       source_dir=kenney_source_dir)
+
+        # ── Default model pack (Model Pack v1) ────────────────────────────────
+        # Real models replace the primitive placeholders. Resolution is purely
+        # what exists under Models/Defaults — missing files degrade to primitives.
+        used_models = models_for_schema(
+            schema,
+            resolve_default_models(lookups_dir=lookups_dir,
+                                   model_source_dir=model_source_dir),
+            composed_units,
+        )
+        # Resource path each entity group instantiates ("" = primitive).
+        entity_model_paths = {
+            e.name: used_models[e.kind].resource_path
+            for e in schema.entities if e.kind in used_models
+        }
+        any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
+
+        palette   = schema.color_palette  # always non-None after model_validator
+        lighting  = _LIGHTING_BY_STYLE.get(schema.visual_style,
+                                           _LIGHTING_BY_STYLE["stylized"])
+        bg        = _unity_color(palette.background)
+
+        # ── Environment mood (time of day / fog) ──────────────────────────────
+        # "day" (or no environment block) keeps the historical style lighting
+        # byte-for-byte; other times of day swing the sun + tint it.
+        env    = schema.environment
+        preset = _TIME_OF_DAY_PRESETS.get(env.time_of_day) if env else None
+        if preset:
+            sun_rotation, sun_euler = _sun_rotation(preset["pitch"])
+            sun_color = {"r": preset["color"][0], "g": preset["color"][1],
+                         "b": preset["color"][2]}
+            sun_intensity = preset["intensity"]
+        else:
+            sun_rotation  = "{x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}"
+            sun_euler     = "{x: 50, y: -30, z: 0}"
+            sun_color     = {"r": lighting["r"], "g": lighting["g"], "b": lighting["b"]}
+            sun_intensity = lighting["intensity"]
+        if env and env.sun_intensity is not None:
+            sun_intensity = env.sun_intensity
+        fog_enabled = env.fog if (env and env.fog is not None) else lighting["fog"]
+        fog_color   = _unity_color(env.fog_color) if (env and env.fog_color) else bg
+
+        # GUIDs for generated .mat files (deterministic)
+        mat_guids = {
+            "primary":   _make_guid(f"{pn}/Materials/Primary"),
+            "secondary": _make_guid(f"{pn}/Materials/Secondary"),
+            "accent":    _make_guid(f"{pn}/Materials/Accent"),
+            "trim":      _make_guid(f"{pn}/Materials/Trim"),
+        }
+
+        base_ctx = {
+            "project_name":      pn,
+            "company_name":      schema.company_name,
+            "game_type":         schema.game_type,
+            "platform":          schema.platform,
+            "render_pipeline":   schema.render_pipeline,
+            "unity_version":     schema.unity_version,
+            "color_space":       schema.color_space,
+            "visual_style":      schema.visual_style,
+            "color_palette":     palette,
+            "palette_rgb": {
+                "primary":    _unity_color(palette.primary),
+                "secondary":  _unity_color(palette.secondary),
+                "accent":     _unity_color(palette.accent),
+                "background": bg,
+                "trim":       _unity_color(palette.trim),
+            },
+            "mat_guids":         mat_guids,
+            "lighting":          lighting,
+            "sun_rotation":      sun_rotation,
+            "sun_euler":         sun_euler,
+            "sun_color":         sun_color,
+            "sun_intensity":     sun_intensity,
+            "fog_enabled":       fog_enabled,
+            "fog_color":         fog_color,
+            "features":          schema.features,
+            "scenes":            schema.scenes,
+            "story_beats":       schema.story_beats,
+            "audio_tracks":      schema.audio_tracks,
+            "procedural_meshes": schema.procedural_meshes,
+            "entities":          schema.entities,
+            "entity_model_paths": entity_model_paths,
+            "kenney_assets":     kenney_assets,
+        }
+
+        _ev, _er = _VERSION_MAP.get(schema.unity_version, ("6000.0.66f2", "0000000000000"))
+        files[f"{pn}/ProjectSettings/ProjectVersion.txt"] = self._render(
+            "ProjectVersion.txt.j2", {"editor_version": _ev, "editor_revision": _er}
+        )
+
+        files[f"{pn}/Packages/manifest.json"] = self._render(
+            "manifest.json.j2", {**base_ctx, "dependencies": manifest_deps}
+        )
+
+        files[f"{pn}/ProjectSettings/ProjectSettings.asset"] = self._render(
+            "ProjectSettings.asset.j2", {**base_ctx, "product_guid": _make_guid(pn)}
+        )
+        files[f"{pn}/ProjectSettings/QualitySettings.asset"] = self._render(
+            "QualitySettings.asset.j2", base_ctx
+        )
+        # Entity tags must exist in TagManager or `go.tag = ...` errors at runtime
+        # ("Tag: EnemyCar is not defined" — hit live on the racing beta run).
+        _builtin_tags = {"Player", "Enemy", "Collectible", "Ground", "Obstacle",
+                         "Interactable", "Projectile", "Trigger", "Untagged"}
+        entity_tags = sorted({
+            e.tag for e in schema.entities
+            if e.tag and e.tag not in _builtin_tags
+        })
+        files[f"{pn}/ProjectSettings/TagManager.asset"] = self._render(
+            "TagManager.asset.j2", {**base_ctx, "entity_tags": entity_tags}
+        )
+        scene_guids = {s: _make_guid(f"{pn}/scene/{s}") for s in schema.scenes}
+        files[f"{pn}/ProjectSettings/EditorBuildSettings.asset"] = self._render(
+            "EditorBuildSettings.asset.j2", {**base_ctx, "scene_guids": scene_guids}
+        )
+
+        _cam = _CAMERA_PRESETS.get(schema.game_type, _CAMERA_PRESETS["3D"])
+        # scripts_by_type lets the scene template wire MonoBehaviour components
+        # to the correct script GUID without looping in Jinja2.
+        scripts_by_type = {s.type: s for s in schema.scripts}
+        script_guids    = {
+            s.name: _make_guid(f"{pn}/Scripts/{s.name}") for s in schema.scripts
+        }
+        # Custom scripts attach per `attach_to`; each gets a deterministic scene
+        # MonoBehaviour fileID (base 900003010) so regeneration is stable.
+        custom_scripts = [
+            {
+                "name":      s.name,
+                "guid":      script_guids[s.name],
+                "file_id":   900003010 + i,
+                "attach_to": s.attach_to,
+            }
+            for i, s in enumerate(x for x in schema.scripts if x.type == "custom")
+        ]
+        scene_ctx = {
+            **base_ctx,
+            "camera_position":  _cam["position"],
+            "camera_rotation":  _cam["rotation"],
+            "camera_euler":     _cam["euler"],
+            "scripts_by_type":  scripts_by_type,
+            "script_guids":     script_guids,
+            "composed_units":   composed_units or [],
+            "custom_scripts":   custom_scripts,
+            "entity_spawner_guid": _make_guid(f"{pn}/Scripts/EntitySpawner"),
+            # Model Pack v1 — drive mode keeps the car visual, so no player swap.
+            "player_model": used_models.get("player") if schema.locomotion != "drive" else None,
+            "enemy_model":  used_models.get("enemy"),
+            "model_swap_guid": _make_guid(f"{pn}/Scripts/ModelSwap"),
+            "character_controller_res": "Models/Default/DefaultCharacter",
+        }
+        for scene_name in schema.scenes:
+            scene_path = f"{pn}/Assets/Scenes/{scene_name}.unity"
+            files[scene_path] = self._render(
+                "scene.unity.j2", {**scene_ctx, "scene_name": scene_name}
+            )
+            files[f"{scene_path}.meta"] = _default_meta(
+                _make_guid(f"{pn}/scene/{scene_name}")
+            )
+        files[f"{pn}/Assets/Scenes.meta"] = _default_meta(
+            _make_guid(f"{pn}/Assets/Scenes"), folder=True
+        )
+
+        for script in schema.scripts:
+            script_content, script_path = self._generate_script(schema, script, base_ctx)
+            if "/_skip_" in script_path:
+                continue  # level_generator handled separately as Editor script
+            files[script_path]           = script_content
+            files[f"{script_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Scripts/{script.name}")
+            )
+        files[f"{pn}/Assets/Scripts.meta"] = _default_meta(
+            _make_guid(f"{pn}/Assets/Scripts"), folder=True
+        )
+
+        # ── Procedural Meshes ─────────────────────────────────────────────────
+        if schema.procedural_meshes:
+            for mesh in schema.procedural_meshes:
+                obj_path = f"{pn}/Assets/Models/{mesh.name}.obj"
+                files[obj_path]           = _generate_obj(mesh)
+                files[f"{obj_path}.meta"] = _model_meta(
+                    _make_guid(f"{pn}/Models/{mesh.name}")
+                )
+                mesh_cs  = f"{mesh.name}Mesh"
+                cs_path  = f"{pn}/Assets/Scripts/{mesh_cs}.cs"
+                files[cs_path]              = self._render("ProceduralMesh.cs.j2", {
+                    **base_ctx, "mesh": mesh, "class_name": mesh_cs,
+                })
+                files[f"{cs_path}.meta"]    = _meta_file(
+                    _make_guid(f"{pn}/Scripts/{mesh_cs}")
+                )
+            files[f"{pn}/Assets/Models.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Models"), folder=True
+            )
+
+        # ── Palette Materials ─────────────────────────────────────────────────
+        _mat_defs = [
+            ("Primary",   palette.primary,    0.25),
+            ("Secondary", palette.secondary,  0.15),
+            ("Accent",    palette.accent,     0.40),
+            ("Trim",      palette.trim,       0.10),
+        ]
+        for mat_label, mat_hex, mat_smooth in _mat_defs:
+            mat_path = f"{pn}/Assets/Materials/{mat_label}.mat"
+            files[mat_path]            = _generate_material(
+                mat_label, mat_hex, schema.render_pipeline, mat_smooth
+            )
+            files[f"{mat_path}.meta"]  = _default_meta(mat_guids[mat_label.lower()])
+
+        # ── UI Toolkit HUD assets (UIDocument host for ui_manager, non-VR) ────
+        # The scene template authors a HUD_Root → UIDocument that references these
+        # by their fixed guids; emitting them makes the HUD render with no manual
+        # wiring. VR drives its UI differently, so skip there (matches the Canvas).
+        _stypes_for_ui = {s.type for s in schema.scripts}
+        if "ui_manager" in _stypes_for_ui and schema.game_type != "VR":
+            files[f"{pn}/Assets/UI.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/UI"), folder=True
+            )
+            files[f"{pn}/Assets/UI/HUD.uxml"]                   = _HUD_UXML
+            files[f"{pn}/Assets/UI/HUD.uxml.meta"]              = _HUD_UXML_META
+            files[f"{pn}/Assets/UI/HUDPanelSettings.asset"]     = _HUD_PANELSETTINGS
+            files[f"{pn}/Assets/UI/HUDPanelSettings.asset.meta"] = _HUD_PANELSETTINGS_META
+
+        # ── Default model pack emission ───────────────────────────────────────
+        # Metas for every model/clip (binaries are copied by write()); the
+        # ModelSwap runtime; and the run-once editor pass that forces Humanoid
+        # rigs and builds the DefaultCharacter AnimatorController.
+        if used_models:
+            files[f"{pn}/Assets/Resources.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Resources"), folder=True)
+            for m in used_models.values():
+                for item in [m] + list(m.clips.values()):
+                    meta_fn = (_humanoid_model_meta(
+                                   _make_guid(f"{pn}/{item.dest_rel}"), item.scale)
+                               if item.rig == "humanoid"
+                               else _model_meta(_make_guid(f"{pn}/{item.dest_rel}")))
+                    files[f"{pn}/Assets/Resources/{item.dest_rel}.meta"] = meta_fn
+            ms_path = f"{pn}/Assets/Scripts/ModelSwap.cs"
+            files[ms_path]           = self._render("ModelSwap.cs.j2", base_ctx)
+            files[f"{ms_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/ModelSwap"))
+            if any_humanoid:
+                sdm_path = f"{pn}/Assets/Editor/SetupDefaultModels.cs"
+                files[sdm_path]           = self._render("SetupDefaultModels.cs.j2", base_ctx)
+                files[f"{sdm_path}.meta"] = _meta_file(_make_guid(f"{pn}/Editor/SetupDefaultModels"))
+                files[f"{pn}/Assets/Editor.meta"] = _default_meta(
+                    _make_guid(f"{pn}/Assets/Editor"), folder=True)
+
+        # ── EntitySpawner (Tier-2 prompt-derived scene content) ───────────────
+        # When the schema carries `entities`, emit a runtime spawner that builds
+        # `count` primitives per group (N enemies, a ring of buildings, a crowd)
+        # so the concept's content reaches the scene. The scene template hosts it
+        # on an `EntitySpawner` GameObject (guarded by `entities`, gameplay scenes).
+        if schema.entities:
+            esp_path = f"{pn}/Assets/Scripts/EntitySpawner.cs"
+            files[esp_path]           = self._render("EntitySpawner.cs.j2", base_ctx)
+            files[f"{esp_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/EntitySpawner"))
+
+        # ── Level Generator editor script (ProBuilder) ────────────────────────
+        _stypes = {s.type for s in schema.scripts}
+        if "level_generator" in _stypes:
+            for sc in schema.scripts:
+                if sc.type != "level_generator":
+                    continue
+                ed_path = f"{pn}/Assets/Editor/{sc.name}.cs"
+                files[ed_path]            = self._render("LevelGenerator.cs.j2", {
+                    **base_ctx, "script": sc,
+                })
+                files[f"{ed_path}.meta"]  = _meta_file(
+                    _make_guid(f"{pn}/Editor/{sc.name}")
+                )
+
+        # ── Kenney asset importer editor script ──────────────────────────────
+        if kenney_assets:
+            ki_path = f"{pn}/Assets/Editor/KenneyImporter.cs"
+            files[ki_path]            = self._render("KenneyImporter.cs.j2", base_ctx)
+            files[f"{ki_path}.meta"]  = _meta_file(
+                _make_guid(f"{pn}/Editor/KenneyImporter")
+            )
+
+        # ── Editor folder (shared by SetupRenderPipeline + LevelGenerator + KenneyImporter) ─
+        # (only create if not already handled by the URP/HDRP block below)
+        has_editor_content = "level_generator" in _stypes or bool(kenney_assets)
+        if has_editor_content and schema.render_pipeline == "builtin":
+            files[f"{pn}/Assets/Editor.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Editor"), folder=True
+            )
+
+        for folder in ("Prefabs", "Audio", "Animations", "Textures"):
+            folder_path = f"{pn}/Assets/{folder}"
+            files[f"{folder_path}/.gitkeep"]  = ""
+            files[f"{folder_path}.meta"]       = _default_meta(
+                _make_guid(f"{pn}/Assets/{folder}"), folder=True
+            )
+
+        # ── Editor setup script (URP / HDRP only) ────────────────────────────
+        if schema.render_pipeline in ("URP", "HDRP"):
+            editor_tpl = "editor/SetupRenderPipeline.cs.j2"
+            script_path = f"{pn}/Assets/Editor/SetupRenderPipeline.cs"
+            files[script_path] = self._render(editor_tpl, base_ctx)
+            files[f"{script_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Editor/SetupRenderPipeline")
+            )
+            files[f"{pn}/Assets/Editor.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Editor"), folder=True
+            )
+            # Settings folder — created at runtime by the script; stub keeps git happy
+            settings_path = f"{pn}/Assets/Settings"
+            files[f"{settings_path}/.gitkeep"]  = ""
+            files[f"{settings_path}.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Settings"), folder=True
+            )
+
+        files[f"{pn}/Assets.meta"] = _default_meta(_make_guid(f"{pn}/Assets"), folder=True)
+
+        # ── Input Actions (New Input System) ──────────────────────────────────
+        if "input_system" in schema.features:
+            ia_name = f"{pn}InputActions"
+            ia_path = f"{pn}/Assets/Settings/{ia_name}.inputactions"
+            files[ia_path] = _generate_input_actions(schema, pn)
+            files[f"{ia_path}.meta"] = _native_meta(
+                _make_guid(f"{pn}/InputActions/{ia_name}"), main_object_id=13400000
+            )
+
+        # ── Prefabs ───────────────────────────────────────────────────────────
+        prefab_ctx = {
+            **base_ctx,
+            "scripts_by_type": scripts_by_type,
+            "script_guids":    script_guids,
+        }
+        for prefab_type, prefab_tpl in (("player", "Player.prefab.j2"),
+                                         ("enemy",  "Enemy.prefab.j2")):
+            if prefab_type not in scripts_by_type:
+                continue
+            prefab_name = scripts_by_type[prefab_type].name
+            prefab_path = f"{pn}/Assets/Prefabs/{prefab_name}.prefab"
+            files[prefab_path] = self._render(prefab_tpl, prefab_ctx)
+            files[f"{prefab_path}.meta"] = _native_meta(
+                _make_guid(f"{pn}/Prefabs/{prefab_name}"), main_object_id=100100000
+            )
+
+        # ── _UserAssets/ skeleton ─────────────────────────────────────────────
+        # Drops a category tree under Assets/_UserAssets/ where the tester
+        # places their own meshes, audio, etc. See docs/FREE_ASSETS.md and
+        # templates/unity/user_assets_skeleton/.
+        files.update(self._user_assets_files(pn))
+
+        # ── README.md ─────────────────────────────────────────────────────────
+        readme_ctx = {
+            **base_ctx,
+            "description": schema.description,
+            "scripts":     schema.scripts,
+            # Pass as sorted list of (id, version) tuples for stable output
+            "packages":    sorted(manifest_deps.items()),
+        }
+        files[f"{pn}/README.md"] = self._render("readme.md.j2", readme_ctx)
+
+        # ── compile-map sidecar ───────────────────────────────────────────────
+        # Maps each generated .cs file (project-relative, forward slashes) back to
+        # the template that produced it, so `unity_cli.py verify` can attribute a
+        # compile error to its source .j2 during the template-hardening loop.
+        files[f"{pn}/.compile_map.json"] = json.dumps(
+            self._compile_map(schema, bool(kenney_assets)), indent=2
+        )
+
+        return files
+
+    # ── compile-map ────────────────────────────────────────────────────────────
+
+    def _compile_map(self, schema: UnitySchema, has_kenney: bool) -> dict[str, str]:
+        """file (relative to project root) -> source template path under templates/unity/."""
+        m: dict[str, str] = {}
+        for s in schema.scripts:
+            if s.type == "level_generator":
+                m[f"Assets/Editor/{s.name}.cs"] = "editor/LevelGenerator.cs.j2"
+                continue
+            tpl = _SCRIPT_TEMPLATES.get(s.type)
+            if tpl:
+                m[f"Assets/Scripts/{s.name}.cs"] = f"scripts/{tpl}"
+        for mesh in schema.procedural_meshes:
+            m[f"Assets/Scripts/{mesh.name}Mesh.cs"] = "scripts/ProceduralMesh.cs.j2"
+        if schema.render_pipeline in ("URP", "HDRP"):
+            m["Assets/Editor/SetupRenderPipeline.cs"] = "editor/SetupRenderPipeline.cs.j2"
+        if has_kenney:
+            m["Assets/Editor/KenneyImporter.cs"] = "editor/KenneyImporter.cs.j2"
+        return m
+
+    # ── _UserAssets skeleton ─────────────────────────────────────────────────
+
+    def _user_assets_files(self, project_name: str) -> dict[str, str]:
+        """
+        Mirror templates/unity/user_assets_skeleton/ into
+        Assets/_UserAssets/, generating a folder .meta for every directory
+        and a DefaultImporter .meta for every README file. Returns an empty
+        dict if the skeleton dir is missing (lets the generator stay
+        backward-compatible).
+        """
+        skel = self.template_dir / "user_assets_skeleton"
+        out: dict[str, str] = {}
+        if not skel.exists():
+            return out
+
+        pn = project_name
+        # Always emit the top-level _UserAssets folder meta.
+        out[f"{pn}/Assets/_UserAssets.meta"] = _default_meta(
+            _make_guid(f"{pn}/Assets/_UserAssets"), folder=True
+        )
+
+        for path in sorted(skel.rglob("*")):
+            rel = path.relative_to(skel).as_posix()
+            target_rel = f"_UserAssets/{rel}" if rel != "." else "_UserAssets"
+            target_path = f"{pn}/Assets/{target_rel}"
+            if path.is_dir():
+                out[f"{target_path}.meta"] = _default_meta(
+                    _make_guid(f"{pn}/Assets/{target_rel}"), folder=True
+                )
+            else:
+                out[target_path] = path.read_text(encoding="utf-8")
+                out[f"{target_path}.meta"] = _default_meta(
+                    _make_guid(f"{pn}/Assets/{target_rel}")
+                )
+        return out
+
+    def write(self, schema: UnitySchema, manifest_deps: dict[str, str],
+              output_dir: str = "output/unity",
+              lookups_dir: str = "lookups",
+              kenney_source_dir: str | None = None,
+              composed_units: list | None = None,
+              model_source_dir: str | None = None) -> tuple[Path, int]:
+        """Write the project to disk; return (project_root, file_count)."""
+        files = self.generate(schema, manifest_deps,
+                              lookups_dir=lookups_dir,
+                              kenney_source_dir=kenney_source_dir,
+                              composed_units=composed_units,
+                              model_source_dir=model_source_dir)
+        root  = Path(output_dir)
+
+        # Create all unique parent directories in one pass before writing files.
+        for d in {(root / p).parent for p in files}:
+            d.mkdir(parents=True, exist_ok=True)
+
+        for rel_path, content in files.items():
+            (root / rel_path).write_text(content, encoding="utf-8")
+
+        # Binary model copies (generate() emitted the matching .meta files —
+        # same resolution, so the pair always lines up).
+        used_models = models_for_schema(
+            schema,
+            resolve_default_models(lookups_dir=lookups_dir,
+                                   model_source_dir=model_source_dir),
+            composed_units,
+        )
+        n_models = 0
+        for m in used_models.values():
+            for item in [m] + list(m.clips.values()):
+                dest = root / schema.project_name / "Assets" / "Resources" / item.dest_rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(Path(item.src).read_bytes())
+                n_models += 1
+
+        return root / schema.project_name, len(files) + n_models
+
+    # ── private helpers ────────────────────────────────────────────────────────
+
+    def _render(self, template_name: str, ctx: dict) -> str:
+        return self._env.get_template(template_name).render(**ctx)
+
+    def _generate_script(self, schema: UnitySchema, script: UnityScript,
+                         base_ctx: dict) -> tuple[str, str]:
+        tpl_file = _SCRIPT_TEMPLATES.get(script.type)
+        pn       = schema.project_name
+
+        # level_generator lives in Assets/Editor — handled in generate(); emit nothing here
+        if script.type == "level_generator":
+            return "", f"{pn}/Assets/Scripts/_skip_{script.name}"
+
+        path = f"{pn}/Assets/Scripts/{script.name}.cs"
+
+        if tpl_file and (self.template_dir / "scripts" / tpl_file).exists():
+            content = self._render(tpl_file, {**base_ctx, "script": script})
+        else:
+            content = (
+                f"// Auto-generated stub — {script.name}\n"
+                f"// {script.description}\n"
+                "using UnityEngine;\n\n"
+                f"public class {script.name} : MonoBehaviour\n"
+                "{\n"
+                "    // TODO: implement\n"
+                "}\n"
+            )
+        return content, path

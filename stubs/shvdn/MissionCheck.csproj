@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- GTA mission compile gate: builds GtaStubs.cs + every Mission_*.cs copied
+       alongside by `gta-verify`. net8.0-windows + WinForms gives us the Keys
+       enum; language-level differences vs the SHVDN runtime don't matter for
+       compile-fidelity checking. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>Library</OutputType>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <!-- CA1416 (windows-only API) is noise here — missions only run on Windows. -->
+    <NoWarn>CA1416</NoWarn>
+  </PropertyGroup>
+</Project>

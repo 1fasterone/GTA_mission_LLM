@@ -1,0 +1,42 @@
+# {{ s.name }} — Unity Interactable
+
+**Variant:** `{{ variant }}`
+**Detection:** `{{ s.detection }}`
+**Key:** `{{ s.interact_key }}`
+{% if s.one_shot %}**One-shot:** yes (consumed after first use)
+{% endif %}
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to the object (it needs a `Collider`{% if s.detection == "trigger" %}, set **Is Trigger** on){% else %}).{% endif %}
+{% if s.detection == "trigger" %}
+3. Tag your player `{{ s.player_tag }}` so range detection works.
+{% else %}
+3. Raycast mode uses `Camera.main` — make sure your player camera is tagged `MainCamera`.
+{% endif %}
+4. Wire the prompt to your HUD (e.g. the `interaction_prompt` HUD micro):
+
+```csharp
+var it = GetComponent<{{ s.name }}>();
+it.OnPrompt    += text => hud.Show(text);   // "" hides it
+it.OnInteract  += ()   => Debug.Log("Used {{ s.name }}");
+{% if variant in ("lever", "button_switch", "door") %}it.OnToggled   += on => Debug.Log("State: " + on);
+{% endif %}```
+
+## Behaviour
+
+{% if variant == "pickup" %}
+Player enters range → prompt shows → presses `{{ s.interact_key }}` → object deactivates and `OnInteract` fires (hook your inventory add here).
+{% elif variant == "door" %}
+Toggles open/closed (rotates 90°) each interaction; `OnToggled(bool)` reports the state.
+{% elif variant in ("lever", "button_switch") %}
+Toggles an on/off state each interaction; `OnToggled(bool)` drives whatever it controls.
+{% elif variant == "npc_talk" %}
+Fires `OnInteract` so you can open a conversation (pairs with the `dialogue` micro).
+{% else %}
+Fires `OnInteract` so you can show readable text / a note.
+{% endif %}
+`Interact()` is public, so a button or cutscene can trigger it directly.

@@ -1,0 +1,44 @@
+name: superhero_flying
+display: "Superhero Flying Mechanics"
+pipelines: [gta, unity]
+
+concept_bias: |
+  A vertical city where the player can fly. Movement is the core verb — the
+  story is about altitude, momentum, and the human cost of being able to
+  ignore gravity. Crime, rescue, and pursuit all happen across rooftops,
+  through clouds, and along skyscraper canyons.
+
+detect_keywords: [superhero, flying, flight, cape, hero, vigilante, fly, sky, skyscraper]
+
+vocabulary:
+  peds:     ["panicked rooftop civilian", "rogue power-suited villain", "rival masked hero", "drone operator", "rescue paramedic"]
+  vehicles: ["police helicopter", "news chopper", "armoured prison transport", "antagonist VTOL"]
+  objects:  ["satellite uplink", "antigrav device", "hostage marker", "broadcast antenna"]
+  locations_gta: [downtown, vinewood, highway, military_base]
+
+step_hints: [go_to, pickup, kill_all, deliver, timer, escape]
+
+unity:
+  palette:
+    name:      "Skybound"
+    primary:   "#1E88E5"
+    secondary: "#0B1437"
+    accent:    "#FFD54F"
+    background: "#C9DAF8"
+    trim:      "#FAFAFA"
+  systems_hint: ["six-axis flight controller", "stamina/altitude tradeoff", "third-person Cinemachine", "wind/draft physics", "rescue-grab interaction"]
+  visual_style: stylized
+
+twist_seeds:
+  - "Flight burns calories — the player must eat between missions or fall out of the sky."
+  - "The player can fly but cannot stop themselves; landing is a separate puzzle."
+  - "Every rescue costs the player one foot of maximum altitude permanently."
+  - "Birds form flocks around the player and warn enemies of their position."
+  - "Gravity is selectively broken — only the player and one other person can fly."
+  - "The villain doesn't fly. They fall slower. Their menace comes from patience."
+
+avoid:
+  - "radioactive spider origin story"
+  - "kryptonite weakness"
+  - "secret-identity-at-the-Daily-Planet"
+  - "alien-prince-from-a-dying-world"

@@ -1,0 +1,44 @@
+name: underwater_city
+display: "Underwater City Exploration"
+pipelines: [gta, unity]
+
+concept_bias: |
+  A drowned megacity, its towers veiled in silt and bioluminescent algae.
+  Pressure-suited divers move through flooded plazas where neon signs still
+  flicker. Air is currency, light is sparse, and something older than the
+  city watches from the trenches.
+
+detect_keywords: [underwater, submarine, deep sea, drowned, abyss, ocean, diver, atlantis, reef]
+
+vocabulary:
+  peds:     ["pressure-suited diver", "salvage crew engineer", "rogue marine biologist", "cult of the deep acolyte", "rebreather mercenary"]
+  vehicles: ["mini-sub", "salvage barge", "armoured dive sled", "research submarine"]
+  objects:  ["oxygen tank", "salvage marker buoy", "encrusted relic", "sonar beacon", "data core"]
+  locations_gta: [port, docks, alamo_sea, paleto_bay]
+
+step_hints: [go_to, pickup, deliver, timer, kill_all]
+
+unity:
+  palette:
+    name:      "AbyssNeon"
+    primary:   "#1FB6C9"
+    secondary: "#0A1A2E"
+    accent:    "#7CFFB2"
+    background: "#020611"
+    trim:      "#A8C8D8"
+  systems_hint: ["oxygen meter", "pressure-depth damage", "buoyancy movement", "limited light cone"]
+  visual_style: stylized
+
+twist_seeds:
+  - "Sound travels four times faster — every noise gives you away instantly."
+  - "Your air supply is shared with one NPC; you both die if it empties."
+  - "The deeper you go, the more your radio whispers in a language you didn't learn."
+  - "The city is rising — every minute, one more level emerges above the waves."
+  - "There is no surface to swim back to; the mission is one-way."
+  - "Light attracts predators. Darkness attracts something worse."
+
+avoid:
+  - "BioShock-style splicers and ADAM"
+  - "Atlantis with crystals"
+  - "generic submarine warfare"
+  - "mermaid romance subplot"

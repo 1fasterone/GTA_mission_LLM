@@ -1,0 +1,69 @@
+Unity Tools & Editor Packages
+==============================
+ProBuilder → com.unity.probuilder
+level design tool → com.unity.probuilder
+3D modelling in Unity → com.unity.probuilder
+in-editor mesh builder → com.unity.probuilder
+quick prototype → com.unity.probuilder
+
+Terrain Tools → com.unity.terrain-tools
+terrain sculpting → com.unity.terrain-tools
+heightmap editing → com.unity.terrain-tools
+landscape editor → com.unity.terrain-tools
+
+Unity Recorder → com.unity.recorder
+screen recording → com.unity.recorder
+gameplay capture → com.unity.recorder
+video output → com.unity.recorder
+
+Burst Compiler → com.unity.burst
+performance optimisation → com.unity.burst
+LLVM compiler → com.unity.burst
+high performance code → com.unity.burst
+job system compiler → com.unity.burst
+
+Unity Mathematics → com.unity.mathematics
+math library → com.unity.mathematics
+SIMD math → com.unity.mathematics
+float2 float3 float4 → com.unity.mathematics
+
+Collections → com.unity.collections
+native arrays → com.unity.collections
+unmanaged collections → com.unity.collections
+burst compatible lists → com.unity.collections
+
+XR Interaction Toolkit → com.unity.xr.interaction.toolkit
+VR interaction → com.unity.xr.interaction.toolkit
+XR grabbing → com.unity.xr.interaction.toolkit
+VR teleport → com.unity.xr.interaction.toolkit
+controller input VR → com.unity.xr.interaction.toolkit
+hand tracking → com.unity.xr.interaction.toolkit
+
+OpenXR → com.unity.xr.openxr
+cross platform VR → com.unity.xr.openxr
+Meta Quest → com.unity.xr.openxr
+HTC Vive → com.unity.xr.openxr
+Valve Index → com.unity.xr.openxr
+
+In App Purchasing → com.unity.purchasing
+IAP → com.unity.purchasing
+monetisation → com.unity.purchasing
+in-game store → com.unity.purchasing
+
+Test Framework → com.unity.test-framework
+unit testing → com.unity.test-framework
+play mode tests → com.unity.test-framework
+edit mode tests → com.unity.test-framework
+
+UI Toolkit → com.unity.ui
+Unity UI Toolkit → com.unity.ui
+UIElements → com.unity.ui
+UXML → com.unity.ui
+USS → com.unity.ui
+UI Builder → com.unity.ui
+
+UGUI → com.unity.ugui
+Canvas UI → com.unity.ugui
+legacy UI → com.unity.ugui
+Canvas system → com.unity.ugui
+Unity GUI → com.unity.ugui

@@ -1,0 +1,43 @@
+name: medieval_sword
+display: "Medieval Sword Fighting"
+pipelines: [gta, unity]
+
+concept_bias: |
+  Steel against steel in a small, cold kingdom on the edge of winter.
+  Fights are short, ugly, and decisive — three strikes at most. The story
+  is about oaths, debts, and the kind of honour that gets people killed.
+
+detect_keywords: [medieval, sword, knight, kingdom, blade, duel, castle, peasant, lord]
+
+vocabulary:
+  peds:     ["mailed knight", "village blacksmith", "hooded ranger", "drunk mercenary captain", "wandering priest", "court spy in livery"]
+  vehicles: ["ox-drawn cart", "warhorse with caparison", "messenger's swift palfrey", "siege wagon"]
+  objects:  ["family sword", "sealed royal letter", "wooden coin chest", "leather quiver", "relic in a brass box"]
+  locations_gta: [paleto_bay, sandy_shores, vinewood, prison]
+
+step_hints: [go_to, kill_all, pickup, deliver, escape, wait]
+
+unity:
+  palette:
+    name:      "Winter Steel"
+    primary:   "#8FA3B2"
+    secondary: "#2B1F18"
+    accent:    "#B23A2A"
+    background: "#1F2A33"
+    trim:      "#E9DDC4"
+  systems_hint: ["directional parry/strike", "stamina-bound combat", "third-person Cinemachine", "lock-on duel camera", "bleeding/exhaustion debuffs"]
+  visual_style: realistic
+
+twist_seeds:
+  - "Killing a named NPC binds the player to their unfinished oath."
+  - "The player's sword is a character — it remembers who it has killed and weighs accordingly."
+  - "Three days of rain have rusted every blade in the kingdom. Combat is now half wrestling."
+  - "Healing is forbidden by royal decree; wounds carry across missions until reset by the chapel."
+  - "Every guard the player kills is replaced overnight by a personal acquaintance."
+  - "The king is dead. Nobody is allowed to say so."
+
+avoid:
+  - "Tolkien orcs and elves"
+  - "chosen-one farmboy with a destined sword"
+  - "training montage with a wise mentor"
+  - "dragon final boss"

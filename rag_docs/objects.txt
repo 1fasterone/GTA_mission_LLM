@@ -1,0 +1,115 @@
+GTA5 PROP / OBJECT MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== CONTRABAND / PICKUPS ===
+drug package → prop_drug_package_01
+drugs → xm3_prop_xm3_drug_pkg_01a
+package → xm3_prop_xm3_drug_stack_01a
+brick → prop_drug_package_01
+bag → h4_prop_h4_med_bag_01b
+paper bag → prop_paper_bag_01
+evidence bag → prop_paper_bag_01
+briefcase → m24_2_prop_m42_metalbriefcase_01a
+case → prop_case_closed
+gun case → prop_gun_case_02
+weapons cache → prop_case_closed
+suitcase → prop_suitcase_01
+body bag → xm_prop_body_bag
+cash → sf_prop_sf_cash_pile_01
+money → m25_1_prop_m51_cash_stack_01a
+cash pile → prop_cash_pile_01
+
+=== ELECTRONICS ===
+laptop → prop_cs_laptop
+computer → v_res_pctower
+phone → sf_prop_sf_phone_01a
+mobile phone → prop_cs_phone_01
+detonator → v_res_tt_tvremote
+flash drive → prop_cs_phone_01
+key card → prop_cs_phone_01
+
+=== INDUSTRIAL ===
+barrel → prop_barrel_01a
+oil barrel → prop_barrel_01a
+drum → prop_barrel_01a
+crate → v_res_tt_tvremote
+box → prop_boxpile_04a
+cardboard box → prop_box_cardboard
+shipping container → prop_container_01a
+container → prop_container_01a
+fuel pump → prop_cs_fuel_pump
+gas pump → prop_cs_fuel_pump
+generator → prop_generator_01a
+power generator → ch_prop_ch_generator_01a
+pallet → prop_pallet_01a
+forklift pallet → prop_pallet_01a
+
+=== ENVIRONMENT ===
+airport light tower → prop_air_lights_02a
+light tower → prop_streetlight_11b
+spotlight → prop_air_lights_02a
+bench → prop_bench_01a
+park bench → prop_bench_01a
+dumpster → prop_dumpster_01a
+trash → ng_proc_brkbottle_02d
+traffic cone → m25_1_int_01_cone_02
+cone → prop_roadcone02a
+barrier → ba_prop_battle_barrier_02a
+road barrier → sum_prop_race_barrier_01_sec
+ladder → prop_ladder_01a
+fence → prop_fnc_01a
+
+=== TECH / SECURITY ===
+motion sensor → prop_cs_phone_01
+motion sensors → prop_cs_phone_01
+motion sensors on floor → prop_cs_phone_01
+security camera → prop_cs_phone_01
+security device → prop_cs_phone_01
+alarm → prop_cs_phone_01
+alarm box → prop_alarm_02
+server rack → prop_cs_laptop
+hard drive → prop_cs_laptop
+usb drive → prop_cs_phone_01
+
+=== DOCUMENTS / VALUABLES ===
+documents → prop_paper_bag_01
+files → prop_paper_bag_01
+folder → prop_paper_bag_01
+safe → xm3_prop_xm3_safe_01a
+vault → prop_case_closed
+lockbox → prop_case_closed
+gold bars → h4_prop_h4_gold_stack_01a
+diamonds → prop_case_closed
+contraband → prop_drug_package_01
+weapon crate → prop_box_cardboard
+supply crate → m24_2_prop_m42_supplycrate_01a
+
+=== BOMBS / EXPLOSIVES ===
+explosive → prop_c4_final_green
+military explosives → ch_prop_ch_explosive_01a
+bomb → prop_c4_final_green
+detonation trap → prop_c4_final_green
+hidden trap → prop_c4_final_green
+explosive trap → prop_c4_final_green
+trap → prop_c4_final_green
+landmine → prop_c4_final_green
+mine → prop_c4_final_green
+
+=== RACE / CHECKPOINT ===
+checkpoint → prop_roadcone02a
+checkpoint marker → prop_roadcone02a
+race checkpoint → prop_roadcone02a
+route marker → v_31a_emrglight007
+marker → v_31a_emrglight007
+waypoint → prop_roadcone02a
+race barrier → sum_prop_race_barrier_01_sec
+finish line banner → prop_tri_finish_banner
+finish line → prop_start_finish_line_01
+
+=== MILITARY / WRECKS ===
+crashed tank → prop_container_01a
+tank wreck → prop_container_01a
+military wreck → prop_container_01a
+wrecked military vehicle → prop_container_01a
+destroyed vehicle → prop_container_01a
+military crate → m24_2_prop_m42_supplycrate_01a

@@ -1,0 +1,275 @@
+"""
+Unity package resolver — Step 4.
+Maps plain-English package descriptions -> Unity Package Manager IDs + versions.
+Mirrors GTA5 resolver architecture: local lookup first, RAG fallback.
+"""
+
+import json
+import re
+from pathlib import Path
+from typing import Optional
+
+from rich.console import Console
+
+from .anythingllm_client import AnythingLLMClient
+from .unity_schema import UnitySchema, UnityPackage
+
+console = Console()
+
+_PKG_ID_RE = re.compile(r"^com\.[a-z][a-z0-9._-]+$")
+
+# MCP-for-Unity editor bridge (CoplayDev/unity-mcp). Installed by git URL so it
+# carries no semver — it lives in its own editor assembly, so it loads and
+# starts even when the generated gameplay scripts fail to compile, which is
+# exactly what lets an agent read the first-open compile errors and fix them.
+MCP_BRIDGE_PKG_ID = "com.coplaydev.unity-mcp"
+MCP_BRIDGE_GIT_URL = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
+
+# Standard built-in engine modules. Unity 6 trims built-in modules from a
+# freshly-written manifest unless they are listed explicitly — so a generated
+# project with a lean manifest is missing the engine surface that both ordinary
+# gameplay code (AudioSource, Rigidbody, …) and the injected MCP bridge rely on,
+# producing a wall of `CS1069 … type has been forwarded to assembly
+# UnityEngine.XxxModule`. A 3D project masks this by pulling many modules
+# transitively through its packages (e.g. navigation -> physics), but a lean 2D
+# project pulls almost none. The robust fix is to always ship the same module
+# set Unity's own default project template writes.
+#
+# This is the cross-version-stable subset (present from 2021.3 through 6000.x);
+# version-specific entries like `unityanalytics` (removed in Unity 6) and
+# `accessibility` (added in Unity 6) are deliberately excluded. All ship at
+# "1.0.0". Keyed as a dict so callers get {id: version} directly.
+BUILTIN_MODULES = {f"com.unity.modules.{m}": "1.0.0" for m in (
+    "ai", "androidjni", "animation", "assetbundle", "audio", "cloth",
+    "director", "imageconversion", "imgui", "jsonserialize", "particlesystem",
+    "physics", "physics2d", "screencapture", "terrain", "terrainphysics",
+    "tilemap", "ui", "uielements", "umbra", "unitywebrequest",
+    "unitywebrequestassetbundle", "unitywebrequestaudio",
+    "unitywebrequesttexture", "unitywebrequestwww", "vehicles", "video",
+    "vr", "wind", "xr",
+)}
+
+
+def _load_package_db(lookups_dir: str) -> dict:
+    path = Path(lookups_dir) / "unity" / "packages.json"
+    try:
+        db = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    # Pre-sort synonym entries once so _local_resolve's substring scan is O(n)
+    # without re-sorting on every call.
+    db["_sorted_synonyms"] = sorted(db.get("synonyms", {}).items())
+    return db
+
+
+def _local_resolve(description: str, db: dict) -> Optional[str]:
+    synonyms        = db.get("synonyms", {})
+    sorted_synonyms = db.get("_sorted_synonyms", sorted(synonyms.items()))
+    desc = description.lower().strip()
+
+    if desc in synonyms:
+        return synonyms[desc]
+
+    for key, pkg_id in sorted_synonyms:
+        if key in desc or desc in key:
+            return pkg_id
+
+    desc_words = set(desc.split())
+    scored: list[tuple[int, str, str]] = []
+    for key, pkg_id in sorted_synonyms:
+        overlap = len(desc_words & set(key.split()))
+        if overlap >= 1:
+            scored.append((overlap, key, pkg_id))
+
+    if not scored:
+        return None
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return scored[0][2]
+
+
+def _get_version(pkg_id: str, unity_version: str, db: dict) -> Optional[str]:
+    versions = db.get("versions", {})
+    pkg_versions = versions.get(pkg_id, {})
+    if unity_version in pkg_versions:
+        return pkg_versions[unity_version]
+    # Sort descending so the most-specific/newest version wins when multiple
+    # keys share the same major prefix (e.g. "2022.3" beats "2022.1").
+    for ver_key, ver_val in sorted(pkg_versions.items(), reverse=True):
+        if unity_version.startswith(ver_key.split(".")[0]):
+            return ver_val
+    return None
+
+
+class UnityResolver:
+    def __init__(self, lookups_dir: str = "lookups",
+                 rag: Optional[AnythingLLMClient] = None,
+                 use_rag: bool = True):
+        self.db = _load_package_db(lookups_dir)
+        self.lookups_dir = lookups_dir
+        self.rag = rag
+        self.use_rag = use_rag and rag is not None
+
+    def _rag_resolve(self, description: str, unity_version: str) -> Optional[str]:
+        """RAG attempt — returns a validated package id or None."""
+        try:
+            result = self.rag.resolve_package(description, unity_version)
+        except Exception as exc:
+            console.print(f"  [yellow]WARN[/] Unity RAG failed for '{description}' "
+                          f"({type(exc).__name__}) — trying local fallback")
+            return None
+        if not result or not _PKG_ID_RE.match(result):
+            return None
+        # Accept any well-formed com.* id; prefer ones present in the version db.
+        if result in self.db.get("versions", {}):
+            return result
+        # Still return the formally-valid id; _get_version will return None and
+        # the manifest writer will fall back to the "1.0.0" default with a warn.
+        return result
+
+    def resolve_package(self, description: str, unity_version: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Returns (package_id, version) or (None, None) if unresolved.
+        Order: explicit valid ID → RAG (when enabled) → local lookup.
+        """
+        # Already a valid package ID?
+        desc = description.strip()
+        if _PKG_ID_RE.match(desc):
+            version = _get_version(desc, unity_version, self.db)
+            return desc, version
+
+        pkg_id: Optional[str] = None
+        if self.use_rag:
+            pkg_id = self._rag_resolve(desc, unity_version)
+            if pkg_id:
+                console.print(f"  [cyan]RAG[/]  '{desc}' -> {pkg_id}")
+
+        if not pkg_id:
+            pkg_id = _local_resolve(description, self.db)
+
+        if not pkg_id:
+            console.print(f"  [yellow]WARN[/] No package match for '{description}' — skipped")
+            return None, None
+
+        version = _get_version(pkg_id, unity_version, self.db)
+        return pkg_id, version
+
+    def resolve_schema(self, schema: UnitySchema) -> UnitySchema:
+        """Fill package_id + version for all packages in the schema.
+
+        Two passes:
+          1. Packages with no package_id → full resolve (RAG/local + version).
+          2. Packages with package_id but no version → version-only lookup.
+             (The LLM frequently outputs `package_id` without a version; we
+              must NOT let those slip through to build_manifest_deps' broken
+              `1.0.0` fallback.)
+        """
+        for pkg in schema.packages:
+            if not pkg.package_id:
+                pkg_id, version = self.resolve_package(pkg.description, schema.unity_version)
+                pkg.package_id = pkg_id
+                pkg.version    = version
+                if pkg_id:
+                    console.print(
+                        f"  [green]OK[/]   '{pkg.description}' -> {pkg_id} {version or '(no version)'}"
+                    )
+            elif not pkg.version:
+                version = _get_version(pkg.package_id, schema.unity_version, self.db)
+                pkg.version = version
+                if version:
+                    console.print(
+                        f"  [green]VER[/]  '{pkg.package_id}' -> {version}"
+                    )
+        return schema
+
+    def inject_required_packages(self, schema: UnitySchema) -> UnitySchema:
+        """
+        Add packages required by the chosen render pipeline, game type, and feature flags.
+        Deduplicates — never adds a package that's already present.
+        """
+        db             = self.db
+        unity_version  = schema.unity_version
+        existing_ids   = {p.package_id for p in schema.packages if p.package_id}
+
+        def _add_pkg(pkg_id: str, reason: str) -> None:
+            if pkg_id in existing_ids:
+                return
+            version = _get_version(pkg_id, unity_version, db)
+            schema.packages.append(UnityPackage(
+                description = pkg_id,
+                package_id  = pkg_id,
+                version     = version,
+            ))
+            existing_ids.add(pkg_id)
+            console.print(f"  [magenta]INJ[/]  {pkg_id} {version or ''} ({reason})")
+
+        # Render pipeline required packages
+        for pkg_id in db.get("pipeline_packages", {}).get(schema.render_pipeline, []):
+            _add_pkg(pkg_id, f"{schema.render_pipeline} pipeline")
+
+        # Game type suggested packages
+        for pkg_id in db.get("game_type_packages", {}).get(schema.game_type, []):
+            _add_pkg(pkg_id, f"{schema.game_type} game type")
+
+        # Feature flag packages
+        for feature in schema.features:
+            for pkg_id in db.get("feature_packages", {}).get(feature, []):
+                _add_pkg(pkg_id, f"feature:{feature}")
+
+        # Always-include packages
+        for pkg_id in db.get("always_include", []):
+            _add_pkg(pkg_id, "always required")
+
+        return schema
+
+    def build_manifest_deps(
+        self, schema: UnitySchema, inject_mcp_bridge: bool = False
+    ) -> dict[str, str]:
+        """
+        Return {package_id: version} dict for manifest.json, sorted.
+
+        Three-tier fallback per package:
+          1. Use schema-declared version if present.
+          2. Re-resolve via `_get_version` against this schema's unity_version.
+          3. **Skip the package entirely** with a loud warning — a missing
+             package is recoverable (the tester can add it manually), but a
+             bogus `1.0.0` breaks the whole manifest at import time because
+             Unity rejects the whole file when one dep is unresolvable.
+
+        When ``inject_mcp_bridge`` is set, the MCP-for-Unity editor bridge is
+        added as a git-URL dependency (no version resolution — the value *is*
+        the URL). This is a dev-only tool; gate it off for distribution builds.
+        """
+        deps: dict[str, str] = {}
+        for pkg in schema.packages:
+            if not pkg.package_id:
+                continue
+            version = pkg.version
+            if not version:
+                version = _get_version(pkg.package_id, schema.unity_version, self.db)
+            if version:
+                deps[pkg.package_id] = version
+                continue
+            console.print(
+                f"  [yellow]WARN[/] No version known for '{pkg.package_id}' "
+                f"on Unity {schema.unity_version} — SKIPPING (add it manually "
+                "via Window → Package Manager if you need it)"
+            )
+        # Always ship the standard built-in engine modules so the project has a
+        # complete engine surface under Unity 6 (see BUILTIN_MODULES). Without
+        # this, lean manifests fail to compile with CS1069 "type forwarded to
+        # UnityEngine.XxxModule" for both gameplay and the MCP bridge.
+        added_modules = 0
+        for mod_id, mod_ver in BUILTIN_MODULES.items():
+            if mod_id not in deps:
+                deps[mod_id] = mod_ver
+                added_modules += 1
+        if added_modules:
+            console.print(f"  [magenta]INJ[/]  {added_modules} built-in engine modules")
+
+        if inject_mcp_bridge:
+            deps.setdefault(MCP_BRIDGE_PKG_ID, MCP_BRIDGE_GIT_URL)
+            console.print(
+                f"  [magenta]INJ[/]  {MCP_BRIDGE_PKG_ID} (MCP editor bridge, "
+                "git URL — agent can fix first-open errors)"
+            )
+        return dict(sorted(deps.items()))

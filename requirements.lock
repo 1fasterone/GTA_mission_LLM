@@ -1,0 +1,20 @@
+# Pinned, reproducible dependency set (generated from a known-good environment).
+# install.ps1 prefers this over requirements.txt so every tester runs identical
+# versions. Regenerate after intentional upgrades:  pip freeze > requirements.lock
+#
+# Direct dependencies
+httpx==0.28.1
+pydantic==2.13.3
+jinja2==3.1.6
+pyyaml==6.0.3
+rich==15.0.0
+typer==0.25.0
+python-dotenv==1.2.2
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+#
+# Key transitive pins (kept explicit so resolution can't drift)
+starlette==1.2.0
+pydantic-core==2.46.3
+anyio==4.13.0
+click==8.3.3

@@ -1,0 +1,10 @@
+GTA5 PED MILITARY MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== MILITARY ===
+soldier → s_m_y_marine_01
+marine → s_m_y_marine_01
+army → s_m_y_marine_01
+military → s_m_m_marine_01
+veteran → s_m_m_marine_01
+

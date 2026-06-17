@@ -1,0 +1,44 @@
+# {{ s.name }} — Unity Save/Load
+
+**Variant:** `{{ variant }}`
+**Storage:** `{{ s.storage }}`
+{% if variant == "save_slots" %}**Slots:** {{ s.slot_count }} (`{{ s.slot_naming }}`)
+{% endif %}
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to a persistent GameObject (e.g. a `GameManager`).
+{% if variant == "checkpoint" %}
+3. Assign the **player** Transform in the inspector. Call `SetCheckpoint()` at checkpoints
+   and `Respawn()` on death.
+{% elif variant == "save_slots" %}
+3. Call `Save(slot)` / `Load(slot)` with a slot index in `0..{{ s.slot_count - 1 }}`.
+{% elif variant == "autosave" %}
+3. State auto-loads on `Awake`, autosaves every {{ "%.0f"|format(s.autosave_interval) }}s,
+   and saves on quit/pause. Call `Save()` manually anytime too.
+{% else %}
+3. State auto-loads on `Awake`. Call `Save()` / `Load()` when you need to persist or restore.
+{% endif %}
+
+## What gets saved
+
+`{{ s.name }}Data` (a `[Serializable]` class):
+
+| Field | Type |
+|-------|------|
+{% for f in s.data_fields %}
+| `{{ f.name }}` | `{{ f.type }}` |
+{% endfor %}
+
+Mutate `saveSystem.Data.<field>` from your gameplay code, then call `Save()`.
+
+## Where it lives
+
+{% if s.storage == "playerprefs" %}
+PlayerPrefs under the key `{{ s.name }}` (a single JSON blob).
+{% else %}
+A JSON file at `Application.persistentDataPath/{{ s.default_file_name }}`{% if variant == "save_slots" %} (one per slot){% endif %}{% if variant == "encrypted_json" %}, XOR-obfuscated with `encryptionKey` and Base64-encoded. Note: this is light obfuscation, not real security{% endif %}.
+{% endif %}

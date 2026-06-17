@@ -1,0 +1,40 @@
+# {{ s.name }} — Unity Audio System
+
+**Variant:** `{{ variant }}`
+**Categories:** {{ s.categories | join(', ') }}
+**Pool size:** {{ s.pool_size }}
+**Mixer groups:** {{ s.mixer_groups | join(', ') }}
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. **Right-click in Project → Create → Audio → {{ s.name }} Bank** to create your bank asset.
+3. **Right-click → Create → Audio → Cue** to create individual `AudioCue` assets.
+   Assign an AudioClip, set `id`, `category`, and (optionally) an `AudioMixerGroup`.
+4. Drag your cues into the bank's `cues` list.
+5. Add a GameObject to your scene with a `{{ s.name }}AudioManager` component and
+   assign the bank.
+
+## API
+
+```csharp
+{{ s.name }}AudioManager.Instance.Play("door_close");
+{{ s.name }}AudioManager.Instance.Play("explosion", worldPos: transform.position);
+{{ s.name }}AudioManager.Instance.StopMusic();
+```
+
+{% if variant == "music_layers" %}
+## Music layers
+
+Add a `{{ s.name }}MusicLayers` component to a GameObject. Assign {{ s.layer_count }}
+stem AudioClips. Call `PlayAll()` once to sync them, then `SetLayer(i, volume)` to
+mix them in/out as gameplay state changes.
+{% elif variant == "crossfade_zones" %}
+## Crossfade zones
+
+Add a `{{ s.name }}CrossfadeZone` component to any GameObject with a trigger
+collider. Set `enterCueId` and `exitCueId` to ambient cues in the bank. The
+crossfade duration is `{{ "%.2f"|format(s.crossfade_seconds) }}` seconds.
+{% endif %}

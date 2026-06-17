@@ -1,0 +1,53 @@
+Create a fully playable Unity test‑matrix game template that clearly demonstrates the following on first Play:
+
+CAMERA / VIEW MODE:
+- Use this camera style: <board | top_down | isometric | 2.5D | 3D | VR>.
+- Camera must be immediately functional and show the intended perspective without adjustment.
+
+PLATFORM TARGET:
+- Primary platform: <PC | Android | iOS | WebGL | Console | VR>.
+- Input system must match the platform (keyboard/mouse, gamepad, touch, VR controllers).
+
+CORE CONCEPT:
+- High‑level theme: <describe the fantasy or scenario>.
+- Player goal: <simple objective visible within 5 seconds>.
+- Environment: <brief description of test arena or layout>.
+- Visual tone: <cartoon, realistic, neon, low‑poly, etc.>.
+
+PLAYER CONTROLLER:
+- Movement style: <2D platformer | 3D character | top‑down mover | vehicle | flying | VR hands>.
+- Include jump/dash/sprint if appropriate.
+- Include a visible player prefab (placeholder mesh is fine).
+
+AI OPPONENTS:
+- Number of AI agents: <N>.
+- Behavior model: <patrol | chase | flee | guard | waypoint | simple FSM>.
+- AI must visibly react to the player within 3 seconds of Play.
+
+PHYSICS SYSTEM:
+- Physics mode: <2D | 3D | kinematic | rigidbody | character controller>.
+- Include at least one interactable object (pushable, collectible, or destructible).
+
+AUDIO SYSTEM:
+- Include an AudioManager with:
+  - background music loop,
+  - SFX for player actions,
+  - SFX for AI reactions.
+
+HUD / UI:
+- Minimal HUD showing:
+  - health,
+  - score or objective,
+  - interaction prompt if relevant.
+
+SCENES:
+- One main scene named “Main”.
+- Scene must load with all systems active and no errors.
+
+SUCCESS CRITERIA:
+- When the user presses Play, the camera, controller, AI, physics, audio, and HUD all work immediately.
+- The prototype must clearly express the intended concept within the first 5 seconds.
+- All prefabs must be wired and functional.
+- No missing scripts, no unresolved packages.
+
+Generate the full Unity schema and all required scripts, prefabs, scenes, and settings.

@@ -1,0 +1,44 @@
+name: cyberpunk_neon
+display: "Cyberpunk Neon Overhaul"
+pipelines: [gta, unity]
+
+concept_bias: |
+  A city run by subscription. Augmentation is a payment plan, weather is
+  rented, and the rain never quite reaches the ground. The player is a
+  fixer at the bottom of the corporate stack, doing the kind of work that
+  doesn't show up in a quarterly report.
+
+detect_keywords: [cyberpunk, neon, hacker, corporate, augment, chrome, netrunner, dystopia, megacity]
+
+vocabulary:
+  peds:     ["augmented runner", "corporate security with mirror visor", "netrunner in a hoodie", "chromed-up bouncer", "rogue AI's human face"]
+  vehicles: ["matte-black sedan", "armoured corporate APC", "neon-trimmed sportbike", "rain-slicked taxi"]
+  objects:  ["encrypted data shard", "neural shunt", "blackmarket cred chip", "biometric token"]
+  locations_gta: [downtown, vinewood, port, docks, highway]
+
+step_hints: [go_to, pickup, deliver, kill_all, escape, timer]
+
+unity:
+  palette:
+    name:      "NeonRain"
+    primary:   "#00F5FF"
+    secondary: "#1A0A2E"
+    accent:    "#FF2D78"
+    background: "#050310"
+    trim:      "#C49BFF"
+  systems_hint: ["neural-link hacking minigame", "augment cooldown bar", "cinemachine third-person + lock-on", "rain shader on all surfaces"]
+  visual_style: stylized
+
+twist_seeds:
+  - "Every augment the player buys is also installed on one random NPC enemy."
+  - "The player's contact has been a chatbot since act one; no one has told them."
+  - "Subscription lapses kill abilities mid-mission. Money is the real health bar."
+  - "Rain falls upward in one district and nobody mentions it."
+  - "The player's reflection in puddles is always one decision behind."
+  - "An AI is paying the player to lose. They have to figure out which jobs."
+
+avoid:
+  - "mirrorshades and ponytails"
+  - "rogue military prototype escapes the lab"
+  - "evil zaibatsu CEO final boss"
+  - "the rebellion has a charismatic young leader"

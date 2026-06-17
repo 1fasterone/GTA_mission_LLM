@@ -1,0 +1,44 @@
+# ── Secrets & local config (NEVER commit) ───────────────────────────
+# config.yaml holds the live AnythingLLM API key — keep ignored.
+.env
+config.yaml
+.ratings.json
+.claude/settings.local.json
+
+# ── Generated output & build artifacts ──────────────────────────────
+# dist/ holds distro zips rebuilt by package.ps1; force a release into
+# the repo with `git add -f dist/<file>.zip` if you ever want one tracked.
+output/
+dist/
+
+# ── Scratch / redirected logs ───────────────────────────────────────
+err.txt
+out.txt
+*.log
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Node (webui frontend tooling, if any) ───────────────────────────
+node_modules/
+
+# ── Editors / IDEs ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+
+# ── OS junk ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini

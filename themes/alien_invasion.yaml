@@ -1,0 +1,44 @@
+name: alien_invasion
+display: "Alien Invasion Simulator"
+pipelines: [gta, unity]
+
+concept_bias: |
+  Day six of an invasion that nobody planned for. The aliens are wrong in
+  shape and unreadable in motive — they don't seem to want the planet so
+  much as something specific on it. Cities are half-evacuated, militaries
+  are improvising, and the player is one small unit doing one small job.
+
+detect_keywords: [alien, invasion, ufo, extraterrestrial, mothership, abduction, xenos, otherworldly]
+
+vocabulary:
+  peds:     ["bio-armoured alien scout", "frightened militia volunteer", "deserting army officer", "scientist with a clipboard", "cult member welcoming the visitors"]
+  vehicles: ["military humvee", "skeletonised alien walker", "evac school bus", "armed pickup truck"]
+  objects:  ["alien crystal shard", "downed-craft fragment", "evacuee dossier", "comms relay module"]
+  locations_gta: [military_base, sandy_shores, paleto_bay, downtown, highway]
+
+step_hints: [go_to, kill_all, pickup, deliver, escape, timer]
+
+unity:
+  palette:
+    name:      "First Contact"
+    primary:   "#7BFFB2"
+    secondary: "#0B1410"
+    accent:    "#FF4D4D"
+    background: "#101816"
+    trim:      "#D9F0D9"
+  systems_hint: ["NavMesh-driven alien squad AI", "civilian rescue meter", "alien tech reverse-engineering inventory", "screen-distortion proximity FX"]
+  visual_style: stylized
+
+twist_seeds:
+  - "The aliens do not see the player as a threat. They see them as a courier."
+  - "Anyone the player saves is marked; the aliens follow that mark, not the player."
+  - "Killing an alien resurrects the next one with its memories."
+  - "The invasion is a rescue operation — humans were captured millennia ago."
+  - "The aliens communicate in weather. The forecast is the dialogue tree."
+  - "There is no mothership. The aliens are already from here."
+
+avoid:
+  - "Independence Day mothership-over-the-White-House"
+  - "evil grey men with anal probes"
+  - "humanity unites at the last minute"
+  - "noble alien defector falls in love with a human"

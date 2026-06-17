@@ -1,0 +1,39 @@
+# {{ s.name }} — Unity Physics Body
+
+**Variant:** `{{ variant }}`
+**Collider shape:** `{{ s.collider_shape }}`
+**Trigger:** `{{ s.is_trigger }}`
+**Layer / Tag:** `{{ s.layer }}` / `{{ s.tag }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop `Scripts/` into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to the GameObject you want to simulate.
+{% if variant == "rigidbody_2d" %}
+3. The object needs a `Rigidbody2D` and a 2D collider (auto-added on Awake if missing in some templates).
+{% elif variant != "kinematic_character" %}
+3. The object needs a `Rigidbody` and a 3D collider.
+{% else %}
+3. The script will add a `CharacterController` if one isn't already attached.
+{% endif %}
+{% if s.impact_events %}
+4. Subscribe to `{{ s.name }}.OnImpact` / `OnTriggerEnterEvent` or to the static
+   `ImpactDispatcher.OnAnyImpact` / `OnAnyTrigger` events to react.
+{% endif %}
+
+## Tuning
+
+| Field         | Default | Notes |
+|---------------|---------|-------|
+| `mass`        | {{ "%.3f"|format(s.mass) }} | kg |
+| `linearDrag`  | {{ "%.3f"|format(s.drag) }} | air resistance |
+| `angularDrag` | {{ "%.3f"|format(s.angular_drag) }} | rotational damping |
+{% if variant == "rigidbody_2d" %}
+| `gravityScale`| {{ "%.3f"|format(s.gravity_scale) }} | 2D gravity multiplier |
+{% endif %}
+{% if variant == "buoyancy" %}
+| `waterLevel`  | 0 | world-Y at which buoyancy begins |
+| `floatForce`  | 12 | upward acceleration per unit submersion |
+{% endif %}

@@ -1,0 +1,43 @@
+name: gravity_control
+display: "Gravity Control Device"
+pipelines: [gta, unity]
+
+concept_bias: |
+  The player carries a device that changes which direction is down inside a
+  short cone. Walls become floors, ceilings become roads, and a five-storey
+  building becomes a corridor. Every space is a puzzle in three rotations.
+
+detect_keywords: [gravity, antigravity, levitation, anti-grav, weightless, orientation, floating]
+
+vocabulary:
+  peds:     ["lab security guard", "rogue physicist", "test subject in jumpsuit", "evacuated office worker", "anti-grav protester"]
+  vehicles: ["levitating cargo pallet", "experimental hover-bike", "armoured research truck", "VTOL prototype"]
+  objects:  ["gravity emitter core", "magnetic anchor plate", "crated heavy machinery", "calibration weight"]
+  locations_gta: [military_base, downtown, port, docks]
+
+step_hints: [go_to, pickup, deliver, kill_all, timer, escape]
+
+unity:
+  palette:
+    name:      "Inversion"
+    primary:   "#9E6FFF"
+    secondary: "#0D0B16"
+    accent:    "#FFB347"
+    background: "#1A1426"
+    trim:      "#E6E1F2"
+  systems_hint: ["per-object gravity field", "first-person reorientation camera", "physics-based puzzle solver", "object-mass HUD"]
+  visual_style: stylized
+
+twist_seeds:
+  - "Flipping gravity also flips the player's controls; mastery is the puzzle."
+  - "Every NPC the device touches drifts up and never comes down."
+  - "Gravity in the level is determined by sound — speakers pull objects toward them."
+  - "The device is leaking; the area of effect doubles every minute until disaster."
+  - "Bullets fall toward the wall the player is looking at, not the floor."
+  - "Only objects the player owns are affected. Everything else is bolted to a different physics."
+
+avoid:
+  - "Portal-style test chambers"
+  - "Half-Life gravity gun homage"
+  - "anti-gravity racing setpiece"
+  - "scientist husband captured by the agency"

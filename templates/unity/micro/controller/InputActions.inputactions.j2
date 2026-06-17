@@ -1,0 +1,26 @@
+{
+  "name": "{{ s.name }}",
+  "maps": [
+    {
+      "name": "Player",
+      "id": "00000000-0000-0000-0000-000000000001",
+      "actions": [
+        { "name": "Move", "type": "Value", "expectedControlType": "Vector2", "id": "00000000-0000-0000-0000-000000000010" }
+{% if "jump" in s.abilities %}
+       ,{ "name": "Jump", "type": "Button", "id": "00000000-0000-0000-0000-000000000011" }
+{% endif %}
+{% if "sprint" in s.abilities %}
+       ,{ "name": "Sprint", "type": "Button", "id": "00000000-0000-0000-0000-000000000012" }
+{% endif %}
+{% if "crouch" in s.abilities %}
+       ,{ "name": "Crouch", "type": "Button", "id": "00000000-0000-0000-0000-000000000013" }
+{% endif %}
+{% if "dash" in s.abilities %}
+       ,{ "name": "Dash", "type": "Button", "id": "00000000-0000-0000-0000-000000000014" }
+{% endif %}
+      ],
+      "bindings": []
+    }
+  ],
+  "controlSchemes": []
+}

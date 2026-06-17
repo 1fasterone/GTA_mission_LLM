@@ -1,0 +1,479 @@
+# {{ project_name }}
+
+> {{ description }}
+
+**Game type:** {{ game_type }} &nbsp;|&nbsp; **Pipeline:** {{ render_pipeline }} &nbsp;|&nbsp; **Platform:** {{ platform }} &nbsp;|&nbsp; **Unity:** {{ unity_version }}
+
+---
+
+## Quick Start
+
+1. Open **Unity Hub** and click **Open → Add project from disk**.
+2. Navigate to this folder (`{{ project_name }}/`) and confirm.
+3. Unity Hub will match the editor version automatically (`{{ unity_version }}`).
+   If that version is not installed, Hub will prompt you to install it.
+4. Wait for the initial import to finish (first open takes 1–3 minutes).
+5. Open **{{ scenes[0] }}** from `Assets/Scenes/` in the Project browser.
+6. Press **Play** — the placeholder GameObjects are already in the scene.
+
+---
+
+## What Is Already Set Up
+
+### Scenes
+{% for scene in scenes %}
+- **{{ scene }}.unity** — `Assets/Scenes/{{ scene }}.unity`
+{% endfor %}
+
+### Scripts (`Assets/Scripts/`)
+{% for script in scripts %}
+- **{{ script.name }}.cs** (`{{ script.type }}`) — {{ script.description }}
+{% endfor %}
+
+### Scene GameObjects (gameplay scenes)
+
+| GameObject | Shape | Components | Script |
+|------------|-------|------------|--------|
+| GameManager | *(empty)* | Transform | `GameManager.cs` |
+{% for script in scripts %}
+{% if script.type == "player" %}
+| Player | {% if game_type in ("2D", "2.5D") %}Quad{% else %}Capsule{% endif %} | Transform, MeshFilter, MeshRenderer, {% if game_type in ("2D", "2.5D") %}BoxCollider2D, Rigidbody2D{% else %}CapsuleCollider, Rigidbody{% endif %} | `{{ script.name }}.cs` |
+{% endif %}
+{% if script.type == "enemy" %}
+| Enemy | Sphere | Transform, MeshFilter, MeshRenderer, {% if game_type in ("2D", "2.5D") %}CircleCollider2D, Rigidbody2D{% else %}SphereCollider, Rigidbody{% endif %} | `{{ script.name }}.cs` |
+{% endif %}
+{% endfor %}
+
+### Packages (`Packages/manifest.json`)
+
+The following Unity packages are already declared and will be downloaded automatically on first open:
+{% for pkg_id, version in packages %}
+- `{{ pkg_id }}` — `{{ version }}`
+{% endfor %}
+
+### Folder Structure
+
+```
+{{ project_name }}/
+├── Assets/
+│   ├── Animations/       ← empty, ready for Animator Controllers
+│   ├── Audio/            ← empty, ready for AudioClips
+│   ├── Materials/        ← empty, ready for Materials{% if render_pipeline != "builtin" %} ({{ render_pipeline }} Lit shader){% endif %}
+│   ├── Prefabs/          ← empty, ready for Prefabs
+│   ├── Scenes/           ← generated scenes
+│   ├── Scripts/          ← generated C# scripts
+│   └── Textures/         ← empty, ready for Textures
+├── Packages/
+│   └── manifest.json     ← UPM dependencies (auto-downloaded)
+└── ProjectSettings/      ← all project settings pre-configured
+```
+
+---
+
+## What's Already Wired (press Play — no manual steps)
+
+This scene is authored ready-to-run. The items testers used to wire by hand are now done by the generator:
+
+- **Materials** — Player, Ground, and Enemy use generated {% if render_pipeline != "builtin" %}{{ render_pipeline }} Lit{% else %}Standard{% endif %} palette materials (no pink / placeholder).
+- **Ground plane** — a 20×20 ground (Layer **Ground** / 10) is in the scene; the Player won't fall.
+{% if "camera" in scripts | map(attribute="type") | list %}
+- **Follow camera** — the camera script is on **Main Camera** with its **target** pre-set to the Player.
+{% endif %}
+{% if "ui_manager" in scripts | map(attribute="type") | list and game_type != "VR" %}
+- **HUD** — a UI Toolkit HUD (`Assets/UI/HUD.uxml` + PanelSettings) is hosted on **HUD_Root** and bound to the HUD manager; score/lives render immediately.
+{% endif %}
+{% if "health" in scripts | map(attribute="type") | list %}
+- **Health** — a HealthSystem is on the Player, so enemy hits land via `TakeDamage`.
+{% endif %}
+{% if "audio_manager" in scripts | map(attribute="type") | list %}
+- **Audio** — an **AudioManager** object with wired AudioSources is in the scene (drop clips into `Assets/Audio/` to hear them).
+{% endif %}
+
+> These are deliberately **primitive placeholders** (capsule player, sphere enemy, cube ground). They are wired and functional, not final art — swap meshes/materials for production assets.
+
+## Optional Polish (only if you want it)
+
+### 1. Animator Controllers
+Any script that calls `GetComponent<Animator>()` (PlayerController, EnemyAI) will log a warning if no Animator is attached.
+
+**Fix:**
+1. Create an Animator Controller in `Assets/Animations/` (**right-click → Create → Animator Controller**).
+2. Select the Player (or Enemy) GameObject in the Scene.
+3. Add an **Animator** component and assign your new controller to its **Controller** slot.
+4. Add the animation states your script triggers:
+{% for script in scripts %}
+{% if script.type == "player" %}
+   - Player animations: `Speed` (float), `Jump` (trigger) — used by `{{ script.name }}.cs`
+{% endif %}
+{% if script.type == "enemy" %}
+   - Enemy animations: `Speed` (float), `Attack` (trigger), `Death` (trigger) — used by `{{ script.name }}.cs`
+{% endif %}
+{% endfor %}
+{% if "animation_rigging" in features %}
+
+> **Animation Rigging** is included in this project. After adding an Animator, add a **Rig Builder** component and set up IK rigs for limb targeting.
+{% endif %}
+
+{% if "cinemachine" in features %}
+### 2. Cinemachine Camera (optional upgrade)
+
+The built-in follow camera already works. For a more polished rig, **Cinemachine** is included:
+1. Add a **Cinemachine Virtual Camera** (`GameObject → Cinemachine → Virtual Camera`).
+2. Set **Follow** and **Look At** to the Player Transform.
+3. Tune **Body** (Framing Transposer / 3rd Person Follow) and **Aim** settings.
+{% endif %}
+{% if "navmesh" in features %}
+
+### 3. NavMesh Bake
+
+`EnemyAI.cs` uses **NavMeshAgent** for pathfinding. The agent will log errors until the NavMesh is baked.
+
+**Fix:**
+1. Mark all static geometry as **Navigation Static** (Inspector → Static dropdown).
+2. Open **Window → AI → Navigation**.
+3. Go to the **Bake** tab and click **Bake**.
+{% endif %}
+{% if "audio" in features and "audio_manager" in scripts | map(attribute="type") | list %}
+
+### 4. Audio Clips (optional)
+
+The **AudioManager** and its AudioSources are already wired in the scene. To add sound, drop AudioClips into `Assets/Audio/` and assign them on the AudioManager in the Inspector (`mainTheme` / `sfxClips`).
+{% endif %}
+{% if "networking" in features %}
+
+### 8. Networking Setup
+
+**Netcode for GameObjects** is included. To enable multiplayer:
+1. Add a **NetworkManager** component to the GameManager GameObject.
+2. Assign the **Network Prefabs** list (your Player prefab must have a `NetworkObject` component).
+3. Implement `NetworkBehaviour` on any synced scripts instead of `MonoBehaviour`.
+{% endif %}
+{% if "addressables" in features %}
+
+### 9. Addressables
+
+**Addressables** is included. To use asset streaming:
+1. Open **Window → Asset Management → Addressables → Groups**.
+2. Mark Prefabs and large assets as Addressable.
+3. Build the Addressables catalog before making a build.
+{% endif %}
+
+---
+
+## Recommended Next Steps
+
+### ⚡ Immediate — get something running in under 30 minutes
+
+- [ ] **Open the Console** (`Window → General → Console`) — confirm it's clean on load
+- [ ] **Press Play** — the Player capsule, follow camera, ground, and HUD are already wired; verify the Player responds to input (WASD / arrow keys{% if game_type == "VR" %} / XR controller{% endif %})
+- [ ] **Check the Player tag** — select the Player GO in the Hierarchy, confirm Tag is set to **Player** in the Inspector (enemies search by this tag)
+{% if "input_system" in features %}
+- [ ] **Verify Input System mode** — `Project Settings → Player → Active Input Handling` must be **Both** or **Input System Package (New)**
+{% endif %}
+
+### 🛠 Short Term — polish the prototype (1–2 days)
+
+- [ ] **Animator Controllers** — create one in `Assets/Animations/`, assign it to Player's Animator component, add states for: `Idle`, `Run`{% if game_type not in ("2D", "2.5D") %}, `Jump`{% endif %}, `Attack`, `Death`
+- [ ] **Tune the follow camera** — the camera already follows the Player; adjust its `offset` / `smoothTime` on the camera script to taste
+{% if "cinemachine" in features %}
+- [ ] **Set up Cinemachine** — `GameObject → Cinemachine → Virtual Camera`, set Follow + Look At to Player; tune Body to **Framing Transposer**{% if game_type in ("top_down", "isometric") %} or **Orbital Transposer** for overhead views{% endif %}
+{% endif %}
+- [ ] **Replace placeholder meshes** with real character art or sprites (Player capsule → your character model; Enemy sphere → enemy model)
+{% for script in scripts %}
+{% if script.type == "ui_manager" %}
+- [ ] **Customize the HUD** — edit `Assets/UI/HUD.uxml` (already bound to `{{ script.name }}` on **HUD_Root**) to restyle score / lives / panels
+{% endif %}
+{% if script.type == "health" %}
+- [ ] **Hook HealthSystem events** — `{{ script.name }}.cs` is already on the Player; wire its `OnDeath` UnityEvent to your game-over logic
+{% endif %}
+{% if script.type == "audio_manager" %}
+- [ ] **Populate AudioManager** — import AudioClips into `Assets/Audio/`, then drag them into `{{ script.name }}`'s Inspector fields (BGM, footstep, attack, death)
+{% endif %}
+{% endfor %}
+{% if "navmesh" in features %}
+- [ ] **Bake the NavMesh** — add your level geometry, mark it Navigation Static, then `Window → AI → Navigation → Bake`; enemies will start pathfinding immediately
+{% endif %}
+{% if game_type in ("2D", "2.5D") %}
+- [ ] **Set up the 2D physics layers** — `Project Settings → Physics 2D → Layer Collision Matrix`; disable Player↔Player and Enemy↔Enemy collisions
+{% else %}
+- [ ] **Set up the 3D physics layers** — `Project Settings → Physics → Layer Collision Matrix`; disable Player↔Player and Enemy↔Enemy collisions
+{% endif %}
+
+### 🏗 Medium Term — build out core systems (1 week)
+
+- [ ] **GameManager state machine** — implement states: `MainMenu → Playing → Paused → GameOver → Win`; expose `GameManager.Instance.ChangeState(State)` to other scripts
+- [ ] **Scene transitions** — load `{{ scenes[0] }}` from `MainMenu` using `SceneManager.LoadScene()` with a fade-out coroutine
+{% if scenes | length > 1 %}
+- [ ] **Wire {{ scenes[1] }}** — add UI buttons in the {% if "MainMenu" in scenes %}MainMenu{% else %}{{ scenes[1] }}{% endif %} scene that call `SceneManager.LoadSceneAsync()`
+{% endif %}
+- [ ] **Create Prefabs** — drag the Player and Enemy GameObjects from the Hierarchy into `Assets/Prefabs/`; delete the originals and use the Prefabs going forward (supports Instantiate at runtime)
+{% for script in scripts %}
+{% if script.type == "collectible" %}
+- [ ] **Collectible system** — create a Collectible Prefab using `{{ script.name }}.cs`, add a trigger Collider, place instances in the scene; verify `OnTriggerEnter` calls `GameManager.Instance.AddScore()`
+{% endif %}
+{% endfor %}
+{% if "tilemaps" in features %}
+- [ ] **Tilemap level design** — `Window → 2D → Tile Palette`; create a Tileset from your sprites; paint Ground and Wall tilemaps with appropriate TilemapCollider2D components
+{% endif %}
+{% if "addressables" in features %}
+- [ ] **Convert large assets to Addressables** — mark Prefabs, textures, and audio in the Addressables Groups window; load them with `Addressables.LoadAssetAsync<T>(key)` instead of Resources.Load
+{% endif %}
+{% if "timeline" in features %}
+- [ ] **Author cutscenes** — `Window → Sequencing → Timeline`; create a Timeline asset on an empty GO; add Animation, Audio, and Activation tracks for intro/outro sequences
+{% endif %}
+{% if "networking" in features %}
+- [ ] **Multiplayer setup** — add `NetworkManager` to the GameManager GO; convert Player and Enemy to NetworkBehaviour; add `NetworkObject` to their Prefabs; implement `ServerRpc` / `ClientRpc` for state sync
+{% endif %}
+{% if "localization" in features %}
+- [ ] **Localization tables** — `Window → Asset Management → Localization Tables`; create a String Table; replace hard-coded UI text with `LocalizedString` references
+{% endif %}
+- [ ] **Save / load system** — use `PlayerPrefs` for simple scores or `System.IO` + `JsonUtility` for full save files; hook into GameManager state transitions
+
+### 🚀 Before Shipping
+
+- [ ] **Player Settings** — `Edit → Project Settings → Player`: set Company Name (`{{ company_name }}`), Product Name (`{{ project_name }}`), app icon, and bundle identifier
+- [ ] **Quality Settings** — `Edit → Project Settings → Quality`: tune shadow distance, anti-aliasing, and texture quality per quality level; set the default level for your target hardware
+- [ ] **Remove placeholder assets** — delete the generated capsule/sphere meshes and replace with production-ready models; strip any TODO scripts
+- [ ] **Profile in Play mode** — `Window → Analysis → Profiler`; target 60 fps on lowest-spec device; watch for GC.Alloc spikes in hot paths
+- [ ] **Standalone build test** — `File → Build Settings → Build and Run`; test the .exe / .app outside the editor to catch build-only issues
+{% if render_pipeline == "URP" %}
+- [ ] **URP tuning** — in the URP Asset (`Project Settings → Graphics`): enable MSAA (4x), configure Shadow Distance (~50m), add a Global Volume with Bloom and Color Grading post-processing
+{% elif render_pipeline == "HDRP" %}
+- [ ] **HDRP tuning** — configure the HDRP Asset quality levels; add a Sky and Fog Volume; use HDRP Lit materials with proper albedo/smoothness/metallic maps; enable TAA
+{% endif %}
+{% if platform == "mobile" %}
+- [ ] **Mobile input** — add on-screen joystick and button UI using Unity's On-Screen Controls (`Input System → On-Screen Stick / Button`); test with touch simulation in the Game view
+- [ ] **Performance budget** — target 30 fps on mid-range device; reduce draw calls with GPU instancing; bake all static lighting; use compressed textures (ASTC for mobile)
+- [ ] **Device testing** — connect a physical Android / iOS device; deploy via `Build Settings → Build and Run`; check battery drain and thermal throttling over 15 min sessions
+- [ ] **SDK settings** — `Player Settings → Android`: set Min API Level (21+) and Target API Level; for iOS: set Deployment Target (12.0+) and enable Metal
+{% endif %}
+{% if platform == "webgl" %}
+- [ ] **WebGL memory** — in `Player Settings → WebGL`: set Initial Memory Size (256 MB minimum); enable **Brotli** compression for smaller downloads
+- [ ] **Local server test** — WebGL builds require a server; run `python -m http.server 8000` in the build folder and open `http://localhost:8000` — never open `index.html` directly from disk
+- [ ] **Browser compatibility** — test in Chrome, Firefox, and Safari; Safari has stricter AudioContext rules (audio may require a user gesture to start)
+{% endif %}
+{% if platform == "console" %}
+- [ ] **Certification checklist** — follow the platform holder's Technical Requirements Checklist (TRC/TCR/LotCheck); common failures: missing controller disconnect handling, save data corruption recovery
+{% endif %}
+
+---
+
+## Script Reference
+
+{% for script in scripts %}
+### `{{ script.name }}.cs` <small>— {{ script.type }}</small>
+
+> {{ script.description }}
+
+**Attach to:** {% if script.type == "game_manager" %}The **GameManager** empty GameObject in every scene
+{% elif script.type == "player" %}The **Player** GameObject (already attached to the capsule{% if game_type in ("2D","2.5D") %}/quad{% endif %} placeholder)
+{% elif script.type == "enemy" %}The **Enemy** GameObject (already attached to the sphere placeholder); duplicate for multiple enemy variants
+{% elif script.type == "camera" %}The **Main Camera** GameObject
+{% elif script.type == "health" %}Any damageable object — Player, Enemy, destructible prop
+{% elif script.type == "collectible" %}A Prefab in `Assets/Prefabs/` with a trigger Collider (Is Trigger ✓)
+{% elif script.type == "ui_manager" %}A dedicated **UI** empty GameObject or the GameManager
+{% elif script.type == "audio_manager" %}A dedicated **AudioManager** empty GameObject; mark it `DontDestroyOnLoad`
+{% else %}Any relevant GameObject in the scene
+{% endif %}
+
+**Inspector fields to set:**
+{% if script.type == "game_manager" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| *(none required)* | — | Singleton — auto-initialises in `Awake`. Access via `GameManager.Instance` from other scripts. |
+{% elif script.type == "player" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| `moveSpeed` | float | Walking speed in units/sec (default 5) |
+| `jumpForce` | float | Impulse applied on jump (default 7); ignored in 2D top-down |
+| `groundLayer` | LayerMask | Set to **Ground** layer for jump detection |
+{% elif script.type == "enemy" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| `detectionRadius` | float | Distance at which the enemy notices the player (default 8) |
+| `attackRadius` | float | Distance at which the enemy attacks (default 1.5) |
+| `moveSpeed` | float | Chase speed in units/sec (default 3.5) |
+| `attackDamage` | float | Damage per hit, sent via `SendMessage("TakeDamage")` (default 10) |
+| `attackCooldown` | float | Seconds between attacks (default 1.5) |
+{% elif script.type == "health" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| `maxHealth` | float | Starting and maximum HP (default 100) |
+{% elif script.type == "camera" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| **Target** | Transform | **Required** — drag the Player Transform here |
+| `offset` | Vector3 | Camera offset from target (default behind and above) |
+| `smoothTime` | float | Follow smoothing — lower = snappier (default 0.2) |
+{% elif script.type == "collectible" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| `pointValue` | int | Score awarded on pickup (default 10) |
+| `pickupSound` | AudioClip | Optional — played on collect |
+{% elif script.type == "ui_manager" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| `scoreText` | TMP_Text | **Required** — drag your score TextMeshPro label here |
+| `healthBar` | Slider | Optional — UI Slider for health display |
+| `gameOverPanel` | GameObject | Panel to show on game over; starts inactive |
+{% elif script.type == "audio_manager" %}
+| Field | Type | Notes |
+|-------|------|-------|
+| `backgroundMusic` | AudioClip | Loops for the duration of gameplay |
+| `sfxClips` | AudioClip[] | Index-addressed sound effects |
+{% else %}
+*(See script source for serialized fields — add `[SerializeField]` annotations as needed)*
+{% endif %}
+
+**Key public API:**
+{% if script.type == "game_manager" %}
+```csharp
+GameManager.Instance.AddScore(int points);   // add to score, notifies UIManager
+GameManager.Instance.GameOver();             // triggers game-over state + UI
+GameManager.Instance.RestartGame();          // reload current scene
+```
+{% elif script.type == "health" %}
+```csharp
+health.TakeDamage(float amount);   // reduce HP; triggers OnDeath() at 0
+health.Heal(float amount);         // restore HP, clamped to maxHealth
+// Also responds to:
+gameObject.SendMessage("TakeDamage", amount, SendMessageOptions.DontRequireReceiver);
+```
+{% elif script.type == "enemy" %}
+```csharp
+enemy.OnDeath();   // call this from HealthSystem's OnDeath event to play death animation and disable
+```
+{% elif script.type == "audio_manager" %}
+```csharp
+AudioManager.Instance.PlaySFX(int index);     // play a one-shot sound effect
+AudioManager.Instance.PlayBGM(AudioClip clip); // swap background music
+AudioManager.Instance.SetVolume(float vol);    // 0.0 – 1.0
+```
+{% elif script.type == "ui_manager" %}
+```csharp
+UIManager.Instance.UpdateScore(int score);     // refresh score label
+UIManager.Instance.UpdateHealth(float pct);    // update health bar (0.0 – 1.0)
+UIManager.Instance.ShowGameOver();             // activate game-over panel
+```
+{% else %}
+*(No public API — driven by Unity messages: `Start`, `Update`, physics callbacks)*
+{% endif %}
+
+**Connects to:**
+{% if script.type == "player" %}
+- `HealthSystem` — receives `TakeDamage` via `SendMessage` when hit by enemies
+- `{{ scripts | selectattr("type","equalto","camera") | map(attribute="name") | first | default("CameraFollow") }}.cs` — camera reads this Transform as its follow target
+- `GameManager` — calls `GameManager.Instance.GameOver()` on death
+{% elif script.type == "enemy" %}
+- `HealthSystem` on Player — calls `SendMessage("TakeDamage", attackDamage)`
+- Player tag — uses `GameObject.FindGameObjectWithTag("Player")` to locate target
+{% if "navmesh" in features %}
+- `NavMeshAgent` component — must be present on same GameObject; bake NavMesh first
+{% endif %}
+{% elif script.type == "health" %}
+- `GameManager` — notifies on death
+- `UIManager` — updates health bar
+- `{{ scripts | selectattr("type","equalto","enemy") | map(attribute="name") | first | default("EnemyAI") }}.cs` — calls `OnDeath()` to trigger enemy destruction
+{% elif script.type == "camera" %}
+- Player Transform — must be assigned in Inspector (see §3)
+{% elif script.type == "game_manager" %}
+- `UIManager` — calls `UpdateScore`, `ShowGameOver`
+- `AudioManager` — triggers music changes on state transitions
+- All scene scripts — access the singleton via `GameManager.Instance`
+{% elif script.type == "ui_manager" %}
+- `GameManager.Instance` — receives score/state change callbacks
+- `HealthSystem` — reads current health percentage
+{% elif script.type == "audio_manager" %}
+- `GameManager` — music changes on game-state transitions
+- Any script — call `AudioManager.Instance.PlaySFX()` for one-shot sounds
+{% else %}
+*(See script source for cross-script dependencies)*
+{% endif %}
+
+---
+{% endfor %}
+
+## Troubleshooting
+
+### Visual
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| Player / Enemy appear **pink** | {% if render_pipeline != "builtin" %}Built-in Default-Material not supported in {{ render_pipeline }}{% else %}Missing material reference{% endif %} | Create a {% if render_pipeline == "URP" %}**URP/Lit**{% elif render_pipeline == "HDRP" %}**HDRP/Lit**{% else %}**Standard**{% endif %} material in `Assets/Materials/` and assign it to the MeshRenderer |
+| Scene is **completely black** | No light and no skybox | Ensure the Directional Light is active; for 2D check the Camera's Background Color |
+| **Skybox missing** / solid grey background | Skybox Material not set | `Window → Rendering → Lighting → Environment → Skybox Material`; assign the default skybox |
+{% if render_pipeline != "builtin" %}
+| **Shader compilation freeze** on first open | {{ render_pipeline }} compiling all shader variants | Normal — wait 3–10 minutes; subsequent opens are instant |
+{% endif %}
+| Objects **invisible** but scene looks fine | Wrong layer / culling mask | Check the Camera's Culling Mask includes the object's layer |
+
+### Physics & Movement
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **Player falls through floor** | No ground Collider | Add `GameObject → 3D Object → Plane` with a Collider, layer = Ground |
+| Player **won't move** | Script not receiving input{% if "input_system" in features %} / Input System not configured{% endif %} | Check Console for errors; {% if "input_system" in features %}verify `Project Settings → Player → Active Input Handling = Both`{% else %}confirm `GetAxis("Horizontal")` returns non-zero in the Debugger{% endif %} |
+| Player **clips through walls** at speed | Rigidbody Continuous collision off | On the Player Rigidbody, set **Collision Detection** to **Continuous** |
+| **Rigidbody2D not moving** | Script expects Rigidbody2D but has Rigidbody (3D) | Check the Player GO — it should have a **Rigidbody2D** component for {{ game_type }} games |
+| Player **slides with no friction** | No Physics Material | Create a Physics Material (`Assets/Materials/`), set Friction=0.6, assign to CapsuleCollider |
+| Player **rotates and falls over** | Rigidbody rotation not frozen | On the Rigidbody, set **Constraints → Freeze Rotation X, Y, Z** |
+
+### AI & Enemies
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **Enemy doesn't chase** the player | Player tag missing or detection radius too small | Select Player GO, set **Tag = Player**; increase `detectionRadius` on the enemy script |
+{% if "navmesh" in features %}
+| Enemy **stands still**, no pathfinding | NavMesh not baked | `Window → AI → Navigation → Bake`; make sure ground is Navigation Static |
+| Enemy **stutters or teleports** | NavMesh too coarse | Lower `Cell Size` in Navigation bake settings; increase `agentRadius` |
+{% endif %}
+| Enemy **deals no damage** | No HealthSystem on Player | Add `HealthSystem.cs` to the Player GO; the enemy uses SendMessage which silently does nothing if the receiver is absent |
+| Enemy **immediately attacks** on spawn | Detection radius too large | Reduce `detectionRadius` on the Enemy script in the Inspector |
+
+### Scripts & Compile Errors
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **"Missing Script"** on a GameObject | CS compile error preventing script load | Open Console (`Window → General → Console`), fix the red error, re-enter Play |
+| **NullReferenceException** in PlayerController | Required component not on same GO | The script calls `GetComponent<Rigidbody>()` — verify the Rigidbody is attached |
+| **"The type … could not be found"** | Script reference between files broken | Check for typos in class names; ensure the `.cs` filename matches the class name exactly |
+| **Animator warnings** (`Animator is not playing…`) | No Animator Controller assigned | Create an Animator Controller in `Assets/Animations/`, assign to the Animator component |
+| **"No receiver for SendMessage TakeDamage"** | HealthSystem not on target GO | Add `HealthSystem.cs` to the target object, or change EnemyAI's script to use `DontRequireReceiver` (already set) |
+
+### Camera
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **Camera doesn't follow** the player | Target Transform not assigned | Select Camera GO → Camera script in Inspector → drag Player into **Target** field |
+| Camera **snaps, not smooth** | Smooth time too low | Increase `smoothTime` on the camera script (try 0.15 – 0.3) |
+| Camera **clips into geometry** | No collision avoidance | Add a `CinemachineCollider` extension if using Cinemachine, or implement a sphere-cast in the camera script |
+{% if game_type == "2D" %}
+| **Parallax layers** not moving | Wrong script or missing setup | Ensure background sprites are on different Sorting Layers and driven by a parallax script that reads Camera delta |
+{% endif %}
+
+### Build & Platform
+{% if platform == "mobile" %}
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **Touch input not working** | Using old Input Manager | Add `On-Screen Stick` and `On-Screen Button` from Input System package; or use `Input.GetTouch()` |
+| **Build fails on Android** | Missing NDK / SDK | Unity Hub → Installs → Add Modules → Android Build Support (includes NDK, SDK, JDK) |
+| **App crashes on launch** (iOS) | Missing permissions plist entry | `Player Settings → iOS → Other Settings → Camera / Microphone Usage Description` |
+{% endif %}
+{% if platform == "webgl" %}
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **Blank screen** after build | Opened `index.html` from disk | Serve from a local server: `python -m http.server 8000` |
+| **Audio silent** | Browser AudioContext policy | Trigger audio only from a user gesture (button click); Unity's `AudioSource.Play()` is gated |
+| **Build very large** | Uncompressed textures / audio | Enable **Brotli** compression; use Crunch compression on textures; convert audio to MP3/OGG |
+{% endif %}
+
+| Symptom | Most Likely Cause | Fix |
+|---------|-------------------|-----|
+| **Scene not found** at runtime | Scene not in Build Settings | `File → Build Settings → Add Open Scenes`; verify the scene index matches `SceneManager.LoadScene()` calls |
+| **Packages fail to download** | No internet or corporate proxy | Check Unity Hub is signed in; try `Window → Package Manager → Refresh`; manually edit `manifest.json` |
+
+---
+
+*Generated by the Unity Project Creator Pipeline.*

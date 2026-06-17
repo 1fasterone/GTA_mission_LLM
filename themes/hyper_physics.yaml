@@ -1,0 +1,44 @@
+name: hyper_physics
+display: "Hyper-Realistic Physics Engine"
+pipelines: [gta, unity]
+
+concept_bias: |
+  A sandbox where mass, friction, deformation, and brittle failure are
+  modelled in punishing detail. Cars crumple correctly, walls fall in
+  pieces that fit, and bullets ricochet on the angles they should. The
+  story is whatever the player decides — physics is the antagonist.
+
+detect_keywords: [physics, realistic, simulation, destruction, ragdoll, deformation, ballistics, soft-body]
+
+vocabulary:
+  peds:     ["stunt-trained driver", "demolition crew worker", "crash test analyst", "physics-blind tourist", "skeptical engineer"]
+  vehicles: ["family sedan", "construction crane", "fuel tanker", "garbage truck", "race-spec coupe"]
+  objects:  ["stacked oil drums", "loaded pallet", "scaffolding section", "fragile glass crate"]
+  locations_gta: [port, docks, highway, military_base, downtown]
+
+step_hints: [go_to, get_in_vehicle, pickup, deliver, kill_all, race_lap]
+
+unity:
+  palette:
+    name:      "Test Track"
+    primary:   "#E0A800"
+    secondary: "#1F1F1F"
+    accent:    "#D7263D"
+    background: "#2C2F33"
+    trim:      "#F4F4F4"
+  systems_hint: ["wheel-collider vehicle physics", "rigidbody destruction zones", "soft-body deformation shaders", "ballistic ricochet model"]
+  visual_style: realistic
+
+twist_seeds:
+  - "Damage is permanent across the entire campaign — no body shop, no respawn cosmetics."
+  - "Air resistance has been doubled; bullets drop within fifty metres."
+  - "Every collision spawns a paperwork mini-objective the player must complete."
+  - "Gravity drifts by 1% each in-game day. Eventually everything falls slowly."
+  - "Friction is sponsored. Some surfaces only work if the player passes a billboard first."
+  - "The world has perfect physics. The player does not — they are the only ragdoll."
+
+avoid:
+  - "BeamNG screenshot showcase"
+  - "GTA ramp-pile-into-a-helicopter setpiece"
+  - "physics-as-a-tutorial-puzzle"
+  - "destructible-environments marketing buzzwords"

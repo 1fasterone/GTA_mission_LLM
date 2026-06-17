@@ -1,0 +1,69 @@
+# {{ s.name }} — Unity Input Bindings
+
+**Variant:** `{{ variant }}`
+**Maps:** {{ s.maps | length }} ({{ s.maps | map(attribute='name') | join(', ') }})
+{%- set ns = namespace(total=0) -%}
+{%- for m in s.maps %}{%- set ns.total = ns.total + (m.actions | length) %}{%- endfor %}
+**Total actions:** {{ ns.total }}
+
+{{ s.description }}
+
+## Install
+
+1. Make sure the **Input System** package (`com.unity.inputsystem`) is installed in
+   Package Manager. Set Edit → Project Settings → Player → Active Input Handling to
+   "Input System Package" (or "Both") and let Unity restart.
+2. Drop the `Input/{{ s.name }}.inputactions` file into your `Assets/`.
+3. Drop the `Scripts/` files into `Assets/Scripts/`.
+{% if s.use_input_reader_so %}
+4. Right-click in the Project window → **Create → Input → {{ s.name }} Reader** to
+   create a `{{ s.name }}InputReader` ScriptableObject asset. Assign the
+   `{{ s.name }}.inputactions` asset to its `asset` field.
+5. Subscribe to its typed events from your game code:
+
+```csharp
+public class Player : MonoBehaviour
+{
+    [SerializeField] private {{ s.name }}InputReader input;
+
+    private void OnEnable()
+    {
+{% for m in s.maps %}
+{% for a in m.actions %}
+{% if a.control_type == "Vector2" %}
+        input.On{{ a.name }} += v => Debug.Log($"{{ a.name }}: {v}");
+{% elif a.control_type == "Axis" %}
+        input.On{{ a.name }} += v => Debug.Log($"{{ a.name }}: {v}");
+{% else %}
+        input.On{{ a.name }} += () => Debug.Log("{{ a.name }} pressed");
+{% endif %}
+{% endfor %}
+{% endfor %}
+    }
+}
+```
+{% endif %}
+{% if s.use_typed_wrapper %}
+6. Alternatively, use the static `{{ s.name }}Bindings` wrapper for polled access:
+
+```csharp
+// Once at startup:
+{{ s.name }}Bindings.Asset = inputActionAssetReference;
+
+// Then anywhere:
+if ({{ s.name }}Bindings.Player.Jump.WasPressedThisFrame()) { /* ... */ }
+```
+{% endif %}
+
+## Action map summary
+
+{% for m in s.maps %}
+### Map: `{{ m.name }}`
+
+| Action | Type | Control |
+|--------|------|---------|
+{% for a in m.actions %}
+| `{{ a.name }}` | {{ a.type }} | {{ a.control_type }} |
+{% endfor %}
+
+{% endfor %}

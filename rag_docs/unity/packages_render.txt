@@ -1,0 +1,33 @@
+Unity Render Pipeline Packages
+===============================
+Universal Render Pipeline → com.unity.render-pipelines.universal
+URP → com.unity.render-pipelines.universal
+Lightweight Render Pipeline → com.unity.render-pipelines.universal
+LWRP → com.unity.render-pipelines.universal
+standard forward renderer → com.unity.render-pipelines.universal
+mobile renderer → com.unity.render-pipelines.universal
+
+High Definition Render Pipeline → com.unity.render-pipelines.high-definition
+HDRP → com.unity.render-pipelines.high-definition
+high fidelity graphics → com.unity.render-pipelines.high-definition
+ray tracing → com.unity.render-pipelines.high-definition
+AAA quality renderer → com.unity.render-pipelines.high-definition
+photorealistic renderer → com.unity.render-pipelines.high-definition
+
+Shader Graph → com.unity.shadergraph
+visual shader editor → com.unity.shadergraph
+node based shaders → com.unity.shadergraph
+shader authoring → com.unity.shadergraph
+
+Visual Effect Graph → com.unity.visualeffectgraph
+VFX Graph → com.unity.visualeffectgraph
+GPU particle effects → com.unity.visualeffectgraph
+visual effects → com.unity.visualeffectgraph
+particle system GPU → com.unity.visualeffectgraph
+
+Post Processing → com.unity.postprocessing
+bloom and tone mapping → com.unity.postprocessing
+camera effects → com.unity.postprocessing
+image effects → com.unity.postprocessing
+color grading → com.unity.postprocessing
+depth of field → com.unity.postprocessing

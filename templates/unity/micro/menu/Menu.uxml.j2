@@ -1,0 +1,8 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements">
+    <ui:VisualElement name="root" class="menu-root">
+        <ui:Label text="{{ s.title }}" class="menu-title" />
+{% for item in s.items %}
+        <ui:Button name="item{{ loop.index0 }}" text="{{ item }}" class="menu-button" />
+{% endfor %}
+    </ui:VisualElement>
+</ui:UXML>

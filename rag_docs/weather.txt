@@ -1,0 +1,37 @@
+GTA5 WEATHER TYPE LOOKUP TABLE
+
+=== SCHEMA VALUES (used in mission JSON) ===
+clear | overcast | rain | thunder | foggy | smog
+
+=== SCHEMA → GTA5 NATIVE HASH STRING ===
+clear     → CLEAR
+sunny     → EXTRASUNNY
+overcast  → OVERCAST
+cloudy    → CLOUDS
+rain      → RAIN
+thunder   → THUNDER
+foggy     → FOGGY
+fog       → FOGGY
+smog      → SMOG
+snow      → XMAS
+blizzard  → BLIZZARD
+halloween → HALLOWEEN
+
+=== ALL VALID NATIVE WEATHER STRINGS ===
+CLEAR
+EXTRASUNNY
+CLOUDS
+OVERCAST
+RAIN
+CLEARING
+THUNDER
+SMOG
+FOGGY
+XMAS
+SNOWLIGHT
+BLIZZARD
+SNOW
+HALLOWEEN
+
+=== USAGE IN C# (SHVDN) ===
+Function.Call(Hash.SET_WEATHER_TYPE_NOW_PERSIST, "CLEAR");

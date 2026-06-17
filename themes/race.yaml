@@ -1,0 +1,55 @@
+name: race
+display: "Race (planes / cars / boats / bicycles / running)"
+pipelines: [gta, unity]
+
+# Variants change the vehicle class and track flavour. Picked via:
+#   - explicit hint embedded in the user prompt
+#   - --variant flag on the CLI (planes|cars|boats|bicycles|running_road|running_offroad)
+variants:
+  planes:           "low-altitude air race through canyons, rings, and bridges"
+  cars:             "street-circuit road race with traffic and shortcuts"
+  boats:            "open-water powerboat race with chop, jumps, and buoy gates"
+  bicycles:         "single-track bike race with stamina and line choice"
+  running_road:     "foot race on closed urban streets, pace and tactics matter"
+  running_offroad:  "trail run across hills and broken ground, footing is the puzzle"
+
+concept_bias: |
+  A race. The stakes are not the trophy — they're whatever waits past the
+  finish line. Rivals have personalities, the track has weather, and the
+  player wins by exploiting one detail nobody else noticed.
+
+detect_keywords: [race, racing, racer, lap, circuit, sprint, marathon, time trial, championship, finish line]
+
+vocabulary:
+  peds:     ["rival driver in branded suit", "pit crew chief", "trackside marshal", "spectator with a phone", "race official with a clipboard"]
+  vehicles: ["sports coupe", "race bike", "open powerboat", "stunt biplane", "off-road buggy"]
+  objects:  ["finish-line banner", "checkpoint flag", "pit timer", "trophy case", "qualifying transponder"]
+  locations_gta: [airport, highway, vinewood, sandy_shores, docks, port]
+
+# Race themes lean heavily on race_lap / checkpoint / get_in_vehicle / timer
+step_hints: [get_in_vehicle, race_lap, checkpoint, timer, go_to]
+
+unity:
+  palette:
+    name:      "Pole Position"
+    primary:   "#D7263D"
+    secondary: "#1B1F23"
+    accent:    "#F4D35E"
+    background: "#0F1115"
+    trim:      "#FFFFFF"
+  systems_hint: ["wheel-collider or kinematic racer", "lap counter + ghost-time HUD", "rubber-band rival AI", "track-spline checkpoint system"]
+  visual_style: stylized
+
+twist_seeds:
+  - "The track changes between laps; nobody warns the racers."
+  - "Every rival is a former version of the player; their lines are the player's old habits."
+  - "Finishing first loses the race. The winner is whoever the crowd loves most."
+  - "Damage carries between laps — the car/bike/body degrades visibly."
+  - "Weather is on a fixed clock — lap three is always thunderstorm."
+  - "The finish line moves. It is wherever the leader stops believing in the race."
+
+avoid:
+  - "Fast & Furious family-quarter-mile clichés"
+  - "evil corporate sponsor sabotage"
+  - "underdog rookie versus reigning champion"
+  - "the prize money saves the protagonist's home"

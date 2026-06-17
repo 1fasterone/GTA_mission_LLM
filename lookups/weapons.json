@@ -1,0 +1,43 @@
+{
+  "schema_to_native": {
+    "pistol":   "WEAPON_PISTOL",
+    "smg":      "WEAPON_MICROSMG",
+    "rifle":    "WEAPON_ASSAULTRIFLE",
+    "shotgun":  "WEAPON_PUMPSHOTGUN",
+    "sniper":   "WEAPON_SNIPERRIFLE",
+    "none":     ""
+  },
+  "schema_to_weaponhash": {
+    "pistol":   "Pistol",
+    "smg":      "MicroSMG",
+    "rifle":    "AssaultRifle",
+    "shotgun":  "PumpShotgun",
+    "sniper":   "SniperRifle",
+    "none":     null
+  },
+  "synonyms": {
+    "pistol":          "pistol",
+    "handgun":         "pistol",
+    "glock":           "pistol",
+    "9mm":             "pistol",
+    "uzi":             "smg",
+    "micro smg":       "smg",
+    "smg":             "smg",
+    "submachine gun":  "smg",
+    "ar":              "rifle",
+    "assault rifle":   "rifle",
+    "ak":              "rifle",
+    "m4":              "rifle",
+    "carbine":         "rifle",
+    "rifle":           "rifle",
+    "shotgun":         "shotgun",
+    "pump shotgun":    "shotgun",
+    "scattergun":      "shotgun",
+    "sniper":          "sniper",
+    "sniper rifle":    "sniper",
+    "long rifle":      "sniper",
+    "unarmed":         "none",
+    "no weapon":       "none",
+    "fists":           "none"
+  }
+}

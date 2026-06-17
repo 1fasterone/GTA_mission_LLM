@@ -1,0 +1,35 @@
+GTA5 CIVILIAN PEDS MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+
+=== CIVILIANS / AMBIENT ===
+cult member → a_m_o_acult_01
+cult guy → a_m_o_acult_01
+cultist → a_m_o_acult_01
+female cultist → a_f_o_acult_01
+cult woman → a_f_o_acult_01
+hipster → a_m_y_hipster_01
+businessman → a_m_m_business_01
+suited man → a_m_m_business_01
+office worker → a_m_m_business_01
+office worker male → a_m_m_business_01
+office worker female → a_f_m_business_02
+executive → a_m_m_business_01
+foreman → s_m_m_dockwork_01
+foreman in office → s_m_m_dockwork_01
+site foreman → s_m_y_construct_01
+warehouse worker → s_m_m_dockwork_01
+warehouse guard → s_m_m_security_01
+night watchman → s_m_m_security_01
+lab worker → s_m_m_scientist_01
+scientist → s_m_m_scientist_01
+chemist → s_m_m_scientist_01
+technician → s_m_y_xmech_01
+hacker → a_m_y_hipster_01
+informant → a_m_m_business_01
+target → a_m_m_business_01
+witness → a_m_y_business_01
+civilian → a_m_y_business_01
+random guy → a_m_y_business_02
+beach guy → a_m_y_beachvesp_01
+old man → a_m_o_acult_01

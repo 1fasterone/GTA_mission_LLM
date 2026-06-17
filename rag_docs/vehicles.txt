@@ -1,0 +1,68 @@
+GTA5 VEHICLE MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+
+=== AIRCRAFT ===
+helicopter → buzzard2
+police helicopter → policehelicopter
+police heli → policehelicopter
+attack helicopter → buzzard
+attack heli → buzzard
+buzzard → buzzard
+military helicopter → valkyrie
+cargo helicopter → cargobob
+cargo heli → cargobob
+plane → velum
+private jet → shamal
+stunt → stunt
+biplane → duster
+diy plane → pyro
+fast plane → hydra
+big plane → cargoplane
+flight simulator → cargoplane
+ww2 plane → howard
+drug smuggler plane → titan
+
+
+
+=== CIVILIAN CARS ===
+sports car → sultan
+muscle car → gauntlet
+supercar → zentorno
+luxury car → baller2
+suv → baller
+4x4 → trophytruck
+pickup truck → bison
+truck → bison
+sedan → schafter2
+black sedan → schafter2
+limousine → stretch
+limo → stretch
+bmx → bmx
+bike → bati
+motorcycle → bati
+dirt bike → sanchez
+sport bike → hakuchou2
+harley → sanctus
+old bike → ratbike
+offroad → outlaw
+golf cart → caddy
+
+
+
+=== CARGO / UTILITY ===
+armored truck → stockade
+money truck → stockade
+security van → stockade
+cargo van → burrito
+van → burrito
+delivery van → burrito
+ambulance → ambulance
+fire truck → firetruk
+rv → journey2
+
+=== WATER ===
+boat → speeder
+speedboat → speeder
+yacht → longfin
+jet ski → seashark

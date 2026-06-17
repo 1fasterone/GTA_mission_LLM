@@ -1,0 +1,68 @@
+Unity Core System Packages
+===========================
+Input System → com.unity.inputsystem
+new input system → com.unity.inputsystem
+Unity Input → com.unity.inputsystem
+gamepad support → com.unity.inputsystem
+controller support → com.unity.inputsystem
+keyboard and mouse → com.unity.inputsystem
+touch input → com.unity.inputsystem
+action based input → com.unity.inputsystem
+
+Cinemachine → com.unity.cinemachine
+virtual camera → com.unity.cinemachine
+camera rig → com.unity.cinemachine
+smart camera → com.unity.cinemachine
+camera follow system → com.unity.cinemachine
+procedural camera → com.unity.cinemachine
+dolly camera → com.unity.cinemachine
+freelook camera → com.unity.cinemachine
+
+AI Navigation → com.unity.ai.navigation
+NavMesh → com.unity.ai.navigation
+pathfinding → com.unity.ai.navigation
+enemy pathfinding → com.unity.ai.navigation
+navigation system → com.unity.ai.navigation
+nav mesh surface → com.unity.ai.navigation
+nav mesh agent → com.unity.ai.navigation
+
+Addressables → com.unity.addressables
+addressable assets → com.unity.addressables
+asset management → com.unity.addressables
+dynamic loading → com.unity.addressables
+downloadable content → com.unity.addressables
+DLC → com.unity.addressables
+asset bundles → com.unity.addressables
+
+Timeline → com.unity.timeline
+cutscenes → com.unity.timeline
+cinematic sequences → com.unity.timeline
+animation sequencer → com.unity.timeline
+director system → com.unity.timeline
+
+Animation Rigging → com.unity.animation.rigging
+IK → com.unity.animation.rigging
+inverse kinematics → com.unity.animation.rigging
+bone constraints → com.unity.animation.rigging
+rig builder → com.unity.animation.rigging
+procedural animation → com.unity.animation.rigging
+
+Localization → com.unity.localization
+multi language → com.unity.localization
+translation system → com.unity.localization
+string localization → com.unity.localization
+language support → com.unity.localization
+
+Netcode for GameObjects → com.unity.netcode.gameobjects
+multiplayer → com.unity.netcode.gameobjects
+networking → com.unity.netcode.gameobjects
+online multiplayer → com.unity.netcode.gameobjects
+network sync → com.unity.netcode.gameobjects
+client server → com.unity.netcode.gameobjects
+co-op → com.unity.netcode.gameobjects
+
+TextMeshPro → com.unity.textmeshpro
+TMP → com.unity.textmeshpro
+rich text → com.unity.textmeshpro
+UI text → com.unity.textmeshpro
+font rendering → com.unity.textmeshpro

@@ -1,0 +1,40 @@
+# {{ s.name }} — Unity Menu
+
+**Variant:** `{{ variant }}`
+**Backend:** `{{ s.backend }}`
+**Navigation:** `{{ s.navigation }}`
+{% if s.pauses_game %}**Pauses game:** yes (sets `Time.timeScale = 0` while open)
+{% endif %}
+
+{{ s.description }}
+
+## Items
+
+{% for item in s.items %}
+- `{{ item }}`
+{% endfor %}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+{% if s.backend == "uGUI" %}
+2. Build a Canvas with a panel + one `Button` per item, add a `CanvasGroup` to the panel.
+3. Add the `{{ s.name }}` component; assign the `panel` and the `buttons` array **in items order**.
+{% else %}
+2. Drop `UI/{{ s.name }}.uxml` + `UI/{{ s.name }}.uss` in, add a `UIDocument` with the UXML as source.
+3. Add the `{{ s.name }}` component and assign the `UIDocument`.
+{% endif %}
+4. Set **firstScene** to the scene `Play`/`Start` should load (and add it to Build Settings).
+
+## Behaviour
+
+Common items act automatically: **Play/Start** → load `firstScene`; **Resume** → hide{% if s.pauses_game %} + unpause{% endif %};
+**Retry** → reload the active scene; **Quit** → `Application.Quit`; **Quit to Menu** → load `MainMenu`;
+**Back/No** → hide. Everything else (Settings, level names, Yes…) raises `OnItemSelected` so your
+game decides:
+
+```csharp
+GetComponent<{{ s.name }}>().OnItemSelected += item => Debug.Log("Chose " + item);
+```
+
+Call `Show()` / `Hide()` to toggle the menu (e.g. open the pause menu on Esc).

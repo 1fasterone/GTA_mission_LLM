@@ -1,0 +1,7 @@
+GTA5 SPECIAL VEHICLE MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== Truck ===
+special truck → rcbandito
+dune buggy → ratel
+sand rail → ratel

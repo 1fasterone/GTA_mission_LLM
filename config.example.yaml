@@ -1,0 +1,54 @@
+lm_studio:
+  backend: lm_studio              # "lm_studio" or "ollama"
+  base_url: http://localhost:1234/v1
+  model: qwen3.5-9b               # the model name shown in LM Studio
+  temperature: 0.7
+  max_tokens: 8192
+  timeout: 600
+  concept_temperature: 0.85
+  schema_temperature: 0.2
+  # seed: 1234                     # fixed sampler seed → reproducible LLM output (unset = random)
+
+ollama:                            # used when lm_studio.backend == "ollama"
+  base_url: http://localhost:11434/v1
+  model: qwen2.5:7b               # must match a pulled tag (ollama pull <model>)
+
+anythingllm:
+  base_url: http://localhost:3001
+  api_key: ''                     # AnythingLLM → Settings → API Keys
+  workspace_slug: llm_gta         # GTA RAG workspace
+  unity_workspace_slug: llm_unity # Unity RAG workspace
+  fallback_to_local: true         # use bundled local lookups when RAG misses
+
+basic_mode: false                  # true => skip RAG entirely; local lookups only
+
+pipeline:
+  output_dir: output
+  lookups_dir: lookups
+  rag_docs_dir: rag_docs
+  template_file: templates/mission.cs.j2
+
+unity_pipeline:
+  lookups_dir: lookups
+  rag_docs_dir: rag_docs/unity
+  unity_template_dir: templates/unity
+  unity_output_dir: output/unity
+  # Inject the MCP-for-Unity editor bridge (com.coplaydev.unity-mcp) into every
+  # generated full project so an agent can fix the first-open compile errors.
+  # Dev-only; set false for distribution/build outputs.
+  inject_mcp_bridge: true
+
+blender:                           # external asset-fulfilment stage (blender_cli.py)
+  blender_path: ''                 # empty => auto-detect (PATH + standard installs)
+  output_dir: output/blender
+  timeout: 900                     # seconds per Blender job
+  max_retries: 1                   # extra attempts before a job is marked FAILED
+  normalize_exports: true          # strip FBX/Alembic timestamps -> byte-identical re-exports
+  diffusion:                       # second pipeline for non-procedural textures
+    backend: none                  # none | auto1111 | comfyui
+    base_url: http://127.0.0.1:7860
+    timeout: 180
+
+logging:
+  level: INFO
+  show_prompts: false

@@ -1,0 +1,24 @@
+GTA5 CRIMINALS PED MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== CRIMINALS / GANG MEMBERS ===
+drug dealer → g_m_y_lost_01
+dealer → g_m_y_lost_01
+gang member → g_m_y_armgoon_01
+goon → g_m_y_armgoon_01
+armed goon → g_m_y_armgoon_01
+street thug → g_m_y_armgoon_01
+hitman → g_m_y_armgoon_01
+mercenary → s_m_y_swat_01
+thief → g_m_y_armgoon_01
+robber → g_m_y_armgoon_01
+bodyguard → g_m_y_armgoon_01
+assassin → g_m_y_armgoon_01
+cartel member → g_m_y_mexgang_01
+ballas → g_m_y_ballas_01
+biker → g_m_y_lost_01
+lost mc → g_m_y_lost_01
+mexican gang → g_m_y_mexgang_01
+vagos → g_m_y_vagos_01
+families → g_m_y_famca_01
+grove street → g_m_y_famca_01

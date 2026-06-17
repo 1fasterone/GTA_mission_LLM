@@ -1,0 +1,22 @@
+{
+  "name": "{{ s.name }}",
+  "maps": [
+{% for m in s.maps %}
+    {
+      "name": "{{ m.name }}",
+      "id": "00000000-0000-0000-0000-{{ '%012d' % loop.index }}",
+      "actions": [
+{% for a in m.actions %}
+        { "name": "{{ a.name }}", "type": "{{ a.type }}", "expectedControlType": "{{ a.control_type }}", "id": "00000000-0000-0000-0000-{{ '%04d' % loop.index0 }}{{ '%08d' % loop.index }}" }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+      ],
+      "bindings": []
+    }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+  ],
+  "controlSchemes": [
+    { "name": "{{ variant }}", "bindingGroup": "{{ variant }}", "devices": [] }
+  ]
+}

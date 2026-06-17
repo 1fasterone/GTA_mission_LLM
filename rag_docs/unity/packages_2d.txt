@@ -1,0 +1,32 @@
+Unity 2D Packages
+==================
+2D Tilemap → com.unity.2d.tilemap
+tilemaps → com.unity.2d.tilemap
+tile maps → com.unity.2d.tilemap
+tile based levels → com.unity.2d.tilemap
+2D level design → com.unity.2d.tilemap
+rule tiles → com.unity.2d.tilemap
+
+2D Tilemap Extras → com.unity.2d.tilemap.extras
+rule tile → com.unity.2d.tilemap.extras
+animated tile → com.unity.2d.tilemap.extras
+random tile → com.unity.2d.tilemap.extras
+isometric tile → com.unity.2d.tilemap.extras
+
+2D Sprite → com.unity.2d.sprite
+sprite editor → com.unity.2d.sprite
+sprite slicer → com.unity.2d.sprite
+2D graphics → com.unity.2d.sprite
+
+2D Animation → com.unity.2d.animation
+sprite animation → com.unity.2d.animation
+2D bones → com.unity.2d.animation
+skeletal animation 2D → com.unity.2d.animation
+2D IK → com.unity.2d.animation
+sprite rig → com.unity.2d.animation
+
+2D Pixel Perfect → com.unity.2d.pixel-perfect
+pixel art → com.unity.2d.pixel-perfect
+pixel perfect camera → com.unity.2d.pixel-perfect
+retro graphics → com.unity.2d.pixel-perfect
+pixel game → com.unity.2d.pixel-perfect

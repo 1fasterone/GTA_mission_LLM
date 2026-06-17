@@ -1,0 +1,31 @@
+{
+  "title": "Getting Started",
+  "intro": "This tool turns a one-line prompt into either a GTA5 mission script or a ready-to-open Unity project. Below are the three things you need to do once.",
+  "steps": [
+    {
+      "title": "1. Wire up a chat backend",
+      "body": "Generation needs a local LLM. Open the Backends page and pick either LM Studio (default :1234) or Ollama (:11434). Start the server, load a model, then click Test Connection. The Chat light at the top right should turn green.",
+      "cta": { "label": "Open Backends", "section": "backends" }
+    },
+    {
+      "title": "2. (Optional) Create the RAG workspaces",
+      "body": "Asset resolution is sharper with AnythingLLM. With AnythingLLM running at :3001, click 'Create pre-built workspace' twice — once for the GTA5 workspace (llm_gta) and once for the Unity workspace (llm_unity). The RAG light turns green when both exist. If you don't want RAG, flip Basic Mode on and the project uses bundled local lookup tables instead.",
+      "cta": { "label": "Open Backends", "section": "backends" }
+    },
+    {
+      "title": "3. Generate your first mod or project",
+      "body": "Open the Prompt page, pick GTA or Unity at the top, type one sentence (e.g. 'Infiltrate the docks at night and steal a drug shipment'), and click Generate. Watch the live progress; the output file appears below when done. GTA mods need ScriptHookV + ScriptHookVDotNet3.dll installed — you'll get a reminder on the output panel.",
+      "cta": { "label": "Open Prompt", "section": "prompt" }
+    },
+    {
+      "title": "4. Manage what you've made",
+      "body": "Every run is saved under output/ (GTA) or output/unity/ (Unity). The Library page lists everything with star ratings, a Share button (copies the path to clipboard), and an Open button (reveals the folder in Explorer).",
+      "cta": { "label": "Open Library", "section": "library" }
+    }
+  ],
+  "tips": [
+    "Custom Args on the Prompt page accepts CLI-style flags. --debug streams LLM request/response bodies into the live progress console.",
+    "The Errors & Fixes page is a searchable cheat sheet for the most common failures: backend not started, no model loaded, RAG unauthorized, truncated JSON, and more.",
+    "Saved settings persist in config.yaml. The CLI (python main.py generate ...) reads the same file, so the two stay in sync."
+  ]
+}

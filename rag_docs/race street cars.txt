@@ -1,0 +1,9 @@
+GTA5 STREET RACE VEHICLES MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== ROAD RACE CARS ===
+gt3 → s80
+road race car → s80
+race car → dominator6
+f1 car → openwheel1
+f1 ai car → formula

@@ -1,0 +1,126 @@
+GTA5 MISSION SCHEMA REFERENCE
+Used by AnythingLLM RAG to answer schema structure questions.
+
+=== TOP-LEVEL FIELDS ===
+mission_name    string
+location_name   enum: docks | airport | downtown | vinewood | sandy_shores | paleto_bay | alamo_sea | military_base | prison | port | highway
+time_of_day     integer 0-23  (0=midnight, 6=dawn, 12=noon, 20=evening, 22=night)
+weather         enum: clear | overcast | rain | thunder | foggy | smog
+steps           array of MissionStep
+peds            array of MissionPed
+vehicles        array of MissionVehicle
+objects         array of MissionObject
+audio           array of MissionAudio
+
+=== MissionStep ===
+type   enum: go_to | kill_all | pickup | deliver | get_in_vehicle | escape | wait | checkpoint | race_lap | timer
+label  string (shown on screen to player)
+params dict  optional type-specific parameters (default {})
+
+  go_to          player walks/drives to a waypoint
+  kill_all       player eliminates all hostile peds
+  pickup         player collects a spawned prop
+  deliver        player reaches the delivery blip
+  get_in_vehicle player boards a spawned vehicle
+  escape         player loses all wanted stars
+  wait           3-second pause with a message
+
+  checkpoint     player passes through all checkpoints on a named track (single pass)
+                 params: {"track": "airport.figure_8", "require_vehicle": true}
+  race_lap       player completes N laps of a checkpoint circuit — USE FOR ALL RACING MISSIONS
+                 params: {"lap_count": 5, "track": "airport.figure_8", "require_vehicle": true}
+  timer          player survives / holds position for N seconds
+                 params: {"seconds": 60}
+
+=== MissionPed ===
+description  string (plain English, resolved by RAG)
+model        string (GTA5 ped model ID, filled by RAG)
+role         enum: guard | patrol | target | civilian | ally
+count        integer 1-8
+weapon       enum: none | pistol | smg | rifle | shotgun | sniper
+
+=== MissionVehicle ===
+description  string (plain English, resolved by RAG)
+model        string (GTA5 vehicle model ID, filled by RAG)
+role         enum: patrol | escape | delivery | parked | chase | race_opponent
+             race_opponent = spawns with an AI driver that heads toward first checkpoint
+count        integer 1-4
+
+=== MissionObject ===
+description  string (plain English, resolved by RAG)
+model        string (GTA5 prop model ID, filled by RAG)
+role         enum: pickup | obstacle | decoration
+
+=== MissionAudio ===
+type     enum: ambient | mission_passed | mission_failed | sting
+context  string (when this audio plays)
+name     string (GTA5 audio name, filled by RAG)
+
+=== NAMED LOCATIONS AND COORDINATES ===
+docks         → Vector3(-1009, -2704, 13.8)   Terminal / Port of LS
+airport       → Vector3(-1336, -3044, 13.9)   Los Santos International Airport
+downtown      → Vector3(250, -850, 29.7)      Downtown Los Santos
+vinewood      → Vector3(604, 108, 100)         Vinewood Hills
+sandy_shores  → Vector3(1800, 3800, 32)        Sandy Shores
+paleto_bay    → Vector3(-105, 6300, 31)        Paleto Bay
+alamo_sea     → Vector3(1200, 2700, 38)        Alamo Sea
+military_base → Vector3(-2258, 3012, 32)       Fort Zancudo
+prison        → Vector3(1695, 2440, 45)        Bolingbroke Penitentiary
+port          → Vector3(830, -2900, 5.8)       La Mesa Port
+highway       → Vector3(1003, -1700, 52)       Olympic Freeway
+
+=== NAMED TRACKS (for race_lap / checkpoint params.track) ===
+airport.figure_8      LSIA Figure-8 Runway — 6 checkpoints
+airport.circuit       LSIA Perimeter Loop — 6 checkpoints
+vinewood.circuit      Vinewood Hills Winding Road — 6 checkpoints
+highway.circuit       Olympic Freeway Loop — 6 checkpoints
+docks.circuit         Container Yard Loop — 6 checkpoints
+sandy_shores.circuit  Sandy Shores Desert Loop — 6 checkpoints
+
+=== EXAMPLE SCHEMA (HEIST) ===
+{
+  "mission_name": "The Harbor Job",
+  "location_name": "docks",
+  "time_of_day": 22,
+  "weather": "clear",
+  "steps": [
+    { "type": "go_to",    "label": "Get to the docks",          "params": {} },
+    { "type": "kill_all", "label": "Eliminate the guards",       "params": {} },
+    { "type": "pickup",   "label": "Grab the package",           "params": {} },
+    { "type": "deliver",  "label": "Bring it to the buyer",      "params": {} }
+  ],
+  "peds": [
+    { "description": "cult member", "role": "guard", "count": 4, "weapon": "pistol" }
+  ],
+  "vehicles": [
+    { "description": "unmarked cruiser", "role": "patrol", "count": 1 }
+  ],
+  "objects": [
+    { "description": "drug package", "role": "pickup" }
+  ],
+  "audio": [
+    { "type": "mission_passed", "context": "when player delivers the package" }
+  ]
+}
+
+=== EXAMPLE SCHEMA (RACE) ===
+{
+  "mission_name": "Airport Figure Eight",
+  "location_name": "airport",
+  "time_of_day": 12,
+  "weather": "CLEAR",
+  "steps": [
+    { "type": "get_in_vehicle", "label": "Get in the race car",    "params": {} },
+    { "type": "race_lap",       "label": "Complete 5 laps",
+      "params": {"lap_count": 5, "track": "airport.figure_8", "require_vehicle": true} }
+  ],
+  "peds": [],
+  "vehicles": [
+    { "description": "sports car", "role": "race_opponent", "count": 3 },
+    { "description": "supercar",   "role": "escape",        "count": 1 }
+  ],
+  "objects": [],
+  "audio": [
+    { "type": "mission_passed", "context": "when player wins the race" }
+  ]
+}

@@ -1,0 +1,53 @@
+# {{ s.name }} — Unity Spawner
+
+**Variant:** `{{ variant }}`
+**Spawn shape:** `{{ s.spawn_shape }}`
+**Pooling:** `{{ s.pooling }}`
+**Trigger:** `{{ s.trigger }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to an empty GameObject placed where you want spawning to originate.
+3. Assign the **prefab** to spawn in the inspector.
+{% if s.pooling == "pooled" %}
+4. Add a `{{ s.name }}Pool` component (same or another GameObject), assign the same prefab,
+   and drag it into the spawner's `pool` field. Leave it empty to fall back to plain `Instantiate`.
+{% endif %}
+{% if s.spawn_shape == "spawn_points" %}
+5. Create empty GameObjects as spawn points and drag them into the `spawnPoints` array.
+{% endif %}
+{% if variant == "trigger_spawner" %}
+6. Put this GameObject's collider on **Is Trigger**, and tag your player `{{ s.target_tag }}`.
+{% endif %}
+
+## Behaviour
+
+{% if variant == "wave_spawner" %}
+Spawns **{{ s.wave_count }}** waves of ~**{{ s.per_wave_count }}** each (ramping +50% per wave),
+waiting **{{ "%.1f"|format(s.spawn_interval) }}s** between waves. Capped at **{{ s.max_alive }}** alive.
+{% elif variant == "continuous_spawner" %}
+Spawns one instance every **{{ "%.1f"|format(s.spawn_interval) }}s**, capped at **{{ s.max_alive }}** alive.
+{% elif variant == "trigger_spawner" %}
+Spawns a burst of **{{ s.per_wave_count }}** when a `{{ s.target_tag }}` enters the trigger.
+{% elif variant in ("point_spawner", "radial_spawner") %}
+One-shot: spawns **{{ s.per_wave_count }}** instances on `Start()`. Call `Spawn()` for more.
+{% elif variant == "object_pool" %}
+Pure pool broker — call `Spawn()` (or use `{{ s.name }}Pool` directly) from your gameplay code.
+{% endif %}
+
+`Spawn()` is public so timelines, UnityEvents, or other scripts can trigger a spawn manually.
+
+## Tuning
+
+| Field            | Default | Notes |
+|------------------|---------|-------|
+| `maxAlive`       | {{ s.max_alive }} | live-instance cap (auto-pruned) |
+{% if variant in ("wave_spawner", "continuous_spawner", "trigger_spawner") %}
+| `spawnInterval`  | {{ "%.1f"|format(s.spawn_interval) }} | seconds between spawns/waves |
+{% endif %}
+{% if s.spawn_shape in ("circle", "box") %}
+| `spawnRadius`    | {{ "%.1f"|format(s.spawn_radius) }} | spawn area size |
+{% endif %}

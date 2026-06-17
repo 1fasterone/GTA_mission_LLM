@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title id="docTitle">Bacon &amp; Eggs</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-dot"></span>
+      <div class="brand-text">
+        <h1 id="brandName">Bacon &amp; Eggs</h1>
+        <span class="brand-tagline" id="brandTagline">Compose a Unity game from parts.</span>
+      </div>
+    </div>
+    <div class="status-cluster" id="statusCluster">
+      <span class="status-pill" id="pillChat" title="Chat backend connection">
+        <span class="light light--unknown"></span><span class="pill-label">Chat</span>
+      </span>
+      <span class="status-pill" id="pillRag" title="RAG / AnythingLLM connection">
+        <span class="light light--unknown"></span><span class="pill-label">RAG</span>
+      </span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- ───── Sidebar ───── -->
+    <aside class="sidebar">
+      <button class="nav is-active" data-section="prompt" data-pipeline="unity">
+        <span class="ico">🎮</span><span>New Unity Project</span>
+      </button>
+      <button class="nav" data-section="llm">
+        <span class="ico">⚙</span><span>LLM Settings</span>
+      </button>
+      <button class="nav" data-section="backends">
+        <span class="ico">🔌</span><span>Backends</span>
+      </button>
+      <button class="nav" data-section="library">
+        <span class="ico">📚</span><span>Library</span>
+      </button>
+      <button class="nav" data-section="tutorial">
+        <span class="ico">🎓</span><span>Tutorial</span>
+      </button>
+      <button class="nav" data-section="errors">
+        <span class="ico">🛠</span><span>Errors &amp; Fixes</span>
+      </button>
+
+      <div class="nav-divider"></div>
+      <button class="nav nav--secondary" data-section="prompt" data-pipeline="gta">
+        <span class="ico">🚗</span><span>GTA5 (Showcase)</span>
+      </button>
+    </aside>
+
+    <!-- ───── Workspace ───── -->
+    <main>
+      <!-- =========== PROMPT =========== -->
+      <section class="panel is-active" data-section="prompt">
+        <div class="card">
+          <div class="pipeline-head">
+            <h2 id="pipelineTitle">New Unity Project</h2>
+            <p class="help" id="pipelineHint">Assemble a wired, playable Unity project from the micro library.</p>
+          </div>
+
+          <!-- Unity sub-options: compose a whole game, one system, or a full template -->
+          <div class="sub-row" id="unitySubRow">
+            <label class="sub-label">Mode</label>
+            <div class="segmented segmented--sub" role="tablist" aria-label="Unity mode">
+              <button class="seg is-active" data-utype="compose" data-tip="Assemble the micro library into one wired, playable project (controller, camera, HUD, health, menu, save…).">Compose Game</button>
+              <button class="seg" data-utype="micro" data-tip="Generate one drop-in subsystem on its own.">Single System</button>
+              <button class="seg" data-utype="project" data-tip="The classic full-project template (built-in scripts, no composition).">Full Template</button>
+            </div>
+          </div>
+
+          <div class="grid2" id="microSubFields" hidden>
+            <label class="field">
+              <span>
+                Generator
+                <i class="tip" id="microTip" data-tip="Pick a subsystem to generate on its own.">?</i>
+              </span>
+              <select id="genMicro"></select>
+            </label>
+            <label class="field">
+              <span>
+                Variant
+                <i class="tip" id="variantTip" data-tip="Pick a generator first.">?</i>
+              </span>
+              <select id="genVariant"></select>
+            </label>
+          </div>
+
+          <div class="grid2">
+            <label class="field">
+              <span>Theme <i class="tip" data-tip="Optional. Nudges the story toward a setting; asset resolution is unchanged.">?</i></span>
+              <select id="genTheme"><option value="">(none)</option></select>
+            </label>
+            <label class="field">
+              <span>Seed <i class="tip" data-tip="Optional integer for reproducible twist-seed selection.">?</i></span>
+              <input id="genSeed" type="number" placeholder="(random)" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Prompt</span>
+            <textarea id="genPrompt" rows="4" placeholder="e.g. Infiltrate the docks at night and steal a drug shipment"></textarea>
+          </label>
+
+          <details class="advanced">
+            <summary>Advanced — Custom Args</summary>
+            <p class="help">
+              CLI-style flags forwarded to this run. Combine freely &mdash; example:
+              <code>--debug --max-tokens=12288 --temperature=0.9 --basic</code>
+            </p>
+            <table class="flag-table">
+              <tr><th>Flag</th><th>Effect</th></tr>
+              <tr><td><code>--debug</code></td><td>DEBUG log level. Streams raw LLM &amp; RAG request/response into the live console.</td></tr>
+              <tr><td><code>--verbose</code></td><td>INFO log level. Extra pipeline step detail.</td></tr>
+              <tr><td><code>--show-prompts</code></td><td>Prints the LLM concept story live (long).</td></tr>
+              <tr><td><code>--max-tokens=&lt;N&gt;</code></td><td>Override <code>lm_studio.max_tokens</code> for this run only.</td></tr>
+              <tr><td><code>--temperature=&lt;F&gt;</code></td><td>Override <code>concept_temperature</code> for this run only.</td></tr>
+              <tr><td><code>--basic</code></td><td>Force Basic Mode (skip RAG, use local lookups) for this run only.</td></tr>
+            </table>
+            <label class="field">
+              <span>Extra args</span>
+              <input id="genExtraArgs" type="text" placeholder="--debug --max-tokens=12288" />
+            </label>
+          </details>
+
+          <div class="row generate-row">
+            <button class="btn btn--primary" id="btnGenerate">Generate</button>
+            <div class="inline-status" title="Backend readiness">
+              <span class="inline-light"><span class="light light--unknown" id="lightInlineChat" title="Chat backend connection"></span>LLM</span>
+              <span class="inline-light"><span class="light light--unknown" id="lightInlineRag" title="RAG / AnythingLLM connection"></span>RAG</span>
+            </div>
+            <span class="test-result" id="genStatus"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Live progress</h2>
+          <pre class="console" id="genConsole" aria-live="polite"></pre>
+          <div id="genOutput" class="output-panel" hidden></div>
+        </div>
+      </section>
+
+      <!-- =========== LLM SETTINGS =========== -->
+      <section class="panel" data-section="llm">
+        <div class="card">
+          <h2>LLM Settings</h2>
+          <p class="help">Sliders map to real config values in <code>config.yaml</code> &mdash;
+            shared with the CLI.</p>
+
+          <div class="slider-row">
+            <label>Complexity <i class="tip" data-tip="Inverse of schema_temperature: more complex ⇒ stricter (lower temp) JSON pass.">?</i></label>
+            <input id="sldComplexity" type="range" min="0" max="100" value="80" />
+            <span class="slider-val" id="valComplexity">80%</span>
+          </div>
+          <div class="slider-row">
+            <label>Detail Level <i class="tip" data-tip="Maps to max_tokens (4096–16384).">?</i></label>
+            <input id="sldDetail" type="range" min="0" max="100" value="50" />
+            <span class="slider-val" id="valDetail">50%</span>
+          </div>
+          <div class="slider-row">
+            <label>Creativity <i class="tip" data-tip="Maps to concept_temperature (0.2 – 1.2).">?</i></label>
+            <input id="sldCreativity" type="range" min="0" max="100" value="65" />
+            <span class="slider-val" id="valCreativity">65%</span>
+          </div>
+
+          <label class="field field--toggle">
+            <span>Enable AI Enhancements <i class="tip" data-tip="Auto-injects theme='random' on the next run.">?</i></span>
+            <input id="cfgEnhance" type="checkbox" />
+          </label>
+          <label class="field field--toggle">
+            <span>Auto-save Templates <i class="tip" data-tip="Outputs always persist to output/; this just controls Library visibility.">?</i></span>
+            <input id="cfgAutosave" type="checkbox" checked />
+          </label>
+
+          <label class="field">
+            <span>Default template type</span>
+            <select id="cfgTemplateType">
+              <option value="unity">Unity Project</option>
+              <option value="gta">GTA5 Mission (Showcase)</option>
+            </select>
+          </label>
+
+          <div class="row">
+            <button class="btn btn--primary" id="btnSaveLlm">Save settings</button>
+            <span class="save-note" id="saveLlmNote"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- =========== BACKENDS =========== -->
+      <section class="panel" data-section="backends">
+        <div class="card">
+          <div class="card-head">
+            <h2>Chat backend</h2>
+            <span class="light light--unknown" id="lightChat" title="Live status"></span>
+          </div>
+          <p class="help">Local LLM that writes the story and fills the schema.</p>
+
+          <label class="field">
+            <span>Backend <i class="tip" data-tip="LM Studio: built-in server on :1234. Ollama: `ollama serve`, API on :11434.">?</i></span>
+            <select id="cfgBackend">
+              <option value="lm_studio">LM Studio</option>
+              <option value="ollama">Ollama</option>
+            </select>
+          </label>
+
+          <div class="backend-block" data-backend="lm_studio">
+            <label class="field">
+              <span>LM Studio base URL</span>
+              <input id="cfgLmUrl" type="text" placeholder="http://localhost:1234/v1" />
+            </label>
+            <label class="field">
+              <span>Model</span>
+              <input id="cfgLmModel" type="text" placeholder="qwen3.5-9b" />
+            </label>
+          </div>
+
+          <div class="backend-block" data-backend="ollama" hidden>
+            <label class="field">
+              <span>Ollama base URL</span>
+              <input id="cfgOlUrl" type="text" placeholder="http://localhost:11434/v1" />
+            </label>
+            <label class="field">
+              <span>Model <i class="tip" data-tip="Pull it first: `ollama pull qwen2.5:7b`.">?</i></span>
+              <input id="cfgOlModel" type="text" placeholder="qwen2.5:7b" />
+            </label>
+          </div>
+
+          <div class="row">
+            <button class="btn" id="btnTestChat">Test Connection</button>
+            <span class="test-result" id="resultChat"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>RAG — AnythingLLM</h2>
+            <span class="light light--unknown" id="lightRag" title="Live status"></span>
+          </div>
+          <p class="help">Two workspaces: <code>llm_gta</code> for mission asset IDs,
+            <code>llm_unity</code> for Unity package IDs. Turn Basic Mode on to skip RAG.</p>
+
+          <label class="field field--toggle">
+            <span>Basic Mode (RAG off)</span>
+            <input id="cfgBasicMode" type="checkbox" />
+          </label>
+
+          <label class="field">
+            <span>AnythingLLM base URL</span>
+            <input id="cfgRagUrl" type="text" placeholder="http://localhost:3001" />
+          </label>
+          <div class="grid2">
+            <label class="field">
+              <span>GTA workspace slug</span>
+              <input id="cfgRagSlug" type="text" placeholder="llm_gta" />
+            </label>
+            <label class="field">
+              <span>Unity workspace slug</span>
+              <input id="cfgRagSlugUnity" type="text" placeholder="llm_unity" />
+            </label>
+          </div>
+          <label class="field">
+            <span>API key <i class="tip" data-tip="AnythingLLM → Settings → API Keys. Leave blank to keep the stored key.">?</i></span>
+            <input id="cfgRagKey" type="password" placeholder="leave blank to keep stored key" />
+          </label>
+
+          <div class="workspace-rows">
+            <div class="workspace-row gta-only" data-ws="gta">
+              <span class="light light--unknown" id="lightWsGta"></span>
+              <span class="ws-label">GTA workspace</span>
+              <button class="btn btn--ghost" data-setup="gta">Create</button>
+            </div>
+            <div class="workspace-row unity-only" data-ws="unity">
+              <span class="light light--unknown" id="lightWsUnity"></span>
+              <span class="ws-label">Unity workspace</span>
+              <button class="btn btn--ghost" data-setup="unity">Create</button>
+            </div>
+          </div>
+
+          <div class="row">
+            <button class="btn" id="btnTestRag">Test Connection</button>
+          </div>
+          <span class="test-result" id="resultRag"></span>
+        </div>
+
+        <div class="card card--actions">
+          <button class="btn btn--primary" id="btnSaveBackends">Save settings</button>
+          <span class="save-note" id="saveBackendsNote"></span>
+        </div>
+      </section>
+
+      <!-- =========== LIBRARY =========== -->
+      <section class="panel" data-section="library">
+        <div class="card">
+          <div class="segmented" role="tablist" aria-label="Library tab">
+            <button class="seg is-active" data-lib="unity">Unity Projects</button>
+            <button class="seg" data-lib="gta">GTA5 (Showcase)</button>
+          </div>
+          <div class="lib-list" id="libList"></div>
+        </div>
+      </section>
+
+      <!-- =========== TUTORIAL =========== -->
+      <section class="panel" data-section="tutorial">
+        <div class="card">
+          <h2 id="tutTitle">Getting Started</h2>
+          <p class="help" id="tutIntro"></p>
+          <ol class="tut-steps" id="tutSteps"></ol>
+          <h3>Tips</h3>
+          <ul class="tips" id="tutTips"></ul>
+          <label class="field field--toggle">
+            <span>Don't show this on startup</span>
+            <input id="tutHide" type="checkbox" />
+          </label>
+        </div>
+      </section>
+
+      <!-- =========== ERRORS =========== -->
+      <section class="panel" data-section="errors">
+        <div class="card">
+          <h2>Common Errors &amp; Fixes</h2>
+          <input class="search" id="errorSearch" type="search" placeholder="Search errors…" />
+          <div id="errorList" class="error-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="tooltip" id="tooltip" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,46 @@
+{
+  "docks": {
+    "x": -1009.0, "y": -2704.0, "z": 13.8,
+    "label": "Terminal / Port of LS"
+  },
+  "airport": {
+    "x": -1336.0, "y": -3044.0, "z": 13.9,
+    "label": "Los Santos International Airport"
+  },
+  "downtown": {
+    "x": 250.0, "y": -850.0, "z": 29.7,
+    "label": "Downtown Los Santos"
+  },
+  "vinewood": {
+    "x": 604.0, "y": 108.0, "z": 100.0,
+    "label": "Vinewood Hills"
+  },
+  "sandy_shores": {
+    "x": 1800.0, "y": 3800.0, "z": 32.0,
+    "label": "Sandy Shores"
+  },
+  "paleto_bay": {
+    "x": -105.0, "y": 6300.0, "z": 31.0,
+    "label": "Paleto Bay"
+  },
+  "alamo_sea": {
+    "x": 1200.0, "y": 2700.0, "z": 38.0,
+    "label": "Alamo Sea"
+  },
+  "military_base": {
+    "x": -2258.0, "y": 3012.0, "z": 32.0,
+    "label": "Fort Zancudo"
+  },
+  "prison": {
+    "x": 1695.0, "y": 2440.0, "z": 45.0,
+    "label": "Bolingbroke Penitentiary"
+  },
+  "port": {
+    "x": 830.0, "y": -2900.0, "z": 5.8,
+    "label": "La Mesa Port / LSIA"
+  },
+  "highway": {
+    "x": 1003.0, "y": -1700.0, "z": 52.0,
+    "label": "Olympic Freeway"
+  }
+}

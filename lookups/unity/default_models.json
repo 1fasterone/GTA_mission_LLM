@@ -1,0 +1,44 @@
+{
+  "_config": {
+    "comment": "kind -> default model + clips. Paths relative to unity_pipeline.model_source_dir (default Models/Defaults). Missing files degrade to primitives.",
+    "resources_root": "Models/Default"
+  },
+  "kinds": {
+    "player": {
+      "model": "player/Player.fbx",
+      "rig": "humanoid",
+      "scale": 1.0,
+      "clips": {
+        "Idle":   "player/Idle.fbx",
+        "Run":    "player/Run.fbx",
+        "Jump":   "player/Jump.fbx",
+        "Attack": "player/Attack.fbx",
+        "Death":  "player/Death.fbx",
+        "Crouch": "player/Crouch.fbx"
+      }
+    },
+    "enemy": {
+      "model": "enemy/Enemy.fbx",
+      "rig": "humanoid",
+      "scale": 1.0,
+      "clips": {}
+    },
+    "vehicle": {
+      "model": "vehicle/Car.fbx",
+      "rig": "none",
+      "scale": 1.0,
+      "clips": {}
+    },
+    "crowd": {
+      "model": "crowd/Spectator.fbx",
+      "rig": "none",
+      "scale": 1.0,
+      "clips": {}
+    },
+    "tree":     { "model": "props/Tree.fbx",     "rig": "none", "scale": 1.0, "clips": {} },
+    "rock":     { "model": "props/Rock.fbx",     "rig": "none", "scale": 1.0, "clips": {} },
+    "building": { "model": "props/Building.fbx", "rig": "none", "scale": 1.0, "clips": {} },
+    "barrier":  { "model": "props/Barrier.fbx",  "rig": "none", "scale": 1.0, "clips": {} },
+    "prop":     { "model": "props/Cone.fbx",     "rig": "none", "scale": 1.0, "clips": {} }
+  }
+}

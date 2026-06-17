@@ -1,0 +1,26 @@
+GTA5 VEHICLE MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== LAW ENFORCEMENT ===
+police car → police
+cop car → police
+patrol car → police
+lspd cruiser → police
+police cruiser → police2
+police suv → police2
+unmarked cruiser → police4
+unmarked cop car → police4
+undercover car → police4
+police interceptor → police3
+police bike → policeb
+motorcycle cop → policeb
+sheriff suv → sheriff
+sheriff car → sheriff2
+sheriff cruiser → sheriff2
+fbi suv → fbi
+fbi car → fbi2
+government suv → fbi
+noose van → riot
+swat van → riot
+military jeep → army
+army jeep → army

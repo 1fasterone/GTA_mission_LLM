@@ -1,0 +1,25 @@
+# {{ s.name }} — Unity Camera Rig
+
+**Variant:** `{{ variant }}`
+**Follows:** GameObject tagged `{{ s.follow_target_tag }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop `Scripts/{{ s.name }}.cs` into your project's `Assets/`.
+2. Add the component to your scene's main Camera.
+3. Make sure your follow target GameObject is tagged `{{ s.follow_target_tag }}`.
+{% if variant.startswith("cinemachine_") %}
+4. Install `com.unity.cinemachine` from Package Manager. Add a `CinemachineCamera` to
+   the scene and set its Follow/LookAt to the target tagged `{{ s.follow_target_tag }}`.
+{% endif %}
+
+## Tuning
+
+| Field          | Default | Notes |
+|----------------|---------|-------|
+| `offset`       | ({{ "%.2f"|format(s.offset_x) }}, {{ "%.2f"|format(s.offset_y) }}, {{ "%.2f"|format(s.offset_z) }}) | local-space follow offset |
+| `smoothTime`   | {{ "%.3f"|format(s.smooth_time) }} | higher = floatier follow |
+| `fovBase`      | {{ "%.1f"|format(s.fov_base) }} | resting field of view |
+| `fovSprint`    | {{ "%.1f"|format(s.fov_sprint) }} | widened FOV during sprint |

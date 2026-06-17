@@ -1,0 +1,237 @@
+GTA5 AUDIO REFERENCE — Mission Pipeline
+Used by AnythingLLM RAG to resolve audio names for mission scripts.
+All names are passed to: Function.Call(Hash.PLAY_MISSION_COMPLETE_AUDIO, "NAME")
+
+================================================================
+MISSION PASS STINGS — use for "mission_passed" audio type
+================================================================
+
+--- GENERIC (use when no character context) ---
+MISSION_PASSED_JINGLE        generic mission passed jingle, neutral
+FRANKLIN_BIG_01              big triumphant sting, heist / major job success
+FRANKLIN_BIG_02              alternate big sting, major mission complete
+MICHAEL_BIG_01               Michael's triumphant sting, big score, sophisticated heist
+MICHAEL_BIG_02               alternate Michael big sting
+TREVOR_BIG_01                Trevor's chaotic victory sting, violent mission complete
+TREVOR_BIG_02                alternate Trevor big sting
+
+--- SMALL / MINOR MISSIONS ---
+FRANKLIN_SMALL_01            small sting, minor errand, street race win, quick job
+FRANKLIN_SMALL_02            alternate small sting, delivery, simple objective
+MICHAEL_SMALL_01             Michael small sting, subtle win, white-collar job
+MICHAEL_SMALL_02             alternate Michael small sting
+TREVOR_SMALL_01              Trevor small sting, minor chaos, quick kill
+TREVOR_SMALL_02              alternate Trevor small sting
+
+--- HEIST SPECIFIC ---
+HEIST_AWARD                  heist completion award, big score, multi-stage heist finale
+STINGER_HEIST_PASS_1         heist passed sting 1, major heist success
+STINGER_HEIST_PASS_2         heist passed sting 2, alternate heist completion
+STINGER_HEIST_SETUP_PASS_1   heist setup complete, preparation phase done
+STINGER_SUCCESS_1            general success sting, heist or mission complete
+STINGER_MISSION_PASSED       general mission passed stinger
+
+--- RACES & SPORTS ---
+FRANKLIN_SMALL_01            street race win, circuit race victory, time trial complete
+STINGER_SUCCESS_1            race finished, lap record, checkpoint race done
+MISSION_PASSED_JINGLE        off-road race win, figure-8 race complete, airport race
+
+--- STEALTH / INFILTRATION ---
+MICHAEL_SMALL_01             stealth mission complete, silent extraction, no-alert success
+MICHAEL_BIG_01               full infiltration success, heist with no witnesses
+
+--- ASSASSINATION / KILL MISSIONS ---
+TREVOR_SMALL_01              target eliminated, assassination complete, kill confirmed
+TREVOR_BIG_01                major hit complete, crime lord eliminated
+FRANKLIN_BIG_01              assassination for Lester, stock market hit complete
+
+--- RESCUE / ESCORT ---
+FRANKLIN_BIG_01              hostage rescued, escort mission complete, ally survived
+MICHAEL_BIG_01               VIP extracted, undercover rescue complete
+
+--- DELIVERY / SMUGGLING ---
+FRANKLIN_SMALL_01            package delivered, vehicle delivered, contraband delivered
+FRANKLIN_SMALL_02            drug delivery complete, weapon drop delivered
+MICHAEL_SMALL_01             corporate espionage delivered, data extracted
+
+--- VEHICLE / PURSUIT ---
+FRANKLIN_BIG_01              vehicle pursuit ended, target vehicle stolen
+TREVOR_SMALL_01              vehicle hijacked, drive-by complete
+FRANKLIN_SMALL_01            stolen car delivered, car export complete
+
+--- POLICE EVASION ---
+TREVOR_SMALL_01              police escaped, wanted level cleared, lost the cops
+FRANKLIN_SMALL_01            evaded pursuit, stars lost, clean getaway
+
+================================================================
+MISSION FAIL STINGS — use for "mission_failed" audio type
+================================================================
+
+MISSION_FAILED_JINGLE        generic mission failed, neutral
+FRANKLIN_LOSE_1              Franklin's mission fail sting, busted or killed
+FRANKLIN_LOSE_2              alternate Franklin fail sting
+MICHAEL_LOSE_1               Michael's mission fail sting, killed or caught
+MICHAEL_LOSE_2               alternate Michael fail sting
+TREVOR_LOSE_1                Trevor's mission fail sting, chaos went wrong
+TREVOR_LOSE_2                alternate Trevor fail sting
+STINGER_FAIL_1               general failure sting, mission blown
+STINGER_HEIST_FAIL_1         heist failed sting, major job blown
+STINGER_HEIST_FAIL_2         alternate heist fail sting
+
+--- Context-specific fail suggestions ---
+player killed             → FRANKLIN_LOSE_1
+player busted             → FRANKLIN_LOSE_1
+time ran out              → MISSION_FAILED_JINGLE
+target escaped            → MICHAEL_LOSE_1
+heist blown               → STINGER_HEIST_FAIL_1
+race lost                 → MISSION_FAILED_JINGLE
+ally died                 → FRANKLIN_LOSE_1
+vehicle destroyed         → TREVOR_LOSE_1
+
+================================================================
+AMBIENT SOUNDS — use for "ambient" audio type
+================================================================
+Note: ambient names are passed to PLAY_MISSION_COMPLETE_AUDIO or
+used as context hints only. Preferred defaults below.
+
+DLC_ISLANDS_AMBIENCE_EXTERIOR   outdoor ambient, island or countryside atmosphere
+PROLOGUE_AMBIENCE               snowy/cold atmosphere, Prologue-style
+PORT_AMBIENCE                   port / docks ambient, shipping yard
+DOWNTOWN_AMBIENCE               city ambient, urban street noise
+AIRPORT_AMBIENCE                airport terminal ambience
+MILITARY_BASE_AMBIENCE          fort/military compound atmosphere
+DESERT_AMBIENCE                 sandy shores, desert, hot dry atmosphere
+NIGHT_CLUB_AMBIENCE             nightclub / party atmosphere
+RAIN_AMBIENT                    rainy night atmosphere
+STORM_AMBIENCE                  thunder and lightning, stormy mission
+PRISON_AMBIENCE                 penitentiary, cell block atmosphere
+
+================================================================
+STINGS — use for "sting" audio type (short punctuation cues)
+================================================================
+
+STING_SUBTLE_1               quiet, subtle sting — discovery, item found
+STING_SUBTLE_2               alternate subtle sting
+STING_AGGRESSIVE_1           action sting — combat start, ambush trigger
+STING_AGGRESSIVE_2           alternate aggressive sting
+STING_EMOTIONAL_1            emotional beat — story moment, character reveal
+STING_EMOTIONAL_2            alternate emotional sting
+STING_HEIST_1                heist-specific sting — plan briefing, crew assembled
+STING_CHASE_1                police chase sting — pursuit begins
+STING_TENSE_1                tension sting — target spotted, timer starts
+STING_TENSE_2                alternate tension sting — countdown, pressure moment
+STING_SUCCESS_1              positive sting — objective completed, checkpoint reached
+STINGER_MISSION_PASSED       short passing sting — step complete
+STINGER_HEIST_SETUP_PASS_1   setup sting — prep step done, moving to next phase
+
+================================================================
+QUICK LOOKUP BY MISSION TYPE
+================================================================
+
+heist completion (big)       → HEIST_AWARD
+heist completion (small)     → STINGER_HEIST_PASS_1
+heist setup done             → STINGER_HEIST_SETUP_PASS_1
+assassination                → TREVOR_SMALL_01  or  FRANKLIN_BIG_01
+street race win              → FRANKLIN_SMALL_01
+figure-8 race win            → FRANKLIN_SMALL_01
+off-road race win            → FRANKLIN_SMALL_01
+airport race win             → MISSION_PASSED_JINGLE
+time trial win               → FRANKLIN_SMALL_01
+drug delivery                → FRANKLIN_SMALL_01  or  FRANKLIN_SMALL_02
+arms deal complete           → TREVOR_SMALL_01
+vehicle theft                → FRANKLIN_SMALL_01
+car export                   → FRANKLIN_SMALL_02
+rescue mission               → FRANKLIN_BIG_01
+escort complete              → MICHAEL_BIG_01
+infiltration success         → MICHAEL_SMALL_01
+stealth takedown             → MICHAEL_SMALL_01
+major bank job               → MICHAEL_BIG_01
+corrupt cop busted           → FRANKLIN_BIG_02
+gang war won                 → TREVOR_BIG_01
+police escaped               → FRANKLIN_SMALL_01
+prison break                 → TREVOR_BIG_01
+hacking complete             → MICHAEL_SMALL_01
+sabotage complete            → TREVOR_SMALL_01
+kidnap/hostage rescue        → FRANKLIN_BIG_01
+cargo extracted              → FRANKLIN_SMALL_01
+docks infiltration           → MICHAEL_SMALL_01
+vinewood gala infiltration   → MICHAEL_BIG_01
+military base escape         → TREVOR_BIG_01
+sandy shores chaos           → TREVOR_BIG_01
+paleto bay heist             → FRANKLIN_BIG_01
+generic pass                 → MISSION_PASSED_JINGLE
+generic fail                 → MISSION_FAILED_JINGLE
+generic fail (player died)   → FRANKLIN_LOSE_1
+generic fail (busted)        → FRANKLIN_LOSE_1
+
+================================================================
+PLAY_SOUND_FRONTEND REFERENCE (supplemental)
+Format: SOUND_NAME | SOUNDSET_NAME
+Used for in-game UI/feedback sounds via PLAY_SOUND_FRONTEND native
+================================================================
+
+--- MISSION UI ---
+WAYPOINT_SET           | HUD_FRONTEND_DEFAULT_SOUNDSET   blip placed
+CHECKPOINT_NORMAL      | GTAO_FM_Events_Soundset          checkpoint passed
+RACE_PLACED_1ST        | GTAO_FM_Events_Soundset          race 1st place
+RACE_PLACED             | GTAO_FM_Events_Soundset          race finished
+TIMER_STOP             | HUD_MINI_GAME_SOUNDSET            timer complete
+
+--- HUD ---
+SELECT                 | HUD_FRONTEND_DEFAULT_SOUNDSET
+BACK                   | HUD_FRONTEND_DEFAULT_SOUNDSET
+ERROR                  | HUD_FRONTEND_DEFAULT_SOUNDSET
+NAV_UP_DOWN            | HUD_FRONTEND_DEFAULT_SOUNDSET
+
+--- NOTIFICATIONS ---
+RANK_UP                | HUD_AWARDS                        level up, achievement
+5_SEC_WARNING          | HUD_MINI_GAME_SOUNDSET            warning ping
+
+--- WANTED LEVEL ---
+WANTED_LEVEL_UP        | HUD_FRONTEND_DEFAULT_SOUNDSET
+WANTED_LEVEL_DOWN      | HUD_FRONTEND_DEFAULT_SOUNDSET
+POLICE_RADIO_CHATTER   | POLICE_SCANNER
+
+--- WEAPONS ---
+PISTOL_COCK            | HUD_AMMO_SHOP_SOUNDSET
+ZOOM_IN                | HUD_MINI_GAME_SOUNDSET
+ZOOM_OUT               | HUD_MINI_GAME_SOUNDSET
+
+--- VEHICLES ---
+CAR_LOCK               | HUD_MINI_GAME_SOUNDSET
+CAR_UNLOCK             | HUD_MINI_GAME_SOUNDSET
+ENGINE_FAIL            | MP_CAR_BOMB_SOUNDS
+BOMB_ACTIVATED         | MP_CAR_BOMB_SOUNDS
+BOMB_BEEP              | MP_CAR_BOMB_SOUNDS
+
+--- EXPLOSIONS / ACTION ---
+EXPLOSION              | MP_CAR_BOMB_SOUNDS
+GRENADE_PIN            | WEAPON_GRENADE_FRAG_SOUNDS
+
+--- AMBIENT ---
+PIN_BUTTON             | ATM_SOUNDS
+DOOR_OPEN              | DOOR_CHIME_SOUNDSET
+DOOR_CLOSE             | DOOR_CHIME_SOUNDSET
+
+================================================================
+NOTES FOR RAG RESOLUTION
+================================================================
+
+When asked "what audio name for X":
+1. Return ONLY the audio name string — no soundset, no explanation
+2. For mission_passed events → use a PLAY_MISSION_COMPLETE_AUDIO name from above
+3. For mission_failed events → use FRANKLIN_LOSE_1 or MISSION_FAILED_JINGLE
+4. For sting events → use a STING_* name
+5. For ambient events → use an *_AMBIENCE name or DLC_ISLANDS_AMBIENCE_EXTERIOR
+
+Example queries and correct answers:
+Q: "mission_passed event: heist completion"          → HEIST_AWARD
+Q: "mission_passed event: street race win"           → FRANKLIN_SMALL_01
+Q: "mission_passed event: assassination"             → TREVOR_SMALL_01
+Q: "mission_passed event: docks infiltration"        → MICHAEL_SMALL_01
+Q: "mission_failed event: player killed"             → FRANKLIN_LOSE_1
+Q: "mission_failed event: heist blown"               → STINGER_HEIST_FAIL_1
+Q: "sting event: combat start"                       → STING_AGGRESSIVE_1
+Q: "sting event: objective done"                     → STING_SUCCESS_1
+Q: "ambient event: rainy night"                      → RAIN_AMBIENT
+Q: "ambient event: airport"                          → AIRPORT_AMBIENCE

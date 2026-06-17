@@ -1,0 +1,45 @@
+name: zombie_apocalypse
+display: "Zombie Apocalypse Survival"
+pipelines: [gta, unity]
+
+concept_bias: |
+  Survival horror at the end of the world. Civilization has collapsed, the
+  streets are abandoned, and the infected outnumber the living thousands to
+  one. The player is a survivor with diminishing supplies and an unreliable
+  radio. Tension comes from scarcity, sound discipline, and the moral cost
+  of who you save and who you leave behind.
+
+detect_keywords: [zombie, zombies, infected, undead, outbreak, apocalypse, survivor, walkers]
+
+vocabulary:
+  peds:     ["infected runner", "shambling walker", "scavenger survivor", "raider in gas mask", "military deserter", "panicked civilian"]
+  vehicles: ["rusted pickup", "armoured van", "abandoned ambulance", "boarded-up bus"]
+  objects:  ["medical supplies", "fuel can", "ammo crate", "radio beacon", "canned food cache"]
+  locations_gta: [paleto_bay, sandy_shores, prison, alamo_sea, downtown]
+
+step_hints: [go_to, pickup, kill_all, timer, escape, deliver]
+
+unity:
+  palette:
+    name:      "Outbreak"
+    primary:   "#7A8C5C"
+    secondary: "#1B1410"
+    accent:    "#B3261E"
+    background: "#0F0C0A"
+    trim:      "#C9C0A8"
+  systems_hint: ["scarce-resource inventory", "noise/aggro AI", "day/night with night curfew", "infection meter"]
+  visual_style: stylized
+
+twist_seeds:
+  - "The infected only move when no one is looking at them."
+  - "The player is themselves slowly turning; their HUD degrades over time."
+  - "Sound, not sight, is what attracts them — every gunshot is a debt."
+  - "One named NPC ally is secretly infected; the player must work out which."
+  - "The cure exists but requires harvesting from a living infected."
+  - "Rain is the only thing that keeps them dormant — the mission ends when the sky clears."
+
+avoid:
+  - "generic mall siege"
+  - "lone hero with a katana"
+  - "evil military doctor with the cure"
+  - "patient zero in a CDC lab"

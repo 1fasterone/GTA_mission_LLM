@@ -1,0 +1,45 @@
+{# Shared injection macros for LLM-authored prompt-specific C# fragments.
+   Imported by each generator's main MonoBehaviour template:
+     {% import "_inject.j2" as inject %}
+   The format here matches the controller's hand-tuned inline layout so output
+   is consistent across every generator. #}
+
+{% macro usings(s) -%}
+{% for u in s.extra_usings %}
+using {{ u }};
+{%- endfor %}
+{%- endmacro %}
+
+{% macro fields(s) -%}
+{% for f in s.extra_fields %}
+{{ "    " }}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
+{%- endfor %}
+{%- endmacro %}
+
+{% macro lifecycle(body) -%}
+{% if body %}
+        // ── prompt-specific ──
+{{ body | indent(8, True) }}
+{%- endif %}
+{%- endmacro %}
+
+{% macro fixed_update(s) -%}
+{% if s.fixed_update_extra %}
+
+    private void FixedUpdate()
+    {
+{{ s.fixed_update_extra | indent(8, True) }}
+    }
+{%- endif %}
+{%- endmacro %}
+
+{% macro methods(s) -%}
+{% for m in s.extra_methods %}
+
+    // ── prompt-specific ──
+    {{ m.signature }}
+    {
+{{ m.body | indent(8, True) }}
+    }
+{%- endfor %}
+{%- endmacro %}

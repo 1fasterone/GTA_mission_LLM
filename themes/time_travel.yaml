@@ -1,0 +1,44 @@
+name: time_travel
+display: "Time Travel Protocol"
+pipelines: [gta, unity]
+
+concept_bias: |
+  A small bureaucracy of time agents whose job is the unspectacular maintenance
+  of the timeline. The player carries a brass pocket-piece that lets them
+  rewind eight seconds. Every mission is a contradiction the agents have to
+  resolve before it spreads into the present.
+
+detect_keywords: [time travel, rewind, paradox, chronon, timeline, temporal, past, future, loop]
+
+vocabulary:
+  peds:     ["time agent in period dress", "anachronistic out-of-place person", "future fugitive", "naive historical bystander", "rival chronopolice"]
+  vehicles: ["1930s sedan", "modern unmarked SUV", "horse-drawn carriage", "experimental jet"]
+  objects:  ["pocket chronometer", "out-of-place artifact", "sealed evidence canister", "temporal anchor stake"]
+  locations_gta: [vinewood, downtown, paleto_bay, military_base, prison]
+
+step_hints: [go_to, pickup, deliver, wait, kill_all, escape]
+
+unity:
+  palette:
+    name:      "Sepia Pulse"
+    primary:   "#C8A26A"
+    secondary: "#2A2218"
+    accent:    "#1E90C9"
+    background: "#3D3024"
+    trim:      "#E8D7B5"
+  systems_hint: ["8-second rewind buffer", "paradox detector UI", "deterministic NPC routines", "snapshot/restore world state"]
+  visual_style: stylized
+
+twist_seeds:
+  - "Rewinding the world does not rewind the player's bullets — they keep flying after you reset."
+  - "Every rewind ages the player by one real second of their own life."
+  - "An object brought from the past slowly persuades NPCs it was always there."
+  - "The player can see exactly one future event with perfect clarity. They cannot prevent it."
+  - "There is a 9-second delay before consequences manifest, so causality looks broken."
+  - "One NPC is a future version of the player. They will not say so."
+
+avoid:
+  - "saving JFK / Hitler"
+  - "evil twin from the future"
+  - "the multiverse already split"
+  - "Back to the Future hoverboard"

@@ -1,0 +1,39 @@
+# {{ s.name }} — Unity Health
+
+**Variant:** `{{ variant }}`
+**On death:** `{{ s.death_action }}`
+**Max health:** {{ "%.0f"|format(s.max_health) }}
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to anything that can take damage (player, enemy, destructible).
+3. Call `TakeDamage(amount)` / `Heal(amount)`; read `CurrentHealth` / `MaxHealth`.
+4. Wire the events — e.g. to the HUD `health_bar` micro:
+
+```csharp
+var hp  = GetComponent<{{ s.name }}>();
+hp.OnHealthChanged += hud.SetHealth;   // (current, max)
+hp.OnDeath         += () => Debug.Log("dead");
+```
+
+(The composition layer wires `OnHealthChanged → HUD.SetHealth` automatically when both are present.)
+
+## Behaviour
+
+{% if variant == "regenerating" %}
+Regenerates {{ "%.0f"|format(s.regen_rate) }} hp/sec after {{ "%.0f"|format(s.regen_delay) }}s without damage.
+{% elif variant == "shielded" %}
+A {{ "%.0f"|format(s.shield) }}-point shield absorbs damage before health.
+{% elif variant == "armor" %}
+Armor reduces incoming damage by {{ "%.0f"|format(s.armor * 100) }}%.
+{% elif variant == "lives" %}
+{{ s.lives }} lives — death restores full health until lives run out, then `OnDeath` fires.
+{% else %}
+Straight health pool.
+{% endif %}
+{% if s.invuln_time > 0 %}
+Brief {{ "%.2f"|format(s.invuln_time) }}s invulnerability after each hit.
+{% endif %}

@@ -1,0 +1,362 @@
+{
+  "synonyms": {
+    "universal render pipeline":            "com.unity.render-pipelines.universal",
+    "urp":                                  "com.unity.render-pipelines.universal",
+    "lightweight render pipeline":          "com.unity.render-pipelines.universal",
+    "lwrp":                                 "com.unity.render-pipelines.universal",
+    "high definition render pipeline":      "com.unity.render-pipelines.high-definition",
+    "hdrp":                                 "com.unity.render-pipelines.high-definition",
+    "high definition":                      "com.unity.render-pipelines.high-definition",
+    "input system":                         "com.unity.inputsystem",
+    "new input system":                     "com.unity.inputsystem",
+    "unity input":                          "com.unity.inputsystem",
+    "cinemachine":                          "com.unity.cinemachine",
+    "camera package":                       "com.unity.cinemachine",
+    "virtual camera":                       "com.unity.cinemachine",
+    "tilemap":                              "com.unity.2d.tilemap",
+    "tilemaps":                             "com.unity.2d.tilemap",
+    "2d tilemap":                           "com.unity.2d.tilemap",
+    "2d extras":                            "com.unity.2d.tilemap.extras",
+    "navmesh":                              "com.unity.ai.navigation",
+    "navigation":                           "com.unity.ai.navigation",
+    "ai navigation":                        "com.unity.ai.navigation",
+    "pathfinding":                          "com.unity.ai.navigation",
+    "addressables":                         "com.unity.addressables",
+    "addressable assets":                   "com.unity.addressables",
+    "asset management":                     "com.unity.addressables",
+    "netcode":                              "com.unity.netcode.gameobjects",
+    "netcode for gameobjects":              "com.unity.netcode.gameobjects",
+    "multiplayer":                          "com.unity.netcode.gameobjects",
+    "networking":                           "com.unity.netcode.gameobjects",
+    "unity multiplayer":                    "com.unity.netcode.gameobjects",
+    "localization":                         "com.unity.localization",
+    "localize":                             "com.unity.localization",
+    "timeline":                             "com.unity.timeline",
+    "cutscenes":                            "com.unity.timeline",
+    "animation rigging":                    "com.unity.animation.rigging",
+    "ik":                                   "com.unity.animation.rigging",
+    "inverse kinematics":                   "com.unity.animation.rigging",
+    "textmeshpro":                          "com.unity.textmeshpro",
+    "tmp":                                  "com.unity.textmeshpro",
+    "text mesh pro":                        "com.unity.textmeshpro",
+    "post processing":                      "com.unity.postprocessing",
+    "post-processing":                      "com.unity.postprocessing",
+    "visual effects":                       "com.unity.visualeffectgraph",
+    "vfx graph":                            "com.unity.visualeffectgraph",
+    "visual effect graph":                  "com.unity.visualeffectgraph",
+    "shader graph":                         "com.unity.shadergraph",
+    "shaders":                              "com.unity.shadergraph",
+    "2d sprite":                            "com.unity.2d.sprite",
+    "sprite":                               "com.unity.2d.sprite",
+    "2d animation":                         "com.unity.2d.animation",
+    "sprite animation":                     "com.unity.2d.animation",
+    "2d physics":                           "com.unity.2d.physics",
+    "physics 2d":                           "com.unity.2d.physics",
+    "ui toolkit":                           "com.unity.ui",
+    "ui builder":                           "com.unity.ui",
+    "unity ui":                             "com.unity.ugui",
+    "ugui":                                 "com.unity.ugui",
+    "canvas ui":                            "com.unity.ugui",
+    "probuilder":                           "com.unity.probuilder",
+    "level design":                         "com.unity.probuilder",
+    "terrain tools":                        "com.unity.terrain-tools",
+    "terrain":                              "com.unity.terrain-tools",
+    "xr interaction toolkit":              "com.unity.xr.interaction.toolkit",
+    "vr":                                   "com.unity.xr.interaction.toolkit",
+    "xr":                                   "com.unity.xr.interaction.toolkit",
+    "oculus":                               "com.unity.xr.oculus",
+    "openxr":                               "com.unity.xr.openxr",
+    "dots physics":                         "com.unity.physics",
+    "entities physics":                     "com.unity.physics",
+    "burst":                                "com.unity.burst",
+    "burst compiler":                       "com.unity.burst",
+    "jobs":                                 "com.unity.jobs",
+    "job system":                           "com.unity.jobs",
+    "mathematics":                          "com.unity.mathematics",
+    "math":                                 "com.unity.mathematics",
+    "collections":                          "com.unity.collections",
+    "unity collections":                    "com.unity.collections",
+    "entities":                             "com.unity.entities",
+    "dots":                                 "com.unity.entities",
+    "ecs":                                  "com.unity.entities",
+    "test framework":                       "com.unity.test-framework",
+    "testing":                              "com.unity.test-framework",
+    "code coverage":                        "com.unity.testtools.codecoverage",
+    "profile analyzer":                     "com.unity.performance.profile-analyzer",
+    "memory profiler":                      "com.unity.memoryprofiler",
+    "recorder":                             "com.unity.recorder",
+    "unity recorder":                       "com.unity.recorder",
+    "in app purchasing":                    "com.unity.purchasing",
+    "iap":                                  "com.unity.purchasing",
+    "ads":                                  "com.unity.ads",
+    "analytics":                            "com.unity.analytics"
+  },
+
+  "versions": {
+    "com.unity.render-pipelines.universal": {
+      "6000.4": "17.0.3",
+      "6000.1": "17.0.3",
+      "6000.0": "17.0.3",
+      "2022.3": "14.0.11",
+      "2021.3": "12.1.15"
+    },
+    "com.unity.render-pipelines.high-definition": {
+      "6000.4": "17.0.3",
+      "6000.1": "17.0.3",
+      "6000.0": "17.0.3",
+      "2022.3": "14.0.11",
+      "2021.3": "12.1.15"
+    },
+    "com.unity.inputsystem": {
+      "6000.4": "1.14.0",
+      "6000.1": "1.11.2",
+      "6000.0": "1.8.2",
+      "2022.3": "1.8.0",
+      "2021.3": "1.7.0"
+    },
+    "com.unity.cinemachine": {
+      "6000.4": "3.1.4",
+      "6000.1": "3.1.3",
+      "6000.0": "3.1.2",
+      "2022.3": "2.9.7",
+      "2021.3": "2.9.5"
+    },
+    "com.unity.2d.tilemap": {
+      "6000.4": "1.0.0",
+      "6000.1": "1.0.0",
+      "6000.0": "1.0.0",
+      "2022.3": "1.0.0",
+      "2021.3": "1.0.0"
+    },
+    "com.unity.2d.tilemap.extras": {
+      "6000.4": "4.1.0",
+      "6000.1": "4.1.0",
+      "6000.0": "4.1.0",
+      "2022.3": "3.1.2",
+      "2021.3": "2.2.4"
+    },
+    "com.unity.ai.navigation": {
+      "6000.4": "2.0.8",
+      "6000.1": "2.0.6",
+      "6000.0": "2.0.4",
+      "2022.3": "1.1.5",
+      "2021.3": "1.1.5"
+    },
+    "com.unity.addressables": {
+      "6000.4": "2.4.4",
+      "6000.1": "2.4.0",
+      "6000.0": "2.3.1",
+      "2022.3": "1.21.21",
+      "2021.3": "1.21.21"
+    },
+    "com.unity.netcode.gameobjects": {
+      "6000.4": "2.3.2",
+      "6000.1": "2.2.0",
+      "6000.0": "2.1.1",
+      "2022.3": "1.9.1",
+      "2021.3": "1.7.1"
+    },
+    "com.unity.localization": {
+      "6000.4": "1.5.4",
+      "6000.1": "1.5.3",
+      "6000.0": "1.5.2",
+      "2022.3": "1.5.1",
+      "2021.3": "1.4.5"
+    },
+    "com.unity.timeline": {
+      "6000.4": "1.8.7",
+      "6000.1": "1.8.7",
+      "6000.0": "1.8.7",
+      "2022.3": "1.7.6",
+      "2021.3": "1.6.5"
+    },
+    "com.unity.animation.rigging": {
+      "6000.4": "1.3.1",
+      "6000.1": "1.3.1",
+      "6000.0": "1.3.0",
+      "2022.3": "1.3.0",
+      "2021.3": "1.2.1"
+    },
+    "com.unity.textmeshpro": {
+      "6000.4": "3.0.9",
+      "6000.1": "3.0.9",
+      "6000.0": "3.0.9",
+      "2022.3": "3.0.9",
+      "2021.3": "3.0.7"
+    },
+    "com.unity.postprocessing": {
+      "6000.4": "3.4.0",
+      "6000.1": "3.4.0",
+      "6000.0": "3.4.0",
+      "2022.3": "3.4.0",
+      "2021.3": "3.3.0"
+    },
+    "com.unity.visualeffectgraph": {
+      "6000.4": "17.0.3",
+      "6000.1": "17.0.3",
+      "6000.0": "17.0.3",
+      "2022.3": "14.0.11",
+      "2021.3": "12.1.15"
+    },
+    "com.unity.shadergraph": {
+      "6000.4": "17.0.3",
+      "6000.1": "17.0.3",
+      "6000.0": "17.0.3",
+      "2022.3": "14.0.11",
+      "2021.3": "12.1.15"
+    },
+    "com.unity.2d.sprite": {
+      "6000.4": "1.0.0",
+      "6000.1": "1.0.0",
+      "6000.0": "1.0.0",
+      "2022.3": "1.0.0",
+      "2021.3": "1.0.0"
+    },
+    "com.unity.2d.animation": {
+      "6000.4": "10.1.5",
+      "6000.1": "10.1.4",
+      "6000.0": "10.1.3",
+      "2022.3": "9.1.3",
+      "2021.3": "7.0.12"
+    },
+    "com.unity.2d.physics": {
+      "6000.4": "1.0.0",
+      "6000.1": "1.0.0",
+      "6000.0": "1.0.0",
+      "2022.3": "1.0.0",
+      "2021.3": "1.0.0"
+    },
+    "com.unity.ui": {
+      "6000.4": "2.0.0",
+      "6000.1": "2.0.0",
+      "6000.0": "2.0.0",
+      "2022.3": "1.0.0",
+      "2021.3": "1.0.0"
+    },
+    "com.unity.ugui": {
+      "6000.4": "2.0.0",
+      "6000.1": "2.0.0",
+      "6000.0": "2.0.0",
+      "2022.3": "1.0.0",
+      "2021.3": "1.0.0"
+    },
+    "com.unity.probuilder": {
+      "6000.4": "6.0.5",
+      "6000.1": "6.0.4",
+      "6000.0": "6.0.3",
+      "2022.3": "5.2.2",
+      "2021.3": "5.1.1"
+    },
+    "com.unity.terrain-tools": {
+      "6000.4": "5.1.2",
+      "6000.1": "5.1.2",
+      "6000.0": "5.1.2",
+      "2022.3": "5.1.1",
+      "2021.3": "4.0.3"
+    },
+    "com.unity.xr.interaction.toolkit": {
+      "6000.4": "3.1.0",
+      "6000.1": "3.0.7",
+      "6000.0": "3.0.5",
+      "2022.3": "3.0.5",
+      "2021.3": "2.6.3"
+    },
+    "com.unity.xr.oculus": {
+      "6000.4": "4.3.0",
+      "6000.1": "4.3.0",
+      "6000.0": "4.3.0",
+      "2022.3": "4.2.0",
+      "2021.3": "3.3.0"
+    },
+    "com.unity.xr.openxr": {
+      "6000.4": "1.13.2",
+      "6000.1": "1.12.0",
+      "6000.0": "1.11.0",
+      "2022.3": "1.10.0",
+      "2021.3": "1.9.1"
+    },
+    "com.unity.burst": {
+      "6000.4": "1.8.21",
+      "6000.1": "1.8.19",
+      "6000.0": "1.8.16",
+      "2022.3": "1.8.13",
+      "2021.3": "1.8.12"
+    },
+    "com.unity.mathematics": {
+      "6000.4": "1.3.2",
+      "6000.1": "1.3.2",
+      "6000.0": "1.3.2",
+      "2022.3": "1.3.2",
+      "2021.3": "1.3.1"
+    },
+    "com.unity.collections": {
+      "6000.4": "2.5.1",
+      "6000.1": "2.5.0",
+      "6000.0": "2.4.4",
+      "2022.3": "2.4.4",
+      "2021.3": "2.2.1"
+    },
+    "com.unity.entities": {
+      "6000.4": "1.3.10",
+      "6000.1": "1.3.8",
+      "6000.0": "1.3.5",
+      "2022.3": "1.3.5",
+      "2021.3": "1.0.16"
+    },
+    "com.unity.test-framework": {
+      "6000.4": "1.4.6",
+      "6000.1": "1.4.6",
+      "6000.0": "1.4.5",
+      "2022.3": "1.3.9",
+      "2021.3": "1.3.9"
+    },
+    "com.unity.recorder": {
+      "6000.4": "5.1.2",
+      "6000.1": "5.1.1",
+      "6000.0": "5.1.0",
+      "2022.3": "4.0.3",
+      "2021.3": "3.0.3"
+    },
+    "com.unity.purchasing": {
+      "6000.4": "4.12.2",
+      "6000.1": "4.12.2",
+      "6000.0": "4.12.2",
+      "2022.3": "4.12.0",
+      "2021.3": "4.10.0"
+    }
+  },
+
+  "feature_packages": {
+    "physics":           [],
+    "ui_toolkit":        ["com.unity.ui", "com.unity.textmeshpro"],
+    "input_system":      ["com.unity.inputsystem"],
+    "cinemachine":       ["com.unity.cinemachine"],
+    "tilemaps":          ["com.unity.2d.tilemap", "com.unity.2d.tilemap.extras"],
+    "navmesh":           ["com.unity.ai.navigation"],
+    "audio":             [],
+    "networking":        ["com.unity.netcode.gameobjects"],
+    "addressables":      ["com.unity.addressables"],
+    "localization":      ["com.unity.localization"],
+    "timeline":          ["com.unity.timeline"],
+    "animation_rigging": ["com.unity.animation.rigging"]
+  },
+
+  "game_type_packages": {
+    "2D": ["com.unity.2d.sprite", "com.unity.2d.animation", "com.unity.2d.tilemap", "com.unity.textmeshpro"],
+    "2.5D": ["com.unity.2d.sprite", "com.unity.textmeshpro"],
+    "3D": ["com.unity.textmeshpro"],
+    "VR": ["com.unity.xr.interaction.toolkit", "com.unity.xr.openxr", "com.unity.textmeshpro"],
+    "top_down": ["com.unity.textmeshpro"],
+    "isometric": ["com.unity.textmeshpro"]
+  },
+
+  "pipeline_packages": {
+    "URP":     ["com.unity.render-pipelines.universal", "com.unity.shadergraph"],
+    "HDRP":    ["com.unity.render-pipelines.high-definition", "com.unity.shadergraph", "com.unity.visualeffectgraph"],
+    "builtin": []
+  },
+
+  "always_include": [
+    "com.unity.textmeshpro"
+  ]
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<engine:UXML xmlns:engine="UnityEngine.UIElements" xmlns:editor="UnityEditor.UIElements">
+    <engine:VisualElement name="Root" class="root anchor-{{ s.anchor }}">
+{% if variant == "health_bar" %}
+        <engine:ProgressBar name="HealthBar" value="100" low-value="0" high-value="100" title="HP" />
+{% elif variant == "ammo_counter" %}
+        <engine:Label name="Ammo" text="0 / 0" class="hud-label" />
+{% elif variant == "score_panel" %}
+        <engine:Label name="Score" text="0" class="hud-label hud-score" />
+{% elif variant == "interaction_prompt" %}
+        <engine:Label name="Prompt" text="" class="hud-prompt" />
+{% elif variant == "dialogue_box" %}
+        <engine:Label name="Body" text="" class="hud-dialogue" />
+{% elif variant == "pause_menu" %}
+        <engine:Label name="Title" text="Paused" class="hud-title" />
+{% elif variant == "minimap" %}
+        <engine:VisualElement name="Map" class="hud-minimap" />
+{% elif variant == "crosshair" %}
+        <engine:VisualElement name="Crosshair" class="hud-crosshair" />
+{% else %}
+        <engine:Label text="HUD" />
+{% endif %}
+    </engine:VisualElement>
+</engine:UXML>

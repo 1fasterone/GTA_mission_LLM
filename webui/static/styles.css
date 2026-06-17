@@ -1,0 +1,358 @@
+:root {
+  /* Dark navy + bright-blue palette matching the screenshot */
+  --bg:          #0F1724;
+  --surface:     #1A2433;
+  --panel:       #131C2A;
+  --panel-soft:  #1E2A3D;
+  --accent:      #2E8AFF;
+  --accent-2:    #4A9DFF;
+  --accent-soft: rgba(46,138,255,.14);
+  --text:        #E5ECF4;
+  --muted:       #8FA0B5;
+  --border:      rgba(255,255,255,.06);
+  --border-2:    rgba(255,255,255,.12);
+
+  --green:  #34D399;
+  --amber:  #F59E0B;
+  --red:    #F87171;
+  --grey:   #4A5868;
+
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.25);
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  /* subtle grid-on-navy backdrop, like the mock */
+  background-image:
+    linear-gradient(rgba(46,138,255,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(46,138,255,.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* ── Top bar ───────────────────────────────────────────── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-text { display: flex; flex-direction: column; line-height: 1.15; }
+.brand h1 { font-size: 1.05rem; margin: 0; font-weight: 700; }
+.brand-tagline { font-size: 0.72rem; color: var(--muted); font-weight: 400; }
+.brand .sep { color: var(--muted); margin: 0 6px; font-weight: 400; }
+.logo-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft);
+}
+.status-cluster { display: flex; gap: 10px; }
+.status-pill {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border);
+  font-size: .82rem; color: var(--muted);
+}
+
+/* ── Status lights ─────────────────────────────────────── */
+.light {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block; flex: none;
+  background: var(--grey);
+  transition: background .2s, box-shadow .2s;
+}
+.light--ok    { background: var(--green); box-shadow: 0 0 0 3px rgba(52,211,153,.18); }
+.light--warn  { background: var(--amber); box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+.light--err   { background: var(--red);   box-shadow: 0 0 0 3px rgba(248,113,113,.18); }
+.light--basic { background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.light--unknown { background: var(--grey); }
+
+/* ── Shell layout: sidebar + workspace ─────────────────── */
+.shell { display: grid; grid-template-columns: 220px 1fr; min-height: calc(100vh - 53px); }
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  padding: 14px 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.nav {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  border: none; background: none; cursor: pointer;
+  color: var(--muted); text-align: left;
+  border-radius: 8px;
+  font: inherit; font-size: .9rem;
+}
+.nav:hover { background: var(--panel); color: var(--text); }
+.nav.is-active {
+  background: var(--accent); color: #fff; font-weight: 600;
+  box-shadow: 0 1px 3px rgba(46,138,255,.4);
+}
+.nav .ico { width: 18px; text-align: center; }
+
+main { padding: 24px; max-width: 1100px; }
+.panel { display: none; flex-direction: column; gap: 18px; }
+.panel.is-active { display: flex; }
+
+/* ── Cards ─────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 20px 22px;
+}
+.card h2 { margin: 0 0 4px; font-size: 1.02rem; font-weight: 600; }
+.card h3 { font-size: .92rem; margin: 18px 0 6px; color: var(--muted); }
+.card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+.card-head h2 { margin: 0; }
+.card--actions { display: flex; align-items: center; gap: 14px; }
+.help { color: var(--muted); font-size: .85rem; margin: 4px 0 14px; }
+.help code { background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Fields ────────────────────────────────────────────── */
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.field > span { font-size: .8rem; font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.field input[type=text], .field input[type=password], .field input[type=number],
+.field select, .field textarea {
+  font: inherit; padding: 9px 11px;
+  border: 1px solid var(--border-2); border-radius: 7px;
+  background: var(--panel); color: var(--text);
+}
+.field input:focus, .field select:focus, .field textarea:focus {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.field--toggle { flex-direction: row; align-items: center; justify-content: space-between; }
+.field--toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+
+/* ── Segmented control (GTA/Unity toggle) ─────────────── */
+.segmented {
+  display: inline-flex; background: var(--panel); border: 1px solid var(--border-2);
+  border-radius: 8px; padding: 3px; margin-bottom: 16px;
+}
+.seg {
+  border: none; background: none; cursor: pointer; font: inherit;
+  padding: 7px 16px; border-radius: 6px;
+  color: var(--muted); font-size: .9rem;
+}
+.seg:hover { color: var(--text); }
+.seg.is-active { background: var(--accent); color: #fff; font-weight: 600; }
+
+/* ── Buttons ───────────────────────────────────────────── */
+.btn {
+  font: inherit; cursor: pointer;
+  padding: 9px 16px; border-radius: 8px;
+  border: 1px solid var(--border-2);
+  background: var(--panel); color: var(--text);
+}
+.btn:hover { border-color: var(--accent); color: var(--accent-2); }
+.btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn--primary:hover { background: var(--accent-2); color: #fff; }
+.btn--ghost { background: var(--accent-soft); border-color: transparent; color: var(--accent-2); }
+.btn--tiny { padding: 4px 10px; font-size: .8rem; }
+.btn:disabled { opacity: .55; cursor: default; }
+.row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+
+/* ── Sliders (LLM Settings) ─────────────────────────────── */
+.slider-row {
+  display: grid; grid-template-columns: 130px 1fr 60px;
+  align-items: center; gap: 14px; margin-bottom: 14px;
+}
+.slider-row label { font-size: .85rem; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.slider-row input[type=range] { accent-color: var(--accent); }
+.slider-val {
+  font-size: .8rem; color: var(--text);
+  background: var(--panel); padding: 4px 8px; border-radius: 6px;
+  text-align: center; border: 1px solid var(--border);
+}
+
+/* ── Sub-row (Unity Type sub-toggle) ──────────────────── */
+.sub-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 8px 12px; margin: -6px 0 14px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.sub-row .sub-label {
+  font-size: .8rem; font-weight: 600; color: var(--muted);
+}
+.segmented--sub { margin: 0; padding: 2px; }
+.segmented--sub .seg { padding: 5px 12px; font-size: .85rem; }
+
+/* ── Flag table (Custom Args reference) ───────────────── */
+.flag-table {
+  width: 100%; border-collapse: collapse;
+  margin: 8px 0 14px; font-size: .82rem;
+}
+.flag-table th, .flag-table td {
+  text-align: left; padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.flag-table th { color: var(--muted); font-weight: 600; }
+.flag-table code {
+  background: var(--bg); padding: 1px 6px;
+  border-radius: 4px; color: var(--accent-2);
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+/* ── Inline status next to Generate ───────────────────── */
+.generate-row { gap: 16px; }
+.inline-status {
+  display: inline-flex; gap: 12px; padding: 6px 12px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 999px; font-size: .8rem; color: var(--muted);
+}
+.inline-light { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ── Pipeline-scoped visibility ────────────────────────── */
+/* When the segmented control sets body[data-pipeline=gta|unity], elements
+   marked .gta-only or .unity-only show/hide so the active pipeline's
+   controls aren't visually crowded by the other's. */
+body[data-pipeline="gta"]   .unity-only { display: none !important; }
+body[data-pipeline="unity"] .gta-only   { display: none !important; }
+
+/* ── Concept preview (Library rows) ───────────────────── */
+.lib-concept {
+  margin-top: 8px; font-size: .82rem; color: var(--muted);
+  line-height: 1.5;
+}
+.lib-concept .more {
+  cursor: pointer; color: var(--accent-2);
+  font-size: .78rem; margin-left: 4px;
+}
+.lib-concept .more:hover { text-decoration: underline; }
+
+/* ── Advanced collapsible ──────────────────────────────── */
+.advanced { margin-top: 6px; }
+.advanced summary {
+  cursor: pointer; padding: 8px 0; color: var(--accent-2); font-size: .88rem;
+  user-select: none;
+}
+.advanced[open] summary { margin-bottom: 6px; }
+
+/* ── Workspace rows (per-WS create) ────────────────────── */
+.workspace-rows { margin: 10px 0 14px; display: flex; flex-direction: column; gap: 8px; }
+.workspace-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.workspace-row .ws-label { flex: 1; font-size: .88rem; }
+
+/* ── Test/save results ─────────────────────────────────── */
+.test-result, .save-note { font-size: .84rem; }
+.test-result.ok   { color: var(--green); }
+.test-result.err  { color: var(--red); }
+.test-result.busy { color: var(--muted); }
+.fix-box {
+  margin-top: 10px; padding: 12px 14px;
+  background: rgba(245,158,11,.08); border: 1px solid rgba(245,158,11,.3);
+  border-radius: 8px; font-size: .84rem; color: var(--text);
+}
+.fix-box h4 { margin: 0 0 4px; font-size: .9rem; color: var(--amber); }
+.fix-box ol { margin: 6px 0 0; padding-left: 18px; }
+
+/* ── Console + output panel ────────────────────────────── */
+.console {
+  background: #0A1019; color: #C8D3E3;
+  border-radius: 8px; padding: 14px;
+  font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+  font-size: .8rem; line-height: 1.45;
+  max-height: 380px; overflow: auto; white-space: pre-wrap;
+  margin: 0; border: 1px solid var(--border);
+}
+.output-panel {
+  margin-top: 12px; padding: 14px;
+  background: var(--accent-soft); border: 1px solid rgba(46,138,255,.3);
+  border-radius: 8px; font-size: .86rem; word-break: break-all;
+}
+.output-panel .row { margin-top: 10px; }
+.hint-box {
+  margin-top: 12px; padding: 12px 14px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; font-size: .85rem;
+}
+.hint-box h4 { margin: 0 0 4px; font-size: .92rem; color: var(--accent-2); }
+.hint-box code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+
+/* ── Library list ──────────────────────────────────────── */
+.lib-list { display: flex; flex-direction: column; gap: 8px; }
+.lib-row {
+  display: grid;
+  grid-template-columns: 1fr 130px 110px auto;
+  align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.lib-row .title { font-size: .9rem; font-weight: 500; }
+.lib-row .title .kind { color: var(--muted); font-size: .78rem; margin-left: 6px; }
+.lib-row .stars { display: flex; gap: 2px; }
+.star { cursor: pointer; color: var(--grey); font-size: 1.1rem; line-height: 1; user-select: none; }
+.star.on { color: var(--amber); }
+.lib-actions { display: flex; gap: 6px; }
+.lib-meta { font-size: .76rem; color: var(--muted); }
+
+/* ── Errors page ───────────────────────────────────────── */
+.search {
+  width: 100%; font: inherit; padding: 9px 11px; margin-bottom: 14px;
+  border: 1px solid var(--border-2); border-radius: 7px;
+  background: var(--panel); color: var(--text);
+}
+.error-list { display: flex; flex-direction: column; gap: 12px; }
+.error-card {
+  border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px;
+  background: var(--panel);
+}
+.error-card h3 { margin: 0 0 6px; font-size: .96rem; color: var(--accent-2); }
+.error-card .sym { font-size: .85rem; color: var(--muted); margin: 0 0 8px; }
+.error-card ol { margin: 6px 0 0; padding-left: 18px; font-size: .86rem; }
+
+/* ── Tutorial ──────────────────────────────────────────── */
+.tut-steps { padding-left: 20px; display: flex; flex-direction: column; gap: 12px; }
+.tut-steps li h4 { margin: 0 0 4px; font-size: .95rem; color: var(--accent-2); }
+.tut-steps li p { margin: 4px 0 6px; font-size: .87rem; color: var(--text); }
+.tips { padding-left: 20px; }
+.tips li { font-size: .85rem; color: var(--muted); margin-bottom: 6px; }
+
+/* ── Tooltip ───────────────────────────────────────────── */
+.tip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-2);
+  font-size: .68rem; font-style: normal; font-weight: 700; cursor: help;
+}
+.tooltip {
+  position: fixed; z-index: 50; max-width: 260px;
+  background: #0A1019; color: var(--text);
+  padding: 8px 11px; border-radius: 7px;
+  font-size: .78rem; line-height: 1.4;
+  border: 1px solid var(--border-2);
+  box-shadow: var(--shadow); pointer-events: none;
+}
+
+/* ── Unity-first sidebar: divider + secondary (showcase) entries ───────────── */
+.nav-divider {
+  height: 1px; background: var(--border, #263248);
+  margin: 10px 6px;
+}
+.nav--secondary { font-size: .85rem; opacity: .75; }
+.nav--secondary:hover { opacity: 1; }
+.nav--secondary.is-active { opacity: 1; }
+
+/* ── Prompt page pipeline header (replaces the old top toggle) ─────────────── */
+.pipeline-head { margin-bottom: 14px; }
+.pipeline-head h2 { margin: 0 0 2px; }
+.pipeline-head .help { margin: 0; }
+
+/* ── Greyed-out fields that can't affect the current run ───────────────────── */
+.field.is-muted { opacity: .45; }
+.field.is-muted input, .field.is-muted select { cursor: not-allowed; }

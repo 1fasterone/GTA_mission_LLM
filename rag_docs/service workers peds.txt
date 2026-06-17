@@ -1,0 +1,15 @@
+GTA5 SERVICE WORKERS PED MODEL LOOKUP TABLE
+Format: synonym → model_id
+
+=== SERVICE WORKERS ===
+security guard → s_m_m_security_01
+security → s_m_m_security_01
+bouncer → s_m_m_security_01
+guard → s_m_m_security_01
+dock worker → s_m_m_dockwork_01
+dockworker → s_m_m_dockwork_01
+mechanic → s_m_y_xmech_01
+construction worker → s_m_y_construct_01
+pilot → s_m_y_pilot_01
+female pilot → s_f_y_pilot_01
+paramedic → s_m_m_paramedic_01

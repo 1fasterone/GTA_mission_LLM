@@ -1,0 +1,40 @@
+# {{ s.name }} — Unity Scene Transition
+
+**Variant:** `{{ variant }}`
+**Load mode:** `{{ s.load_mode }}`
+**Trigger:** `{{ s.trigger }}`
+**Target scene:** `{{ s.target_scene }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add **{{ s.target_scene }}** (and this scene) to **Build Settings → Scenes In Build**.
+3. Add the `{{ s.name }}` component to a GameObject.
+{% if variant in ("fade", "trigger_door") %}
+4. Create a full-screen black `Image` with a `CanvasGroup` (alpha 0) and assign it to `fadeCanvas`.
+{% endif %}
+{% if variant == "loading_bar" %}
+4. Add a `Slider` and assign it to `progressBar` (fills as the scene streams in).
+{% endif %}
+{% if s.trigger == "on_trigger" %}
+5. Put this object's collider on **Is Trigger** and tag your player `{{ s.player_tag }}`.
+{% elif s.trigger == "on_timer" %}
+5. Fires automatically {{ "%.0f"|format(s.timer_delay) }}s after the scene starts.
+{% else %}
+5. Call `Go()` from your code/UI when you want the transition to run.
+{% endif %}
+
+## Behaviour
+
+{% if variant == "instant" %}
+Loads `{{ s.target_scene }}` immediately ({{ s.load_mode }}).
+{% elif variant in ("fade", "trigger_door") %}
+Fades to black over {{ "%.1f"|format(s.fade_duration) }}s, then loads `{{ s.target_scene }}` ({{ s.load_mode }}).
+{% elif variant == "loading_bar" %}
+Streams `{{ s.target_scene }}` asynchronously while updating the progress bar (0–1).
+{% elif variant == "async_additive" %}
+Loads `{{ s.target_scene }}` additively in the background (keeps the current scene live).
+{% endif %}
+`Go()` is public and idempotent (guards against double-trigger).

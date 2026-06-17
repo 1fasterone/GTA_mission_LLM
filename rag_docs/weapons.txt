@@ -1,0 +1,41 @@
+GTA5 WEAPON LOOKUP TABLE
+Format: synonym → schema_enum | native_name | shvdn_weaponhash
+
+=== SCHEMA ENUMS (used in mission JSON) ===
+pistol | smg | rifle | shotgun | sniper | none
+
+=== SYNONYM → SCHEMA ENUM ===
+pistol → pistol
+handgun → pistol
+glock → pistol
+9mm → pistol
+uzi → smg
+micro smg → smg
+submachine gun → smg
+assault rifle → rifle
+ar → rifle
+ak → rifle
+m4 → rifle
+carbine → rifle
+shotgun → shotgun
+pump shotgun → shotgun
+scattergun → shotgun
+sniper → sniper
+sniper rifle → sniper
+long rifle → sniper
+unarmed → none
+no weapon → none
+
+=== SCHEMA ENUM → GTA5 NATIVE NAME ===
+pistol   → WEAPON_PISTOL
+smg      → WEAPON_MICROSMG
+rifle    → WEAPON_ASSAULTRIFLE
+shotgun  → WEAPON_PUMPSHOTGUN
+sniper   → WEAPON_SNIPERRIFLE
+
+=== SCHEMA ENUM → SHVDN WeaponHash ===
+pistol   → WeaponHash.Pistol
+smg      → WeaponHash.MicroSMG
+rifle    → WeaponHash.AssaultRifle
+shotgun  → WeaponHash.PumpShotgun
+sniper   → WeaponHash.SniperRifle

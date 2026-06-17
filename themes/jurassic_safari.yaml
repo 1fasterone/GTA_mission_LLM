@@ -1,0 +1,44 @@
+name: jurassic_safari
+display: "Jurassic Park Safari"
+pipelines: [gta, unity]
+
+concept_bias: |
+  An offshore reserve where the megafauna of fifteen prehistoric eras share
+  the same fences. The player is staff, not a tourist — vet, ranger, or
+  troubleshooter. Stories are about being outclassed by biology and the
+  small competence of doing one's job anyway.
+
+detect_keywords: [dinosaur, jurassic, safari, prehistoric, t-rex, raptor, reserve, paleo, fossil]
+
+vocabulary:
+  peds:     ["khaki-clad park ranger", "veterinarian with tranq rifle", "tourist with a phone out", "tour guide on a radio", "rival poacher"]
+  vehicles: ["safari jeep", "armoured cattle truck", "research helicopter", "amphibious tracker buggy"]
+  objects:  ["tranquillizer dart", "dinosaur tracking collar", "fertilised egg crate", "perimeter fence node"]
+  locations_gta: [paleto_bay, sandy_shores, alamo_sea, port]
+
+step_hints: [go_to, pickup, deliver, kill_all, escape, timer]
+
+unity:
+  palette:
+    name:      "Mesozoic"
+    primary:   "#3F7D3A"
+    secondary: "#2A1E10"
+    accent:    "#E6B23A"
+    background: "#1B2417"
+    trim:      "#F2E4C1"
+  systems_hint: ["NavMesh predator-prey AI", "scent/wind detection model", "tranq-vs-lethal toolkit", "vehicle health vs. dino weight"]
+  visual_style: realistic
+
+twist_seeds:
+  - "The dinosaurs are not from the past — they're from a parallel evolution that skipped mammals."
+  - "Tranquillizing a dinosaur transfers a portion of its memories to the ranger."
+  - "The biggest predator is afraid of one specific species of beetle."
+  - "Every escape was deliberate; a member of staff has been opening the gates."
+  - "The reserve is moving. Each day it surfaces in a different ocean."
+  - "There are no carnivores. The danger is the herbivores' grief over what was killed for them."
+
+avoid:
+  - "billionaire CEO opens the park anyway"
+  - "raptors-in-the-kitchen homage"
+  - "the spared child saves the day"
+  - "DNA frog gap closure"
