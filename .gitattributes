@@ -1,0 +1,31 @@
+# Normalize line endings: store text as LF in the repo; check out native per-OS.
+# This silences the "LF will be replaced by CRLF" warnings and keeps diffs clean.
+* text=auto
+
+# ── Force LF for files that must stay LF even on a Windows checkout ──
+*.sh   text eol=lf
+
+# ── Force CRLF for Windows-only scripts ─────────────────────────────
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# ── Binary assets: never touch their bytes / never line-ending-convert ──
+*.fbx   binary
+*.blend binary
+*.obj   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.tga   binary
+*.psd   binary
+*.bmp   binary
+*.ico   binary
+*.wav   binary
+*.mp3   binary
+*.ogg   binary
+*.zip   binary
+*.7z    binary
+*.gz    binary
+*.dll   binary
+*.pdf   binary
