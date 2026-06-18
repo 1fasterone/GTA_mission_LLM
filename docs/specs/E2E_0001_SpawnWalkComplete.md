@@ -6,12 +6,14 @@
 **Status:** Normative test specification
 **Determinism basis:** V5 §0.6 (snapshot-replayable world), V11 §0.7 (Replay-Equivalence), V11 §0.9 (Divergence-Localization)
 
-> **IMPLEMENTATION STATUS (2026-06-17):** This is a **specification only**. The V1–V13 deterministic
-> game-assembly compiler it targets is a design (see the sibling `V1…V13` specs), **not implemented
-> code**. There is currently no `rig_hash`/`deform_hash`/`worldstate_hash` engine, no tick-barrier
-> simulation, and no harness that can execute this test. The repo's *real* runnable surface is the
-> Python LLM→codegen pipeline (`src/`, `tests/` pytest suite, `unity_cli.py verify`). This document
-> defines the target behavior for a future implementation; running it requires building the engine first.
+> **IMPLEMENTATION STATUS (2026-06-17):** A **minimal runnable reference kernel for this slice now
+> exists** at `src/vstack/` (`canon.py` — content-addressed hashing; `slice_v1_v5.py` — the V1→V5
+> identity chain + tick-barrier sim; `e2e_0001.py` — the runner). `tests/test_e2e_0001.py` (11 tests)
+> passes: the slice spawns, walks at a constant quantized 0.050 u/tick, completes the objective at
+> **tick 91**, replays **byte-identically** (and reproduces the same hashes across separate processes),
+> and degrades to a distinct, reproducible golden. Run it: `python -m src.vstack.e2e_0001 --degrade`.
+> The *broader* V1–V13 compiler remains a specification — this kernel implements only the minimal
+> vertical slice these E2E steps require, not the full architecture.
 
 ---
 
