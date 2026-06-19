@@ -10,8 +10,9 @@ using {{ u }};
 {% endfor %}
 
 /// <summary>{{ s.description }}</summary>
-public class {{ s.name }} : MonoBehaviour
+public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}, IVehicleState{% endif %}
 {
+
     [Header("Movement")]
     [SerializeField] private float moveSpeed   = {{ "%.2f"|format(s.move_speed) }}f;
     [SerializeField] private float sprintSpeed = {{ "%.2f"|format(s.sprint_speed) }}f;
@@ -55,9 +56,18 @@ public class {{ s.name }} : MonoBehaviour
     private ParticleSystem _smoke;
     private float _baseSideStiffness = 1.6f;
     private bool _lightsOn;
+    private float _steerInput;       // last frame's steer (-1..1), for IVehicleState
+    private float _throttleInput;    // last frame's throttle (0..1), for IVehicleState
 
     /// <summary>Current speed in km/h — read by speedometer HUDs.</summary>
     public float SpeedKmh => _rb != null ? _rb.linearVelocity.magnitude * 3.6f : 0f;
+
+    // ── IVehicleState: lets the VehicleBoneDriver spin/steer the rigged model's
+    //    wheel bones with the car's exact values (the precise hybrid path). ──
+    public float ForwardSpeed       => _rb != null ? Vector3.Dot(_rb.linearVelocity, transform.forward) : 0f;
+    public float SteerNormalized    => _steerInput;
+    public float ThrottleNormalized => _throttleInput;
+    public float WheelRadius        => wheelRadius;
 {% else %}
     private CharacterController _cc;
     private Vector3 _velocity;
@@ -165,6 +175,8 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
         float motor = v * maxMotorTorque;
         float steer = h * maxSteerAngle;
+        _steerInput    = h;                       // surfaced via IVehicleState
+        _throttleInput = Mathf.Clamp01(Mathf.Abs(v));
 
         // Counter-steer assist: while drifting, bias the front wheels toward the
         // direction of travel so the slide is catchable.
@@ -188,8 +200,13 @@ public class {{ s.name }} : MonoBehaviour
                 ? _baseSideStiffness * driftSlipMultiplier
                 : _baseSideStiffness;
             wc.sidewaysFriction = sf;
-            wc.GetWorldPose(out Vector3 wPos, out Quaternion wRot); // suspension visual
-            _wheelVisuals[i].SetPositionAndRotation(wPos, wRot * Quaternion.Euler(0f, 0f, 90f));
+            // Primitive cylinder wheels follow the collider pose directly. Rigged
+            // FBX wheels are null here — the VehicleBoneDriver spins/steers those bones.
+            if (_wheelVisuals[i] != null)
+            {
+                wc.GetWorldPose(out Vector3 wPos, out Quaternion wRot); // suspension visual
+                _wheelVisuals[i].SetPositionAndRotation(wPos, wRot * Quaternion.Euler(0f, 0f, 90f));
+            }
         }
 
         if (lightsToggle)
@@ -245,11 +262,28 @@ public class {{ s.name }} : MonoBehaviour
         col.size   = new Vector3(1.7f, 0.5f, 4.0f);
         col.center = new Vector3(0f, 0.45f, 0f);
 
-        Vector3[] offsets =
+        // Prefer the rigged model's wheel bones (Wheel.FL/FR/RL/RR) so the REAL
+        // wheels spin/steer/suspend. WheelColliders are placed at the bone positions
+        // for physics; the VehicleBoneDriver animates the bones. Falls back to
+        // primitive cylinders when the model has no wheel bones (pack not installed).
+        Transform[] wheelBones = FindWheelBones(transform);
+        bool boneWheels = wheelBones != null;
+
+        Vector3[] offsets;
+        if (boneWheels)
         {
-            new Vector3(-0.8f, 0.15f,  1.4f), new Vector3(0.8f, 0.15f,  1.4f),  // front
-            new Vector3(-0.8f, 0.15f, -1.4f), new Vector3(0.8f, 0.15f, -1.4f),  // rear
-        };
+            offsets = new Vector3[4];
+            for (int i = 0; i < 4; i++)
+                offsets[i] = transform.InverseTransformPoint(wheelBones[i].position);
+        }
+        else
+        {
+            offsets = new Vector3[]
+            {
+                new Vector3(-0.8f, 0.15f,  1.4f), new Vector3(0.8f, 0.15f,  1.4f),  // front
+                new Vector3(-0.8f, 0.15f, -1.4f), new Vector3(0.8f, 0.15f, -1.4f),  // rear
+            };
+        }
         for (int i = 0; i < 4; i++)
         {
             var wgo = new GameObject((i < 2 ? "WheelF" : "WheelR") + i);
@@ -270,14 +304,23 @@ public class {{ s.name }} : MonoBehaviour
             wc.sidewaysFriction = side;
             _wheels[i] = wc;
 
-            var vis = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            vis.name = "WheelMesh";
-            Destroy(vis.GetComponent<CapsuleCollider>());
-            vis.transform.SetParent(wgo.transform, false);
-            vis.transform.localScale    = new Vector3(wheelRadius * 2f, 0.12f, wheelRadius * 2f);
-            vis.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
-            _wheelVisuals[i] = vis.transform;
+            if (boneWheels)
+            {
+                _wheelVisuals[i] = null;   // the VehicleBoneDriver drives the FBX wheel bone
+            }
+            else
+            {
+                var vis = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                vis.name = "WheelMesh";
+                Destroy(vis.GetComponent<CapsuleCollider>());
+                vis.transform.SetParent(wgo.transform, false);
+                vis.transform.localScale    = new Vector3(wheelRadius * 2f, 0.12f, wheelRadius * 2f);
+                vis.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+                _wheelVisuals[i] = vis.transform;
+            }
         }
+        if (boneWheels && GetComponent<VehicleBoneDriver>() == null)
+            gameObject.AddComponent<VehicleBoneDriver>();
 
         for (int i = -1; i <= 1; i += 2)
         {
@@ -313,6 +356,29 @@ public class {{ s.name }} : MonoBehaviour
         main.startColor    = new Color(0.85f, 0.85f, 0.85f, 0.5f);
         var em = _smoke.emission;
         em.rateOverTime = 0f;
+    }
+
+    // Locate the rigged model's four wheel BONES (Wheel.FL/FR/RL/RR), skinned bones
+    // only (mesh objects carry a Renderer and are skipped). Returns [FL,FR,RL,RR],
+    // or null if all four aren't present (then primitive cylinders are used).
+    private Transform FindWheelBones(Transform root)
+    {
+        Transform fl = null, fr = null, rl = null, rr = null;
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.GetComponent<Renderer>() != null) continue;     // mesh, not a bone
+            string n = t.name.ToLowerInvariant();
+            if (!n.StartsWith("wheel")) continue;
+            bool front = n.Contains(".f") || n.Contains("front");
+            bool left  = n.EndsWith("l") || n.Contains("left");
+            if (front && left)      fl = t;
+            else if (front)         fr = t;
+            else if (left)          rl = t;
+            else                    rr = t;
+        }
+        if (fl != null && fr != null && rl != null && rr != null)
+            return new[] { fl, fr, rl, rr };
+        return null;
     }
 {% endif %}
 {% if variant.startswith("2d_") %}

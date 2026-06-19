@@ -38,6 +38,13 @@ public class ModelSwap : MonoBehaviour
             var ctrl = Resources.Load<RuntimeAnimatorController>(controllerPath);
             if (ctrl != null) _anim.runtimeAnimatorController = ctrl;
         }
+
+        // Mechanical models (wheels/propeller) get their bones driven from motion.
+        // The driver stands itself down on humanoids (no such bones) so the
+        // Animator keeps full control there.
+        if (vis.GetComponent<VehicleBoneDriver>() == null)
+            vis.AddComponent<VehicleBoneDriver>();
+
         _lastPos = transform.position;
     }
 

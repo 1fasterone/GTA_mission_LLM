@@ -18,6 +18,48 @@ from .unity_model_resolver import resolve_default_models, models_for_schema
 from .micro.code_fields import lint_extensible
 
 
+def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> dict:
+    """Inject Blender-built FBX paths into the resolved model catalog.
+
+    For kinds already in the catalog: swaps only the `src` path, keeping the
+    catalog's dest_rel / resource_path / rig / scale unchanged.
+    For kinds NOT yet in the catalog (no static fallback file existed): bootstraps
+    a complete ResolvedModel so the copy + .meta + ModelSwap chain still fires.
+    Silently skips any entry whose FBX file doesn't exist on disk yet.
+    """
+    if not overrides:
+        return resolved
+    from .unity_model_resolver import ResolvedModel
+    _RES_ROOT = "Models/Default"
+    # player/enemy ship a real Unity Humanoid skeleton from the Blender rigger, so
+    # they import as Humanoid (and humanoid clips retarget). Everything else
+    # (vehicle/prop) carries a vehicle/no skeleton -> Generic, never Humanoid.
+    for kind, src in overrides.items():
+        if not src or not Path(src).is_file():
+            continue
+        src_abs = str(Path(src).resolve())
+        rig = "humanoid" if kind in ("player", "enemy") else "generic"
+        if kind in resolved:
+            update = {"src": src_abs, "rig": rig}
+            # Generic models can't use humanoid retarget clips — drop them so the
+            # importer doesn't choke on mismatched animation files.
+            if rig != "humanoid":
+                update["clips"] = {}
+            resolved[kind] = resolved[kind].model_copy(update=update)
+        else:
+            fname    = Path(src).name
+            dest_rel = f"{_RES_ROOT}/{kind.capitalize()}/{fname}"
+            resolved[kind] = ResolvedModel(
+                kind          = kind,
+                src           = src_abs,
+                dest_rel      = dest_rel,
+                resource_path = dest_rel.rsplit(".", 1)[0],
+                rig           = rig,
+                scale         = 1.0,
+            )
+    return resolved
+
+
 # ── GUID generation ────────────────────────────────────────────────────────────
 # Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
 
@@ -264,6 +306,48 @@ def _model_meta(guid: str) -> str:
         "    animationWrapMode: 0\n"
         "    clipAnimations: []\n"
         "    isReadable: 0\n"
+        "  platforms: []\n"
+        "  userData: \n"
+        "  assetBundleName: \n"
+        "  assetBundleVariant: \n"
+    )
+
+
+def _generic_model_meta(guid: str, scale: float = 1.0) -> str:
+    """ModelImporter .meta for skeleton-less procedural FBX (Blender bases).
+
+    animationType: 2 (Generic) so Unity does NOT try to build a Humanoid avatar —
+    these loose-mesh models have no 'Hips'/standard bones, and Humanoid import
+    fails with "Invalid Avatar Rig Configuration". Generic imports cleanly; the
+    mesh swaps in over the primitive at Play."""
+    return (
+        "fileFormatVersion: 2\n"
+        f"guid: {guid}\n"
+        "ModelImporter:\n"
+        "  serializedVersion: 21300\n"
+        "  internalIDToNameTable: []\n"
+        "  externalObjects: {}\n"
+        "  materials:\n"
+        "    materialImportMode: 1\n"
+        "    materialName: 0\n"
+        "    materialSearch: 1\n"
+        "    materialLocation: 1\n"
+        "  animations:\n"
+        "    legacyGenerateAnimations: 4\n"
+        "    bakeSimulation: 0\n"
+        "    resampleCurves: 1\n"
+        "    optimizeGameObjects: 0\n"
+        "    animationCompression: 1\n"
+        "    animationRotationError: 0.5\n"
+        "    animationPositionError: 0.5\n"
+        "    animationScaleError: 0.5\n"
+        "    animationWrapMode: 0\n"
+        "    clipAnimations: []\n"
+        "    isReadable: 0\n"
+        f"  globalScale: {scale}\n"
+        "  useFileScale: 1\n"
+        "  animationType: 2\n"
+        "  avatarSetup: 0\n"
         "  platforms: []\n"
         "  userData: \n"
         "  assetBundleName: \n"
@@ -717,7 +801,8 @@ class UnityProjectGenerator:
                  lookups_dir: str = "lookups",
                  kenney_source_dir: str | None = None,
                  composed_units: list | None = None,
-                 model_source_dir: str | None = None) -> dict[str, str]:
+                 model_source_dir: str | None = None,
+                 model_overrides: dict[str, str] | None = None) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
         Caller writes the dict to disk.
@@ -767,11 +852,15 @@ class UnityProjectGenerator:
         # ── Default model pack (Model Pack v1) ────────────────────────────────
         # Real models replace the primitive placeholders. Resolution is purely
         # what exists under Models/Defaults — missing files degrade to primitives.
+        _override_kinds = set(model_overrides.keys()) if model_overrides else None
         used_models = models_for_schema(
             schema,
-            resolve_default_models(lookups_dir=lookups_dir,
-                                   model_source_dir=model_source_dir),
+            _apply_model_overrides(
+                resolve_default_models(lookups_dir=lookups_dir,
+                                       model_source_dir=model_source_dir),
+                model_overrides),
             composed_units,
+            override_kinds=_override_kinds,
         )
         # Resource path each entity group instantiates ("" = primitive).
         entity_model_paths = {
@@ -994,10 +1083,13 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/Resources"), folder=True)
             for m in used_models.values():
                 for item in [m] + list(m.clips.values()):
-                    meta_fn = (_humanoid_model_meta(
-                                   _make_guid(f"{pn}/{item.dest_rel}"), item.scale)
-                               if item.rig == "humanoid"
-                               else _model_meta(_make_guid(f"{pn}/{item.dest_rel}")))
+                    guid = _make_guid(f"{pn}/{item.dest_rel}")
+                    if item.rig == "humanoid":
+                        meta_fn = _humanoid_model_meta(guid, item.scale)
+                    elif item.rig == "generic":
+                        meta_fn = _generic_model_meta(guid, item.scale)
+                    else:
+                        meta_fn = _model_meta(guid)
                     files[f"{pn}/Assets/Resources/{item.dest_rel}.meta"] = meta_fn
             ms_path = f"{pn}/Assets/Scripts/ModelSwap.cs"
             files[ms_path]           = self._render("ModelSwap.cs.j2", base_ctx)
@@ -1008,6 +1100,24 @@ class UnityProjectGenerator:
                 files[f"{sdm_path}.meta"] = _meta_file(_make_guid(f"{pn}/Editor/SetupDefaultModels"))
                 files[f"{pn}/Assets/Editor.meta"] = _default_meta(
                     _make_guid(f"{pn}/Assets/Editor"), folder=True)
+
+        # ── Bone-driver runtime ───────────────────────────────────────────────
+        # VehicleBoneDriver spins/steers a rigged model's wheel/prop bones from the
+        # vehicle's motion; IVehicleState is the contract the vehicle controller
+        # exposes for the precise path. Emit when there are models to drive (ModelSwap
+        # attaches the driver) OR a vehicle controller is composed (it implements
+        # IVehicleState). The driver self-disables on humanoids (Animator owns those).
+        _has_vehicle_ctrl = any(
+            getattr(u, "kind", "") == "controller" and "vehicle" in getattr(u, "variant", "")
+            for u in (composed_units or [])
+        )
+        if used_models or _has_vehicle_ctrl:
+            iv_path = f"{pn}/Assets/Scripts/IVehicleState.cs"
+            files[iv_path]           = self._render("IVehicleState.cs.j2", base_ctx)
+            files[f"{iv_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/IVehicleState"))
+            bd_path = f"{pn}/Assets/Scripts/VehicleBoneDriver.cs"
+            files[bd_path]           = self._render("VehicleBoneDriver.cs.j2", base_ctx)
+            files[f"{bd_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/VehicleBoneDriver"))
 
         # ── EntitySpawner (Tier-2 prompt-derived scene content) ───────────────
         # When the schema carries `entities`, emit a runtime spawner that builds
@@ -1189,13 +1299,16 @@ class UnityProjectGenerator:
               lookups_dir: str = "lookups",
               kenney_source_dir: str | None = None,
               composed_units: list | None = None,
-              model_source_dir: str | None = None) -> tuple[Path, int]:
+              model_source_dir: str | None = None,
+              model_overrides: dict[str, str] | None = None) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
+        _override_kinds = set(model_overrides.keys()) if model_overrides else None
         files = self.generate(schema, manifest_deps,
                               lookups_dir=lookups_dir,
                               kenney_source_dir=kenney_source_dir,
                               composed_units=composed_units,
-                              model_source_dir=model_source_dir)
+                              model_source_dir=model_source_dir,
+                              model_overrides=model_overrides)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.
@@ -1209,9 +1322,12 @@ class UnityProjectGenerator:
         # same resolution, so the pair always lines up).
         used_models = models_for_schema(
             schema,
-            resolve_default_models(lookups_dir=lookups_dir,
-                                   model_source_dir=model_source_dir),
+            _apply_model_overrides(
+                resolve_default_models(lookups_dir=lookups_dir,
+                                       model_source_dir=model_source_dir),
+                model_overrides),
             composed_units,
+            override_kinds=_override_kinds,
         )
         n_models = 0
         for m in used_models.values():

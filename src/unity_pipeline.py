@@ -201,6 +201,7 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
 
 class UnityPipeline:
     def __init__(self, config: dict):
+        self.config = config
         lm_cfg   = config["lm_studio"]
         pipe_cfg = config.get("unity_pipeline", config.get("pipeline", {}))
 
@@ -244,11 +245,89 @@ class UnityPipeline:
 
     # ── main run ──────────────────────────────────────────────────────────────
 
+    def _blender_model_overrides(self, schema, concept: str) -> dict[str, str]:
+        """Build procedural Blender models for every supported catalog kind and return
+        {kind: fbx_path}.  Degrades silently per kind if a build fails — the generator
+        falls back to the static Model Pack / primitives for that kind.
+
+        Catalog kinds built here: player, enemy (both humanoid), vehicle (car/plane/bike
+        chosen from locomotion + entity/concept keywords).
+        """
+        from src.blender.locator import blender_available
+        bl_path = self.config.get("blender", {}).get("blender_path") or None
+        if not blender_available(bl_path):
+            self._warn("Blender not found — using static Model Pack / primitives")
+            return {}
+
+        from src.micro.model import ModelPipeline
+        mp = ModelPipeline(self.config)
+        overrides: dict[str, str] = {}
+        pname = schema.project_name
+
+        # ── helpers ──────────────────────────────────────────────────────────
+        def _entity_desc(kind: str) -> str:
+            return next(
+                (getattr(e, "description", "") or e.name
+                 for e in schema.entities if getattr(e, "kind", "") == kind),
+                "",
+            )
+
+        def _build(catalog_kind: str, variant: str, prompt: str, asset_name: str) -> None:
+            # rig=True so movable models ship a real skeleton: humanoid -> Unity
+            # Humanoid avatar (player/enemy animate + retarget clips); car/bike ->
+            # wheel/steer bones. Skeleton-less bases just export static (graceful).
+            res = mp.build_fbx(prompt or variant, variant=variant, rig=True,
+                               name=asset_name, use_llm=False)
+            if res and res.get("fbx"):
+                overrides[catalog_kind] = res["fbx"]
+                self._ok(f"Blender {catalog_kind} ({variant}): "
+                         f"{res.get('tris', '?')} tris -> {res['fbx']}")
+            else:
+                self._warn(f"Blender {catalog_kind} ({variant}) build failed — "
+                           "falling back to static pack")
+
+        # ── humanoid: player + enemy ──────────────────────────────────────────
+        _build("player", "humanoid",
+               _entity_desc("player") or "player character",
+               f"{pname}Player")
+        _build("enemy",  "humanoid",
+               _entity_desc("enemy")  or "enemy humanoid",
+               f"{pname}Enemy")
+
+        # ── vehicle: pick the right base from locomotion + content keywords ──
+        loco = getattr(schema, "locomotion", "walk")
+        combined = " ".join([
+            loco,
+            " ".join(e.name for e in schema.entities),
+            " ".join(getattr(e, "description", "") or "" for e in schema.entities),
+            concept,
+        ]).lower()
+
+        has_vehicle = (
+            loco in ("drive", "fly")
+            or any(getattr(e, "kind", "") == "vehicle" for e in schema.entities)
+            or any(w in combined for w in ("vehicle", "car", "jeep", "truck",
+                                           "plane", "aircraft", "jet", "bike",
+                                           "motorcycle", "motorbike"))
+        )
+        if has_vehicle:
+            if any(w in combined for w in ("plane", "aircraft", "jet", "glider", "fly")):
+                veh_variant = "plane"
+            elif any(w in combined for w in ("bike", "motorcycle", "motorbike", "dirt bike", "chopper")):
+                veh_variant = "bike"
+            else:
+                veh_variant = "car"
+            veh_prompt = (_entity_desc("vehicle") or concept or "").strip()[:400]
+            _build("vehicle", veh_variant, veh_prompt, f"{pname}Vehicle")
+
+        return overrides
+
     def run(self, user_prompt: str,
             theme:       str | None = None,
             mashup_with: str | None = None,
             seed:        int | None = None,
-            compose:     bool = False) -> Path:
+            compose:     bool = False,
+            blender_models: bool = False) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -341,6 +420,11 @@ class UnityPipeline:
 
         # STEP 6 — generate ───────────────────────────────────────────────────
         self._step(6, "Generator compiles schema -> Unity project folder")
+        # Blender model fulfilment: build real models from the story and feed them
+        # into the Model Pack flow keyed by kind (replaces the static FBX/primitive).
+        model_overrides: dict[str, str] = {}
+        if blender_models:
+            model_overrides = self._blender_model_overrides(schema, concept)
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
         composed_units = None
@@ -366,7 +450,8 @@ class UnityPipeline:
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         project_root, file_count = self.generator.write(
-            schema, manifest_deps, self.output_dir, composed_units=composed_units)
+            schema, manifest_deps, self.output_dir, composed_units=composed_units,
+            model_overrides=model_overrides)
         if compose and subsystems:
             composer.emit(subsystems, project_root / "Assets")
             self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes")

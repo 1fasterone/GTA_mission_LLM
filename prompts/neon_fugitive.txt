@@ -1,61 +1,86 @@
-Neon Fugitive — a third-person open-world cyberpunk bounty-hunter game for PC.
+IRON FRONTIER — 3D third-person action-survival game
 
-The player is a rogue AI enforcement agent navigating six districts of a rain-soaked
-megacity at night. Each district has its own visual identity: neon markets, industrial
-docks, corporate towers, underground tunnels, a rooftop skyway, and the flooded
-outer slums. All six districts plus a main menu, a boss arena, and a credits scene
-must be separate Unity scenes.
+SETTING
+A ruined industrial city. The player is a scavenger named Kael who must raid a heavily
+fortified enemy compound, steal an experimental fuel cell, and escape by vehicle before
+rival factions close in.
 
-NARRATIVE — eight acts of escalating story beats:
-1. Activation: player boots up for the first time in an alley (on_start)
-2. First Mark: player receives the first bounty contract (on_enter_zone)
-3. Street Chase: player pursues mark through market crowds (on_enemy_death)
-4. Betrayal: handler reveals the player is also a target (on_timer)
-5. Underground: player escapes into the tunnel district (on_enter_zone)
-6. Data Heist: player steals identity files from corporate tower (on_pickup)
-7. Showdown: final confrontation with the original programmer (manual)
-8. Escape: player reaches the sky-bridge extraction point (on_enter_zone)
+PLAYER
+Third-person character controller with run, crouch, roll, and aim-walk stances.
+Gamepad and keyboard+mouse input both fully supported.
+Kael uses a stamina-gated dodge and can vault low obstacles (Rigidbody 3D physics,
+kinematic character body, trigger zones for vaulting).
+Health: 120 HP, regenerates 15 HP/s after 4 seconds out of combat. Armour layer
+absorbs 30% of damage before health is touched.
 
-AUDIO — rich layered soundscape across eight tracks:
-- Pulsing synth main theme (looping music, plays on menu)
-- District market ambient (looping ambient, tense urban crowd)
-- Industrial dock drone (looping ambient, machinery hum and water)
-- Chase adrenaline track (looping music, fast-paced synth percussion)
-- Corporate tower tension (looping music, slow arpeggiated suspense)
-- Rain and thunder environment (looping ambient, outdoor weather)
-- Combat hit and gunshot SFX pack (non-looping sfx, action punctuation)
-- Victory sting and credits outro (non-looping music, emotional resolution)
+CAMERA
+Cinemachine third-person follow with soft-lock aim assist. Switches to a cinematic
+dolly cut when Kael enters a vehicle.
 
-PROCEDURAL GEOMETRY — runtime-built world pieces:
-- Procedural terrain for the outer slum district (terrain type, resolution 64)
-- Procedural road network grid for market district (road type, resolution 48)
-- Procedural water plane for the flooded outer zone (water type, resolution 32)
-- Procedural room layout for the corporate tower interior (room type, resolution 24)
+HUD
+Live health bar (armour overlay), stamina bar, ammo counter (current/reserve),
+minimap (top-right, marks enemies and objectives), interaction prompt (centre-bottom:
+"[E] Open / Pick up / Talk"), score panel tracking compound-raid score.
 
-SYSTEMS — everything this game needs:
-- Third-person player movement with parkour (wall-run, vault, slide)
-- Cinemachine third-person camera with lock-on targeting mode
-- Enemy AI with NavMesh patrol, chase, and alert states
-- Bounty system tracking multiple live contracts simultaneously
-- Health and damage system with shields and healing pickups
-- Dialogue manager playing all eight story beats as in-world hologram events
-- District manager switching ambient audio and sky color per zone transition
-- Day-night cycle controller driving scene lighting and NPC schedules
-- Vehicle controller for rideable hoverbikes in open sections
-- Weapon system managing ranged and melee attack combos
-- Inventory and equipment screen
-- Minimap radar displaying bounty targets and district boundaries
-- Save and checkpoint system between acts
-- ProBuilder level generator producing the tunnel and rooftop districts at edit time
+INVENTORY
+Slot-based (8 slots). Kael starts with a pistol and a medkit. Lootable crates scatter
+the compound. Weapons: pistol, SMG, shotgun, EMP grenade. Consumables: medkit, armour
+shard, stamina boost.
 
-VISUAL STYLE: stylized — heavy neon on deep dark backgrounds.
-COLOR PALETTE name "NeonFugitive":
-  primary   #00F5FF  (player energy — cyan glow)
-  secondary #1A0A2E  (environment base — near-black violet)
-  accent    #FF2D78  (enemies and hazards — hot pink)
-  background #0D0D1A (sky and voids — pitch dark blue)
-  trim      #FFD600  (UI, collectibles, highlights — electric yellow)
+ENEMIES & AI
+Three enemy archetypes:
+  • Guard (humanoid, navmesh patrol → chase → cover shooter when alerted)
+  • Drone (flying swarm, patrols corridors, alerts on sight)
+  • Heavy (humanoid, slow FSM guard, suppressing-fire behaviour)
+Enemies are wave-spawned from four radial spawn points around the compound exterior.
+First wave: 3 guards. Every 60 s a new wave adds 2 more enemies (continuous spawner).
 
-RENDER PIPELINE: URP (post-processing bloom and chromatic aberration essential).
-UNITY VERSION: 6000.0
-PLATFORM: PC
+INTERACTABLES
+  • Compound gate: lever puzzle (two levers must be thrown in sequence)
+  • Locked doors: triggered by keycards found in the environment
+  • Fuel-cell terminal: readable terminal with a 3-line lore entry, then pickup
+  • NPC mechanic "Sable": talks Kael through the escape, gives a bike key
+
+DIALOGUE
+Sable has a branching conversation tree (3 nodes). Player can ask about the compound
+layout (reveals minimap markers) or go straight to the escape plan. Typewriter reveal,
+skip-able.
+
+AUDIO
+Layered ambient: wind + distant machinery. Music: tense layer fades in when enemies
+are alerted, swells on boss wave. Spatial SFX: gunshots, footsteps (surface-aware),
+vehicle engines. 3D positional audio for enemies (hear before you see them).
+
+VEHICLES (Blender models, all four bases)
+  Kael escapes via three vehicle options she finds in the motor pool:
+    • Tactical jeep   (base=car,   ride=0.35, wheel_r=0.72, bed=0, wheel_pairs=2)
+    • Cargo truck     (base=car,   body_len=5.0, wheel_pairs=3, ride=0.2)
+    • Recon plane     (base=plane, fuselage_len=6.5, wing_span=8.0, fin_h=1.4)
+    • Dirt bike       (base=bike,  suspension=1, engine=1, tank=1, pedals=0)
+  Each vehicle uses a vehicle_car controller variant, has its own chase camera,
+  engine audio loop, and Rigidbody wheel-collider physics.
+  Humanoid enemies are spawned as rigged humanoid base models (base=humanoid,
+  height=1.85, shoulder_w=0.52).
+
+MENUS & SCENES
+  Scene 1 – Main Menu: play, load game, settings (audio sliders, invert-Y, rebind),
+            quit.
+  Scene 2 – Compound (main level).
+  Scene 3 – Escape corridor (streamed in via async additive load, trigger-door
+            transition when Kael reaches the motor pool).
+  Pause menu available at any point in scenes 2-3: resume, save, settings, quit
+  to main menu.
+  Game-over screen on death with retry / load last checkpoint.
+
+SAVE SYSTEM
+Autosave on checkpoint trigger (entering the compound, reaching Sable, reaching the
+motor pool). Three manual save slots accessible from the pause menu. Save data
+includes: scene index, inventory contents, enemy wave number, Sable dialogue state.
+
+HEALTH SYSTEM (enemies)
+Guards: 60 HP. Drones: 25 HP (one shotgun blast). Heavy: 180 HP with armour (60 HP
+shield that must be broken first). All enemies have a ragdoll-on-death transition.
+
+VISUAL STYLE
+Gritty low-poly with strong directional lighting. URP with post-processing: bloom,
+chromatic aberration on damage, vignette. Day is overcast; escape sequence at dusk.

@@ -13,6 +13,12 @@ Unity mode  (local lookup tables only, no RAG required):
   python main.py unity-resolve "universal render pipeline"
   python main.py unity-validate schema.json
 
+Blender model micro (car / plane / humanoid / bike → FBX):
+  python main.py unity-model "lifted matte-black pickup" --no-llm
+  python main.py unity-model "tall humanoid" --variant humanoid --no-llm
+  python main.py unity-model "dirt bike" --variant bike -k suspension=1 --no-llm
+  python main.py unity-model "glider" --variant plane --emit
+
 Global flags (work with any command):
   --verbose / -v   Show pipeline step output
   --debug   / -d   Show raw LLM requests and responses
@@ -22,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +36,14 @@ import typer
 import yaml
 from dotenv import load_dotenv
 from rich.console import Console
+
+# Render rich output (Panels use Unicode box-drawing) safely when stdout is a
+# Windows cp1252 pipe — same guard as blender_cli.py.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001
+        pass
 
 # ── GTA5 pipeline ─────────────────────────────────────────────────────────────
 from src.anythingllm_client import AnythingLLMClient
@@ -237,6 +252,8 @@ def unity_create(
                                               help="Override the configured LM Studio model for this run"),
     compose:     bool          = typer.Option(False, "--compose",
                                               help="Assemble micros into the project + wire them into the scene (combinatorial mode)"),
+    blender_models: bool       = typer.Option(False, "--blender-models",
+                                              help="Build real models from the story in Blender (headless) and wire them into the scene via the Model Pack (replaces placeholders)"),
 ) -> None:
     """Generate a complete Unity project folder from a plain-English prompt.
 
@@ -265,7 +282,7 @@ def unity_create(
         console.print("  Example: python main.py unity-create --file prompts/neon_fugitive.txt")
         raise typer.Exit(1)
 
-    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose)
+    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models)
 
 
 @app.command("unity-resolve")
@@ -287,8 +304,11 @@ def unity_resolve(
 
 @app.command("unity-validate")
 def unity_validate(
-    schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),
-    config:      str = typer.Option("config.yaml", "--config", "-c"),
+    schema_file:    str  = typer.Argument(..., help="Path to a Unity schema JSON file"),
+    config:         str  = typer.Option("config.yaml", "--config", "-c"),
+    blender_models: bool = typer.Option(False, "--blender-models",
+                                        help="Build Blender FBX models (player/enemy/vehicle) "
+                                             "and wire them into the regenerated project"),
 ) -> None:
     """Recompile a saved Unity schema to a project folder without re-running the LLM."""
     cfg      = _cfg(config)
@@ -301,10 +321,16 @@ def unity_validate(
     deps     = resolver.build_manifest_deps(
         schema, inject_mcp_bridge=pipe_cfg.get("inject_mcp_bridge", True)
     )
+    model_overrides: dict = {}
+    if blender_models:
+        from src.unity_pipeline import UnityPipeline
+        concept = schema.meta.get("concept", "") if schema.meta else ""
+        model_overrides = UnityPipeline(cfg)._blender_model_overrides(schema, concept)
     gen      = UnityProjectGenerator(
         template_dir=pipe_cfg.get("unity_template_dir", "templates/unity")
     )
-    root, count = gen.write(schema, deps, pipe_cfg.get("unity_output_dir", "output/unity"))
+    root, count = gen.write(schema, deps, pipe_cfg.get("unity_output_dir", "output/unity"),
+                            model_overrides=model_overrides or None)
     console.print(f"[green]OK[/]  {count} files -> {root}")
 
 
@@ -588,6 +614,84 @@ def unity_health(
 ) -> None:
     """Generate a Unity health system (simple/regenerating/shielded/armor/lives)."""
     _run_micro("health", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+
+
+# ── Blender 3D-model micro-generator ──────────────────────────────────────────
+
+def _parse_knobs(pairs: Optional[list[str]]) -> dict:
+    """Parse repeatable `--knob key=value` flags into a param dict. Comma values
+    become a list (for color), numeric strings become floats."""
+    out: dict = {}
+    for item in (pairs or []):
+        if "=" not in item:
+            console.print(f"[yellow]skip knob (need key=value):[/] {item}")
+            continue
+        k, v = item.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if "," in v:
+            try:
+                out[k] = [float(x) for x in v.split(",")]
+            except ValueError:
+                out[k] = v
+        else:
+            try:
+                out[k] = float(v)
+            except ValueError:
+                out[k] = v
+    return out
+
+
+@app.command("unity-model")
+def unity_model(
+    prompt:  Optional[str]  = typer.Argument(None, help="Description, e.g. 'lifted matte-black pickup' or 'tall slim humanoid'"),
+    variant: Optional[str]  = typer.Option(None, "--variant",
+                                           help="car | plane | humanoid | bike  (inferred from prompt if omitted)"),
+    knob:    Optional[list[str]] = typer.Option(None, "--knob", "-k",
+                                  help="Override a param knob (repeatable): -k wheel_r=0.8 -k color=0.02,0.02,0.02"),
+    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
+    rig:     bool           = typer.Option(True,  "--rig/--no-rig",
+                                           help="Build armature + skin-bind the parts (game-functional FBX)"),
+    demo:    bool           = typer.Option(False, "--demo",
+                                           help="Pose the rig after building (visual proof; leave off for rest-pose FBX)"),
+    name:    Optional[str]  = typer.Option(None, "--name", help="Asset name (PascalCase; inferred from prompt if omitted)"),
+    unity_project: Optional[str] = typer.Option(None, "--unity-project", "-u",
+                                  help="Unity project root — FBX is overlaid into Assets/BlenderAssets/<name>/"),
+    emit:    bool           = typer.Option(False, "--emit",
+                                           help="Emit the bpy script only (for live MCP Blender); skip headless build"),
+    no_llm:  bool           = typer.Option(False, "--no-llm",
+                                           help="Deterministic keyword mapping only — no LM Studio call"),
+    out:     Optional[str]  = typer.Option(None, "--out", help="Override Blender output directory"),
+    config:  str            = typer.Option("config.yaml", "--config", "-c"),
+    model:   Optional[str]  = typer.Option(None, "--model", "-m",
+                                           help="Override LM Studio model for param mapping"),
+) -> None:
+    """Generate a procedural 3D model in Blender (car / plane / humanoid / bike),
+    export a Unity-ready FBX, and optionally overlay it into a Unity project.
+
+    Bases and their knobs
+    ---------------------
+    car      — body_w, body_len, body_h, cabin_h, cabin_len, cabin_pos, wheel_r,
+               wheel_w, ride, bed, wheel_pairs, rim, color
+    plane    — fuselage_len, fuselage_r, wing_span, wing_chord, fin_h, color
+    humanoid — height, shoulder_w, hip_w, head_r, limb_r, color
+    bike     — wheelbase, wheel_r, wheel_w, frame_h, handlebar_w, rim, wheels,
+               engine, tank, pedals, suspension, color
+
+    \b
+    Examples:
+      python main.py unity-model "a lifted matte-black pickup" --no-llm
+      python main.py unity-model --variant plane -k wing_span=9 -k fin_h=1.8 --no-llm
+      python main.py unity-model "tall slim humanoid" --variant humanoid --no-llm
+      python main.py unity-model "dirt bike" --variant bike -k suspension=1 --no-llm
+      python main.py unity-model "red sports coupe" -u output/unity/TopDownRacingGame
+      python main.py unity-model "motorbike" --emit
+    """
+    from src.micro import ModelPipeline
+    ModelPipeline(_cfg(config, model)).run(
+        prompt, variant=variant, knobs=_parse_knobs(knob), seed=seed, rig=rig,
+        demo=demo, name=name, unity_project=unity_project, emit=emit,
+        use_llm=not no_llm, out=out,
+    )
 
 
 @app.command("unity-tools")

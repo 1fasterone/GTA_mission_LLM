@@ -46,6 +46,8 @@ def test_registry_has_all_known():
         "controller", "camera", "physics", "hud",
         "input", "audio", "ai", "spawner", "saveload", "inventory", "dialogue",
         "menu", "interactable", "transition", "health",
+        # geometry pipeline (Blender -> FBX); not an LLM concept/schema micro
+        "model",
     }
 
 
@@ -54,6 +56,10 @@ def test_pipeline_metadata_set(kind, cls):
     assert cls.kind == kind
     assert cls.variants, f"{kind}: no variants declared"
     assert cls.default_variant in cls.variants
+    # The geometry pipeline (model) maps prompt -> params, not the LLM
+    # concept/schema two-step, so it has no concept_prompt/schema_prompt contract.
+    if kind == "model":
+        return
     assert "{user_prompt}" in cls.concept_prompt
     assert "{variant}"     in cls.concept_prompt
     assert "{theme_block}" in cls.concept_prompt

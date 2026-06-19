@@ -15,8 +15,10 @@ from .menu           import MenuPipeline,          MenuSchema
 from .interactable   import InteractablePipeline,  InteractableSchema
 from .transition     import TransitionPipeline,    TransitionSchema
 from .health         import HealthPipeline,        HealthSchema
+from .model          import ModelPipeline
 
 __all__ = [
+    "ModelPipeline",
     "ControllerPipeline", "ControllerSchema",
     "CameraRigPipeline",  "CameraRigSchema",
     "PhysicsPipeline",    "PhysicsSchema",
@@ -52,4 +54,5 @@ REGISTRY = {
     "interactable": InteractablePipeline,
     "transition":   TransitionPipeline,
     "health":       HealthPipeline,
+    "model":        ModelPipeline,
 }

@@ -1,0 +1,86 @@
+IRON FRONTIER — 3D third-person action-survival game
+
+SETTING
+A ruined industrial city. The player is a scavenger named Kael who must raid a heavily
+fortified enemy compound, steal an experimental fuel cell, and escape by vehicle before
+rival factions close in.
+
+PLAYER
+Third-person character controller with run, crouch, roll, and aim-walk stances.
+Gamepad and keyboard+mouse input both fully supported.
+Kael uses a stamina-gated dodge and can vault low obstacles (Rigidbody 3D physics,
+kinematic character body, trigger zones for vaulting).
+Health: 120 HP, regenerates 15 HP/s after 4 seconds out of combat. Armour layer
+absorbs 30% of damage before health is touched.
+
+CAMERA
+Cinemachine third-person follow with soft-lock aim assist. Switches to a cinematic
+dolly cut when Kael enters a vehicle.
+
+HUD
+Live health bar (armour overlay), stamina bar, ammo counter (current/reserve),
+minimap (top-right, marks enemies and objectives), interaction prompt (centre-bottom:
+"[E] Open / Pick up / Talk"), score panel tracking compound-raid score.
+
+INVENTORY
+Slot-based (8 slots). Kael starts with a pistol and a medkit. Lootable crates scatter
+the compound. Weapons: pistol, SMG, shotgun, EMP grenade. Consumables: medkit, armour
+shard, stamina boost.
+
+ENEMIES & AI
+Three enemy archetypes:
+  • Guard (humanoid, navmesh patrol → chase → cover shooter when alerted)
+  • Drone (flying swarm, patrols corridors, alerts on sight)
+  • Heavy (humanoid, slow FSM guard, suppressing-fire behaviour)
+Enemies are wave-spawned from four radial spawn points around the compound exterior.
+First wave: 3 guards. Every 60 s a new wave adds 2 more enemies (continuous spawner).
+
+INTERACTABLES
+  • Compound gate: lever puzzle (two levers must be thrown in sequence)
+  • Locked doors: triggered by keycards found in the environment
+  • Fuel-cell terminal: readable terminal with a 3-line lore entry, then pickup
+  • NPC mechanic "Sable": talks Kael through the escape, gives a bike key
+
+DIALOGUE
+Sable has a branching conversation tree (3 nodes). Player can ask about the compound
+layout (reveals minimap markers) or go straight to the escape plan. Typewriter reveal,
+skip-able.
+
+AUDIO
+Layered ambient: wind + distant machinery. Music: tense layer fades in when enemies
+are alerted, swells on boss wave. Spatial SFX: gunshots, footsteps (surface-aware),
+vehicle engines. 3D positional audio for enemies (hear before you see them).
+
+VEHICLES (Blender models, all four bases)
+  Kael escapes via three vehicle options she finds in the motor pool:
+    • Tactical jeep   (base=car,   ride=0.35, wheel_r=0.72, bed=0, wheel_pairs=2)
+    • Cargo truck     (base=car,   body_len=5.0, wheel_pairs=3, ride=0.2)
+    • Recon plane     (base=plane, fuselage_len=6.5, wing_span=8.0, fin_h=1.4)
+    • Dirt bike       (base=bike,  suspension=1, engine=1, tank=1, pedals=0)
+  Each vehicle uses a vehicle_car controller variant, has its own chase camera,
+  engine audio loop, and Rigidbody wheel-collider physics.
+  Humanoid enemies are spawned as rigged humanoid base models (base=humanoid,
+  height=1.85, shoulder_w=0.52).
+
+MENUS & SCENES
+  Scene 1 – Main Menu: play, load game, settings (audio sliders, invert-Y, rebind),
+            quit.
+  Scene 2 – Compound (main level).
+  Scene 3 – Escape corridor (streamed in via async additive load, trigger-door
+            transition when Kael reaches the motor pool).
+  Pause menu available at any point in scenes 2-3: resume, save, settings, quit
+  to main menu.
+  Game-over screen on death with retry / load last checkpoint.
+
+SAVE SYSTEM
+Autosave on checkpoint trigger (entering the compound, reaching Sable, reaching the
+motor pool). Three manual save slots accessible from the pause menu. Save data
+includes: scene index, inventory contents, enemy wave number, Sable dialogue state.
+
+HEALTH SYSTEM (enemies)
+Guards: 60 HP. Drones: 25 HP (one shotgun blast). Heavy: 180 HP with armour (60 HP
+shield that must be broken first). All enemies have a ragdoll-on-death transition.
+
+VISUAL STYLE
+Gritty low-poly with strong directional lighting. URP with post-processing: bloom,
+chromatic aberration on damage, vignette. Day is overcast; escape sequence at dusk.
