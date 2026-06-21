@@ -167,6 +167,51 @@ def resolve(
     console.print(f"[cyan]{description}[/] -> [bold]{result}[/]")
 
 
+@app.command("rag-build")
+def rag_build(
+    targets: list[str] = typer.Argument(None, help="Scrapers to run (default: all)"),
+    force:   bool      = typer.Option(False, "--force", "-f", help="Re-scrape even if corpus exists"),
+    limit:   int       = typer.Option(0, "--limit", "-l", help="Cap entries (0=unlimited)"),
+) -> None:
+    """Scrape GTA5 data → JSONL corpus, then embed → ChromaDB index."""
+    import subprocess, sys
+    build_args = [sys.executable, "-m", "rag.build"] + (targets or [])
+    if force:   build_args.append("--force")
+    if limit:   build_args += [f"--limit={limit}"]
+    subprocess.run(build_args, check=True)
+    console.print("\n[bold]Embedding corpus into vector index ...[/]")
+    idx_args = [sys.executable, "-m", "rag.indexer"]
+    subprocess.run(idx_args, check=True)
+
+
+@app.command("rag-query")
+def rag_query(
+    query: str = typer.Argument(..., help="Natural-language search term"),
+    kind:  str = typer.Option("", "--kind", "-k", help="Filter: ped|vehicle|animation|scenario|audio"),
+    n:     int = typer.Option(5,  "--n",    "-n", help="Number of results"),
+) -> None:
+    """Search the local RAG vector index. Requires rag-build to have been run."""
+    from rag.query import RagClient
+    rag = RagClient()
+    if not rag.is_ready():
+        console.print("[red]Index not built.[/] Run: [cyan]python main.py rag-build[/]")
+        raise typer.Exit(1)
+
+    kind_arg = kind or None
+    hits = rag.search(query, kind=kind_arg, n=n)
+    console.print(f"\n[bold]RAG search:[/] [cyan]{query}[/]"
+                  + (f"  [dim](kind={kind})[/]" if kind else ""))
+    for i, h in enumerate(hits, 1):
+        dist = h["distance"]
+        color = "green" if dist < 0.4 else ("yellow" if dist < 0.55 else "red")
+        console.print(
+            f"  [{i}] [{color}]{h['canonical']}[/]  "
+            f"[dim]{h['kind']} | {h['label']} | dist={dist:.3f}[/]"
+        )
+        if h.get("tags"):
+            console.print(f"       [dim]tags: {h['tags']}[/]")
+
+
 @app.command("setup-rag")
 def setup_rag(
     config: str = typer.Option("config.yaml", "--config", "-c"),
@@ -467,9 +512,31 @@ def unity_audio(
     out:     Optional[str]  = typer.Option(None, "--out"),
     config:  str            = typer.Option("config.yaml", "--config", "-c"),
     model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
+    no_llm:  bool           = typer.Option(False, "--no-llm", help="Skip the LLM; build the bank from the game-type's required cues (deterministic)"),
+    clips:   bool           = typer.Option(True, "--clips/--no-clips", help="Generate actual .wav clips into Resources/Audio/"),
+    unity:   Optional[str]  = typer.Option(None, "--unity", "-u", help="Overlay generated clips + manifest into this Unity project's Assets/Resources/"),
 ) -> None:
-    """Generate a Unity audio bank (AudioCue + Bank ScriptableObjects + AudioManager)."""
-    _run_micro("audio", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+    """Generate a Unity audio bank (AudioCue + Bank + AudioManager) AND the actual
+    clips: DSP synth for arcade SFX, local models for voice/music (see config audio.backend)."""
+    if file is not None:
+        if not file.exists():
+            console.print(f"[red]Error:[/] file not found: {file}"); raise typer.Exit(1)
+        prompt = file.read_text(encoding="utf-8").strip()
+    if not prompt:
+        console.print("[red]Error:[/] provide a prompt or use --file <path>"); raise typer.Exit(1)
+
+    from src.micro import AudioPipeline
+    out_dir = AudioPipeline(_cfg(config, model)).run(
+        prompt, variant=variant, theme=theme, mashup_with=mashup_with, seed=seed,
+        out=out, use_llm=not no_llm, with_clips=clips)
+
+    if unity and clips:
+        import shutil
+        src_res = Path(out_dir) / "Resources"
+        if src_res.exists():
+            dst_res = Path(unity) / "Assets" / "Resources"
+            shutil.copytree(src_res, dst_res, dirs_exist_ok=True)
+            console.print(f"  [green]overlay[/] -> {dst_res}")
 
 
 @app.command("unity-ai")
@@ -645,7 +712,7 @@ def _parse_knobs(pairs: Optional[list[str]]) -> dict:
 def unity_model(
     prompt:  Optional[str]  = typer.Argument(None, help="Description, e.g. 'lifted matte-black pickup' or 'tall slim humanoid'"),
     variant: Optional[str]  = typer.Option(None, "--variant",
-                                           help="car | plane | humanoid | bike  (inferred from prompt if omitted)"),
+                                           help="car | plane | humanoid | bike | furniture | weapon  (inferred from prompt if omitted)"),
     knob:    Optional[list[str]] = typer.Option(None, "--knob", "-k",
                                   help="Override a param knob (repeatable): -k wheel_r=0.8 -k color=0.02,0.02,0.02"),
     seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
@@ -665,17 +732,22 @@ def unity_model(
     model:   Optional[str]  = typer.Option(None, "--model", "-m",
                                            help="Override LM Studio model for param mapping"),
 ) -> None:
-    """Generate a procedural 3D model in Blender (car / plane / humanoid / bike),
-    export a Unity-ready FBX, and optionally overlay it into a Unity project.
+    """Generate a procedural 3D model in Blender (car / plane / humanoid / bike /
+    furniture / weapon), export a Unity-ready FBX, and optionally overlay it into a
+    Unity project.
 
     Bases and their knobs
     ---------------------
-    car      — body_w, body_len, body_h, cabin_h, cabin_len, cabin_pos, wheel_r,
-               wheel_w, ride, bed, wheel_pairs, rim, color
-    plane    — fuselage_len, fuselage_r, wing_span, wing_chord, fin_h, color
-    humanoid — height, shoulder_w, hip_w, head_r, limb_r, color
-    bike     — wheelbase, wheel_r, wheel_w, frame_h, handlebar_w, rim, wheels,
-               engine, tank, pedals, suspension, color
+    car       — body_w, body_len, body_h, cabin_h, cabin_len, cabin_pos, wheel_r,
+                wheel_w, ride, bed, wheel_pairs, rim, color
+    plane     — fuselage_len, fuselage_r, wing_span, wing_chord, fin_h, color
+    humanoid  — height, shoulder_w, hip_w, head_r, limb_r, color
+    bike      — wheelbase, wheel_r, wheel_w, frame_h, handlebar_w, rim, wheels,
+                engine, tank, pedals, suspension, color
+    furniture — width, depth, height, top_t, leg_r, legs, seat, back, shelves,
+                drawers, cushion, color
+    weapon    — length, caliber, barrel_len, stock, muzzle, magazine, scope, grip,
+                foregrip, color
 
     \b
     Examples:
@@ -683,6 +755,8 @@ def unity_model(
       python main.py unity-model --variant plane -k wing_span=9 -k fin_h=1.8 --no-llm
       python main.py unity-model "tall slim humanoid" --variant humanoid --no-llm
       python main.py unity-model "dirt bike" --variant bike -k suspension=1 --no-llm
+      python main.py unity-model "a wooden bookcase" --variant furniture --no-llm
+      python main.py unity-model "a suppressed sniper rifle" --variant weapon --no-llm
       python main.py unity-model "red sports coupe" -u output/unity/TopDownRacingGame
       python main.py unity-model "motorbike" --emit
     """

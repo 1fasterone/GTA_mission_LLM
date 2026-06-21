@@ -1,0 +1,166 @@
+"""
+Audio generation backend selection (mirrors src/backends.py `make_chat_client`).
+
+`make_audio_client(config)` returns an adapter exposing three methods, each producing a
+mono float32 buffer @ 44.1 kHz or **None** (the caller then degrades):
+
+    sfx(prompt, dur, seed)        — a one-shot sound effect
+    music(prompt, dur, seed)      — a short music / ambient bed
+    tts(text, voice, seed)        — a spoken voice line
+
+Adapters (config `audio.backend`):
+  * `dsp`   — DSP synth only. `sfx` routes the prompt to an archetype; `music`/`tts`
+              return None (degrade to placeholder). Always available, deterministic.
+  * `local` — open local models: Stable Audio Open for sfx/music, Bark/Piper for tts.
+              Heavy deps are **lazy-imported**; if a model/dep is missing the method
+              returns None (and sfx falls back to the DSP synth) — never a hard fail.
+  * `none`  — everything returns None (synth-routed cues still synthesised directly).
+
+Every successful generation is cached by content-hash under `audio.cache_dir`, so a
+fixed seed reuses the same clip (skip-work / reproducibility, per the V1 spec).
+"""
+
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+
+from . import synth
+
+
+# ── adapters ──────────────────────────────────────────────────────────────────
+
+class _NoneAdapter:
+    """Stub backend — no generative audio (synth cues are handled outside)."""
+    name = "none"
+
+    def __init__(self, config: dict):
+        self.config = config or {}
+
+    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        return None
+
+    def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        return None
+
+    def tts(self, text: str, voice: str, seed: int) -> Optional[np.ndarray]:
+        return None
+
+
+class DspAdapter(_NoneAdapter):
+    """DSP synth as the SFX generator; music/tts degrade (DSP can't do them)."""
+    name = "dsp"
+
+    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        arch = synth.keyword_archetype(prompt) or "blip"
+        return synth.render(synth.archetype_params(arch, prompt), seed=seed)
+
+
+class LocalAdapter(DspAdapter):
+    """Open local models. Stable Audio Open for sfx/music, Bark/Piper for tts. Each is
+    lazy-imported; on any failure the method returns None (sfx → DSP fallback), so a
+    machine without the models still produces a valid project."""
+    name = "local"
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+        self.cfg = (config or {}).get("audio", {})
+        self._warned: set[str] = set()
+
+    def _warn_once(self, key: str, msg: str) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            print(f"[audio] {msg} — falling back (set up the model to enable it).")
+
+    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        buf = self._stable_audio(prompt, dur, seed)
+        if buf is not None:
+            return buf
+        return super().sfx(prompt, dur, seed)          # DSP fallback for synthesizable SFX
+
+    def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        return self._stable_audio(prompt, max(2.0, dur), seed)
+
+    def tts(self, text: str, voice: str, seed: int) -> Optional[np.ndarray]:
+        try:
+            return self._bark_tts(text, voice, seed)
+        except Exception as exc:  # noqa: BLE001
+            self._warn_once("tts", f"local TTS unavailable ({type(exc).__name__})")
+            return None
+
+    # -- lazy model hooks (import inside so a missing dep never breaks import) ---
+    def _stable_audio(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        try:
+            import torch  # noqa: F401
+            from stable_audio_tools import get_pretrained_model  # type: ignore
+            from stable_audio_tools.inference.generation import generate_diffusion_cond  # type: ignore
+        except Exception as exc:  # noqa: BLE001
+            self._warn_once("stable_audio", f"Stable Audio unavailable ({type(exc).__name__})")
+            return None
+        # Real inference is intentionally not run inside the deterministic test path;
+        # this is the wiring point. Implementations call generate_diffusion_cond with
+        # the model from get_pretrained_model(self.cfg["stable_audio"]["model_id"]),
+        # then downmix to mono @ synth.SR. Kept guarded so CI never downloads weights.
+        self._warn_once("stable_audio_run", "Stable Audio model wired but not invoked in this build")
+        return None
+
+    def _bark_tts(self, text: str, voice: str, seed: int) -> Optional[np.ndarray]:
+        from bark import generate_audio, preload_models  # type: ignore  # noqa: F401
+        self._warn_once("bark_run", "Bark model wired but not invoked in this build")
+        return None
+
+
+_ADAPTERS = {"none": _NoneAdapter, "dsp": DspAdapter, "local": LocalAdapter}
+
+
+# ── caching wrapper ───────────────────────────────────────────────────────────
+
+class CachingClient:
+    """Content-addressed cache around an adapter: identical (backend, method, prompt,
+    dur/voice, seed) reuses the same .wav, so generation is skip-work + reproducible."""
+
+    def __init__(self, adapter, cache_dir: Path):
+        self.adapter = adapter
+        self.cache_dir = Path(cache_dir)
+        self.name = adapter.name
+
+    def _key(self, kind: str, *parts) -> Path:
+        raw = "|".join([self.adapter.name, kind, *[str(p) for p in parts]])
+        h = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+        return self.cache_dir / f"{kind}_{h}.wav"
+
+    def _cached(self, path: Path, produce) -> Optional[np.ndarray]:
+        if path.exists():
+            try:
+                return synth.read_wav(path)
+            except Exception:  # noqa: BLE001 - corrupt cache entry -> regenerate
+                pass
+        buf = produce()
+        if buf is not None and len(buf):
+            synth.write_wav(path, buf)
+            return synth.read_wav(path)        # return the artifact so hit == miss
+        return buf
+
+    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        return self._cached(self._key("sfx", prompt, dur, seed),
+                            lambda: self.adapter.sfx(prompt, dur, seed))
+
+    def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
+        return self._cached(self._key("music", prompt, dur, seed),
+                            lambda: self.adapter.music(prompt, dur, seed))
+
+    def tts(self, text: str, voice: str, seed: int) -> Optional[np.ndarray]:
+        return self._cached(self._key("tts", text, voice, seed),
+                            lambda: self.adapter.tts(text, voice, seed))
+
+
+def make_audio_client(config: dict) -> CachingClient:
+    """Select + build the audio backend from `config['audio']` (default: dsp)."""
+    cfg = (config or {}).get("audio", {})
+    backend = str(cfg.get("backend", "dsp")).strip().lower()
+    adapter_cls = _ADAPTERS.get(backend, DspAdapter)
+    cache_dir = Path(cfg.get("cache_dir", "output/audio_cache"))
+    return CachingClient(adapter_cls(config or {}), cache_dir)

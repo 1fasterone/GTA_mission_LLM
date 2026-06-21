@@ -38,6 +38,32 @@ Riggers reuse `rigging.py` bone specs (e.g. `RigTemplate*` armatures) where a ba
 existing class (humanoid, quadruped); new mechanical rigs are generated procedurally from part
 positions like the car's.
 
+## Smooth-mesh toolkit (ring-loft) — the quality upgrade
+
+Early bases stacked separately-scaled primitives (`box`/`cyl`/`sphere`), which read as blocky.
+The shared toolkit in `base_models._MESH_TOOLKIT` (emitted into every build script) lifts organic
+shapes to smooth low-poly without changing the parts/assembler/rigger pattern:
+
+| Helper | What it does |
+|---|---|
+| `loft(name, sections, rgb, n)` | tapered tube/limb/torso from a spine of `(center, radius)` sections — rings bridged into smooth quads. Verts in **world** coords (object at origin) so proximity weighting reads `v.co`. |
+| `uvsphere_bm(name, center, r, rgb)` | head / eyes as a real bmesh sphere |
+| `finish(o, smooth, subsurf, bevel)` | shade-smooth + optional Subsurf/Bevel — the single chokepoint that lifts the silhouette (operator-free, headless-safe) |
+| `uv_unwrap(o)` | smart-project UVs (tolerant of headless context) |
+| `collider_hull(name, parts)` | one convex `COL_*` hull merged from render parts → Unity convex `MeshCollider` |
+| `make_lods(parts, levels)` | rename render parts `LOD0_*`, emit decimated `LOD1_*` copies (skinned copies keep weights; the FBX exporter bakes the decimate, preserves the skin) |
+
+**Proximity skinning** replaces rigid weight-1.0 binds for organic bases: each vertex is weighted to
+every bone within a falloff `radius` of its nearest bone-segment point, normalized — so joints
+deform smoothly across two bones. (`_HUMANOID_RIG.seg_weight`, after the recipe in
+*Fully Rigged Humanoid Character.md*.)
+
+**Full Unity pipeline** (humanoid; `src/micro/model._build_base_code_with_fbx`): after build+rig the
+emit runs `uv_unwrap` over the parts, builds a `COL_*` hull and `LOD0_/LOD1_` copies, then exports one
+FBX. `templates/unity/ProcGenImporter.cs` (an `AssetPostprocessor` the overlay drops into
+`Assets/Editor/`) auto-sets the **Humanoid** rig when a `Hips` bone is present and wires the
+`LODGroup` + `MeshCollider` from those naming conventions.
+
 ---
 
 ## Base families
@@ -49,14 +75,16 @@ positions like the car's.
 - **Structural knobs:** cabin_len, cabin_pos, bed, wheel_pairs.
 - **Rig:** root → body + per-wheel bones (axle +X) → wheels spin + suspension. ✅ done.
 
-### 2. boat
-- **Variants:** rowboat, speedboat, tugboat, cargo ship, sailboat.
-- **Parts:** hull (tapered box / lofted), deck, cabin/wheelhouse, mast, funnel, `Oar.L/R`, rudder, prop.
-- **Scale knobs:** hull_len/beam/depth, deck_h, cabin_size.
-- **Structural knobs:** `mast`(0/1 + count), `funnel`(0/1), `oars`(0/1, count), `cabin_style`
-  (open/wheelhouse), `prop`(0/1), `superstructure_levels` (cargo ship stacks).
-- **Rig:** root → hull → rudder (hinge Z), prop (spin), oars (pivot), mast (static). Hull at
-  waterline z=0; everything above.
+### 2. boat ✅ (implemented)
+- **Variants:** rowboat, sailboat, schooner (2-mast), motorboat, tugboat/steamer.
+- **Parts:** lofted U-section `Hull` (tapered bow/stern, keel z=0), inset deck, cabin/wheelhouse,
+  masts + square sails, funnel, steerable `Rudder`, motor propeller (`PropBlade_*`).
+- **Scale knobs:** hull_len/beam/depth, deck_h, mast_h.
+- **Structural knobs:** `masts` (0–3), `sails`(0/1), `prop`(0/1 → motor), `cabin`(0/1),
+  `rudder`(0/1), `funnel`(0/1).
+- **Rig:** Root → Hull → `RudderSteer` (yaws) + `Propeller` (spins); both name-driven by
+  `VehicleBoneDriver` (steer / prop). Rigid mechanical bind (weight 1.0). Full Unity pipeline
+  (UV + COL_ hull + LOD0/1). Hull keel at z=0.
 
 ### 3. building
 - **Variants:** house, shop, tower, warehouse, hut.
@@ -154,7 +182,13 @@ then live-verify in Blender (build → rig → pose → render) and confirm rigg
 
 ## Notes / honest limits
 
-- These stay **blocky primitive-composites** — great for greybox / GTA-sub-game props /
-  placeholders / prototyping, not AAA meshes. Believability scales with authoring effort per base.
+- Mechanical bases (car/bike/weapon/furniture) stay **primitive-composites** — great for greybox /
+  GTA-sub-game props / placeholders, not AAA meshes. **humanoid** (ring-stack body, proximity skin,
+  Unity Humanoid avatar) and **plane** (ellipsoid fuselage + wings + tail + engines/props + gear,
+  rigid mechanical rig driven by `VehicleBoneDriver` — props spin, wheels roll) are ported from the
+  proven standalone generators (`humangen.py` / `planegen.py`) and ship the full Unity pipeline
+  (UVs + LOD0/1 + convex collider). **boat** (lofted U-hull + masts/sails or cabin/funnel/prop, with a
+  rudder+prop mechanical rig) is built from scratch guided by the V1/V2 specs + this boat family, and
+  ships the same pipeline. Bike/furniture/weapon adopt the same approach next.
 - For unique *hero* assets, the complementary **text-to-3D** track (cloud or bigger VRAM) can feed
   the same Blender sanitizer (cleanup → UV → LOD → rig). Parametric stays the controllable spine.

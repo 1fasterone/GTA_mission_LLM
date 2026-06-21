@@ -117,6 +117,7 @@ pytest -m unity_compile            # launches a real Unity Editor in batchmode (
   `unity_pipeline` paths. The configured model name must match what LM Studio has loaded exactly.
 - **rich on Windows**: `main.py` and `blender_cli.py` reconfigure stdout/stderr to UTF-8 — rich Panels
   use box-drawing chars that crash a cp1252 pipe. Keep that guard in any new top-level CLI.
+- **sentence-transformers crashes on Windows** (exit -1073741819, access violation in tokenizer DLL), so the RAG indexer uses `fastembed` (ONNX) with model `BAAI/bge-small-en-v1.5` instead — run it as `python -m rag.indexer` (not `rag.index`).
 - **Live MCP servers** are available in some sessions: the **capital-B `mcp__Blender__`** server works
   (lowercase `mcp__blender__` times out); Unity MCP needs an Editor running with the plugin. Headless
   Blender (`--background --factory-startup --python`) is the no-GUI path used by the asset factory.

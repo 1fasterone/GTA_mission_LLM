@@ -40,8 +40,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-# Variants backed by vehicle_generator's detailed FBX builder.
-_VG_VARIANTS = {"car", "plane"}
+# Variants backed by vehicle_generator's detailed FBX builder. (plane now uses the
+# ported planegen builder in base_models instead — see _variant_table.)
+_VG_VARIANTS = {"car"}
 
 # Per-variant: (param schema, clamp fn, keyword-map fn, asset_type).
 def _variant_table():
@@ -56,9 +57,12 @@ def _variant_table():
 
     return {
         "car":      (vg.PARAM_SCHEMA, vg.clamp_params, vg.keyword_vehicle_params, "vehicle"),
-        "plane":    (vg.PLANE_PARAM_SCHEMA, vg.clamp_plane_params, vg.keyword_plane_params, "aircraft"),
-        "humanoid": (BASE_PARAM_SCHEMA["humanoid"], _bm_clamp("humanoid"), _bm_keyword("humanoid"), "character"),
-        "bike":     (BASE_PARAM_SCHEMA["bike"],     _bm_clamp("bike"),     _bm_keyword("bike"),     "vehicle"),
+        "plane":     (BASE_PARAM_SCHEMA["plane"],     _bm_clamp("plane"),     _bm_keyword("plane"),     "aircraft"),
+        "boat":      (BASE_PARAM_SCHEMA["boat"],      _bm_clamp("boat"),      _bm_keyword("boat"),      "vehicle"),
+        "humanoid":  (BASE_PARAM_SCHEMA["humanoid"],  _bm_clamp("humanoid"),  _bm_keyword("humanoid"),  "character"),
+        "bike":      (BASE_PARAM_SCHEMA["bike"],      _bm_clamp("bike"),      _bm_keyword("bike"),      "vehicle"),
+        "furniture": (BASE_PARAM_SCHEMA["furniture"], _bm_clamp("furniture"), _bm_keyword("furniture"), "prop"),
+        "weapon":    (BASE_PARAM_SCHEMA["weapon"],    _bm_clamp("weapon"),    _bm_keyword("weapon"),    "weapon"),
     }
 
 
@@ -75,12 +79,34 @@ def _build_base_code_with_fbx(base: str, params: dict, coll: str,
     out_fwd = str(out_dir).replace("\\", "/")
     fbx_fwd = str(fbx_path).replace("\\", "/")
     code += f'\n_OUT_DIR = r"{out_fwd}"\n'
+
+    # Full Unity pipeline (rigged bases): smart-project UVs, build a convex COL_
+    # collider hull and LOD0_/LOD1_ decimated copies before export. Gated to the
+    # ported, properly-rigged bases; the others stay untouched until they're ported.
+    if base in ("humanoid", "plane", "boat"):
+        code += '''
+# --- full Unity pipeline: UVs + collider + LODs ---
+_meshes = [o for o in _parts if o.type == "MESH"]
+for _o in _meshes:
+    uv_unwrap(_o)
+_col = collider_hull(COLL, _parts)
+_lods = make_lods(_parts, levels=2)
+result["collider"] = bool(_col)
+result["lods"] = len(_lods)
+result["objects"] = [o.name for o in _coll().objects]
+print("[proc] unity pipeline: collider=%s lods=%d" % (bool(_col), len(_lods)))
+'''
+
     code += f'''
 import bpy as _bpy, json as _json, os as _os
 _fbx = r"{fbx_fwd}"
+# Export ONLY this model's collection — never the scene's default cube/camera/light.
+_bpy.ops.object.select_all(action="DESELECT")
+for _o in _coll().objects:
+    _o.select_set(True)
 _bpy.ops.export_scene.fbx(
     filepath=_fbx,
-    use_selection=False,
+    use_selection=True,
     global_scale=1.0,
     apply_unit_scale=True,
     bake_space_transform=False,
@@ -116,7 +142,7 @@ class ModelPipeline:
 
     kind            = "model"
     display_name    = "Procedural 3D Model (Blender → FBX)"
-    variants        = ["car", "plane", "humanoid", "bike"]
+    variants        = ["car", "plane", "boat", "humanoid", "bike", "furniture", "weapon"]
     default_variant = "car"
 
     def __init__(self, config: dict):
@@ -135,7 +161,10 @@ class ModelPipeline:
     # ── prompt → params ──────────────────────────────────────────────────────
     def _map_params(self, prompt: str, variant: str, use_llm: bool) -> tuple[dict, str]:
         schema, clamp, keyword, _ = _variant_table()[variant]
-        if use_llm and prompt:
+        # Only the detailed car/plane builders have an LLM param mapper; the
+        # base_models variants (humanoid/bike/furniture) use their own knob
+        # schema, so route them through the deterministic keyword mapper.
+        if use_llm and prompt and variant in _VG_VARIANTS:
             try:
                 import procedural_pipeline as pp
                 mapper = pp.map_plane_prompt if variant == "plane" else pp.map_vehicle_prompt
@@ -325,14 +354,34 @@ class ModelPipeline:
         manifest = AssetManifest(
             name=name, asset_type=asset_type, style="procedural_lowpoly",
             route="blender", fbx=fbx_out, rigged=bool(result.get("rigged")),
-            tris=result.get("tris"),
+            collider=bool(result.get("collider")), tris=result.get("tris"),
         )
         res = overlay_asset(manifest, Path(unity_project), assets_subdir=assets_subdir)
+        # Drop the AssetPostprocessor so the project auto-wires Humanoid rig /
+        # LODGroup / MeshCollider on import (idempotent; never clobbers a newer copy).
+        self._install_postprocessor(Path(unity_project))
         if res.copied:
             console.print(f"  [green]overlay[/] -> {unity_project}: {', '.join(res.copied)}")
         if res.missing:
             console.print(f"  [yellow]missing[/] {', '.join(res.missing)}")
         return res.model_dump()
+
+    def _install_postprocessor(self, unity_root: Path) -> None:
+        """Copy templates/unity/ProcGenImporter.cs into <project>/Assets/Editor/
+        if absent. Editor-only; required for the overlay path since the generated
+        scene doesn't otherwise consume Assets/BlenderAssets/."""
+        src = _REPO_ROOT / "templates" / "unity" / "ProcGenImporter.cs"
+        if not src.exists():
+            return
+        dst = unity_root / "Assets" / "Editor" / "ProcGenImporter.cs"
+        if dst.exists():
+            return
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+            console.print(f"  [green]editor[/] -> {dst.relative_to(unity_root)}")
+        except OSError as exc:  # noqa: BLE001 - overlay should never hard-fail
+            console.print(f"  [yellow]postprocessor copy failed[/] ({exc})")
 
     def _write_plan(self, out_dir: Path, name: str, plan: dict) -> None:
         (out_dir / f"{name}.plan.json").write_text(

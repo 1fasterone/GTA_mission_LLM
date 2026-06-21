@@ -39,6 +39,7 @@ class AssetManifest(BaseModel):
     lods:        list[str]     = Field(default_factory=list)
     animations:  list[str]     = Field(default_factory=list)
     rigged:      bool          = False
+    collider:    bool          = False     # FBX carries a COL_* convex hull (Unity MeshCollider)
     seed:        Optional[int] = None      # the seed that produced this asset (provenance)
     geo_hash:    Optional[str] = None      # vertex fingerprint (backend-agnostic; cache key)
     # Pre-rig mesh `.blend` the run saved (clean verts+UVs, no armature) — the

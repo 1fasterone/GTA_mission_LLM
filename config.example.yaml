@@ -20,6 +20,10 @@ anythingllm:
   unity_workspace_slug: llm_unity # Unity RAG workspace
   fallback_to_local: true         # use bundled local lookups when RAG misses
 
+rag:
+  backend: local                   # "local" (ChromaDB/fastembed, no API) | "anythingllm" (legacy)
+  # index_dir: rag/index           # optional override for ChromaDB path (default: rag/index/)
+
 basic_mode: false                  # true => skip RAG entirely; local lookups only
 
 pipeline:
