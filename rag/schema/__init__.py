@@ -4,6 +4,8 @@ from .vehicle import make_vehicle_entry
 from .animation import make_anim_entry
 from .behavior import make_scenario_entry
 from .audio import make_audio_entry
+from .weapon import make_weapon_entry
+from .prop import make_prop_entry
 
 __all__ = [
     "RagEntry",
@@ -12,4 +14,6 @@ __all__ = [
     "make_anim_entry",
     "make_scenario_entry",
     "make_audio_entry",
+    "make_weapon_entry",
+    "make_prop_entry",
 ]

@@ -28,6 +28,8 @@ _CORPUS = [
     ("gta5/vehicles.jsonl",   "vehicle"),
     ("gta5/scenarios.jsonl",  "scenario"),
     ("gta5/audio.jsonl",      "audio"),
+    ("gta5/weapons.jsonl",    "weapon"),
+    ("gta5/props.jsonl",      "prop"),
     ("gta5/animations.jsonl", "animation"),   # largest — 20K dicts, still fast
 ]
 

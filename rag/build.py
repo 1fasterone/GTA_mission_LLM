@@ -21,10 +21,12 @@ SCRAPERS: dict[str, str] = {
     "animations": "rag.scrapers.gta5_animations",
     "scenarios":  "rag.scrapers.gta5_scenarios",
     "audio":      "rag.scrapers.gta5_audio",
+    "weapons":    "rag.scrapers.gta5_weapons",
+    "props":      "rag.scrapers.gta5_props",
 }
 
 # Ordered so fast scrapes run first
-DEFAULT_ORDER = ["scenarios", "audio", "peds", "vehicles", "animations"]
+DEFAULT_ORDER = ["scenarios", "audio", "weapons", "peds", "vehicles", "props", "animations"]
 
 
 def _count(path: Path) -> int:

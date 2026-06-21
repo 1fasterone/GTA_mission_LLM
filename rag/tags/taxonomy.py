@@ -60,6 +60,22 @@ GTA5_SCENARIO = {
                  "preaching", "ambient"],
 }
 
+GTA5_WEAPON = {
+    "weapon": ["melee", "pistol", "smg", "rifle", "mg", "shotgun", "sniper",
+               "heavy", "thrown", "stun", "unarmed", "tool", "special"],
+    "damage": ["bullet", "melee", "explosive", "fire", "electric"],
+    "mount":  ["handheld", "vehicle"],
+}
+
+GTA5_PROP = {
+    "prop":    ["electronic", "container", "valuables", "contraband",
+                "industrial", "military", "explosive", "access",
+                "medical", "documents", "collectible", "misc"],
+    "mission": ["heist", "casino_heist", "biker", "gunrunning", "dlc",
+                "trevor", "story"],
+    "context": ["cutscene", "ambient", "scripted"],
+}
+
 GTA5_AUDIO = {
     "type":    ["ambient", "script", "music", "mission", "complete",
                 "speech", "sting", "sfx"],
@@ -83,6 +99,8 @@ ALL_DOMAINS: dict[str, dict[str, dict[str, list[str]]]] = {
         "animation": GTA5_ANIMATION,
         "scenario":  GTA5_SCENARIO,
         "audio":     GTA5_AUDIO,
+        "weapon":    GTA5_WEAPON,
+        "prop":      GTA5_PROP,
     },
     "unity": {
         "package": UNITY_PACKAGE,
