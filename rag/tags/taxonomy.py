@@ -85,10 +85,63 @@ GTA5_AUDIO = {
 }
 
 UNITY_PACKAGE = {
-    "pipeline": ["urp", "hdrp", "builtin"],
+    "pipeline": ["urp", "hdrp", "builtin", "any"],
     "domain":   ["rendering", "audio", "physics", "ai", "ui", "input",
                  "animation", "network", "tools", "vfx", "terrain",
-                 "cinemachine", "testing", "localization"],
+                 "cinemachine", "testing", "localization", "2d", "xr",
+                 "timeline", "shadergraph"],
+    "category": ["camera", "rendering", "tools", "testing", "simulation",
+                 "input", "physics", "audio", "network", "ai", "xr"],
+}
+
+UNITY_COMPONENT = {
+    "category":  ["rendering", "physics_3d", "physics_2d", "audio", "animation",
+                  "navigation", "ui", "ui_toolkit", "event", "network", "input",
+                  "timeline", "cinemachine", "effects", "terrain", "xr", "lod",
+                  "transform", "postprocess", "scripting"],
+    "pipeline":  ["urp", "hdrp", "builtin", "any"],
+    "requires":  ["Rigidbody", "Collider", "Collider2D", "Camera", "Animator",
+                  "Canvas", "MeshFilter", "SkinnedMeshRenderer", "NetworkObject",
+                  "PlayableDirector", "com.unity.cinemachine", "com.unity.ai.navigation",
+                  "com.unity.netcode.gameobjects", "com.unity.textmeshpro",
+                  "com.unity.inputsystem", "com.unity.xr.coreutils",
+                  "com.unity.xr.interaction.toolkit", "AnimatorController"],
+    "is":        ["physics", "collider", "character", "renderable", "skinned",
+                  "2d", "audio", "audio_listener", "animation", "navigation",
+                  "ai", "baking", "ui", "container", "image", "text", "interactive",
+                  "scroll", "layout", "texture", "ui_toolkit", "timeline",
+                  "cutscene", "camera", "cinemachine", "tps", "input", "multiplayer",
+                  "network", "transform", "vehicle", "wheel", "joint", "cloth",
+                  "vfx", "particle", "reflection", "lod", "terrain", "xr", "vr",
+                  "ar", "scripting", "mesh", "postprocess"],
+}
+
+UNITY_API_VERB = {
+    "subsystem": ["transform", "rigidbody", "animator", "audio", "navmesh",
+                  "gameobject", "physics", "camera", "cinemachine", "ui",
+                  "timeline", "scene", "coroutine", "save", "screen"],
+    "action":    ["move", "rotate", "scale", "hierarchy", "physics", "animate",
+                  "audio", "navigate", "spawn", "destroy", "toggle", "query",
+                  "modify", "camera", "ui", "cutscene", "scene", "async",
+                  "save", "visual", "misc"],
+}
+
+UNITY_SCENE_RULE = {
+    "rule":     ["required", "forbidden", "warning"],
+    "pipeline": ["urp", "hdrp", "builtin", "any"],
+    "affects":  ["camera", "rendering", "audio", "physics", "navigation", "ui",
+                 "animation", "network", "input", "terrain", "xr", "lighting",
+                 "performance", "scripting", "shaders", "materials", "postprocess",
+                 "character", "cinemachine"],
+}
+
+UNITY_GENRE_ATOM = {
+    "genre":       ["universal", "fps", "rpg", "platformer", "horror",
+                    "racing", "tower_defence", "puzzle", "stealth", "strategy"],
+    "action_type": ["spawn", "destroy", "trigger", "timer", "cutscene", "visual",
+                    "ui", "save", "audio", "combat", "movement", "pickup", "ai",
+                    "dialogue", "quest", "progression", "interaction", "mechanic",
+                    "hazard", "camera", "environment", "scare", "build", "toggle"],
 }
 
 # ── Registry ─────────────────────────────────────────────────────────────────
@@ -103,7 +156,11 @@ ALL_DOMAINS: dict[str, dict[str, dict[str, list[str]]]] = {
         "prop":      GTA5_PROP,
     },
     "unity": {
-        "package": UNITY_PACKAGE,
+        "package":    UNITY_PACKAGE,
+        "component":  UNITY_COMPONENT,
+        "api_verb":   UNITY_API_VERB,
+        "scene_rule": UNITY_SCENE_RULE,
+        "genre_atom": UNITY_GENRE_ATOM,
     },
 }
 

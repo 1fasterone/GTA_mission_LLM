@@ -16,17 +16,33 @@ from pathlib import Path
 CORPUS_DIR = Path(__file__).parent / "corpus"
 
 SCRAPERS: dict[str, str] = {
-    "peds":       "rag.scrapers.gta5_peds",
-    "vehicles":   "rag.scrapers.gta5_vehicles",
-    "animations": "rag.scrapers.gta5_animations",
-    "scenarios":  "rag.scrapers.gta5_scenarios",
-    "audio":      "rag.scrapers.gta5_audio",
-    "weapons":    "rag.scrapers.gta5_weapons",
-    "props":      "rag.scrapers.gta5_props",
+    # GTA5
+    "peds":              "rag.scrapers.gta5_peds",
+    "vehicles":          "rag.scrapers.gta5_vehicles",
+    "animations":        "rag.scrapers.gta5_animations",
+    "scenarios":         "rag.scrapers.gta5_scenarios",
+    "audio":             "rag.scrapers.gta5_audio",
+    "weapons":           "rag.scrapers.gta5_weapons",
+    "props":             "rag.scrapers.gta5_props",
+    # Unity
+    "unity_components":  "rag.scrapers.unity_components",
+    "unity_api_verbs":   "rag.scrapers.unity_api_verbs",
+    "unity_scene_rules": "rag.scrapers.unity_scene_rules",
+    "unity_genre_atoms": "rag.scrapers.unity_genre_atoms",
+    "unity_packages":    "rag.scrapers.unity_packages",
 }
 
-# Ordered so fast scrapes run first
-DEFAULT_ORDER = ["scenarios", "audio", "weapons", "peds", "vehicles", "props", "animations"]
+# Ordered so fast (static) scrapers run first; network scraper last
+DEFAULT_ORDER = [
+    "scenarios", "audio", "weapons", "peds", "vehicles", "props", "animations",
+    "unity_components", "unity_api_verbs", "unity_scene_rules", "unity_genre_atoms",
+    "unity_packages",
+]
+
+UNITY_ORDER = [
+    "unity_components", "unity_api_verbs", "unity_scene_rules",
+    "unity_genre_atoms", "unity_packages",
+]
 
 
 def _count(path: Path) -> int:
@@ -38,11 +54,25 @@ def _count(path: Path) -> int:
 def stats() -> None:
     print("\nCorpus stats:")
     grand = 0
-    for name in DEFAULT_ORDER:
+    gta5_names = ["scenarios", "audio", "weapons", "peds", "vehicles", "props", "animations"]
+    for name in gta5_names:
         path = CORPUS_DIR / "gta5" / f"{name}.jsonl"
-        n    = _count(path)
+        n = _count(path)
         status = f"{n:>6} entries" if n else "  MISSING"
         print(f"  gta5/{name}.jsonl  {status}")
+        grand += n
+    unity_names = {
+        "unity_components":  "unity/components.jsonl",
+        "unity_api_verbs":   "unity/api_verbs.jsonl",
+        "unity_scene_rules": "unity/scene_rules.jsonl",
+        "unity_genre_atoms": "unity/genre_atoms.jsonl",
+        "unity_packages":    "unity/packages.jsonl",
+    }
+    for label, rel in unity_names.items():
+        path = CORPUS_DIR / rel
+        n = _count(path)
+        status = f"{n:>6} entries" if n else "  MISSING"
+        print(f"  {rel}  {status}")
         grand += n
     print(f"  {'Total':30} {grand:>6} entries\n")
 
@@ -69,7 +99,9 @@ def main() -> None:
         stats()
         return
 
-    if not targets:
+    if "--unity" in argv:
+        targets = UNITY_ORDER
+    elif not targets:
         targets = DEFAULT_ORDER
 
     invalid = [t for t in targets if t not in SCRAPERS]
