@@ -114,6 +114,60 @@ class LocalAdapter(DspAdapter):
 
 
 _ADAPTERS = {"none": _NoneAdapter, "dsp": DspAdapter, "local": LocalAdapter}
+# "stable3" is registered lazily in make_audio_client to avoid importing torch at startup.
+
+
+# ── LM Studio VRAM management ────────────────────────────────────────────────
+
+def unload_lm_studio(config: dict) -> bool:
+    """Unload all active LM Studio models to free VRAM for Stable Audio 3.
+
+    Strategy (tried in order, first success wins):
+      1. `lms unload <model_id>` CLI — the supported unload mechanism in LM Studio.
+      2. REST GET /api/v0/models to discover what's loaded (used to build CLI args).
+
+    Returns True on success or when nothing is loaded; False on failure (non-fatal).
+    Graceful on Ollama (no lms CLI) and on network / subprocess errors.
+    """
+    import subprocess
+
+    lm_cfg = (config or {}).get("lm_studio", {})
+    v1_base = str(lm_cfg.get("base_url", "http://localhost:1234/v1")).rstrip("/")
+    mgmt = v1_base.replace("/v1", "").rstrip("/") + "/api/v0"
+
+    # Discover which models are loaded via the REST list endpoint.
+    loaded_ids: list[str] = []
+    try:
+        import httpx
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(f"{mgmt}/models")
+            if r.status_code == 200:
+                for m in r.json().get("data", []):
+                    if m.get("state") == "loaded":
+                        mid = m.get("id") or m.get("identifier") or ""
+                        if mid:
+                            loaded_ids.append(mid)
+    except Exception:  # noqa: BLE001 — Ollama / network unavailable
+        pass
+
+    if not loaded_ids:
+        return True  # nothing to unload
+
+    # Unload each model via the LM Studio CLI (`lms unload <model_key>`).
+    all_ok = True
+    for mid in loaded_ids:
+        try:
+            result = subprocess.run(
+                ["lms", "unload", mid],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                all_ok = False
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            # lms CLI not on PATH or timed out — non-fatal
+            all_ok = False
+
+    return all_ok
 
 
 # ── caching wrapper ───────────────────────────────────────────────────────────
@@ -158,9 +212,21 @@ class CachingClient:
 
 
 def make_audio_client(config: dict) -> CachingClient:
-    """Select + build the audio backend from `config['audio']` (default: dsp)."""
+    """Select + build the audio backend from `config['audio']` (default: dsp).
+
+    Backends:
+      dsp     — offline sfxr DSP synth only (default, always available)
+      local   — Stable Audio Open + Bark (legacy stub)
+      stable3 — Stable Audio 3 via G:/AI MODELS/stable3audio (lazy-imported
+                so torch is never loaded at module-import time)
+      none    — everything returns None
+    """
     cfg = (config or {}).get("audio", {})
     backend = str(cfg.get("backend", "dsp")).strip().lower()
-    adapter_cls = _ADAPTERS.get(backend, DspAdapter)
+    if backend == "stable3":
+        from .stable3_backend import Stable3AudioAdapter  # lazy — avoids torch at startup
+        adapter_cls = Stable3AudioAdapter
+    else:
+        adapter_cls = _ADAPTERS.get(backend, DspAdapter)
     cache_dir = Path(cfg.get("cache_dir", "output/audio_cache"))
     return CachingClient(adapter_cls(config or {}), cache_dir)

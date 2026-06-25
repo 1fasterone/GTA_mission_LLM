@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, UNITY_EXTRA_INSTRUCTIONS,
 )
@@ -149,7 +150,7 @@ OUTPUT:
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 
-class AudioPipeline(MicroPipeline):
+class AudioPipeline(UnityMicroPipeline):
     kind            = "audio"
     display_name    = "Unity Audio System"
     schema_cls      = AudioSchema
@@ -192,6 +193,9 @@ class AudioPipeline(MicroPipeline):
         schema.meta = {"user_prompt": user_prompt}
         schema = self.default_fix(schema, variant)
         schema.name = to_pascal(schema.name or "AudioBank", "AudioBank")
+        # Unload LM Studio if stable3 backend is active (no concept to translate
+        # on the --no-llm path, but VRAM still needs to be freed before inference).
+        self._pre_write(schema, variant)
         out_dir = Path(out) if out else (self.output_root / schema.name)
         out_dir.mkdir(parents=True, exist_ok=True)
         n = self.write_files(schema, variant, out_dir)
@@ -199,6 +203,52 @@ class AudioPipeline(MicroPipeline):
             json.dumps(schema.model_dump(), indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"[audio] (no-LLM) {schema.name}: {len(schema.cues)} cues, {n} file(s) -> {out_dir}")
         return out_dir
+
+    def _pre_write(self, schema, variant) -> None:
+        """Hook called after the fixer and before write_files.
+
+        When the backend is `stable3`:
+          1. Translate the Step-2 concept brief → per-cue gen_prompt while
+             LM Studio is still loaded (richer prompts, zero extra cost).
+          2. Unload LM Studio to free VRAM before Stable Audio 3 loads its models.
+
+        Silently no-ops for other backends (dsp / local / none).
+        """
+        cfg = (self.config or {}).get("audio", {})
+        if str(cfg.get("backend", "dsp")).strip().lower() != "stable3":
+            return
+
+        # Step 3.5 — enrich gen_prompts while the project LLM is still loaded
+        concept = (getattr(schema, "meta", None) or {}).get("concept", "")
+        if concept and getattr(schema, "cues", None):
+            self._step(3, "Translating concept → Stable Audio 3 prompts")
+            try:
+                from ..audio.concept_translator import translate_concept
+                n = translate_concept(concept, schema.cues, self.llm, self._gen_seed)
+                if n:
+                    self._ok(f"gen_prompt enriched for {n}/{len(schema.cues)} cues")
+                else:
+                    self._warn("concept translation produced no prompts — using descriptors")
+            except Exception as exc:  # noqa: BLE001
+                self._warn(
+                    f"concept translation failed ({type(exc).__name__}: {exc}) "
+                    "— descriptors will be used as prompts"
+                )
+
+        # Step 3.6 — unload LM Studio so Stable Audio 3 has the full 8 GB
+        self._step(3, "Unloading LM Studio model to free VRAM for Stable Audio 3")
+        try:
+            from ..audio.backends import unload_lm_studio
+            ok = unload_lm_studio(self.config)
+            if ok:
+                self._ok("LM Studio model unloaded — VRAM available for Stable Audio 3")
+            else:
+                self._warn(
+                    "Could not unload LM Studio via API — "
+                    "manually unload the model to avoid CUDA OOM on 8 GB VRAM"
+                )
+        except Exception as exc:  # noqa: BLE001
+            self._warn(f"unload request failed ({type(exc).__name__}: {exc})")
 
     def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "AudioBank")
@@ -211,15 +261,50 @@ class AudioPipeline(MicroPipeline):
             schema.categories.insert(0, "music")
         if not schema.mixer_groups:
             schema.mixer_groups = ["Master"]
-        # Inject the game-type's required cues (so the bank is never empty), then
-        # dedup by id. game_type comes from the LLM or is derived from the prompt.
-        from ..audio.resolver import required_cues, game_type_from_prompt
-        prompt = (getattr(schema, "meta", None) or {}).get("user_prompt", self._gen_prompt)
-        schema.game_type = schema.game_type or game_type_from_prompt(prompt)
-        have = {c.id for c in schema.cues}
-        for rc in required_cues(schema.game_type):
-            if rc["id"] not in have:
-                schema.cues.append(AudioCueSpec(**rc)); have.add(rc["id"])
+        # Inject cues so the bank is never empty.
+        # Primary path: LLM reads the concept and extracts diegetic sound sources
+        # from the world's own nouns/verbs — no genre lookup, no preset list.
+        # Fallback (--no-llm or LLM failure): genre preset via required_cues().
+        meta    = getattr(schema, "meta", None) or {}
+        concept = meta.get("concept", "")
+        prompt  = meta.get("user_prompt", self._gen_prompt)
+        llm     = getattr(self, "llm", None)
+
+        pre_cues = meta.get("_pre_cues")  # injected by main pipeline before LM Studio unload
+        injected = False
+        if pre_cues:
+            # Compose path: cues were extracted from the game concept in the main pipeline
+            # while LM Studio was still loaded.  No live LLM needed here.
+            have = {c.id for c in schema.cues}
+            for rc in pre_cues:
+                cid = rc.get("id", "")
+                if cid and cid not in have:
+                    schema.cues.append(AudioCueSpec(**rc))
+                    have.add(cid)
+            injected = bool(schema.cues)
+        elif concept and llm is not None:
+            # Standalone path: LLM still available; extract cues live.
+            try:
+                from ..audio.resolver import extract_cues
+                diegetic = extract_cues(concept, llm, n=10, seed=self._gen_seed)
+                if diegetic:
+                    have = {c.id for c in schema.cues}
+                    for rc in diegetic:
+                        if rc["id"] not in have:
+                            schema.cues.append(AudioCueSpec(**rc))
+                            have.add(rc["id"])
+                    injected = True
+            except Exception:  # noqa: BLE001 — always degrade to preset
+                pass
+
+        if not injected:
+            from ..audio.resolver import required_cues, game_type_from_prompt
+            schema.game_type = schema.game_type or game_type_from_prompt(prompt)
+            have = {c.id for c in schema.cues}
+            for rc in required_cues(schema.game_type):
+                if rc["id"] not in have:
+                    schema.cues.append(AudioCueSpec(**rc))
+                    have.add(rc["id"])
         seen: set[str] = set(); deduped = []
         for c in schema.cues:
             if c.id not in seen:

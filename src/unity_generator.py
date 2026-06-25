@@ -126,6 +126,105 @@ _SCRIPT_TEMPLATES = {
     # level_generator is an Editor script — handled separately in generate()
 }
 
+# ── Custom-type stub emitter ───────────────────────────────────────────────────
+# When the LLM invents a type name in `extra_fields` (e.g. List<BountyContract>)
+# that isn't a standard Unity/C# type, the generator auto-emits a minimal
+# [System.Serializable] stub class above the MonoBehaviour so the script compiles.
+
+_CS_BUILTIN_TYPES: frozenset[str] = frozenset({
+    # C# primitives / value types
+    "string", "int", "float", "bool", "double", "long", "short", "byte",
+    "char", "object", "void", "uint", "ulong", "ushort", "sbyte", "decimal",
+    # Generic collection open names
+    "List", "Dictionary", "Array", "Queue", "Stack", "HashSet",
+    "LinkedList", "IEnumerable", "IEnumerator", "IList", "IDictionary",
+    "ICollection", "IReadOnlyList", "IReadOnlyDictionary",
+    # Delegates / events
+    "Action", "Func", "Predicate", "EventHandler", "Delegate", "UnityEvent",
+    "UnityAction",
+    # Unity structs / value types
+    "Vector2", "Vector3", "Vector4", "Quaternion", "Color", "Color32",
+    "Rect", "Bounds", "RectOffset", "Matrix4x4", "Plane", "Ray",
+    "RaycastHit", "RaycastHit2D", "LayerMask", "GUIStyle", "GUIContent",
+    "Keyframe", "AnimationCurve",
+    # Unity components
+    "Transform", "GameObject", "MonoBehaviour", "ScriptableObject",
+    "Component", "Behaviour", "Object",
+    "Rigidbody", "Rigidbody2D", "Collider", "Collider2D",
+    "BoxCollider", "SphereCollider", "CapsuleCollider", "MeshCollider",
+    "BoxCollider2D", "CircleCollider2D", "PolygonCollider2D",
+    "Animator", "Animation", "AnimationClip", "AnimationState",
+    "AudioSource", "AudioClip", "AudioMixer", "AudioMixerGroup",
+    "Camera", "Light", "LineRenderer", "TrailRenderer",
+    "Material", "Mesh", "MeshRenderer", "MeshFilter", "SkinnedMeshRenderer",
+    "Sprite", "SpriteRenderer", "Texture", "Texture2D", "RenderTexture",
+    "Shader", "ParticleSystem", "NavMeshAgent", "NavMeshPath",
+    # UI
+    "Canvas", "CanvasGroup", "CanvasScaler", "GraphicRaycaster",
+    "Text", "Image", "Button", "InputField", "Slider", "Toggle",
+    "ScrollRect", "Scrollbar", "Dropdown", "RawImage",
+    "TextMeshPro", "TMP_Text", "TMP_InputField",
+    "UIDocument", "VisualElement",
+    # Coroutines / async
+    "WaitForSeconds", "WaitForFixedUpdate", "WaitForEndOfFrame",
+    "YieldInstruction", "Coroutine", "AsyncOperation",
+    # Scene
+    "Scene",
+    # PhysicMaterial spellings
+    "PhysicMaterial", "PhysicsMaterial2D",
+})
+
+_GENERIC_WRAPPER_RE = re.compile(
+    r"^(?:List|IEnumerable|IList|ICollection|IReadOnlyList|Queue|Stack|HashSet)<(.+)>$"
+)
+_DICT_RE = re.compile(r"^Dictionary<([^,]+),\s*(.+)>$")
+
+
+def _extract_base_type(type_str: str) -> str:
+    """Strip generics/arrays to return the innermost concrete type name."""
+    t = type_str.strip().rstrip("[]").strip()
+    m = _DICT_RE.match(t)
+    if m:
+        return _extract_base_type(m.group(2))   # value type is more often custom
+    m = _GENERIC_WRAPPER_RE.match(t)
+    if m:
+        return _extract_base_type(m.group(1))
+    return t.split("<")[0].strip()
+
+
+def _collect_custom_type_stubs(extra_fields: list) -> list[str]:
+    """Return [System.Serializable] stub strings for LLM-invented types in extra_fields.
+
+    Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are skipped, as are
+    Manager/System/Controller singletons (those are expected to be separate scripts).
+    """
+    seen: set[str] = set()
+    stubs: list[str] = []
+    for f in extra_fields:
+        base = _extract_base_type(getattr(f, "type", "") or "")
+        if (
+            not base
+            or base in _CS_BUILTIN_TYPES
+            or "<" in base
+            or "." in base
+            or base in seen
+            or base.endswith("Manager")
+            or base.endswith("System")
+            or base.endswith("Controller")
+            or base.endswith("Handler")
+        ):
+            continue
+        seen.add(base)
+        stubs.append(
+            f"[System.Serializable]\n"
+            f"public class {base}\n"
+            f"{{\n"
+            f"    // Auto-generated stub — add fields as needed\n"
+            f"}}\n"
+        )
+    return stubs
+
+
 # ── Visual style -> lighting config ───────────────────────────────────────────
 
 _LIGHTING_BY_STYLE: dict[str, dict] = {
@@ -841,6 +940,12 @@ class UnityProjectGenerator:
                 known.add(u.class_name)
                 if u.kind == "ai":
                     ai_fallback = u.class_name
+            # Atom-driven entities get a generated <Name>Behavior class — add those
+            # class names to `known` so the reconciliation below does not clear them.
+            for e in schema.entities:
+                if e.atoms:
+                    parts = re.sub(r"[^a-zA-Z0-9]+", " ", e.name or "").split()
+                    known.add(("".join(p.capitalize() for p in parts) or "Entity") + "Behavior")
             for e in schema.entities:
                 if e.behavior and e.behavior not in known:
                     e.behavior = ai_fallback if e.kind == "enemy" else ""
@@ -986,6 +1091,13 @@ class UnityProjectGenerator:
             }
             for i, s in enumerate(x for x in schema.scripts if x.type == "custom")
         ]
+        # SceneSetup.cs is always emitted — it builds the per-scene UI at runtime.
+        _scene_setup_guid = _make_guid(f"{pn}/Scripts/SceneSetup")
+        files[f"{pn}/Assets/Scripts/SceneSetup.cs"] = self._render(
+            "scripts/SceneSetup.cs.j2", {**base_ctx, "project_name": pn}
+        )
+        files[f"{pn}/Assets/Scripts/SceneSetup.cs.meta"] = _meta_file(_scene_setup_guid)
+
         scene_ctx = {
             **base_ctx,
             "camera_position":  _cam["position"],
@@ -1001,6 +1113,7 @@ class UnityProjectGenerator:
             "enemy_model":  used_models.get("enemy"),
             "model_swap_guid": _make_guid(f"{pn}/Scripts/ModelSwap"),
             "character_controller_res": "Models/Default/DefaultCharacter",
+            "scene_setup_guid": _scene_setup_guid,
         }
         for scene_name in schema.scenes:
             scene_path = f"{pn}/Assets/Scenes/{scene_name}.unity"
@@ -1129,6 +1242,46 @@ class UnityProjectGenerator:
             files[esp_path]           = self._render("EntitySpawner.cs.j2", base_ctx)
             files[f"{esp_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/EntitySpawner"))
 
+        # ── Atom-driven entity behaviors ──────────────────────────────────────
+        # For each entity that has an atom sequence, generate a MonoBehaviour
+        # coroutine.  EntitySpawner resolves the class name at runtime via
+        # Type.GetType(entity.behavior) and AddComponent — the name must match.
+        entities_with_atoms = [e for e in schema.entities if getattr(e, "atoms", None)]
+        if entities_with_atoms:
+            from .atoms.backends.unity import unity_coroutine_body as _ucb
+            from .atoms.behavior_map import behavior_loops
+
+            def _class(entity_name: str) -> str:
+                import re
+                parts = re.sub(r"[^a-zA-Z0-9]+", " ", entity_name or "").split()
+                return ("".join(p.capitalize() for p in parts) or "Entity") + "Behavior"
+
+            for e in entities_with_atoms:
+                cls       = _class(e.name)
+                atom_dicts = [inv.model_dump() for inv in e.atoms]
+                body      = _ucb(atom_dicts)
+                eb_path   = f"{pn}/Assets/Scripts/{cls}.cs"
+                files[eb_path]           = self._render("EntityBehavior.cs.j2", {
+                    **base_ctx,
+                    "entity":       e,
+                    "class_name":   cls,
+                    "atom_body":    body,
+                    "loop_behavior": behavior_loops(e.atoms),
+                })
+                files[f"{eb_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/{cls}"))
+
+        # ── Global atom sequencer (schema.atoms) ──────────────────────────────
+        # Schema-level atoms (intro fade, music start, etc.) fire once on Start
+        # via a GameSequencer MonoBehaviour on the GameManager object.
+        if getattr(schema, "atoms", None):
+            from .atoms.backends.unity import unity_coroutine_body as _ucb
+            gs_path = f"{pn}/Assets/Scripts/GameSequencer.cs"
+            files[gs_path]           = self._render("GameSequencer.cs.j2", {
+                **base_ctx,
+                "atom_body": _ucb([inv.model_dump() for inv in schema.atoms]),
+            })
+            files[f"{gs_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/GameSequencer"))
+
         # ── Level Generator editor script (ProBuilder) ────────────────────────
         _stypes = {s.type for s in schema.scripts}
         if "level_generator" in _stypes:
@@ -1209,7 +1362,7 @@ class UnityProjectGenerator:
             prefab_path = f"{pn}/Assets/Prefabs/{prefab_name}.prefab"
             files[prefab_path] = self._render(prefab_tpl, prefab_ctx)
             files[f"{prefab_path}.meta"] = _native_meta(
-                _make_guid(f"{pn}/Prefabs/{prefab_name}"), main_object_id=100100000
+                _make_guid(f"{pn}/Prefabs/{prefab_name}"), main_object_id=1001000000
             )
 
         # ── _UserAssets/ skeleton ─────────────────────────────────────────────
@@ -1332,9 +1485,18 @@ class UnityProjectGenerator:
         n_models = 0
         for m in used_models.values():
             for item in [m] + list(m.clips.values()):
+                # Primary copy: Assets/Resources/Models/Default/... (for Resources.Load)
                 dest = root / schema.project_name / "Assets" / "Resources" / item.dest_rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(Path(item.src).read_bytes())
+                # Secondary copy: Assets/Models/<Kind>/<file> (user-visible clean folder).
+                # item.dest_rel starts with "Models/Default/" — strip that prefix so the
+                # secondary path is Assets/Models/<Kind>/<file> not Assets/Models/Models/Default/...
+                _rel_parts = Path(item.dest_rel).parts
+                _kind_relative = Path(*_rel_parts[2:]) if len(_rel_parts) > 2 else Path(_rel_parts[-1])
+                dest2 = root / schema.project_name / "Assets" / "Models" / _kind_relative
+                dest2.parent.mkdir(parents=True, exist_ok=True)
+                dest2.write_bytes(Path(item.src).read_bytes())
                 n_models += 1
 
         return root / schema.project_name, len(files) + n_models
@@ -1355,8 +1517,26 @@ class UnityProjectGenerator:
 
         path = f"{pn}/Assets/Scripts/{script.name}.cs"
 
+        # Compute atom coroutine body for custom scripts whose description resolved
+        # to an atom sequence (resolver fills script.atoms when extra_* are empty).
+        atom_body = ""
+        if script.type == "custom" and getattr(script, "atoms", None):
+            from .atoms.backends.unity import unity_coroutine_body
+            atom_body = unity_coroutine_body([inv.model_dump() for inv in script.atoms])
+
+        # Emit [System.Serializable] stub classes for any field types the LLM
+        # invented that aren't standard Unity/C# types.  Without this, references
+        # like List<BountyContract> cause CS0246 on first open in Unity.
+        stub_classes = ""
+        if script.type == "custom" and script.extra_fields:
+            stubs = _collect_custom_type_stubs(script.extra_fields)
+            if stubs:
+                stub_classes = "\n".join(stubs) + "\n"
+
         if tpl_file and (self.template_dir / "scripts" / tpl_file).exists():
-            content = self._render(tpl_file, {**base_ctx, "script": script})
+            content = self._render(tpl_file, {**base_ctx, "script": script,
+                                              "atom_body": atom_body,
+                                              "stub_classes": stub_classes})
         else:
             content = (
                 f"// Auto-generated stub — {script.name}\n"

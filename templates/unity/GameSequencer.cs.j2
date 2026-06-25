@@ -1,0 +1,22 @@
+// Auto-generated — DO NOT EDIT
+// Fires the schema-level atom sequence once at game start.
+// Attach to any persistent GameObject (GameManager is the default host).
+using System.Collections;
+using UnityEngine;
+
+public class GameSequencer : MonoBehaviour
+{
+    [Tooltip("Delay in seconds before the sequence fires (e.g. let the scene finish loading).")]
+    [SerializeField] private float startDelay = 0.1f;
+
+    private IEnumerator Start()
+    {
+        if (startDelay > 0f) yield return new WaitForSeconds(startDelay);
+        yield return StartCoroutine(Sequence());
+    }
+
+    private IEnumerator Sequence()
+    {
+        {{ atom_body | indent(8) }}
+    }
+}

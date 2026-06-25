@@ -1,27 +1,81 @@
 """
 Mission & Project Creator — CLI entry point.
 
-GTA5 mode  (AnythingLLM RAG for model-ID resolution):
-  python main.py generate "Make a heist mission at the docks."
-  python main.py validate schema.json
-  python main.py resolve "cult member" peds
-  python main.py setup-rag
+LLM front-end (Steps 1-3) + deterministic compiler back-end (Steps 4-6).
+Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
 
-Unity mode  (local lookup tables only, no RAG required):
-  python main.py unity-create "A 2D platformer with Cinemachine"
+━━━ GTA5 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python main.py generate "heist at the docks"        # LLM → C# mission script
+  python main.py validate schema.json                 # recompile saved schema (no LLM)
+  python main.py resolve "cult member" peds           # resolve one GTA5 asset ID
+
+━━━ RAG index (local ChromaDB — run once, or after corpus updates) ━━━━━━━━━
+  python main.py rag-build                            # scrape + embed all corpora
+  python main.py rag-build weapons scenarios --force  # rebuild specific scrapers
+  python main.py rag-query "cult member" --kind ped  # search the local index
+  python main.py rag-build --unity                    # rebuild the Unity corpus only
+
+━━━ AnythingLLM (legacy — only needed if you run an AnythingLLM server) ━━━━
+  python main.py setup-rag                            # upload GTA5 docs to workspace
+  python main.py setup-workspace                      # bootstrap the workspace
+  python main.py rag-status                           # check workspace doc counts
+
+━━━ Web UI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python main.py serve                                # http://127.0.0.1:8000
+
+━━━ Unity — full project ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python main.py unity-create "horror survival in a maze"
   python main.py unity-create --file prompts/neon_fugitive.txt
-  python main.py unity-resolve "universal render pipeline"
-  python main.py unity-validate schema.json
+  python main.py unity-create "racing game" --compose         # + wire micro-generators
+  python main.py unity-validate MyGame.schema.json            # recompile (no LLM)
+  python main.py unity-migrate MyGame.schema.json             # upgrade v1 → v2 schema
+  python main.py unity-resolve "universal render pipeline"    # look up package ID
 
-Blender model micro (car / plane / humanoid / bike → FBX):
+━━━ Unity — micro-generators (drop-in focused artefacts) ━━━━━━━━━━━━━━━━━━
+  python main.py unity-controller "scuba diver" --variant swimming
+  python main.py unity-camera     "horror game camera" --variant cinemachine_3p
+  python main.py unity-physics    "floating debris" --variant buoyancy
+  python main.py unity-hud        "sci-fi helmet display" --variant full_hud_bundle
+  python main.py unity-input      "racing wheel + gamepad" --variant racing_wheel
+  python main.py unity-ai         "guard dog that patrols and chases" --variant fsm_guard
+  python main.py unity-spawner    "enemy wave system" --variant wave_spawner
+  python main.py unity-saveload   "checkpoint autosave" --variant checkpoint
+  python main.py unity-inventory  "equipment slots for an RPG" --variant equipment
+  python main.py unity-dialogue   "branching NPC conversation" --variant branching
+  python main.py unity-menu       "pause menu with settings" --variant pause_menu
+  python main.py unity-interactable "locked door with keypad" --variant door
+  python main.py unity-transition "fade to black on zone exit" --variant fade
+  python main.py unity-health     "regenerating shield + health" --variant shielded
+  python main.py unity-statemachine "zombie with 3 patrol states" --variant enemy_fsm
+  python main.py unity-trigger    "boss arena that seals on entry" --variant zone_enter
+  python main.py unity-animator   "humanoid soldier walk/run/shoot" --variant humanoid
+
+━━━ Unity — audio (Stable Audio 3 by default — see config.yaml audio.backend) ━━
+  python main.py unity-audio "horror maze ambient + threat SFX"
+  python main.py unity-audio "arcade coin game" --no-llm       # no LLM, DSP fallback
+  python main.py unity-audio "FPS soundscape" -u output/unity/MyGame  # overlay clips
+
+━━━ Unity — Blender 3D model micro (car / plane / humanoid / bike / weapon → FBX) ━━
   python main.py unity-model "lifted matte-black pickup" --no-llm
   python main.py unity-model "tall humanoid" --variant humanoid --no-llm
   python main.py unity-model "dirt bike" --variant bike -k suspension=1 --no-llm
-  python main.py unity-model "glider" --variant plane --emit
+  python main.py unity-model "red sports coupe" -u output/unity/TopDownRacingGame
+  python main.py unity-model "glider" --variant plane --emit    # emit bpy script only
 
-Global flags (work with any command):
-  --verbose / -v   Show pipeline step output
+━━━ Atoms (engine-agnostic IR building blocks) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python main.py atom-list                            # all atoms by category
+  python main.py atom-list movement --params          # show parameter details
+  python main.py atom-list --snippet MoveToTarget     # show Unity C# snippet
+
+━━━ Enumerate tools ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python main.py unity-tools list                     # list every micro + variants
+
+━━━ Global flags (work with any command) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  --verbose / -v   Show pipeline step summaries
   --debug   / -d   Show raw LLM requests and responses
+  --model   / -m   Override the LM Studio model for this single run
+  --seed           Seed for reproducible twist-seed / theme selection
+  --theme          Theme name, 'random', or 'list'
 """
 
 from __future__ import annotations
@@ -216,7 +270,9 @@ def rag_query(
 def setup_rag(
     config: str = typer.Option("config.yaml", "--config", "-c"),
 ) -> None:
-    """Upload GTA5 RAG documents to AnythingLLM workspace (one-time setup)."""
+    """Upload GTA5 RAG documents to AnythingLLM workspace (legacy — AnythingLLM only).
+
+    For the local ChromaDB RAG pipeline, use: python main.py rag-build"""
     import setup_rag as sr          # top-level script, kept lazy to avoid startup cost
     sr.upload_all(_cfg(config))
 
@@ -225,7 +281,9 @@ def setup_rag(
 def rag_status(
     config: str = typer.Option("config.yaml", "--config", "-c"),
 ) -> None:
-    """Print per-workspace doc count + embedding status for both RAG workspaces."""
+    """Print doc count + status for AnythingLLM workspaces (legacy — AnythingLLM only).
+
+    For the local ChromaDB index, use: python main.py rag-query <term>"""
     from src.backends import check_rag
     result = check_rag(_cfg(config))
     if result.get("basic_mode"):
@@ -256,7 +314,9 @@ def rag_status(
 def setup_workspace(
     config: str = typer.Option("config.yaml", "--config", "-c"),
 ) -> None:
-    """Bootstrap the pre-built AnythingLLM workspace (create + query mode + upload docs)."""
+    """Bootstrap AnythingLLM workspace (legacy — AnythingLLM server only).
+
+    For the local ChromaDB RAG pipeline, use: python main.py rag-build"""
     import setup_anythingllm
     result = setup_anythingllm.bootstrap(_cfg(config))
     if result.get("log"):
@@ -273,7 +333,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host"),
     port: int = typer.Option(8000, "--port", "-p"),
 ) -> None:
-    """Launch the local web UI (setup, connection testing, and generation)."""
+    """Launch the local web UI — all pipelines accessible at http://host:port."""
     import uvicorn
     console.print(f"[cyan]Mission & Project Creator[/] — open http://{host}:{port}")
     uvicorn.run("webui.server:app", host=host, port=port, log_level="info")
@@ -374,9 +434,69 @@ def unity_validate(
     gen      = UnityProjectGenerator(
         template_dir=pipe_cfg.get("unity_template_dir", "templates/unity")
     )
-    root, count = gen.write(schema, deps, pipe_cfg.get("unity_output_dir", "output/unity"),
+    output_dir = pipe_cfg.get("unity_output_dir", "output/unity")
+    root, count = gen.write(schema, deps, output_dir,
                             model_overrides=model_overrides or None)
+    # Write schema sidecar so unity-model --unity-project can find and re-inject models.
+    try:
+        (root / f"{schema.project_name}.schema.json").write_text(
+            schema.model_dump_json(indent=2), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
     console.print(f"[green]OK[/]  {count} files -> {root}")
+
+
+@app.command("unity-migrate")
+def unity_migrate(
+    schema_file: str         = typer.Argument(..., help="Path to a Unity .schema.json file"),
+    in_place:    bool        = typer.Option(False, "--in-place", "-i",
+                                            help="Overwrite the source file"),
+    output:      Optional[str] = typer.Option(None, "--output", "-o",
+                                              help="Write migrated schema to this path"),
+    dry_run:     bool        = typer.Option(False, "--dry-run",
+                                            help="Print the migrated JSON without writing"),
+) -> None:
+    """Upgrade a data-first (v1) schema.json to a capability-aware (v2) schema.
+
+    Synthesises a `capabilities` block from the existing `features` list and
+    `locomotion` field.  Idempotent — already-migrated schemas pass through unchanged.
+
+    \b
+    Examples:
+      python main.py unity-migrate MyGame.schema.json
+      python main.py unity-migrate MyGame.schema.json --in-place
+      python main.py unity-migrate MyGame.schema.json --output MyGame.v2.schema.json
+    """
+    from src.capability_resolver import migrate_schema_v1_to_v2
+
+    src = Path(schema_file)
+    if not src.exists():
+        console.print(f"[red]Error:[/] file not found: {src}")
+        raise typer.Exit(1)
+
+    data    = json.loads(src.read_text(encoding="utf-8"))
+    updated = migrate_schema_v1_to_v2(data)
+
+    if "capabilities" not in data:
+        added_caps = updated.get("capabilities", {})
+        console.print(f"[green]Migrated[/] — added capabilities block: "
+                      f"{list(added_caps.keys())}")
+    else:
+        console.print("[yellow]Already v2[/] — capabilities block already present, no changes")
+
+    if dry_run:
+        console.print(json.dumps(updated, indent=2))
+        return
+
+    if output:
+        dest = Path(output)
+    elif in_place:
+        dest = src
+    else:
+        dest = src.with_suffix("").with_suffix(".v2.schema.json")
+
+    dest.write_text(json.dumps(updated, indent=2), encoding="utf-8")
+    console.print(f"[green]Written[/] → {dest}")
 
 
 # ── Unity micro-generator subcommands ─────────────────────────────────────────
@@ -516,8 +636,13 @@ def unity_audio(
     clips:   bool           = typer.Option(True, "--clips/--no-clips", help="Generate actual .wav clips into Resources/Audio/"),
     unity:   Optional[str]  = typer.Option(None, "--unity", "-u", help="Overlay generated clips + manifest into this Unity project's Assets/Resources/"),
 ) -> None:
-    """Generate a Unity audio bank (AudioCue + Bank + AudioManager) AND the actual
-    clips: DSP synth for arcade SFX, local models for voice/music (see config audio.backend)."""
+    """Generate a Unity audio bank (AudioCue + Bank + AudioManager) AND actual .wav clips.
+
+    Default backend is Stable Audio 3 (config.yaml audio.backend: stable3).
+    The pipeline translates the Step-2 concept brief into evocative per-cue prompts,
+    unloads LM Studio to free VRAM, then runs inference.  Falls back to offline DSP
+    synth when Stable Audio 3 is unavailable.  Set audio.backend: dsp to always use
+    the deterministic synth, or none to skip clip generation entirely."""
     if file is not None:
         if not file.exists():
             console.print(f"[red]Error:[/] file not found: {file}"); raise typer.Exit(1)
@@ -683,6 +808,78 @@ def unity_health(
     _run_micro("health", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
 
 
+@app.command("unity-statemachine")
+def unity_statemachine(
+    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description of the object and its states"),
+    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
+    variant: Optional[str]  = typer.Option(None, "--variant", help="player_fsm|enemy_fsm|game_fsm|object_fsm"),
+    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
+    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
+    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
+    out:     Optional[str]  = typer.Option(None, "--out"),
+    config:  str            = typer.Option("config.yaml", "--config", "-c"),
+    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
+) -> None:
+    """Generate a Unity FSM (player_fsm/enemy_fsm/game_fsm/object_fsm).
+
+    States and transitions are derived from the prompt concept — not generic defaults.
+
+    \b
+    Examples:
+      python main.py unity-statemachine "underwater alien that stalks the player"
+      python main.py unity-statemachine "deep-sea boss with 3 phases" --variant enemy_fsm
+    """
+    _run_micro("statemachine", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+
+
+@app.command("unity-trigger")
+def unity_trigger(
+    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description of the trigger scenario"),
+    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
+    variant: Optional[str]  = typer.Option(None, "--variant", help="zone_enter|zone_exit|timer_trigger|distance_trigger|compound"),
+    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
+    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
+    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
+    out:     Optional[str]  = typer.Option(None, "--out"),
+    config:  str            = typer.Option("config.yaml", "--config", "-c"),
+    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
+) -> None:
+    """Generate a Unity event trigger zone (enter/exit/timer/distance/compound).
+
+    Events fired are derived from the prompt — spawns enemies, starts dialogue, etc.
+
+    \b
+    Examples:
+      python main.py unity-trigger "ambush zone that spawns enemies when player enters"
+      python main.py unity-trigger "boss arena seal: lock door + start music" --variant zone_enter
+    """
+    _run_micro("trigger", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+
+
+@app.command("unity-animator")
+def unity_animator(
+    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description of the character or object's animations"),
+    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
+    variant: Optional[str]  = typer.Option(None, "--variant", help="humanoid|vehicle|creature|object|ui"),
+    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
+    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
+    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
+    out:     Optional[str]  = typer.Option(None, "--out"),
+    config:  str            = typer.Option("config.yaml", "--config", "-c"),
+    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
+) -> None:
+    """Generate a Unity Animator parameter driver (humanoid/vehicle/creature/object/ui).
+
+    Animator params and clip names are derived from the prompt concept.
+
+    \b
+    Examples:
+      python main.py unity-animator "scuba diver with swim, dive, surface, and drowning states"
+      python main.py unity-animator "giant enemy crab — walk, attack, pinch, dead" --variant creature
+    """
+    _run_micro("animator", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+
+
 # ── Blender 3D-model micro-generator ──────────────────────────────────────────
 
 def _parse_knobs(pairs: Optional[list[str]]) -> dict:
@@ -722,7 +919,12 @@ def unity_model(
                                            help="Pose the rig after building (visual proof; leave off for rest-pose FBX)"),
     name:    Optional[str]  = typer.Option(None, "--name", help="Asset name (PascalCase; inferred from prompt if omitted)"),
     unity_project: Optional[str] = typer.Option(None, "--unity-project", "-u",
-                                  help="Unity project root — FBX is overlaid into Assets/BlenderAssets/<name>/"),
+                                  help="Unity project root — wires FBX into scene via schema regeneration; "
+                                       "falls back to Assets/BlenderAssets/ if no schema.json found"),
+    role:    Optional[str]  = typer.Option(None, "--role",
+                                           help="Override catalog kind for scene wiring: "
+                                                "player | enemy | vehicle | prop  "
+                                                "(inferred from variant if omitted; humanoid defaults to 'player')"),
     emit:    bool           = typer.Option(False, "--emit",
                                            help="Emit the bpy script only (for live MCP Blender); skip headless build"),
     no_llm:  bool           = typer.Option(False, "--no-llm",
@@ -733,8 +935,12 @@ def unity_model(
                                            help="Override LM Studio model for param mapping"),
 ) -> None:
     """Generate a procedural 3D model in Blender (car / plane / humanoid / bike /
-    furniture / weapon), export a Unity-ready FBX, and optionally overlay it into a
-    Unity project.
+    furniture / weapon), export a Unity-ready FBX, and wire it into a Unity project.
+
+    When --unity-project is given and the project has a *.schema.json sidecar
+    (written by unity-create), the generator is re-run with the new FBX as a
+    model_override — this updates scene.unity, EntitySpawner.cs, and ModelSwap.cs
+    so the primitive placeholder is swapped for the real mesh at Play.
 
     Bases and their knobs
     ---------------------
@@ -758,12 +964,13 @@ def unity_model(
       python main.py unity-model "a wooden bookcase" --variant furniture --no-llm
       python main.py unity-model "a suppressed sniper rifle" --variant weapon --no-llm
       python main.py unity-model "red sports coupe" -u output/unity/TopDownRacingGame
+      python main.py unity-model "tall enemy soldier" --variant humanoid --role enemy -u output/unity/TacticalShooter
       python main.py unity-model "motorbike" --emit
     """
     from src.micro import ModelPipeline
     ModelPipeline(_cfg(config, model)).run(
         prompt, variant=variant, knobs=_parse_knobs(knob), seed=seed, rig=rig,
-        demo=demo, name=name, unity_project=unity_project, emit=emit,
+        demo=demo, name=name, unity_project=unity_project, role=role, emit=emit,
         use_llm=not no_llm, out=out,
     )
 
@@ -781,6 +988,65 @@ def unity_tools(
     else:
         console.print(f"[red]Unknown action:[/] {action}")
         raise typer.Exit(1)
+
+
+@app.command("atom-list")
+def atom_list(
+    category: Optional[str] = typer.Argument(None, help="Filter by category: movement|animation|camera|audio|fx|logic|entity"),
+    show_params: bool        = typer.Option(False, "--params", "-p", help="Show parameter details"),
+    show_snippet: Optional[str] = typer.Option(None, "--snippet", "-s",
+                                               help="Show Unity C# snippet for a named atom"),
+) -> None:
+    """List Phase 2 atoms — engine-agnostic building blocks for the compiler."""
+    from src.atoms import list_atoms, get_atom, CATEGORIES
+    from rich.table import Table
+    from rich.panel import Panel
+
+    if show_snippet:
+        from src.atoms.backends.unity import unity_atom_snippet
+        atom = get_atom(show_snippet)
+        if atom is None:
+            console.print(f"[red]Unknown atom:[/] {show_snippet}")
+            raise typer.Exit(1)
+        snippet = unity_atom_snippet(atom.name, {p.name: p.default for p in atom.params})
+        console.print(Panel(
+            snippet,
+            title=f"[cyan]{atom.name}[/] — Unity C# snippet (default args)",
+            subtitle=f"category: {atom.category} | duration: {atom.duration}",
+            expand=False,
+        ))
+        return
+
+    atoms = list_atoms(category)
+    if not atoms:
+        console.print(f"[yellow]No atoms found[/] for category '{category}'.")
+        console.print(f"Valid categories: {', '.join(CATEGORIES)}")
+        raise typer.Exit(1)
+
+    by_cat: dict[str, list] = {}
+    for a in atoms:
+        by_cat.setdefault(a.category, []).append(a)
+
+    for cat, cat_atoms in by_cat.items():
+        console.print(f"\n[bold magenta]{cat.upper()}[/]")
+        tbl = Table(box=None, pad_edge=False, show_header=show_params)
+        tbl.add_column("Atom",        style="cyan",  no_wrap=True)
+        tbl.add_column("Duration",    style="yellow", no_wrap=True)
+        tbl.add_column("Description", style="dim")
+        if show_params:
+            tbl.add_column("Params", style="green")
+        for a in cat_atoms:
+            param_str = ", ".join(
+                f"{p.name}:{p.type}" + (f"={p.default}" if p.default is not None else "")
+                for p in a.params
+            ) if show_params else ""
+            row = [a.name, a.duration, a.description]
+            if show_params:
+                row.append(param_str)
+            tbl.add_row(*row)
+        console.print(tbl)
+
+    console.print(f"\n[dim]Total: {len(atoms)} atoms | tip: --params for details, --snippet <Name> for C#[/]")
 
 
 if __name__ == "__main__":

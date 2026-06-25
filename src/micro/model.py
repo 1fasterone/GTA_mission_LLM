@@ -137,6 +137,15 @@ def _to_pascal(s: str, fallback: str = "Model") -> str:
     return out or fallback
 
 
+# variant → Unity catalog kind (used by scene wiring / ModelSwap / EntitySpawner)
+_VARIANT_TO_KIND: dict[str, str] = {
+    "car": "vehicle", "plane": "vehicle", "boat": "vehicle", "bike": "vehicle",
+    "humanoid": "player",   # default; user can override with --role enemy
+    "furniture": "prop",
+    "weapon": "prop",
+}
+
+
 class ModelPipeline:
     """Procedural 3D model micro-generator (car / plane → FBX → Unity)."""
 
@@ -289,6 +298,7 @@ class ModelPipeline:
             emit: bool = False,
             use_llm: bool = True,
             out: Optional[str] = None,
+            role: Optional[str] = None,
             # accepted for registry/_run_micro compatibility, unused for geometry:
             theme: Optional[str] = None,
             mashup_with: Optional[str] = None) -> Path:
@@ -336,8 +346,16 @@ class ModelPipeline:
                 "params": res["params"], "rig": rig, "name": name, "fbx": fbx_out,
                 "tris": res.get("tris"), "rigged": res.get("rigged")}
         if unity_project:
-            plan["unity_overlay"] = self._overlay(
-                name, res["asset_type"], fbx_out, res, unity_project, assets_subdir)
+            # Determine catalog kind (player / enemy / vehicle / prop).
+            catalog_kind = role or _VARIANT_TO_KIND.get(variant, "prop")
+            # Schema-driven path: re-run generator so scene.unity / EntitySpawner.cs
+            # are rebaked with the correct modelPath pointing at this FBX.
+            wired = self._reinject(unity_project, catalog_kind, fbx_out)
+            if not wired:
+                # Fallback: overlay to BlenderAssets so the FBX is at least importable.
+                plan["unity_overlay"] = self._overlay(
+                    name, res["asset_type"], fbx_out, res, unity_project, assets_subdir)
+            self._install_postprocessor(Path(unity_project))
         self._write_plan(out_dir, name, plan)
         console.print(Panel(
             f"[bold green]Done![/]  [cyan]{name}[/] ({variant})\n"
@@ -346,6 +364,46 @@ class ModelPipeline:
                if plan.get("unity_overlay") else "")
             + f"Output: {out_dir}", style="green"))
         return out_dir
+
+    # ── scene wiring (schema-driven re-generation) ───────────────────────────
+    def _reinject(self, unity_project: str, kind: str, fbx_path: str) -> bool:
+        """Re-run generator with model_overrides so the scene's ModelSwap / EntitySpawner
+        reference the new FBX.  Finds <project>/*.schema.json, resolves it, and writes
+        the project again with model_overrides={kind: fbx_path}.  Returns True on success."""
+        proj = Path(unity_project)
+        schema_files = sorted(proj.glob("*.schema.json"))
+        if not schema_files:
+            console.print("  [yellow]no schema.json in project[/] — run unity-create first "
+                          "for full scene wiring; FBX copied to Resources only")
+            return False
+        try:
+            from src.unity_schema import UnitySchema
+            from src.unity_resolver import UnityResolver
+            from src.unity_generator import UnityProjectGenerator
+
+            data   = json.loads(schema_files[0].read_text(encoding="utf-8"))
+            schema = UnitySchema.model_validate(data)
+            pipe_cfg = self.config.get("unity_pipeline", {})
+            lookups_dir = pipe_cfg.get("lookups_dir", "lookups")
+            resolver = UnityResolver(lookups_dir=lookups_dir)
+            schema   = resolver.resolve_schema(schema)
+            schema   = resolver.inject_required_packages(schema)
+            deps     = resolver.build_manifest_deps(schema)
+            template_dir = pipe_cfg.get("unity_template_dir",
+                                        str(_REPO_ROOT / "templates" / "unity"))
+            gen      = UnityProjectGenerator(template_dir=template_dir)
+            output_dir = str(proj.parent)
+            root, count = gen.write(
+                schema, deps, output_dir,
+                model_overrides={kind: fbx_path},
+            )
+            console.print(f"  [green]wired[/]   {kind} → scene  "
+                          f"({count} files regenerated) [{root}]")
+            return True
+        except Exception as exc:  # noqa: BLE001 — overlay never hard-fails
+            console.print(f"  [yellow]wire failed ({type(exc).__name__}: {exc})[/]  "
+                          "re-run unity-validate to rebake manually")
+            return False
 
     # ── helpers ──────────────────────────────────────────────────────────────
     def _overlay(self, name, asset_type, fbx_out, result, unity_project, assets_subdir) -> dict:

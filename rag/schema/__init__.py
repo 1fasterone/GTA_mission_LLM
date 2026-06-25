@@ -11,6 +11,7 @@ from .unity_component import make_component_entry
 from .unity_api_verb import make_api_verb_entry
 from .unity_scene_rule import make_scene_rule_entry
 from .unity_genre_atom import make_genre_atom_entry
+from .atom import make_atom_entry
 
 __all__ = [
     "RagEntry",
@@ -26,4 +27,5 @@ __all__ = [
     "make_api_verb_entry",
     "make_scene_rule_entry",
     "make_genre_atom_entry",
+    "make_atom_entry",
 ]

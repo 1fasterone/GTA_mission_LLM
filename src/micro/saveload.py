@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, CodeField, lint_extensible, lint_fields, clamp_enum,
     UNITY_EXTRA_INSTRUCTIONS,
@@ -110,7 +111,7 @@ OUTPUT:
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 
-class SaveLoadPipeline(MicroPipeline):
+class SaveLoadPipeline(UnityMicroPipeline):
     kind            = "saveload"
     display_name    = "Unity Save/Load"
     schema_cls      = SaveLoadSchema

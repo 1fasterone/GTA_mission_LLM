@@ -69,6 +69,10 @@ def generate_bank(cues, resources_dir: str | Path, config: dict,
         bufs: list[np.ndarray] = []
         note = ""
 
+        # When the backend is stable3, skip DSP entirely — route everything through SA3.
+        if route == "synth" and client.name == "stable3":
+            route = "gen"
+
         if route == "synth":
             arch = cue["archetype"] or synth.keyword_archetype(cue["descriptor"]) or "blip"
             params = synth.archetype_params(arch, cue["descriptor"])
@@ -76,7 +80,9 @@ def generate_bank(cues, resources_dir: str | Path, config: dict,
             note = f"synth:{arch}"
         elif route in ("gen", "library"):
             prompt = cue["gen_prompt"] or cue["descriptor"]
-            if cue["category"] == "music":
+            # Ambient routes to the music model — it handles drones/beds better
+            # than the SFX model, and enforces the same 2s minimum.
+            if cue["category"] in ("music", "ambient"):
                 buf = client.music(prompt, cue["duration_s"], cseed)
             else:
                 buf = client.sfx(prompt, cue["duration_s"], cseed)

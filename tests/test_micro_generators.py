@@ -48,6 +48,8 @@ def test_registry_has_all_known():
         "menu", "interactable", "transition", "health",
         # geometry pipeline (Blender -> FBX); not an LLM concept/schema micro
         "model",
+        # behavior-graph micros
+        "statemachine", "trigger", "animator",
     }
 
 
@@ -297,6 +299,68 @@ def test_audio_crossfade_zone_emits_extra_file(tmp_path, dummy_config):
     s = p.default_fix(s, "crossfade_zones")
     p.write_files(s, "crossfade_zones", tmp_path)
     assert (tmp_path / "Scripts" / "ZonesCrossfadeZone.cs").exists()
+
+
+def test_audio_coin_arcade_pack_12_sounds(tmp_path, dummy_config):
+    """12-cue sound pack for a top-down coin-collecting arcade game.
+
+    Verifies: all 12 explicit cue IDs survive the fixer's dedup pass,
+    game_type resolves to 'generic' (no arcade keyword), the bank C# is
+    emitted, and no clip-generation errors bubble up as hard failures.
+    """
+    from src.micro.audio import AudioCueSpec
+
+    PACK = [
+        AudioCueSpec(id="coin_collect",   category="sfx",     descriptor="collect a gold coin ding",          duration_s=0.3),
+        AudioCueSpec(id="big_coin",       category="sfx",     descriptor="large treasure coin sparkle chime", duration_s=0.5),
+        AudioCueSpec(id="coin_combo",     category="sfx",     descriptor="rapid coin streak combo jingle",    duration_s=0.6),
+        AudioCueSpec(id="powerup",        category="sfx",     descriptor="power up upgrade blip",             duration_s=0.4),
+        AudioCueSpec(id="player_hit",     category="sfx",     descriptor="player take damage thud",           duration_s=0.3),
+        AudioCueSpec(id="player_death",   category="sfx",     descriptor="player death game over sting",      duration_s=1.2),
+        AudioCueSpec(id="enemy_die",      category="sfx",     descriptor="enemy defeated pop burst",          duration_s=0.4),
+        AudioCueSpec(id="level_complete", category="sfx",     descriptor="level clear fanfare win jingle",    duration_s=1.5),
+        AudioCueSpec(id="game_over",      category="sfx",     descriptor="game over dramatic sting",          duration_s=1.0),
+        AudioCueSpec(id="ui_click",       category="sfx",     descriptor="menu button click blip",            duration_s=0.15),
+        AudioCueSpec(id="footstep",       category="sfx",     descriptor="light footstep tap",                duration_s=0.2),
+        AudioCueSpec(id="music_loop",     category="music",   descriptor="upbeat retro arcade loop",          loop=True, duration_s=15.0),
+    ]
+
+    p = AudioPipeline({**dummy_config, "audio": {"generate_clips": False}})
+    s = AudioSchema(
+        name="CoinArcadeBank",
+        variant="categorical_mixer",
+        game_type="generic",
+        categories=["music", "sfx"],
+        bank_clip_count_hint=12,
+        description="Top-down coin-collecting arcade sound pack",
+        cues=PACK,
+    )
+    s = p.default_fix(s, "categorical_mixer")
+
+    # All 12 explicit IDs must survive the dedup pass
+    cue_ids = {c.id for c in s.cues}
+    for expected in (
+        "coin_collect", "big_coin", "coin_combo", "powerup",
+        "player_hit", "player_death", "enemy_die", "level_complete",
+        "game_over", "ui_click", "footstep", "music_loop",
+    ):
+        assert expected in cue_ids, f"cue '{expected}' lost after default_fix"
+
+    assert len(s.cues) >= 12              # fixer may inject extra generic cues
+    assert s.game_type == "generic"       # no arcade keyword → generic
+    assert "music" in s.categories
+    assert "sfx" in s.categories
+
+    # Write the artifacts — must not raise
+    p._with_clips = False
+    count = p.write_files(s, "categorical_mixer", tmp_path)
+
+    assert count >= 3
+    bank_cs = (tmp_path / "Scripts" / "CoinArcadeBank.cs").read_text(encoding="utf-8")
+    assert "[CreateAssetMenu" in bank_cs
+    assert "public class CoinArcadeBank" in bank_cs
+    assert (tmp_path / "Scripts" / "CoinArcadeBankAudioManager.cs").exists()
+    assert (tmp_path / "Scripts" / "AudioCue.cs").exists()
 
 
 # ── Tier 2 — unity-ai ───────────────────────────────────────────────────────

@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, UNITY_EXTRA_INSTRUCTIONS,
 )
@@ -109,7 +110,7 @@ rubber-bands its speed to stay competitive with the target.)
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 
-class AIPipeline(MicroPipeline):
+class AIPipeline(UnityMicroPipeline):
     kind            = "ai"
     display_name    = "Unity AI Behaviour"
     schema_cls      = AISchema

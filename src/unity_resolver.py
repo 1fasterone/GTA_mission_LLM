@@ -179,7 +179,62 @@ class UnityResolver:
                     console.print(
                         f"  [green]VER[/]  '{pkg.package_id}' -> {version}"
                     )
+        self.expand_behaviors(schema)
         return schema
+
+    # ── Atom behavior expansion ───────────────────────────────────────────────
+
+    @staticmethod
+    def expand_behaviors(schema: UnitySchema) -> None:
+        """Expand entity behavior prose into AtomInvocation sequences (in-place).
+
+        For each EntitySpec whose `behavior` string matches a known keyword:
+          - fills `entity.atoms` with the corresponding atom sequence
+          - rewrites `entity.behavior` to the generated C# class name so
+            EntitySpawner can `AddComponent(behaviorType)` at runtime
+
+        Entities with already-populated `atoms` (e.g. set by the LLM directly)
+        are left untouched.  Entities with unknown behaviors keep their behavior
+        string so a hand-authored script can still be attached.
+        """
+        import re
+        from .atoms.behavior_map import expand_behavior
+
+        def _pascal(s: str) -> str:
+            parts = re.sub(r"[^a-zA-Z0-9]+", " ", s or "").split()
+            return "".join(p.capitalize() for p in parts) or "Entity"
+
+        for e in schema.entities:
+            if e.atoms:
+                # LLM already filled atoms — derive class name and move on
+                if e.behavior and not e.behavior.endswith("Behavior"):
+                    e.behavior = _pascal(e.name) + "Behavior"
+                continue
+            if not e.behavior:
+                continue
+            expanded = expand_behavior(e.behavior)
+            if expanded:
+                e.atoms    = expanded
+                e.behavior = _pascal(e.name) + "Behavior"
+                console.print(
+                    f"  [cyan]ATM[/]  '{e.name}' behavior -> "
+                    f"{len(expanded)} atoms ({e.behavior})"
+                )
+
+        # Expand custom script descriptions → atoms so the generator can
+        # emit a coroutine body even when the LLM left extra_* fields empty.
+        for s in schema.scripts:
+            if s.type != "custom" or s.atoms:
+                continue
+            if not s.description:
+                continue
+            expanded = expand_behavior(s.description)
+            if expanded:
+                s.atoms = expanded
+                console.print(
+                    f"  [cyan]ATM[/]  '{s.name}' description -> "
+                    f"{len(expanded)} atoms"
+                )
 
     def inject_required_packages(self, schema: UnitySchema) -> UnitySchema:
         """

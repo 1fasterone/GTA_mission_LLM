@@ -1,0 +1,99 @@
+Deep Dive — a 3D underwater exploration and survival game for PC.
+
+The player is a deep-sea researcher exploring a collapsed underwater research station
+in the Pacific Ocean. Armed with a harpoon gun and a rebreather, they must collect
+data logs, survive predators, and escape before their oxygen runs out. The ocean
+environment spans five distinct zones with separate Unity scenes.
+
+SCENES (8 total):
+1. MainMenu       — animated title screen with ocean caustic background, Start / Load / Quit
+2. Shallows       — sunlit entry zone, coral reef, tutorials, small fish schools
+3. KelpForest     — dense kelp canopy, low visibility, first shark encounter
+4. WreckInterior  — dark flooded corridors of the research station, data log collectibles
+5. AbyssalPlain   — pitch-black deep zone, bioluminescent creatures, boss shark encounter
+6. EscapeRoute    — flooded escape tunnel with rising sediment, timed sequence
+7. InventoryDive  — inventory and equipment management screen
+8. SurfaceEnding  — ending cutscene: player breaks surface, rescue helicopter arrives
+
+NARRATIVE — eight story beats:
+1. Descent Begin  — player enters the water for the first time (on_start)
+2. First Contact  — player spots a shark shadow in the kelp (on_enter_zone)
+3. Signal Found   — player discovers a distress beacon in the wreck (on_pickup)
+4. O2 Warning     — O2 drops below 25 percent, warning alarm triggers (on_timer)
+5. Shark Ambush   — shark charges from the darkness (on_enemy_death)
+6. Core Breach    — reactor room floods completely (on_enter_zone)
+7. Boss Dive      — giant great white guards the escape hatch (manual)
+8. Surface Break  — player reaches the surface (on_enter_zone)
+
+SCRIPTS — every system the game needs:
+- SwimmingController   (player)      3D six-axis underwater movement, buoyancy drift,
+                                     current push, sprint bubble burst, surface bob
+- O2Manager            (custom)      oxygen tank countdown, refill from O2 stations,
+                                     low-O2 screen vignette + heartbeat, death on empty
+- HarpoonGun           (custom)      ranged underwater weapon: charge, fire, reload,
+                                     harpoon projectile physics, rope retract animation
+- SharkAI              (enemy)       NavMesh patrol → alert → charge → bite state machine,
+                                     reacts to player light and bubbles, flees on harpoon hit
+- FishSchool           (custom)      boids-style flocking for small tropical and deep fish,
+                                     scatter on player proximity or shark presence
+- UnderwaterCamera     (camera)      Cinemachine third-person, lazy follow with fluid lag,
+                                     depth-based fog colour shift, caustic overlay, tilt on roll
+- GameManager          (game_manager) singleton: state machine (Menu/Playing/Paused/Dead/Win),
+                                     score (data logs collected), lives (O2 refills remaining),
+                                     scene transitions, save/load checkpoint
+- UIManager            (ui_manager)  HUD: O2 bar (top-left), depth meter (top-right),
+                                     harpoon ammo counter, collected logs counter,
+                                     low-O2 pulse warning overlay, pause panel, game-over panel
+- AudioManager         (custom)      spatial audio pool, music crossfade between zones,
+                                     ambient layering (water, bubbles, creak, pressure),
+                                     plays cues from AudioBank by id
+- HealthSystem         (health)      player and shark HP, damage events, death callbacks
+- DataLogCollectible   (collectible) pickup triggering story beat dialogue and score
+- WaypointNavigator    (custom)      leads player toward next objective with a glowing fish guide
+- InventoryManager     (custom)      equipment slots: harpoon, torch, sonar, O2 tank upgrades
+- SaveLoadManager      (saveload)    JSON checkpoint save between scenes
+- DialogueManager      (dialogue_manager) story beat subtitles and voice-over trigger
+- MaterialPalette      (material_palette) runtime ocean colour palette application
+- ProceduralSeabed     (level_generator) ProBuilder seabed topology: rocks, ridges, sand dunes
+
+ENTITIES:
+- Player: deep-sea researcher in dive suit, humanoid rig
+- Enemy:  great white shark, generic rig, patrol + charge animations
+- Vehicle: none
+- NPC:    small tropical fish school (boid swarm, no rig, simple mesh)
+- NPC:    giant manta ray (slow patrol, ambient, no combat)
+- Collectible: data log canister (glowing green cylinder)
+- Collectible: O2 refill station (wall-mounted tank)
+
+AUDIO — twelve cues for a rich underwater soundscape:
+- rebreather_bubbles   music    looping  ambient bubble stream from rebreather, constant
+- ambient_deep_drone   ambient  looping  low sub-bass ocean pressure hum, eerie and vast
+- ambient_shallows     ambient  looping  bright water shimmer, surface light, gentle current
+- kelp_creak           ambient  looping  kelp stalks swaying and structure groan
+- shark_approach       sfx              deep low pulse, danger proximity cue
+- harpoon_fire         sfx              hiss and bubble trail as harpoon launches
+- harpoon_reload       sfx              mechanical click and air hiss of reload
+- fish_scatter         sfx              rapid small splashes as fish school disperses
+- o2_alarm             sfx              rising beep cadence, low oxygen warning
+- data_log_pickup      sfx              sonar ping with digital confirm tone
+- boss_theme           music    looping  intense orchestral tension, boss arena
+- surface_break_sting  music            triumphant swell as player reaches the surface
+
+PROCEDURAL GEOMETRY:
+- Seabed terrain with rock formations and sand ripples  (terrain, resolution 64)
+- Kelp forest canopy patches                             (foliage, resolution 48)
+- Coral reef structure cluster                           (rock, resolution 32)
+- Flooded corridor layout inside the wreck               (room, resolution 24)
+
+VISUAL STYLE: stylized — deep blue-green water, caustic light shafts, bioluminescent accents.
+COLOR PALETTE name "OceanRift":
+  primary    #00D4FF  (player HUD and torch beam — electric aqua)
+  secondary  #0A1628  (deep water base — midnight navy)
+  accent     #39FF14  (bioluminescence and data logs — neon green)
+  background #061020  (abyssal void — near-black ocean)
+  trim       #FF6B35  (danger indicators and shark — warning orange)
+
+FEATURES: navmesh, cinemachine, animation_rigging, input_system, tilemaps, post_processing
+RENDER PIPELINE: URP  (underwater fog, caustic shader, depth-of-field, color grading essential)
+UNITY VERSION: 6000.0
+PLATFORM: PC

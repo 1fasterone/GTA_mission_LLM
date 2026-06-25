@@ -1,21 +1,27 @@
 """
-Shared 6-step base class for Unity micro-generators.
+Shared 6-step base class for domain-agnostic micro-generators.
 
-A micro-generator produces a small, drop-in Unity artefact (a character
+A micro-generator produces a small, drop-in engine artefact (a character
 controller, a camera rig, a physics body, a HUD) — not a whole project.
 Each subclass provides:
-  * `kind`           — short identifier (e.g. "controller")
-  * `display_name`   — human label for log output
-  * `schema_cls`     — Pydantic model the LLM fills at Step 3
-  * `variants`       — list of allowed --variant values
-  * `concept_prompt` — Step 2 user prompt template (must have {user_prompt}, {theme_block}, {variant})
-  * `schema_prompt`  — Step 3 user prompt template (must have {concept}, {schema_hints}, {variant})
-  * `default_fix`    — Step 5 fixer (optional, base provides a no-op)
-  * `write_files`    — Step 6 deterministic writer (subclass owns templates + output layout)
+  * `kind`              — short identifier (e.g. "controller")
+  * `display_name`      — human label for log output
+  * `engine`            — target engine tag ("unity", "gta5", "shared")
+  * `concept_system`    — Step 2 LLM system prompt (override per engine)
+  * `schema_fill_system`— Step 3 LLM system prompt (override per engine)
+  * `schema_cls`        — Pydantic model the LLM fills at Step 3
+  * `variants`          — list of allowed --variant values
+  * `concept_prompt`    — Step 2 user prompt template ({user_prompt}, {theme_block}, {variant})
+  * `schema_prompt`     — Step 3 user prompt template ({concept}, {schema_hints}, {variant})
+  * `default_fix`       — Step 5 fixer (optional, base provides a no-op)
+  * `write_files`       — Step 6 deterministic writer (subclass owns templates + output layout)
 
 The base handles theming, LLM calls, JSON extraction, output dir naming, and the
 schema.json sidecar.  Identical mental model to the existing GTA + Unity
 pipelines, just smaller-scoped.
+
+Engine-specific subclasses (UnityMicroPipeline, etc.) live in src/micro/unity_base.py
+and override `concept_system`, `schema_fill_system`, and provide C# lint helpers.
 """
 
 from __future__ import annotations
@@ -41,6 +47,23 @@ from .themes import (
 
 console = Console()
 
+# ── Default engine-agnostic system prompts ────────────────────────────────────
+# Subclasses (UnityMicroPipeline, GTA5MicroPipeline, …) override these to
+# give the LLM domain-specific context.  The base defaults are deliberately
+# generic so an accidental direct instantiation still produces usable output.
+
+_DEFAULT_CONCEPT_SYSTEM = (
+    "You are a senior game engineer. Describe a focused, self-contained game "
+    "feature in concrete technical terms — no code, no JSON. Be specific about "
+    "behaviour, inputs, and which engine systems are involved."
+)
+
+_DEFAULT_SCHEMA_FILL_SYSTEM = (
+    "You are a schema designer for a game content compiler. "
+    "Output ONLY valid JSON — no explanation, no markdown fences. "
+    "Use plain English for description fields."
+)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,41 +85,32 @@ def to_pascal(s: str, fallback: str = "Generated") -> str:
     return result
 
 
-# ── Common prompt fragments ───────────────────────────────────────────────────
-
-MICRO_CONCEPT_SYSTEM = (
-    "You are a senior Unity engineer. Describe a focused Unity feature in concrete "
-    "technical terms — no code, no JSON, no package IDs. Be specific about behaviour, "
-    "inputs, and which Unity components are involved."
-)
-
-MICRO_SCHEMA_FILL_SYSTEM = (
-    "You are a Unity schema designer. Output ONLY valid JSON — no explanation, no "
-    "markdown fences. Use plain English for description fields."
-)
-
-
 # ── Base class ────────────────────────────────────────────────────────────────
 
 class MicroPipeline(ABC):
-    kind:           str = "micro"
-    display_name:   str = "Unity Micro"
-    schema_cls:     Type[BaseModel]
-    variants:       list[str] = []
-    default_variant: str = ""
-    concept_prompt: str = ""
-    schema_prompt:  str = ""
-    template_subdir: str = ""           # under templates/unity/micro/
-    SCHEMA_FILL_ATTEMPTS: int = 2       # re-roll STEP 3 on flaky-model JSON/validation failures
+    kind:               str = "micro"
+    display_name:       str = "Micro"
+    engine:             str = "shared"   # "unity" | "gta5" | "shared"
+    # Override in engine-specific subclasses (e.g. UnityMicroPipeline):
+    concept_system:     str = _DEFAULT_CONCEPT_SYSTEM
+    schema_fill_system: str = _DEFAULT_SCHEMA_FILL_SYSTEM
+    schema_cls:         Type[BaseModel]
+    variants:           list[str] = []
+    default_variant:    str = ""
+    concept_prompt:     str = ""
+    schema_prompt:      str = ""
+    template_subdir:    str = ""         # under templates/<engine>/micro/
+    SCHEMA_FILL_ATTEMPTS: int = 2        # re-roll STEP 3 on JSON/validation failures
 
     def __init__(self, config: dict):
         lm_cfg = config["lm_studio"]
         self.llm = make_chat_client(config)
         self.concept_temp = lm_cfg.get("concept_temperature", 0.85)
         self.schema_temp  = lm_cfg.get("schema_temperature", 0.2)
-        unity_cfg = config.get("unity_pipeline", {})
-        self.output_root = Path(unity_cfg.get("unity_output_dir", "output/unity")) / "micro" / self.kind
-        self.template_root = Path(unity_cfg.get("unity_template_dir", "templates/unity")) / "micro" / (self.template_subdir or self.kind)
+        # Generic fallback roots — engine subclasses override these in their own
+        # __init__ to point at the correct output/template tree.
+        self.output_root   = Path("output") / self.engine / "micro" / self.kind
+        self.template_root = Path("templates") / self.engine / "micro" / (self.template_subdir or self.kind)
 
     # ── console helpers ──────────────────────────────────────────────────────
 
@@ -111,6 +125,15 @@ class MicroPipeline(ABC):
     def default_fix(self, schema: BaseModel, variant: str) -> BaseModel:
         return schema
 
+    def _pre_write(self, schema: BaseModel, variant: str) -> None:
+        """Hook called after the fixer (Step 5), before write_files (Step 6).
+
+        Override in domain subclasses to perform infra work that must happen
+        while the LLM client is still accessible but before deterministic codegen:
+        supplementary LLM calls, VRAM management, model unloading, etc.
+        The base no-ops; failures in overrides must be caught and logged, not raised.
+        """
+
     def attach_class(self, schema: BaseModel) -> str:
         """The MonoBehaviour class a composed scene should attach for this micro.
         Defaults to schema.name; override when the micro's primary file is NOT
@@ -122,6 +145,9 @@ class MicroPipeline(ABC):
     def write_files(self, schema: BaseModel, variant: str, out_dir: Path) -> int:
         """Write the actual files for this generator. Return file count."""
         ...
+
+    def _after_write(self, schema: BaseModel, variant: str, out_dir: Path, name: str) -> None:
+        """Post-write hook. Engine subclasses override to inject extra artefacts."""
 
     # ── Jinja env (subclasses can call) ──────────────────────────────────────
 
@@ -178,7 +204,7 @@ class MicroPipeline(ABC):
         # STEP 2 — concept
         self._step(2, f"LLM describes the {self.kind}")
         concept = self.llm.chat(
-            system      = MICRO_CONCEPT_SYSTEM,
+            system      = self.concept_system,
             user        = self.concept_prompt.format(
                 user_prompt=user_prompt,
                 theme_block=theme_block,
@@ -213,7 +239,7 @@ class MicroPipeline(ABC):
                 )
             try:
                 schema_raw = self.llm.chat(
-                    system      = MICRO_SCHEMA_FILL_SYSTEM,
+                    system      = self.schema_fill_system,
                     user        = user_msg,
                     temperature = self.schema_temp if attempt == 0 else min(self.schema_temp, 0.1),
                     thinking    = False,
@@ -250,6 +276,9 @@ class MicroPipeline(ABC):
         schema = self.default_fix(schema, variant)
         self._ok("fixer pass complete")
 
+        # STEP 5.5 — pre-write hook (VRAM management, supplementary LLM calls, etc.)
+        self._pre_write(schema, variant)
+
         # STEP 6 — write
         self._step(6, f"Write the {self.kind} folder")
         # Pick a project name
@@ -261,6 +290,7 @@ class MicroPipeline(ABC):
         out_dir.mkdir(parents=True, exist_ok=True)
 
         file_count = self.write_files(schema, variant, out_dir)
+        self._after_write(schema, variant, out_dir, name)
 
         # Sidecar schema for re-runs
         schema_path = out_dir / f"{name}.schema.json"

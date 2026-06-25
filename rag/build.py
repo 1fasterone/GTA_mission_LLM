@@ -30,6 +30,8 @@ SCRAPERS: dict[str, str] = {
     "unity_scene_rules": "rag.scrapers.unity_scene_rules",
     "unity_genre_atoms": "rag.scrapers.unity_genre_atoms",
     "unity_packages":    "rag.scrapers.unity_packages",
+    # Shared (engine-agnostic)
+    "atoms":             "rag.scrapers.atoms",
 }
 
 # Ordered so fast (static) scrapers run first; network scraper last
@@ -37,12 +39,15 @@ DEFAULT_ORDER = [
     "scenarios", "audio", "weapons", "peds", "vehicles", "props", "animations",
     "unity_components", "unity_api_verbs", "unity_scene_rules", "unity_genre_atoms",
     "unity_packages",
+    "atoms",
 ]
 
 UNITY_ORDER = [
     "unity_components", "unity_api_verbs", "unity_scene_rules",
     "unity_genre_atoms", "unity_packages",
 ]
+
+ATOM_ORDER = ["atoms"]
 
 
 def _count(path: Path) -> int:
@@ -74,13 +79,23 @@ def stats() -> None:
         status = f"{n:>6} entries" if n else "  MISSING"
         print(f"  {rel}  {status}")
         grand += n
+    shared_path = CORPUS_DIR / "shared" / "atoms.jsonl"
+    n = _count(shared_path)
+    status = f"{n:>6} entries" if n else "  MISSING"
+    print(f"  shared/atoms.jsonl  {status}")
+    grand += n
     print(f"  {'Total':30} {grand:>6} entries\n")
 
 
 def run_scraper(name: str, force: bool, extra_args: dict) -> int:
     mod = importlib.import_module(SCRAPERS[name])
-    kwargs = {"force": force}
-    if name == "animations" and "limit" in extra_args:
+    import inspect
+    sig = inspect.signature(mod.run)
+    params = set(sig.parameters)
+    kwargs: dict = {}
+    if "force" in params:
+        kwargs["force"] = force
+    if "limit" in params and "limit" in extra_args:
         kwargs["limit"] = extra_args["limit"]
     return mod.run(**kwargs)
 

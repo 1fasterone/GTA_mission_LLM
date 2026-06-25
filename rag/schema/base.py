@@ -9,7 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 
-DOMAINS = Literal["gta5", "unity"]
+DOMAINS = Literal["gta5", "unity", "shared"]
 
 
 class RagEntry(BaseModel):

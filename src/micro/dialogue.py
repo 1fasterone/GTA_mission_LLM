@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
 )
@@ -126,7 +127,7 @@ OUTPUT:
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 
-class DialoguePipeline(MicroPipeline):
+class DialoguePipeline(UnityMicroPipeline):
     kind            = "dialogue"
     display_name    = "Unity Dialogue"
     schema_cls      = DialogueSchema

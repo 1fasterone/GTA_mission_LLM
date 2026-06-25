@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeField, CodeMethod,
     lint_code_fragment, lint_method, lint_usings, lint_fields,
@@ -217,7 +218,7 @@ Author REAL prompt-specific behavior in the extras. Output ONLY the JSON. No pro
 """
 
 
-class ControllerPipeline(MicroPipeline):
+class ControllerPipeline(UnityMicroPipeline):
     kind           = "controller"
     display_name   = "Unity Character Controller"
     schema_cls     = ControllerSchema

@@ -1,21 +1,24 @@
 """Unity micro-generators — focused single-purpose tools on the shared pipeline."""
 
-from .controller     import ControllerPipeline,    ControllerSchema
-from .camera         import CameraRigPipeline,     CameraRigSchema
-from .physics        import PhysicsPipeline,       PhysicsSchema
-from .hud            import HUDPipeline,           HUDSchema
-from .input_actions  import InputPipeline,         InputSchema
-from .audio          import AudioPipeline,         AudioSchema
-from .ai             import AIPipeline,            AISchema
-from .spawner        import SpawnerPipeline,       SpawnerSchema
-from .saveload       import SaveLoadPipeline,      SaveLoadSchema
-from .inventory      import InventoryPipeline,     InventorySchema
-from .dialogue       import DialoguePipeline,      DialogueSchema
-from .menu           import MenuPipeline,          MenuSchema
-from .interactable   import InteractablePipeline,  InteractableSchema
-from .transition     import TransitionPipeline,    TransitionSchema
-from .health         import HealthPipeline,        HealthSchema
-from .model          import ModelPipeline
+from .controller    import ControllerPipeline,    ControllerSchema
+from .camera        import CameraRigPipeline,     CameraRigSchema
+from .physics       import PhysicsPipeline,       PhysicsSchema
+from .hud           import HUDPipeline,           HUDSchema
+from .input_actions import InputPipeline,         InputSchema
+from .audio         import AudioPipeline,         AudioSchema
+from .ai            import AIPipeline,            AISchema
+from .spawner       import SpawnerPipeline,       SpawnerSchema
+from .saveload      import SaveLoadPipeline,      SaveLoadSchema
+from .inventory     import InventoryPipeline,     InventorySchema
+from .dialogue      import DialoguePipeline,      DialogueSchema
+from .menu          import MenuPipeline,          MenuSchema
+from .interactable  import InteractablePipeline,  InteractableSchema
+from .transition    import TransitionPipeline,    TransitionSchema
+from .health        import HealthPipeline,        HealthSchema
+from .model         import ModelPipeline
+from .statemachine  import StateMachinePipeline,  StateMachineSchema
+from .trigger       import TriggerPipeline,       TriggerSchema
+from .animator      import AnimatorPipeline,      AnimatorSchema
 
 __all__ = [
     "ModelPipeline",
@@ -55,4 +58,7 @@ REGISTRY = {
     "transition":   TransitionPipeline,
     "health":       HealthPipeline,
     "model":        ModelPipeline,
+    "statemachine": StateMachinePipeline,
+    "trigger":      TriggerPipeline,
+    "animator":     AnimatorPipeline,
 }

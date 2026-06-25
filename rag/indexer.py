@@ -24,6 +24,7 @@ BATCH_SIZE  = 256                    # ChromaDB upsert batch size
 COLLECTION  = "rag_ontology"
 
 _CORPUS = [
+    # GTA5 domain
     ("gta5/peds.jsonl",       "ped"),
     ("gta5/vehicles.jsonl",   "vehicle"),
     ("gta5/scenarios.jsonl",  "scenario"),
@@ -31,6 +32,14 @@ _CORPUS = [
     ("gta5/weapons.jsonl",    "weapon"),
     ("gta5/props.jsonl",      "prop"),
     ("gta5/animations.jsonl", "animation"),   # largest — 20K dicts, still fast
+    # Unity domain
+    ("unity/packages.jsonl",    "package"),
+    ("unity/components.jsonl",  "component"),
+    ("unity/api_verbs.jsonl",   "api_verb"),
+    ("unity/scene_rules.jsonl", "scene_rule"),
+    ("unity/genre_atoms.jsonl", "genre_atom"),
+    # Shared / engine-agnostic
+    ("shared/atoms.jsonl",      "atom"),
 ]
 
 

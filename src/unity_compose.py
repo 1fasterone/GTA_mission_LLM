@@ -57,23 +57,35 @@ _COMPOSED_FILE_ID_BASE = 900000010
 COVERED_SCRIPT_TYPES = {
     "player", "camera", "enemy", "audio_manager",
     "ui_manager", "collectible", "dialogue_manager", "health",
+    # newly owned by compose micros
+    "physics", "input_system",
 }
 
 
 class MicroComposer:
     """Assemble micros into a project's Assets and report how to wire them."""
 
-    def __init__(self, project_name: str, template_dir: str = "templates/unity"):
+    def __init__(self, project_name: str, template_dir: str = "templates/unity",
+                 project_config: dict | None = None):
         self.project_name = project_name
-        self._cfg = {
-            # write_files / default_fix never touch the network; the client is
-            # constructed but unused, exactly as in the micro unit tests.
+        # Merge real project config (audio backend, paths, etc.) over the minimal
+        # dummy so write_files respects backend: stable3 / generate_clips / etc.
+        # The LM Studio client is still constructed but never called (compose is
+        # LLM-free), so the dummy base_url is harmless.
+        base_cfg: dict = {
             "lm_studio": {"base_url": "http://localhost:1234/v1", "model": "compose"},
             "unity_pipeline": {
                 "unity_output_dir":  "output/unity",
                 "unity_template_dir": template_dir,
             },
         }
+        if project_config:
+            for k, v in project_config.items():
+                if k not in base_cfg:
+                    base_cfg[k] = v
+                elif isinstance(v, dict) and isinstance(base_cfg.get(k), dict):
+                    base_cfg[k] = {**base_cfg[k], **v}
+        self._cfg = base_cfg
 
     def _resolve(self, sub: Subsystem):
         """Build the micro pipeline + fixed schema + class name + GUID for a
@@ -234,14 +246,23 @@ class MicroComposer:
 
 # ── Deterministic mapper: game concept → subsystem set ────────────────────────
 
-def subsystems_for(game_type: str, features: list[str] | None = None,
-                   locomotion: str = "walk") -> list[Subsystem]:
-    """Map a project's game_type + features + locomotion to a default set of
-    subsystems to compose. Deterministic — no LLM."""
+def subsystems_for(
+    game_type:    str,
+    features:     list[str] | None = None,
+    locomotion:   str               = "walk",
+    capabilities  = None,            # Optional[ProjectCapabilities] — avoids import cycle
+    user_prompt:  str               = "",
+) -> list[Subsystem]:
+    """Map a project's game_type + features + locomotion + capabilities to subsystems.
+
+    Deterministic — no LLM. Capabilities (when present) override controller
+    parameters so the composed output matches the schema's typed declarations
+    rather than generic defaults.
+    """
     feats = set(features or [])
     gt = (game_type or "3D").lower()
 
-    # Controller variant by game type.
+    # Controller variant by game type
     ctrl = {
         "2d": "2d_platformer", "2.5d": "2d_platformer", "top_down": "top_down",
         "isometric": "top_down", "vr": "first_person",
@@ -251,9 +272,7 @@ def subsystems_for(game_type: str, features: list[str] | None = None,
         "isometric": "cinemachine_topdown",
     }.get(gt, "follow")
 
-    # Locomotion overrides the walker default for 3D-ish game types — a racing
-    # prompt gets the real WheelCollider car, not a humanoid (2D/VR keep their
-    # game-type controller; a "2D racing game" is still a 2D controller).
+    # Locomotion overrides for 3D-ish game types
     if gt in ("3d", "top_down", "isometric"):
         loco_ctrl = {"drive": "vehicle_car", "fly": "flying", "swim": "swimming"}
         loco_cam  = {"drive": "vehicle_chase"}
@@ -261,30 +280,66 @@ def subsystems_for(game_type: str, features: list[str] | None = None,
             ctrl = loco_ctrl[locomotion]
             cam  = loco_cam.get(locomotion, "follow")
 
+    # Controller options — capabilities override defaults when declared
+    ctrl_opts: dict = {"input_backend": "legacy"}
+    if capabilities and capabilities.controller:
+        c = capabilities.controller
+        abilities = []
+        if c.jump:   abilities.append("jump")
+        if c.sprint: abilities.append("sprint")
+        if c.crouch: abilities.append("crouch")
+        ctrl_opts.update({
+            "move_speed":   c.speed,
+            "sprint_speed": c.speed * c.sprint_multiplier,
+            "jump_force":   c.jump_force,
+            "abilities":    abilities,
+        })
+
+    # Animator variant from locomotion
+    anim_variant = {
+        "drive": "vehicle", "fly": "creature", "swim": "creature",
+    }.get(locomotion, "humanoid")
+
+    # Input variant from game type / features
+    input_variant = "gamepad" if gt == "vr" else (
+        "racing_wheel" if locomotion == "drive" else "keyboard_mouse"
+    )
+
     subs: list[Subsystem] = [
-        Subsystem(kind="controller", variant=ctrl, target="player",
-                  name="PlayerController", options={"input_backend": "legacy"}),
-        Subsystem(kind="camera", variant=cam, target="camera", name="PlayerCamera"),
-        Subsystem(kind="health", variant="simple", target="player", name="PlayerHealth"),
-        Subsystem(kind="hud", variant="health_bar", target="ui", name="GameHud"),
-        Subsystem(kind="menu", variant="pause_menu", target="ui", name="PauseMenu",
-                  options={"backend": "uGUI"}),
-        Subsystem(kind="saveload", variant="json_file", target="systems", name="SaveSystem"),
+        # Core (always)
+        Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
+        Subsystem(kind="camera",      variant=cam,            target="camera",  name="PlayerCamera"),
+        Subsystem(kind="health",      variant="simple",       target="player",  name="PlayerHealth"),
+        Subsystem(kind="hud",         variant="health_bar",   target="ui",      name="GameHud"),
+        Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),
+        Subsystem(kind="saveload",    variant="json_file",    target="systems", name="SaveSystem"),
+        # Always-on: physics body, input reader, interactables, animator, triggers
+        Subsystem(kind="physics",     variant="rigidbody",    target="player",  name="PhysicsBody"),
+        Subsystem(kind="input",       variant=input_variant,  target="systems", name="InputReader"),
+        Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable"),
+        Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator"),
+        Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
+        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger"),
     ]
-    # Feature-driven additions.
+
+    # Feature-driven additions
     if "ai" in feats or "navmesh" in feats or "enemies" in feats:
-        # Driving games want a racing-line follower (no NavMesh bake needed),
-        # not a patrol guard — it consumes the EntitySpawner's "Waypoints".
-        # target="asset": the class is emitted for per-enemy attachment (via
-        # entities[].behavior) but NOT attached to _Systems — a mover script on
-        # _Systems would literally drive the holder object around the track.
-        if locomotion == "drive":
-            subs.append(Subsystem(kind="ai", variant="waypoint_follow", target="asset", name="EnemyAI"))
-        else:
-            subs.append(Subsystem(kind="ai", variant="navmesh_patrol", target="world", name="EnemyAI"))
-        subs.append(Subsystem(kind="spawner", variant="wave_spawner", target="world", name="EnemySpawner"))
+        ai_var = "waypoint_follow" if locomotion == "drive" else "navmesh_patrol"
+        ai_tgt = "asset"           if locomotion == "drive" else "world"
+        subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI"))
+        subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
+        subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
     if "audio" in feats:
-        subs.append(Subsystem(kind="audio", variant="categorical_mixer", target="systems", name="AudioDirector"))
+        # Pass user_prompt via meta so AudioPipeline.default_fix can derive the game
+        # type from the original request (e.g. "horror maze" → horror required cues
+        # with ambient+music that route to the generative backend, not DSP).
+        audio_opts: dict = {}
+        if user_prompt:
+            audio_opts["meta"] = {"user_prompt": user_prompt}
+        subs.append(Subsystem(kind="audio", variant="categorical_mixer", target="systems",
+                              name="AudioDirector", options=audio_opts))
     if "inventory" in feats:
-        subs.append(Subsystem(kind="inventory", variant="slot_based", target="systems", name="PlayerInventory"))
+        subs.append(Subsystem(kind="inventory",    variant="slot_based",    target="systems", name="PlayerInventory"))
+    if "dialogue" in feats or gt in ("vr",):
+        subs.append(Subsystem(kind="dialogue",     variant="linear",        target="systems", name="DialogueSystem"))
     return subs
