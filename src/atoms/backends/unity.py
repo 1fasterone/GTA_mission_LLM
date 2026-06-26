@@ -605,6 +605,80 @@ def _set_animation_state(args: dict) -> str:
     )
 
 
+# ── Dialog atoms ──────────────────────────────────────────────────────────────
+
+def _say_line(args: dict) -> str:
+    line_id  = _s(args.get("line_id", "line"))
+    blocking = _b(args.get("blocking", True))
+    return (
+        f'SendMessage("PlayLine", "{line_id}", SendMessageOptions.DontRequireReceiver);\n'
+        f'if ({blocking}) yield return new WaitUntil(\n'
+        f'    () => (GetComponent<AudioSource>() == null || !GetComponent<AudioSource>().isPlaying));'
+    )
+
+
+def _play_dialog_audio(args: dict) -> str:
+    path   = _s(args.get("path", "Dialog/line"))
+    volume = _f(args.get("volume", 1.0))
+    return (
+        f'var _dlgClip = Resources.Load<AudioClip>("Audio/{path}");\n'
+        f'if (_dlgClip != null) {{\n'
+        f'    var _dlgSrc = GetComponent<AudioSource>() ?? gameObject.AddComponent<AudioSource>();\n'
+        f'    _dlgSrc.volume = {volume};\n'
+        f'    _dlgSrc.PlayOneShot(_dlgClip);\n'
+        f'    yield return new WaitForSeconds(_dlgClip.length + 0.1f);\n'
+        f'}}'
+    )
+
+
+def _gesture(args: dict) -> str:
+    gtype    = _s(args.get("type", "Idle"))
+    duration = _f(args.get("duration", 1.0))
+    return (
+        f'var _ganim = GetComponent<Animator>();\n'
+        f'if (_ganim != null) _ganim.SetTrigger("{gtype}");\n'
+        f'yield return new WaitForSeconds({duration});'
+    )
+
+
+def _look_at(args: dict) -> str:
+    target   = _s(args.get("target", "Player"))
+    duration = float(args.get("duration", 0.0))
+    if duration <= 0:
+        return (
+            f'var _laT = GameObject.Find("{target}");\n'
+            f'if (_laT != null) {{\n'
+            f'    var _laD = _laT.transform.position - transform.position; _laD.y = 0f;\n'
+            f'    if (_laD != Vector3.zero) transform.rotation = Quaternion.LookRotation(_laD);\n'
+            f'}}'
+        )
+    dur = _f(duration)
+    return (
+        f'var _laT = GameObject.Find("{target}");\n'
+        f'if (_laT != null) {{\n'
+        f'    float _laEl = 0f;\n'
+        f'    while (_laEl < {dur}) {{\n'
+        f'        var _laD = _laT.transform.position - transform.position; _laD.y = 0f;\n'
+        f'        if (_laD != Vector3.zero)\n'
+        f'            transform.rotation = Quaternion.Slerp(\n'
+        f'                transform.rotation, Quaternion.LookRotation(_laD), _laEl / {dur});\n'
+        f'        _laEl += Time.deltaTime; yield return null;\n'
+        f'    }}\n'
+        f'}}'
+    )
+
+
+def _end_dialog(args: dict) -> str:
+    return_idle = _b(args.get("return_to_idle", True))
+    return (
+        f'SendMessage("OnDialogEnd", SendMessageOptions.DontRequireReceiver);\n'
+        f'if ({return_idle}) {{\n'
+        f'    var _edAnim = GetComponent<Animator>();\n'
+        f'    if (_edAnim != null) _edAnim.SetTrigger("Idle");\n'
+        f'}}'
+    )
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
 _SNIPPETS: dict[str, Any] = {
@@ -669,6 +743,12 @@ _SNIPPETS: dict[str, Any] = {
     "SetMaterial":        _set_material,
     "SetLOD":             _set_lod,
     "SetAnimationState":  _set_animation_state,
+    # dialog
+    "SayLine":            _say_line,
+    "PlayDialogAudio":    _play_dialog_audio,
+    "Gesture":            _gesture,
+    "LookAt":             _look_at,
+    "EndDialog":          _end_dialog,
 }
 
 

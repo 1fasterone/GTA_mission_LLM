@@ -173,6 +173,11 @@ Convert the brief into JSON. Output JSON only.
 VARIANT MUST BE: {variant}
 INTERACTION_TYPE — ambient | quest | vendor | combat | follower
 AUDIO_STYLE      — natural | stylized | robotic | whisper | radio
+  Infer from the brief: "radio broadcast"/"vintage filter"/"old radio" → radio
+                        "whisper"/"hushed"/"secret" → whisper
+                        "robotic"/"synthetic"/"glitched" → robotic
+                        "cinematic"/"dramatic"/"exaggerated" → stylized
+                        anything else → natural
 EMOTION (per line) — neutral | happy | sad | angry | fearful | surprised | whisper | calm | excited
 LANGUAGE (per line) — ISO 639-1 two-letter code (en, es, fr, de, ja, zh, ...)
 
@@ -198,7 +203,7 @@ OUTPUT:
   "variant": "{variant}",
   "speaker_name": "Bartender",
   "interaction_type": "quest",
-  "audio_style": "natural",
+  "audio_style": "<natural|stylized|robotic|whisper|radio — infer from brief>",
   "multilingual_targets": [],
   "context_tags": ["bar", "noir", "mystery"],
   "prefab_path": "",
@@ -235,16 +240,22 @@ class NpcDialogPipeline(UnityMicroPipeline):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.config     = config or {}
-        self._gen_seed  = 0
+        self.config      = config or {}
+        self._gen_seed   = 0
         self._gen_prompt = ""
         self._with_audio = None   # None → config audio.generate_clips (default on)
+        self._audio_style: str | None = None  # CLI override; applied in default_fix
 
     def run(self, user_prompt: str, *, use_llm: bool = True,
-            with_audio=None, seed=None, **kw):
-        self._gen_seed   = int(seed) if seed is not None else 0
-        self._gen_prompt = user_prompt or ""
-        self._with_audio = with_audio
+            with_audio=None, seed=None, audio_style: str | None = None, **kw):
+        self._gen_seed    = int(seed) if seed is not None else 0
+        self._gen_prompt  = user_prompt or ""
+        self._with_audio  = with_audio
+        self._audio_style = audio_style
+        # Suppress auto-theme detection for NPC dialog — themes distort character
+        # voices more than they help. Pass --theme <name> to opt in explicitly.
+        if kw.get("theme") is None:
+            kw["theme"] = "none"
         if not use_llm:
             return self._run_no_llm(user_prompt, **kw)
         return super().run(user_prompt, seed=seed, **kw)
@@ -318,13 +329,18 @@ class NpcDialogPipeline(UnityMicroPipeline):
             default_lines, default_voice_for,
         )
 
+        # CLI --audio-style override takes precedence over everything else
+        if getattr(self, "_audio_style", None):
+            schema.audio_style = clamp_enum(self._audio_style, AUDIO_STYLES, "natural")
+
         schema.name     = to_pascal(schema.name, "NpcDialog")
         schema.variant  = variant
 
         # Variant → interaction_type / audio_style coherence
         if variant in _VARIANT_INTERACTION and not schema.interaction_type:
             schema.interaction_type = _VARIANT_INTERACTION[variant]
-        if variant in _VARIANT_STYLE and schema.audio_style == "natural":
+        if variant in _VARIANT_STYLE and schema.audio_style == "natural" \
+                and not getattr(self, "_audio_style", None):
             schema.audio_style = _VARIANT_STYLE[variant]
 
         # Normalise language codes

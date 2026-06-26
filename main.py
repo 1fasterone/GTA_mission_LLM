@@ -755,8 +755,9 @@ def unity_npc_dialog(
     out:     Optional[str]  = typer.Option(None, "--out"),
     config:  str            = typer.Option("config.yaml", "--config", "-c"),
     model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-    no_llm:  bool           = typer.Option(False, "--no-llm", help="Skip the LLM; use preset dialog lines for the interaction type"),
-    audio:   bool           = typer.Option(True,  "--audio/--no-audio", help="Generate WAV clips via Higgs Audio v2 TTS"),
+    no_llm:     bool           = typer.Option(False, "--no-llm", help="Skip the LLM; use preset dialog lines for the interaction type"),
+    audio:      bool           = typer.Option(True,  "--audio/--no-audio", help="Generate WAV clips via Higgs Audio v2 TTS"),
+    audio_style: Optional[str] = typer.Option(None,  "--audio-style", help="Override audio style: natural|stylized|robotic|whisper|radio"),
 ) -> None:
     """Generate NPC dialog lines + WAV clips using Higgs Audio v2 TTS.
 
@@ -776,7 +777,7 @@ def unity_npc_dialog(
     from src.micro import NpcDialogPipeline
     NpcDialogPipeline(_cfg(config, model)).run(
         prompt, variant=variant, theme=theme, mashup_with=mashup_with, seed=seed,
-        out=out, use_llm=not no_llm, with_audio=audio)
+        out=out, use_llm=not no_llm, with_audio=audio, audio_style=audio_style)
 
 
 @app.command("unity-menu")

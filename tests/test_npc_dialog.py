@@ -354,3 +354,173 @@ def test_npc_dialog_pipeline_metadata():
     assert "{theme_block}" in NpcDialogPipeline.concept_prompt
     assert "{concept}"     in NpcDialogPipeline.schema_prompt
     assert "{schema_hints}" in NpcDialogPipeline.schema_prompt
+
+
+# ── Unity dialog atom snippets ────────────────────────────────────────────────
+
+def test_say_line_snippet_registered():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("SayLine", {"line_id": "greet", "blocking": True})
+    assert "PlayLine" in out
+    assert '"greet"' in out
+    assert "TODO" not in out
+
+
+def test_say_line_non_blocking():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("SayLine", {"line_id": "bark", "blocking": False})
+    assert "PlayLine" in out
+    # non-blocking: no WaitUntil needed — check boolean value emitted
+    assert "false" in out
+
+
+def test_play_dialog_audio_snippet():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("PlayDialogAudio", {"path": "Dialog/npc/greet_en", "volume": 0.9})
+    assert 'Resources.Load<AudioClip>' in out
+    assert "Dialog/npc/greet_en" in out
+    assert "WaitForSeconds" in out
+    assert "TODO" not in out
+
+
+def test_gesture_snippet():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("Gesture", {"type": "nod", "duration": 1.5})
+    assert "SetTrigger" in out
+    assert '"nod"' in out
+    assert "1.5f" in out
+    assert "TODO" not in out
+
+
+def test_look_at_snippet_instant():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("LookAt", {"target": "Player", "duration": 0.0})
+    assert 'GameObject.Find("Player")' in out
+    assert "LookRotation" in out
+    assert "TODO" not in out
+
+
+def test_look_at_snippet_timed():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("LookAt", {"target": "Mick", "duration": 1.0})
+    assert "Slerp" in out
+    assert "yield return null" in out
+    assert "TODO" not in out
+
+
+def test_end_dialog_snippet():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("EndDialog", {"return_to_idle": True})
+    assert '"OnDialogEnd"' in out
+    assert "SetTrigger" in out
+    assert "TODO" not in out
+
+
+def test_end_dialog_no_idle():
+    from src.atoms.backends.unity import unity_atom_snippet
+    out = unity_atom_snippet("EndDialog", {"return_to_idle": False})
+    assert '"OnDialogEnd"' in out
+    # return_to_idle=False means the SetTrigger("Idle") branch is guarded by false
+    assert "false" in out
+
+
+# ── Theme suppression ─────────────────────────────────────────────────────────
+
+def test_auto_theme_suppressed_by_default(dummy_config):
+    """NpcDialogPipeline.run() should default to theme='none', skipping auto-detect."""
+    p = NpcDialogPipeline(dummy_config)
+
+    captured = {}
+
+    original_run = p.__class__.__bases__[0].run  # UnityMicroPipeline.run
+
+    def mock_run(self_, prompt, *, seed=None, **kw):
+        captured.update(kw)
+        raise RuntimeError("short-circuit")
+
+    import types
+    p.__class__.__bases__[0].run = types.MethodType(mock_run, p)
+    try:
+        p.run("A soldier NPC gives orders.", use_llm=True, with_audio=False)
+    except RuntimeError:
+        pass
+    finally:
+        p.__class__.__bases__[0].run = original_run  # restore
+
+    assert captured.get("theme") == "none"
+
+
+def test_explicit_theme_not_overridden(dummy_config):
+    """Caller-supplied --theme value must be forwarded as-is."""
+    p = NpcDialogPipeline(dummy_config)
+    captured = {}
+
+    import types
+    original_run = p.__class__.__bases__[0].run
+
+    def mock_run(self_, prompt, *, seed=None, **kw):
+        captured.update(kw)
+        raise RuntimeError("short-circuit")
+
+    p.__class__.__bases__[0].run = types.MethodType(mock_run, p)
+    try:
+        p.run("Wizard NPC sells potions.", use_llm=True, with_audio=False, theme="fantasy")
+    except RuntimeError:
+        pass
+    finally:
+        p.__class__.__bases__[0].run = original_run
+
+    assert captured.get("theme") == "fantasy"
+
+
+# ── audio_style CLI override ──────────────────────────────────────────────────
+
+def test_audio_style_override_applied(dummy_config):
+    """--audio-style radio must override whatever the LLM wrote."""
+    s = NpcDialogSchema(audio_style="natural")
+    p = NpcDialogPipeline(dummy_config)
+    p._audio_style = "radio"
+    fixed = p.default_fix(s, "quest_giver")
+    assert fixed.audio_style == "radio"
+
+
+def test_audio_style_override_clamped(dummy_config):
+    """Invalid audio_style override falls back to natural."""
+    s = NpcDialogSchema(audio_style="natural")
+    p = NpcDialogPipeline(dummy_config)
+    p._audio_style = "space_opera"
+    fixed = p.default_fix(s, "quest_giver")
+    assert fixed.audio_style == "natural"
+
+
+def test_audio_style_none_override_leaves_llm_choice(dummy_config):
+    """No override (None) must not alter what the LLM wrote."""
+    s = NpcDialogSchema(audio_style="robotic")
+    p = NpcDialogPipeline(dummy_config)
+    p._audio_style = None
+    fixed = p.default_fix(s, "combat_chatter")
+    assert fixed.audio_style == "robotic"
+
+
+# ── theme='none' in resolve_theme ────────────────────────────────────────────
+
+def test_resolve_theme_none_keyword():
+    from src.themes import resolve_theme
+    theme, _rng, meta = resolve_theme(user_prompt="A noir bartender NPC.", theme_name="none")
+    assert theme is None
+    assert meta["theme"] is None
+
+
+def test_resolve_theme_none_keyword_case_insensitive():
+    from src.themes import resolve_theme
+    theme, _rng, _meta = resolve_theme(user_prompt="anything", theme_name="NONE")
+    assert theme is None
+
+
+# ── schema_prompt audio_style guidance present ────────────────────────────────
+
+def test_schema_prompt_has_audio_style_guide():
+    prompt = NpcDialogPipeline.schema_prompt
+    assert "radio broadcast" in prompt or "vintage filter" in prompt
+    assert "whisper" in prompt
+    assert "robotic" in prompt
