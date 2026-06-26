@@ -744,6 +744,41 @@ def unity_dialogue(
     _run_micro("dialogue", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
 
 
+@app.command("unity-npc-dialog")
+def unity_npc_dialog(
+    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English NPC description"),
+    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
+    variant: Optional[str]  = typer.Option(None, "--variant", help="quest_giver|vendor|ambient_bark|combat_chatter|follower|cutscene"),
+    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
+    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
+    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
+    out:     Optional[str]  = typer.Option(None, "--out"),
+    config:  str            = typer.Option("config.yaml", "--config", "-c"),
+    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
+    no_llm:  bool           = typer.Option(False, "--no-llm", help="Skip the LLM; use preset dialog lines for the interaction type"),
+    audio:   bool           = typer.Option(True,  "--audio/--no-audio", help="Generate WAV clips via Higgs Audio v2 TTS"),
+) -> None:
+    """Generate NPC dialog lines + WAV clips using Higgs Audio v2 TTS.
+
+    Produces DialogPlayer.cs + DialogTrigger.cs + DialogData.json + WAV files
+    under Resources/Audio/Dialog/<speaker>/.
+
+    Default backend: Higgs Audio v2 (config.yaml audio.backend: higgs).
+    Degrades gracefully: no Higgs → text-only JSON with subtitle support.
+    Set --no-audio to skip clip generation (text + C# only)."""
+    if file is not None:
+        if not file.exists():
+            console.print(f"[red]Error:[/] file not found: {file}"); raise typer.Exit(1)
+        prompt = file.read_text(encoding="utf-8").strip()
+    if not prompt:
+        console.print("[red]Error:[/] provide a prompt or use --file <path>"); raise typer.Exit(1)
+
+    from src.micro import NpcDialogPipeline
+    NpcDialogPipeline(_cfg(config, model)).run(
+        prompt, variant=variant, theme=theme, mashup_with=mashup_with, seed=seed,
+        out=out, use_llm=not no_llm, with_audio=audio)
+
+
 @app.command("unity-menu")
 def unity_menu(
     prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),

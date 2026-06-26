@@ -50,6 +50,8 @@ def test_registry_has_all_known():
         "model",
         # behavior-graph micros
         "statemachine", "trigger", "animator",
+        # NPC dialog + Higgs Audio v2 TTS
+        "npc_dialog",
     }
 
 

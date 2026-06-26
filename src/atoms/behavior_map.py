@@ -197,6 +197,13 @@ MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
         {"atom": "SetAnimationState", "args": {"param": "Idle", "value": "true", "param_type": "trigger"}, "label": "idle"},
         {"atom": "SetAnimationState", "args": {"param": "Speed","value": "0",    "param_type": "float"},    "label": "zero speed"},
     ],
+    # ── NPC Dialog: look → speak → gesture → end ─────────────────────────────
+    "npc_dialog": [
+        {"atom": "LookAt",   "args": {"target": "Player", "duration": 0.0, "weight": 0.8}, "label": "face player"},
+        {"atom": "SayLine",  "args": {"line_id": "greet", "blocking": True},                "label": "greeting line"},
+        {"atom": "Gesture",  "args": {"type": "nod", "duration": 1.0},                      "label": "idle gesture"},
+        {"atom": "EndDialog","args": {"return_to_idle": True},                              "label": "close dialog"},
+    ],
 }
 
 
