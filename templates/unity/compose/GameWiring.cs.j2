@@ -8,15 +8,15 @@ using UnityEngine;
 /// <summary>
 /// Wires all composed subsystems together at startup.
 {% if has_input_so %}
-/// InputReaderInputReader is a ScriptableObject — assign it in the Inspector
-/// on the GameWiring GameObject (drag the InputReaderInputReader asset here).
+/// The InputReader ScriptableObject (IInputReader) — assign it in the Inspector
+/// on the GameWiring GameObject (drag the generated InputReader asset here).
 {% endif %}
 /// </summary>
 public class GameWiring : MonoBehaviour
 {
 {% if has_input_so %}
     [Header("Input (ScriptableObject — assign in Inspector)")]
-    [SerializeField] private InputReaderInputReader _inputSO;
+    [SerializeField] private IInputReader _inputSO;
 
 {% endif %}
     // ── Scene refs (found at runtime) ─────────────────────────────────────────

@@ -27,6 +27,7 @@ from .hud        import HUD_ATOMS
 from .physics    import PHYSICS_ATOMS
 from .input      import INPUT_ATOMS
 from .model      import MODEL_ATOMS
+from .wiring     import WIRING_ATOMS          # Unity-only seam primitives
 
 ALL_ATOMS: list[AtomDef] = (
     MOVEMENT_ATOMS
@@ -41,6 +42,7 @@ ALL_ATOMS: list[AtomDef] = (
     + PHYSICS_ATOMS
     + INPUT_ATOMS
     + MODEL_ATOMS
+    + WIRING_ATOMS
 )
 
 # Primary lookup by canonical name ("MoveTo")
@@ -55,6 +57,7 @@ for _atom in ALL_ATOMS:
 CATEGORIES: list[str] = [
     "movement", "animation", "camera", "audio", "fx", "logic", "entity",
     "controller", "hud", "physics", "input", "model",
+    "wiring",   # Unity-only seam atoms — domain-isolated from GTA5
 ]
 
 

@@ -1,70 +1,79 @@
 """
-RagClient — drop-in replacement for AnythingLLMClient.
+RagClient — domain-isolated vector search across gta5 / unity / shared collections.
 
-Uses the local ChromaDB index built by python -m rag.indexer.
-Same public interface as AnythingLLMClient so src/resolver.py can swap it in.
+Collections:
+    rag_gta5   — peds, vehicles, animations, scenarios, audio, weapons, props
+    rag_unity  — packages, components, api_verbs, scene_rules, genre_atoms
+    rag_shared — atoms (engine-agnostic IR)
 
 Usage:
     from rag.query import RagClient
     rag = RagClient()
-    rag.resolve_model("corrupt cop", "peds")   -> "s_m_y_cop_01"
-    rag.resolve_model("police car", "vehicles") -> "police"
-    rag.resolve_audio("heist complete", "mission_passed") -> "MISSION_PASSED_JINGLE"
+    rag.resolve_model("corrupt cop", "peds")          -> "s_m_y_cop_01"
+    rag.resolve_model("police car", "vehicles")       -> "police"
+    rag.resolve_package("physics simulation", "2022") -> "com.unity.physics"
+    rag.resolve_component("rigid body")               -> "Rigidbody"
 """
 from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
 INDEX_DIR   = Path(__file__).parent / "index"
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"   # ONNX via fastembed, no PyTorch dep
-COLLECTION  = "rag_ontology"
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+_THRESHOLD  = 0.55
 
-# Cosine distance threshold: below this → confident match.
-# ChromaDB cosine distance = 1 - cosine_similarity, so 0.0 = identical, 2.0 = opposite.
-_THRESHOLD = 0.55
+COLLECTION_MAP = {
+    "gta5":   "rag_gta5",
+    "unity":  "rag_unity",
+    "shared": "rag_shared",
+}
 
 
 class RagClient:
     """
-    Local vector-search resolver. Lazy-loads model + collection on first query.
-    Thread-safe for read (ChromaDB PersistentClient is safe for concurrent reads).
+    Local vector-search resolver with per-domain collection isolation.
+    Collections are lazy-loaded on first access per domain.
+    Thread-safe for reads (ChromaDB PersistentClient supports concurrent reads).
     """
-    # The corpus comes from verified DurtyFree data — every returned canonical
-    # is a real GTA5 model name. The ModelResolver should skip its valid_models
-    # guard when this flag is True.
     is_corpus_backed: bool = True
 
     def __init__(self, index_dir: str | None = None,
                  model_name: str = EMBED_MODEL,
                  threshold: float = _THRESHOLD):
-        self._idx_path  = index_dir or str(INDEX_DIR)
+        self._idx_path   = index_dir or str(INDEX_DIR)
         self._model_name = model_name
         self._threshold  = threshold
         self._model      = None
-        self._collection = None
+        self._client     = None
+        self._collections: dict[str, object] = {}
 
-    # ── lazy init ────────────────────────────────────────────────────────────
+    # ── lazy init ─────────────────────────────────────────────────────────────
 
-    def _ensure_ready(self) -> None:
-        if self._collection is not None:
-            return
+    def _ensure_domain(self, domain: str):
+        if domain in self._collections:
+            return self._collections[domain]
+
         import chromadb
         from fastembed import TextEmbedding
 
-        client = chromadb.PersistentClient(path=self._idx_path)
-        self._collection = client.get_collection(COLLECTION)
-        self._model      = TextEmbedding(self._model_name)
+        if self._client is None:
+            self._client = chromadb.PersistentClient(path=self._idx_path)
+        if self._model is None:
+            self._model = TextEmbedding(self._model_name)
 
-    # ── core search ──────────────────────────────────────────────────────────
+        col_name = COLLECTION_MAP[domain]
+        self._collections[domain] = self._client.get_collection(col_name)
+        return self._collections[domain]
 
-    def _search(self, text: str, kind: str | None = None, n: int = 3) -> list[dict]:
-        """Return top-n matches with .canonical, .label, .tags, .distance."""
-        self._ensure_ready()
-        # fastembed returns a generator of numpy arrays; take the first (and only) result
+    # ── core search ───────────────────────────────────────────────────────────
+
+    def _search(self, text: str, domain: str, kind: str | None = None, n: int = 3) -> list[dict]:
+        """Return top-n matches from the given domain collection."""
+        collection = self._ensure_domain(domain)
         vec   = next(iter(self._model.embed([text]))).tolist()
         where = {"kind": kind} if kind else None
 
-        result = self._collection.query(
+        result = collection.query(
             query_embeddings=[vec],
             n_results=n,
             where=where,
@@ -75,14 +84,13 @@ class RagClient:
             hits.append({**meta, "distance": dist})
         return hits
 
-    def _best(self, text: str, kind: str | None = None) -> Optional[str]:
-        """Return the canonical of the closest entry under the distance threshold."""
-        hits = self._search(text, kind=kind, n=1)
+    def _best(self, text: str, domain: str, kind: str | None = None) -> Optional[str]:
+        hits = self._search(text, domain=domain, kind=kind, n=1)
         if hits and hits[0]["distance"] < self._threshold:
             return hits[0]["canonical"]
         return None
 
-    # ── AnythingLLMClient-compatible interface ────────────────────────────────
+    # ── GTA5 resolvers ────────────────────────────────────────────────────────
 
     def resolve_model(self, description: str, category: str) -> Optional[str]:
         """
@@ -98,39 +106,50 @@ class RagClient:
         }
         kind  = kind_map.get(category, category.rstrip("s"))
         query = f"GTA5 {category}: {description}"
-        return self._best(query, kind=kind)
+        return self._best(query, domain="gta5", kind=kind)
 
     def resolve_audio(self, context: str, audio_type: str) -> Optional[str]:
         query = f"GTA5 audio {audio_type} event: {context}"
-        return self._best(query, kind="audio")
-
-    def resolve_package(self, description: str, unity_version: str) -> Optional[str]:
-        """Unity Package Manager resolver (populated when Unity corpus is indexed)."""
-        query = f"Unity package for {description} (Unity {unity_version})"
-        return self._best(query, kind="package")
-
-    # ── extended interface (beyond AnythingLLM) ───────────────────────────────
+        return self._best(query, domain="gta5", kind="audio")
 
     def resolve_animation(self, description: str) -> Optional[str]:
-        """Find the best GTA5 animation dict for a plain-English action."""
-        return self._best(f"GTA5 animation: {description}", kind="animation")
+        return self._best(f"GTA5 animation: {description}", domain="gta5", kind="animation")
 
     def resolve_scenario(self, description: str) -> Optional[str]:
-        """Find the best NPC scenario for a behavior description."""
-        return self._best(f"GTA5 ped behavior: {description}", kind="scenario")
+        return self._best(f"GTA5 ped behavior: {description}", domain="gta5", kind="scenario")
 
-    def search(self, text: str, kind: str | None = None, n: int = 5) -> list[dict]:
-        """
-        Public multi-result search — useful for debugging and the rag-query CLI.
-        Returns list of {canonical, label, kind, tags, distance}.
-        """
-        return self._search(text, kind=kind, n=n)
+    # ── Unity resolvers ───────────────────────────────────────────────────────
 
-    # ── status ────────────────────────────────────────────────────────────────
+    def resolve_package(self, description: str, unity_version: str = "") -> Optional[str]:
+        suffix = f" (Unity {unity_version})" if unity_version else ""
+        return self._best(f"Unity package for {description}{suffix}", domain="unity", kind="package")
 
-    def is_ready(self) -> bool:
+    def resolve_component(self, description: str) -> Optional[str]:
+        return self._best(f"Unity component: {description}", domain="unity", kind="component")
+
+    def resolve_api_verb(self, description: str) -> Optional[str]:
+        return self._best(f"Unity API verb: {description}", domain="unity", kind="api_verb")
+
+    def resolve_scene_rule(self, description: str) -> Optional[str]:
+        return self._best(f"Unity scene rule: {description}", domain="unity", kind="scene_rule")
+
+    def resolve_genre_atom(self, description: str) -> Optional[str]:
+        return self._best(f"Unity genre atom: {description}", domain="unity", kind="genre_atom")
+
+    # ── Shared / atom resolvers ───────────────────────────────────────────────
+
+    def resolve_atom(self, description: str) -> Optional[str]:
+        return self._best(f"atom: {description}", domain="shared", kind="atom")
+
+    # ── Debug / CLI search ────────────────────────────────────────────────────
+
+    def search(self, text: str, domain: str = "gta5", kind: str | None = None, n: int = 5) -> list[dict]:
+        """Multi-result search — useful for debugging and the rag-query CLI."""
+        return self._search(text, domain=domain, kind=kind, n=n)
+
+    def is_ready(self, domain: str = "gta5") -> bool:
         try:
-            self._ensure_ready()
-            return self._collection.count() > 0
+            col = self._ensure_domain(domain)
+            return col.count() > 0
         except Exception:
             return False

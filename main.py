@@ -240,21 +240,22 @@ def rag_build(
 
 @app.command("rag-query")
 def rag_query(
-    query: str = typer.Argument(..., help="Natural-language search term"),
-    kind:  str = typer.Option("", "--kind", "-k", help="Filter: ped|vehicle|animation|scenario|audio"),
-    n:     int = typer.Option(5,  "--n",    "-n", help="Number of results"),
+    query:  str = typer.Argument(..., help="Natural-language search term"),
+    kind:   str = typer.Option("", "--kind",   "-k", help="Filter by kind: ped|vehicle|animation|package|component|atom ..."),
+    domain: str = typer.Option("gta5", "--domain", "-d", help="Collection to search: gta5|unity|shared"),
+    n:      int = typer.Option(5,  "--n",    "-n", help="Number of results"),
 ) -> None:
     """Search the local RAG vector index. Requires rag-build to have been run."""
     from rag.query import RagClient
     rag = RagClient()
-    if not rag.is_ready():
-        console.print("[red]Index not built.[/] Run: [cyan]python main.py rag-build[/]")
+    if not rag.is_ready(domain=domain):
+        console.print(f"[red]Index not built for domain '{domain}'.[/] Run: [cyan]python main.py rag-build[/]")
         raise typer.Exit(1)
 
     kind_arg = kind or None
-    hits = rag.search(query, kind=kind_arg, n=n)
+    hits = rag.search(query, domain=domain, kind=kind_arg, n=n)
     console.print(f"\n[bold]RAG search:[/] [cyan]{query}[/]"
-                  + (f"  [dim](kind={kind})[/]" if kind else ""))
+                  + f"  [dim](domain={domain}" + (f", kind={kind}" if kind else "") + ")[/]")
     for i, h in enumerate(hits, 1):
         dist = h["distance"]
         color = "green" if dist < 0.4 else ("yellow" if dist < 0.55 else "red")

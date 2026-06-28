@@ -1,0 +1,67 @@
+GAME TITLE: Hollow City — Neon Rogue
+
+GENRE: 2D action-platformer roguelite with light RPG elements.
+
+SETTING: A crumbling underground metropolis beneath a collapsed megacity. Neon signs flicker across rusted catwalks. The player descends through five districts — Sewer Gate, Market Maze, Industrial Core, The Vault, and the Boss Sanctum — each procedurally arranged from hand-crafted rooms.
+
+PLAYER CHARACTER: A scavenger named KAI with a grapple-hook arm, a melee blade, and a modular energy pistol. Kai can run, jump, double-jump, wall-slide, and dash. Health is split: Shield (regenerates after 4 seconds) and Hull (permanent, healed by pickups). Death returns the player to the last checkpoint with half their currency.
+
+ENEMY TYPES:
+- Scrapper: melee grunt that patrols, detects Kai, chases, and swings.
+- Sentinel: ranged turret-drone that floats in a patrol pattern, locks on, fires 3-shot burst, then retreats.
+- Brute: armored elite that charges, slams, and has a phase-2 rage mode at 30% health.
+- Necro-Drone: spawner unit that summons Scrappers every 8 seconds until killed.
+- Boss — WARDEN-7: a giant mech with 3 phases (missiles, laser sweep, melee slam + minion summon).
+
+CORE SYSTEMS REQUIRED:
+
+1. PLAYER CONTROLLER — 2D physics-based. Run speed 6 m/s, dash (0.15s, 8m, 0.6s cooldown), double-jump, wall-slide with coyote time (0.12s) and jump buffer (0.1s). Inputs: WASD/arrows + Space/gamepad left-stick + A-button.
+
+2. HEALTH SYSTEM — Two-layer (shield + hull). Shield: 60 HP, regens 15/s after 4s no-damage. Hull: 100 HP, no regen, healed by MedKit pickups. Lives system: 3 lives, checkpoint respawn, permanent death on 0 lives.
+
+3. ENEMY AI FSM — States: Idle → Patrol (waypoints) → Alert (heard noise) → Chase (line-of-sight) → Attack → Retreat (low health). NavMesh or custom A* pathfinding. Brute gets a Rage sub-state. Necro-Drone gets a Summon state on a timer.
+
+4. WAVE SPAWNER — Room-based wave system. Each room has 1–4 waves. Waves unlock next door when cleared. Spawns from designated SpawnPoint objects tagged "EnemySpawn". Object pool for performance. Boss room triggers boss fight sequence.
+
+5. INVENTORY SYSTEM — Grid inventory (5×4 slots). Item types: MedKit, ShieldCell, Ammo_Pistol, Ammo_Blade, UpgradeChip (passive), KeyCard. Equipment slots: Weapon_Primary, Weapon_Secondary, Armor. Hotbar: 4 slots. Right-click to equip/use. Weight limit: 20 units.
+
+6. DIALOGUE SYSTEM — Branching dialogue with typewriter effect (40 chars/sec). Used for: NPC merchants in Market Maze, lore terminals (readable), boss pre-fight taunts (cutscene bark). Speaker portrait + name. Skip-to-end on Space. Dialogue triggers lock player input.
+
+7. AUDIO SYSTEM — Diegetic ambient loops per district. SFX banks: Player (footstep_metal, dash_whoosh, blade_swing, pistol_shot, hurt, death, jump, land), Enemy (scrapper_growl, sentinel_lock, brute_roar, drone_spawn, explosion), UI (menu_select, menu_back, pickup_coin, pickup_medkit, wave_clear, checkpoint_save). Music: tense_ambient, combat_loop, boss_theme, victory_sting, death_sting. AudioManager with 2D/3D blend, volume channels (master/music/sfx).
+
+8. HUD — Canvas overlay: Hull bar (red, bottom-left), Shield bar (blue arc above hull), Lives counter (skull icons), Ammo counter (pistol + blade), Currency counter (bottom-right), Wave counter (top-right "Wave 2/4"), Boss health bar (top-center, hidden until boss room), Minimap (top-left, room fog-of-war).
+
+9. SAVE / LOAD — Checkpoint system (glowing orbs in rooms). Autosave on checkpoint touch. Save data: current district, hull HP, lives, inventory contents, currency, cleared rooms. JSON file to Application.persistentDataPath. 3 save slots.
+
+10. SCENE TRANSITIONS — Fade-to-black (0.4s) between districts. Loading bar for heavy scenes (Industrial Core, Boss Sanctum). Async scene load. Trigger: player walks through an unlocked exit door.
+
+11. INPUT SYSTEM — Unity New Input System. Actions: Move (Vector2), Jump (button), Dash (button), Attack_Melee (button), Attack_Ranged (button), Interact (button), OpenInventory (button), Pause (button). Supports keyboard+mouse and gamepad simultaneously.
+
+12. CAMERA — Cinemachine 2D. Virtual camera follows Kai with soft zone (lookahead on velocity). Confine to room bounds (PolygonCollider2D). Screen-shake on hit (0.15s, 0.3 amplitude). Boss room: zoom out to full arena view on trigger.
+
+13. PHYSICS — Rigidbody2D on player (gravity scale 2.5). Custom gravity for wall-slide (0.3× gravity). Layers: Player, Enemy, Ground, Platform (one-way), Projectile, Trigger. Platform with one-way collision (drop-through on S+Jump).
+
+14. STATE MACHINE — Player FSM: Idle, Run, Jump, DoubleJump, WallSlide, Dash, Attack, Hurt, Dead. Game FSM: MainMenu, Playing, Paused, GameOver, Victory, Cutscene. Enemy FSM: Idle, Patrol, Alert, Chase, Attack, Retreat, Dead.
+
+15. MAIN MENU — Title screen with animated background (parallax neon city). Buttons: New Game, Continue (grayed if no save), Load (slot picker), Settings (audio sliders + keybind display), Quit. Game-over screen: "SYSTEM FAILURE" with Retry (same checkpoint), Return to Menu.
+
+16. INTERACTABLES — MedKit pickup (auto-collect on touch), KeyCard (auto-collect), UpgradeChip (prompt E to collect), Chest (E to open, loot table), Door (locked/unlocked by KeyCard or wave clear), Merchant NPC (dialogue + shop UI), Lore Terminal (E to read, opens dialogue).
+
+17. TRIGGERS — Room entry trigger (spawns wave 1), Room clear trigger (opens exit door), Boss arena trigger (locks exit, starts boss music + cutscene bark, zooms camera), Checkpoint trigger (save + heal shield), Hazard zone trigger (applies 5 DPS acid damage to player), Cutscene trigger (locks player, plays bark dialogue).
+
+18. ANIMATOR — Player: Idle, Run, Jump, Fall, WallSlide, Dash, Attack_Melee, Attack_Ranged, Hurt, Death. Enemies: Scrapper (Idle, Walk, Attack, Hurt, Death), Sentinel (Float, Lock, Fire, Retreat), Brute (Idle, Walk, Charge, Slam, Rage, Death). Boss: Phase1_Idle, Missile, Phase2_Laser, Phase3_Slam, Summon, Death. UI: HUD pulse on low health, Boss bar fill animation.
+
+WIRING REQUIREMENTS:
+- PlayerController references HealthSystem, InputReader, PlayerAnimator, AudioManager, CameraShake.
+- HealthSystem broadcasts OnDamage(float) and OnDeath events; HUD subscribes.
+- WaveSpawner references ObjectPool, RoomClearEvent, EnemyFSM prefabs.
+- InventorySystem referenced by Interactable (pickup), MerchantNPC (shop), HUD (slot display).
+- DialogueSystem referenced by MerchantNPC, LoreTerminal, BossCutscene. Locks PlayerController.InputEnabled.
+- SaveSystem called by CheckpointTrigger and SceneTransition.
+- AudioManager is a singleton; all systems call AudioManager.PlaySFX() and AudioManager.PlayMusic().
+- GameFSM gates input (no player input during Cutscene/Paused/GameOver states).
+- All enemy FSMs reference AudioManager and ObjectPool for death VFX spawning.
+- CameraShake referenced by HealthSystem (on player hit) and Boss (on slam).
+
+OUTPUT EXPECTATIONS:
+Produce C# scripts for all 18 systems above. Each script must be fully implemented (no TODO stubs). Scripts must wire to each other via UnityEvents, C# events, or direct GetComponent references as described. Include a SceneSetup builder that creates the root GameObjects, attaches all components, and wires all cross-references in a single Editor menu call "Hollow City / Build Scene".

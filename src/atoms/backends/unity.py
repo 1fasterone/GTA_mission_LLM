@@ -679,6 +679,104 @@ def _end_dialog(args: dict) -> str:
     )
 
 
+# ── Wiring atoms (Unity-only seam primitives) ────────────────────────────────
+# These generate the C# subscription blocks that go inside GameWiring.Awake()
+# or GameWiring.Update(). Variable names match GameWiring's _kind field naming.
+
+def _wire_health_to_hud(args: dict) -> str:
+    hv = _s(args.get("health_var", "_health"))
+    uv = _s(args.get("hud_var",    "_hud"))
+    return (
+        f"if ({hv} != null && {uv} != null)\n"
+        f"{{\n"
+        f"    {hv}.OnHealthChanged += {uv}.SetHealth;\n"
+        f"    {uv}.SetHealth({hv}.CurrentHealth, {hv}.MaxHealth);\n"
+        f"}}"
+    )
+
+
+def _wire_health_to_fsm(args: dict) -> str:
+    hv = _s(args.get("health_var",       "_health"))
+    fv = _s(args.get("statemachine_var", "_statemachine"))
+    return (
+        f"if ({hv} != null && {fv} != null)\n"
+        f"    {hv}.OnDeath += {fv}.Kill;"
+    )
+
+
+def _wire_health_to_audio(args: dict) -> str:
+    hv        = _s(args.get("health_var",  "_health"))
+    av        = _s(args.get("audio_var",   "_audio"))
+    cue_hurt  = _s(args.get("cue_hurt",   "player_hurt"))
+    cue_death = _s(args.get("cue_death",  "player_death"))
+    cue_heal  = _s(args.get("cue_heal",   "checkpoint_save_led"))
+    return (
+        f"if ({hv} != null && {av} != null)\n"
+        f"{{\n"
+        f"    _onDamaged = _ => {av}.Play(\"{cue_hurt}\");\n"
+        f"    _onDeath   = () => {av}.Play(\"{cue_death}\");\n"
+        f"    _onHealed  = _ => {av}.Play(\"{cue_heal}\");\n"
+        f"    {hv}.OnDamaged += _onDamaged;\n"
+        f"    {hv}.OnDeath   += _onDeath;\n"
+        f"    {hv}.OnHealed  += _onHealed;\n"
+        f"}}"
+    )
+
+
+def _wire_fsm_to_animator(args: dict) -> str:
+    fv = _s(args.get("statemachine_var", "_statemachine"))
+    av = _s(args.get("animator_var",     "_animator"))
+    return (
+        f"if ({fv} != null && {av} != null)\n"
+        f"    {fv}.OnStateChanged += OnFSMStateChanged;"
+    )
+
+
+def _wire_input_to_controller(args: dict) -> str:
+    iv = _s(args.get("input_var",      "_inputSO"))
+    cv = _s(args.get("controller_var", "_controller"))
+    return (
+        f"if ({iv} != null && {cv} != null)\n"
+        f"    {cv}.SetInputReader({iv});"
+    )
+
+
+def _wire_input_to_fsm(args: dict) -> str:
+    iv = _s(args.get("input_var",        "_inputSO"))
+    fv = _s(args.get("statemachine_var", "_statemachine"))
+    return (
+        f"if ({iv} != null && {fv} != null)\n"
+        f"{{\n"
+        f"    _onFSMJump = () => {fv}.SetJump(true);\n"
+        f"    {iv}.OnMove += {fv}.SetMove;\n"
+        f"    {iv}.OnJump += _onFSMJump;\n"
+        f"}}"
+    )
+
+
+def _wire_grounded_bridge(args: dict) -> str:
+    cv = _s(args.get("controller_var",   "_controller"))
+    fv = _s(args.get("statemachine_var", "_statemachine"))
+    av = _s(args.get("animator_var",     "_animator"))
+    return (
+        f"if ({cv} != null)\n"
+        f"{{\n"
+        f"    bool grounded = {cv}.IsGrounded;\n"
+        f"    {fv}?.SetGrounded(grounded);\n"
+        f"    {av}?.SetGrounded(grounded);\n"
+        f"}}"
+    )
+
+
+def _wire_trigger_to_save(args: dict) -> str:
+    tv = _s(args.get("trigger_var",  "_trigger"))
+    sv = _s(args.get("saveload_var", "_saveload"))
+    return (
+        f"if ({tv} != null && {sv} != null)\n"
+        f"    {tv}.gameObject.AddComponent<CheckpointSaveRelay>().Init({sv});"
+    )
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
 _SNIPPETS: dict[str, Any] = {
@@ -749,6 +847,15 @@ _SNIPPETS: dict[str, Any] = {
     "Gesture":            _gesture,
     "LookAt":             _look_at,
     "EndDialog":          _end_dialog,
+    # wiring (Unity-only seam primitives)
+    "WireHealthToHUD":        _wire_health_to_hud,
+    "WireHealthToFSM":        _wire_health_to_fsm,
+    "WireHealthToAudio":      _wire_health_to_audio,
+    "WireFSMToAnimator":      _wire_fsm_to_animator,
+    "WireInputToController":  _wire_input_to_controller,
+    "WireInputToFSM":         _wire_input_to_fsm,
+    "WireGroundedBridge":     _wire_grounded_bridge,
+    "WireTriggerToSave":      _wire_trigger_to_save,
 }
 
 
