@@ -167,21 +167,202 @@ class MicroComposer:
 
     def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path) -> None:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
-        wiring = next(u for u in units if u.kind == "wiring")
+        from .atoms.backends.unity import unity_atom_snippet
+
+        wiring     = next(u for u in units if u.kind == "wiring")
         real_units = [u for u in units if u.kind != "wiring"]
+
         wdir = micros_root / "wiring"
         sdir = wdir / "Scripts"
         sdir.mkdir(parents=True, exist_ok=True)
         env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
                           undefined=StrictUndefined, keep_trailing_newline=True)
-        hud = next((u for u in real_units if u.kind == "hud"), None)
-        health = next((u for u in real_units if u.kind == "health"), None)
-        # HUD.SetHealth(float,float) only exists on the health_bar variant.
-        wire_health_hud = bool(health and hud and hud.variant == "health_bar")
+
+        # ── Subsystem resolution ──────────────────────────────────────────────
+        # When multiple units share a kind (e.g. two statemachine units), pick
+        # the one whose target matches the hint.  This is the single source of
+        # truth for which unit wires into each seam; it also prevents the old
+        # by_kind dict overwrite that wired EnemyFSM seams to the player.
+        def _pick(kind: str, target: str | None = None) -> "ComposedUnit | None":
+            candidates = [u for u in real_units if u.kind == kind]
+            if not candidates:
+                return None
+            if len(candidates) == 1 or target is None:
+                return candidates[0]
+            preferred = [u for u in candidates if u.target == target]
+            return preferred[0] if preferred else candidates[0]
+
+        health   = _pick("health",       "player")
+        hud      = _pick("hud",          "ui")
+        fsm      = _pick("statemachine", "player")   # player FSM only — enemy FSM excluded
+        anim     = _pick("animator",     "player")
+        audio    = _pick("audio",        "systems")
+        ctrl     = _pick("controller",   "player")
+        trigger  = _pick("trigger",      "world")
+        saveload = _pick("saveload",     "systems")
+        menu     = _pick("menu",         "ui")
+
+        # Field-name helper: derive a unique C# variable name from class_name so
+        # two units of the same kind (PlayerFSM/EnemyFSM) never collide.
+        def _fv(u: "ComposedUnit") -> str:
+            return f"_{u.class_name.lower()}"
+
+        # InputReader SO is needed whenever controller, FSM, or menu is present.
+        has_input_so = bool(ctrl or fsm or menu)
+
+        # ── Build seam lists (atom-driven) ────────────────────────────────────
+        awake_seams:      list[dict] = []
+        update_seams:     list[dict] = []
+        stored_delegates: list[dict] = []
+        destroy_cleanups: list[str]  = []
+        helper_methods:   list[str]  = []
+        has_trigger_save              = False
+
+        # SEAM 1 — Health → HUD (hp bar reflects damage/heal live)
+        if health and hud and hud.variant == "health_bar":
+            hv, uv = _fv(health), _fv(hud)
+            awake_seams.append({
+                "label":   "SEAM 1: Health → HUD",
+                "snippet": unity_atom_snippet("WireHealthToHUD", {
+                    "health_var": hv, "hud_var": uv,
+                }),
+            })
+            destroy_cleanups.append(
+                f"if ({hv} != null && {uv} != null)\n"
+                f"    {hv}.OnHealthChanged -= {uv}.SetHealth;"
+            )
+
+        # SEAM 2 — Health → FSM (death drives Dead state)
+        if health and fsm:
+            hv, fv = _fv(health), _fv(fsm)
+            awake_seams.append({
+                "label":   "SEAM 2: Health → FSM (death drives Dead state)",
+                "snippet": unity_atom_snippet("WireHealthToFSM", {
+                    "health_var": hv, "statemachine_var": fv,
+                }),
+            })
+            destroy_cleanups.append(
+                f"if ({hv} != null && {fv} != null)\n"
+                f"    {hv}.OnDeath -= {fv}.Kill;"
+            )
+
+        # SEAM 3 — Health → Audio (hurt / death / heal sounds)
+        if health and audio:
+            hv, av = _fv(health), _fv(audio)
+            stored_delegates += [
+                {"type": "Action<float>", "name": "_onDamaged"},
+                {"type": "Action",        "name": "_onDeath"},
+                {"type": "Action<float>", "name": "_onHealed"},
+            ]
+            awake_seams.append({
+                "label":   "SEAM 3: Health → Audio",
+                "snippet": unity_atom_snippet("WireHealthToAudio", {
+                    "health_var": hv, "audio_var": av,
+                    "cue_hurt":  "player_hurt",
+                    "cue_death": "player_death",
+                    "cue_heal":  "checkpoint_save_led",
+                }),
+            })
+            destroy_cleanups.append(
+                f"if ({hv} != null)\n"
+                "{\n"
+                f"    if (_onDamaged != null) {hv}.OnDamaged -= _onDamaged;\n"
+                f"    if (_onDeath   != null) {hv}.OnDeath   -= _onDeath;\n"
+                f"    if (_onHealed  != null) {hv}.OnHealed  -= _onHealed;\n"
+                "}"
+            )
+
+        # SEAM 4 — FSM → Animator (state changes drive CrossFade)
+        if fsm and anim:
+            fv, anv = _fv(fsm), _fv(anim)
+            awake_seams.append({
+                "label":   "SEAM 4: FSM → Animator",
+                "snippet": unity_atom_snippet("WireFSMToAnimator", {
+                    "statemachine_var": fv, "animator_var": anv,
+                }),
+            })
+            fsm_cls = fsm.class_name
+            helper_methods.append(
+                f"private void OnFSMStateChanged({fsm_cls}.State state)\n"
+                f"    {{\n"
+                f"        if ({anv} == null) return;\n"
+                f"        switch (state)\n"
+                f"        {{\n"
+                f"            case {fsm_cls}.State.Idle:    {anv}.CrossFade(\"Idle\", 0.1f); break;\n"
+                f"            case {fsm_cls}.State.Moving:  {anv}.CrossFade(\"Run\",  0.1f); break;\n"
+                f"            case {fsm_cls}.State.Jumping: {anv}.PlayJump();              break;\n"
+                f"            case {fsm_cls}.State.Dead:    {anv}.PlayDeath();             break;\n"
+                f"        }}\n"
+                f"    }}"
+            )
+            destroy_cleanups.append(
+                f"if ({fv} != null && {anv} != null)\n"
+                f"    {fv}.OnStateChanged -= OnFSMStateChanged;"
+            )
+
+        # SEAM 4b — InputReader → Controller
+        if has_input_so and ctrl:
+            awake_seams.append({
+                "label":   "SEAM 4b: InputReader → Controller",
+                "snippet": unity_atom_snippet("WireInputToController", {
+                    "input_var": "_inputSO", "controller_var": _fv(ctrl),
+                }),
+            })
+            # Controller unsubscribes itself in its own OnDisable.
+
+        # SEAM 5 — InputReader → FSM (typed move + jump events)
+        if has_input_so and fsm:
+            fv = _fv(fsm)
+            stored_delegates.append({"type": "Action", "name": "_onFSMJump"})
+            awake_seams.append({
+                "label":   "SEAM 5: InputReader → FSM",
+                "snippet": unity_atom_snippet("WireInputToFSM", {
+                    "input_var": "_inputSO", "statemachine_var": fv,
+                }),
+            })
+            destroy_cleanups.append(
+                f"if (_inputSO != null && {fv} != null)\n"
+                "{\n"
+                f"    _inputSO.OnMove -= {fv}.SetMove;\n"
+                "    if (_onFSMJump != null) _inputSO.OnJump -= _onFSMJump;\n"
+                "}"
+            )
+
+        # SEAM 6 — Grounded bridge (Update, not Awake)
+        if ctrl and (fsm or anim):
+            update_seams.append({
+                "label":   "Grounded bridge: controller → FSM + Animator",
+                "snippet": unity_atom_snippet("WireGroundedBridge", {
+                    "controller_var":   _fv(ctrl),
+                    "statemachine_var": _fv(fsm)  if fsm  else "_statemachine",
+                    "animator_var":     _fv(anim) if anim else "_animator",
+                }),
+            })
+
+        # SEAM 7 — Trigger → SaveSystem (checkpoint saves)
+        if trigger and saveload:
+            has_trigger_save = True
+            awake_seams.append({
+                "label":   "SEAM 7: Trigger → SaveSystem",
+                "snippet": unity_atom_snippet("WireTriggerToSave", {
+                    "trigger_var":  _fv(trigger),
+                    "saveload_var": _fv(saveload),
+                }),
+            })
+
+        # ── Render template ───────────────────────────────────────────────────
         content = env.get_template("GameWiring.cs.j2").render(
             units=real_units,
-            has_menu=any(u.kind == "menu" for u in real_units),
-            wire_health_hud=wire_health_hud)
+            has_menu=menu is not None,
+            menu_var=_fv(menu) if menu else "_menu",
+            has_input_so=has_input_so,
+            stored_delegates=stored_delegates,
+            awake_seams=awake_seams,
+            update_seams=update_seams,
+            helper_methods=helper_methods,
+            destroy_cleanups=destroy_cleanups,
+            has_trigger_save=has_trigger_save,
+        )
         (sdir / "GameWiring.cs").write_text(content, encoding="utf-8")
         (sdir / "GameWiring.cs.meta").write_text(_meta_file(wiring.guid), encoding="utf-8")
         self._folder_meta(wdir)

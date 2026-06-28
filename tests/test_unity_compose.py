@@ -158,7 +158,7 @@ def test_emit_writes_gamewiring_referencing_composed_classes(tmp_path):
     for u in units:
         if u.kind not in ("wiring",):
             assert u.class_name in gw, f"GameWiring missing reference to {u.class_name}"
-    assert "_menu.Show()" in gw
+    assert ".Show()" in gw   # fallback Escape handler — variable name is class_name.lower()
     assert gw.count("{") == gw.count("}")
 
 
@@ -176,7 +176,7 @@ def test_gamewiring_connects_health_to_hud(tmp_path):
     # Default mapper includes health (target player) + hud health_bar → the seam wires.
     units = MicroComposer("HSeam").emit(subsystems_for("3D", []), Path(tmp_path) / "Assets")
     gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
-    assert "_health.OnHealthChanged += _hud.SetHealth" in gw
+    assert "OnHealthChanged += " in gw and "SetHealth" in gw   # seam 1 wired; var names are class_name.lower()
     assert {"health", "hud"} <= {u.kind for u in units}
 
 
