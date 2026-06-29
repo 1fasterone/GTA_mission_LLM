@@ -113,6 +113,32 @@ _DEFAULT_TRANSITIONS: dict[str, list[dict]] = {
     ],
 }
 
+# Backing fields the DEFAULT transition conditions reference. Without these the
+# generated FSM references undeclared identifiers (CS0103). player_fsm needs none —
+# the template already declares _moveInput / _jumpPressed / _grounded.
+_DEFAULT_CONDITION_FIELDS: dict[str, list[dict]] = {
+    "enemy_fsm": [
+        {"name": "attackRange",   "type": "float", "default": "2f", "header": "AI"},
+        {"name": "_distToPlayer", "type": "float", "default": "999f"},
+        {"name": "_seesPlayer",   "type": "bool",  "default": "false"},
+        {"name": "_heardNoise",   "type": "bool",  "default": "false"},
+        {"name": "_alertTimer",   "type": "float", "default": "0f"},
+        {"name": "_lostTimer",    "type": "float", "default": "0f"},
+    ],
+    "game_fsm": [
+        {"name": "_startPressed",   "type": "bool", "default": "false"},
+        {"name": "_pausePressed",   "type": "bool", "default": "false"},
+        {"name": "_playerDead",     "type": "bool", "default": "false"},
+        {"name": "_restartPressed", "type": "bool", "default": "false"},
+    ],
+    "object_fsm": [
+        {"name": "_triggered",    "type": "bool",  "default": "false"},
+        {"name": "_activeDone",   "type": "bool",  "default": "false"},
+        {"name": "_cooldownDone", "type": "bool",  "default": "false"},
+        {"name": "_hp",           "type": "float", "default": "100f", "header": "Stats"},
+    ],
+}
+
 
 CONCEPT_PROMPT = """\
 {theme_block}
@@ -198,10 +224,20 @@ class StateMachinePipeline(UnityMicroPipeline):
         # Fill states and transitions from defaults if LLM left them empty
         if not schema.states:
             schema.states = [StateDefinition(**d) for d in _DEFAULT_STATES.get(variant, _DEFAULT_STATES["player_fsm"])]
+        used_default_transitions = not schema.transitions
         if not schema.transitions:
             schema.transitions = [StateTransition(**d) for d in _DEFAULT_TRANSITIONS.get(variant, [])]
         if not schema.initial_state and schema.states:
             schema.initial_state = schema.states[0].name
+
+        # When the default transitions are used, declare the fields their
+        # conditions reference so the FSM compiles (CS0103 guard). Skip any the
+        # LLM already declared.
+        if used_default_transitions and variant in _DEFAULT_CONDITION_FIELDS:
+            existing = {f.name for f in schema.extra_fields}
+            for d in _DEFAULT_CONDITION_FIELDS[variant]:
+                if d["name"] not in existing:
+                    schema.extra_fields.append(CodeField(**d))
 
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,

@@ -49,6 +49,14 @@ class ComposedUnit(BaseModel):
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
 _COMPOSED_FILE_ID_BASE = 900000010
 
+# Kinds that GameWiring / GameContext must NOT FindFirstObjectByType:
+#   wiring/context — the synthetic glue components themselves.
+#   input          — a ScriptableObject (IInputReader) assigned via the _inputSO
+#                    SerializeField, never a scene MonoBehaviour. The generated SO
+#                    class is `<name>InputReader` (not `<name>`), so finding it is
+#                    CS0246 and would never resolve at runtime anyway.
+_NON_SCENE_KINDS = {"wiring", "context", "input"}
+
 # Built-in UnityScript types the micro library now OWNS. In --compose mode these
 # are dropped from the generated project so the composer is the single source of
 # truth (no duplicate PlayerController/CameraFollow/etc.). The unique glue scripts
@@ -179,7 +187,7 @@ class MicroComposer:
         from .atoms.backends.unity import unity_atom_snippet
 
         wiring     = next(u for u in units if u.kind == "wiring")
-        real_units = [u for u in units if u.kind not in ("wiring", "context")]
+        real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
 
         wdir = micros_root / "wiring"
         sdir = wdir / "Scripts"
@@ -297,10 +305,10 @@ class MicroComposer:
                 f"        if ({anv} == null) return;\n"
                 f"        switch (state)\n"
                 f"        {{\n"
-                f"            case {fsm_cls}.State.Idle:    {anv}.CrossFade(\"Idle\", 0.1f); break;\n"
-                f"            case {fsm_cls}.State.Moving:  {anv}.CrossFade(\"Run\",  0.1f); break;\n"
-                f"            case {fsm_cls}.State.Jumping: {anv}.PlayJump();              break;\n"
-                f"            case {fsm_cls}.State.Dead:    {anv}.PlayDeath();             break;\n"
+                f"            case {fsm_cls}.State.Idle:    {anv}.CrossFade(\"Idle\",  0.1f); break;\n"
+                f"            case {fsm_cls}.State.Moving:  {anv}.CrossFade(\"Run\",   0.1f); break;\n"
+                f"            case {fsm_cls}.State.Jumping: {anv}.CrossFade(\"Jump\",  0.1f); break;\n"
+                f"            case {fsm_cls}.State.Dead:    {anv}.CrossFade(\"Death\", 0.1f); break;\n"
                 f"        }}\n"
                 f"    }}"
             )
@@ -390,7 +398,7 @@ class MicroComposer:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
         context    = next(u for u in units if u.kind == "context")
-        real_units = [u for u in units if u.kind not in ("wiring", "context")]
+        real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
 
         def _pick(kind: str, target: str | None = None) -> "ComposedUnit | None":
             cands = [u for u in real_units if u.kind == kind]
@@ -498,15 +506,33 @@ def subsystems_for(
     locomotion:   str               = "walk",
     capabilities  = None,            # Optional[ProjectCapabilities] — avoids import cycle
     user_prompt:  str               = "",
+    *,
+    scenes:       list[str] | None  = None,
+    entities      = None,            # list of schema entities (have .kind)
+    scripts       = None,            # list of schema scripts  (have .type/.name)
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
     Deterministic — no LLM. Capabilities (when present) override controller
     parameters so the composed output matches the schema's typed declarations
     rather than generic defaults.
+
+    Optional micros are gated on BOTH feature flags AND deterministic schema
+    CONTENT (scene count, entity kinds, script types). The local LLM rarely emits
+    the niche feature tokens, so content gating is what actually makes vfx /
+    npc_dialog / transition / dialogue reachable for a fitting game.
     """
     feats = set(features or [])
     gt = (game_type or "3D").lower()
+
+    # ── Deterministic content signals (what the game actually contains) ───────
+    scene_count  = len(scenes or [])
+    entity_kinds = {str(getattr(e, "kind", "") or "").lower() for e in (entities or [])}
+    script_types = {str(getattr(s, "type", "") or "").lower() for s in (scripts or [])}
+    prompt_low   = (user_prompt or "").lower()
+    has_enemies  = bool({"ai", "navmesh", "enemies"} & feats) or "enemy" in entity_kinds
+    has_npcs     = ("npc" in entity_kinds or "dialogue_manager" in script_types
+                    or any(k in prompt_low for k in ("voiced npc", "npc dialog", "quest giver")))
 
     # Controller variant by game type
     ctrl = {
@@ -568,8 +594,8 @@ def subsystems_for(
         Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger"),
     ]
 
-    # Feature-driven additions
-    if "ai" in feats or "navmesh" in feats or "enemies" in feats:
+    # Feature- AND content-driven additions
+    if has_enemies:
         ai_var = "waypoint_follow" if locomotion == "drive" else "navmesh_patrol"
         ai_tgt = "asset"           if locomotion == "drive" else "world"
         subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI"))
@@ -584,20 +610,24 @@ def subsystems_for(
             audio_opts["meta"] = {"user_prompt": user_prompt}
         subs.append(Subsystem(kind="audio", variant="categorical_mixer", target="systems",
                               name="AudioDirector", options=audio_opts))
-    if "inventory" in feats:
+    if "inventory" in feats or "inventory" in prompt_low \
+            or any("inventory" in t for t in script_types):
         subs.append(Subsystem(kind="inventory",    variant="slot_based",    target="systems", name="PlayerInventory"))
-    if "dialogue" in feats or gt in ("vr",):
+    # Dialogue (linear text) — requested, VR, an authored dialogue_manager, or NPCs exist.
+    if "dialogue" in feats or gt in ("vr",) or "dialogue_manager" in script_types or has_npcs:
         subs.append(Subsystem(kind="dialogue",     variant="linear",        target="systems", name="DialogueSystem"))
     # Decorative impact effects — object-pooled, event-driven (OnTrigger/OnCollision),
     # self-contained (no GameWiring seam). impact_fx null-guards an unassigned prefab.
-    if "vfx" in feats or "effects" in feats or "particles" in feats:
+    # Reachable whenever there's combat (enemies), since impacts need effects.
+    if {"vfx", "effects", "particles"} & feats or has_enemies:
         subs.append(Subsystem(kind="vfx",          variant="impact_fx",     target="world",   name="ImpactVFX"))
     # Spoken NPCs (Higgs TTS). Composed unit skips clip generation (meta.skip_audio) so
     # codegen stays LLM/Higgs-free; the <name>Player MonoBehaviour is the attach class.
-    if "npc_dialog" in feats or "voiced_npcs" in feats or "npcs" in feats:
+    # Reachable whenever the world actually has NPCs (entity kind / dialogue script).
+    if {"npc_dialog", "voiced_npcs", "npcs"} & feats or has_npcs:
         subs.append(Subsystem(kind="npc_dialog",   variant="quest_giver",   target="world",   name="NpcDialog",
                               options={"speaker_name": "NPC", "meta": {"skip_audio": True}}))
-    # Scene transitions — only meaningful for multi-scene projects, so feature-gated.
-    if "levels" in feats or "multi_scene" in feats or "scene_transition" in feats:
+    # Scene transitions — meaningful for any multi-scene project (deterministic: > 1 scene).
+    if {"levels", "multi_scene", "scene_transition"} & feats or scene_count > 1:
         subs.append(Subsystem(kind="transition",   variant="fade",          target="systems", name="SceneTransition"))
     return subs

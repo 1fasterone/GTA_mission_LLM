@@ -78,7 +78,10 @@ VISUAL STYLES — use only one of:
 
 FEATURE FLAGS — use only these (as many as apply):
   physics | ui_toolkit | input_system | cinemachine | tilemaps | navmesh |
-  audio | networking | addressables | localization | timeline | animation_rigging
+  audio | networking | addressables | localization | timeline | animation_rigging |
+  inventory | dialogue | npc_dialog | vfx | scene_transition
+  (npc_dialog = spoken/voiced NPCs; vfx = particle/impact effects;
+   scene_transition = multi-scene projects that fade/load between scenes)
 
 SCRIPT TYPES — use only one per script:
   player | camera | game_manager | enemy | collectible | ui_manager | audio_manager | health |

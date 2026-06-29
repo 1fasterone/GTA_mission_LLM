@@ -22,6 +22,14 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 {% endfor %}
 
+    // ── Driven values — Set via the public setters; pushed to the Animator each
+    //    frame. Params with a driven_by expression compute their value instead. ─
+{% for p in s.params %}
+{% if p.param_type != "trigger" and not p.driven_by %}
+    private {{ p.param_type }} _{{ p.name|lower }};
+{% endif %}
+{% endfor %}
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     private void Awake()
     {
@@ -33,13 +41,14 @@ public class {{ s.name }} : MonoBehaviour
     {
         if (_anim == null) return;
 {% for p in s.params %}
-{% if p.driven_by and p.param_type != "trigger" %}
+{% if p.param_type != "trigger" %}
+{% set _val = p.driven_by if p.driven_by else "_" ~ p.name|lower %}
 {% if p.param_type == "float" %}
-        _anim.SetFloat(_{{ p.name }}Id,  {{ p.driven_by }});
+        _anim.SetFloat(_{{ p.name }}Id,  {{ _val }});
 {% elif p.param_type == "bool" %}
-        _anim.SetBool(_{{ p.name }}Id,   {{ p.driven_by }});
+        _anim.SetBool(_{{ p.name }}Id,   {{ _val }});
 {% elif p.param_type == "int" %}
-        _anim.SetInteger(_{{ p.name }}Id, (int)({{ p.driven_by }}));
+        _anim.SetInteger(_{{ p.name }}Id, (int)({{ _val }}));
 {% endif %}
 {% endif %}
 {% endfor %}
@@ -49,6 +58,8 @@ public class {{ s.name }} : MonoBehaviour
 {% for p in s.params %}
 {% if p.param_type == "trigger" %}
     public void Play{{ p.name }}() { if (_anim) _anim.SetTrigger("{{ p.name }}"); }
+{% elif not p.driven_by %}
+    public void Set{{ p.name }}({{ p.param_type }} value) => _{{ p.name|lower }} = value;
 {% endif %}
 {% endfor %}
 

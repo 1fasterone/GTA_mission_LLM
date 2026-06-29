@@ -156,7 +156,7 @@ def test_emit_writes_gamewiring_referencing_composed_classes(tmp_path):
     assert "public class GameWiring" in gw
     # references real composed class names + has the menu seam
     for u in units:
-        if u.kind not in ("wiring", "context"):
+        if u.kind not in ("wiring", "context", "input"):
             assert u.class_name in gw, f"GameWiring missing reference to {u.class_name}"
     assert ".Show()" in gw   # fallback Escape handler — variable name is class_name.lower()
     assert gw.count("{") == gw.count("}")
@@ -268,7 +268,7 @@ def test_compose_new_micros_gamewiring_references_real_classes(tmp_path):
     assert gw.count("{") == gw.count("}"), "GameWiring braces unbalanced"
     assert {"vfx", "npc_dialog", "transition"} <= {u.kind for u in units}
     for u in units:
-        if u.kind not in ("wiring", "context"):
+        if u.kind not in ("wiring", "context", "input"):
             assert u.class_name in gw, f"GameWiring missing reference to {u.class_name}"
     assert "FindFirstObjectByType<NpcDialogPlayer>()" in gw
     assert "FindFirstObjectByType<NpcDialog>()" not in gw   # the old CS0246
@@ -312,6 +312,68 @@ def test_walk_compose_keeps_grounded_bridge(tmp_path):
     gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
           / "GameWiring.cs").read_text(encoding="utf-8")
     assert "IsGrounded" in gw   # default third_person controller still bridges grounded
+
+
+# ── Content-based reachability: optional micros from schema content ───────────
+
+def _ns(**kw):
+    from types import SimpleNamespace
+    return SimpleNamespace(**kw)
+
+
+def test_transition_reachable_from_multi_scene():
+    kinds = {s.kind for s in subsystems_for("3D", [], scenes=["Main", "Level2"])}
+    assert "transition" in kinds
+
+
+def test_no_transition_for_single_scene():
+    kinds = {s.kind for s in subsystems_for("3D", [], scenes=["Main"])}
+    assert "transition" not in kinds
+
+
+def test_npc_dialog_and_dialogue_reachable_from_npc_entity():
+    subs = subsystems_for("3D", [], entities=[_ns(kind="npc"), _ns(kind="pickup")])
+    kinds = {s.kind for s in subs}
+    assert "npc_dialog" in kinds and "dialogue" in kinds
+
+
+def test_vfx_and_ai_reachable_from_enemy_entity():
+    kinds = {s.kind for s in subsystems_for("3D", [], entities=[_ns(kind="enemy")])}
+    assert {"vfx", "ai", "spawner"} <= kinds
+
+
+def test_dialogue_reachable_from_dialogue_manager_script():
+    kinds = {s.kind for s in subsystems_for("3D", [], scripts=[_ns(type="dialogue_manager")])}
+    assert "dialogue" in kinds
+
+
+def test_content_gating_backward_compatible_when_no_content():
+    # No scenes/entities/scripts and no feature flags → only the core 12 (existing contract).
+    kinds = {s.kind for s in subsystems_for("3D", [])}
+    assert not ({"vfx", "npc_dialog", "transition", "inventory", "dialogue", "ai"} & kinds)
+
+
+def test_gamewiring_fsm_to_animator_uses_crossfade(tmp_path):
+    """Regression: OnFSMStateChanged must use CrossFade for all states (universal),
+    not the humanoid-only PlayJump()/PlayDeath() which a creature animator lacks (CS1061)."""
+    MicroComposer("FsmAnim").emit(subsystems_for("3D", ["navmesh"]), Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "PlayJump" not in gw and "PlayDeath" not in gw
+    assert 'CrossFade("Jump"' in gw and 'CrossFade("Death"' in gw
+
+
+def test_gamewiring_does_not_findobject_input_scriptableobject(tmp_path):
+    """Regression: the input micro is an IInputReader ScriptableObject (class
+    `<name>InputReader`), assigned via the _inputSO SerializeField — NOT a scene
+    MonoBehaviour. GameWiring must not FindFirstObjectByType<InputReader>() (CS0246)."""
+    units = MicroComposer("InputWire").emit(subsystems_for("3D", []), Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "input" in {u.kind for u in units}              # input IS composed...
+    assert "FindFirstObjectByType<InputReader>" not in gw   # ...but never found in-scene
+    assert "private InputReader " not in gw
+    assert "_inputSO" in gw                                 # it's wired via the SerializeField
 
 
 # ── GameContext: bridging the two islands (micros ↔ prompt-authored scripts) ───

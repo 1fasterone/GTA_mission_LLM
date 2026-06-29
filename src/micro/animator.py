@@ -49,30 +49,33 @@ class AnimatorSchema(BaseModel):
 
 
 # Default param sets per variant — used when LLM leaves params empty.
+# driven_by is left empty so the template declares a backing field + public
+# Set<Param>() setter for each (e.g. SetGrounded, called by GameWiring). The LLM
+# may still supply driven_by for params it computes from its own declared fields.
 _DEFAULT_PARAMS: dict[str, list[dict]] = {
     "humanoid": [
-        {"name": "Speed",   "param_type": "float",   "default": "0",     "driven_by": "_rb ? _rb.velocity.magnitude : _cc.velocity.magnitude"},
-        {"name": "Grounded","param_type": "bool",    "default": "true",  "driven_by": "_grounded"},
+        {"name": "Speed",   "param_type": "float",   "default": "0",     "driven_by": ""},
+        {"name": "Grounded","param_type": "bool",    "default": "true",  "driven_by": ""},
         {"name": "Jump",    "param_type": "trigger", "default": "",      "driven_by": ""},
         {"name": "Attack",  "param_type": "trigger", "default": "",      "driven_by": ""},
     ],
     "vehicle": [
-        {"name": "RPM",    "param_type": "float", "default": "0", "driven_by": "_rpm"},
-        {"name": "Speed",  "param_type": "float", "default": "0", "driven_by": "_speed"},
-        {"name": "Braking","param_type": "bool",  "default": "false", "driven_by": "_braking"},
+        {"name": "RPM",    "param_type": "float", "default": "0",     "driven_by": ""},
+        {"name": "Speed",  "param_type": "float", "default": "0",     "driven_by": ""},
+        {"name": "Braking","param_type": "bool",  "default": "false", "driven_by": ""},
     ],
     "creature": [
-        {"name": "Speed",   "param_type": "float",   "default": "0", "driven_by": "_speed"},
-        {"name": "Dive",    "param_type": "bool",    "default": "false", "driven_by": "_diving"},
-        {"name": "Surface", "param_type": "trigger", "default": "",  "driven_by": ""},
+        {"name": "Speed",   "param_type": "float",   "default": "0",     "driven_by": ""},
+        {"name": "Dive",    "param_type": "bool",    "default": "false", "driven_by": ""},
+        {"name": "Surface", "param_type": "trigger", "default": "",      "driven_by": ""},
     ],
     "object": [
-        {"name": "Open",    "param_type": "bool", "default": "false", "driven_by": "_isOpen"},
-        {"name": "Active",  "param_type": "bool", "default": "false", "driven_by": "_active"},
+        {"name": "Open",    "param_type": "bool", "default": "false", "driven_by": ""},
+        {"name": "Active",  "param_type": "bool", "default": "false", "driven_by": ""},
     ],
     "ui": [
-        {"name": "Visible", "param_type": "bool",  "default": "false", "driven_by": "_visible"},
-        {"name": "Selected","param_type": "float", "default": "0",     "driven_by": "_selectedIndex"},
+        {"name": "Visible", "param_type": "bool",  "default": "false", "driven_by": ""},
+        {"name": "Selected","param_type": "float", "default": "0",     "driven_by": ""},
     ],
 }
 

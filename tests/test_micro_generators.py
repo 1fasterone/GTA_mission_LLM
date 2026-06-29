@@ -207,6 +207,40 @@ def test_grounded_controllers_keep_ground_check(tmp_path, dummy_config):
     assert "IsGrounded" in cs and "CheckGrounded3D" in cs
 
 
+@pytest.mark.parametrize("variant", ["humanoid", "vehicle", "creature", "object", "ui"])
+def test_animator_declares_backing_fields_and_setters(tmp_path, dummy_config, variant):
+    """Regression: default animator params must declare a backing field + public
+    Set<Param>() setter (so SetGrounded etc. resolve), with no undeclared _rb/_cc."""
+    from src.micro import AnimatorPipeline, AnimatorSchema
+    p = AnimatorPipeline(dummy_config)
+    s = p.default_fix(AnimatorSchema(name="Anim", variant=variant), variant)
+    p.write_files(s, variant, tmp_path)
+    cs = (tmp_path / "Scripts" / "Anim.cs").read_text(encoding="utf-8")
+    assert "_rb" not in cs and "_cc" not in cs
+    for prm in s.params:
+        if prm.param_type != "trigger" and not prm.driven_by:
+            assert f"_{prm.name.lower()}" in cs and f"Set{prm.name}(" in cs
+    assert cs.count("{") == cs.count("}")
+
+
+@pytest.mark.parametrize("variant,fields", [
+    ("enemy_fsm",  ["attackRange", "_distToPlayer", "_seesPlayer", "_heardNoise", "_alertTimer", "_lostTimer"]),
+    ("game_fsm",   ["_startPressed", "_pausePressed", "_playerDead", "_restartPressed"]),
+    ("object_fsm", ["_triggered", "_activeDone", "_cooldownDone", "_hp"]),
+])
+def test_statemachine_declares_default_condition_fields(tmp_path, dummy_config, variant, fields):
+    """Regression: default FSM transition conditions reference fields that must be
+    declared, or the generated FSM is CS0103."""
+    from src.micro import StateMachinePipeline, StateMachineSchema
+    p = StateMachinePipeline(dummy_config)
+    s = p.default_fix(StateMachineSchema(name="Fsm", variant=variant), variant)
+    p.write_files(s, variant, tmp_path)
+    cs = (tmp_path / "Scripts" / "Fsm.cs").read_text(encoding="utf-8")
+    for f in fields:
+        assert f in cs, f"{variant} missing condition field {f}"
+    assert cs.count("{") == cs.count("}")
+
+
 @pytest.mark.parametrize("variant", CameraRigPipeline.variants)
 def test_camera_renders_every_variant(tmp_path, dummy_config, variant):
     p = CameraRigPipeline(dummy_config)

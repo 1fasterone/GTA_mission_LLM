@@ -521,7 +521,10 @@ class UnityPipeline:
             subsystems = subsystems_for(schema.game_type, schema.features,
                                         locomotion=schema.locomotion,
                                         capabilities=schema.capabilities,
-                                        user_prompt=user_prompt)
+                                        user_prompt=user_prompt,
+                                        scenes=schema.scenes,
+                                        entities=schema.entities,
+                                        scripts=schema.scripts)
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep
