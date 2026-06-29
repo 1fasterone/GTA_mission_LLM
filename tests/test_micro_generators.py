@@ -52,6 +52,8 @@ def test_registry_has_all_known():
         "statemachine", "trigger", "animator",
         # NPC dialog + Higgs Audio v2 TTS
         "npc_dialog",
+        # VFX — particle systems, sequences, screen effects, impact bursts
+        "vfx",
     }
 
 
@@ -179,6 +181,30 @@ def test_controller_renders_every_variant(tmp_path, dummy_config, variant):
     cs = (tmp_path / "Scripts" / "TestCtl.cs").read_text(encoding="utf-8")
     assert "public class TestCtl" in cs
     assert f"Variant: {variant}" in cs
+
+
+@pytest.mark.parametrize("variant", ["swimming", "flying"])
+def test_aquatic_aerial_controllers_drop_ground_check(tmp_path, dummy_config, variant):
+    """Fix #5: swimming/flying have no ground, so they must NOT emit the walker
+    ground-check scaffolding (groundRayLen / CheckGrounded3D / IsGrounded)."""
+    p = ControllerPipeline(dummy_config)
+    s = p.default_fix(ControllerSchema(name="Aqua", variant=variant), variant)
+    cs = (lambda: (p.write_files(s, variant, tmp_path),
+                   (tmp_path / "Scripts" / "Aqua.cs").read_text(encoding="utf-8"))[1])()
+    assert "IsGrounded" not in cs
+    assert "CheckGrounded3D" not in cs
+    assert "groundRayLen" not in cs
+    assert "_grounded" not in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_grounded_controllers_keep_ground_check(tmp_path, dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = p.default_fix(ControllerSchema(name="Walker", variant="third_person",
+                                       abilities=["jump", "sprint"]), "third_person")
+    p.write_files(s, "third_person", tmp_path)
+    cs = (tmp_path / "Scripts" / "Walker.cs").read_text(encoding="utf-8")
+    assert "IsGrounded" in cs and "CheckGrounded3D" in cs
 
 
 @pytest.mark.parametrize("variant", CameraRigPipeline.variants)

@@ -97,10 +97,14 @@ def test_generate_bank_synth_deterministic(tmp_path):
     res2 = tmp_path / "p2" / "Resources"
     m1 = generate_bank(cues, res1, cfg, seed=1)
     m2 = generate_bank(cues, res2, cfg, seed=1)
-    assert m1["cue_count"] == len(cues) and not m1["warnings"]
-    assert all(e["route"] == "synth" for e in m1["cues"])
-    # every clip exists, is audible, and is byte-identical across runs (determinism)
-    for e in m1["cues"]:
+    assert m1["cue_count"] == len(cues)
+    # sfx cues route through DSP synth; music/ambient require stable3 (not available here)
+    sfx_entries = [e for e in m1["cues"] if e["category"] == "sfx"]
+    assert all(e["route"] == "synth" for e in sfx_entries)
+    sfx_ids = {e["id"] for e in sfx_entries}
+    assert not [w for w in m1["warnings"] if any(sid in w for sid in sfx_ids)]
+    # sfx clips exist, are audible, and are byte-identical across runs (determinism)
+    for e in sfx_entries:
         w = res1 / e["clips"][0]
         assert w.exists() and synth.rms(synth.read_wav(w)) > 0.02
         assert w.read_bytes() == (res2 / e["clips"][0]).read_bytes()

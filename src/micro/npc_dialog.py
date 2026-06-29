@@ -426,6 +426,13 @@ class NpcDialogPipeline(UnityMicroPipeline):
                         template_usings=self._TEMPLATE_USINGS)
         return schema
 
+    def attach_class(self, schema) -> str:
+        """The scene-attachable MonoBehaviour for npc_dialog is <name>Player — the
+        component exposing StartDialog/Advance/StopDialog. The bare <name> is NOT a
+        class (the templates only define <name>Player/Trigger/Data), so the default
+        attach_class (schema.name) would make GameWiring emit a CS0246 reference."""
+        return f"{schema.name}Player"
+
     def write_files(self, schema, variant, out_dir: Path) -> int:
         env         = self.jinja()
         scripts_dir = out_dir / "Scripts"
@@ -467,7 +474,13 @@ class NpcDialogPipeline(UnityMicroPipeline):
         # 6. Audio content pass — generate WAV files via Higgs Audio v2
         audio_on = self._with_audio
         if audio_on is None:
-            audio_on = bool(self.config.get("audio", {}).get("generate_clips", True))
+            # In --compose the unit is emitted with meta.skip_audio so codegen stays
+            # fast + LLM/Higgs-free (the dedicated audio micro owns clip generation);
+            # standalone `micro npc_dialog` still honours config audio.generate_clips.
+            if (getattr(schema, "meta", None) or {}).get("skip_audio"):
+                audio_on = False
+            else:
+                audio_on = bool(self.config.get("audio", {}).get("generate_clips", True))
         if audio_on and schema.lines:
             try:
                 from ..audio.dialog_content import generate_dialog_bank

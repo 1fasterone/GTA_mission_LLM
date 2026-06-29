@@ -12,8 +12,14 @@ using {{ u }};
 {{ stub_classes }}
 {% endif %}
 /// <summary>{{ script.description }}</summary>
+{% if needs_rigidbody %}
+[RequireComponent(typeof(Rigidbody))]
+{% endif %}
 public class {{ script.name }} : MonoBehaviour
 {
+{% if needs_rigidbody %}
+    private Rigidbody rb;
+{% endif %}
 {% for f in script.extra_fields %}
 {{ "    " }}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
 {% endfor %}
@@ -27,11 +33,17 @@ public class {{ script.name }} : MonoBehaviour
         yield return null;
     }
 {% endif %}
-{% if script.awake_extra %}
+{% if needs_rigidbody or script.awake_extra %}
 
     private void Awake()
     {
+{% if needs_rigidbody %}
+        rb = GetComponent<Rigidbody>();
+        if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
+{% endif %}
+{% if script.awake_extra %}
 {{ script.awake_extra | indent(8, True) }}
+{% endif %}
     }
 {% endif %}
 {% if script.update_extra %}

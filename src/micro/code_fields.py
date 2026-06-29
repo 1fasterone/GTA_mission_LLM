@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from rich.console import Console
 
 console = Console()
@@ -78,7 +78,30 @@ class CodeField(BaseModel):
 class CodeMethod(BaseModel):
     """An LLM-authored helper method appended to a generated class."""
     signature: str
-    body:      str
+    body:      str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_aliases(cls, data):
+        """Tolerate the common LLM shape drift for method entries. The schema
+        wants {signature, body}; LLMs frequently emit {name, body} or
+        {signature, code}. Map the aliases so one stray key doesn't abort the
+        whole schema-fill (valid {signature, body} input passes through
+        untouched)."""
+        if not isinstance(data, dict):
+            return data
+        d = dict(data)
+        if not d.get("signature"):
+            for alt in ("name", "sig", "declaration", "header", "method_signature"):
+                if d.get(alt):
+                    d["signature"] = d[alt]
+                    break
+        if not d.get("body"):
+            for alt in ("code", "method", "impl", "content", "method_body"):
+                if d.get(alt):
+                    d["body"] = d[alt]
+                    break
+        return d
 
     @field_validator("signature", mode="before")
     @classmethod
@@ -86,6 +109,11 @@ class CodeMethod(BaseModel):
         s = str(v).strip()
         # Drop any trailing `{` or `;` — the template adds the brace itself.
         s = s.rstrip("{ ;")
+        # A bare method name (e.g. "OnAirEmpty") is not a valid C# signature —
+        # the template renders `<signature>\n{ ... }`. Synthesise a private void
+        # header so the method compiles instead of becoming a syntax error.
+        if s and "(" not in s and _CSHARP_IDENT_RE.match(s):
+            s = f"private void {s}()"
         return s
 
 

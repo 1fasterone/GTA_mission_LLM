@@ -1533,10 +1533,25 @@ class UnityProjectGenerator:
             if stubs:
                 stub_classes = "\n".join(stubs) + "\n"
 
+        # Auto-declare a Rigidbody when the LLM-authored update/awake/fixed code
+        # references `rb` but never declares it. Without this the raw fragment
+        # (e.g. `rb.AddForce(...)`) is CS0103 and breaks the whole assembly.
+        needs_rigidbody = False
+        if script.type == "custom":
+            blob = " ".join(filter(None, [
+                getattr(script, "awake_extra", ""),
+                getattr(script, "update_extra", ""),
+                getattr(script, "fixed_update_extra", ""),
+            ]))
+            declared = {(getattr(f, "name", "") or "") for f in (script.extra_fields or [])}
+            if re.search(r"\brb\b", blob) and "rb" not in declared:
+                needs_rigidbody = True
+
         if tpl_file and (self.template_dir / "scripts" / tpl_file).exists():
             content = self._render(tpl_file, {**base_ctx, "script": script,
                                               "atom_body": atom_body,
-                                              "stub_classes": stub_classes})
+                                              "stub_classes": stub_classes,
+                                              "needs_rigidbody": needs_rigidbody})
         else:
             content = (
                 f"// Auto-generated stub — {script.name}\n"

@@ -220,6 +220,26 @@ OUTPUT this exact JSON structure, fully populated:
 
 Output ONLY the JSON. No other text."""
 
+
+# Appended to the schema-fill prompt ONLY in --compose mode, where the micro
+# subsystems and the GameContext locator exist. Steers custom-script fragments to
+# reach other subsystems through GameContext instead of inventing singletons
+# (which the deterministic fixer would otherwise strip).
+GAMECONTEXT_SCHEMA_GUIDANCE = """
+
+  REACHING OTHER SUBSYSTEMS — this project is composed, so the player/camera/HUD/
+  audio/save systems already exist as separate components. From any custom-script
+  fragment, reach another subsystem through the shared locator (never invent a
+  singleton like FooManager.Instance — only these two access points exist):
+      GameContext.Instance.Get<T>()   // cached; may return null — ALWAYS null-check
+      GameManager.Instance            // game state / score / lives
+  Examples:
+      var hp = GameContext.Instance.Get<PlayerHealth>(); if (hp != null) hp.TakeDamage(10f);
+      GameContext.Instance.Get<GameManager>()?.AddScore(100);
+  Composed subsystem types you may Get<T>(): PlayerController, PlayerCamera,
+  PlayerHealth, PlayerAnimator, PlayerFSM, GameHud, PauseMenu, SaveSystem,
+  PhysicsBody, WorldInteractable, SceneTrigger (plus GameManager)."""
+
 # ── STEP 5: Schema validation ─────────────────────────────────────────────────
 
 UNITY_VALIDATE_SYSTEM = """\

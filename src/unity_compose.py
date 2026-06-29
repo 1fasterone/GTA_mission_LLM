@@ -122,6 +122,12 @@ class MicroComposer:
             kind="wiring", variant="", class_name="GameWiring",
             guid=_make_guid(f"{self.project_name}/Micros/wiring/GameWiring"),
             target="systems", file_id=_COMPOSED_FILE_ID_BASE + 10 * len(subsystems)))
+        # Synthetic GameContext locator — the shared bridge surface that lets the
+        # composed micros AND the prompt-authored scripts find each other.
+        units.append(ComposedUnit(
+            kind="context", variant="", class_name="GameContext",
+            guid=_make_guid(f"{self.project_name}/Micros/context/GameContext"),
+            target="systems", file_id=_COMPOSED_FILE_ID_BASE + 10 * (len(subsystems) + 1)))
         return units
 
     def _folder_meta(self, path: Path) -> None:
@@ -132,7 +138,8 @@ class MicroComposer:
     def _wiring_template_dir(self) -> Path:
         return Path(self._cfg["unity_pipeline"]["unity_template_dir"]) / "compose"
 
-    def compose(self, subsystems: list[Subsystem], assets_root: Path) -> list[ComposedUnit]:
+    def compose(self, subsystems: list[Subsystem], assets_root: Path,
+                has_game_manager: bool = False) -> list[ComposedUnit]:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
@@ -163,6 +170,8 @@ class MicroComposer:
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
         self._emit_wiring(units, micros_root)
+        # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
+        self._emit_context(units, micros_root, has_game_manager)
         return units
 
     def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path) -> None:
@@ -170,7 +179,7 @@ class MicroComposer:
         from .atoms.backends.unity import unity_atom_snippet
 
         wiring     = next(u for u in units if u.kind == "wiring")
-        real_units = [u for u in units if u.kind != "wiring"]
+        real_units = [u for u in units if u.kind not in ("wiring", "context")]
 
         wdir = micros_root / "wiring"
         sdir = wdir / "Scripts"
@@ -329,7 +338,9 @@ class MicroComposer:
             )
 
         # SEAM 6 — Grounded bridge (Update, not Awake)
-        if ctrl and (fsm or anim):
+        # Skip for swimming/flying controllers — they have no ground, so the
+        # controller intentionally exposes no IsGrounded (would be CS1061).
+        if ctrl and (fsm or anim) and ctrl.variant not in ("swimming", "flying"):
             update_seams.append({
                 "label":   "Grounded bridge: controller → FSM + Animator",
                 "snippet": unity_atom_snippet("WireGroundedBridge", {
@@ -368,6 +379,58 @@ class MicroComposer:
         self._folder_meta(wdir)
         self._folder_meta(sdir)
 
+    def _emit_context(self, units: list[ComposedUnit], micros_root: Path,
+                      has_game_manager: bool) -> None:
+        """Emit GameContext.cs — the shared service locator that bridges the
+        composed micros (Assets/Micros) and the prompt-authored scripts
+        (Assets/Scripts) so all generated assets coexist. `Get<T>()` is the
+        universal, leak-free access surface; concrete micro↔GameManager seams are
+        added only when a GameManager concept script is present (both ends are
+        pipeline-owned templates, so the references always resolve)."""
+        from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+        context    = next(u for u in units if u.kind == "context")
+        real_units = [u for u in units if u.kind not in ("wiring", "context")]
+
+        def _pick(kind: str, target: str | None = None) -> "ComposedUnit | None":
+            cands = [u for u in real_units if u.kind == kind]
+            if not cands:
+                return None
+            if len(cands) == 1 or target is None:
+                return cands[0]
+            pref = [u for u in cands if u.target == target]
+            return pref[0] if pref else cands[0]
+
+        # Cross-layer bridge. Direction matters for lifetime safety: the publisher
+        # (per-scene PlayerHealth) is subscribed to a persistent-singleton method
+        # (GameManager.LoseLife) — when the scene unloads the subscription dies
+        # with PlayerHealth, so there is no dangling-delegate leak.
+        bridges: list[dict] = []
+        if has_game_manager:
+            health = _pick("health", "player")
+            if health:
+                bridges.append({
+                    "label": "Player death -> GameManager.LoseLife (micro -> concept)",
+                    "snippet": (
+                        f"var __health = Get<{health.class_name}>();\n"
+                        f"if (__health != null && GameManager.Instance != null)\n"
+                        f"    __health.OnDeath += GameManager.Instance.LoseLife;"
+                    ),
+                })
+
+        env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
+                          undefined=StrictUndefined, keep_trailing_newline=True)
+        content = env.get_template("GameContext.cs.j2").render(
+            units=real_units, bridges=bridges)
+
+        cdir = micros_root / "context"
+        sdir = cdir / "Scripts"
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "GameContext.cs").write_text(content, encoding="utf-8")
+        (sdir / "GameContext.cs.meta").write_text(_meta_file(context.guid), encoding="utf-8")
+        self._folder_meta(cdir)
+        self._folder_meta(sdir)
+
     # Built-in modules / packages each composed micro kind needs in manifest.json.
     # Merged into the project's deps so a composed project actually compiles.
     # UnityEngine.UI (Button/Slider/Image) comes from the UGUI package
@@ -385,6 +448,8 @@ class MicroComposer:
         "spawner":      ["com.unity.modules.physics"],
         "interactable": ["com.unity.modules.physics"],
         "transition":   ["com.unity.modules.ui", _UGUI],
+        "npc_dialog":   ["com.unity.modules.audio", "com.unity.modules.physics"],
+        "vfx":          ["com.unity.modules.ui", _UGUI],
     }
 
     @classmethod
@@ -523,4 +588,16 @@ def subsystems_for(
         subs.append(Subsystem(kind="inventory",    variant="slot_based",    target="systems", name="PlayerInventory"))
     if "dialogue" in feats or gt in ("vr",):
         subs.append(Subsystem(kind="dialogue",     variant="linear",        target="systems", name="DialogueSystem"))
+    # Decorative impact effects — object-pooled, event-driven (OnTrigger/OnCollision),
+    # self-contained (no GameWiring seam). impact_fx null-guards an unassigned prefab.
+    if "vfx" in feats or "effects" in feats or "particles" in feats:
+        subs.append(Subsystem(kind="vfx",          variant="impact_fx",     target="world",   name="ImpactVFX"))
+    # Spoken NPCs (Higgs TTS). Composed unit skips clip generation (meta.skip_audio) so
+    # codegen stays LLM/Higgs-free; the <name>Player MonoBehaviour is the attach class.
+    if "npc_dialog" in feats or "voiced_npcs" in feats or "npcs" in feats:
+        subs.append(Subsystem(kind="npc_dialog",   variant="quest_giver",   target="world",   name="NpcDialog",
+                              options={"speaker_name": "NPC", "meta": {"skip_audio": True}}))
+    # Scene transitions — only meaningful for multi-scene projects, so feature-gated.
+    if "levels" in feats or "multi_scene" in feats or "scene_transition" in feats:
+        subs.append(Subsystem(kind="transition",   variant="fade",          target="systems", name="SceneTransition"))
     return subs

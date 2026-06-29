@@ -92,7 +92,9 @@ public class {{ s.name }}Trigger : MonoBehaviour
     private void TryStartDialog()
     {
 {% if variant not in ("cutscene",) %}
+{% if variant in ("quest_giver", "vendor", "follower") %}
         if (_oneShot && _used) return;
+{% endif %}
         if (Time.time < _nextAllowed) return;
         _used        = true;
         _nextAllowed = Time.time + _cooldown;

@@ -20,6 +20,7 @@ from .statemachine  import StateMachinePipeline,  StateMachineSchema
 from .trigger       import TriggerPipeline,       TriggerSchema
 from .animator      import AnimatorPipeline,      AnimatorSchema
 from .npc_dialog    import NpcDialogPipeline,     NpcDialogSchema,   DialogLine
+from .vfx           import VfxPipeline,           VfxSchema
 
 __all__ = [
     "ModelPipeline",
@@ -39,6 +40,7 @@ __all__ = [
     "TransitionPipeline",   "TransitionSchema",
     "HealthPipeline",       "HealthSchema",
     "NpcDialogPipeline",    "NpcDialogSchema",    "DialogLine",
+    "VfxPipeline",          "VfxSchema",
 ]
 
 
@@ -64,4 +66,5 @@ REGISTRY = {
     "trigger":      TriggerPipeline,
     "animator":     AnimatorPipeline,
     "npc_dialog":   NpcDialogPipeline,
+    "vfx":          VfxPipeline,
 }

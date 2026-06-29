@@ -24,6 +24,7 @@ from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
     UNITY_CONCEPT_SYSTEM, UNITY_CONCEPT_USER,
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
+    GAMECONTEXT_SCHEMA_GUIDANCE,
 )
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
@@ -53,20 +54,28 @@ _GAME_MANAGER_API: frozenset[str] = frozenset({
     "RestartLevel", "LoadMainMenu",
 })
 
+# Public API of the composed GameContext locator (compose mode only). Custom
+# scripts reach other subsystems via GameContext.Instance.Get<T>().
+_GAME_CONTEXT_API: frozenset[str] = frozenset({"Instance", "Get"})
+
 # Regex to find "SomeName.Instance.Whatever" singleton calls in C# body strings.
 _SINGLETON_CALL_RE = re.compile(r"\b(\w+)\.Instance\.(\w+)\b")
 # Line-level split (keeps \n in place for the join).
 _LINE_RE = re.compile(r"[^\n]*\n?")
 
 
-def _sanitize_singleton_calls(body: str, known_classes: set[str]) -> str:
+def _sanitize_singleton_calls(body: str, known_classes: set[str],
+                              allow_context: bool = False) -> str:
     """Strip lines from a C# body string that call undefined singleton methods.
 
-    Two cases are handled:
+    Cases handled:
       1. ``UndefinedClass.Instance.Foo(...)`` where UndefinedClass has no script
          in the schema → entire line removed.
       2. ``GameManager.Instance.UndefinedProp(...)`` where the property/method is
          not part of the canonical GameManager template API → entire line removed.
+      3. ``GameContext.Instance.Get<...>(...)`` — kept ONLY when allow_context
+         (i.e. --compose, where the GameContext locator exists); otherwise the
+         locator is undefined and the line is removed.
 
     Only lines that exclusively contain the bad call are dropped; lines with
     multiple statements are stripped only of the offending statement.
@@ -76,6 +85,11 @@ def _sanitize_singleton_calls(body: str, known_classes: set[str]) -> str:
         keep = True
         for m in _SINGLETON_CALL_RE.finditer(line):
             cls, member = m.group(1), m.group(2)
+            if cls == "GameContext":
+                if allow_context and member in _GAME_CONTEXT_API:
+                    continue
+                keep = False
+                break
             if cls not in known_classes:
                 keep = False
                 break
@@ -100,7 +114,7 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
     return result
 
 
-def _programmatic_fix(schema: UnitySchema) -> UnitySchema:
+def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema:
     schema.project_name = _to_pascal(schema.project_name, "UnityProject")
     schema.company_name = re.sub(r"[/\\]", "_", schema.company_name).strip() or "MyCompany"
 
@@ -147,15 +161,16 @@ def _programmatic_fix(schema: UnitySchema) -> UnitySchema:
         if script.type != "custom":
             continue
         if script.update_extra:
-            script.update_extra = _sanitize_singleton_calls(script.update_extra, known_classes)
+            script.update_extra = _sanitize_singleton_calls(
+                script.update_extra, known_classes, allow_context=compose)
         if script.awake_extra:
-            script.awake_extra = _sanitize_singleton_calls(script.awake_extra, known_classes)
+            script.awake_extra = _sanitize_singleton_calls(
+                script.awake_extra, known_classes, allow_context=compose)
         if script.fixed_update_extra:
             script.fixed_update_extra = _sanitize_singleton_calls(
-                script.fixed_update_extra, known_classes
-            )
+                script.fixed_update_extra, known_classes, allow_context=compose)
         for m in script.extra_methods:
-            m.body = _sanitize_singleton_calls(m.body, known_classes)
+            m.body = _sanitize_singleton_calls(m.body, known_classes, allow_context=compose)
 
     return schema
 
@@ -421,9 +436,15 @@ class UnityPipeline:
 
         # STEP 3 — fill schema ────────────────────────────────────────────────
         self._step(3, "LLM fills project schema")
+        schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept, schema_hints=schema_hints)
+        # In --compose mode the micros + GameContext locator exist, so steer the
+        # LLM to reach subsystems via GameContext.Instance.Get<T>() instead of
+        # inventing singletons (which the fixer strips).
+        if compose:
+            schema_user += GAMECONTEXT_SCHEMA_GUIDANCE
         schema_raw = self.llm.chat(
             system      = UNITY_SCHEMA_FILL_SYSTEM,
-            user        = UNITY_SCHEMA_FILL_USER.format(concept=concept, schema_hints=schema_hints),
+            user        = schema_user,
             temperature = self.schema_temp,
             thinking    = False,
         )
@@ -454,7 +475,7 @@ class UnityPipeline:
 
         # STEP 5 — validate + fix ─────────────────────────────────────────────
         self._step(5, "Programmatic fixer + consistency check")
-        schema = _programmatic_fix(schema)
+        schema = _programmatic_fix(schema, compose=compose)
         self._ok("Programmatic fixes applied (naming, scenes, script names)")
 
         schema, fix_msgs = _check_consistency(schema)
@@ -545,8 +566,13 @@ class UnityPipeline:
                     self._ok("LM Studio model unloaded — VRAM available for Stable Audio 3")
                 else:
                     self._warn("LM Studio unload failed — SA3 may OOM; run: lms unload")
-            composer.emit(subsystems, project_root / "Assets")
-            self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes")
+            # Bridge the two islands: tell the composer whether a GameManager
+            # concept script survived so GameContext can wire micro↔concept seams.
+            has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
+            composer.emit(subsystems, project_root / "Assets",
+                          has_game_manager=has_game_manager)
+            self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes "
+                     "(GameContext bridges micros ↔ prompt-authored scripts)")
             # Overlay audio clips:
             #   1. Assets/Audio/           — canonical user-visible folder
             #   2. Assets/Resources/Audio/ — for Resources.LoadAll<AudioClip> at runtime

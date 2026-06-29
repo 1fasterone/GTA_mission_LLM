@@ -156,7 +156,7 @@ def test_emit_writes_gamewiring_referencing_composed_classes(tmp_path):
     assert "public class GameWiring" in gw
     # references real composed class names + has the menu seam
     for u in units:
-        if u.kind not in ("wiring",):
+        if u.kind not in ("wiring", "context"):
             assert u.class_name in gw, f"GameWiring missing reference to {u.class_name}"
     assert ".Show()" in gw   # fallback Escape handler — variable name is class_name.lower()
     assert gw.count("{") == gw.count("}")
@@ -221,3 +221,155 @@ def test_locomotion_schema_normalises_synonyms():
     s2 = UnitySchema(project_name="L", game_type="3D", platform="pc",
                      render_pipeline="URP", locomotion="nonsense")
     assert s2.locomotion == "walk"
+
+
+# ── Newly-wired optional micros: vfx / npc_dialog / transition ────────────────
+
+def test_vfx_feature_composes_impact_fx():
+    subs = subsystems_for("3D", ["vfx"])
+    v = [s for s in subs if s.kind == "vfx"]
+    assert len(v) == 1 and v[0].variant == "impact_fx" and v[0].name == "ImpactVFX"
+
+
+def test_npc_dialog_feature_composes_with_skip_audio():
+    subs = subsystems_for("3D", ["npcs"])
+    npc = [s for s in subs if s.kind == "npc_dialog"]
+    assert len(npc) == 1
+    assert npc[0].options.get("meta", {}).get("skip_audio") is True
+
+
+def test_transition_feature_composes_fade():
+    subs = subsystems_for("3D", ["levels"])
+    assert any(s.kind == "transition" and s.variant == "fade" for s in subs)
+
+
+def test_new_micros_absent_without_their_features():
+    # Feature-gating must not leak the new micros into a plain project.
+    kinds = {s.kind for s in subsystems_for("3D", [])}
+    assert not ({"vfx", "npc_dialog", "transition"} & kinds)
+
+
+def test_npc_dialog_attach_class_is_player_not_bare_name():
+    """Regression: the default attach_class (schema.name) would make GameWiring emit
+    FindFirstObjectByType<NpcDialog>() — a CS0246, since only NpcDialogPlayer exists."""
+    sub = next(s for s in subsystems_for("3D", ["npcs"]) if s.kind == "npc_dialog")
+    units = MicroComposer("NpcAttach").plan([sub])
+    npc = next(u for u in units if u.kind == "npc_dialog")
+    assert npc.class_name == "NpcDialogPlayer"
+
+
+def test_compose_new_micros_gamewiring_references_real_classes(tmp_path):
+    """All three newly-wired micros compose; GameWiring references each real
+    MonoBehaviour class; braces balance; and the broken bare NpcDialog ref is gone."""
+    subs = subsystems_for("3D", ["vfx", "npcs", "levels"])
+    units = MicroComposer("WireProof").emit(subs, Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert gw.count("{") == gw.count("}"), "GameWiring braces unbalanced"
+    assert {"vfx", "npc_dialog", "transition"} <= {u.kind for u in units}
+    for u in units:
+        if u.kind not in ("wiring", "context"):
+            assert u.class_name in gw, f"GameWiring missing reference to {u.class_name}"
+    assert "FindFirstObjectByType<NpcDialogPlayer>()" in gw
+    assert "FindFirstObjectByType<NpcDialog>()" not in gw   # the old CS0246
+
+
+def test_compose_npc_dialog_skips_audio_and_emits_player(tmp_path):
+    """Compose path stays Higgs-free even when config enables clip generation, and
+    writes the real NpcDialogPlayer MonoBehaviour."""
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("NpcAudioProof",
+                  project_config={"audio": {"generate_clips": True}}).emit(
+        subsystems_for("3D", ["npcs"]), assets)
+    player = assets / "Micros" / "npc_dialog" / "Scripts" / "NpcDialogPlayer.cs"
+    assert player.exists()
+    assert "class NpcDialogPlayer" in player.read_text(encoding="utf-8")
+    assert not (assets / "Micros" / "npc_dialog" / "Resources").exists(), \
+        "compose must not generate dialog audio clips"
+
+
+def test_module_deps_for_new_micros():
+    units = MicroComposer("Deps").plan(subsystems_for("3D", ["vfx", "npcs", "levels"]))
+    deps = MicroComposer.module_deps(units)
+    assert "com.unity.modules.audio" in deps      # npc_dialog AudioSource
+    assert "com.unity.ugui" in deps               # vfx/transition UGUI
+
+
+def test_swim_compose_skips_grounded_bridge(tmp_path):
+    """Fix #5 coupling: a swimming controller exposes no IsGrounded, so the
+    composed GameWiring must NOT emit the grounded bridge (would be CS1061)."""
+    subs = subsystems_for("3D", ["audio"], locomotion="swim")
+    assert next(s.variant for s in subs if s.kind == "controller") == "swimming"
+    MicroComposer("SwimWire").emit(subs, Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "IsGrounded" not in gw
+    assert gw.count("{") == gw.count("}")
+
+
+def test_walk_compose_keeps_grounded_bridge(tmp_path):
+    MicroComposer("WalkWire").emit(subsystems_for("3D", []), Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "IsGrounded" in gw   # default third_person controller still bridges grounded
+
+
+# ── GameContext: bridging the two islands (micros ↔ prompt-authored scripts) ───
+
+def _gamecontext_cs(tmp_path, project, has_gm):
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer(project).emit(subsystems_for("3D", []), assets, has_game_manager=has_gm)
+    return (assets / "Micros" / "context" / "Scripts"
+            / "GameContext.cs").read_text(encoding="utf-8")
+
+
+def test_gamecontext_emitted_with_universal_locator(tmp_path):
+    ctx = _gamecontext_cs(tmp_path, "CtxProof", has_gm=False)
+    assert "public class GameContext" in ctx
+    assert "public static GameContext Instance" in ctx
+    assert "public T Get<T>()" in ctx                 # universal access surface
+    assert "FindFirstObjectByType<T>()" in ctx
+    assert ctx.count("{") == ctx.count("}")
+    assert "{{" not in ctx and "{%" not in ctx
+
+
+def test_gamecontext_bridges_player_death_to_gamemanager(tmp_path):
+    ctx = _gamecontext_cs(tmp_path, "CtxBridge", has_gm=True)
+    assert "GameManager.Instance.LoseLife" in ctx      # micro death -> concept brain
+    assert "Get<PlayerHealth>()" in ctx
+    assert "OnDeath +=" in ctx
+    assert ctx.count("{") == ctx.count("}")
+
+
+def test_gamecontext_no_concept_bridge_when_no_gamemanager(tmp_path):
+    ctx = _gamecontext_cs(tmp_path, "CtxNoGm", has_gm=False)
+    # No GameManager in the project → no concept-side code referenced (still compiles).
+    assert "GameManager.Instance" not in ctx
+
+
+def test_gamewiring_uses_unqualified_findfirstobjectbytype(tmp_path):
+    """Hardening: GameWiring imports both System and UnityEngine, so a bare
+    `Object.` prefix would be CS0104. The inherited unqualified call is safe."""
+    MicroComposer("GwObj").emit(subsystems_for("3D", []), Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "Object.FindFirstObjectByType" not in gw
+    assert "FindFirstObjectByType<" in gw
+
+
+def test_plan_includes_gamecontext_unit_with_unique_fileids():
+    units = MicroComposer("CtxPlan").plan(subsystems_for("3D", []))
+    ctx = [u for u in units if u.kind == "context"]
+    assert len(ctx) == 1 and ctx[0].class_name == "GameContext"
+    fids = [u.file_id for u in units]
+    assert len(fids) == len(set(fids)), "scene fileIDs must stay unique with context unit"
+
+
+def test_gamecontext_attached_in_scene():
+    units = MicroComposer("CtxScene").plan(subsystems_for("3D", []))
+    schema = UnitySchema(project_name="CtxScene", game_type="3D", platform="PC",
+                         render_pipeline="builtin", scenes=["Main"])
+    scene = UnityProjectGenerator().generate(
+        schema, {}, composed_units=units)["CtxScene/Assets/Scenes/Main.unity"]
+    ctx = next(u for u in units if u.kind == "context")
+    assert ctx.guid in scene   # GameContext coexists in the scene with everything else

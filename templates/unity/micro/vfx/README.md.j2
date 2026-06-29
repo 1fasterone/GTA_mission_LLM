@@ -1,0 +1,29 @@
+# {{ s.name }} — VFX
+
+**Variant:** {{ variant }}
+
+{{ s.description }}
+
+## Setup
+
+{% if variant == "particle_system" %}
+1. Attach `{{ s.name }}` to a GameObject that has a **ParticleSystem** component (or assign one in the Inspector).
+2. Call `Play()` / `Stop()` from any script, or enable **Play On Start**.
+3. Set **Loop Effect** in the Inspector to keep the effect running continuously.
+{% elif variant == "vfx_sequence" %}
+1. Assign the **Effect Prefabs** array in the Inspector (one slot per sequence step).
+2. Call `Play()` to run the full sequence, or enable **Play On Start**.
+3. Sequence cues ({{ s.cues | length }} step(s)):
+{% for cue in s.cues %}
+   - Step {{ loop.index }}: `{{ cue.effect_id }}` at ({{ cue.x }}, {{ cue.y }}, {{ cue.z }}) scale {{ cue.scale }} after {{ cue.delay }}s
+{% endfor %}
+{% elif variant == "screen_fx" %}
+1. Create a full-screen **UI Image** (stretch to fill the Canvas) and assign it to **Overlay**.
+2. Optionally assign a **Flash Light** (directional or point) for the light spike.
+3. Call `FadeIn()` / `FadeOut()` for screen transitions; `Flash()` for the light burst.
+4. Fade color: RGB({{ s.fade_color_r }}, {{ s.fade_color_g }}, {{ s.fade_color_b }}) over {{ s.fade_duration }}s.
+{% elif variant == "impact_fx" %}
+1. Assign the **Effect Prefab** (a particle system prefab) in the Inspector.
+2. Attach to any collider — particles spawn at the impact point when **{{ s.trigger_tag }}** objects collide.
+3. Pool size: {{ s.pool_size }} — increase if many simultaneous impacts are expected.
+{% endif %}

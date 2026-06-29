@@ -245,3 +245,53 @@ def test_gta_fewshot_wave_spawner_lands_in_script():
     assert "private void SpawnChaseWave()" in cs
     assert "_vehicles.Add(car);" in cs
     assert cs.count("{") == cs.count("}")
+
+
+# ── CodeMethod alias tolerance (LLM shape drift) ──────────────────────────────
+
+def test_codemethod_accepts_name_alias_and_synthesises_signature():
+    """LLMs frequently emit {name, body} instead of {signature, body}. A bare
+    method name must become a valid C# signature, not abort schema-fill."""
+    m = CodeMethod.model_validate({"name": "OnAirEmpty", "body": "Die();"})
+    assert m.signature == "private void OnAirEmpty()"
+    assert m.body == "Die();"
+
+
+def test_codemethod_accepts_code_alias_and_keeps_full_signature():
+    m = CodeMethod.model_validate({"signature": "public int Foo(int x)", "code": "return x;"})
+    assert m.signature == "public int Foo(int x)"   # full signature untouched
+    assert m.body == "return x;"
+
+
+def test_codemethod_valid_input_passes_through_unchanged():
+    m = CodeMethod(signature="void F()", body="x();")
+    assert m.signature == "void F()" and m.body == "x();"
+
+
+# ── Fix #1: custom scripts that use `rb` get a Rigidbody auto-declared ─────────
+
+def _custom_script_cs(name: str, update_extra: str) -> str:
+    from src.unity_schema import UnitySchema
+    from src.unity_generator import UnityProjectGenerator
+    schema = UnitySchema.model_validate({
+        "project_name": name, "game_type": "3D", "platform": "pc",
+        "render_pipeline": "URP", "scenes": ["Main"],
+        "scripts": [{"name": "Subj", "type": "custom", "attach_to": "systems",
+                     "description": "x", "update_extra": update_extra}],
+    })
+    return UnityProjectGenerator().generate(schema, {})[f"{name}/Assets/Scripts/Subj.cs"]
+
+
+def test_custom_script_autodeclares_rigidbody_when_rb_used():
+    """Regression for the BuoyancySystem CS0103: `rb.AddForce(...)` with no rb
+    field must not break compilation — the generator declares the Rigidbody."""
+    cs = _custom_script_cs("RbProof", "rb.AddForce(Vector3.up * 9.81f, ForceMode.Acceleration);")
+    assert "private Rigidbody rb;" in cs
+    assert "[RequireComponent(typeof(Rigidbody))]" in cs
+    assert "rb = GetComponent<Rigidbody>();" in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_custom_script_no_rigidbody_when_rb_unused():
+    cs = _custom_script_cs("NoRbProof", "transform.Rotate(Vector3.up * Time.deltaTime);")
+    assert "Rigidbody" not in cs
