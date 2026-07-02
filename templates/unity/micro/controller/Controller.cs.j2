@@ -160,7 +160,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endfor %}
 
     // ═══ GROUND CHECK ════════════════════════════════════════════════════════
-{% if s.ground_check == "raycast" and not variant.startswith("vehicle_") and not variant.startswith("2d_") and variant != "aircraft" %}
+{% if s.ground_check == "raycast" and not variant.startswith("vehicle_") and not variant.startswith("2d_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
     [Header("Ground Check")]
     [SerializeField] private float     groundRayLen = 1.05f;
     [SerializeField] private LayerMask groundMask   = ~0;
@@ -206,7 +206,9 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 {% endif %}
 
+{% if variant not in ("swimming", "flying") %}
     private bool _grounded;
+{% endif %}
 {% if "double_jump" in s.abilities %}
     private int  _airJumpsLeft;
     private const int MaxAirJumps = 1;
@@ -263,7 +265,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
     // ═══ PUBLIC PROPERTIES ═══════════════════════════════════════════════════
-{% if not variant.startswith("vehicle_") and variant != "aircraft" %}
+{% if not variant.startswith("vehicle_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
     /// <summary>Read by GameWiring each frame to push grounded state to FSM + Animator.</summary>
     public bool IsGrounded => _grounded;
 {% endif %}
@@ -297,6 +299,18 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     {
 {% if variant.startswith("2d_") %}
         _rb = GetComponent<Rigidbody2D>();
+        if (_rb == null) _rb = gameObject.AddComponent<Rigidbody2D>();
+        _rb.freezeRotation = true;
+        // A 2D body needs a 2D collider to land on the ground (models import without one).
+        if (GetComponent<Collider2D>() == null)
+        {
+            var _box = gameObject.AddComponent<BoxCollider2D>();
+            _box.size = new Vector2(1f, 2f);
+            _box.offset = new Vector2(0f, 1f);
+        }
+{% if variant == "2d_topdown" %}
+        _rb.gravityScale = 0f;
+{% endif %}
 {% elif variant.startswith("vehicle_") %}
         _rb = GetComponent<Rigidbody>();
         if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();
@@ -788,7 +802,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if variant.startswith("2d_") %}
     private bool CheckGrounded2D()
         => Physics2D.Raycast(transform.position, Vector2.down, 1.05f);
-{% elif not variant.startswith("vehicle_") and variant != "aircraft" %}
+{% elif not variant.startswith("vehicle_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
     private bool CheckGrounded3D()
     {
 {% if s.ground_check == "spherecast" %}

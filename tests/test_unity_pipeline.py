@@ -459,6 +459,38 @@ class TestUnityProgrammaticFix:
         fixed = _programmatic_fix(schema)
         assert fixed.scripts[0].name == "PlayerController"
 
+    # ── GameContext bridge access (compose-aware sanitizer) ───────────────────
+    def test_gamecontext_call_preserved_in_compose(self):
+        schema = self._schema(scripts=[
+            UnityScript(name="Bridger", type="custom", description="x",
+                        update_extra="var hp = GameContext.Instance.Get<PlayerHealth>();"),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        assert "GameContext.Instance.Get<PlayerHealth>()" in fixed.scripts[0].update_extra
+
+    def test_gamecontext_call_stripped_without_compose(self):
+        # No GameContext exists outside --compose, so the locator call must be
+        # stripped (it would be CS0246) rather than left to break compilation.
+        schema = self._schema(scripts=[
+            UnityScript(name="Bridger", type="custom", description="x",
+                        update_extra="var hp = GameContext.Instance.Get<PlayerHealth>();"),
+        ])
+        fixed = _programmatic_fix(schema)   # compose defaults to False
+        assert "GameContext" not in fixed.scripts[0].update_extra
+
+    def test_invented_singleton_still_stripped_in_compose(self):
+        schema = self._schema(scripts=[
+            UnityScript(name="Bridger", type="custom", description="x",
+                        update_extra="FooManager.Instance.DoThing();"),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        assert "FooManager" not in fixed.scripts[0].update_extra
+
+    def test_gamecontext_guidance_constant(self):
+        from src.unity_prompts import GAMECONTEXT_SCHEMA_GUIDANCE
+        assert "GameContext.Instance.Get<T>()" in GAMECONTEXT_SCHEMA_GUIDANCE
+        assert "null-check" in GAMECONTEXT_SCHEMA_GUIDANCE.lower()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Schema extraction from LLM artifacts (markdown + think blocks)

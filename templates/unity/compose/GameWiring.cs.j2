@@ -36,7 +36,7 @@ public class GameWiring : MonoBehaviour
     private void Awake()
     {
 {% for u in units %}
-        _{{ u.class_name | lower }} = Object.FindFirstObjectByType<{{ u.class_name }}>();
+        _{{ u.class_name | lower }} = FindFirstObjectByType<{{ u.class_name }}>();
 {% endfor %}
 {% for seam in awake_seams %}
 

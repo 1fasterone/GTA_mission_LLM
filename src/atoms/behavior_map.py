@@ -204,6 +204,11 @@ MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
         {"atom": "Gesture",  "args": {"type": "nod", "duration": 1.0},                      "label": "idle gesture"},
         {"atom": "EndDialog","args": {"return_to_idle": True},                              "label": "close dialog"},
     ],
+    # ── VFX: spawn an impact burst then flash the light ───────────────────────
+    "vfx": [
+        {"atom": "SpawnParticle", "args": {"effect": "Explosion", "x": 0.0, "y": 0.0, "z": 0.0, "scale": 1.0}, "label": "spawn burst"},
+        {"atom": "LightFlash",    "args": {"intensity": 5.0, "duration": 0.05},                                "label": "impact flash"},
+    ],
 }
 
 

@@ -5,6 +5,7 @@ using UnityEngine;
 
 public class EntitySpawner : MonoBehaviour
 {
+{% if game_type not in ["2D", "2.5D"] %}
 {% for e in entities %}
 {% if e.placement == "path" and e.path_points %}
     private static readonly Vector3[] _path_{{ loop.index0 }} =
@@ -15,11 +16,17 @@ public class EntitySpawner : MonoBehaviour
     };
 {% endif %}
 {% endfor %}
+{% endif %}
 
 {% set ns = namespace(first_path=true) %}
     private void Start()
     {
         var sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+{% if game_type in ["2D", "2.5D"] %}
+        // 2D side-scroller archetype: build a COHERENT course (continuous ground +
+        // entities laid along +X) instead of formula-scattering props.
+        BuildSideScroller2D(sh);
+{% else %}
 {% for e in entities %}
 {% set has_path = e.placement == "path" and e.path_points %}
         SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh);
@@ -28,6 +35,7 @@ public class EntitySpawner : MonoBehaviour
 {% set ns.first_path = false %}
 {% endif %}
 {% endfor %}
+{% endif %}
     }
 
     private void SpawnGroup(string groupName, int count, PrimitiveType shape, string placement,
@@ -50,6 +58,7 @@ public class EntitySpawner : MonoBehaviour
             if (modelPrefab != null)
             {
                 go = Instantiate(modelPrefab);
+{% if game_type not in ["2D", "2.5D"] %}
                 // Models import without colliders — behaviors/tags need one.
                 if (behaviorType != null || (tag != "Untagged" && tag.Length > 0))
                 {
@@ -57,6 +66,7 @@ public class EntitySpawner : MonoBehaviour
                     cc.height = 2f;
                     cc.center = new Vector3(0f, 1f, 0f);
                 }
+{% endif %}
             }
             else
             {
@@ -65,6 +75,12 @@ public class EntitySpawner : MonoBehaviour
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
             go.transform.localScale = Vector3.one * scale;
+{% if game_type in ["2D", "2.5D"] %}
+            // 2D: strip imported/primitive 3D colliders, ensure one 2D collider so
+            // the Rigidbody2D player can stand on / collide with this entity.
+            foreach (var c3d in go.GetComponentsInChildren<Collider>()) Destroy(c3d);
+            if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
+{% endif %}
             Vector3 pos;
             if (placement == "path" && path != null && path.Length > 0)
             {
@@ -75,7 +91,10 @@ public class EntitySpawner : MonoBehaviour
             else
             {
                 pos = PlaceAt(placement, i, count, spacing, radius);
-                pos.y = scale * 0.5f;
+{% if game_type in ["2D", "2.5D"] %}
+                pos = new Vector3(pos.x, pos.z, 0f);  // XZ layout -> XY side-on plane
+{% endif %}
+                pos.y += scale * 0.5f;
             }
             go.transform.position = pos;
             if (sh != null && modelPrefab == null)   // models keep their own materials
@@ -153,4 +172,74 @@ public class EntitySpawner : MonoBehaviour
                 return Vector3.zero;
         }
     }
+{% if game_type in ["2D", "2.5D"] %}
+
+    // ── 2D side-scroller archetype builders ─────────────────────────────────────
+    private void BuildSideScroller2D(Shader sh)
+    {
+        int maxCount = 1;
+{% for e in entities %}{% if e.kind|lower not in ["player", "road", "ground"] %}        maxCount = Mathf.Max(maxCount, {{ e.count }});
+{% endif %}{% endfor %}
+        const float lane = 7f;
+        float courseLen = (maxCount + 2) * lane;
+        BuildGround2D(courseLen, sh);
+{% for e in entities %}
+{% set role = e.kind|lower %}
+{% if role not in ["player", "road", "ground"] %}
+        PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh);
+{% endif %}
+{% endfor %}
+        PlacePlayerStart2D();
+    }
+
+    private void BuildGround2D(float length, Shader sh)
+    {
+        var ground = new GameObject("Ground");
+        ground.transform.SetParent(transform, false);
+        ground.transform.position = new Vector3(length * 0.5f, -1f, 0f);
+        var col = ground.AddComponent<BoxCollider2D>();
+        col.size = new Vector2(length + 28f, 2f);
+        var vis = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        var c3 = vis.GetComponent<Collider>(); if (c3 != null) Destroy(c3);
+        vis.transform.SetParent(ground.transform, false);
+        vis.transform.localScale = new Vector3(length + 28f, 2f, 1f);
+        Apply2DColor(vis, sh, new Color(0.20f, 0.20f, 0.23f));
+    }
+
+    private void PlaceRow2D(string groupName, int count, float scale, string modelPath,
+                            Color color, string tag, bool backdrop, float courseLen, Shader sh)
+    {
+        var modelPrefab = string.IsNullOrEmpty(modelPath) ? null : Resources.Load<GameObject>(modelPath);
+        var parent = new GameObject(groupName).transform;
+        parent.SetParent(transform, false);
+        int n = Mathf.Max(1, count);
+        for (int i = 0; i < n; i++)
+        {
+            GameObject go = modelPrefab != null ? Instantiate(modelPrefab) : GameObject.CreatePrimitive(PrimitiveType.Cube);
+            go.name = groupName + "_" + i;
+            go.transform.SetParent(parent);
+            go.transform.localScale = Vector3.one * scale;
+            go.transform.position = new Vector3((i + 1) * (courseLen / (n + 1)),
+                                                backdrop ? 3.5f : scale * 0.5f,
+                                                backdrop ? 8f : 0f);
+            foreach (var cc in go.GetComponentsInChildren<Collider>()) Destroy(cc);
+            if (!backdrop && go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
+            if (modelPrefab == null) Apply2DColor(go, sh, color);
+            if (!backdrop && !string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
+        }
+    }
+
+    private void PlacePlayerStart2D()
+    {
+        var p = GameObject.FindWithTag("Player");
+        if (p != null) p.transform.position = new Vector3(0f, 2.5f, 0f);
+    }
+
+    private void Apply2DColor(GameObject go, Shader sh, Color color)
+    {
+        if (sh == null) return;
+        var rend = go.GetComponent<Renderer>();
+        if (rend != null) { var m = new Material(sh); m.color = color; rend.material = m; }
+    }
+{% endif %}
 }

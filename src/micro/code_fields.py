@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from rich.console import Console
 
 console = Console()
@@ -78,7 +78,30 @@ class CodeField(BaseModel):
 class CodeMethod(BaseModel):
     """An LLM-authored helper method appended to a generated class."""
     signature: str
-    body:      str
+    body:      str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_aliases(cls, data):
+        """Tolerate the common LLM shape drift for method entries. The schema
+        wants {signature, body}; LLMs frequently emit {name, body} or
+        {signature, code}. Map the aliases so one stray key doesn't abort the
+        whole schema-fill (valid {signature, body} input passes through
+        untouched)."""
+        if not isinstance(data, dict):
+            return data
+        d = dict(data)
+        if not d.get("signature"):
+            for alt in ("name", "sig", "declaration", "header", "method_signature"):
+                if d.get(alt):
+                    d["signature"] = d[alt]
+                    break
+        if not d.get("body"):
+            for alt in ("code", "method", "impl", "content", "method_body"):
+                if d.get(alt):
+                    d["body"] = d[alt]
+                    break
+        return d
 
     @field_validator("signature", mode="before")
     @classmethod
@@ -86,6 +109,11 @@ class CodeMethod(BaseModel):
         s = str(v).strip()
         # Drop any trailing `{` or `;` — the template adds the brace itself.
         s = s.rstrip("{ ;")
+        # A bare method name (e.g. "OnAirEmpty") is not a valid C# signature —
+        # the template renders `<signature>\n{ ... }`. Synthesise a private void
+        # header so the method compiles instead of becoming a syntax error.
+        if s and "(" not in s and _CSHARP_IDENT_RE.match(s):
+            s = f"private void {s}()"
         return s
 
 
@@ -132,6 +160,25 @@ def _cap_lines(text: str, *, what: str) -> str:
     return "\n".join(kept)
 
 
+# CS1612: a value-type property returns a COPY, so mutating a member of it
+# (`transform.position.x += v`, `Physics.gravity.y = v`) does not compile. LLMs
+# write this constantly. Repair to read-modify-write on a local.
+_STRUCT_MEMBER_ASSIGN_RE = re.compile(
+    r'((?:[A-Za-z_]\w*\.)*'
+    r'(?:transform\.(?:position|localPosition|localScale|eulerAngles|localEulerAngles)'
+    r'|Physics2D\.gravity|Physics\.gravity))'
+    r'\.([xyzw])\s*(\+=|-=|\*=|/=|=(?!=))\s*([^;]+?)\s*;')
+
+
+def _repair_struct_member_assign(text: str) -> str:
+    """Rewrite `prop.x += v;` → `{ var _v = prop; _v.x += v; prop = _v; }` for the
+    common value-type Unity properties that otherwise throw CS1612."""
+    new = _STRUCT_MEMBER_ASSIGN_RE.sub(r'{ var _v = \1; _v.\2 \3 \4; \1 = _v; }', text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  rewrote value-type property member assignment (CS1612)")
+    return new
+
+
 def lint_code_fragment(text: str, *, what: str) -> str:
     """
     Clean an LLM-authored C# fragment intended for an injection point.
@@ -147,6 +194,7 @@ def lint_code_fragment(text: str, *, what: str) -> str:
         return ""
     # Strip `using X;` lines — these belong in `extra_usings`, not the body.
     text = _USING_RE.sub("", text)
+    text = _repair_struct_member_assign(text)
     text = _balance_braces(text)
     text = _cap_lines(text, what=what)
     return text.strip()
@@ -178,25 +226,36 @@ def lint_method(m: CodeMethod, *, taken_names: set[str]) -> Optional[CodeMethod]
 # SunsetDriftKingdom beta run), so anything outside this allowlist is dropped.
 _KNOWN_NAMESPACES = {
     "System", "System.Collections", "System.Collections.Generic", "System.Linq",
-    "System.Text", "System.IO",
+    "System.Text", "System.IO", "System.Threading.Tasks",
     "UnityEngine", "UnityEngine.UI", "UnityEngine.UIElements",
     "UnityEngine.InputSystem", "UnityEngine.AI", "UnityEngine.Audio",
     "UnityEngine.Events", "UnityEngine.SceneManagement", "UnityEngine.Rendering",
     "UnityEngine.Rendering.Universal", "UnityEngine.Animations", "UnityEngine.Tilemaps",
+    "UnityEngine.U2D", "UnityEngine.Playables", "UnityEngine.Video",
     "TMPro", "Unity.Cinemachine", "Cinemachine",
 }
 
 # Content patterns → the namespace they require. If a fragment/field uses the
 # pattern and the using is missing, we add it instead of letting compile fail
-# (`List<Light>` without System.Collections.Generic was hit live).
+# (`List<Light>` without System.Collections.Generic was hit live; a custom
+# script referencing bare `InputSystem.*`/`InputAction` without
+# `UnityEngine.InputSystem` — CS0103 "the name 'InputSystem' does not exist in
+# the current context" — and `Resources.Load<SpriteAtlas>` without
+# `UnityEngine.U2D` — CS0311 — were both hit live too).
 _USING_TRIGGERS: list[tuple[str, str]] = [
     (r"\b(?:List|Dictionary|HashSet|Queue|Stack)\s*<",     "System.Collections.Generic"),
-    (r"\b(?:Keyboard|Mouse|Gamepad)\s*\.\s*current\b",     "UnityEngine.InputSystem"),
+    (r"\b(?:InputSystem|InputAction|InputActionAsset|InputActionMap|"
+     r"InputActionReference|Keyboard|Mouse|Gamepad|Touchscreen)\b",   "UnityEngine.InputSystem"),
     (r"\bNavMeshAgent\b",                                  "UnityEngine.AI"),
     (r"\bUnityEvent\b",                                    "UnityEngine.Events"),
     (r"\bSceneManager\s*\.",                               "UnityEngine.SceneManagement"),
     (r"\bTMP_\w+|\bTextMeshPro",                           "TMPro"),
     (r"\bIEnumerator\b",                                   "System.Collections"),
+    (r"\bSpriteAtlas\b",                                   "UnityEngine.U2D"),
+    (r"\b(?:Tilemap|TileBase)\b",                          "UnityEngine.Tilemaps"),
+    (r"\bPlayableDirector\b",                               "UnityEngine.Playables"),
+    (r"\bVideoPlayer\b",                                    "UnityEngine.Video"),
+    (r"\bTask\s*[<(]|\bTask\.(?:Run|Delay|WhenAll|WhenAny)\b", "System.Threading.Tasks"),
 ]
 
 

@@ -49,6 +49,14 @@ class ComposedUnit(BaseModel):
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
 _COMPOSED_FILE_ID_BASE = 900000010
 
+# Kinds that GameWiring / GameContext must NOT FindFirstObjectByType:
+#   wiring/context — the synthetic glue components themselves.
+#   input          — a ScriptableObject (IInputReader) assigned via the _inputSO
+#                    SerializeField, never a scene MonoBehaviour. The generated SO
+#                    class is `<name>InputReader` (not `<name>`), so finding it is
+#                    CS0246 and would never resolve at runtime anyway.
+_NON_SCENE_KINDS = {"wiring", "context", "input"}
+
 # Built-in UnityScript types the micro library now OWNS. In --compose mode these
 # are dropped from the generated project so the composer is the single source of
 # truth (no duplicate PlayerController/CameraFollow/etc.). The unique glue scripts
@@ -60,6 +68,22 @@ COVERED_SCRIPT_TYPES = {
     # newly owned by compose micros
     "physics", "input_system",
 }
+
+
+def drop_owned_scripts(scripts: list, composed_units: list) -> list:
+    """Return LLM-authored scripts minus the ones compose already owns.
+
+    Compose is the single source of truth for composed subsystems, so a script
+    is dropped when it collides either:
+      • by TYPE  — a built-in kind the micro library covers (COVERED_SCRIPT_TYPES), or
+      • by NAME  — the LLM authored a custom script whose class name matches a
+                   composed class (e.g. its own `PhysicsBody` or `GameContext`).
+    The name check is what prevents CS0101/CS0111 duplicate-definition errors when
+    the model invents a `type: custom` script that shadows a micro.
+    """
+    reserved_names = {u.class_name for u in composed_units}
+    return [s for s in scripts
+            if s.type not in COVERED_SCRIPT_TYPES and s.name not in reserved_names]
 
 
 class MicroComposer:
@@ -122,6 +146,12 @@ class MicroComposer:
             kind="wiring", variant="", class_name="GameWiring",
             guid=_make_guid(f"{self.project_name}/Micros/wiring/GameWiring"),
             target="systems", file_id=_COMPOSED_FILE_ID_BASE + 10 * len(subsystems)))
+        # Synthetic GameContext locator — the shared bridge surface that lets the
+        # composed micros AND the prompt-authored scripts find each other.
+        units.append(ComposedUnit(
+            kind="context", variant="", class_name="GameContext",
+            guid=_make_guid(f"{self.project_name}/Micros/context/GameContext"),
+            target="systems", file_id=_COMPOSED_FILE_ID_BASE + 10 * (len(subsystems) + 1)))
         return units
 
     def _folder_meta(self, path: Path) -> None:
@@ -132,7 +162,8 @@ class MicroComposer:
     def _wiring_template_dir(self) -> Path:
         return Path(self._cfg["unity_pipeline"]["unity_template_dir"]) / "compose"
 
-    def compose(self, subsystems: list[Subsystem], assets_root: Path) -> list[ComposedUnit]:
+    def compose(self, subsystems: list[Subsystem], assets_root: Path,
+                has_game_manager: bool = False) -> list[ComposedUnit]:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
@@ -163,6 +194,8 @@ class MicroComposer:
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
         self._emit_wiring(units, micros_root)
+        # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
+        self._emit_context(units, micros_root, has_game_manager)
         return units
 
     def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path) -> None:
@@ -170,7 +203,7 @@ class MicroComposer:
         from .atoms.backends.unity import unity_atom_snippet
 
         wiring     = next(u for u in units if u.kind == "wiring")
-        real_units = [u for u in units if u.kind != "wiring"]
+        real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
 
         wdir = micros_root / "wiring"
         sdir = wdir / "Scripts"
@@ -288,10 +321,10 @@ class MicroComposer:
                 f"        if ({anv} == null) return;\n"
                 f"        switch (state)\n"
                 f"        {{\n"
-                f"            case {fsm_cls}.State.Idle:    {anv}.CrossFade(\"Idle\", 0.1f); break;\n"
-                f"            case {fsm_cls}.State.Moving:  {anv}.CrossFade(\"Run\",  0.1f); break;\n"
-                f"            case {fsm_cls}.State.Jumping: {anv}.PlayJump();              break;\n"
-                f"            case {fsm_cls}.State.Dead:    {anv}.PlayDeath();             break;\n"
+                f"            case {fsm_cls}.State.Idle:    {anv}.CrossFade(\"Idle\",  0.1f); break;\n"
+                f"            case {fsm_cls}.State.Moving:  {anv}.CrossFade(\"Run\",   0.1f); break;\n"
+                f"            case {fsm_cls}.State.Jumping: {anv}.CrossFade(\"Jump\",  0.1f); break;\n"
+                f"            case {fsm_cls}.State.Dead:    {anv}.CrossFade(\"Death\", 0.1f); break;\n"
                 f"        }}\n"
                 f"    }}"
             )
@@ -329,7 +362,9 @@ class MicroComposer:
             )
 
         # SEAM 6 — Grounded bridge (Update, not Awake)
-        if ctrl and (fsm or anim):
+        # Skip for swimming/flying controllers — they have no ground, so the
+        # controller intentionally exposes no IsGrounded (would be CS1061).
+        if ctrl and (fsm or anim) and ctrl.variant not in ("swimming", "flying"):
             update_seams.append({
                 "label":   "Grounded bridge: controller → FSM + Animator",
                 "snippet": unity_atom_snippet("WireGroundedBridge", {
@@ -368,6 +403,58 @@ class MicroComposer:
         self._folder_meta(wdir)
         self._folder_meta(sdir)
 
+    def _emit_context(self, units: list[ComposedUnit], micros_root: Path,
+                      has_game_manager: bool) -> None:
+        """Emit GameContext.cs — the shared service locator that bridges the
+        composed micros (Assets/Micros) and the prompt-authored scripts
+        (Assets/Scripts) so all generated assets coexist. `Get<T>()` is the
+        universal, leak-free access surface; concrete micro↔GameManager seams are
+        added only when a GameManager concept script is present (both ends are
+        pipeline-owned templates, so the references always resolve)."""
+        from jinja2 import Environment, FileSystemLoader, StrictUndefined
+
+        context    = next(u for u in units if u.kind == "context")
+        real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
+
+        def _pick(kind: str, target: str | None = None) -> "ComposedUnit | None":
+            cands = [u for u in real_units if u.kind == kind]
+            if not cands:
+                return None
+            if len(cands) == 1 or target is None:
+                return cands[0]
+            pref = [u for u in cands if u.target == target]
+            return pref[0] if pref else cands[0]
+
+        # Cross-layer bridge. Direction matters for lifetime safety: the publisher
+        # (per-scene PlayerHealth) is subscribed to a persistent-singleton method
+        # (GameManager.LoseLife) — when the scene unloads the subscription dies
+        # with PlayerHealth, so there is no dangling-delegate leak.
+        bridges: list[dict] = []
+        if has_game_manager:
+            health = _pick("health", "player")
+            if health:
+                bridges.append({
+                    "label": "Player death -> GameManager.LoseLife (micro -> concept)",
+                    "snippet": (
+                        f"var __health = Get<{health.class_name}>();\n"
+                        f"if (__health != null && GameManager.Instance != null)\n"
+                        f"    __health.OnDeath += GameManager.Instance.LoseLife;"
+                    ),
+                })
+
+        env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
+                          undefined=StrictUndefined, keep_trailing_newline=True)
+        content = env.get_template("GameContext.cs.j2").render(
+            units=real_units, bridges=bridges)
+
+        cdir = micros_root / "context"
+        sdir = cdir / "Scripts"
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "GameContext.cs").write_text(content, encoding="utf-8")
+        (sdir / "GameContext.cs.meta").write_text(_meta_file(context.guid), encoding="utf-8")
+        self._folder_meta(cdir)
+        self._folder_meta(sdir)
+
     # Built-in modules / packages each composed micro kind needs in manifest.json.
     # Merged into the project's deps so a composed project actually compiles.
     # UnityEngine.UI (Button/Slider/Image) comes from the UGUI package
@@ -385,6 +472,8 @@ class MicroComposer:
         "spawner":      ["com.unity.modules.physics"],
         "interactable": ["com.unity.modules.physics"],
         "transition":   ["com.unity.modules.ui", _UGUI],
+        "npc_dialog":   ["com.unity.modules.audio", "com.unity.modules.physics"],
+        "vfx":          ["com.unity.modules.ui", _UGUI],
     }
 
     @classmethod
@@ -433,28 +522,59 @@ def subsystems_for(
     locomotion:   str               = "walk",
     capabilities  = None,            # Optional[ProjectCapabilities] — avoids import cycle
     user_prompt:  str               = "",
+    *,
+    scenes:       list[str] | None  = None,
+    entities      = None,            # list of schema entities (have .kind)
+    scripts       = None,            # list of schema scripts  (have .type/.name)
+    genre:        str               = "universal",   # schema.meta["genre"] — see unity_archetypes.py
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
     Deterministic — no LLM. Capabilities (when present) override controller
     parameters so the composed output matches the schema's typed declarations
     rather than generic defaults.
+
+    Optional micros are gated on BOTH feature flags AND deterministic schema
+    CONTENT (scene count, entity kinds, script types). The local LLM rarely emits
+    the niche feature tokens, so content gating is what actually makes vfx /
+    npc_dialog / transition / dialogue reachable for a fitting game.
     """
     feats = set(features or [])
     gt = (game_type or "3D").lower()
+    genre = (genre or "universal").lower()
 
-    # Controller variant by game type
+    # ── Deterministic content signals (what the game actually contains) ───────
+    scene_count  = len(scenes or [])
+    entity_kinds = {str(getattr(e, "kind", "") or "").lower() for e in (entities or [])}
+    script_types = {str(getattr(s, "type", "") or "").lower() for s in (scripts or [])}
+    prompt_low   = (user_prompt or "").lower()
+    has_enemies  = bool({"ai", "navmesh", "enemies"} & feats) or "enemy" in entity_kinds
+    has_npcs     = ("npc" in entity_kinds or "dialogue_manager" in script_types
+                    or any(k in prompt_low for k in ("voiced npc", "npc dialog", "quest giver")))
+
+    # Controller variant by game type. gt values with an explicit dimension/
+    # perspective (2D/top-down/isometric/VR) always win — an fps prompt doesn't
+    # turn a top-down game into a first-person one. Only the "no opinion" default
+    # branch (plain 3D) defers to genre, so an unqualified "fps" prompt gets a
+    # first-person rig instead of silently falling through to third_person.
+    ctrl_default = "first_person" if genre == "fps" else "third_person"
+    cam_default  = "first_person" if genre == "fps" else "follow"
     ctrl = {
         "2d": "2d_platformer", "2.5d": "2d_platformer", "top_down": "top_down",
         "isometric": "top_down", "vr": "first_person",
-    }.get(gt, "third_person")
+    }.get(gt, ctrl_default)
     cam = {
-        "2d": "follow", "2.5d": "follow", "top_down": "cinemachine_topdown",
+        "2d": "follow_2d", "2.5d": "follow_2d", "top_down": "cinemachine_topdown",
         "isometric": "cinemachine_topdown",
-    }.get(gt, "follow")
+    }.get(gt, cam_default)
 
-    # Locomotion overrides for 3D-ish game types
-    if gt in ("3d", "top_down", "isometric"):
+    # Locomotion overrides for 3D-ish game types. "vr" belongs here too — a VR
+    # scuba/flight game is a legitimate combination; excluding it meant a
+    # correctly-classified VR+swim project silently kept the "first_person"
+    # walking controller instead of "swimming" (hit live: an underwater VR
+    # project never got its swim controller even after game_type/locomotion
+    # were both detected correctly).
+    if gt in ("3d", "top_down", "isometric", "vr"):
         loco_ctrl = {"drive": "vehicle_car", "fly": "flying", "swim": "swimming"}
         loco_cam  = {"drive": "vehicle_chase"}
         if locomotion in loco_ctrl:
@@ -481,10 +601,22 @@ def subsystems_for(
         "drive": "vehicle", "fly": "creature", "swim": "creature",
     }.get(locomotion, "humanoid")
 
-    # Input variant from game type / features
-    input_variant = "gamepad" if gt == "vr" else (
-        "racing_wheel" if locomotion == "drive" else "keyboard_mouse"
-    )
+    # Input variant must align with the CONTROLLER, not raw locomotion: a wheel
+    # reader's OnMove is inert on a character (2d_platformer/etc.) controller, so
+    # the player can't move. Only a vehicle controller gets the wheel.
+    input_variant = ("gamepad" if gt == "vr"
+                     else "racing_wheel" if ctrl.startswith("vehicle_")
+                     else "keyboard_mouse")
+
+    # Physics body must match the controller's dimension: a 2D game uses a
+    # Rigidbody2D (the prior "rigidbody" was invalid and clamped to 3D, which
+    # then fought the 2d_platformer controller's Rigidbody2D).
+    phys_variant = "rigidbody_2d" if gt in ("2d", "2.5d") else "rigidbody_3d"
+
+    # trigger/interactable need to know the project's dimension so their
+    # generated scripts author Collider2D + OnTrigger*2D callbacks instead of
+    # the 3D Physics API — a Collider2D never raises OnTriggerEnter(Collider).
+    dim_meta = {"meta": {"game_type": game_type or "3D"}}
 
     subs: list[Subsystem] = [
         # Core (always)
@@ -495,16 +627,16 @@ def subsystems_for(
         Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),
         Subsystem(kind="saveload",    variant="json_file",    target="systems", name="SaveSystem"),
         # Always-on: physics body, input reader, interactables, animator, triggers
-        Subsystem(kind="physics",     variant="rigidbody",    target="player",  name="PhysicsBody"),
+        Subsystem(kind="physics",     variant=phys_variant,   target="player",  name="PhysicsBody"),
         Subsystem(kind="input",       variant=input_variant,  target="systems", name="InputReader"),
-        Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable"),
+        Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable", options=dim_meta),
         Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator"),
         Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
-        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger"),
+        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger", options=dim_meta),
     ]
 
-    # Feature-driven additions
-    if "ai" in feats or "navmesh" in feats or "enemies" in feats:
+    # Feature- AND content-driven additions
+    if has_enemies:
         ai_var = "waypoint_follow" if locomotion == "drive" else "navmesh_patrol"
         ai_tgt = "asset"           if locomotion == "drive" else "world"
         subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI"))
@@ -519,8 +651,24 @@ def subsystems_for(
             audio_opts["meta"] = {"user_prompt": user_prompt}
         subs.append(Subsystem(kind="audio", variant="categorical_mixer", target="systems",
                               name="AudioDirector", options=audio_opts))
-    if "inventory" in feats:
+    if "inventory" in feats or "inventory" in prompt_low \
+            or any("inventory" in t for t in script_types):
         subs.append(Subsystem(kind="inventory",    variant="slot_based",    target="systems", name="PlayerInventory"))
-    if "dialogue" in feats or gt in ("vr",):
+    # Dialogue (linear text) — requested, VR, an authored dialogue_manager, or NPCs exist.
+    if "dialogue" in feats or gt in ("vr",) or "dialogue_manager" in script_types or has_npcs:
         subs.append(Subsystem(kind="dialogue",     variant="linear",        target="systems", name="DialogueSystem"))
+    # Decorative impact effects — object-pooled, event-driven (OnTrigger/OnCollision),
+    # self-contained (no GameWiring seam). impact_fx null-guards an unassigned prefab.
+    # Reachable whenever there's combat (enemies), since impacts need effects.
+    if {"vfx", "effects", "particles"} & feats or has_enemies:
+        subs.append(Subsystem(kind="vfx",          variant="impact_fx",     target="world",   name="ImpactVFX"))
+    # Spoken NPCs (Higgs TTS). Composed unit skips clip generation (meta.skip_audio) so
+    # codegen stays LLM/Higgs-free; the <name>Player MonoBehaviour is the attach class.
+    # Reachable whenever the world actually has NPCs (entity kind / dialogue script).
+    if {"npc_dialog", "voiced_npcs", "npcs"} & feats or has_npcs:
+        subs.append(Subsystem(kind="npc_dialog",   variant="quest_giver",   target="world",   name="NpcDialog",
+                              options={"speaker_name": "NPC", "meta": {"skip_audio": True}}))
+    # Scene transitions — meaningful for any multi-scene project (deterministic: > 1 scene).
+    if {"levels", "multi_scene", "scene_transition"} & feats or scene_count > 1:
+        subs.append(Subsystem(kind="transition",   variant="fade",          target="systems", name="SceneTransition"))
     return subs

@@ -14,15 +14,38 @@ public class {{ s.name }}InputReader : ScriptableObject, IInputReader
 {
     [SerializeField] private InputActionAsset asset;
 
+{% set canon = ["OnMove", "OnJump", "OnSprint", "OnSprintReleased"] %}
+{% set ns = namespace(move_map=None, move_action=None) %}
+{% for m in s.maps %}{% for a in m.actions %}{% if ns.move_action is none and a.control_type == "Vector2" %}{% set ns.move_map = m.name %}{% set ns.move_action = a.name %}{% endif %}{% endfor %}{% endfor %}
+    // ── Canonical IInputReader contract ──────────────────────────────────────
+    // Declared for EVERY variant so any controller can consume any reader
+    // without a CS0535 mismatch. Bound below from a same-named action when one
+    // exists; OnMove additionally aliases the primary stick/pad.
+#pragma warning disable 67  // canonical contract — a given variant may not bind all four
+    public event Action<Vector2> OnMove;
+    public event Action          OnJump;
+    public event Action          OnSprint;
+    public event Action          OnSprintReleased;
+#pragma warning restore 67
+
+    // ── Variant-specific events ({{ variant }}) ──────────────────────────────
 {% for m in s.maps %}
 {% for a in m.actions %}
 {% if a.control_type == "Vector2" %}
+{% if "On" ~ a.name not in canon %}
     public event Action<Vector2> On{{ a.name }};
+{% endif %}
 {% elif a.control_type == "Axis" %}
+{% if "On" ~ a.name not in canon %}
     public event Action<float> On{{ a.name }};
+{% endif %}
 {% else %}
+{% if "On" ~ a.name not in canon %}
     public event Action On{{ a.name }};
+{% endif %}
+{% if "On" ~ a.name ~ "Released" not in canon %}
     public event Action On{{ a.name }}Released;
+{% endif %}
 {% endif %}
 {% endfor %}
 {% endfor %}
@@ -47,6 +70,11 @@ public class {{ s.name }}InputReader : ScriptableObject, IInputReader
 {% if a.control_type == "Vector2" %}
                     act.performed += ctx => On{{ a.name }}?.Invoke(ctx.ReadValue<Vector2>());
                     act.canceled  += ctx => On{{ a.name }}?.Invoke(Vector2.zero);
+{% if m.name == ns.move_map and a.name == ns.move_action and a.name != "Move" %}
+                    // Alias the primary stick/pad onto the canonical OnMove contract.
+                    act.performed += ctx => OnMove?.Invoke(ctx.ReadValue<Vector2>());
+                    act.canceled  += ctx => OnMove?.Invoke(Vector2.zero);
+{% endif %}
 {% elif a.control_type == "Axis" %}
                     act.performed += ctx => On{{ a.name }}?.Invoke(ctx.ReadValue<float>());
                     act.canceled  += ctx => On{{ a.name }}?.Invoke(0f);

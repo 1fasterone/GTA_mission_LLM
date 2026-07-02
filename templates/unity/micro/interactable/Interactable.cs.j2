@@ -5,10 +5,15 @@
 using System;
 using UnityEngine;
 {{ inject.usings(s) }}
+{% set is2d = s.meta.get("game_type") in ("2D", "2.5D") %}
 
 /// <summary>{{ s.description }}
 /// Subscribe to OnPrompt (show/hide a HUD prompt) and OnInteract for behaviour.</summary>
+{% if is2d %}
+[RequireComponent(typeof(Collider2D))]
+{% else %}
 [RequireComponent(typeof(Collider))]
+{% endif %}
 public class {{ s.name }} : MonoBehaviour
 {
 {{ inject.fields(s) }}
@@ -30,6 +35,21 @@ public class {{ s.name }} : MonoBehaviour
     private bool _used;
 
 {% if s.detection == "trigger" %}
+{% if is2d %}
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        if (!other.CompareTag(playerTag)) return;
+        _inRange = true;
+        if (!_used) OnPrompt?.Invoke(promptText);
+    }
+
+    private void OnTriggerExit2D(Collider2D other)
+    {
+        if (!other.CompareTag(playerTag)) return;
+        _inRange = false;
+        OnPrompt?.Invoke("");
+    }
+{% else %}
     private void OnTriggerEnter(Collider other)
     {
         if (!other.CompareTag(playerTag)) return;
@@ -43,14 +63,23 @@ public class {{ s.name }} : MonoBehaviour
         _inRange = false;
         OnPrompt?.Invoke("");
     }
+{% endif %}
 {% else %}
     private void UpdateRaycast()
     {
         var cam = Camera.main;
         bool hitMe = false;
+{% if is2d %}
+        if (cam != null)
+        {
+            var hit = Physics2D.Raycast(cam.transform.position, cam.transform.forward, radius + 2f);
+            hitMe = hit.collider != null && hit.collider.gameObject == gameObject;
+        }
+{% else %}
         if (cam != null && Physics.Raycast(cam.transform.position, cam.transform.forward,
                                            out var hit, radius + 2f))
             hitMe = hit.collider != null && hit.collider.gameObject == gameObject;
+{% endif %}
 
         if (hitMe && !_inRange) { _inRange = true; if (!_used) OnPrompt?.Invoke(promptText); }
         else if (!hitMe && _inRange) { _inRange = false; OnPrompt?.Invoke(""); }

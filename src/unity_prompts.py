@@ -78,7 +78,10 @@ VISUAL STYLES — use only one of:
 
 FEATURE FLAGS — use only these (as many as apply):
   physics | ui_toolkit | input_system | cinemachine | tilemaps | navmesh |
-  audio | networking | addressables | localization | timeline | animation_rigging
+  audio | networking | addressables | localization | timeline | animation_rigging |
+  inventory | dialogue | npc_dialog | vfx | scene_transition
+  (npc_dialog = spoken/voiced NPCs; vfx = particle/impact effects;
+   scene_transition = multi-scene projects that fade/load between scenes)
 
 SCRIPT TYPES — use only one per script:
   player | camera | game_manager | enemy | collectible | ui_manager | audio_manager | health |
@@ -114,6 +117,16 @@ CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
   System.Collections.Generic) — never type names like AudioSource or ParticleSystem.
   Reference other scripts via GetComponent / FindFirstObjectByType. Keep fragments under
   ~40 lines each. C# only — never Python.
+  extra_fields TYPES MUST BE DATA ONLY — a Unity/C# builtin (float, int, bool, string,
+  Vector3, GameObject, Transform, List<T> of those, etc.) or, at most, a bare data name
+  with NO methods of its own (an unrecognized type name auto-generates an EMPTY stub
+  class purely to avoid a compile error — it has no members). NEVER invent a type and
+  then call methods on it (currentState.Update(), enemy.NextState(), item.Use()) or
+  assign it an enum-like bare-word default (= Idle, = Attacking) — nothing you didn't
+  spell out in extra_fields/extra_methods exists, so both fail compilation. If a prompt
+  wants a state machine (idle/walk/attack/etc.), do NOT model it as a custom object
+  with behavior — use a plain string or int field ("state") and drive transitions with
+  if/else directly inside update_extra.
 
 ENTITIES — the actual objects in the scene, built from primitives so the concept SHOWS UP.
   Populate one group per distinct set of objects the prompt implies. Fields:
@@ -219,6 +232,31 @@ OUTPUT this exact JSON structure, fully populated:
 }}
 
 Output ONLY the JSON. No other text."""
+
+
+# Appended to the schema-fill prompt ONLY in --compose mode, where the micro
+# subsystems and the GameContext locator exist. Steers custom-script fragments to
+# reach other subsystems through GameContext instead of inventing singletons
+# (which the deterministic fixer would otherwise strip).
+GAMECONTEXT_SCHEMA_GUIDANCE = """
+
+  REACHING OTHER SUBSYSTEMS — this project is composed, so the player/camera/HUD/
+  audio/save systems already exist as separate components. From any custom-script
+  fragment, reach another subsystem through the shared locator (never invent a
+  singleton like FooManager.Instance — only these two access points exist):
+      GameContext.Instance.Get<T>()   // cached; may return null — ALWAYS null-check
+      GameManager.Instance            // game state / score / lives
+  Examples:
+      var hp = GameContext.Instance.Get<PlayerHealth>(); if (hp != null) hp.TakeDamage(10f);
+      GameContext.Instance.Get<GameManager>()?.AddScore(100);
+  Composed subsystem types you may Get<T>(): PlayerController, PlayerCamera,
+  PlayerHealth, PlayerAnimator, PlayerFSM, GameHud, PauseMenu, SaveSystem,
+  PhysicsBody, WorldInteractable, SceneTrigger (plus GameManager).
+  A PLAYER STATE MACHINE ALREADY EXISTS (PlayerFSM) — never author your own custom
+  FSM/state-object script for player state. Drive its state via
+  GameContext.Instance.Get<PlayerFSM>() instead of inventing a ClimbState/EnemyState-
+  style type with its own Update()/NextState() methods (those methods don't exist
+  anywhere and fail compilation — see extra_fields rule above)."""
 
 # ── STEP 5: Schema validation ─────────────────────────────────────────────────
 

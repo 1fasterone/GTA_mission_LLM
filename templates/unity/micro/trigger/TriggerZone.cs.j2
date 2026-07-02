@@ -6,6 +6,7 @@ using System.Collections;
 {% for u in s.extra_usings %}
 using {{ u }};
 {% endfor %}
+{% set is2d = s.meta.get("game_type") in ("2D", "2.5D") %}
 
 /// <summary>{{ s.description }}</summary>
 [AddComponentMenu("Game/Triggers/{{ s.name }}")]
@@ -72,16 +73,30 @@ public class {{ s.name }} : MonoBehaviour
 
     // ── Collision / overlap (zone variants) ───────────────────────────────────
 {% if variant == "zone_enter" or variant == "compound" %}
+{% if is2d %}
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        if (other.CompareTag(targetTag)) Activate();
+    }
+{% else %}
     private void OnTriggerEnter(Collider other)
     {
         if (other.CompareTag(targetTag)) Activate();
     }
 {% endif %}
+{% endif %}
 {% if variant == "zone_exit" %}
+{% if is2d %}
+    private void OnTriggerExit2D(Collider2D other)
+    {
+        if (other.CompareTag(targetTag)) Activate();
+    }
+{% else %}
     private void OnTriggerExit(Collider other)
     {
         if (other.CompareTag(targetTag)) Activate();
     }
+{% endif %}
 {% endif %}
 
     // ── Activation ────────────────────────────────────────────────────────────
@@ -136,8 +151,13 @@ public class {{ s.name }} : MonoBehaviour
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = new Color(0f, 0.8f, 1f, 0.2f);
+{% if is2d %}
+        if (TryGetComponent<Collider2D>(out var col))
+            Gizmos.DrawWireCube(col.bounds.center, col.bounds.size);
+{% else %}
         if (TryGetComponent<Collider>(out var col))
             Gizmos.DrawWireCube(col.bounds.center, col.bounds.size);
+{% endif %}
     }
 {% endif %}
 }

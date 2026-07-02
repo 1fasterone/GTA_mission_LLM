@@ -5,9 +5,7 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.SceneManagement;
-{% if variant == "loading_bar" %}
 using UnityEngine.UI;
-{% endif %}
 {{ inject.usings(s) }}
 
 /// <summary>{{ s.description }} Call Go() to start the transition.</summary>
@@ -57,7 +55,9 @@ public class {{ s.name }} : MonoBehaviour
 
     private IEnumerator Run()
     {
+{% if variant != "async_additive" %}
         var mode = LoadSceneMode.{{ "Additive" if s.load_mode == "additive" else "Single" }};
+{% endif %}
 {% if variant in ("fade", "trigger_door") %}
         yield return Fade(0f, 1f);
         SceneManager.LoadScene(targetScene, mode);

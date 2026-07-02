@@ -6,7 +6,9 @@ No LLM involved — deterministic from schema.
 
 import hashlib
 import json
+import logging
 import math
+import os
 import re
 from pathlib import Path
 
@@ -16,6 +18,8 @@ from .unity_schema import ColorPalette, ProceduralMesh, UnitySchema, UnityScript
 from .unity_asset_resolver import resolve_assets
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .micro.code_fields import lint_extensible
+
+_log = logging.getLogger(__name__)
 
 
 def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> dict:
@@ -192,14 +196,13 @@ def _extract_base_type(type_str: str) -> str:
     return t.split("<")[0].strip()
 
 
-def _collect_custom_type_stubs(extra_fields: list) -> list[str]:
-    """Return [System.Serializable] stub strings for LLM-invented types in extra_fields.
-
-    Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are skipped, as are
-    Manager/System/Controller singletons (those are expected to be separate scripts).
-    """
+def _stub_type_names(extra_fields: list) -> list[str]:
+    """Return base type names for LLM-invented types in extra_fields (first-seen
+    order). Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are excluded,
+    as are Manager/System/Controller/Handler singletons (those are expected to
+    be separate scripts, not local stub classes)."""
     seen: set[str] = set()
-    stubs: list[str] = []
+    names: list[str] = []
     for f in extra_fields:
         base = _extract_base_type(getattr(f, "type", "") or "")
         if (
@@ -215,14 +218,149 @@ def _collect_custom_type_stubs(extra_fields: list) -> list[str]:
         ):
             continue
         seen.add(base)
-        stubs.append(
-            f"[System.Serializable]\n"
-            f"public class {base}\n"
-            f"{{\n"
-            f"    // Auto-generated stub — add fields as needed\n"
-            f"}}\n"
-        )
-    return stubs
+        names.append(base)
+    return names
+
+
+def _collect_custom_type_stubs(extra_fields: list) -> list[str]:
+    """Return [System.Serializable] stub strings for LLM-invented types in extra_fields.
+
+    Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are skipped, as are
+    Manager/System/Controller singletons (those are expected to be separate scripts).
+    """
+    return [
+        f"[System.Serializable]\n"
+        f"public class {name}\n"
+        f"{{\n"
+        f"    // Auto-generated stub — add fields as needed\n"
+        f"}}\n"
+        for name in _stub_type_names(extra_fields)
+    ]
+
+
+def _sanitize_stub_type_usage(script: UnityScript) -> None:
+    """LLM-invented field types get an EMPTY auto-generated stub class (see
+    _collect_custom_type_stubs) — that alone prevents CS0246 (type not found),
+    but the LLM's own code fragments routinely still call methods on that field
+    (e.g. a hand-rolled polymorphic FSM state object with .Update()/.NextState())
+    or assign it an invented enum-like default (e.g. `= Idle`) — both guaranteed
+    CS1061 / CS0103 since the stub has zero members (hit live: ClimbStateFSM.cs,
+    2x CS0103 + 3x CS1061). Deterministically strip any statement that calls a
+    method on a stub-typed field (mirrors _sanitize_singleton_calls' line-level
+    strip for undefined singletons) and clear an unresolvable default so the
+    field just defaults to null — the same "prefer inert over broken" contract
+    _collect_custom_type_stubs already uses for the type itself."""
+    stub_names = set(_stub_type_names(script.extra_fields))
+    if not stub_names:
+        return
+
+    _bare_ident_re = re.compile(r"^[A-Za-z_]\w*$")
+    stub_fields: set[str] = set()
+    for f in script.extra_fields:
+        if _extract_base_type(f.type or "") not in stub_names:
+            continue
+        stub_fields.add(f.name)
+        default = (f.default or "").strip()
+        if default and default not in ("null", "true", "false") and _bare_ident_re.match(default):
+            f.default = None   # e.g. `= Idle` — Idle is never declared anywhere
+
+    if not stub_fields:
+        return
+    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\.\s*\w+\s*\(")
+
+    def _strip(body: str) -> str:
+        if not body:
+            return body
+        return "".join(line for line in body.splitlines(keepends=True) if not call_re.search(line))
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+# Verified public API of composed micro classes (--compose mode) a custom script
+# might reach via GetComponent<T>()/GameContext.Instance.Get<T>(). Maximal union
+# across every variant of that kind — a member valid for one variant but not the
+# active one survives unstripped (acceptable false-negative); a member that is
+# never real on ANY variant (the actual failure mode) never does. Extend this
+# table as more of these calls get hit live; an unlisted composed class is left
+# untouched (nothing to validate against).
+_COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
+    # Controller.cs.j2 PUBLIC PROPERTIES section.
+    "PlayerController": frozenset({
+        "IsGrounded", "SpeedKmh", "ForwardSpeed", "SteerNormalized",
+        "ThrottleNormalized", "WheelRadius", "ThrottleLevel", "AirSpeedKmh",
+        "IsBlocking", "IsInvincible", "IsAiming", "CurrentAmmo", "IsReloading",
+    }),
+    # Health.cs.j2 public surface — Die() is `private void Die()`, only reachable
+    # indirectly via TakeDamage driving _current to 0 (hit live: OxygenManager.cs
+    # called GameContext.Instance.Get<PlayerHealth>().Die() — CS0122).
+    "PlayerHealth": frozenset({
+        "CurrentHealth", "MaxHealth", "TakeDamage", "Heal",
+        "OnHealthChanged", "OnDamaged", "OnHealed", "OnDeath",
+    }),
+}
+
+# How a custom script reaches a composed micro class instance: a MonoBehaviour
+# sibling via GetComponent<T>(), or any composed system via the GameContext
+# service locator (the --compose bridge micros<->prompt-authored scripts use).
+_COMPOSED_GETTER_ALT = r"(?:GameContext\.Instance\.Get|GetComponent)"
+
+
+def _sanitize_composed_component_calls(script: UnityScript, composed_units: list | None) -> None:
+    """Strip calls to a composed micro class whose verified public API doesn't
+    include the called member — the LLM assumes a method that was never
+    authored on the template. Hit live twice:
+      - O2Manager.cs: GetComponent<PlayerController>()?.GetSpeed() — doesn't
+        exist, Controller.cs.j2 exposes ForwardSpeed/SpeedKmh instead (CS1061).
+      - OxygenManager.cs: `var context = GameContext.Instance.Get<PlayerHealth>();
+        ... context.Die();` — Die() is private on Health.cs.j2, only reachable
+        via TakeDamage (CS0122). This is the chained-getter call PLUS the
+        assign-to-a-variable-then-call-later shape, both handled below.
+    Only checked for classes with a verified entry in _COMPOSED_CLASS_API;
+    anything else is left alone rather than risk a false strip."""
+    if not composed_units:
+        return
+    known = {u.class_name for u in composed_units if u.class_name in _COMPOSED_CLASS_API}
+    if not known:
+        return
+    names_alt = "|".join(re.escape(n) for n in known)
+    chained_call_re = re.compile(
+        _COMPOSED_GETTER_ALT + r"<(" + names_alt + r")>\(\)\s*\??\.\s*(\w+)"
+    )
+    var_decl_re = re.compile(
+        r"\b\w+\s+(\w+)\s*=\s*" + _COMPOSED_GETTER_ALT + r"<(" + names_alt + r")>\(\)"
+    )
+
+    def _strip(body: str) -> str:
+        if not body:
+            return body
+        # Variable bindings (`var context = GameContext.Instance.Get<T>();`) can
+        # be declared on one line and used on a later one, so resolve them
+        # against the whole body before scanning line-by-line.
+        var_types = {m.group(1): m.group(2) for m in var_decl_re.finditer(body)}
+        var_call_re = None
+        if var_types:
+            var_alt = "|".join(re.escape(v) for v in var_types)
+            var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)\s*\(")
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(m.group(2) not in _COMPOSED_CLASS_API[m.group(1)]
+                      for m in chained_call_re.finditer(line))
+            if not bad and var_call_re:
+                bad = any(m.group(2) not in _COMPOSED_CLASS_API[var_types[m.group(1)]]
+                          for m in var_call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
 
 
 # ── Visual style -> lighting config ───────────────────────────────────────────
@@ -891,6 +1029,14 @@ class UnityProjectGenerator:
             undefined     = StrictUndefined,
             trim_blocks   = True,
             lstrip_blocks = True,
+            # Jinja's default strips the template source's own trailing newline.
+            # Unity's native YAML-ish asset format (.prefab/.unity/.asset) is NOT
+            # lenient about a missing final newline — its parser reads past EOF
+            # looking for the value after the last key and reports a confused
+            # "Parser Failure ... Expect ':'" one line past the real content
+            # (hit live: StickmanPlayer.prefab). C# scripts tolerate it, but
+            # every file this env renders shares one setting, so keep it on.
+            keep_trailing_newline = True,
         )
         self.template_dir = tpl_path
 
@@ -901,7 +1047,8 @@ class UnityProjectGenerator:
                  kenney_source_dir: str | None = None,
                  composed_units: list | None = None,
                  model_source_dir: str | None = None,
-                 model_overrides: dict[str, str] | None = None) -> dict[str, str]:
+                 model_overrides: dict[str, str] | None = None,
+                 strict_assets: bool = False) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
         Caller writes the dict to disk.
@@ -923,6 +1070,10 @@ class UnityProjectGenerator:
             if s.type == "custom":
                 lint_extensible(s, reserved_fields=set(),
                                 template_usings={"UnityEngine"})
+                # Must run AFTER lint_extensible: it needs the final, cleaned
+                # extra_fields to know which field types are our own stubs.
+                _sanitize_stub_type_usage(s)
+                _sanitize_composed_component_calls(s, composed_units)
                 # A custom script can only attach to the Player if one exists.
                 if s.attach_to == "player" and not any(
                         x.type == "player" for x in schema.scripts):
@@ -958,20 +1109,69 @@ class UnityProjectGenerator:
         # Real models replace the primitive placeholders. Resolution is purely
         # what exists under Models/Defaults — missing files degrade to primitives.
         _override_kinds = set(model_overrides.keys()) if model_overrides else None
+        all_models = _apply_model_overrides(
+            resolve_default_models(lookups_dir=lookups_dir,
+                                   model_source_dir=model_source_dir),
+            model_overrides)
         used_models = models_for_schema(
-            schema,
-            _apply_model_overrides(
-                resolve_default_models(lookups_dir=lookups_dir,
-                                       model_source_dir=model_source_dir),
-                model_overrides),
-            composed_units,
-            override_kinds=_override_kinds,
-        )
-        # Resource path each entity group instantiates ("" = primitive).
-        entity_model_paths = {
-            e.name: used_models[e.kind].resource_path
-            for e in schema.entities if e.kind in used_models
-        }
+            schema, all_models, composed_units, override_kinds=_override_kinds)
+        # Resource path each entity group instantiates. An entity kind with no
+        # specific model falls back to a REAL default prop — never a primitive
+        # (the no-generic-defaults doctrine). The fallback is logged, not silent,
+        # so a fitting model can be added. assets.strict hard-fails only when there
+        # is no real model AT ALL (the asset library is missing/empty).
+        prop_fallback = all_models.get("prop") or next(iter(all_models.values()), None)
+        entity_model_paths: dict[str, str] = {}
+        _defaulted: list[tuple[str, str]] = []
+        for e in schema.entities:
+            if e.kind in used_models:
+                entity_model_paths[e.name] = used_models[e.kind].resource_path
+            elif prop_fallback is not None:
+                used_models.setdefault("prop", prop_fallback)  # ensure it is copied + meta'd
+                entity_model_paths[e.name] = prop_fallback.resource_path
+                _defaulted.append((e.name, e.kind))
+        if _defaulted:
+            _log.warning(
+                "[assets] no specific model for kind(s) %s — using default prop '%s'. "
+                "Add a mapping in lookups/unity/default_models.json for a better fit.",
+                sorted({k for _, k in _defaulted}),
+                prop_fallback.resource_path if prop_fallback else "?")
+        if strict_assets:
+            missing = [(e.name, e.kind) for e in schema.entities
+                       if not entity_model_paths.get(e.name)]
+            if missing:
+                kinds = sorted({k for _, k in missing})
+                raise ValueError(
+                    f"[assets.strict] no real model — not even a default prop — for "
+                    f"entity kind(s) {kinds} (entities {[n for n, _ in missing]}). The "
+                    "Models/Defaults asset library is missing/empty; populate it "
+                    "(see Models/Defaults/README.md) or set assets.strict: false."
+                )
+        # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
+        # two independent cases:
+        #  1. 2D games render in 2.5D (orthographic) — never import a Humanoid
+        #     avatar there regardless of the model's actual rig quality.
+        #  2. The STATIC default pack's player/enemy FBX placeholders are
+        #     confirmed to carry NO real humanoid skeleton at all (verified:
+        #     zero Hips/Spine/UpperLeg/LowerLeg bone names in
+        #     Models/Defaults/{player,enemy}/*.fbx) despite the catalog
+        #     labeling them `rig: "humanoid"` — forcing Humanoid on them always
+        #     throws "Invalid Avatar Rig Configuration: Required human bone
+        #     'LeftLowerLeg' not found" (hit live on a VR project — the crash
+        #     is NOT 2D-specific, gating on game_type alone was too narrow).
+        #     Only a genuine Blender-built override (_apply_model_overrides,
+        #     kind in model_overrides) actually ships a real named skeleton, so
+        #     only THAT case is trusted to keep Humanoid.
+        # This MUST run after the entity-model-path resolution above: the
+        # prop-fallback loop can still insert a fresh used_models entry
+        # (setdefault("prop", ...)), and any humanoid model added that late
+        # would otherwise skip the downgrade.
+        _blender_kinds = set(model_overrides.keys()) if model_overrides else set()
+        _is_2d = schema.game_type in ("2D", "2.5D")
+        for _kind, _m in used_models.items():
+            if _m.rig == "humanoid" and (_is_2d or _kind not in _blender_kinds):
+                _m.rig = "generic"
+                _m.clips = {}
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
         palette   = schema.color_palette  # always non-None after model_validator
@@ -1010,6 +1210,11 @@ class UnityProjectGenerator:
         base_ctx = {
             "project_name":      pn,
             "company_name":      schema.company_name,
+            "description":       schema.description,
+            # Which subsystem kinds the composer owns — lets IR-driven scripts
+            # (e.g. SceneSetup) defer UI to the GameHud/PauseMenu micros instead
+            # of building a duplicate generic HUD.
+            "composed_kinds":    sorted({u.kind for u in (composed_units or [])}),
             "game_type":         schema.game_type,
             "platform":          schema.platform,
             "render_pipeline":   schema.render_pipeline,
@@ -1453,7 +1658,8 @@ class UnityProjectGenerator:
               kenney_source_dir: str | None = None,
               composed_units: list | None = None,
               model_source_dir: str | None = None,
-              model_overrides: dict[str, str] | None = None) -> tuple[Path, int]:
+              model_overrides: dict[str, str] | None = None,
+              strict_assets: bool = False) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
         _override_kinds = set(model_overrides.keys()) if model_overrides else None
         files = self.generate(schema, manifest_deps,
@@ -1461,15 +1667,28 @@ class UnityProjectGenerator:
                               kenney_source_dir=kenney_source_dir,
                               composed_units=composed_units,
                               model_source_dir=model_source_dir,
-                              model_overrides=model_overrides)
+                              model_overrides=model_overrides,
+                              strict_assets=strict_assets)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.
         for d in {(root / p).parent for p in files}:
             d.mkdir(parents=True, exist_ok=True)
 
+        # Regenerating into a project the Unity Editor already has open (the
+        # normal "live Unity" test loop) races the Editor's file watcher: a
+        # plain write_text() truncates the file to 0 bytes before writing the
+        # new content, and a reimport triggered inside that window sees a
+        # truncated/torn file — the exact shape of "Parser Failure ... Expect
+        # ':' between key and value" and "same file identifier" duplicate-fileID
+        # errors. Write to a sibling temp file and os.replace() into place so
+        # the Editor only ever observes the old complete file or the new
+        # complete file, never a partial one.
         for rel_path, content in files.items():
-            (root / rel_path).write_text(content, encoding="utf-8")
+            dest = root / rel_path
+            tmp  = dest.with_name(dest.name + ".tmp")
+            tmp.write_text(content, encoding="utf-8")
+            os.replace(tmp, dest)
 
         # Binary model copies (generate() emitted the matching .meta files —
         # same resolution, so the pair always lines up).
@@ -1533,10 +1752,25 @@ class UnityProjectGenerator:
             if stubs:
                 stub_classes = "\n".join(stubs) + "\n"
 
+        # Auto-declare a Rigidbody when the LLM-authored update/awake/fixed code
+        # references `rb` but never declares it. Without this the raw fragment
+        # (e.g. `rb.AddForce(...)`) is CS0103 and breaks the whole assembly.
+        needs_rigidbody = False
+        if script.type == "custom":
+            blob = " ".join(filter(None, [
+                getattr(script, "awake_extra", ""),
+                getattr(script, "update_extra", ""),
+                getattr(script, "fixed_update_extra", ""),
+            ]))
+            declared = {(getattr(f, "name", "") or "") for f in (script.extra_fields or [])}
+            if re.search(r"\brb\b", blob) and "rb" not in declared:
+                needs_rigidbody = True
+
         if tpl_file and (self.template_dir / "scripts" / tpl_file).exists():
             content = self._render(tpl_file, {**base_ctx, "script": script,
                                               "atom_body": atom_body,
-                                              "stub_classes": stub_classes})
+                                              "stub_classes": stub_classes,
+                                              "needs_rigidbody": needs_rigidbody})
         else:
             content = (
                 f"// Auto-generated stub — {script.name}\n"

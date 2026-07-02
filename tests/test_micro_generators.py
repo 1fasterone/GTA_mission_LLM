@@ -22,6 +22,7 @@ from src.micro.menu           import MenuPipeline,        MenuSchema
 from src.micro.interactable   import InteractablePipeline, InteractableSchema
 from src.micro.transition     import TransitionPipeline,  TransitionSchema
 from src.micro.health         import HealthPipeline,       HealthSchema
+from src.micro.trigger        import TriggerPipeline,      TriggerSchema
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -52,6 +53,8 @@ def test_registry_has_all_known():
         "statemachine", "trigger", "animator",
         # NPC dialog + Higgs Audio v2 TTS
         "npc_dialog",
+        # VFX — particle systems, sequences, screen effects, impact bursts
+        "vfx",
     }
 
 
@@ -181,6 +184,67 @@ def test_controller_renders_every_variant(tmp_path, dummy_config, variant):
     assert f"Variant: {variant}" in cs
 
 
+@pytest.mark.parametrize("variant", ["swimming", "flying"])
+def test_aquatic_aerial_controllers_drop_ground_check(tmp_path, dummy_config, variant):
+    """Fix #5: swimming/flying have no ground, so they must NOT emit the walker
+    ground-check scaffolding (groundRayLen / CheckGrounded3D / IsGrounded)."""
+    p = ControllerPipeline(dummy_config)
+    s = p.default_fix(ControllerSchema(name="Aqua", variant=variant), variant)
+    cs = (lambda: (p.write_files(s, variant, tmp_path),
+                   (tmp_path / "Scripts" / "Aqua.cs").read_text(encoding="utf-8"))[1])()
+    assert "IsGrounded" not in cs
+    assert "CheckGrounded3D" not in cs
+    assert "groundRayLen" not in cs
+    assert "_grounded" not in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_grounded_controllers_keep_ground_check(tmp_path, dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = p.default_fix(ControllerSchema(name="Walker", variant="third_person",
+                                       abilities=["jump", "sprint"]), "third_person")
+    p.write_files(s, "third_person", tmp_path)
+    cs = (tmp_path / "Scripts" / "Walker.cs").read_text(encoding="utf-8")
+    assert "IsGrounded" in cs and "CheckGrounded3D" in cs
+
+
+@pytest.mark.parametrize("variant", ["humanoid", "vehicle", "creature", "object", "ui"])
+def test_animator_declares_backing_fields_and_setters(tmp_path, dummy_config, variant):
+    """Regression: default animator params must declare a backing field + public
+    Set<Param>() setter (so SetGrounded etc. resolve), with no undeclared _rb/_cc."""
+    from src.micro import AnimatorPipeline, AnimatorSchema
+    p = AnimatorPipeline(dummy_config)
+    s = p.default_fix(AnimatorSchema(name="Anim", variant=variant), variant)
+    p.write_files(s, variant, tmp_path)
+    cs = (tmp_path / "Scripts" / "Anim.cs").read_text(encoding="utf-8")
+    assert "_rb" not in cs and "_cc" not in cs
+    for prm in s.params:
+        if prm.param_type != "trigger" and not prm.driven_by:
+            assert f"_{prm.name.lower()}" in cs and f"Set{prm.name}(" in cs
+    # Wiring contract: GameWiring's grounded bridge calls animator.SetGrounded for
+    # EVERY variant (CS1061 hit live on the vehicle animator in GravityDrift).
+    assert cs.count("public void SetGrounded(") == 1
+    assert cs.count("{") == cs.count("}")
+
+
+@pytest.mark.parametrize("variant,fields", [
+    ("enemy_fsm",  ["attackRange", "_distToPlayer", "_seesPlayer", "_heardNoise", "_alertTimer", "_lostTimer"]),
+    ("game_fsm",   ["_startPressed", "_pausePressed", "_playerDead", "_restartPressed"]),
+    ("object_fsm", ["_triggered", "_activeDone", "_cooldownDone", "_hp"]),
+])
+def test_statemachine_declares_default_condition_fields(tmp_path, dummy_config, variant, fields):
+    """Regression: default FSM transition conditions reference fields that must be
+    declared, or the generated FSM is CS0103."""
+    from src.micro import StateMachinePipeline, StateMachineSchema
+    p = StateMachinePipeline(dummy_config)
+    s = p.default_fix(StateMachineSchema(name="Fsm", variant=variant), variant)
+    p.write_files(s, variant, tmp_path)
+    cs = (tmp_path / "Scripts" / "Fsm.cs").read_text(encoding="utf-8")
+    for f in fields:
+        assert f in cs, f"{variant} missing condition field {f}"
+    assert cs.count("{") == cs.count("}")
+
+
 @pytest.mark.parametrize("variant", CameraRigPipeline.variants)
 def test_camera_renders_every_variant(tmp_path, dummy_config, variant):
     p = CameraRigPipeline(dummy_config)
@@ -250,6 +314,15 @@ def test_input_renders_every_variant(tmp_path, dummy_config, variant):
     reader = (tmp_path / "Scripts" / "TestInputInputReader.cs").read_text(encoding="utf-8")
     assert "[CreateAssetMenu" in reader
     assert "public class TestInputInputReader" in reader
+    # CS0535 regression: EVERY variant must satisfy the IInputReader contract,
+    # not just keyboard_mouse. The class claims `: IInputReader`, so it must
+    # declare all four canonical members or Unity won't compile.
+    assert ": ScriptableObject, IInputReader" in reader
+    for member in ("OnMove", "OnJump", "OnSprint", "OnSprintReleased"):
+        assert f" {member};" in reader, f"{variant} reader missing {member}"
+    # No duplicate event declarations (canonical vs variant-specific collision).
+    assert reader.count("public event Action<Vector2> OnMove;") == 1
+    assert reader.count("public event Action          OnJump;") == 1
 
 
 def test_input_typed_wrapper_optional(tmp_path, dummy_config):
@@ -755,6 +828,54 @@ def test_interactable_renders_every_variant(tmp_path, dummy_config, variant):
         assert "OnToggled" in cs
 
 
+# ── 2D-aware trigger detection (Collider2D, not the 3D Physics API) ────────────
+# A Collider2D never raises OnTriggerEnter(Collider) — only *2D overloads fire on
+# it — so a 2D project must get RequireComponent(Collider2D) + OnTriggerEnter2D.
+
+def test_interactable_2d_uses_collider2d_api(tmp_path, dummy_config):
+    p = InteractablePipeline(dummy_config)
+    s = p.default_fix(
+        InteractableSchema(name="TestIt", variant="pickup", detection="trigger",
+                           meta={"game_type": "2D"}),
+        "pickup")
+    p.write_files(s, "pickup", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestIt.cs").read_text(encoding="utf-8")
+    assert "RequireComponent(typeof(Collider2D))" in cs
+    assert "OnTriggerEnter2D(Collider2D other)" in cs
+    assert "RequireComponent(typeof(Collider))" not in cs
+    assert "OnTriggerEnter(Collider other)" not in cs
+
+
+def test_interactable_3d_still_uses_collider_api(tmp_path, dummy_config):
+    p = InteractablePipeline(dummy_config)
+    s = p.default_fix(InteractableSchema(name="TestIt", variant="pickup", detection="trigger"), "pickup")
+    p.write_files(s, "pickup", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestIt.cs").read_text(encoding="utf-8")
+    assert "RequireComponent(typeof(Collider))" in cs
+    assert "OnTriggerEnter(Collider other)" in cs
+    assert "OnTriggerEnter2D" not in cs
+
+
+def test_trigger_zone_enter_2d_uses_collider2d_api(tmp_path, dummy_config):
+    p = TriggerPipeline(dummy_config)
+    s = p.default_fix(
+        TriggerSchema(name="TestZone", variant="zone_enter", meta={"game_type": "2.5D"}),
+        "zone_enter")
+    p.write_files(s, "zone_enter", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestZone.cs").read_text(encoding="utf-8")
+    assert "OnTriggerEnter2D(Collider2D other)" in cs
+    assert "OnTriggerEnter(Collider other)" not in cs
+
+
+def test_trigger_zone_enter_3d_still_uses_collider_api(tmp_path, dummy_config):
+    p = TriggerPipeline(dummy_config)
+    s = p.default_fix(TriggerSchema(name="TestZone", variant="zone_enter"), "zone_enter")
+    p.write_files(s, "zone_enter", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestZone.cs").read_text(encoding="utf-8")
+    assert "OnTriggerEnter(Collider other)" in cs
+    assert "OnTriggerEnter2D" not in cs
+
+
 def test_transition_schema_clamp():
     assert TransitionSchema(name="X", variant="weird").variant == "fade"
 
@@ -909,6 +1030,31 @@ class TestUsingHardening:
         lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"})
         assert "System.Collections.Generic" in s.extra_usings
         assert "UnityEngine.InputSystem" in s.extra_usings
+
+    def test_bare_inputsystem_reference_gets_using(self):
+        # Regression (live Unity, AlpineClimber2D run): a custom script that
+        # calls InputSystem.GetDevice<Keyboard>() directly (not via
+        # Keyboard.current) is CS0103 "the name 'InputSystem' does not exist
+        # in the current context" without `using UnityEngine.InputSystem;`.
+        from src.unity_schema import UnityScript
+        from src.micro.code_fields import lint_extensible
+        s = UnityScript(name="SlopeDetector", type="custom", description="x",
+                        update_extra="var kb = InputSystem.GetDevice<Keyboard>();")
+        lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"})
+        assert "UnityEngine.InputSystem" in s.extra_usings
+
+    def test_spriteatlas_reference_gets_using_and_survives_allowlist(self):
+        # Regression (live Unity, AlpineClimber2D run): Resources.Load<SpriteAtlas>
+        # without `using UnityEngine.U2D;` is CS0311 (SpriteAtlas isn't found,
+        # so it doesn't resolve as a UnityEngine.Object). UnityEngine.U2D also
+        # has to be in _KNOWN_NAMESPACES or lint_usings' allowlist filter drops
+        # it right back out before the auto-add trigger even runs.
+        from src.unity_schema import UnityScript
+        from src.micro.code_fields import lint_extensible
+        s = UnityScript(name="SpriteAtlasLoader", type="custom", description="x",
+                        awake_extra="var atlas = Resources.Load<SpriteAtlas>(\"Atlas\");")
+        lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"})
+        assert "UnityEngine.U2D" in s.extra_usings
 
 
 class TestBehaviorReconciliation:

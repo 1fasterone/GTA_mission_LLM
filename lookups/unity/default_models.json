@@ -1,6 +1,6 @@
 {
   "_config": {
-    "comment": "kind -> default model + clips. Paths relative to unity_pipeline.model_source_dir (default Models/Defaults). Missing files degrade to primitives.",
+    "comment": "kind -> default model + clips. Paths relative to unity_pipeline.model_source_dir (default Models/Defaults). Only kinds with a real staged model are listed; an entity kind with no entry resolves via the Kenney/Blender path, else (strict mode) fails — it is never silently a primitive. Optional per-kind 'sprite_2d' (a Resources sprite path) may be added later for the true-2D pipeline.",
     "resources_root": "Models/Default"
   },
   "kinds": {
@@ -17,28 +17,24 @@
         "Crouch": "player/Crouch.fbx"
       }
     },
-    "enemy": {
-      "model": "enemy/Enemy.fbx",
-      "rig": "humanoid",
-      "scale": 1.0,
-      "clips": {}
-    },
-    "vehicle": {
-      "model": "vehicle/Car.fbx",
-      "rig": "none",
-      "scale": 1.0,
-      "clips": {}
-    },
-    "crowd": {
-      "model": "crowd/Spectator.fbx",
-      "rig": "none",
-      "scale": 1.0,
-      "clips": {}
-    },
-    "tree":     { "model": "props/Tree.fbx",     "rig": "none", "scale": 1.0, "clips": {} },
-    "rock":     { "model": "props/Rock.fbx",     "rig": "none", "scale": 1.0, "clips": {} },
-    "building": { "model": "props/Building.fbx", "rig": "none", "scale": 1.0, "clips": {} },
-    "barrier":  { "model": "props/Barrier.fbx",  "rig": "none", "scale": 1.0, "clips": {} },
-    "prop":     { "model": "props/Cone.fbx",     "rig": "none", "scale": 1.0, "clips": {} }
+    "enemy":    { "model": "enemy/Enemy.fbx",         "rig": "humanoid", "scale": 1.0, "clips": {} },
+    "vehicle":  { "model": "vehicle/Car.fbx",         "rig": "generic",  "scale": 1.0, "clips": {} },
+    "crowd":    { "model": "crowd/Spectator.fbx",     "rig": "generic",  "scale": 1.0, "clips": {} },
+    "road":     { "model": "road/Road.fbx",           "rig": "generic",  "scale": 1.0, "clips": {} },
+    "ground":   { "model": "road/Road.fbx",           "rig": "generic",  "scale": 1.0, "clips": {} },
+    "building": { "model": "building/Building.fbx",   "rig": "generic",  "scale": 1.0, "clips": {} },
+    "prop":     { "model": "prop/Prop.fbx",           "rig": "generic",  "scale": 1.0, "clips": {} },
+    "obstacle": { "model": "obstacle/Obstacle.fbx",   "rig": "generic",  "scale": 1.0, "clips": {} },
+    "ramp":        { "model": "ramp/Ramp.fbx",         "rig": "generic", "scale": 1.0, "clips": {} },
+    "rail":        { "model": "rail/Rail.fbx",         "rig": "generic", "scale": 1.0, "clips": {} },
+    "pickup":      { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
+    "collectible": { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
+    "coin":        { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
+    "gem":         { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
+    "item":        { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
+    "powerup":     { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
+    "tree":        { "model": "tree/Tree.fbx",         "rig": "generic", "scale": 1.0, "clips": {} },
+    "hazard":      { "model": "prop/Prop.fbx",         "rig": "generic", "scale": 1.0, "clips": {} },
+    "npc":         { "model": "crowd/Spectator.fbx",   "rig": "generic", "scale": 1.0, "clips": {} }
   }
 }

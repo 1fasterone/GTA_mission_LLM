@@ -24,10 +24,12 @@ from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
     UNITY_CONCEPT_SYSTEM, UNITY_CONCEPT_USER,
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
+    GAMECONTEXT_SCHEMA_GUIDANCE,
 )
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
 )
+from .unity_archetypes    import classify as classify_intent, apply_intent
 
 console = Console()
 
@@ -53,20 +55,28 @@ _GAME_MANAGER_API: frozenset[str] = frozenset({
     "RestartLevel", "LoadMainMenu",
 })
 
+# Public API of the composed GameContext locator (compose mode only). Custom
+# scripts reach other subsystems via GameContext.Instance.Get<T>().
+_GAME_CONTEXT_API: frozenset[str] = frozenset({"Instance", "Get"})
+
 # Regex to find "SomeName.Instance.Whatever" singleton calls in C# body strings.
 _SINGLETON_CALL_RE = re.compile(r"\b(\w+)\.Instance\.(\w+)\b")
 # Line-level split (keeps \n in place for the join).
 _LINE_RE = re.compile(r"[^\n]*\n?")
 
 
-def _sanitize_singleton_calls(body: str, known_classes: set[str]) -> str:
+def _sanitize_singleton_calls(body: str, known_classes: set[str],
+                              allow_context: bool = False) -> str:
     """Strip lines from a C# body string that call undefined singleton methods.
 
-    Two cases are handled:
+    Cases handled:
       1. ``UndefinedClass.Instance.Foo(...)`` where UndefinedClass has no script
          in the schema → entire line removed.
       2. ``GameManager.Instance.UndefinedProp(...)`` where the property/method is
          not part of the canonical GameManager template API → entire line removed.
+      3. ``GameContext.Instance.Get<...>(...)`` — kept ONLY when allow_context
+         (i.e. --compose, where the GameContext locator exists); otherwise the
+         locator is undefined and the line is removed.
 
     Only lines that exclusively contain the bad call are dropped; lines with
     multiple statements are stripped only of the offending statement.
@@ -76,6 +86,11 @@ def _sanitize_singleton_calls(body: str, known_classes: set[str]) -> str:
         keep = True
         for m in _SINGLETON_CALL_RE.finditer(line):
             cls, member = m.group(1), m.group(2)
+            if cls == "GameContext":
+                if allow_context and member in _GAME_CONTEXT_API:
+                    continue
+                keep = False
+                break
             if cls not in known_classes:
                 keep = False
                 break
@@ -100,7 +115,7 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
     return result
 
 
-def _programmatic_fix(schema: UnitySchema) -> UnitySchema:
+def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema:
     schema.project_name = _to_pascal(schema.project_name, "UnityProject")
     schema.company_name = re.sub(r"[/\\]", "_", schema.company_name).strip() or "MyCompany"
 
@@ -147,15 +162,16 @@ def _programmatic_fix(schema: UnitySchema) -> UnitySchema:
         if script.type != "custom":
             continue
         if script.update_extra:
-            script.update_extra = _sanitize_singleton_calls(script.update_extra, known_classes)
+            script.update_extra = _sanitize_singleton_calls(
+                script.update_extra, known_classes, allow_context=compose)
         if script.awake_extra:
-            script.awake_extra = _sanitize_singleton_calls(script.awake_extra, known_classes)
+            script.awake_extra = _sanitize_singleton_calls(
+                script.awake_extra, known_classes, allow_context=compose)
         if script.fixed_update_extra:
             script.fixed_update_extra = _sanitize_singleton_calls(
-                script.fixed_update_extra, known_classes
-            )
+                script.fixed_update_extra, known_classes, allow_context=compose)
         for m in script.extra_methods:
-            m.body = _sanitize_singleton_calls(m.body, known_classes)
+            m.body = _sanitize_singleton_calls(m.body, known_classes, allow_context=compose)
 
     return schema
 
@@ -407,6 +423,18 @@ class UnityPipeline:
         else:
             theme_block, schema_hints = "", ""
 
+        # Deterministic intent detection — game_type / locomotion / genre from
+        # keyword scoring, same weighting archetypes.py uses for GTA5 missions.
+        # No LLM involved; runs once against the raw prompt.
+        intent = classify_intent(user_prompt)
+        theme_block  += intent.concept_hint()
+        schema_hints += intent.structure_hint()
+        if intent.matched:
+            self._ok(
+                "Intent: "
+                + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched)
+            )
+
         # STEP 2 — concept ────────────────────────────────────────────────────
         self._step(2, "LLM generates project concept")
         concept = self.llm.chat(
@@ -421,9 +449,15 @@ class UnityPipeline:
 
         # STEP 3 — fill schema ────────────────────────────────────────────────
         self._step(3, "LLM fills project schema")
+        schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept, schema_hints=schema_hints)
+        # In --compose mode the micros + GameContext locator exist, so steer the
+        # LLM to reach subsystems via GameContext.Instance.Get<T>() instead of
+        # inventing singletons (which the fixer strips).
+        if compose:
+            schema_user += GAMECONTEXT_SCHEMA_GUIDANCE
         schema_raw = self.llm.chat(
             system      = UNITY_SCHEMA_FILL_SYSTEM,
-            user        = UNITY_SCHEMA_FILL_USER.format(concept=concept, schema_hints=schema_hints),
+            user        = schema_user,
             temperature = self.schema_temp,
             thinking    = False,
         )
@@ -433,6 +467,14 @@ class UnityPipeline:
         # Persist the LLM concept so the Library page can describe the project.
         schema.meta["concept"]     = concept
         schema.meta["user_prompt"] = user_prompt
+
+        # Deterministic override: if the classifier had a confident direct hit
+        # on the raw prompt and the LLM's own game_type/locomotion disagree,
+        # trust the keyword match over the LLM. genre is always stamped into
+        # schema.meta (default "universal") regardless of confidence.
+        for msg in apply_intent(schema, intent):
+            self._fix(msg)
+
         self._ok(
             f"Game: {schema.game_type}  Pipeline: {schema.render_pipeline}  "
             f"Platform: {schema.platform}  Version: {schema.unity_version}"
@@ -454,7 +496,7 @@ class UnityPipeline:
 
         # STEP 5 — validate + fix ─────────────────────────────────────────────
         self._step(5, "Programmatic fixer + consistency check")
-        schema = _programmatic_fix(schema)
+        schema = _programmatic_fix(schema, compose=compose)
         self._ok("Programmatic fixes applied (naming, scenes, script names)")
 
         schema, fix_msgs = _check_consistency(schema)
@@ -489,7 +531,8 @@ class UnityPipeline:
         composed_units = None
         subsystems = None
         if compose:
-            from .unity_compose import MicroComposer, subsystems_for, COVERED_SCRIPT_TYPES
+            from .unity_compose import (MicroComposer, subsystems_for,
+                                        COVERED_SCRIPT_TYPES, drop_owned_scripts)
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
@@ -500,16 +543,20 @@ class UnityPipeline:
             subsystems = subsystems_for(schema.game_type, schema.features,
                                         locomotion=schema.locomotion,
                                         capabilities=schema.capabilities,
-                                        user_prompt=user_prompt)
+                                        user_prompt=user_prompt,
+                                        scenes=schema.scenes,
+                                        entities=schema.entities,
+                                        scripts=schema.scripts,
+                                        genre=schema.meta.get("genre", "universal"))
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep
             # only the unique glue (GameManager, mesh/material, editor scripts).
             before = len(schema.scripts)
-            schema.scripts = [s for s in schema.scripts if s.type not in COVERED_SCRIPT_TYPES]
+            schema.scripts = drop_owned_scripts(schema.scripts, composed_units)
             if before != len(schema.scripts):
                 self._fix(f"composition owns {before - len(schema.scripts)} subsystem(s) — "
-                          "dropped duplicate built-in scripts")
+                          "dropped duplicate built-in/name-colliding scripts")
             # Contribute the micros' module deps (UI/UGUI/AI/...) so the composed
             # project compiles.
             manifest_deps = {**manifest_deps, **composer.module_deps(composed_units)}
@@ -517,7 +564,8 @@ class UnityPipeline:
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         project_root, file_count = self.generator.write(
             schema, manifest_deps, self.output_dir, composed_units=composed_units,
-            model_overrides=model_overrides)
+            model_overrides=model_overrides,
+            strict_assets=bool(self.config.get("assets", {}).get("strict", True)))
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
             if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):
@@ -545,8 +593,13 @@ class UnityPipeline:
                     self._ok("LM Studio model unloaded — VRAM available for Stable Audio 3")
                 else:
                     self._warn("LM Studio unload failed — SA3 may OOM; run: lms unload")
-            composer.emit(subsystems, project_root / "Assets")
-            self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes")
+            # Bridge the two islands: tell the composer whether a GameManager
+            # concept script survived so GameContext can wire micro↔concept seams.
+            has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
+            composer.emit(subsystems, project_root / "Assets",
+                          has_game_manager=has_game_manager)
+            self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes "
+                     "(GameContext bridges micros ↔ prompt-authored scripts)")
             # Overlay audio clips:
             #   1. Assets/Audio/           — canonical user-visible folder
             #   2. Assets/Resources/Audio/ — for Resources.LoadAll<AudioClip> at runtime
