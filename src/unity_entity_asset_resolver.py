@@ -31,10 +31,16 @@ from .unity_model_resolver import ResolvedModel
 
 _log = logging.getLogger(__name__)
 
-# Resources.Load root for catalog picks. Distinct from the default pack's
+# Resources.Load roots for catalog picks. Distinct from the default pack's
 # "Models/Default/" so the two never collide; 3 path parts keeps write()'s
-# secondary-copy prefix strip (Assets/Models/<Category>/<file>) working.
+# secondary-copy prefix strip (Assets/<root>/<Category>/<file>) working.
 _RES_ROOT = "Models/Kenney"
+_SPRITE_RES_ROOT = "Sprites/Kenney"
+
+# 2D games prefer sprites over 3D models when both match an entity — a fish
+# PNG beats a marble-track FBX in a side-scroller. Applied only to entries
+# that already cleared the strong-hit gate.
+_SPRITE_2D_BONUS = 0.75
 
 _DEFAULT_MIN_SCORE = 0.15
 _DEFAULT_TOP_K = 5
@@ -142,8 +148,15 @@ def resolve_entity_assets(schema,
     top_k = max(1, int(cfg.get("variety_top_k", _DEFAULT_TOP_K)))
     asset_root = cfg.get("asset_root")  # optional override for entry roots
 
+    # Format gate by game type: 2D games may use sprites (png) and models;
+    # everything else is models-only — a flat PNG must never be picked as a
+    # 3D scene object.
+    is_2d = getattr(schema, "game_type", "3D") == "2D"
+    allowed_formats = {"fbx", "png"} if is_2d else {"fbx"}
+
     catalog = load_catalog(str(lookups_dir))
-    assets = [a for a in catalog.get("assets", []) if a.get("filename")]
+    assets = [a for a in catalog.get("assets", []) if a.get("filename")
+              and a.get("format", "fbx") in allowed_formats]
 
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
@@ -170,9 +183,16 @@ def resolve_entity_assets(schema,
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
+
+        def _final_score(a: dict) -> float:
+            s = _score(a, qw, kind)
+            if s > 0.0 and is_2d and a.get("format") == "png":
+                s += _SPRITE_2D_BONUS
+            return s
+
         scored = sorted(
             ((s, a) for a in assets
-             if (s := _score(a, qw, kind)) >= min_score
+             if (s := _final_score(a)) >= min_score
              and _entry_source(a, asset_root) is not None),
             key=lambda sa: (-sa[0], sa[1]["filename"]))
         if scored:
@@ -185,7 +205,9 @@ def resolve_entity_assets(schema,
 
             src = _entry_source(pick, asset_root)
             category = (pick.get("category") or "prop").capitalize()
-            dest_rel = f"{_RES_ROOT}/{category}/{pick['filename']}"
+            is_sprite = pick.get("format") == "png"
+            res_root = _SPRITE_RES_ROOT if is_sprite else _RES_ROOT
+            dest_rel = f"{res_root}/{category}/{pick['filename']}"
             model_key = f"asset:{Path(pick['filename']).stem}"
             rm = used_models.get(model_key)
             if rm is None:
@@ -194,7 +216,10 @@ def resolve_entity_assets(schema,
                     src=str(src.resolve()),
                     dest_rel=dest_rel,
                     resource_path=dest_rel.rsplit(".", 1)[0],
-                    rig="generic",
+                    # "sprite" rig = 2D texture: no ModelImporter .meta is
+                    # authored (Unity's default TextureImporter handles PNG),
+                    # and the spawner loads it as Texture2D → Sprite.Create.
+                    rig="sprite" if is_sprite else "generic",
                     scale=float(pick.get("scale", 1.0) or 1.0),
                 )
                 used_models[model_key] = rm
@@ -245,8 +270,8 @@ def texture_dirs_for(used_models: dict[str, ResolvedModel]) -> list[Path]:
     dirs: list[Path] = []
     seen: set[str] = set()
     for key, m in sorted(used_models.items()):
-        if not key.startswith("asset:"):
-            continue
+        if not key.startswith("asset:") or m.rig == "sprite":
+            continue  # sprites are self-contained PNGs — no FBX texture folder
         for parent in Path(m.src).parents:
             tex = parent / "Textures"
             if tex.is_dir():

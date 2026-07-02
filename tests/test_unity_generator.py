@@ -1098,3 +1098,52 @@ class TestSceneSpecs:
         assert "GroupActive" not in cs
         # all gameplay scenes identical as before
         assert scene(files, "SS", "Main") == scene(files, "SS", "StormShelf")
+
+
+# ── 2D sprite pipeline (PNG picks flow to disk + spawner) ──────────────────────
+
+class TestSpritePipeline:
+    def _env(self, tmp_path):
+        import json as _json
+        lib = tmp_path / "sprites"
+        lib.mkdir()
+        (lib / "fish_blue.png").write_bytes(b"PNG-BYTES")
+        lookups = tmp_path / "lookups"
+        (lookups / "unity").mkdir(parents=True)
+        (lookups / "unity" / "asset_catalog.json").write_text(_json.dumps({
+            "version": 1, "vocabulary": {"categories": [], "tags": []},
+            "assets": [{
+                "filename": "fish_blue.png", "relpath": "fish_blue.png",
+                "root": lib.as_posix(), "format": "png", "pack": "kenney_fishpack",
+                "category": "creature", "keywords": ["fish", "swim", "creature"],
+                "kind_hints": ["enemy"], "game_contexts": ["2d"],
+                "generic_score": 0, "scale": 1.0, "curated": False,
+            }],
+        }), encoding="utf-8")
+        return lookups
+
+    def _schema(self):
+        from src.unity_schema import EntitySpec, UnitySchema
+        return UnitySchema(
+            project_name="SP", company_name="C",
+            description="underwater side-scroller", game_type="2D",
+            platform="pc", render_pipeline="URP", unity_version="6000.0",
+            color_space="Linear", features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            entities=[EntitySpec(name="Fishes", kind="prop", count=5,
+                                 model_hint="swimming fish")],
+        )
+
+    def test_sprite_pick_flows_to_spawner_and_disk(self, gen, tmp_path):
+        lookups = self._env(tmp_path)
+        root, _ = gen.write(self._schema(), {}, output_dir=str(tmp_path / "out"),
+                            lookups_dir=str(lookups))
+        cs = (root / "Assets" / "Scripts" / "EntitySpawner.cs").read_text(encoding="utf-8")
+        assert '"Sprites/Kenney/Creature/fish_blue"' in cs
+        assert "Resources.Load<Texture2D>" in cs
+        assert "SpriteRenderer" in cs
+        # binary copied to Resources + user-visible Assets/Sprites, no authored .meta
+        primary = root / "Assets" / "Resources" / "Sprites" / "Kenney" / "Creature" / "fish_blue.png"
+        assert primary.read_bytes() == b"PNG-BYTES"
+        assert not primary.with_suffix(".png.meta").exists()
+        assert (root / "Assets" / "Sprites" / "Creature" / "fish_blue.png").is_file()

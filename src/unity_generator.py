@@ -1454,6 +1454,11 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/Resources"), folder=True)
             for m in used_models.values():
                 for item in [m] + list(m.clips.values()):
+                    if item.rig == "sprite":
+                        # PNG sprites: no authored .meta — Unity's default
+                        # TextureImporter handles them, and the spawner loads
+                        # Texture2D by path (no GUID references anywhere).
+                        continue
                     guid = _make_guid(f"{pn}/{item.dest_rel}")
                     if item.rig == "humanoid":
                         meta_fn = _humanoid_model_meta(guid, item.scale)
@@ -1757,12 +1762,14 @@ class UnityProjectGenerator:
                 dest = root / schema.project_name / "Assets" / "Resources" / item.dest_rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(Path(item.src).read_bytes())
-                # Secondary copy: Assets/Models/<Kind>/<file> (user-visible clean folder).
-                # item.dest_rel starts with "Models/Default/" or "Models/Kenney/" —
-                # strip that prefix so the secondary path is Assets/Models/<Kind>/<file>.
+                # Secondary copy: Assets/<Root>/<Kind>/<file> (user-visible clean
+                # folder). item.dest_rel starts with "Models/Default/",
+                # "Models/Kenney/" or "Sprites/Kenney/" — strip the two-part
+                # prefix and mirror under the matching top folder.
                 _rel_parts = Path(item.dest_rel).parts
                 _kind_relative = Path(*_rel_parts[2:]) if len(_rel_parts) > 2 else Path(_rel_parts[-1])
-                dest2 = root / schema.project_name / "Assets" / "Models" / _kind_relative
+                _top = _rel_parts[0] if _rel_parts[0] in ("Models", "Sprites") else "Models"
+                dest2 = root / schema.project_name / "Assets" / _top / _kind_relative
                 dest2.parent.mkdir(parents=True, exist_ok=True)
                 dest2.write_bytes(Path(item.src).read_bytes())
                 n_models += 1

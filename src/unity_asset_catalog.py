@@ -22,6 +22,10 @@ from typing import Iterable, Optional
 CATALOG_VERSION = 1
 DEFAULT_ROOTS = ("Models/FBX format",)
 DEFAULT_FORMATS = ("fbx",)
+# 2D sprite library roots (PNG only — Unity has no native SVG importer, and
+# the Double/ variants are the same art at 2x resolution).
+DEFAULT_SPRITE_ROOTS = ("Models/FishPack/PNG/Default",)
+SPRITE_FORMATS = ("png",)
 CATALOG_RELPATH = Path("unity") / "asset_catalog.json"
 CURATED_RELPATH = Path("unity") / "kenney_catalog.json"
 
@@ -165,6 +169,40 @@ _TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
 # marble-track pieces read better slightly larger next to a 1.8u character.
 _CATEGORY_SCALE: dict[str, float] = {}
 
+# ── 2D sprite vocabulary (FishPack and future sprite packs) ───────────────────
+
+_SPRITE_CATEGORY_MAP: dict[str, str] = {
+    "fish":       "creature",
+    "bubble":     "fx",
+    "seaweed":    "vegetation",
+    "rock":       "environment",
+    "terrain":    "environment",
+    "background": "background",
+    "hud":        "ui",
+}
+
+_SPRITE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "fish":       ("swim", "sea", "ocean", "underwater", "creature", "animal", "enemy"),
+    "bubble":     ("air", "water", "pop", "float"),
+    "seaweed":    ("plant", "kelp", "underwater", "vegetation", "grass"),
+    "rock":       ("stone", "boulder", "obstacle"),
+    "terrain":    ("ground", "floor", "sand", "dirt", "platform", "tile"),
+    "background": ("backdrop", "scenery", "distant"),
+    "hud":        ("ui", "icon", "number", "interface"),
+    "skeleton":   ("bone", "dead", "spooky"),
+    "outline":    (),
+}
+
+_SPRITE_KIND_HINTS: dict[str, tuple[str, ...]] = {
+    "creature":    ("enemy", "npc", "crowd"),
+    "fx":          ("prop",),
+    "vegetation":  ("tree", "prop"),
+    "environment": ("ground", "obstacle", "prop"),
+    "background":  ("prop",),
+    "ui":          (),          # HUD digits/icons are not spawnable scene content
+}
+
+
 # Tokens that describe size/variant, not semantics — excluded from keywords.
 _NOISE_TOKENS = frozenset({
     "a", "b", "c", "d", "large", "medium", "small", "wide", "long", "short",
@@ -245,9 +283,58 @@ def derive_entry(path: Path, root: Path) -> dict:
     }
 
 
+def derive_sprite_entry(path: Path, root: Path) -> dict:
+    """Derive a catalog entry for a 2D sprite (PNG)."""
+    tokens = tokenize(path.stem)
+    first = tokens[0] if tokens else "prop"
+    category = _SPRITE_CATEGORY_MAP.get(first, "prop")
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+
+    def _add(word: str) -> None:
+        if word and word not in seen:
+            seen.add(word)
+            keywords.append(word)
+
+    for tok in tokens:
+        if tok not in _NOISE_TOKENS:
+            _add(tok)
+        for syn in _SPRITE_SYNONYMS.get(tok, ()):
+            _add(syn)
+    _add(category)
+
+    return {
+        "filename": path.name,
+        "relpath": path.relative_to(root).as_posix(),
+        "root": root.as_posix(),
+        "format": path.suffix.lstrip(".").lower(),
+        "pack": _pack_for_root(root),
+        "category": category,
+        "description": f"{' '.join(tokens)} — 2D {category} sprite",
+        "keywords": keywords,
+        "kind_hints": list(_SPRITE_KIND_HINTS.get(category, ("prop",))),
+        "game_contexts": ["2d"],
+        "generic_score": 0,
+        "scale": 1.0,
+        "curated": False,
+    }
+
+
 def _pack_for_root(root: Path) -> str:
-    """Pack label from the root folder name (packs are merged on disk)."""
-    name = root.name.lower().replace(" ", "_")
+    """Pack label from the root path (packs are merged on disk).
+
+    Prefers the component right after "Models" so nested roots like
+    Models/FishPack/PNG/Default label as the pack (fishpack), not the
+    resolution folder (default).
+    """
+    parts = [p.lower() for p in root.parts]
+    name = root.name.lower()
+    if "models" in parts:
+        after = parts[parts.index("models") + 1:]
+        if after:
+            name = after[0]
+    name = name.replace(" ", "_")
     return f"kenney_{name}" if "kenney" not in name else name
 
 
@@ -267,8 +354,13 @@ _CURATED_FIELDS = ("category", "keywords", "kind_hints", "game_contexts",
 
 def build_catalog(roots: Iterable[str | Path],
                   curated_path: Optional[Path] = None,
-                  formats: tuple[str, ...] = DEFAULT_FORMATS) -> dict:
-    """Scan the roots and return the full catalog dict (stable ordering)."""
+                  formats: tuple[str, ...] = DEFAULT_FORMATS,
+                  sprite_roots: Iterable[str | Path] = ()) -> dict:
+    """Scan the roots and return the full catalog dict (stable ordering).
+
+    3D model roots and 2D sprite roots share one catalog — entries carry a
+    `format` field (fbx vs png) so the resolver can filter by game type.
+    """
     root_paths = [Path(r) for r in roots]
     curated = _load_curated(curated_path) if curated_path else {}
 
@@ -282,6 +374,9 @@ def build_catalog(roots: Iterable[str | Path],
                     entry[field] = cur[field]
             entry["curated"] = True
         assets.append(entry)
+
+    for path, root in scan_assets([Path(r) for r in sprite_roots], SPRITE_FORMATS):
+        assets.append(derive_sprite_entry(path, root))
 
     categories = sorted({a["category"] for a in assets})
     tag_counts: Counter[str] = Counter()

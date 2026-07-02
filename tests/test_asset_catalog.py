@@ -146,6 +146,43 @@ def test_vocabulary_block(tmp_path):
     assert len(vocab["tags"]) <= 40
 
 
+# ── 2D sprites ────────────────────────────────────────────────────────────────
+
+def test_sprite_entries_derived_and_merged(tmp_path):
+    from src.unity_asset_catalog import derive_sprite_entry
+    lib = _make_tree(tmp_path / "lib", ["tree-pine.fbx"])
+    sprites = tmp_path / "sprites"
+    sprites.mkdir()
+    for n in ("fish_blue.png", "seaweed_green_a.png", "terrain_sand_top_a.png",
+              "hud_number_3.png", "background_rock_a.png"):
+        (sprites / n).write_bytes(b"PNG")
+    (sprites / "notes.txt").write_bytes(b"x")     # non-sprite file skipped
+
+    catalog = build_catalog([lib], sprite_roots=[sprites])
+    by_name = {a["filename"]: a for a in catalog["assets"]}
+    assert len(catalog["assets"]) == 6            # 1 fbx + 5 png
+    fish = by_name["fish_blue.png"]
+    assert fish["format"] == "png"
+    assert fish["category"] == "creature"
+    assert {"fish", "swim", "creature"} <= set(fish["keywords"])
+    assert fish["kind_hints"] == ["enemy", "npc", "crowd"]
+    assert by_name["seaweed_green_a.png"]["category"] == "vegetation"
+    assert by_name["terrain_sand_top_a.png"]["category"] == "environment"
+    assert by_name["hud_number_3.png"]["kind_hints"] == []   # UI: not spawnable
+    # byte-idempotent with sprites included
+    assert catalog_json(catalog) == catalog_json(
+        build_catalog([lib], sprite_roots=[sprites]))
+
+
+def test_sprite_pack_label_uses_pack_folder(tmp_path):
+    from src.unity_asset_catalog import derive_sprite_entry
+    root = tmp_path / "Models" / "FishPack" / "PNG" / "Default"
+    root.mkdir(parents=True)
+    (root / "fish_red.png").write_bytes(b"PNG")
+    entry = derive_sprite_entry(root / "fish_red.png", root)
+    assert entry["pack"] == "kenney_fishpack"
+
+
 # ── staleness / write / load ──────────────────────────────────────────────────
 
 def test_write_and_staleness(tmp_path):
