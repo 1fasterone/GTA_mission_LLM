@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeField, CodeMethod,
     lint_code_fragment, lint_method, lint_usings, lint_fields,
@@ -15,46 +16,108 @@ from .code_fields import (
 
 
 ControllerVariant = Literal[
+    # 3D person
     "first_person", "third_person", "top_down",
+    # 2D
     "2d_platformer", "2d_topdown",
+    # Vehicles
     "vehicle_car", "vehicle_bike",
+    # Special locomotion
     "flying", "swimming",
+    # New genres
+    "aircraft",   # fixed-wing arcade: pitch/roll/yaw/throttle via Rigidbody
+    "fighting",   # third_person base + melee combat atoms (punch/kick/block/dodge)
 ]
 
 VARIANTS = list(ControllerVariant.__args__)   # type: ignore[attr-defined]
 
-Ability = Literal["jump", "double_jump", "sprint", "crouch", "dash", "wall_jump", "glide", "fly"]
-InputBackend = Literal["input_system", "legacy"]
+# Full atom vocabulary — maps to template sections.
+# Locomotion extras beyond WASD:
+#   ascend/descend = up/down in swim/fly   boost = burst speed
+#   dash = short invincible dash            wall_jump/glide/fly = movement abilities
+# Aircraft:  pitch / roll_plane / throttle
+# Shooting:  shoot / aim_down_sights / reload / cycle_weapon / throw_grenade / melee_attack
+# Fighting:  primary_attack / secondary_attack / block / dodge / grab
+# Interaction: interact / use_item / open_inventory / open_map / pause
+# Vehicle:   nitro / brake
+Ability = Literal[
+    # locomotion
+    "jump", "double_jump", "sprint", "crouch", "dash", "wall_jump", "glide", "fly",
+    "ascend", "descend", "boost",
+    # aircraft
+    "pitch", "roll_plane", "throttle",
+    # shooting
+    "shoot", "aim_down_sights", "reload", "cycle_weapon", "throw_grenade", "melee_attack",
+    # fighting / brawler
+    "primary_attack", "secondary_attack", "block", "dodge", "grab",
+    # interaction
+    "interact", "use_item", "open_inventory", "open_map", "pause",
+    # vehicle
+    "nitro", "brake",
+]
+
+InputBackend  = Literal["input_system", "legacy"]
 CameraCoupling = Literal["none", "standard", "cinemachine"]
-GroundCheck = Literal["raycast", "spherecast", "collider"]
+GroundCheck   = Literal["raycast", "spherecast", "collider"]
+
+_ALL_ABILITIES: set[str] = set(Ability.__args__)  # type: ignore[attr-defined]
 
 
 class ControllerSchema(BaseModel):
-    name:            str = "MovementController"
-    variant:         str = "third_person"
+    name:            str           = "MovementController"
+    variant:         str           = "third_person"
     input_backend:   InputBackend  = "input_system"
     camera_coupling: CameraCoupling = "standard"
-    abilities:       list[Ability] = Field(default_factory=lambda: ["jump", "sprint"])
+    abilities:       list[str]     = Field(default_factory=lambda: ["jump", "sprint"])
     ground_check:    GroundCheck   = "raycast"
-    move_speed:      float = 6.0
-    sprint_speed:    float = 10.0
-    jump_force:      float = 8.0
-    description:     str = "Player movement controller"
+    description:     str           = "Player movement controller"
 
-    # ── Vehicle params (vehicle_* variants; ignored otherwise) ────────────────
-    # Drive a real WheelCollider rig that the template self-constructs in Awake:
-    # body box + 4 suspended wheels + headlights + brake light + drift smoke.
+    # ── Core movement ──────────────────────────────────────────────────────────
+    move_speed:   float = 6.0
+    sprint_speed: float = 10.0
+    jump_force:   float = 8.0
+
+    # ── Aircraft params (aircraft variant only) ────────────────────────────────
+    max_thrust:       float = 80.0
+    lift_coefficient: float = 30.0
+    pitch_speed:      float = 60.0
+    roll_speed:       float = 90.0
+    yaw_speed:        float = 30.0
+    throttle_rate:    float = 0.5
+    stall_speed:      float = 15.0
+    max_air_speed:    float = 60.0
+
+    # ── Vehicle params (vehicle_* variants) ────────────────────────────────────
     max_motor_torque:      float = 1200.0
     max_steer_angle:       float = 28.0
     suspension_distance:   float = 0.25
     suspension_spring:     float = 35000.0
     suspension_damper:     float = 4500.0
-    drift_slip_multiplier: float = 0.5    # sideways grip scale while handbrake held
+    drift_slip_multiplier: float = 0.5
     wheel_radius:          float = 0.35
 
-    # ── Prompt-specific extras (the LLM authors these from the concept) ──
-    # These are how prompt details actually reach the rendered .cs file. The
-    # baseline controller above is the *skeleton*; these are the *behavior*.
+    # ── Shooter params (shoot ability) ─────────────────────────────────────────
+    fire_rate:    float = 0.15
+    magazine_size: int  = 30
+    reload_time:  float = 2.0
+    shoot_range:  float = 100.0
+
+    # ── Fighting params (primary_attack / secondary_attack abilities) ──────────
+    primary_damage:   float = 15.0
+    primary_range:    float = 1.2
+    primary_cooldown: float = 0.35
+    secondary_damage:   float = 30.0
+    secondary_range:    float = 1.6
+    secondary_cooldown: float = 0.7
+    block_reduction:  float = 0.7   # fraction of damage absorbed while blocking
+    dodge_force:      float = 12.0
+    dodge_cooldown:   float = 1.0
+    dodge_i_frames:   float = 0.15  # invincibility window in seconds
+
+    # ── Interaction params (interact ability) ──────────────────────────────────
+    interact_range: float = 2.5
+
+    # ── Prompt-specific extras (LLM authors from concept) ─────────────────────
     extra_usings:       list[str]        = Field(default_factory=list)
     extra_fields:       list[CodeField]  = Field(default_factory=list)
     awake_extra:        str              = ""
@@ -62,7 +125,7 @@ class ControllerSchema(BaseModel):
     fixed_update_extra: str              = ""
     extra_methods:      list[CodeMethod] = Field(default_factory=list)
 
-    meta:            dict = Field(default_factory=dict)
+    meta: dict = Field(default_factory=dict)
 
     @field_validator("variant", mode="before")
     @classmethod
@@ -72,18 +135,20 @@ class ControllerSchema(BaseModel):
 
     @field_validator("abilities", mode="before")
     @classmethod
-    def _clamp_abilities(cls, v: list) -> list:
+    def _clamp_abilities(cls, v: object) -> list:
         if not isinstance(v, list):
             return []
         out: list[str] = []
         seen: set[str] = set()
         for item in v:
             s = str(item).strip().lower()
-            if s in Ability.__args__ and s not in seen:   # type: ignore[attr-defined]
+            if s in _ALL_ABILITIES and s not in seen:
                 seen.add(s)
                 out.append(s)
         return out
 
+
+# ── Prompts ───────────────────────────────────────────────────────────────────
 
 CONCEPT_PROMPT = """\
 {theme_block}
@@ -93,110 +158,145 @@ Describe a Unity character controller for this idea:
 
 Variant requested: {variant}
 
-Cover in 1-2 paragraphs:
-- Movement model (rigidbody vs CharacterController vs custom)
-- Input source (Input System actions or legacy axes)
-- Camera coupling, ground detection, abilities
-- One paragraph on feel: acceleration, friction, air control
+Cover in 1–2 paragraphs:
+- Movement model and variant (see VARIANT list below)
+- Input source (Input System or legacy)
+- Camera coupling, ground detection
+- Which control atoms are needed (see ABILITIES list below)
+- One paragraph on feel: acceleration, friction, response
+
+VARIANT OPTIONS:
+  first_person, third_person, top_down       — CharacterController-based 3D
+  2d_platformer, 2d_topdown                  — Rigidbody2D
+  vehicle_car, vehicle_bike                   — WheelCollider rig
+  flying, swimming                            — free 3D locomotion
+  aircraft                                    — Rigidbody pitch/roll/yaw/throttle
+  fighting                                    — third_person movement + melee atoms
+
+ABILITIES — choose any that match the game concept:
+  LOCOMOTION: jump, double_jump, sprint, crouch, dash, wall_jump, glide, fly, ascend, descend, boost
+  AIRCRAFT:   pitch, roll_plane, throttle
+  SHOOTING:   shoot, aim_down_sights, reload, cycle_weapon, throw_grenade, melee_attack
+  FIGHTING:   primary_attack, secondary_attack, block, dodge, grab
+  INTERACTION: interact, use_item, open_inventory, open_map, pause
+  VEHICLE:    nitro, brake
 
 Do NOT write code or JSON.
 """
 
 SCHEMA_PROMPT = """\
 {schema_hints}
-Convert the brief below into this schema. Output ONLY JSON.
-
-You are filling a schema that drives a Unity C# controller. The template
-already emits the BASELINE movement for the chosen variant — you do NOT
-re-write that. Instead, you author the PROMPT-SPECIFIC behavior using the
-`extra_*` fields:
-
-  extra_fields:       extra [SerializeField] declarations (oxygen, boost mult, …)
-  awake_extra:        C# statements appended inside Awake()
-  update_extra:       C# statements appended inside Update()
-  fixed_update_extra: C# statements appended inside FixedUpdate()
-  extra_methods:      helper methods appended to the class
-  extra_usings:       extra namespaces (e.g. UnityEngine.UI)
-
-C# RULES:
-- Reference baseline fields directly: moveSpeed, sprintSpeed, jumpForce,
-  _grounded (3D), _rb (2D/vehicle), _cc (3D person), _velocity (3D person).
-- Use the Input System (Keyboard.current.leftShiftKey.isPressed style)
-  unless input_backend is "legacy".
-- No `using` lines inside method bodies — put them in extra_usings.
-- No braces around method bodies in `extra_methods.body` — the template
-  adds them.
+Convert the brief below into this schema. Output ONLY valid JSON.
 
 VARIANT MUST BE: {variant}
 
-ABILITIES — choose any subset of: jump, double_jump, sprint, crouch, dash, wall_jump, glide, fly
-INPUT_BACKEND — input_system | legacy
-CAMERA_COUPLING — none | standard | cinemachine
-GROUND_CHECK — raycast | spherecast | collider
-VEHICLE KEYS — only matter for vehicle_car / vehicle_bike (template builds a real
-WheelCollider rig: suspension, handbrake drift, headlights H, brake light, smoke).
-Tune from the brief: drift_slip_multiplier (lower = looser drift), suspension_spring/
-damper (stiffness), max_motor_torque (power), max_steer_angle.
+SCHEMA FIELD GUIDE:
+  abilities — list of ability names from the full vocabulary above; drives which C# sections appear
+  move_speed / sprint_speed / jump_force — tune to match the brief's feel
+  fire_rate (s) / magazine_size / reload_time (s) / shoot_range — only matter when "shoot" in abilities
+  primary_damage / primary_range / primary_cooldown — "primary_attack" (punch / light attack)
+  secondary_damage / secondary_range / secondary_cooldown — "secondary_attack" (kick / heavy)
+  block_reduction (0–1 fraction) — "block" ability
+  dodge_force / dodge_cooldown / dodge_i_frames — "dodge" ability
+  interact_range — "interact" ability sphere radius
+  Aircraft keys (aircraft variant only): max_thrust / lift_coefficient / pitch_speed /
+    roll_speed / yaw_speed / throttle_rate / stall_speed / max_air_speed
+  Vehicle keys (vehicle_car / vehicle_bike only): max_motor_torque / max_steer_angle /
+    suspension_distance / suspension_spring / suspension_damper / drift_slip_multiplier / wheel_radius
 
-────────── FEW-SHOT EXAMPLE ──────────
-If the brief is "underwater scuba explorer with shift-to-boost and an
-oxygen meter that depletes over time", you produce:
+extra_* fields (LLM-authored prompt-specific extras):
+  extra_fields       — extra [SerializeField] declarations (oxygen meter, grip level, …)
+  awake_extra        — C# appended inside Awake()
+  update_extra       — C# appended inside Update()
+  fixed_update_extra — C# appended inside FixedUpdate()
+  extra_methods      — helper methods appended at end of class
+  extra_usings       — extra namespaces
 
+C# RULES for extra_* bodies:
+  Reference baseline fields directly: moveSpeed, sprintSpeed, jumpForce, _grounded,
+  _rb (2D/vehicle/aircraft), _cc (3D person), _velocity (3D person).
+  For shooting: _currentAmmo, _isReloading, _lastFireTime, _isAiming, _weaponIndex, _grenadesLeft.
+  For fighting: _isBlocking, _isDodging, _isInvincible, _primaryCooldown, _secondaryCooldown.
+  No `using` inside method bodies — put them in extra_usings.
+  No braces around method bodies in extra_methods.body — template adds them.
+
+────────── FEW-SHOT: underwater scuba explorer ──────────
 {{
   "name": "ScubaExplorerController",
   "variant": "swimming",
   "input_backend": "input_system",
   "camera_coupling": "standard",
-  "abilities": ["sprint"],
+  "abilities": ["sprint", "ascend", "descend", "interact"],
   "ground_check": "raycast",
   "move_speed": 4.0,
   "sprint_speed": 9.0,
   "jump_force": 0.0,
-  "description": "First-person scuba controller with shift-to-boost and oxygen depletion.",
-  "extra_usings": ["UnityEngine.Events"],
+  "interact_range": 2.0,
+  "description": "Underwater scuba controller with boost and oxygen depletion.",
   "extra_fields": [
-    {{"name": "maxOxygen",          "type": "float", "default": "100f",  "header": "Oxygen", "tooltip": "Oxygen capacity in seconds of breath."}},
-    {{"name": "oxygenDepletionRate","type": "float", "default": "1.5f",  "tooltip": "Oxygen lost per second underwater."}},
-    {{"name": "boostMultiplier",    "type": "float", "default": "2.2f",  "header": "Boost"}},
-    {{"name": "boostCostPerSecond", "type": "float", "default": "4f",    "tooltip": "Extra oxygen drain while boosting."}},
-    {{"name": "OnOxygenEmpty",      "type": "UnityEvent", "header": "Events"}}
+    {{"name": "maxOxygen",            "type": "float",                "default": "100f", "header": "Oxygen"}},
+    {{"name": "oxygenDepletionRate",  "type": "float",                "default": "1.5f"}},
+    {{"name": "OnOxygenEmpty",        "type": "UnityEngine.Events.UnityEvent", "header": "Events"}}
   ],
   "awake_extra": "_oxygen = maxOxygen;",
-  "update_extra": "bool boosting = Keyboard.current != null && Keyboard.current.leftShiftKey.isPressed && _oxygen > 0f;\\nif (boosting) {{ moveSpeed = sprintSpeed * boostMultiplier / 2f; }} else {{ moveSpeed = 4f; }}\\nDeplete(boosting ? boostCostPerSecond : oxygenDepletionRate);",
-  "fixed_update_extra": "",
-  "extra_methods": [
-    {{
-      "signature": "private void Deplete(float ratePerSecond)",
-      "body": "_oxygen = Mathf.Max(0f, _oxygen - ratePerSecond * Time.deltaTime);\\nif (_oxygen <= 0f && OnOxygenEmpty != null) OnOxygenEmpty.Invoke();"
-    }},
-    {{
-      "signature": "public void RefillOxygen(float amount)",
-      "body": "_oxygen = Mathf.Min(maxOxygen, _oxygen + amount);"
-    }}
-  ]
+  "update_extra": "float _rate = _sprintHeld ? oxygenDepletionRate * 2.5f : oxygenDepletionRate;\\n_oxygen = Mathf.Max(0f, _oxygen - _rate * Time.deltaTime);\\nif (_oxygen <= 0f) OnOxygenEmpty?.Invoke();",
+  "extra_fields": [{{"name": "_oxygen", "type": "float", "default": "0f"}}],
+  "extra_usings": [],
+  "extra_methods": [],
+  "fixed_update_extra": ""
 }}
 
-(That JSON declares the ONE private float `_oxygen` it uses via an extra_field
-indirectly — actually no: declare it in extra_fields with type=float and
-default=0f. The template makes every extra_field a [SerializeField] private
-member, so they're all reachable from method bodies.)
+────────── FEW-SHOT: 3D fighting brawler ──────────
+{{
+  "name": "BrawlerController",
+  "variant": "fighting",
+  "abilities": ["jump", "sprint", "primary_attack", "secondary_attack", "block", "dodge", "grab"],
+  "move_speed": 5.0,
+  "sprint_speed": 8.5,
+  "jump_force": 7.0,
+  "primary_damage": 18.0,
+  "primary_range": 1.3,
+  "primary_cooldown": 0.3,
+  "secondary_damage": 35.0,
+  "secondary_range": 1.8,
+  "secondary_cooldown": 0.65,
+  "block_reduction": 0.75,
+  "dodge_force": 14.0,
+  "dodge_cooldown": 0.9,
+  "dodge_i_frames": 0.15,
+  "description": "Street brawler with full melee combo system.",
+  "input_backend": "input_system",
+  "camera_coupling": "standard",
+  "ground_check": "spherecast",
+  "extra_usings": [], "extra_fields": [], "awake_extra": "", "update_extra": "",
+  "fixed_update_extra": "", "extra_methods": []
+}}
 
 ────────── NOW DO IT FOR THE BRIEF BELOW ──────────
 
 BRIEF:
 {concept}
 
-OUTPUT this JSON (keep the same key order; omit no keys):
+OUTPUT this JSON (omit no keys):
 {{
-  "name": "PascalCase controller name (no spaces)",
+  "name": "PascalCase name",
   "variant": "{variant}",
-  "input_backend": "...",
-  "camera_coupling": "...",
-  "abilities": ["..."],
-  "ground_check": "...",
+  "input_backend": "input_system",
+  "camera_coupling": "standard",
+  "abilities": [],
+  "ground_check": "raycast",
+  "description": "One sentence.",
   "move_speed": 6.0,
   "sprint_speed": 10.0,
   "jump_force": 8.0,
+  "max_thrust": 80.0,
+  "lift_coefficient": 30.0,
+  "pitch_speed": 60.0,
+  "roll_speed": 90.0,
+  "yaw_speed": 30.0,
+  "throttle_rate": 0.5,
+  "stall_speed": 15.0,
+  "max_air_speed": 60.0,
   "max_motor_torque": 1200.0,
   "max_steer_angle": 28.0,
   "suspension_distance": 0.25,
@@ -204,7 +304,21 @@ OUTPUT this JSON (keep the same key order; omit no keys):
   "suspension_damper": 4500.0,
   "drift_slip_multiplier": 0.5,
   "wheel_radius": 0.35,
-  "description": "One sentence.",
+  "fire_rate": 0.15,
+  "magazine_size": 30,
+  "reload_time": 2.0,
+  "shoot_range": 100.0,
+  "primary_damage": 15.0,
+  "primary_range": 1.2,
+  "primary_cooldown": 0.35,
+  "secondary_damage": 30.0,
+  "secondary_range": 1.6,
+  "secondary_cooldown": 0.7,
+  "block_reduction": 0.7,
+  "dodge_force": 12.0,
+  "dodge_cooldown": 1.0,
+  "dodge_i_frames": 0.15,
+  "interact_range": 2.5,
   "extra_usings": [],
   "extra_fields": [],
   "awake_extra": "",
@@ -213,92 +327,170 @@ OUTPUT this JSON (keep the same key order; omit no keys):
   "extra_methods": []
 }}
 
-Author REAL prompt-specific behavior in the extras. Output ONLY the JSON. No prose.
+Author REAL prompt-specific behavior in the extras. Output ONLY the JSON.
 """
 
 
-class ControllerPipeline(MicroPipeline):
-    kind           = "controller"
-    display_name   = "Unity Character Controller"
-    schema_cls     = ControllerSchema
-    variants       = VARIANTS
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+
+class ControllerPipeline(UnityMicroPipeline):
+    kind            = "controller"
+    display_name    = "Unity Character Controller"
+    schema_cls      = ControllerSchema
+    variants        = VARIANTS
     default_variant = "third_person"
-    concept_prompt = CONCEPT_PROMPT
-    schema_prompt  = SCHEMA_PROMPT
+    concept_prompt  = CONCEPT_PROMPT
+    schema_prompt   = SCHEMA_PROMPT
     template_subdir = "controller"
 
-    # Names the template ALREADY emits — extra_fields with these names get
-    # dropped to avoid double-declaration. Keep in sync with Controller.cs.j2.
+    # Field names the template always emits — extra_fields with these names are
+    # stripped by the fixer to avoid double-declaration.
     _RESERVED_FIELD_NAMES = {
+        # movement core
         "movespeed", "sprintspeed", "jumpforce", "groundraylen", "groundmask",
+        # locomotion state
         "_rb", "_cc", "_velocity", "_grounded", "_airjumpsleft", "maxairjumps",
-        "flyspeed",
-        # vehicle rig (vehicle_* variants)
+        "flyspeed", "_sprintHeld", "_moveInput", "_jumpThisFrame", "_crouching",
+        "crouchheight", "crouchspeed",
+        # aircraft fields
+        "maxthrust", "liftcoefficient", "pitchspeed", "rollspeed", "yawspeed",
+        "throttlerate", "stallspeed", "maxairspeed", "_throttle",
+        # vehicle rig
         "maxmotortorque", "maxsteerangle", "suspensiondistance",
         "suspensionspring", "suspensiondamper", "driftslipmultiplier",
         "wheelradius", "handbraketorque", "_wheels", "_wheelvisuals",
-        "_headlights", "_brakelight", "_smoke", "_basesidestiffness", "_lightson",
+        "_headlights", "_brakelight", "_smoke", "_basesidestiffness",
+        "_lightson", "_steerinput", "_throttleinput",
+        # shooting
+        "firerate", "magazinesize", "reloadtime", "shootrange",
+        "_lastfiretime", "_currentammo", "_isreloading", "_isaiming",
+        "adsfovmultiplier", "adsspeedmultiplier", "_weaponindex",
+        "_grenadesLeft", "maxgrenades", "throwforce",
+        "_meleeCooldown",
+        # fighting
+        "primarydamage", "primaryrange", "primarycooldown",
+        "secondarydamage", "secondaryrange", "secondarycooldown",
+        "blockreduction", "dodgeforce", "dodgecooldown", "dodgeiframes",
+        "_primarycooldown", "_secondarycooldown", "_isblocking",
+        "_isdodging", "_isinvincible", "_dodgecooldown", "_grabcooldown",
+        # interaction
+        "interactrange", "_inventoryopen", "_mapopen", "_ispaused",
+        # vehicle nitro/brake
+        "_nitroCooldown", "_nitroActive",
     }
-    # Namespaces the template already emits.
-    _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.InputSystem"}
 
-    def default_fix(self, schema, variant):
+    _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.InputSystem", "System.Collections"}
+
+    def default_fix(self, schema: ControllerSchema, variant: str) -> ControllerSchema:
         schema.name = to_pascal(schema.name, "MovementController")
-        # 2D variants — strip 3D-only abilities
+
+        # Variant-specific ability pruning
         if variant.startswith("2d_"):
-            schema.abilities = [a for a in schema.abilities if a not in ("glide",)]
-        # vehicle variants — abilities don't apply
+            schema.abilities = [a for a in schema.abilities
+                                if a not in ("glide", "pitch", "roll_plane", "throttle")]
         if variant.startswith("vehicle_"):
-            schema.abilities = []
-        # fly binds Shift (ascend); drop sprint so the key isn't double-bound.
+            # Vehicle is its own movement system — locomotion abilities don't apply
+            schema.abilities = [a for a in schema.abilities
+                                if a in ("nitro", "brake", "open_inventory", "open_map", "pause")]
+        if variant == "aircraft":
+            # Flight uses its own movement; inject the flight atoms if omitted
+            for ab in ("pitch", "roll_plane", "throttle"):
+                if ab not in schema.abilities:
+                    schema.abilities.append(ab)
+            # Remove conflicting locomotion atoms
+            schema.abilities = [a for a in schema.abilities
+                                if a not in ("jump", "double_jump", "wall_jump", "fly",
+                                              "ascend", "descend", "sprint")]
+        if variant == "swimming":
+            # Ascend/descend replace jump for swim
+            if "jump" in schema.abilities:
+                schema.abilities = [a for a in schema.abilities if a != "jump"]
+            for ab in ("ascend", "descend"):
+                if ab not in schema.abilities:
+                    schema.abilities.append(ab)
+        if variant == "flying":
+            # Free-fly: ascend/descend override jump
+            schema.abilities = [a for a in schema.abilities
+                                if a not in ("jump", "double_jump")]
+
+        # fly binds Shift; drop sprint to avoid key conflict
         if "fly" in schema.abilities and "sprint" in schema.abilities:
             schema.abilities = [a for a in schema.abilities if a != "sprint"]
-        if schema.move_speed <= 0:    schema.move_speed = 6.0
+
+        # Speed sanity
+        if schema.move_speed <= 0:
+            schema.move_speed = 6.0
         if schema.sprint_speed <= schema.move_speed:
             schema.sprint_speed = schema.move_speed * 1.6
-        if schema.jump_force < 0:     schema.jump_force = 0.0
+        if schema.jump_force < 0:
+            schema.jump_force = 0.0
 
-        # Vehicle params — clamp to physically sane ranges so a hallucinated
-        # value can't produce an undriveable or exploding car.
-        schema.max_motor_torque      = max(100.0, min(8000.0,  schema.max_motor_torque))
-        schema.max_steer_angle       = max(5.0,   min(50.0,    schema.max_steer_angle))
-        schema.suspension_distance   = max(0.05,  min(0.6,     schema.suspension_distance))
-        schema.suspension_spring     = max(5000.0, min(120000.0, schema.suspension_spring))
-        schema.suspension_damper     = max(500.0, min(20000.0, schema.suspension_damper))
-        schema.drift_slip_multiplier = max(0.1,   min(1.0,     schema.drift_slip_multiplier))
-        schema.wheel_radius          = max(0.1,   min(1.5,     schema.wheel_radius))
+        # Aircraft param clamping
+        schema.max_thrust       = max(10.0,   min(2000.0, schema.max_thrust))
+        schema.lift_coefficient = max(0.0,    min(200.0,  schema.lift_coefficient))
+        schema.pitch_speed      = max(5.0,    min(180.0,  schema.pitch_speed))
+        schema.roll_speed       = max(5.0,    min(360.0,  schema.roll_speed))
+        schema.yaw_speed        = max(5.0,    min(180.0,  schema.yaw_speed))
+        schema.throttle_rate    = max(0.05,   min(5.0,    schema.throttle_rate))
+        schema.stall_speed      = max(0.0,    min(100.0,  schema.stall_speed))
+        schema.max_air_speed    = max(10.0,   min(500.0,  schema.max_air_speed))
 
-        # ── Prompt-specific lint pass ──
-        # LLMs author imperfect C#. Strip md fences, reject Python tokens,
-        # auto-close braces, cap method length, dedupe usings/fields/methods.
+        # Vehicle param clamping
+        schema.max_motor_torque      = max(100.0,   min(8000.0,   schema.max_motor_torque))
+        schema.max_steer_angle       = max(5.0,     min(50.0,     schema.max_steer_angle))
+        schema.suspension_distance   = max(0.05,    min(0.6,      schema.suspension_distance))
+        schema.suspension_spring     = max(5000.0,  min(120000.0, schema.suspension_spring))
+        schema.suspension_damper     = max(500.0,   min(20000.0,  schema.suspension_damper))
+        schema.drift_slip_multiplier = max(0.1,     min(1.0,      schema.drift_slip_multiplier))
+        schema.wheel_radius          = max(0.1,     min(1.5,      schema.wheel_radius))
+
+        # Shooter clamping
+        schema.fire_rate     = max(0.0,  min(5.0,   schema.fire_rate))
+        schema.magazine_size = max(1,    min(999,   schema.magazine_size))
+        schema.reload_time   = max(0.1,  min(10.0,  schema.reload_time))
+        schema.shoot_range   = max(1.0,  min(1000.0, schema.shoot_range))
+
+        # Fighting clamping
+        schema.primary_damage    = max(0.0,  min(9999.0, schema.primary_damage))
+        schema.primary_range     = max(0.1,  min(10.0,   schema.primary_range))
+        schema.primary_cooldown  = max(0.05, min(5.0,    schema.primary_cooldown))
+        schema.secondary_damage  = max(0.0,  min(9999.0, schema.secondary_damage))
+        schema.secondary_range   = max(0.1,  min(10.0,   schema.secondary_range))
+        schema.secondary_cooldown = max(0.05, min(5.0,   schema.secondary_cooldown))
+        schema.block_reduction   = max(0.0,  min(1.0,    schema.block_reduction))
+        schema.dodge_force       = max(0.0,  min(100.0,  schema.dodge_force))
+        schema.dodge_cooldown    = max(0.1,  min(10.0,   schema.dodge_cooldown))
+        schema.dodge_i_frames    = max(0.0,  min(1.0,    schema.dodge_i_frames))
+
+        schema.interact_range = max(0.1, min(20.0, schema.interact_range))
+
+        # Lint pass on LLM-authored extras
         from .code_fields import _KNOWN_NAMESPACES
         schema.extra_usings = lint_usings(
-            schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
+            schema.extra_usings,
+            already_in_template=self._TEMPLATE_USINGS,
             allowed=_KNOWN_NAMESPACES,
         )
         schema.extra_fields = lint_fields(
-            schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES
+            schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,
         )
-        schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body")
-        schema.update_extra       = lint_code_fragment(schema.update_extra,       what="Update() body")
-        schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body")
-        taken_methods: set[str] = set()
-        cleaned_methods = []
-        for m in schema.extra_methods:
-            m2 = lint_method(m, taken_names=taken_methods)
-            if m2 is not None:
-                cleaned_methods.append(m2)
-        schema.extra_methods = cleaned_methods
+        schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake()")
+        schema.update_extra       = lint_code_fragment(schema.update_extra,       what="Update()")
+        schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate()")
+        taken: set[str] = set()
+        schema.extra_methods = [
+            m2 for m in schema.extra_methods
+            if (m2 := lint_method(m, taken_names=taken)) is not None
+        ]
 
         return schema
 
-    def write_files(self, schema, variant, out_dir: Path) -> int:
-        env  = self.jinja()
+    def write_files(self, schema: ControllerSchema, variant: str, out_dir: Path) -> int:
+        env = self.jinja()
         scripts_dir = out_dir / "Scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
-        cs_path = scripts_dir / f"{schema.name}.cs"
-        cs_path.write_text(
+        (scripts_dir / f"{schema.name}.cs").write_text(
             env.get_template("Controller.cs.j2").render(s=schema, variant=variant),
             encoding="utf-8",
         )
@@ -313,7 +505,6 @@ class ControllerPipeline(MicroPipeline):
             )
             count += 1
 
-        # README
         (out_dir / "README.md").write_text(
             env.get_template("README.md.j2").render(s=schema, variant=variant),
             encoding="utf-8",

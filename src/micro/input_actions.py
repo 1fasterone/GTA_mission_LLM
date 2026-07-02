@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 
 
 InputVariant = Literal[
@@ -147,7 +148,7 @@ OUTPUT:
 """
 
 
-class InputPipeline(MicroPipeline):
+class InputPipeline(UnityMicroPipeline):
     kind            = "input"
     display_name    = "Unity Input Bindings"
     schema_cls      = InputSchema

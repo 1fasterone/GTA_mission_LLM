@@ -1,0 +1,16 @@
+# {{ s.name }} — Trigger Zone
+
+**Variant:** {{ variant }}  **Tag:** `{{ s.target_tag }}`  **One-shot:** {{ s.one_shot }}
+
+{{ s.description }}
+
+## Events fired on activation
+
+{% for a in s.actions %}
+- `{{ a.event_name }}`{% if a.delay > 0 %} (after {{ a.delay }}s){% endif %}
+{% endfor %}
+
+## Usage
+
+Attach `{{ s.name }}` to a GameObject with a Collider set to **Is Trigger**.
+Receiving scripts must implement a method matching each event name.

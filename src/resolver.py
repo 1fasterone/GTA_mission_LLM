@@ -6,11 +6,10 @@ Tries AnythingLLM RAG first; falls back to local lookup tables.
 import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from rich.console import Console
 
-from .anythingllm_client import AnythingLLMClient
 from .mission_schema import MissionSchema
 
 console = Console()
@@ -69,7 +68,7 @@ def _local_resolve(description: str, category: str, lookups: dict,
 
 
 class ModelResolver:
-    def __init__(self, rag: AnythingLLMClient, lookups_dir: str,
+    def __init__(self, rag: Any, lookups_dir: str,
                  fallback: bool = True, use_rag: bool = True):
         self.rag      = rag
         self.lookups  = _load_lookups(lookups_dir)
@@ -77,8 +76,8 @@ class ModelResolver:
         self.use_rag  = use_rag
 
     def resolve(self, description: str, category: str) -> str:
-        if not self.use_rag:
-            # Basic Mode — skip RAG entirely, use local lookups only.
+        if not self.use_rag or self.rag is None:
+            # Basic Mode or no rag client — use local lookups only.
             local = _local_resolve(description, category, self.lookups)
             if local:
                 return local
@@ -86,9 +85,14 @@ class ModelResolver:
             return "UNRESOLVED"
         try:
             result = self.rag.resolve_model(description, category)
+            if result:
+                result = result.lower()   # GTA5 names are case-insensitive; normalize for codegen
             if result and _MODEL_ID_RE.match(result):
+                # Corpus-backed clients (RagClient) return verified canonical names —
+                # skip the valid_models guard that protects against LLM hallucination.
+                corpus_backed = getattr(self.rag, "is_corpus_backed", False)
                 valid = self.lookups.get(category, {}).get("valid_models", [])
-                if not valid or result in valid:
+                if corpus_backed or not valid or result in valid:
                     return result
                 console.print(f"  [dim]RAG returned unknown model '{result}' for '{description}' — trying local[/]")
             elif result:

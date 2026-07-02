@@ -10,7 +10,7 @@ using UnityEngine.InputSystem;
 /// Subscribe to the typed events instead of polling devices.
 /// </summary>
 [CreateAssetMenu(menuName = "Input/{{ s.name }} Reader", fileName = "{{ s.name }}InputReader")]
-public class {{ s.name }}InputReader : ScriptableObject
+public class {{ s.name }}InputReader : ScriptableObject, IInputReader
 {
     [SerializeField] private InputActionAsset asset;
 
@@ -65,4 +65,17 @@ public class {{ s.name }}InputReader : ScriptableObject
     {
         if (asset != null) asset.Disable();
     }
+}
+
+/// <summary>
+/// Minimal contract between any generated InputReader ScriptableObject and a controller
+/// MonoBehaviour. Implement this interface on the SO so controllers can reference it
+/// without knowing the concrete asset type.
+/// </summary>
+public interface IInputReader
+{
+    event System.Action<UnityEngine.Vector2> OnMove;
+    event System.Action OnJump;
+    event System.Action OnSprint;
+    event System.Action OnSprintReleased;
 }

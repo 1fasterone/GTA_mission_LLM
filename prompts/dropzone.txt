@@ -1,0 +1,129 @@
+DropZone — a 3D skydiving simulation and stunt game for PC.
+
+The player is a competitive skydiver chasing world records and adrenaline across five
+iconic jump locations. Beginning aboard a propeller aircraft at altitude, they freefall
+through open sky, execute formation manoeuvres with AI skydivers, deploy their parachute
+canopy at the critical moment, and navigate to a precision landing pad. A wingsuit mode
+unlocks after clearing the first three locations, allowing sustained glide along cliff
+faces and through narrow canyon slots before chute deployment.
+
+SCENES (8 total):
+1. MainMenu         — animated title: skydiver silhouette against sunset cloud layer,
+                      camera pulls back from altitude, Start / Career / Settings / Quit
+2. AircraftInterior — player and AI formation team preparing inside a Cessna Caravan,
+                      pre-jump briefing panel, door opens on cue
+3. ColoradoFreefall — open Rocky Mountain jump, blue-sky daylight, formation objective
+4. CoastalCliffs    — wingsuit slot between sea cliffs above crashing Atlantic surf
+5. StormFront       — jump through a thunderstorm at dusk, lightning, turbulent air
+6. CanyonRun        — wingsuit run through a narrow desert canyon at sunrise
+7. NightJump        — full darkness, city lights below, glow-stick formation markers
+8. FinalApproach    — cinematic landing: player steers canopy into championship arena,
+                      crowd noise, trophy presentation
+
+NARRATIVE — eight acts:
+1. First Jump       — tutorial descent with radio coach, calm clear sky (on_start)
+2. Formation Lock   — all four team members reach the formation diamond (on_enter_zone)
+3. Canopy Tangle    — a team member's chute malfunctions, emergency cut-away (on_timer)
+4. Storm Entry      — jump ship hits turbulence, door rips open early (on_enter_zone)
+5. Lightning Strike — near miss with lightning bolt during StormFront jump (on_timer)
+6. Canyon Wall      — wingsuit grazes a canyon wall, close call (on_enter_zone)
+7. Record Attempt   — final formation with four AI divers in NightJump (manual)
+8. Championship Win — canopy landing bullseye in the arena (on_enter_zone)
+
+SCRIPTS:
+- FreefallController   (player)      6-axis body attitude control in freefall:
+                                     barrel rolls, tracking dives, delta position, flare;
+                                     drag simulation scaling with body angle to airspeed;
+                                     terminal velocity plateau at ~200 km/h; altitude HUD readout
+- WingsuitGlide        (custom)      lift/drag ratio control, pitch/roll glide adjustments,
+                                     proximity cliff detection, slot-gap navigation,
+                                     transitions cleanly into FreefallController on exit
+- ParachuteSystem      (custom)      deployment at configurable altitude, canopy inflation
+                                     physics, toggles for left/right steering risers,
+                                     flare brake for precision landing, reserve chute trigger
+- AltimeterManager     (custom)      real-time altitude from aircraft exit to ground,
+                                     pull-altitude alarm at 1500m, hard-deck at 600m,
+                                     emergency auto-deploy below 300m
+- FormationAI          (enemy)       AI skydivers fly NavMesh-free intercept curves to
+                                     player-relative formation slots; break-off on pull signal;
+                                     ragdoll on collision; celebrate on lock
+- SkyCamera            (camera)      Cinemachine: freefall mode tracks player from 3m above
+                                     and behind, smooth in tumbles; canopy mode orbits wide;
+                                     ground-approach mode cuts low for landing drama
+- GameManager          (game_manager) state machine (Menu/Briefing/Aircraft/Freefall/
+                                     Canopy/Landed/Crashed/Victory); score = precision landing
+                                     distance + formation time; career progression unlocks
+- UIManager            (ui_manager)  HUD: altimeter tape (left), airspeed dial (right),
+                                     formation proximity indicators (corners), pull-warning
+                                     flash overlay, canopy steering diagram on deployment
+- WindSystem           (custom)      procedural wind layers at different altitudes: jet stream
+                                     high, thermals mid, gusts low; turbulence during StormFront;
+                                     pushes player and AI formation alike
+- LightningSystem      (custom)      StormFront scene: lightning bolt spawner, strike audio
+                                     and screen flash, player repulsion force on near-miss
+- AudioManager         (custom)      spatial audio pool, crossfade between altitude layers,
+                                     doppler on rushing air, muffled inside aircraft
+- HealthSystem         (health)      player survivability: canopy tangle = life lost,
+                                     cliff graze = life lost, hard-deck breach = death
+- FormationTracker     (custom)      measures formation slot accuracy and lock duration,
+                                     scores each jump segment, writes to career save
+- SaveLoadManager      (saveload)    career JSON: locations unlocked, best scores, wingsuit flag
+- DialogueManager      (dialogue_manager) radio coach voice lines during briefing and freefall,
+                                     eight narrative acts as in-ear transmissions
+- MaterialPalette      (material_palette) runtime sky gradient palette: sunrise canyon warm,
+                                     day blue-sky crisp, storm grey-green, night city-glow
+- ProceduralTerrain    (level_generator) ProBuilder landscape: cliff ridges, canyon walls,
+                                     landing-pad approach strip, crash terrain
+
+ENTITIES:
+- Player:       lead skydiver in jumpsuit and helmet, humanoid rig, freefall + canopy poses
+- Enemy:        formation AI skydivers (3), humanoid rig, intercept behaviour
+- NPC:          Cessna Caravan aircraft, slow loop above jump zone
+- Collectible:  altitude gate ring (fly through for bonus score)
+- Collectible:  formation lock target (diamond marker, all four divers must reach)
+
+AUDIO — twelve cues that should sound unmistakably like a skydive:
+- aircraft_prop_drone    ambient  looping  Cessna Caravan twin-prop engine rumble
+                                           and cabin vibration at altitude, muffled interior
+- door_opens_at_altitude sfx              aircraft slide door rips open, wind blast and
+                                           roar rushes in, metal clatter
+- freefall_wind_rush     ambient  looping  full terminal-velocity wind roar over visor
+                                           and helmet, 200 km/h air pressure white-noise
+- freefall_body_turn     sfx              airstream pitch shift as body rotates from delta
+                                           to sit position, turbulent flutter
+- altimeter_beep_pull    sfx              sharp electronic altimeter alarm beep sequence,
+                                           three ascending tones, pull-altitude warning
+- parachute_deploy       sfx              sudden fabric snap and crack as canopy inflates,
+                                           risers snap taut, deceleration rush
+- canopy_flutter         ambient  looping  nylon canopy fabric buffeting in slow steering
+                                           glide, toggle creaks, wind in lines
+- formation_lock_chime   sfx              clear radio-tone confirmation chime, team lock
+                                           achieved, upbeat digital sting
+- lightning_crack        sfx              explosive close lightning strike with immediate
+                                           thunder crack, air ionisation hiss before
+- canyon_wall_proximity  ambient  looping  wingsuit proximity roar: rock face whooshing
+                                           past centimetres away, echo slap off cliff
+- landing_crowd_cheer    sfx              stadium crowd eruption as player hits precision
+                                           bullseye landing pad, rising cheer swell
+- storm_ambient          ambient  looping  dark rolling thunderstorm interior: rain pelting
+                                           visor, distant rolling thunder, turbulent gusts
+
+PROCEDURAL GEOMETRY:
+- Rocky Mountain terrain with ridgelines and valley floor   (terrain, resolution 64)
+- Sea cliff face with slot gap for wingsuit approach        (rock, resolution 48)
+- Desert canyon walls for canyon run                        (room, resolution 32)
+- Landing arena approach strip and crowd stands             (road, resolution 24)
+
+VISUAL STYLE: stylized with realism bias — crisp sky gradients, volumetric clouds,
+altitude-haze depth.
+COLOR PALETTE name "DropZone":
+  primary    #87CEEB  (open-sky daylight — clear horizon blue)
+  secondary  #1A1A2E  (night jump / storm — deep indigo-black)
+  accent     #FF6B00  (altimeter warnings and formation markers — hazard orange)
+  background #F4A460  (canyon sunrise terrain — warm sandstone)
+  trim       #FFFFFF  (canopy fabric, HUD text, parachute lines — clean white)
+
+FEATURES: navmesh, cinemachine, animation_rigging, input_system, timeline, post_processing
+RENDER PIPELINE: URP  (volumetric clouds, depth-of-field, motion blur on freefall, HDR sky)
+UNITY VERSION: 6000.0
+PLATFORM: PC

@@ -1,0 +1,20 @@
+// Auto-generated — DO NOT EDIT
+// Atom-driven behavior for entity '{{ entity.name }}'.
+// Attached at runtime by EntitySpawner via AddComponent("{{ class_name }}").
+using System.Collections;
+using UnityEngine;
+
+public class {{ class_name }} : MonoBehaviour
+{
+    private void Start() => StartCoroutine(Run());
+
+    private IEnumerator Run()
+    {
+        {{ atom_body | indent(8) }}
+{% if loop_behavior %}
+        // Behavior loops — restart coroutine
+        StartCoroutine(Run());
+{% endif %}
+        yield return null;
+    }
+}

@@ -16,9 +16,9 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .lm_studio_client   import LMStudioClient
-from .backends           import make_chat_client
-from .anythingllm_client import AnythingLLMClient
+from .backends           import make_chat_client, make_rag_client
 from .unity_schema       import UnityPackage, UnitySchema, UnityScript
+from .capability_resolver import resolve_capabilities
 from .unity_resolver     import UnityResolver
 from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
@@ -42,6 +42,49 @@ _CANONICAL_SCRIPT_NAMES = {
     "mesh_builder": "MeshBuilder",
     "health":       "HealthSystem",
 }
+
+# Known public API of the canonical GameManager template (class members the LLM
+# can safely call via GameManager.Instance.<member>).  Calls to anything outside
+# this set are stripped from custom script bodies to prevent CS0246/CS1061.
+_GAME_MANAGER_API: frozenset[str] = frozenset({
+    "Instance", "State", "Score", "Lives", "Level",
+    "OnScoreChanged", "OnLivesChanged", "OnStateChanged",
+    "AddScore", "LoseLife", "ResumeGame", "AdvanceLevel",
+    "RestartLevel", "LoadMainMenu",
+})
+
+# Regex to find "SomeName.Instance.Whatever" singleton calls in C# body strings.
+_SINGLETON_CALL_RE = re.compile(r"\b(\w+)\.Instance\.(\w+)\b")
+# Line-level split (keeps \n in place for the join).
+_LINE_RE = re.compile(r"[^\n]*\n?")
+
+
+def _sanitize_singleton_calls(body: str, known_classes: set[str]) -> str:
+    """Strip lines from a C# body string that call undefined singleton methods.
+
+    Two cases are handled:
+      1. ``UndefinedClass.Instance.Foo(...)`` where UndefinedClass has no script
+         in the schema → entire line removed.
+      2. ``GameManager.Instance.UndefinedProp(...)`` where the property/method is
+         not part of the canonical GameManager template API → entire line removed.
+
+    Only lines that exclusively contain the bad call are dropped; lines with
+    multiple statements are stripped only of the offending statement.
+    """
+    lines_out: list[str] = []
+    for line in body.splitlines(keepends=True):
+        keep = True
+        for m in _SINGLETON_CALL_RE.finditer(line):
+            cls, member = m.group(1), m.group(2)
+            if cls not in known_classes:
+                keep = False
+                break
+            if cls == "GameManager" and member not in _GAME_MANAGER_API:
+                keep = False
+                break
+        if keep:
+            lines_out.append(line)
+    return "".join(lines_out)
 
 
 def _to_pascal(s: str, fallback: str = "Script") -> str:
@@ -95,6 +138,24 @@ def _programmatic_fix(schema: UnitySchema) -> UnitySchema:
             script.name = canon
         deduped.append(script)
     schema.scripts = deduped
+
+    # Strip singleton calls in custom script bodies that reference undefined
+    # classes (e.g. UIManager.Instance.XXX when no UIManager exists) or
+    # undefined GameManager methods (e.g. GameManager.Instance.ActiveZone).
+    known_classes: set[str] = {s.name for s in schema.scripts}
+    for script in schema.scripts:
+        if script.type != "custom":
+            continue
+        if script.update_extra:
+            script.update_extra = _sanitize_singleton_calls(script.update_extra, known_classes)
+        if script.awake_extra:
+            script.awake_extra = _sanitize_singleton_calls(script.awake_extra, known_classes)
+        if script.fixed_update_extra:
+            script.fixed_update_extra = _sanitize_singleton_calls(
+                script.fixed_update_extra, known_classes
+            )
+        for m in script.extra_methods:
+            m.body = _sanitize_singleton_calls(m.body, known_classes)
 
     return schema
 
@@ -201,29 +262,21 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
 
 class UnityPipeline:
     def __init__(self, config: dict):
+        self.config = config
         lm_cfg   = config["lm_studio"]
         pipe_cfg = config.get("unity_pipeline", config.get("pipeline", {}))
 
         self.llm = make_chat_client(config)
 
-        # Unity RAG is optional: skipped in Basic Mode; otherwise points at the
-        # 'llm_unity' AnythingLLM workspace seeded from rag_docs/unity/.
+        # Unity RAG: uses the same backend selection as GTA5 (local ChromaDB or
+        # AnythingLLM), driven by config.rag.backend.  Skipped in Basic Mode.
         use_rag = not config.get("basic_mode", False)
-        unity_rag: AnythingLLMClient | None = None
-        if use_rag:
-            llm_cfg = config.get("anythingllm", {})
-            unity_slug = llm_cfg.get("unity_workspace_slug") or llm_cfg.get("workspace_slug", "")
-            if llm_cfg.get("base_url") and unity_slug:
-                unity_rag = AnythingLLMClient(
-                    base_url       = llm_cfg["base_url"],
-                    api_key        = llm_cfg.get("api_key", ""),
-                    workspace_slug = unity_slug,
-                )
+        unity_rag = make_rag_client(config) if use_rag else None
 
         self.resolver = UnityResolver(
             lookups_dir = pipe_cfg.get("lookups_dir", "lookups"),
             rag         = unity_rag,
-            use_rag     = use_rag,
+            use_rag     = use_rag and unity_rag is not None,
         )
         self.template_dir = pipe_cfg.get("unity_template_dir", "templates/unity")
         self.generator = UnityProjectGenerator(template_dir=self.template_dir)
@@ -244,11 +297,89 @@ class UnityPipeline:
 
     # ── main run ──────────────────────────────────────────────────────────────
 
+    def _blender_model_overrides(self, schema, concept: str) -> dict[str, str]:
+        """Build procedural Blender models for every supported catalog kind and return
+        {kind: fbx_path}.  Degrades silently per kind if a build fails — the generator
+        falls back to the static Model Pack / primitives for that kind.
+
+        Catalog kinds built here: player, enemy (both humanoid), vehicle (car/plane/bike
+        chosen from locomotion + entity/concept keywords).
+        """
+        from src.blender.locator import blender_available
+        bl_path = self.config.get("blender", {}).get("blender_path") or None
+        if not blender_available(bl_path):
+            self._warn("Blender not found — using static Model Pack / primitives")
+            return {}
+
+        from src.micro.model import ModelPipeline
+        mp = ModelPipeline(self.config)
+        overrides: dict[str, str] = {}
+        pname = schema.project_name
+
+        # ── helpers ──────────────────────────────────────────────────────────
+        def _entity_desc(kind: str) -> str:
+            return next(
+                (getattr(e, "description", "") or e.name
+                 for e in schema.entities if getattr(e, "kind", "") == kind),
+                "",
+            )
+
+        def _build(catalog_kind: str, variant: str, prompt: str, asset_name: str) -> None:
+            # rig=True so movable models ship a real skeleton: humanoid -> Unity
+            # Humanoid avatar (player/enemy animate + retarget clips); car/bike ->
+            # wheel/steer bones. Skeleton-less bases just export static (graceful).
+            res = mp.build_fbx(prompt or variant, variant=variant, rig=True,
+                               name=asset_name, use_llm=False)
+            if res and res.get("fbx"):
+                overrides[catalog_kind] = res["fbx"]
+                self._ok(f"Blender {catalog_kind} ({variant}): "
+                         f"{res.get('tris', '?')} tris -> {res['fbx']}")
+            else:
+                self._warn(f"Blender {catalog_kind} ({variant}) build failed — "
+                           "falling back to static pack")
+
+        # ── humanoid: player + enemy ──────────────────────────────────────────
+        _build("player", "humanoid",
+               _entity_desc("player") or "player character",
+               f"{pname}Player")
+        _build("enemy",  "humanoid",
+               _entity_desc("enemy")  or "enemy humanoid",
+               f"{pname}Enemy")
+
+        # ── vehicle: pick the right base from locomotion + content keywords ──
+        loco = getattr(schema, "locomotion", "walk")
+        combined = " ".join([
+            loco,
+            " ".join(e.name for e in schema.entities),
+            " ".join(getattr(e, "description", "") or "" for e in schema.entities),
+            concept,
+        ]).lower()
+
+        has_vehicle = (
+            loco in ("drive", "fly")
+            or any(getattr(e, "kind", "") == "vehicle" for e in schema.entities)
+            or any(w in combined for w in ("vehicle", "car", "jeep", "truck",
+                                           "plane", "aircraft", "jet", "bike",
+                                           "motorcycle", "motorbike"))
+        )
+        if has_vehicle:
+            if any(w in combined for w in ("plane", "aircraft", "jet", "glider", "fly")):
+                veh_variant = "plane"
+            elif any(w in combined for w in ("bike", "motorcycle", "motorbike", "dirt bike", "chopper")):
+                veh_variant = "bike"
+            else:
+                veh_variant = "car"
+            veh_prompt = (_entity_desc("vehicle") or concept or "").strip()[:400]
+            _build("vehicle", veh_variant, veh_prompt, f"{pname}Vehicle")
+
+        return overrides
+
     def run(self, user_prompt: str,
             theme:       str | None = None,
             mashup_with: str | None = None,
             seed:        int | None = None,
-            compose:     bool = False) -> Path:
+            compose:     bool = False,
+            blender_models: bool = False) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -332,6 +463,13 @@ class UnityPipeline:
         if not fix_msgs:
             self._ok("Schema is consistent — no fixes needed")
 
+        # Capability graph: schema.capabilities → atoms (Step 5b)
+        schema, cap_msgs = resolve_capabilities(schema)
+        for msg in cap_msgs:
+            self._fix(msg)
+        if not cap_msgs and schema.capabilities:
+            self._ok("Capabilities present but produced no atoms (all sub-models None)")
+
         # Re-resolve anything that consistency check added
         schema = self.resolver.resolve_schema(schema)
         manifest_deps = self.resolver.build_manifest_deps(
@@ -341,6 +479,11 @@ class UnityPipeline:
 
         # STEP 6 — generate ───────────────────────────────────────────────────
         self._step(6, "Generator compiles schema -> Unity project folder")
+        # Blender model fulfilment: build real models from the story and feed them
+        # into the Model Pack flow keyed by kind (replaces the static FBX/primitive).
+        model_overrides: dict[str, str] = {}
+        if blender_models:
+            model_overrides = self._blender_model_overrides(schema, concept)
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
         composed_units = None
@@ -348,9 +491,16 @@ class UnityPipeline:
         if compose:
             from .unity_compose import MicroComposer, subsystems_for, COVERED_SCRIPT_TYPES
             composer  = MicroComposer(schema.project_name,
-                                      template_dir=self.template_dir)
+                                      template_dir=self.template_dir,
+                                      project_config=self.config)
+            # Ensure audio is always composed — it's a core game system.
+            if "audio" not in (schema.features or []):
+                schema.features = list(schema.features or []) + ["audio"]
+                self._fix("compose: injected 'audio' feature for SA3 clip generation")
             subsystems = subsystems_for(schema.game_type, schema.features,
-                                        locomotion=schema.locomotion)
+                                        locomotion=schema.locomotion,
+                                        capabilities=schema.capabilities,
+                                        user_prompt=user_prompt)
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep
@@ -366,10 +516,55 @@ class UnityPipeline:
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         project_root, file_count = self.generator.write(
-            schema, manifest_deps, self.output_dir, composed_units=composed_units)
+            schema, manifest_deps, self.output_dir, composed_units=composed_units,
+            model_overrides=model_overrides)
         if compose and subsystems:
+            audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
+            if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):
+                # 1. Extract diegetic cues from concept WHILE LM Studio is loaded.
+                #    Inject into the audio subsystem meta so default_fix() finds them
+                #    without needing a live LLM (it's unloaded a few lines below).
+                try:
+                    from .audio.resolver import extract_cues as _extract_audio_cues
+                    _seed = int(self.llm.seed) if getattr(self.llm, "seed", None) is not None else (seed or 0)
+                    _pre_cues = _extract_audio_cues(concept, self.llm, n=10, seed=_seed)
+                    if _pre_cues:
+                        self._ok(f"Pre-extracted {len(_pre_cues)} diegetic audio cues from concept")
+                        for _sub in subsystems:
+                            if _sub.kind == "audio":
+                                _sub.options.setdefault("meta", {})["_pre_cues"] = _pre_cues
+                    else:
+                        self._warn("Concept audio extraction returned no cues — genre preset will be used")
+                except Exception as _exc:  # noqa: BLE001
+                    self._warn(f"Audio pre-extraction failed ({type(_exc).__name__}: {_exc})")
+                # 2. Unload LM Studio so SA3 has the full VRAM budget.
+                from .audio.backends import unload_lm_studio
+                self._ok("Unloading LM Studio to free VRAM for Stable Audio 3 clip generation")
+                ok = unload_lm_studio(self.config)
+                if ok:
+                    self._ok("LM Studio model unloaded — VRAM available for Stable Audio 3")
+                else:
+                    self._warn("LM Studio unload failed — SA3 may OOM; run: lms unload")
             composer.emit(subsystems, project_root / "Assets")
             self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes")
+            # Overlay audio clips:
+            #   1. Assets/Audio/           — canonical user-visible folder
+            #   2. Assets/Resources/Audio/ — for Resources.LoadAll<AudioClip> at runtime
+            # The micro writes to Micros/audio/Resources/Audio/<id>/ — copy the
+            # inner Audio/ tree into both destinations.
+            import shutil
+            audio_micro_clips = (project_root / "Assets" / "Micros" / "audio"
+                                 / "Resources" / "Audio")
+            if audio_micro_clips.exists():
+                dst_audio = project_root / "Assets" / "Audio"
+                shutil.copytree(audio_micro_clips, dst_audio, dirs_exist_ok=True)
+                dst_res_audio = project_root / "Assets" / "Resources" / "Audio"
+                shutil.copytree(audio_micro_clips, dst_res_audio, dirs_exist_ok=True)
+                mf = audio_micro_clips.parent / "audio_manifest.json"
+                if mf.exists():
+                    import shutil as _sh
+                    _sh.copy2(mf, project_root / "Assets" / "Resources" / "audio_manifest.json")
+                self._ok(f"Audio clips overlaid -> Assets/Audio/ + Assets/Resources/Audio/")
         # Drop a discoverable sidecar so the Library page can show the concept
         # next to each saved project (Unity schemas aren't written to disk the
         # way GTA's *.schema.json files are).

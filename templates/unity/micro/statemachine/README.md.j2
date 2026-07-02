@@ -1,0 +1,21 @@
+# {{ s.name }} — State Machine
+
+**Variant:** {{ variant }}
+**States:** {% for st in s.states %}`{{ st.name }}`{% if not loop.last %} → {% endif %}{% endfor %}
+**Initial state:** `{{ s.initial_state }}`
+
+{{ s.description }}
+
+## Transitions
+
+| From | To | Condition |
+|---|---|---|
+{% for t in s.transitions %}
+| `{{ t.from_state }}` | `{{ t.to_state }}` | `{{ t.condition }}` |
+{% endfor %}
+
+## Usage
+
+Attach `{{ s.name }}` to the relevant GameObject.
+Other scripts can read `CurrentState` or call `IsIn(State.X)`.
+State changes broadcast `OnStateChanged(State)` via `SendMessage`.

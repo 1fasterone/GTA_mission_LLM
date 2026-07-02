@@ -1,0 +1,1560 @@
+"""
+Parametric base-model library (the "starter model + manipulate" pipeline).
+
+The lesson from the LLM-from-scratch tests: a local model can't compose recognisable
+vehicles/characters from primitives (spatial reasoning is the wall, not code). So we
+flip it — a human authors a believable PARAMETRIC base once (it's recognisable by
+construction), and the LLM's only job shrinks to emitting a PARAMETER dict
+("jeep with big tires" -> base=car, wheel_r big, ride high, boxy). Geometry quality
+is guaranteed; the model just turns knobs. Same pattern as recipes.py / rig_templates.py,
+extended to whole composite meshes.
+
+Pieces:
+  * `BASE_PARAM_SCHEMA` — per base, {param: (default, lo, hi)}; the LLM's allowed knobs.
+  * `clamp_params` — validate/fill/clamp a raw param dict (robust like unity_schema).
+  * `keyword_base` / `keyword_hints` — deterministic prompt→base + obvious knob nudges,
+    so the pipeline works WITHOUT the LLM (graceful degradation / baseline).
+  * `build_base_code` — a self-contained bpy script that builds `base` with `params`
+    in a collection at an X offset (runs in live MCP Blender or headless, like the
+    rest of the package).
+
+Coordinate care baked into the authored builders (where the LLM failed): Z-up, parts
+stand on the ground (z=0), wheels are side-facing cylinders (axle along X), slabs are
+scaled cubes. Proven believable live on an 8GB 4060.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Optional
+
+# ── parameter schemas: {param: (default, lo, hi)} ─────────────────────────────
+BASE_PARAM_SCHEMA: dict[str, dict[str, tuple]] = {
+    "car": {
+        "body_w":      (1.7, 1.2, 2.4),
+        "body_len":    (3.8, 2.8, 5.5),
+        "body_h":      (0.60, 0.40, 1.20),
+        "cabin_h":     (0.50, 0.30, 1.00),
+        "wheel_r":     (0.42, 0.30, 0.95),
+        "wheel_w":     (0.34, 0.20, 0.60),
+        "ride":        (0.00, 0.00, 0.60),
+        # structural knobs — these change the SILHOUETTE, not just the scale:
+        "cabin_len":   (0.50, 0.30, 0.90),   # cabin length as a fraction of body_len
+        "cabin_pos":   (0.00, -0.30, 0.30),  # cabin shift toward front(+) / rear(-)
+        "bed":         (0.0, 0.0, 1.0),      # >=0.5 -> open pickup bed behind the cabin
+        "wheel_pairs": (2, 2, 3),            # axles: 2 (normal) or 3 (6-wheel limo/truck)
+        "rim":         (0.45, 0.0, 0.6),     # hub radius as a fraction of the tyre (0 = none)
+    },
+    "plane": {
+        "fuselage_len": (5.0, 3.0, 9.0),
+        "fuselage_r":   (0.50, 0.30, 1.00),
+        "wing_span":    (6.0, 3.0, 12.0),
+        "wing_chord":   (1.2, 0.6, 2.5),
+        "fin_h":        (1.0, 0.5, 2.0),
+    },
+    "boat": {
+        "hull_len":   (6.0, 3.0, 16.0),
+        "hull_beam":  (2.0, 1.0, 5.0),
+        "hull_depth": (1.2, 0.6, 3.0),
+        "deck_h":     (0.12, 0.05, 0.40),
+        "mast_h":     (4.0, 0.0, 9.0),
+        # structural — choose the kind of boat (rowboat / sailboat / motorboat / tug):
+        "masts":   (1, 0, 3),            # number of masts (0 = none)
+        "sails":   (1.0, 0.0, 1.0),      # >=0.5 -> square sails on the masts
+        "prop":    (0.0, 0.0, 1.0),      # >=0.5 -> motor propeller (spins)
+        "cabin":   (0.0, 0.0, 1.0),      # >=0.5 -> wheelhouse / cabin
+        "rudder":  (1.0, 0.0, 1.0),      # >=0.5 -> steerable rudder (yaws)
+        "funnel":  (0.0, 0.0, 1.0),      # >=0.5 -> smokestack (steamer / tug)
+    },
+    "humanoid": {
+        "height":     (1.8, 1.2, 2.6),
+        "shoulder_w": (0.50, 0.30, 0.90),
+        "hip_w":      (0.34, 0.20, 0.60),
+        "head_r":     (0.13, 0.08, 0.22),
+        "limb_r":     (0.08, 0.05, 0.16),
+    },
+    "bike": {
+        "wheelbase":   (1.05, 0.60, 1.60),
+        "wheel_r":     (0.34, 0.20, 0.55),
+        "wheel_w":     (0.10, 0.06, 0.32),   # thin (road) -> fat (dirt/chopper)
+        "frame_h":     (0.40, 0.25, 0.65),
+        "handlebar_w": (0.50, 0.30, 0.80),
+        "rim":         (0.55, 0.0, 0.70),
+        # structural — choose the kind of bike:
+        "wheels":      (2, 1, 2),            # 1 = unicycle, 2 = normal
+        "engine":      (0.0, 0.0, 1.0),      # >=0.5 -> motorbike (engine block)
+        "tank":        (0.0, 0.0, 1.0),      # >=0.5 -> fuel tank
+        "pedals":      (1.0, 0.0, 1.0),      # >=0.5 -> pedals (bicycle/unicycle)
+        "suspension":  (0.0, 0.0, 1.0),      # >=0.5 -> dirt-bike front forks
+    },
+    "furniture": {
+        "width":    (1.20, 0.30, 3.00),    # X span of the piece
+        "depth":    (0.70, 0.25, 2.20),    # Y span
+        "height":   (0.75, 0.30, 2.20),    # Z of the primary surface / total height
+        "top_t":    (0.06, 0.02, 0.20),    # surface (top / seat / lid) slab thickness
+        "leg_r":    (0.05, 0.02, 0.18),    # leg radius
+        # structural — choose the kind of furniture (table/chair/shelf/dresser/...):
+        "legs":     (4, 0, 4),             # 0=solid carcass, 1=pedestal, 3, 4=corner legs
+        "seat":     (0.0, 0.0, 1.0),       # >=0.5 -> the surface is a seat (chair/stool/bench/sofa)
+        "back":     (0.0, 0.0, 1.0),       # >=0.5 -> backrest above the seat
+        "shelves":  (0, 0, 6),             # >0 -> open shelving (bookcase); implies a carcass
+        "drawers":  (0, 0, 6),             # >0 -> stacked drawer fronts (desk/dresser)
+        "cushion":  (0.0, 0.0, 1.0),       # >=0.5 -> padded look (thicker seat / mattress)
+    },
+    "weapon": {
+        "length":     (0.90, 0.20, 1.40),  # overall size (receiver + furniture)
+        "caliber":    (0.03, 0.015, 0.08), # bore / barrel radius
+        "barrel_len": (0.45, 0.10, 0.95),  # barrel length forward (+Y) of the receiver
+        # structural — the attachment loadout (scopes, stocks, barrels, muzzles, ...):
+        "stock":      (1, 0, 2),           # 0=none (pistol), 1=fixed, 2=skeleton/folding
+        "muzzle":     (0, 0, 2),           # 0=bare, 1=muzzle brake, 2=suppressor
+        "magazine":   (1, 0, 2),           # 0=none, 1=box mag, 2=drum
+        "scope":      (0.0, 0.0, 1.0),     # >=0.5 -> optic on the top rail
+        "grip":       (1.0, 0.0, 1.0),     # >=0.5 -> pistol grip
+        "foregrip":   (0.0, 0.0, 1.0),     # >=0.5 -> vertical foregrip under the handguard
+    },
+}
+
+BASE_NAMES = tuple(BASE_PARAM_SCHEMA.keys())
+
+DEFAULT_COLOR: dict[str, tuple] = {
+    "car":      (0.12, 0.32, 0.72),
+    "plane":    (0.85, 0.85, 0.88),
+    "boat":     (0.32, 0.20, 0.12),     # varnished wood hull
+    "humanoid": (0.80, 0.66, 0.55),
+    "bike":     (0.70, 0.10, 0.10),
+    "furniture": (0.45, 0.30, 0.16),    # warm wood
+    "weapon":   (0.15, 0.15, 0.16),     # gunmetal / black polymer
+}
+
+# Humanoid material palette (from "Fully Rigged Humanoid Character.md"). The LLM
+# can override any slot via params["palette"]; "skin" defaults to the model colour
+# so a "green android" still tints the skin. Every slot is colour-validated/clamped.
+HUMANOID_PALETTE: dict[str, tuple] = {
+    "skin":  (0.80, 0.66, 0.55),
+    "shirt": (0.20, 0.40, 0.80),
+    "pants": (0.15, 0.15, 0.25),
+    "shoe":  (0.10, 0.10, 0.10),
+    "hair":  (0.12, 0.08, 0.05),
+    "eye":   (0.92, 0.92, 0.94),
+    "pupil": (0.05, 0.05, 0.05),
+}
+
+# prompt keyword -> base (first match wins, order matters; bike before car so
+# "motorbike"/"dirt bike" don't get swallowed by a generic vehicle match)
+_KEYWORD_BASE = [
+    (("airplane", "aeroplane", "plane", "aircraft", "jet", "biplane", "fighter", "glider"), "plane"),
+    (("boat", "ship", "sailboat", "sailing", "yacht", "tugboat", "tug", "ferry", "canoe",
+      "kayak", "dinghy", "rowboat", "trawler", "galleon", "schooner", "barge", "catamaran",
+      "watercraft", "vessel"), "boat"),
+    (("bicycle", "motorbike", "motorcycle", "dirt bike", "unicycle", "scooter", "chopper",
+      "moped", "bike"), "bike"),
+    (("jeep", "car", "truck", "suv", "vehicle", "sedan", "buggy", "van", "auto"), "car"),
+    (("furniture", "table", "desk", "chair", "stool", "bench", "sofa", "couch",
+      "shelf", "bookcase", "bookshelf", "cabinet", "dresser", "drawer", "nightstand",
+      "wardrobe", "ottoman", "bed"), "furniture"),
+    (("weapon", "firearm", "gun", "pistol", "handgun", "revolver", "rifle", "carbine",
+      "sniper", "shotgun", "smg", "submachine", "musket", "blaster", "sidearm"), "weapon"),
+    (("human", "humanoid", "person", "character", "man", "woman", "robot", "biped", "figure"), "humanoid"),
+]
+
+
+def keyword_base(prompt: str) -> Optional[str]:
+    """Deterministic prompt -> base, no LLM. None if nothing matches."""
+    p = prompt.lower()
+    for words, base in _KEYWORD_BASE:
+        if any(w in p for w in words):
+            return base
+    return None
+
+
+def keyword_hints(prompt: str, base: str) -> dict:
+    """A few obvious deterministic knob nudges from the prompt (baseline before the
+    LLM is wired). Conservative — only unmistakable cues."""
+    p = prompt.lower()
+    out: dict = {}
+    if base == "car":
+        if any(w in p for w in ("big tire", "big tyre", "big wheel", "offroad", "off-road", "monster", "jeep", "lifted")):
+            out["wheel_r"] = 0.75
+            out["ride"] = 0.35
+            out["body_h"] = 0.85
+        if "long" in p or "limo" in p:
+            out["body_len"] = 4.6
+    elif base == "plane":
+        if "big" in p or "jumbo" in p or "large" in p:
+            out["fuselage_len"] = 7.5
+            out["wing_span"] = 9.0
+        if "glider" in p:
+            out["wing_span"] = 11.0
+    elif base == "boat":
+        # kind of boat (later cues win; default stays a small single-mast sailboat)
+        if any(w in p for w in ("sailboat", "sailing", "schooner", "galleon", "catamaran", "yacht")):
+            out.update(masts=2 if any(w in p for w in ("schooner", "galleon")) else 1,
+                       sails=1.0, prop=0.0)
+        if any(w in p for w in ("motorboat", "speedboat", "powerboat", "trawler", "ferry")):
+            out.update(masts=0, sails=0.0, prop=1.0, cabin=1.0)
+        if any(w in p for w in ("tug", "tugboat", "steamer", "barge")):
+            out.update(masts=0, sails=0.0, prop=1.0, cabin=1.0, funnel=1.0, hull_beam=2.6)
+        if any(w in p for w in ("rowboat", "canoe", "kayak", "dinghy")):
+            out.update(masts=0, sails=0.0, prop=0.0, cabin=0.0, rudder=0.0,
+                       hull_len=3.6, hull_beam=1.3, hull_depth=0.7)
+        if any(w in p for w in ("big", "large", "cargo", "galleon", "ferry")):
+            out.update(hull_len=11.0, hull_beam=3.4, hull_depth=2.2)
+    elif base == "humanoid":
+        if "tall" in p:
+            out["height"] = 2.3
+        if "thin" in p or "slim" in p:
+            out["shoulder_w"] = 0.36
+            out["limb_r"] = 0.06
+        if "broad" in p or "buff" in p or "strong" in p:
+            out["shoulder_w"] = 0.78
+    elif base == "bike":
+        if any(w in p for w in ("dirt", "off-road", "offroad", "motocross", "mountain")):
+            out.update(wheel_r=0.40, wheel_w=0.24, suspension=1.0, engine=1.0, tank=1.0, pedals=0.0)
+        if any(w in p for w in ("motorbike", "motorcycle", "chopper", "moped")):
+            out.update(engine=1.0, tank=1.0, pedals=0.0, wheel_w=0.18)
+        if "scooter" in p:
+            out.update(engine=1.0, tank=0.0, pedals=0.0, wheel_r=0.26)
+        if "unicycle" in p:
+            out.update(wheels=1.0, pedals=1.0, engine=0.0)
+        if "bicycle" in p:
+            out.update(engine=0.0, tank=0.0, pedals=1.0, wheel_w=0.08)
+    elif base == "furniture":
+        # kind of piece (later cues win, so generic "table" stays a clean default)
+        if "table" in p:
+            out.update(width=1.6, depth=0.9, height=0.75, legs=4)
+        if "desk" in p:
+            out.update(width=1.4, depth=0.7, height=0.75, legs=4, drawers=3)
+        if "stool" in p:
+            out.update(width=0.4, depth=0.4, height=0.6, seat=1.0, back=0.0, legs=4)
+        if "chair" in p:
+            out.update(width=0.5, depth=0.5, height=0.46, seat=1.0, back=1.0, legs=4)
+        if "bench" in p:
+            out.update(width=1.6, depth=0.45, height=0.45, seat=1.0, back=0.0, legs=4)
+        if "sofa" in p or "couch" in p:
+            out.update(width=2.0, depth=0.9, height=0.45, seat=1.0, back=1.0, legs=4, cushion=1.0)
+        if any(w in p for w in ("shelf", "bookcase", "bookshelf")):
+            out.update(width=0.9, depth=0.32, height=1.8, top_t=0.04, legs=0, shelves=4)
+        if any(w in p for w in ("dresser", "drawers", "cabinet", "nightstand", "wardrobe")):
+            out.update(width=1.0, depth=0.5, height=0.9, legs=0, drawers=4)
+        if "bed" in p:
+            out.update(width=1.6, depth=2.0, height=0.5, legs=4, cushion=1.0)
+        if "round" in p or "pedestal" in p:
+            out["legs"] = 1
+    elif base == "weapon":
+        # weapon class (later cues win; default stays a generic rifle-ish receiver)
+        if any(w in p for w in ("pistol", "handgun", "sidearm")):
+            out.update(length=0.32, barrel_len=0.14, stock=0, magazine=1, foregrip=0)
+        if "revolver" in p:
+            out.update(length=0.32, barrel_len=0.16, stock=0, magazine=0, foregrip=0)
+        if "smg" in p or "submachine" in p:
+            out.update(length=0.6, barrel_len=0.25, stock=2, magazine=1)
+        if any(w in p for w in ("rifle", "carbine", "assault", "ar-15", "ar15")):
+            out.update(length=0.95, barrel_len=0.5, stock=1, magazine=1, foregrip=1)
+        if "sniper" in p or "marksman" in p:
+            out.update(length=1.2, barrel_len=0.85, stock=1, scope=1, magazine=1)
+        if "shotgun" in p:
+            out.update(length=1.0, barrel_len=0.6, caliber=0.05, stock=1, magazine=0)
+        if any(w in p for w in ("machine gun", "machinegun", "lmg")):
+            out.update(length=1.1, barrel_len=0.7, stock=1, magazine=2, foregrip=1)
+        if "suppress" in p or "silenc" in p:
+            out["muzzle"] = 2
+        if "brake" in p or "compensator" in p:
+            out["muzzle"] = 1
+        if "scope" in p or "scoped" in p or "optic" in p:
+            out["scope"] = 1
+        if "drum" in p:
+            out["magazine"] = 2
+    return out
+
+
+def _clamp(v, lo, hi, default):
+    try:
+        return max(lo, min(hi, float(v)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp_palette(raw, skin_default):
+    """Validate/clamp every humanoid material slot; fill missing slots with the
+    authored defaults. ``skin`` falls back to the model colour, not the palette
+    default, so colour cues (e.g. 'green android') still tint the skin."""
+    raw = raw if isinstance(raw, dict) else {}
+    out = {}
+    for slot, default in HUMANOID_PALETTE.items():
+        base_default = skin_default if slot == "skin" else default
+        out[slot] = _clamp_color(raw.get(slot), base_default)
+    return out
+
+
+def _clamp_color(v, default):
+    if isinstance(v, (list, tuple)) and len(v) >= 3:
+        try:
+            c = [float(x) for x in v[:3]]
+        except (TypeError, ValueError):
+            return default
+        if max(c) > 1.0:                 # LLM sometimes emits 0-255 -> normalise
+            c = [x / 255.0 for x in c]
+        return tuple(max(0.0, min(1.0, x)) for x in c)
+    return default
+
+
+def clamp_params(base: str, raw: Optional[dict]) -> dict:
+    """Fill defaults + clamp every known knob to its range; validate colour; drop
+    unknown keys. A bad LLM token can never break the builder."""
+    base = base if base in BASE_PARAM_SCHEMA else "car"
+    raw = raw or {}
+    schema = BASE_PARAM_SCHEMA[base]
+    out = {}
+    for name, (default, lo, hi) in schema.items():
+        out[name] = _clamp(raw.get(name, default), lo, hi, default)
+    out["color"] = _clamp_color(raw.get("color"), DEFAULT_COLOR[base])
+    if base == "humanoid":
+        out["palette"] = _clamp_palette(raw.get("palette"), out["color"])
+    return out
+
+
+# ── emitted bpy: shared helpers + per-base builders + runner ───────────────────
+
+_HELPERS = '''
+import bpy
+from math import radians
+
+def colour(o, rgb):
+    m = bpy.data.materials.new("M"); m.use_nodes = True
+    m.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (rgb[0], rgb[1], rgb[2], 1.0)
+    o.data.materials.append(m)
+
+def _coll():
+    c = bpy.data.collections.get(COLL)
+    if c is None:
+        c = bpy.data.collections.new(COLL)
+        bpy.context.scene.collection.children.link(c)
+    return c
+
+def _into(o):
+    c = _coll()
+    for cc in list(o.users_collection):
+        cc.objects.unlink(o)
+    c.objects.link(o)
+    return o
+
+def box(loc, scale, rgb, bevel=0.05):
+    bpy.ops.mesh.primitive_cube_add(size=1.0, location=loc)
+    o = _into(bpy.context.active_object); o.scale = scale; colour(o, rgb)
+    if bevel:
+        bm = o.modifiers.new("bev", "BEVEL"); bm.width = bevel; bm.segments = 2
+    return o
+
+def cyl(loc, r, depth, rgb, rot=(0, 0, 0), verts=24):
+    bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=depth, location=loc, vertices=verts)
+    o = _into(bpy.context.active_object); o.rotation_euler = rot; colour(o, rgb)
+    return o
+
+def cone(loc, r, depth, rgb, rot=(0, 0, 0)):
+    bpy.ops.mesh.primitive_cone_add(radius1=r, depth=depth, location=loc)
+    o = _into(bpy.context.active_object); o.rotation_euler = rot; colour(o, rgb)
+    return o
+
+def sphere(loc, r, rgb):
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=r, location=loc)
+    o = _into(bpy.context.active_object); colour(o, rgb)
+    return o
+'''
+
+# Reusable FUNCTIONAL parts: each returns one named object whose ORIGIN is at the
+# right pivot, so the engine/rig can drive it (a wheel spins about its axle, etc.).
+# This is the part-library half of the pattern — assemblers compose these.
+_PARTS = '''
+def make_wheel(name, loc, r, w, rim=0.45):
+    """A wheel as ONE object, origin at the axle centre, axle along X (so rotating
+    it about its local axis spins it). Tyre + optional hub joined into one mesh."""
+    bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=w, location=loc, vertices=24)
+    tire = _into(bpy.context.active_object)
+    tire.name = name
+    tire.rotation_euler = (0, radians(90), 0)
+    colour(tire, (0.05, 0.05, 0.05))
+    if rim > 0.01:
+        bpy.ops.mesh.primitive_cylinder_add(radius=r * rim, depth=w * 1.08, location=loc, vertices=12)
+        hub = _into(bpy.context.active_object)
+        hub.rotation_euler = (0, radians(90), 0)
+        colour(hub, (0.55, 0.55, 0.58))
+        bpy.ops.object.select_all(action="DESELECT")
+        hub.select_set(True); tire.select_set(True)
+        bpy.context.view_layer.objects.active = tire
+        bpy.ops.object.join()          # merge hub into tyre; keeps the tyre's axle origin
+    tire["role"] = "wheel"             # role tag survives name-collision renames
+    tire["wheel_label"] = name
+    return tire
+
+def tube_between(a, b, r, rgb):
+    """A cylinder spanning points a->b (for frames, forks, masts, limbs)."""
+    import mathutils as _mu
+    a = _mu.Vector(a); b = _mu.Vector(b)
+    d = b - a
+    length = max(0.02, d.length)
+    bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=length, location=(a + b) * 0.5, vertices=12)
+    o = _into(bpy.context.active_object)
+    o.rotation_euler = d.to_track_quat("Z", "Y").to_euler()   # align local Z to the a->b direction
+    colour(o, rgb)
+    return o
+'''
+
+# Ring-loft mesh toolkit (the quality upgrade — see the *.md cheat-sheets). Instead
+# of stacking separately-scaled primitives, organic/tapered shapes are LOFTED from a
+# spine of (centre, radius) sections: a ring of verts is built at each section,
+# oriented perpendicular to the local tangent, and consecutive rings are bridged into
+# smooth quads. Verts are emitted in WORLD coordinates with the object left at the
+# origin, so proximity-based bone weighting can read v.co directly (matches the doc).
+#   loft        — tapered tube/limb/torso from sections
+#   uvsphere_bm — head / eyes as a real bmesh sphere
+#   finish      — shade-smooth + optional Subsurf/Bevel (the silhouette chokepoint)
+#   uv_unwrap   — smart-project UVs (Unity-ready), tolerant of headless context
+#   collider_hull / make_lods — Unity COL_ hull + LOD0_/LOD1_ decimated copies
+_MESH_TOOLKIT = '''
+from math import pi as _PI, cos as _cos, sin as _sin
+
+def loft(name, sections, rgb, n=12, caps=True):
+    """Build a smooth tapered mesh from a spine of (center, radius) sections. Each
+    ring is perpendicular to the local tangent; consecutive rings are bridged."""
+    import bmesh, mathutils
+    centers = [mathutils.Vector(c) for c, _ in sections]
+    radii = [float(r) for _, r in sections]
+    bm = bmesh.new()
+    rings = []
+    m = len(centers)
+    for i, (c, r) in enumerate(zip(centers, radii)):
+        if i == 0:
+            t = centers[1] - centers[0]
+        elif i == m - 1:
+            t = centers[-1] - centers[-2]
+        else:
+            t = centers[i + 1] - centers[i - 1]
+        if t.length < 1e-6:
+            t = mathutils.Vector((0, 0, 1))
+        t.normalize()
+        up = mathutils.Vector((0, 0, 1))
+        if abs(t.dot(up)) > 0.99:
+            up = mathutils.Vector((1, 0, 0))
+        u = t.cross(up).normalized()
+        v = t.cross(u).normalized()
+        ring = []
+        for k in range(n):
+            a = 2 * _PI * k / n
+            ring.append(bm.verts.new(c + (u * _cos(a) + v * _sin(a)) * r))
+        rings.append(ring)
+    bm.verts.ensure_lookup_table()
+    for i in range(m - 1):
+        for k in range(n):
+            try:
+                bm.faces.new([rings[i][k], rings[i][(k + 1) % n],
+                              rings[i + 1][(k + 1) % n], rings[i + 1][k]])
+            except ValueError:
+                pass
+    if caps and m >= 1:
+        try:
+            bm.faces.new(rings[0][::-1])
+        except ValueError:
+            pass
+        try:
+            bm.faces.new(rings[-1])
+        except ValueError:
+            pass
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new(name + "_m")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _into(o)
+    colour(o, rgb)
+    return o
+
+def uvsphere_bm(name, center, r, rgb, seg=16, ring=8):
+    """A real (smooth) sphere via bmesh, centred at a world position."""
+    import bmesh, mathutils
+    bm = bmesh.new()
+    try:
+        bmesh.ops.create_uvsphere(bm, u_segments=seg, v_segments=ring, radius=r)
+    except TypeError:
+        bmesh.ops.create_uvsphere(bm, u_segments=seg, v_segments=ring, diameter=r * 2)
+    bmesh.ops.translate(bm, vec=mathutils.Vector(center), verts=bm.verts)
+    me = bpy.data.meshes.new(name + "_m")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _into(o)
+    colour(o, rgb)
+    return o
+
+def finish(o, smooth=True, subsurf=0, bevel=0.0):
+    """Smooth shading + optional Subsurf/Bevel — the single chokepoint that lifts a
+    blocky loft into a clean low-poly silhouette. Operator-free (headless-safe)."""
+    if smooth:
+        for poly in o.data.polygons:
+            poly.use_smooth = True
+    if subsurf:
+        m = o.modifiers.new("sub", "SUBSURF")
+        m.levels = subsurf
+        m.render_levels = subsurf
+    if bevel:
+        m = o.modifiers.new("bev", "BEVEL")
+        m.width = bevel
+        m.segments = 2
+    return o
+
+def uv_unwrap(o, angle_limit=1.15, island_margin=0.02):
+    """Smart-project UVs so Unity gets a sane atlas. Tolerant: any failure (no
+    context in headless, degenerate mesh) leaves the object usable, unwrapped."""
+    try:
+        bpy.ops.object.select_all(action="DESELECT")
+        o.select_set(True)
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.uv.smart_project(angle_limit=angle_limit, island_margin=island_margin)
+        bpy.ops.object.mode_set(mode="OBJECT")
+    except Exception as _e:
+        try:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        except Exception:
+            pass
+    return o
+
+def collider_hull(name, parts):
+    """One convex-hull mesh (COL_<name>) merged from all render parts — Unity wires
+    it to a convex MeshCollider. Modifier-free and hidden from render."""
+    import bmesh
+    src = [o for o in parts if o.type == "MESH" and o.get("role") != "collider"]
+    if not src:
+        return None
+    dups = []
+    for o in src:
+        d = o.copy()
+        d.data = o.data.copy()
+        d.modifiers.clear()
+        d.parent = None
+        _into(d)
+        dups.append(d)
+    bpy.ops.object.select_all(action="DESELECT")
+    for d in dups:
+        d.select_set(True)
+    bpy.context.view_layer.objects.active = dups[0]
+    if len(dups) > 1:
+        bpy.ops.object.join()
+    col = bpy.context.active_object
+    col.name = "COL_" + name
+    me = col.data
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    try:
+        res = bmesh.ops.convex_hull(bm, input=bm.verts[:])
+        interior = res.get("geom_interior", [])
+        if interior:
+            bmesh.ops.delete(bm, geom=interior, context="VERTS")
+    except Exception:
+        pass
+    bm.to_mesh(me)
+    bm.free()
+    col.hide_render = True
+    col["role"] = "collider"
+    return col
+
+def make_lods(parts, levels=2):
+    """Rename render parts LOD0_* and emit decimated LOD1_* (… up to `levels`)
+    copies. Skinned copies keep their armature modifier + vertex groups, so the FBX
+    exporter bakes the decimate but preserves the skin. Returns the new LOD objects."""
+    meshes = [o for o in parts if o.type == "MESH" and o.get("role") != "collider"]
+    made = []
+    for o in meshes:
+        if not o.name.startswith("LOD0_"):
+            o.name = "LOD0_" + o.name
+    for i in range(1, max(1, levels)):
+        for o in meshes:
+            d = o.copy()
+            d.data = o.data.copy()
+            _into(d)
+            d.name = o.name.replace("LOD0_", "LOD%d_" % i, 1)
+            # drop subsurf on the LOD copy (subsurf-then-decimate is wasteful and
+            # defeats the point); keep the armature modifier so the skin survives.
+            for mod in [m for m in d.modifiers if m.type in ("SUBSURF", "BEVEL")]:
+                d.modifiers.remove(mod)
+            dm = d.modifiers.new("dec", "DECIMATE")
+            dm.ratio = max(0.08, 1.0 / (2 ** i))
+            d["role"] = "lod"
+            made.append(d)
+    return made
+'''
+
+_CAR_SRC = '''
+def build(p, ox):
+    wr, ww = p["wheel_r"], p["wheel_w"]
+    bw, bl, bh = p["body_w"], p["body_len"], p["body_h"]
+    ch = p["cabin_h"]; rim = p.get("rim", 0.45)
+    bed = p["bed"] >= 0.5
+    pairs = max(2, min(3, int(round(p["wheel_pairs"]))))
+    col = tuple(p["color"]); parts = []
+    body_z = wr + p["ride"] + bh * 0.5 + 0.05
+    # chassis + cabin (named parts, role-tagged so lookups survive name collisions)
+    b = box((ox, 0, body_z), (bw, bl, bh), col); b.name = "body"; b["role"] = "body"; parts.append(b)
+    clen = max(0.5, p["cabin_len"] * bl)
+    cy = p["cabin_pos"] * (bl * 0.5)
+    lim = max(0.0, bl * 0.5 - clen * 0.5)
+    cy = max(-lim, min(lim, cy))
+    cab_z = body_z + bh * 0.5 + ch * 0.5
+    cab = box((ox, cy, cab_z), (bw * 0.88, clen, ch), col); cab.name = "cabin"; cab["role"] = "cabin"; parts.append(cab)
+    # pickup bed
+    if bed:
+        cabin_back = cy - clen * 0.5
+        rear_end = -bl * 0.5
+        blen = cabin_back - rear_end
+        if blen > 0.4:
+            bd = box((ox, (cabin_back + rear_end) * 0.5, body_z + bh * 0.5 + 0.09),
+                     (bw * 0.92, blen - 0.05, 0.18), col)
+            bd.name = "bed"; bd["role"] = "bed"; parts.append(bd)
+    # wheels as functional parts, named Wheel.<F/M/R><L/R>
+    wx = bw * 0.5 + ww * 0.5 - 0.05
+    fy = bl * 0.5 - wr - 0.1
+    ry = -(bl * 0.5 - wr - 0.1)
+    labels = {2: ["F", "R"], 3: ["F", "M", "R"]}[pairs]
+    ys = [fy, ry] if pairs == 2 else [fy, (fy + ry) * 0.5, ry]
+    for lab, ay in zip(labels, ys):
+        for side, sx in (("L", 1), ("R", -1)):
+            parts.append(make_wheel("Wheel." + lab + side, (ox + sx * wx, ay, wr), wr, ww, rim))
+    return parts
+'''
+
+_PLANE_SRC = '''
+def build(p, ox):
+    """Recognisable propeller aircraft ported from the proven planegen.py: an
+    ellipsoid fuselage (nose + cockpit glass + tail cone), wings, vertical/horizontal
+    stabilisers, two under-wing engines with 3-blade propellers, and a tricycle
+    landing gear that parks the wheels on the ground (z~0). Forward is -Y (so it
+    matches the other bases and imports nose-forward in Unity). Each part is tagged
+    with its mechanical bone so the rigid rigger + VehicleBoneDriver spin the props
+    (`Propeller_*`) and roll/steer the wheels (`Wheel.*`). Knobs: fuselage_len/_r,
+    wing_span, wing_chord, fin_h."""
+    import math
+    fl = p["fuselage_len"]; fr = p["fuselage_r"]
+    span = p["wing_span"]; chord = p["wing_chord"]; fin = p["fin_h"]
+    body = tuple(p["color"]); wingc = tuple(min(1.0, c * 0.92) for c in p["color"])
+    glass = (0.40, 0.60, 0.90); metal = (0.30, 0.30, 0.30); accent = (0.80, 0.20, 0.20)
+    dark = (0.10, 0.10, 0.10); strutc = (0.50, 0.50, 0.50)
+    parts = []
+    wr = max(0.10, fr * 0.30)          # gear wheel radius
+    gl = max(0.22, fr * 1.10)          # gear strut length
+    cz = wr + gl + fr * 0.55           # fuselage centreline -> wheels rest near z=0
+    fwd = -1.0                          # nose direction (-Y)
+    eng_x = span * 0.30
+    hub_dy = fl * 0.05 + fl * 0.17 + fr * 0.2
+
+    def fix(o):
+        bpy.context.view_layer.objects.active = o
+        bpy.ops.object.select_all(action="DESELECT"); o.select_set(True)
+        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+        bpy.ops.object.select_all(action="DESELECT")
+        return o
+
+    def tag(o, bone, role="plane"):
+        o["bone"] = bone; o["role"] = role; parts.append(o); return o
+
+    def ell(name, loc, scale, rgb):
+        o = sphere(loc, 1.0, rgb); o.name = name; o.scale = scale; finish(o); return fix(o)
+
+    def slab(name, loc, scale, rgb):
+        o = box(loc, scale, rgb, bevel=0.0); o.name = name; return fix(o)
+
+    # fuselage shell: body + nose + cockpit glass + tail cone
+    tag(ell("Fuselage", (ox, 0, cz),                       (fr, fl * 0.5, fr), body), "Fuselage")
+    tag(ell("Nose",     (ox, fwd * (fl * 0.5 + fr * 0.25), cz), (fr * 0.85, fr * 0.8, fr * 0.85), body), "Fuselage")
+    tag(ell("Cockpit",  (ox, fwd * (fl * 0.12), cz + fr * 0.55), (fr * 0.7, fr * 1.1, fr * 0.55), glass), "Fuselage")
+    tag(ell("TailCone", (ox, -fwd * (fl * 0.5), cz),       (fr * 0.6, fr * 0.8, fr * 0.6), body), "Fuselage")
+
+    # wings (span along X), mounted low
+    wt = max(0.04, fr * 0.16)
+    for sgn, nm in ((1, "Wing_R"), (-1, "Wing_L")):
+        tag(slab(nm, (ox + sgn * span * 0.27, fwd * (-fl * 0.02), cz - fr * 0.25),
+                 (span * 0.54, chord, wt), wingc), "Fuselage")
+
+    # tail surfaces at the +Y end
+    tail_y = -fwd * (fl * 0.46)
+    tag(slab("V_Stabilizer", (ox, tail_y, cz + fin * 0.5),
+             (0.06 + fr * 0.1, chord * 0.6, fin), accent), "Fuselage")
+    for sgn, nm in ((1, "H_Stabilizer_R"), (-1, "H_Stabilizer_L")):
+        tag(slab(nm, (ox + sgn * span * 0.14, tail_y, cz),
+                 (span * 0.26, chord * 0.5, wt * 0.8), accent), "Fuselage")
+
+    # engines under the wings + 3-blade propellers at their fronts
+    for sgn, suf in ((1, "R"), (-1, "L")):
+        ex = ox + sgn * eng_x
+        eng = cyl((ex, fwd * (fl * 0.05), cz - fr * 0.45), fr * 0.42, fl * 0.34, metal,
+                  rot=(radians(90), 0, 0))
+        eng.name = "Engine_" + suf; tag(fix(eng), "Fuselage")
+        hub_y = fwd * hub_dy
+        hub = cone((ex, hub_y, cz - fr * 0.45), fr * 0.22, fr * 0.5, metal,
+                   rot=(radians(-90), 0, 0))
+        hub.name = "PropHub_" + suf; tag(fix(hub), "Propeller_" + suf, "prop")
+        for i in range(3):
+            bl = box((ex, hub_y, cz - fr * 0.45), (0.04 + fr * 0.05, 0.02, fr * 1.7), dark)
+            bl.name = "PropBlade_%d_%s" % (i, suf); bl.rotation_euler = (0, radians(i * 120), 0)
+            tag(fix(bl), "Propeller_" + suf, "prop")
+
+    # tricycle landing gear: strut (-> Fuselage) + rolling wheel (-> Wheel.*)
+    def gear(gx, gy, wheel_bone):
+        st = cyl((ox + gx, gy, cz - fr * 0.5 - gl * 0.5), fr * 0.07, gl, strutc)
+        st.name = "Strut_" + wheel_bone.replace("Wheel.", ""); tag(fix(st), "Fuselage")
+        tag(make_wheel(wheel_bone, (ox + gx, gy, wr), wr, wr * 0.5, 0.4), wheel_bone, "wheel")
+    gear(0.0,            fwd * (fl * 0.33),  "Wheel.F")
+    gear(span * 0.10,  -fwd * (fl * 0.02),  "Wheel.RR")
+    gear(-span * 0.10, -fwd * (fl * 0.02),  "Wheel.RL")
+
+    # bone table for the rigid mechanical rigger (single source of truth)
+    global PLANE_BONES
+    PLANE_BONES = [
+        ("Root",     (ox, 0, cz), (ox, 0, cz + 0.5), None),
+        ("Fuselage", (ox, 0, cz), (ox, fwd * (fl * 0.3), cz), "Root"),
+    ]
+    for sgn, suf in ((1, "R"), (-1, "L")):
+        ex = ox + sgn * eng_x; hub_y = fwd * hub_dy
+        PLANE_BONES.append(("Propeller_" + suf, (ex, hub_y, cz - fr * 0.45),
+                            (ex, hub_y + fwd * 0.3, cz - fr * 0.45), "Fuselage"))
+    for nm, gx, gy in (("Wheel.F", 0.0, fwd * (fl * 0.33)),
+                       ("Wheel.RR", span * 0.10, -fwd * (fl * 0.02)),
+                       ("Wheel.RL", -span * 0.10, -fwd * (fl * 0.02))):
+        PLANE_BONES.append((nm, (ox + gx, gy, wr), (ox + gx + 0.3, gy, wr), "Fuselage"))
+    return parts
+'''
+
+_HUMANOID_SRC = '''
+def build(p, ox):
+    """A-pose humanoid built from the proven humangen.py recipe: stacked vertex-ring
+    tubes per body part (arms down at the sides, real bmesh head/eyes), proportions
+    that read as human by construction. Ported into the parametric framework — scaled
+    to `height`, coloured from the palette, feet shifted to the floor (z=0), and every
+    part tagged with its Unity HumanBodyBones name so the rigger skins a valid Humanoid
+    avatar. Verts are in WORLD coords (object at origin) so weighting reads v.co.
+    Reference proportions span z=-0.4..1.8 (~2.2 tall); `rfac` thins radii for lean."""
+    import bmesh, math
+    h = p["height"]
+    pal = p.get("palette") or {}
+    skin  = tuple(pal.get("skin",  p["color"]))
+    shirt = tuple(pal.get("shirt", (0.20, 0.40, 0.80)))
+    pants = tuple(pal.get("pants", (0.15, 0.15, 0.25)))
+    shoe  = tuple(pal.get("shoe",  (0.10, 0.10, 0.10)))
+    hair  = tuple(pal.get("hair",  (0.12, 0.08, 0.05)))
+    eyec  = tuple(pal.get("eye",   (0.92, 0.92, 0.94)))
+    pupil = tuple(pal.get("pupil", (0.05, 0.05, 0.05)))
+    s = h / 2.2
+    rfac = max(0.6, min(1.4, p["limb_r"] / 0.08))
+
+    def X(x): return ox + x * s
+    def Y(y): return y * s
+    def Z(z): return (z + 0.4) * s          # shift so the lowest point (toe) sits at z=0
+    def R(r): return r * s * rfac
+    parts = []
+
+    def stack(name, secs, rgb, part, bone, nseg=10):
+        """A tapered tube from a list of (cx, cy, cz, r) rings (reference coords),
+        bridged into smooth quads + end caps. One named, role/part/bone-tagged obj."""
+        bm = bmesh.new()
+        rings = []
+        for (cx, cy, cz, r) in secs:
+            ring = []
+            for i in range(nseg):
+                a = 2 * math.pi * i / nseg
+                ring.append(bm.verts.new((X(cx) + R(r) * math.cos(a),
+                                          Y(cy) + R(r) * math.sin(a), Z(cz))))
+            rings.append(ring)
+        for ri in range(len(rings) - 1):
+            for i in range(nseg):
+                try:
+                    bm.faces.new([rings[ri][i], rings[ri][(i + 1) % nseg],
+                                  rings[ri + 1][(i + 1) % nseg], rings[ri + 1][i]])
+                except ValueError:
+                    pass
+        try:
+            bm.faces.new(rings[0][::-1])
+        except ValueError:
+            pass
+        try:
+            bm.faces.new(rings[-1])
+        except ValueError:
+            pass
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        me = bpy.data.meshes.new(name + "_m")
+        bm.to_mesh(me)
+        bm.free()
+        o = bpy.data.objects.new(name, me)
+        _into(o)
+        colour(o, rgb)
+        finish(o)            # shade-smooth only: subsurf shrinks open tubes -> gaps
+        o["role"] = "human"; o["part"] = part; o["bone"] = bone
+        parts.append(o)
+        return o
+
+    def ball(name, c, r, rgb, part, bone, seg=16, ring=10):
+        o = uvsphere_bm(name, (X(c[0]), Y(c[1]), Z(c[2])), R(r), rgb, seg=seg, ring=ring)
+        finish(o)
+        o["role"] = "human"; o["part"] = part; o["bone"] = bone
+        parts.append(o)
+        return o
+
+    # torso (5 rings hips->shoulders) + neck + head + hair cap
+    stack("Torso", [(0, 0, 1.4, 0.18), (0, 0, 1.2, 0.20), (0, 0, 0.95, 0.22),
+                    (0, 0, 0.7, 0.20), (0, 0, 0.5, 0.18)], shirt, "Torso", "Spine", nseg=12)
+    stack("Neck", [(0, 0, 1.55, 0.07), (0, 0, 1.4, 0.08)], skin, "Neck", "Neck")
+    ball("Head", (0, 0, 1.65), 0.12, skin, "Head", "Head")
+    ball("Hair", (0, 0, 1.66), 0.135, hair, "Hair", "Head", seg=14, ring=9)
+    ball("Eye_L", (0.06, -0.06, 1.65), 0.025, eyec, "Eye", "Head", seg=8, ring=6)
+    ball("Eye_R", (-0.06, -0.06, 1.65), 0.025, eyec, "Eye", "Head", seg=8, ring=6)
+    ball("Pupil_L", (0.06, -0.08, 1.65), 0.012, pupil, "Pupil", "Head", seg=6, ring=4)
+    ball("Pupil_R", (-0.06, -0.08, 1.65), 0.012, pupil, "Pupil", "Head", seg=6, ring=4)
+
+    # arms (down at the sides) + legs + feet/toes, both sides
+    for sgn, pre in ((1, "Left"), (-1, "Right")):
+        ax = 0.2 * sgn; lx = 0.12 * sgn
+        stack(pre + "UpperArm", [(ax, 0, 1.35, 0.06), (ax, 0, 1.1, 0.055)],
+              skin, pre + "UpperArm", pre + "UpperArm")
+        stack(pre + "LowerArm", [(ax, 0, 1.1, 0.055), (ax, 0, 0.8, 0.045)],
+              skin, pre + "LowerArm", pre + "LowerArm")
+        stack(pre + "Hand", [(ax, 0, 0.8, 0.04), (ax, 0, 0.65, 0.035)],
+              skin, pre + "Hand", pre + "Hand", nseg=8)
+        stack(pre + "UpperLeg", [(lx, 0, 0.5, 0.08), (lx, 0, 0.1, 0.065)],
+              pants, pre + "UpperLeg", pre + "UpperLeg")
+        stack(pre + "LowerLeg", [(lx, 0, 0.1, 0.065), (lx, 0, -0.35, 0.05)],
+              pants, pre + "LowerLeg", pre + "LowerLeg")
+        stack(pre + "Foot", [(lx, 0, -0.35, 0.05), (lx, 0.15, -0.4, 0.05)],
+              shoe, pre + "Foot", pre + "Foot", nseg=8)
+        stack(pre + "Toes", [(lx, 0.15, -0.4, 0.04), (lx, 0.25, -0.4, 0.03)],
+              shoe, pre + "Toes", pre + "Foot", nseg=8)
+
+    # bone table (Unity HumanBodyBones names) in WORLD coords + per-part weight map,
+    # shared with rig_model via module globals (single source of truth).
+    global BONES_WORLD, PART_BONES, WEIGHT_RADIUS
+    def B(x, y, z): return (X(x), Y(y), Z(z))
+    BONES_WORLD = [
+        ("Hips",       B(0, 0, 0.5),  B(0, 0, 0.7),  None),
+        ("Spine",      B(0, 0, 0.7),  B(0, 0, 0.95), "Hips"),
+        ("Chest",      B(0, 0, 0.95), B(0, 0, 1.2),  "Spine"),
+        ("UpperChest", B(0, 0, 1.2),  B(0, 0, 1.4),  "Chest"),
+        ("Neck",       B(0, 0, 1.4),  B(0, 0, 1.55), "UpperChest"),
+        ("Head",       B(0, 0, 1.55), B(0, 0, 1.8),  "Neck"),
+    ]
+    PART_BONES = {
+        "Torso": {"Hips": 0.25, "Spine": 0.25, "Chest": 0.25, "UpperChest": 0.25},
+        "Neck":  {"Neck": 0.7, "Head": 0.15, "UpperChest": 0.15},
+        "Head":  {"Head": 0.9, "Neck": 0.1},
+        "Hair":  {"Head": 1.0}, "Eye": {"Head": 1.0}, "Pupil": {"Head": 1.0},
+    }
+    for sgn, pre in ((1, "Left"), (-1, "Right")):
+        ax = 0.2 * sgn; lx = 0.12 * sgn
+        BONES_WORLD += [
+            (pre + "UpperArm", B(ax, 0, 1.35), B(ax, 0, 1.1),   "UpperChest"),
+            (pre + "LowerArm", B(ax, 0, 1.1),  B(ax, 0, 0.8),   pre + "UpperArm"),
+            (pre + "Hand",     B(ax, 0, 0.8),  B(ax, 0, 0.65),  pre + "LowerArm"),
+            (pre + "UpperLeg", B(lx, 0, 0.5),  B(lx, 0, 0.1),   "Hips"),
+            (pre + "LowerLeg", B(lx, 0, 0.1),  B(lx, 0, -0.35), pre + "UpperLeg"),
+            (pre + "Foot",     B(lx, 0, -0.35), B(lx, 0.15, -0.4), pre + "LowerLeg"),
+            (pre + "Toes",     B(lx, 0.15, -0.4), B(lx, 0.25, -0.4), pre + "Foot"),
+        ]
+        PART_BONES[pre + "UpperArm"] = {pre + "UpperArm": 0.85, "UpperChest": 0.15}
+        PART_BONES[pre + "LowerArm"] = {pre + "LowerArm": 0.85, pre + "UpperArm": 0.15}
+        PART_BONES[pre + "Hand"]     = {pre + "Hand": 0.8, pre + "LowerArm": 0.2}
+        PART_BONES[pre + "UpperLeg"] = {pre + "UpperLeg": 0.85, "Hips": 0.15}
+        PART_BONES[pre + "LowerLeg"] = {pre + "LowerLeg": 0.85, pre + "UpperLeg": 0.15}
+        PART_BONES[pre + "Foot"]     = {pre + "Foot": 0.85, pre + "LowerLeg": 0.15}
+        PART_BONES[pre + "Toes"]     = {pre + "Foot": 0.8, pre + "LowerLeg": 0.2}
+    WEIGHT_RADIUS = 0.2 * s
+    return parts
+'''
+
+_BIKE_SRC = '''
+def build(p, ox):
+    wb = p["wheelbase"]; wr = p["wheel_r"]; ww = p["wheel_w"]; fh = p["frame_h"]
+    hbw = p["handlebar_w"]; rim = p.get("rim", 0.55)
+    n = max(1, min(2, int(round(p["wheels"]))))
+    engine = p["engine"] >= 0.5; tank = p["tank"] >= 0.5
+    pedals = p["pedals"] >= 0.5; susp = p["suspension"] >= 0.5
+    col = tuple(p["color"]); metal = (0.30, 0.30, 0.32); parts = []
+    seat_z = wr + fh
+    if n == 1:
+        # unicycle: one wheel, seat post, seat, pedals on the axle
+        parts.append(make_wheel("Wheel.C", (ox, 0, wr), wr, ww, rim))
+        post = tube_between((ox, 0, wr), (ox, 0, seat_z + 0.1), 0.04, metal); post["role"] = "frame"; parts.append(post)
+        st = box((ox, 0, seat_z + 0.14), (0.28, 0.12, 0.07), col); st.name = "seat"; st["role"] = "frame"; parts.append(st)
+        if pedals:
+            for sx in (1, -1):
+                pd = box((ox + sx * (ww * 0.5 + 0.12), 0, wr), (0.16, 0.06, 0.04), metal); pd["role"] = "frame"; parts.append(pd)
+        return parts
+    front_y = wb * 0.5; rear_y = -wb * 0.5
+    head = (ox, front_y - 0.05, wr + fh * 0.95)
+    bb = (ox, rear_y * 0.25, wr * 0.6)            # bottom bracket / engine area
+    parts.append(make_wheel("Wheel.F", (ox, front_y, wr), wr, ww, rim))
+    parts.append(make_wheel("Wheel.R", (ox, rear_y, wr), wr, ww, rim))
+    # fork (steers) + optional suspension leg
+    fk = tube_between((ox, front_y, wr), head, 0.045, metal); fk.name = "fork"; fk["role"] = "fork"; parts.append(fk)
+    if susp:
+        fk2 = tube_between((ox, front_y, wr), (head[0], head[1], head[2] - 0.06), 0.06, (0.5, 0.5, 0.55)); fk2["role"] = "fork"; parts.append(fk2)
+    # handlebars (bar along X), steer
+    hb = cyl(head, 0.025, hbw, metal, rot=(0, radians(90), 0)); hb.name = "handlebar"; hb["role"] = "handlebar"; parts.append(hb)
+    # frame tubes: head->bb, bb->seat, seat->rear hub, bb->rear hub (chain stay)
+    seat_top = (ox, rear_y * 0.2, seat_z)
+    for a, b, rr in ((head, bb, 0.045), (bb, seat_top, 0.04), (seat_top, (ox, rear_y, wr), 0.035), (bb, (ox, rear_y, wr), 0.035)):
+        t = tube_between(a, b, rr, col); t["role"] = "frame"; parts.append(t)
+    st = box((ox, rear_y * 0.2, seat_z + 0.06), (0.24, 0.14, 0.07), col); st.name = "seat"; st["role"] = "frame"; parts.append(st)
+    if engine:
+        eg = box((ox, bb[1], wr * 0.85), (0.30, 0.36, 0.34), metal); eg.name = "engine"; eg["role"] = "frame"; parts.append(eg)
+    if tank:
+        tk = box((ox, (bb[1] + head[1]) * 0.5, seat_z * 0.95), (0.24, 0.5, 0.22), col); tk.name = "tank"; tk["role"] = "frame"; parts.append(tk)
+    if pedals and not engine:
+        for sx in (1, -1):
+            pd = box((ox + sx * 0.14, bb[1], bb[2]), (0.16, 0.06, 0.04), metal); pd["role"] = "frame"; parts.append(pd)
+    return parts
+'''
+
+_FURNITURE_SRC = '''
+def build(p, ox):
+    """One parametric furniture piece composed from slabs + legs. The same knobs
+    span a table, desk, chair/stool/bench/sofa (seat[+back]), open bookcase
+    (legs=0, shelves>0) and a dresser/desk drawer stack (drawers>0). The primary
+    horizontal surface (top / seat / lid) sits with its top face at z=height; legs
+    or a carcass carry it to the floor. Static decor, so it gets the no-op rigger;
+    drawer fronts are still named Drawer.* by role for later articulation."""
+    w, d, h = p["width"], p["depth"], p["height"]
+    top_t = max(0.02, p["top_t"]); leg_r = p["leg_r"]
+    nlegs = max(0, min(4, int(round(p["legs"]))))
+    seat = p["seat"] >= 0.5; back = p["back"] >= 0.5
+    nshelves = max(0, min(6, int(round(p["shelves"]))))
+    ndrawers = max(0, min(6, int(round(p["drawers"]))))
+    cushion = p["cushion"] >= 0.5
+    col = tuple(p["color"]); dark = (0.10, 0.10, 0.10)
+    pad = tuple(min(1.0, c + 0.06) for c in col)        # lighter upholstery tint
+    parts = []
+
+    surf_top = h
+    pan_t = top_t * (2.4 if (seat and cushion) else 1.0)
+    surf_z = surf_top - pan_t * 0.5
+    surf = box((ox, 0, surf_z), (w, d, pan_t), pad if (seat and cushion) else col)
+    surf.name = "top"; surf["role"] = "surface"; parts.append(surf)
+
+    leg_top = surf_top - pan_t
+    side_t = max(0.03, top_t)
+
+    if nlegs == 0 and nshelves > 0:
+        # open bookcase: two sides + back panel + evenly spaced shelves
+        for sx in (1, -1):
+            sp = box((ox + sx * (w * 0.5 - side_t * 0.5), 0, leg_top * 0.5), (side_t, d, leg_top), col)
+            sp["role"] = "body"; parts.append(sp)
+        bk = box((ox, d * 0.5 - side_t * 0.5, leg_top * 0.5), (w, side_t, leg_top), col)
+        bk["role"] = "body"; parts.append(bk)
+        for i in range(nshelves):
+            z = leg_top * (i + 1) / (nshelves + 1)
+            sh = box((ox, 0, z), (w - side_t * 2.2, d * 0.92, top_t * 0.8), col)
+            sh.name = "shelf_%d" % i; sh["role"] = "shelf"; parts.append(sh)
+    elif nlegs == 0:
+        body = box((ox, 0, leg_top * 0.5), (w, d, max(0.05, leg_top)), col)
+        body.name = "body"; body["role"] = "body"; parts.append(body)
+    elif nlegs == 1:
+        post = cyl((ox, 0, leg_top * 0.5), max(0.04, w * 0.12), leg_top, col)
+        post["role"] = "leg"; parts.append(post)
+        base = cyl((ox, 0, 0.03), w * 0.35, 0.06, col)
+        base["role"] = "leg"; parts.append(base)
+    else:
+        lr = max(0.02, leg_r)
+        lx = w * 0.5 - lr * 1.6; ly = d * 0.5 - lr * 1.6
+        coords = ([(0, ly), (lx, -ly), (-lx, -ly)] if nlegs == 3
+                  else [(lx, ly), (-lx, ly), (lx, -ly), (-lx, -ly)])
+        for i, (cx, cy) in enumerate(coords):
+            lg = cyl((ox + cx, cy, leg_top * 0.5), lr, leg_top, col)
+            lg.name = "leg_%d" % i; lg["role"] = "leg"; parts.append(lg)
+
+    # backrest (chair / bench / sofa) — a slab standing above the rear of the seat
+    if back:
+        br_h = max(0.30, h * 0.95)
+        br = box((ox, -d * 0.5 + side_t, surf_top + br_h * 0.5), (w, side_t * 1.2, br_h),
+                 pad if cushion else col)
+        br.name = "back"; br["role"] = "back"; parts.append(br)
+
+    # drawer fronts (desk pedestal / dresser) on the front (-Y) face
+    if ndrawers > 0:
+        if nlegs == 0:
+            col_w = w; col_x = ox
+        else:                                   # legged desk -> a drawer pedestal on +X
+            col_w = w * 0.42; col_x = ox + (w * 0.5 - col_w * 0.5) - side_t
+            ped = box((col_x, 0, leg_top * 0.5), (col_w, d * 0.96, leg_top), col)
+            ped["role"] = "body"; parts.append(ped)
+        front_y = -d * 0.5 - 0.005
+        dh = leg_top / ndrawers
+        for i in range(ndrawers):
+            z = dh * (i + 0.5)
+            fr = box((col_x, front_y, z), (col_w * 0.88, 0.03, dh * 0.84), col)
+            fr.name = "Drawer.%d" % i; fr["role"] = "drawer"; parts.append(fr)
+            kb = cyl((col_x, front_y - 0.03, z), 0.025, 0.05, dark, rot=(radians(90), 0, 0))
+            kb["role"] = "drawer"; parts.append(kb)
+    return parts
+'''
+
+_WEAPON_SRC = '''
+def build(p, ox):
+    """One parametric firearm: a receiver block + barrel + bolt-on attachment
+    slots (scope / stock / muzzle device / magazine / grips). The same knobs span
+    a pistol (no stock, short barrel), an SMG, a rifle/carbine and a sniper (long
+    barrel + scope). Forward is +Y (the muzzle direction), Z up. Every attachment
+    is named by role (barrel / muzzle / stock / scope / magazine / grip / foregrip)
+    so a fire-point or runtime attachment swap can key off the names later. Static
+    prop, so it gets the no-op rigger."""
+    L = p["length"]; cal = max(0.012, p["caliber"]); blen = p["barrel_len"]
+    nstock = max(0, min(2, int(round(p["stock"]))))
+    nmuzzle = max(0, min(2, int(round(p["muzzle"]))))
+    nmag = max(0, min(2, int(round(p["magazine"]))))
+    scope = p["scope"] >= 0.5; grip = p["grip"] >= 0.5; foregrip = p["foregrip"] >= 0.5
+    col = tuple(p["color"]); black = (0.05, 0.05, 0.05); metal = (0.32, 0.33, 0.35)
+    parts = []
+
+    bz = 0.0                                    # bore line height
+    recv_len = max(0.10, L * 0.55)              # receiver length (along Y)
+    recv_w = max(0.03, cal * 1.8)
+    recv_h = max(0.05, cal * 3.2)
+    front_y = recv_len * 0.5
+    rear_y = -recv_len * 0.5
+
+    # receiver / body block, centred at the origin
+    body = box((ox, 0, bz), (recv_w, recv_len, recv_h), col)
+    body.name = "receiver"; body["role"] = "body"; parts.append(body)
+
+    # barrel: cylinder forward (+Y) from the receiver face (axle along Y)
+    barrel = cyl((ox, front_y + blen * 0.5, bz), cal, blen, metal, rot=(radians(90), 0, 0))
+    barrel.name = "barrel"; barrel["role"] = "barrel"; parts.append(barrel)
+    muzzle_y = front_y + blen
+
+    # muzzle device at the tip
+    if nmuzzle == 1:                            # muzzle brake / compensator
+        mz = cyl((ox, muzzle_y + 0.03, bz), cal * 1.6, 0.07, black, rot=(radians(90), 0, 0))
+        mz.name = "muzzle"; mz["role"] = "muzzle"; parts.append(mz)
+    elif nmuzzle == 2:                          # suppressor
+        mz = cyl((ox, muzzle_y + 0.11, bz), cal * 2.3, 0.22, black, rot=(radians(90), 0, 0))
+        mz.name = "muzzle"; mz["role"] = "muzzle"; parts.append(mz)
+
+    # stock (rearward, -Y)
+    if nstock >= 1:
+        slen = max(0.10, L * 0.32)
+        if nstock == 1:                         # fixed solid stock
+            stk = box((ox, rear_y - slen * 0.5, bz - recv_h * 0.1), (recv_w * 0.9, slen, recv_h * 1.5), col)
+        else:                                   # skeleton / folding stock
+            stk = box((ox, rear_y - slen * 0.5, bz - recv_h * 0.1), (recv_w * 0.7, slen, recv_h * 0.6), black)
+        stk.name = "stock"; stk["role"] = "stock"; parts.append(stk)
+
+    # pistol grip (down, behind the trigger)
+    if grip:
+        g = box((ox, rear_y + recv_len * 0.18, bz - recv_h * 0.5 - 0.07),
+                (recv_w * 0.9, 0.05, 0.16), black)
+        g.name = "grip"; g["role"] = "grip"; parts.append(g)
+
+    # trigger guard under the receiver
+    tg = box((ox, rear_y + recv_len * 0.30, bz - recv_h * 0.5 - 0.025),
+             (recv_w * 0.55, 0.10, 0.015), black)
+    tg["role"] = "body"; parts.append(tg)
+
+    # magazine (down, ahead of the grip)
+    if nmag == 1:                               # box magazine
+        mg = box((ox, recv_len * 0.05, bz - recv_h * 0.5 - 0.11), (recv_w * 0.8, 0.04, 0.20), black)
+        mg.name = "magazine"; mg["role"] = "magazine"; parts.append(mg)
+    elif nmag == 2:                             # drum magazine (disc, axle along X)
+        mg = cyl((ox, recv_len * 0.05, bz - recv_h * 0.5 - 0.13), 0.10, recv_w * 0.8, black,
+                 rot=(0, radians(90), 0))
+        mg.name = "magazine"; mg["role"] = "magazine"; parts.append(mg)
+
+    # vertical foregrip under the handguard
+    if foregrip:
+        fg = box((ox, front_y + blen * 0.30, bz - recv_h * 0.5 - 0.06), (recv_w * 0.6, 0.04, 0.13), black)
+        fg.name = "foregrip"; fg["role"] = "foregrip"; parts.append(fg)
+
+    # optic on the top rail: a scope tube on two mount blocks
+    if scope:
+        sy = recv_len * 0.1; sz = bz + recv_h * 0.5 + 0.05
+        sc = cyl((ox, sy, sz), cal * 1.6, L * 0.25, metal, rot=(radians(90), 0, 0))
+        sc.name = "scope"; sc["role"] = "scope"; parts.append(sc)
+        for ry in (sy - L * 0.08, sy + L * 0.08):
+            mt = box((ox, ry, bz + recv_h * 0.5 + 0.015), (recv_w * 0.5, 0.02, 0.06), black)
+            mt["role"] = "scope"; parts.append(mt)
+    return parts
+'''
+
+_BOAT_SRC = '''
+def build(p, ox):
+    """One parametric watercraft: a lofted U-section hull (tapered to bow/stern,
+    keel at z=0) + deck, then bolt-on structural slots that span a rowboat
+    (no mast/sail/motor), a sailboat (masts + square sails), a motorboat/tug
+    (propeller + cabin [+ funnel]). Bow is -Y. The rudder (`RudderSteer`) and any
+    propeller (`Propeller`) are named so the VehicleBoneDriver yaws/spins them.
+    Knobs: hull_len/_beam/_depth, deck_h, mast_h + structural masts/sails/prop/
+    cabin/rudder/funnel."""
+    import bmesh, math
+    L = p["hull_len"]; beam = p["hull_beam"]; depth = p["hull_depth"]
+    deck_h = p["deck_h"]; mast_h = p["mast_h"]
+    nmast = max(0, min(3, int(round(p["masts"]))))
+    sails = p["sails"] >= 0.5; prop = p["prop"] >= 0.5
+    cabin = p["cabin"] >= 0.5; rudder = p["rudder"] >= 0.5; funnel = p["funnel"] >= 0.5
+    hullc = tuple(p["color"]); deckc = tuple(min(1.0, c * 1.4 + 0.05) for c in p["color"])
+    mastc = (0.20, 0.13, 0.08); sailc = (0.93, 0.93, 0.93)
+    metal = (0.30, 0.30, 0.32); dark = (0.08, 0.08, 0.08); red = (0.65, 0.12, 0.10)
+    parts = []
+
+    def tag(o, bone, role="boat"):
+        o["bone"] = bone; o["role"] = role; parts.append(o); return o
+
+    # ---- hull: loft a U cross-section across stations, tapered toward the ends ----
+    hb = beam * 0.5
+    bm = bmesh.new(); M = 15; N = 13; rings = []
+    for i in range(M):
+        ty = i / (M - 1) - 0.5
+        cy = ty * L
+        t = math.cos(ty * math.pi) * 0.9 + 0.1        # ~1 amidships, ~0.1 at the tips
+        hbi = hb * max(0.04, t); di = depth * max(0.12, t)
+        ring = []
+        for j in range(N):
+            a = math.pi * j / (N - 1)                  # left rim -> round bottom -> right rim
+            x = -math.cos(a) * hbi
+            z = depth - math.sin(a) * di               # rim at z=depth, keel bottom at z=depth-di
+            ring.append(bm.verts.new((ox + x, cy, z)))
+        rings.append(ring)
+    for i in range(M - 1):
+        for j in range(N - 1):
+            try:
+                bm.faces.new([rings[i][j], rings[i][j + 1],
+                              rings[i + 1][j + 1], rings[i + 1][j]])
+            except ValueError:
+                pass
+    try:
+        bm.faces.new(rings[0][:])                      # bow cap
+    except ValueError:
+        pass
+    try:
+        bm.faces.new(rings[-1][::-1])                  # stern cap
+    except ValueError:
+        pass
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new("Hull_m"); bm.to_mesh(me); bm.free()
+    hull = bpy.data.objects.new("Hull", me); _into(hull); colour(hull, hullc); finish(hull)
+    tag(hull, "Hull")
+
+    # deck — a tapered slab that follows the hull's plan outline (inset inside the
+    # rim), dropped just below it so the hull sides read as a bulwark and the deck
+    # never overhangs the bow/stern.
+    deck_z = depth - max(0.10, depth * 0.18)
+
+    def half_w(ty):
+        t = math.cos(ty * math.pi) * 0.9 + 0.1
+        return hb * max(0.04, t) * 0.86            # 0.86 -> tucked inside the rim
+
+    dbm = bmesh.new(); Lt = []; Rt = []; Lb = []; Rb = []
+    for i in range(M):
+        ty = i / (M - 1) - 0.5; cy = ty * L; hw = half_w(ty)
+        zt = deck_z; zb = deck_z - deck_h
+        Lt.append(dbm.verts.new((ox - hw, cy, zt))); Rt.append(dbm.verts.new((ox + hw, cy, zt)))
+        Lb.append(dbm.verts.new((ox - hw, cy, zb))); Rb.append(dbm.verts.new((ox + hw, cy, zb)))
+    for i in range(M - 1):
+        for quad in ([Lt[i], Rt[i], Rt[i + 1], Lt[i + 1]],           # top
+                     [Lb[i + 1], Rb[i + 1], Rb[i], Lb[i]],           # bottom
+                     [Lt[i], Lt[i + 1], Lb[i + 1], Lb[i]],           # left wall
+                     [Rt[i + 1], Rt[i], Rb[i], Rb[i + 1]]):          # right wall
+            try:
+                dbm.faces.new(quad)
+            except ValueError:
+                pass
+    for cap in ([Lt[0], Lb[0], Rb[0], Rt[0]], [Rt[-1], Rb[-1], Lb[-1], Lt[-1]]):
+        try:
+            dbm.faces.new(cap)
+        except ValueError:
+            pass
+    bmesh.ops.recalc_face_normals(dbm, faces=dbm.faces[:])
+    dme = bpy.data.meshes.new("Deck_m"); dbm.to_mesh(dme); dbm.free()
+    deck = bpy.data.objects.new("Deck", dme); _into(deck); colour(deck, deckc)
+    tag(deck, "Hull")
+
+    # superstructure: a modest deckhouse + a smaller wheelhouse stacked on top,
+    # set aft of midships — NOT one big block that merges with the hull.
+    if cabin:
+        dh_h = max(0.35, depth * 0.50)
+        dh_y = L * 0.10
+        tag(box((ox, dh_y, deck_z + dh_h * 0.5), (beam * 0.55, L * 0.26, dh_h), deckc), "Hull")
+        wh_h = max(0.28, depth * 0.38)
+        tag(box((ox, dh_y - L * 0.05, deck_z + dh_h + wh_h * 0.5),
+                (beam * 0.40, L * 0.13, wh_h), deckc), "Hull")
+
+    # masts (along the centreline) + optional square sails
+    if nmast > 0 and mast_h > 0.1:
+        for k in range(nmast):
+            my = (L * 0.3) - (L * 0.6) * (k / max(1, nmast - 1) if nmast > 1 else 0.5)
+            mx = ox
+            tag(cyl((mx, my, deck_z + mast_h * 0.5), max(0.04, beam * 0.04), mast_h, mastc), "Hull")
+            if sails:
+                for s_i in range(2):
+                    sz = deck_z + mast_h * (0.30 + 0.38 * s_i)
+                    sw = beam * (0.85 - 0.18 * s_i)
+                    sh = mast_h * 0.32
+                    tag(box((mx, my, sz), (sw, 0.02, sh), sailc), "Hull")
+
+    # funnel / smokestack (steamer / tug) — tall + distinct, aft of the wheelhouse
+    if funnel:
+        base_h = (max(0.35, depth * 0.50) if cabin else 0.0)
+        fz = deck_z + base_h + depth * 0.7
+        tag(cyl((ox, L * 0.24, fz), beam * 0.11, depth * 1.3, dark), "Hull")
+        tag(cyl((ox, L * 0.24, fz + depth * 0.68), beam * 0.13, depth * 0.12, red), "Hull")  # cap band
+
+    # rudder at the stern (+Y), below the waterline — steers (yaws)
+    if rudder:
+        rud = box((ox, L * 0.5 + beam * 0.05, depth * 0.42),
+                  (max(0.04, beam * 0.05), beam * 0.22, depth * 0.7), red)
+        rud.name = "Rudder"; tag(rud, "RudderSteer", "steer")
+
+    # motor propeller just ahead of the rudder, underwater — spins about forward
+    if prop:
+        px, py, pz = ox, L * 0.46, depth * 0.22
+        tag(cone((px, py, pz), beam * 0.06, beam * 0.14, metal, rot=(radians(90), 0, 0)),
+            "Propeller", "prop")
+        for i in range(3):
+            bl = box((px, py, pz), (0.03 + beam * 0.02, 0.02, depth * 0.5), dark)
+            bl.name = "PropBlade_%d" % i; bl.rotation_euler = (0, radians(i * 120), 0)
+            tag(bl, "Propeller", "prop")
+
+    # bone table for the rigid mechanical rigger
+    global BOAT_BONES
+    cz = depth * 0.5
+    BOAT_BONES = [
+        ("Root", (ox, 0, cz), (ox, 0, cz + 0.6), None),
+        ("Hull", (ox, 0, cz), (ox, -L * 0.3, cz), "Root"),
+    ]
+    if rudder:
+        BOAT_BONES.append(("RudderSteer", (ox, L * 0.5, depth * 0.42),
+                           (ox, L * 0.5, depth * 0.42 + 0.4), "Hull"))
+    if prop:
+        BOAT_BONES.append(("Propeller", (ox, L * 0.46, depth * 0.22),
+                           (ox, L * 0.46 - 0.3, depth * 0.22), "Hull"))
+    return parts
+'''
+
+_BUILDERS = {"car": _CAR_SRC, "plane": _PLANE_SRC, "boat": _BOAT_SRC,
+             "humanoid": _HUMANOID_SRC, "bike": _BIKE_SRC,
+             "furniture": _FURNITURE_SRC, "weapon": _WEAPON_SRC}
+
+# ── riggers: define `rig_model(parts, ox)` per base (game-functional skeletons) ──
+# Car: a root + body bone + one bone per wheel (axle along +X). Each part is rigidly
+# skin-bound (single vertex group, weight 1.0) to its bone, so a wheel bone's roll
+# spins that wheel and its Z move = suspension travel. Exports as a rigged FBX.
+_CAR_RIG = '''
+def rig_model(parts, ox):
+    body = next((o for o in parts if o.get("role") == "body"), None)
+    if body is None:
+        return None
+    wheels = [o for o in parts if o.get("role") == "wheel"]
+    arm = bpy.data.armatures.new(COLL + "_arm")
+    rig = bpy.data.objects.new(COLL + "_rig", arm)
+    _into(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.edit_bones
+    root = eb.new("root"); root.head = (ox, 0, 0.02); root.tail = (ox, 0, 0.32)
+    bb = eb.new("body"); bz = body.location.z
+    bb.head = (ox, 0, bz); bb.tail = (ox, 0.6, bz); bb.parent = root
+    labels = {}
+    for w in wheels:
+        lab = w.get("wheel_label", w.name)
+        bn = eb.new(lab)                                      # bone names unique within this rig
+        bn.head = (w.location.x, w.location.y, w.location.z)
+        bn.tail = (w.location.x + 0.3, w.location.y, w.location.z)   # axle along +X
+        bn.parent = root
+        labels[w.name] = lab
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    def bind(obj, bone):
+        if obj is None:
+            return
+        obj.parent = rig
+        vg = obj.vertex_groups.new(name=bone)
+        vg.add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
+        m = obj.modifiers.new("arm", "ARMATURE"); m.object = rig
+
+    bind(body, "body")
+    bind(next((o for o in parts if o.get("role") == "cabin"), None), "body")
+    bind(next((o for o in parts if o.get("role") == "bed"), None), "body")
+    for w in wheels:
+        bind(w, labels[w.name])
+    return rig
+'''
+
+_BIKE_RIG = '''
+def rig_model(parts, ox):
+    wheels = [o for o in parts if o.get("role") == "wheel"]
+    if not wheels:
+        return None
+    frame = [o for o in parts if o.get("role") == "frame"]
+    fork = [o for o in parts if o.get("role") == "fork"]
+    bars = [o for o in parts if o.get("role") == "handlebar"]
+    arm = bpy.data.armatures.new(COLL + "_arm")
+    rig = bpy.data.objects.new(COLL + "_rig", arm); _into(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.edit_bones
+    root = eb.new("root"); root.head = (ox, 0, 0.02); root.tail = (ox, 0, 0.3)
+    fr = eb.new("frame"); fr.head = (ox, 0, 0.3); fr.tail = (ox, 0.4, 0.3); fr.parent = root
+    wf = next((o for o in wheels if o.get("wheel_label") == "Wheel.F"), None)
+    rr = next((o for o in wheels if o.get("wheel_label") == "Wheel.R"), None)
+    wc = next((o for o in wheels if o.get("wheel_label") == "Wheel.C"), None)
+    steer = None
+    if wf is not None or fork or bars:
+        hy = (bars[0].location.y if bars else (wf.location.y if wf else ox))
+        steer = eb.new("steer"); steer.head = (ox, hy, 0.3); steer.tail = (ox, hy, 0.9); steer.parent = root
+    labels = {}
+    def wbone(w, parent):
+        bn = eb.new(w.get("wheel_label", w.name))
+        bn.head = (w.location.x, w.location.y, w.location.z)
+        bn.tail = (w.location.x + 0.3, w.location.y, w.location.z)
+        bn.parent = parent
+        labels[w.name] = bn.name
+    if wf is not None: wbone(wf, steer or root)      # front wheel turns WITH the steer bone
+    if rr is not None: wbone(rr, root)
+    if wc is not None: wbone(wc, root)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    def bind(obj, bone):
+        if obj is None: return
+        obj.parent = rig
+        vg = obj.vertex_groups.new(name=bone); vg.add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
+        m = obj.modifiers.new("arm", "ARMATURE"); m.object = rig
+    for o in frame: bind(o, "frame")
+    for o in fork: bind(o, "steer" if steer else "frame")
+    for o in bars: bind(o, "steer" if steer else "frame")
+    for w in wheels: bind(w, labels.get(w.name, "frame"))
+    return rig
+'''
+
+# Humanoid: build the standard Unity HumanBodyBones skeleton (exact names so the
+# importer's avatar auto-mapper recognises them), then rigidly skin each tagged
+# mesh segment to its bone (weight 1.0). Required bones present: Hips, Spine, Head,
+# {Left,Right}{UpperLeg,LowerLeg,Foot,UpperArm,LowerArm,Hand} -> a VALID Humanoid
+# avatar, so any humanoid clip (Mixamo-style Run/Jump) retargets onto it.
+_HUMANOID_RIG = '''
+def rig_model(parts, ox):
+    """Build the Unity HumanBodyBones skeleton from BONES_WORLD, then proximity-skin
+    each part against ONLY its curated bone set (PART_BONES) — the humangen.py weight
+    scheme. Curated maps keep arm weights off the torso etc., so joints deform cleanly
+    and the rig imports as a valid Unity Humanoid avatar (no 'Hips not found')."""
+    import mathutils
+    arm = bpy.data.armatures.new(COLL + "_arm")
+    rig = bpy.data.objects.new(COLL + "_rig", arm); _into(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.edit_bones
+    made = {}
+    for name, head, tail, parent in BONES_WORLD:
+        b = eb.new(name)
+        b.head = mathutils.Vector(head)
+        b.tail = mathutils.Vector(tail)
+        b.use_connect = False
+        if parent and parent in made:
+            b.parent = made[parent]
+        made[name] = b
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    segs = {n: (mathutils.Vector(h), mathutils.Vector(t)) for (n, h, t, _) in BONES_WORLD}
+    rad = WEIGHT_RADIUS
+
+    def influence(co, head, tail):
+        ab = tail - head
+        denom = ab.dot(ab) or 1e-6
+        u = max(0.0, min(1.0, (co - head).dot(ab) / denom))
+        d = (co - (head + u * ab)).length
+        return (1.0 - d / rad) if d < rad else 0.0
+
+    def bind(obj):
+        wmap = PART_BONES.get(obj.get("part"))
+        if not wmap:
+            bn = obj.get("bone")
+            wmap = {bn: 1.0} if bn else None
+        if not wmap:
+            return
+        obj.parent = rig
+        groups = {}
+        for v in obj.data.vertices:
+            co = obj.matrix_world @ v.co
+            ws = {}; tot = 0.0
+            for bn, mx in wmap.items():
+                if bn in segs:
+                    w = influence(co, *segs[bn]) * mx
+                    if w > 0.0:
+                        ws[bn] = w; tot += w
+            if tot <= 0.0:                       # outside every falloff -> nearest listed bone
+                best = None; bd = 1e9
+                for bn in wmap:
+                    if bn in segs:
+                        hh, tt = segs[bn]; ab = tt - hh; den = ab.dot(ab) or 1e-6
+                        u = max(0.0, min(1.0, (co - hh).dot(ab) / den))
+                        d = (co - (hh + u * ab)).length
+                        if d < bd:
+                            bd = d; best = bn
+                if best:
+                    ws = {best: 1.0}; tot = 1.0
+            for bn, w in ws.items():
+                groups.setdefault(bn, []).append((v.index, w / tot))
+        for bn, items in groups.items():
+            vg = obj.vertex_groups.new(name=bn)
+            for vi, w in items:
+                vg.add([vi], w, "REPLACE")
+        m = obj.modifiers.new("arm", "ARMATURE"); m.object = rig
+
+    for o in parts:
+        if o.type == "MESH":
+            bind(o)
+    return rig
+'''
+
+# Plane: a rigid MECHANICAL rig (like the car) — build the bones from PLANE_BONES
+# and rigidly skin each part to its bone (single group, weight 1.0). Propeller_* and
+# Wheel.* bones are spun at Play by the name-driven VehicleBoneDriver.
+_PLANE_RIG = '''
+def rig_model(parts, ox):
+    import mathutils
+    arm = bpy.data.armatures.new(COLL + "_arm")
+    rig = bpy.data.objects.new(COLL + "_rig", arm); _into(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.edit_bones; made = {}
+    for name, head, tail, parent in PLANE_BONES:
+        b = eb.new(name)
+        b.head = mathutils.Vector(head); b.tail = mathutils.Vector(tail)
+        b.use_connect = False
+        if parent and parent in made:
+            b.parent = made[parent]
+        made[name] = b
+    bpy.ops.object.mode_set(mode="OBJECT")
+    valid = set(made)
+
+    def bind(o, bone):
+        if bone not in valid:
+            bone = "Fuselage"
+        o.parent = rig
+        vg = o.vertex_groups.new(name=bone)
+        vg.add([v.index for v in o.data.vertices], 1.0, "REPLACE")
+        m = o.modifiers.new("arm", "ARMATURE"); m.object = rig
+
+    for o in parts:
+        if o.type == "MESH":
+            bind(o, o.get("bone", "Fuselage"))
+    return rig
+'''
+
+# Boat: rigid mechanical rig (like the plane) over BOAT_BONES. The rudder
+# (RudderSteer) and propeller (Propeller) bones are spun/yawed by VehicleBoneDriver.
+_BOAT_RIG = '''
+def rig_model(parts, ox):
+    import mathutils
+    arm = bpy.data.armatures.new(COLL + "_arm")
+    rig = bpy.data.objects.new(COLL + "_rig", arm); _into(rig)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm.edit_bones; made = {}
+    for name, head, tail, parent in BOAT_BONES:
+        b = eb.new(name)
+        b.head = mathutils.Vector(head); b.tail = mathutils.Vector(tail)
+        b.use_connect = False
+        if parent and parent in made:
+            b.parent = made[parent]
+        made[name] = b
+    bpy.ops.object.mode_set(mode="OBJECT")
+    valid = set(made)
+
+    def bind(o, bone):
+        if bone not in valid:
+            bone = "Hull"
+        o.parent = rig
+        vg = o.vertex_groups.new(name=bone)
+        vg.add([v.index for v in o.data.vertices], 1.0, "REPLACE")
+        m = o.modifiers.new("arm", "ARMATURE"); m.object = rig
+
+    for o in parts:
+        if o.type == "MESH":
+            bind(o, o.get("bone", "Hull"))
+    return rig
+'''
+
+_NO_RIG = '''
+def rig_model(parts, ox):
+    return None
+'''
+
+_RIGGERS = {"car": _CAR_RIG, "bike": _BIKE_RIG, "humanoid": _HUMANOID_RIG,
+            "plane": _PLANE_RIG, "boat": _BOAT_RIG}
+
+# Pose the rig into a demo: roll every wheel bone (spin) + lift the front axle
+# (suspension), proving the parts are bone-driven and move independently.
+_DEMO = '''
+def demo_pose(rig, spin_deg=35.0, lift=0.22, steer_deg=22.0):
+    import math as _m
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.object.mode_set(mode="POSE")
+    for pb in rig.pose.bones:
+        if pb.name.startswith("Wheel."):
+            pb.rotation_mode = "XYZ"
+            pb.rotation_euler = (0.0, _m.radians(spin_deg), 0.0)   # roll about axle (bone Y = +X)
+            if pb.name[6:7] == "F":                                # front axle -> suspension lift
+                pb.location = (0.0, 0.0, lift)
+        elif "prop" in pb.name.lower():
+            pb.rotation_mode = "XYZ"
+            pb.rotation_euler = (0.0, _m.radians(spin_deg * 1.5), 0.0)  # spin the propeller
+        elif "steer" in pb.name.lower():
+            pb.rotation_mode = "XYZ"
+            pb.rotation_euler = (0.0, _m.radians(steer_deg), 0.0)  # yaw the steer/rudder bone
+    bpy.ops.object.mode_set(mode="OBJECT")
+'''
+
+_RUN = '''
+root = bpy.data.objects.new(COLL + "_root", None)
+_into(root)
+_parts = build(PARAMS, OX)
+_rig = rig_model(_parts, OX) if RIG else None
+if _rig is not None:
+    _rig.parent = root
+for _o in _parts:
+    if _o.parent is None:
+        _o.parent = root
+if RIG and DEMO and _rig is not None:
+    demo_pose(_rig)
+result = {"base": BASE, "parts": len(_parts), "rigged": _rig is not None,
+          "collection": COLL, "objects": [o.name for o in _coll().objects]}
+print("[proc] built", len(_parts), "parts; rigged:", _rig is not None)
+'''
+
+# Tail that writes `result` to disk for the headless backend (mirrors mcp_backend).
+_MANIFEST_TAIL = '''
+import json as _json, os as _os
+try:
+    _p = _os.path.join(_OUT_DIR, COLL + ".result.json")
+    _os.makedirs(_OUT_DIR, exist_ok=True)
+    with open(_p, "w", encoding="utf-8") as _f:
+        _json.dump(result, _f, indent=2)
+    print("[proc] wrote", _p)
+except Exception as _e:
+    print("[proc] result write failed:", _e)
+'''
+
+
+def build_base_code(base: str, params: dict, coll: str, ox: float = 0.0,
+                    out_dir: Optional[str] = None, rig: bool = False,
+                    demo: bool = False) -> str:
+    """Self-contained bpy script that builds `base` with `params` in collection
+    `coll` at X offset `ox`.
+
+    rig  — also build the base's skeleton and skin-bind the parts (game-functional).
+    demo — pose the rig (spin wheels + suspension) to demonstrate it moves.
+    out_dir — append a tail that writes a result JSON (for the headless backend).
+    """
+    base = base if base in _BUILDERS else "car"
+    header = (
+        "BASE = {b!r}\nCOLL = {c!r}\nOX = {x}\nRIG = {r}\nDEMO = {dm}\nPARAMS = {p}\n".format(
+            b=base, c=coll, x=float(ox), r=bool(rig), dm=bool(demo), p=json.dumps(params))
+    )
+    tail = ""
+    if out_dir:
+        header = '_OUT_DIR = r"{d}"\n'.format(d=str(out_dir).replace("\\", "/")) + header
+        tail = _MANIFEST_TAIL
+    rigger = _RIGGERS.get(base, _NO_RIG)
+    return (header + _HELPERS + _PARTS + _MESH_TOOLKIT + "\n" + _BUILDERS[base] + "\n"
+            + rigger + _DEMO + "\n" + _RUN + tail)

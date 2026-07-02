@@ -3,33 +3,60 @@ Pydantic schema models for Unity project generation.
 Two stages:
   UnitySchema (raw) — plain English descriptions, no package IDs
   UnitySchema (resolved) — package IDs + versions filled by RAG/lookup
+
+The schema is the IR (intermediate representation) for the full multimodal
+compiler pipeline. Steps 4-6 are deterministic; only Steps 2-3 are LLM-driven.
 """
 
 from __future__ import annotations
 import re
-from typing import Literal, Optional, get_args
+from typing import Any, Literal, Optional, get_args
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .micro.code_fields import CodeField, CodeMethod
+from .atoms.base import AtomInvocation
 
 
-GameType      = Literal["2D", "2.5D", "3D", "VR", "top_down", "isometric"]
-Platform      = Literal["pc", "mobile", "console", "webgl", "all"]
+# ── Core engine literals ───────────────────────────────────────────────────────
+
+GameType       = Literal["2D", "2.5D", "3D", "VR", "top_down", "isometric"]
+Platform       = Literal["pc", "mobile", "console", "webgl", "all"]
 RenderPipeline = Literal["URP", "HDRP", "builtin"]
-UnityVersion  = Literal["6000.0", "6000.1", "6000.4", "2022.3", "2021.3"]
-ScriptType    = Literal[
+UnityVersion   = Literal["6000.0", "6000.1", "6000.4", "2022.3", "2021.3"]
+ScriptType     = Literal[
     "player", "camera", "game_manager", "enemy",
     "collectible", "ui_manager", "audio_manager", "health",
     "dialogue_manager", "mesh_builder", "procedural_mesh",
     "level_generator", "material_palette", "custom"
 ]
-ScriptAttach  = Literal["player", "camera", "game_manager", "systems"]
-VisualStyle   = Literal["cartoon", "realistic", "low_poly", "stylized", "pixel_art", "retro"]
-FeatureFlag   = Literal[
+ScriptAttach   = Literal["player", "camera", "game_manager", "systems"]
+VisualStyle    = Literal["cartoon", "realistic", "low_poly", "stylized", "pixel_art", "retro"]
+FeatureFlag    = Literal[
     "physics", "ui_toolkit", "input_system", "cinemachine",
     "tilemaps", "navmesh", "audio", "networking",
     "addressables", "localization", "timeline", "animation_rigging"
 ]
+TriggerType    = Literal["on_start", "on_enter_zone", "on_enemy_death", "on_pickup", "on_timer", "manual"]
+AudioCategory  = Literal["music", "sfx", "ambient", "voice"]
+MeshType       = Literal["terrain", "room", "road", "water", "custom"]
+
+# ── Multimodal IR literals ────────────────────────────────────────────────────
+
+AudioGenMethod    = Literal["sfxr", "stable_audio", "elevenlabs", "procedural", "recorded"]
+MaterialGenMethod = Literal["procedural", "substance", "sdxl", "imported"]
+ModelCategory     = Literal["vehicle", "character", "prop", "environment"]
+ModelGenMethod    = Literal["blender_microgen", "parametric_base", "imported"]
+VfxType           = Literal["particle", "volumetric", "shader_fx"]
+ShaderLanguage    = Literal["shadergraph", "hlsl", "glsl"]
+BTNodeType        = Literal["sequence", "selector", "action", "condition", "decorator"]
+WiringType        = Literal["uses", "triggers", "references", "contains"]
+CharacterRole     = Literal["player", "npc", "enemy", "boss", "companion"]
+MissionObjType    = Literal["reach", "collect", "defeat", "survive", "escort", "timer"]
+WeatherType       = Literal["clear", "rain", "storm", "snow", "fog", "wind", "overcast"]
+WorldScale        = Literal["tiny", "small", "medium", "large", "massive"]
+AIBehaviorKind    = Literal["idle", "patrol", "guard", "chase", "flee", "attack", "custom"]
+
+# ── Validation sets ───────────────────────────────────────────────────────────
 
 _VALID_GAME_TYPES:    frozenset[str] = frozenset(get_args(GameType))
 _VALID_PLATFORMS:     frozenset[str] = frozenset(get_args(Platform))
@@ -38,6 +65,23 @@ _VALID_VERSIONS:      frozenset[str] = frozenset(get_args(UnityVersion))
 _VALID_SCRIPT_TYPES:  frozenset[str] = frozenset(get_args(ScriptType))
 _VALID_FEATURES:      frozenset[str] = frozenset(get_args(FeatureFlag))
 _VALID_VISUAL_STYLES: frozenset[str] = frozenset(get_args(VisualStyle))
+_VALID_TRIGGERS:      frozenset[str] = frozenset(get_args(TriggerType))
+_VALID_CATEGORIES:    frozenset[str] = frozenset(get_args(AudioCategory))
+_VALID_MESH_TYPES:    frozenset[str] = frozenset(get_args(MeshType))
+
+_VALID_AUDIO_GEN:     frozenset[str] = frozenset(get_args(AudioGenMethod))
+_VALID_MAT_GEN:       frozenset[str] = frozenset(get_args(MaterialGenMethod))
+_VALID_MODEL_CAT:     frozenset[str] = frozenset(get_args(ModelCategory))
+_VALID_MODEL_GEN:     frozenset[str] = frozenset(get_args(ModelGenMethod))
+_VALID_VFX_TYPE:      frozenset[str] = frozenset(get_args(VfxType))
+_VALID_SHADER_LANG:   frozenset[str] = frozenset(get_args(ShaderLanguage))
+_VALID_BT_NODE:       frozenset[str] = frozenset(get_args(BTNodeType))
+_VALID_WIRING:        frozenset[str] = frozenset(get_args(WiringType))
+_VALID_CHAR_ROLE:     frozenset[str] = frozenset(get_args(CharacterRole))
+_VALID_MISSION_OBJ:   frozenset[str] = frozenset(get_args(MissionObjType))
+_VALID_WEATHER:       frozenset[str] = frozenset(get_args(WeatherType))
+_VALID_WORLD_SCALE:   frozenset[str] = frozenset(get_args(WorldScale))
+_VALID_AI_BEH:        frozenset[str] = frozenset(get_args(AIBehaviorKind))
 
 # ── Hex color helpers ──────────────────────────────────────────────────────────
 
@@ -53,7 +97,6 @@ def _norm_hex(v: str, default: str = "#FFFFFF") -> str:
     return s if _HEX_RE.match(s) else default
 
 
-# Style-specific default palettes (applied when LLM omits color_palette)
 _DEFAULT_PALETTES: dict[str, dict[str, str]] = {
     "cartoon":   {"name": "Cartoon",   "primary": "#4A90E2", "secondary": "#7ED321",
                   "accent": "#F5A623", "background": "#87CEEB", "trim": "#FFFFFF"},
@@ -69,14 +112,8 @@ _DEFAULT_PALETTES: dict[str, dict[str, str]] = {
                   "accent": "#F7C59F", "background": "#1A1A2E", "trim": "#EBEBEB"},
 }
 
-TriggerType   = Literal["on_start", "on_enter_zone", "on_enemy_death", "on_pickup", "on_timer", "manual"]
-AudioCategory = Literal["music", "sfx", "ambient", "voice"]
-MeshType      = Literal["terrain", "room", "road", "water", "custom"]
 
-_VALID_TRIGGERS:   frozenset[str] = frozenset(get_args(TriggerType))
-_VALID_CATEGORIES: frozenset[str] = frozenset(get_args(AudioCategory))
-_VALID_MESH_TYPES: frozenset[str] = frozenset(get_args(MeshType))
-
+# ── Existing schema primitives (preserved for backward compatibility) ──────────
 
 class StoryBeat(BaseModel):
     id:          str
@@ -143,16 +180,17 @@ class EntitySpec(BaseModel):
     bootstrap turns each EntitySpec into `count` GameObjects at the given layout.
     """
     name:       str   = "Entities"
-    kind:       str   = "prop"          # free label: enemy, building, crowd, pickup…
+    kind:       str   = "prop"
     count:      int   = 1
     shape:      str   = "cube"
     placement:  str   = "single"
     color_role: str   = "accent"
-    spacing:    float = 2.0             # units between instances (line/grid/ring)
-    radius:     float = 8.0             # ring/scatter radius
+    spacing:    float = 2.0
+    radius:     float = 8.0
     scale:      float = 1.0
-    tag:        str   = "Untagged"      # e.g. "Enemy" so AI/health find them
-    behavior:   str   = ""              # optional: name of a script to attach
+    tag:        str   = "Untagged"
+    behavior:   str   = ""
+    atoms:      list[AtomInvocation] = Field(default_factory=list)
     # placement == "path": world-space [x, y, z] points (y = elevation!). The
     # spawner lays the instances along this polyline AND emits a "Waypoints"
     # container of empty GameObjects at the points — winding roads, patrol
@@ -180,7 +218,7 @@ class EntitySpec(BaseModel):
     @classmethod
     def _clamp_count(cls, v) -> int:
         try:
-            return max(0, min(200, int(v)))   # cap so a hallucinated 99999 can't bomb the scene
+            return max(0, min(200, int(v)))
         except (TypeError, ValueError):
             return 1
 
@@ -214,10 +252,10 @@ class EntitySpec(BaseModel):
 class EnvironmentSpec(BaseModel):
     """Scene mood — time of day drives the sun's angle/color; fog sets the tone.
     Lets "a mountain road at sunset" actually look like sunset."""
-    time_of_day:   str = "day"           # dawn | day | sunset | night
-    fog:           Optional[bool]  = None   # None → visual-style default
-    fog_color:     Optional[str]   = None   # #RRGGBB; None → palette background
-    sun_intensity: Optional[float] = None   # None → time-of-day preset
+    time_of_day:   str            = "day"
+    fog:           Optional[bool]  = None
+    fog_color:     Optional[str]   = None
+    sun_intensity: Optional[float] = None
 
     @field_validator("time_of_day", mode="before")
     @classmethod
@@ -250,11 +288,11 @@ class EnvironmentSpec(BaseModel):
 class ColorPalette(BaseModel):
     """Six named hex colors that drive material generation and scene lighting."""
     name:       str = "Stylized"
-    primary:    str = "#9B59B6"   # player / protagonist objects
-    secondary:  str = "#1ABC9C"   # ground / terrain / environment
-    accent:     str = "#E67E22"   # enemies / collectibles / highlights
-    background: str = "#2C3E50"   # sky / camera clear color
-    trim:       str = "#F0F0F0"   # UI / trim / neutral geometry
+    primary:    str = "#9B59B6"
+    secondary:  str = "#1ABC9C"
+    accent:     str = "#E67E22"
+    background: str = "#2C3E50"
+    trim:       str = "#F0F0F0"
 
     @field_validator("primary", "secondary", "accent", "background", "trim", mode="before")
     @classmethod
@@ -262,23 +300,487 @@ class ColorPalette(BaseModel):
         return _norm_hex(v)
 
 
+# ── World Spec ────────────────────────────────────────────────────────────────
+
+class WorldRegion(BaseModel):
+    name:     str         = "Region"
+    biome:    str         = ""
+    entities: list[str]   = Field(default_factory=list)
+    bounds:   list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])  # xmin, zmin, xmax, zmax
+
+    @field_validator("bounds", mode="before")
+    @classmethod
+    def _clamp_bounds(cls, v) -> list:
+        if not isinstance(v, list):
+            return [0.0, 0.0, 0.0, 0.0]
+        result = []
+        for x in (list(v) + [0.0, 0.0, 0.0, 0.0])[:4]:
+            try:
+                result.append(max(-10000.0, min(10000.0, float(x))))
+            except (TypeError, ValueError):
+                result.append(0.0)
+        return result
+
+
+class ProceduralRules(BaseModel):
+    blender: dict[str, Any] = Field(default_factory=dict)
+    unity:   dict[str, Any] = Field(default_factory=dict)
+    navmesh: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorldSpec(BaseModel):
+    biome:            str                    = "urban"
+    time_of_day:      str                    = "day"
+    weather:          str                    = "clear"
+    scale:            str                    = "medium"
+    regions:          list[WorldRegion]      = Field(default_factory=list)
+    procedural_rules: Optional[ProceduralRules] = None
+
+    @field_validator("time_of_day", mode="before")
+    @classmethod
+    def _norm_tod(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        synonyms = {"morning": "dawn", "sunrise": "dawn", "noon": "day",
+                    "midday": "day", "dusk": "sunset", "evening": "sunset",
+                    "midnight": "night", "dark": "night"}
+        s = synonyms.get(s, s)
+        return s if s in ("dawn", "day", "sunset", "night") else "day"
+
+    @field_validator("weather", mode="before")
+    @classmethod
+    def _norm_weather(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        synonyms = {"sunny": "clear", "cloudy": "overcast", "windy": "wind",
+                    "rainy": "rain", "stormy": "storm", "snowy": "snow", "foggy": "fog"}
+        s = synonyms.get(s, s)
+        return s if s in _VALID_WEATHER else "clear"
+
+    @field_validator("scale", mode="before")
+    @classmethod
+    def _norm_scale(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_WORLD_SCALE else "medium"
+
+
+# ── Dialog Graph ──────────────────────────────────────────────────────────────
+
+class DialogChoice(BaseModel):
+    text:      str
+    next_node: str
+    condition: str = ""  # optional guard — e.g. "player.has_item(KeyCard)"
+
+
+class DialogNode(BaseModel):
+    id:        str
+    speaker:   str
+    text:      str
+    emotion:   str = "neutral"
+    audio_ref: str = ""  # AudioSpec id — empty = no voiced line
+    choices:   list[DialogChoice] = Field(default_factory=list)
+
+
+class DialogGraph(BaseModel):
+    start_node: str              = ""
+    nodes:      list[DialogNode] = Field(default_factory=list)
+
+
+# ── Behavior Tree ─────────────────────────────────────────────────────────────
+
+class BTNode(BaseModel):
+    id:       str
+    type:     str               = "action"
+    children: list[str]         = Field(default_factory=list)  # child BTNode ids
+    action:   str               = ""
+    params:   dict[str, Any]    = Field(default_factory=dict)
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_BT_NODE else "action"
+
+
+class BehaviorTree(BaseModel):
+    root:  str           = ""
+    nodes: list[BTNode]  = Field(default_factory=list)
+
+
+# ── NPC Brain ─────────────────────────────────────────────────────────────────
+
+class NPCBrain(BaseModel):
+    traits:        list[str]              = Field(default_factory=list)
+    goals:         list[str]              = Field(default_factory=list)
+    memory:        list[str]              = Field(default_factory=list)
+    behavior_tree: Optional[BehaviorTree] = None
+
+
+# ── Character Spec ────────────────────────────────────────────────────────────
+
+class CharacterSpec(BaseModel):
+    id:            str
+    name:          str
+    role:          str              = "npc"
+    model_ref:     str              = ""  # ModelSpec id or file path
+    animation_set: list[str]        = Field(default_factory=list)
+    dialog_graph:  Optional[DialogGraph] = None
+    npc_brain:     Optional[NPCBrain]    = None
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def _norm_role(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_CHAR_ROLE else "npc"
+
+
+# ── Audio Spec (extended — keeps existing AudioTrack for backward compat) ─────
+
+class AudioSpec(BaseModel):
+    id:                str
+    type:              str              = "sfx"
+    description:       str              = ""
+    generation_method: str              = "sfxr"
+    parameters:        dict[str, Any]   = Field(default_factory=dict)
+    file_ref:          str              = ""
+    loop:              bool             = False
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_CATEGORIES else "sfx"
+
+    @field_validator("generation_method", mode="before")
+    @classmethod
+    def _norm_gen(cls, v: str) -> str:
+        s = str(v).lower().strip().replace("-", "_").replace(" ", "_")
+        return s if s in _VALID_AUDIO_GEN else "sfxr"
+
+
+# ── PBR Maps + Material Spec ──────────────────────────────────────────────────
+
+class PBRMaps(BaseModel):
+    albedo:    str = ""
+    normal:    str = ""
+    roughness: str = ""
+    metallic:  str = ""
+    ao:        str = ""
+
+
+class MaterialSpec(BaseModel):
+    id:                str
+    name:              str
+    shader_model:      str            = "Standard"
+    pbr_maps:          Optional[PBRMaps] = None
+    generation_method: str            = "procedural"
+    parameters:        dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("generation_method", mode="before")
+    @classmethod
+    def _norm_gen(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_MAT_GEN else "procedural"
+
+
+# ── Model Spec ────────────────────────────────────────────────────────────────
+
+class ModelSpec(BaseModel):
+    id:                str
+    name:              str
+    category:          str            = "prop"
+    generation_method: str            = "blender_microgen"
+    parameters:        dict[str, Any] = Field(default_factory=dict)
+    file_ref:          str            = ""
+    materials:         list[str]      = Field(default_factory=list)  # MaterialSpec ids
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _norm_cat(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_MODEL_CAT else "prop"
+
+    @field_validator("generation_method", mode="before")
+    @classmethod
+    def _norm_gen(cls, v: str) -> str:
+        s = str(v).lower().strip().replace("-", "_").replace(" ", "_")
+        return s if s in _VALID_MODEL_GEN else "blender_microgen"
+
+
+# ── Animation Spec ────────────────────────────────────────────────────────────
+
+class AnimationSpec(BaseModel):
+    id:     str
+    name:   str
+    clip:   str       = ""
+    loop:   bool      = True
+    events: list[str] = Field(default_factory=list)  # Unity Animation Event names
+
+
+# ── VFX Spec ─────────────────────────────────────────────────────────────────
+
+class VfxSpec(BaseModel):
+    id:         str
+    name:       str
+    type:       str            = "particle"
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    file_ref:   str            = ""
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: str) -> str:
+        s = str(v).lower().strip().replace(" ", "_")
+        return s if s in _VALID_VFX_TYPE else "particle"
+
+
+# ── Shader Spec ───────────────────────────────────────────────────────────────
+
+class ShaderSpec(BaseModel):
+    id:         str
+    name:       str
+    language:   str            = "shadergraph"
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    file_ref:   str            = ""
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _norm_lang(cls, v: str) -> str:
+        s = str(v).lower().strip().replace(" ", "").replace("_", "").replace("-", "")
+        if s in ("shadergraph", "graph", "sg"):
+            return "shadergraph"
+        if s in ("hlsl", "cg"):
+            return "hlsl"
+        if s in ("glsl",):
+            return "glsl"
+        return "shadergraph"
+
+
+# ── Mission Spec ──────────────────────────────────────────────────────────────
+
+class MissionObjective(BaseModel):
+    id:          str
+    description: str
+    type:        str  = "reach"
+    target_ref:  str  = ""
+    count:       int  = 1
+    optional:    bool = False
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_MISSION_OBJ else "reach"
+
+    @field_validator("count", mode="before")
+    @classmethod
+    def _clamp_count(cls, v) -> int:
+        try:
+            return max(1, min(9999, int(v)))
+        except (TypeError, ValueError):
+            return 1
+
+
+class MissionSpec(BaseModel):
+    id:             str
+    title:          str
+    description:    str                    = ""
+    objectives:     list[MissionObjective] = Field(default_factory=list)
+    triggers:       list[str]              = Field(default_factory=list)
+    rewards:        dict[str, Any]         = Field(default_factory=dict)
+    story_beat_ref: str                    = ""  # StoryBeat.id
+
+
+# ── AI Behavior Tree (standalone registry entry, referenced by CharacterSpec) ─
+
+class AIBehaviorTree(BaseModel):
+    id:   str
+    name: str
+    tree: Optional[BehaviorTree] = None
+
+
+# ── Microgen Spec ─────────────────────────────────────────────────────────────
+
+class MicrogensSpec(BaseModel):
+    kind:         str
+    input:        dict[str, Any]          = Field(default_factory=dict)
+    output_files: list[str]               = Field(default_factory=list)
+    atoms:        list[AtomInvocation]    = Field(default_factory=list)
+
+
+# ── Wiring Map ────────────────────────────────────────────────────────────────
+
+class WiringDependency(BaseModel):
+    source: str   # originating asset/system id
+    target: str   # destination asset/system id
+    type:   str = "references"
+
+    @field_validator("type", mode="before")
+    @classmethod
+    def _norm_type(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_WIRING else "references"
+
+
+class WiringMap(BaseModel):
+    dependencies: list[WiringDependency] = Field(default_factory=list)
+
+
+# ── Capability models (behavior-first schema layer) ───────────────────────────
+# The LLM fills these; the capability resolver (Step 5) converts them to atoms.
+# Each field is a typed parameter — "jump: true" + "jump_force" both flow
+# downstream to the Unity C# snippet that implements the Jump atom.
+
+class InputBinding(BaseModel):
+    action: str
+    key:    str
+    event:  str = ""  # SendMessage target; if empty → "On{Action}" at resolve time
+
+
+class ControllerCapability(BaseModel):
+    movement:          bool  = True
+    jump:              bool  = True
+    sprint:            bool  = False
+    crouch:            bool  = False
+    look_sensitivity:  float = 2.0
+    speed:             float = 6.0
+    sprint_multiplier: float = 1.7
+    jump_force:        float = 8.0
+
+    @field_validator("look_sensitivity", "speed", "sprint_multiplier", "jump_force", mode="before")
+    @classmethod
+    def _clamp_positive(cls, v) -> float:
+        try:
+            return max(0.01, float(v))
+        except (TypeError, ValueError):
+            return 1.0
+
+
+class PhysicsCapability(BaseModel):
+    gravity:   bool  = True
+    collision: str   = "dynamic"   # none | static | kinematic | dynamic
+    mass:      float = 80.0
+    drag:      float = 0.0
+
+    @field_validator("collision", mode="before")
+    @classmethod
+    def _norm_collision(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in ("none", "static", "kinematic", "dynamic") else "dynamic"
+
+    @field_validator("mass", mode="before")
+    @classmethod
+    def _clamp_mass(cls, v) -> float:
+        try:
+            return max(0.001, min(100_000.0, float(v)))
+        except (TypeError, ValueError):
+            return 80.0
+
+    @field_validator("drag", mode="before")
+    @classmethod
+    def _clamp_drag(cls, v) -> float:
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            return 0.0
+
+
+class HudCapability(BaseModel):
+    show_health:    bool = True
+    show_ammo:      bool = False
+    show_objective: bool = True
+    show_minimap:   bool = False
+
+
+class ModelCapability(BaseModel):
+    lod:        str             = "auto"
+    animations: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("lod", mode="before")
+    @classmethod
+    def _norm_lod(cls, v) -> str:
+        s = str(v).lower().strip()
+        return s if s in ("auto", "0", "1", "2", "disabled") else "auto"
+
+
+class InputCapability(BaseModel):
+    bindings: list[InputBinding] = Field(default_factory=list)
+
+
+class AnimationCapability(BaseModel):
+    rig_type: str             = "generic"   # generic | humanoid
+    clips:    dict[str, str]  = Field(default_factory=dict)  # state → clip path
+
+    @field_validator("rig_type", mode="before")
+    @classmethod
+    def _norm_rig(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in ("generic", "humanoid") else "generic"
+
+
+class DialogCapability(BaseModel):
+    system:        str  = "simple"   # simple | branching | voiced
+    bark_on_sight: bool = False
+
+    @field_validator("system", mode="before")
+    @classmethod
+    def _norm_system(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in ("simple", "branching", "voiced") else "simple"
+
+
+class AICapability(BaseModel):
+    pathfinding:     bool  = True
+    detection_range: float = 15.0
+    behavior:        str   = "patrol"
+
+    @field_validator("behavior", mode="before")
+    @classmethod
+    def _norm_behavior(cls, v: str) -> str:
+        s = str(v).lower().strip()
+        return s if s in _VALID_AI_BEH else "patrol"
+
+    @field_validator("detection_range", mode="before")
+    @classmethod
+    def _clamp_range(cls, v) -> float:
+        try:
+            return max(0.5, min(200.0, float(v)))
+        except (TypeError, ValueError):
+            return 15.0
+
+
+class VfxCapability(BaseModel):
+    particles:       bool = True
+    post_processing: bool = False
+
+
+class ProjectCapabilities(BaseModel):
+    """
+    Capability graph — the LLM's vocabulary for activating microgens.
+    Each present sub-model activates the matching microgen and seeds its
+    atom sequence with typed parameters instead of hardcoded defaults.
+    """
+    controller: Optional[ControllerCapability] = None
+    physics:    Optional[PhysicsCapability]    = None
+    hud:        Optional[HudCapability]        = None
+    input:      Optional[InputCapability]      = None
+    model:      Optional[ModelCapability]      = None
+    animation:  Optional[AnimationCapability]  = None
+    dialog:     Optional[DialogCapability]     = None
+    ai:         Optional[AICapability]         = None
+    vfx:        Optional[VfxCapability]        = None
+
+
+# ── Package + Script models ───────────────────────────────────────────────────
+
 class UnityPackage(BaseModel):
-    description: str                    # e.g. "universal render pipeline"
-    package_id:  Optional[str] = None   # e.g. "com.unity.render-pipelines.universal"
-    version:     Optional[str] = None   # e.g. "14.0.11"
+    description: str
+    package_id:  Optional[str] = None
+    version:     Optional[str] = None
 
 
 class UnityScript(BaseModel):
-    name:        str        # class name, e.g. "PlayerController"
-    type:        ScriptType # drives which template to use
-    description: str        # plain English: "first-person character controller"
+    name:        str
+    type:        ScriptType
+    description: str
 
-    # ── Custom-script channel (type == "custom") ──────────────────────────────
-    # When a concept isn't covered by any fixed template (drift assist, headlight
-    # toggle, acid rain…), the LLM authors the behavior itself as typed C#
-    # fragments — same proven channel the micro generators use (code_fields.py).
-    # The generator lints them and renders CustomBehaviour.cs.j2. `attach_to`
-    # picks which scene GameObject hosts the component.
     attach_to:          str              = "systems"
     extra_usings:       list[str]        = Field(default_factory=list)
     extra_fields:       list[CodeField]  = Field(default_factory=list)
@@ -286,13 +788,12 @@ class UnityScript(BaseModel):
     update_extra:       str              = ""
     fixed_update_extra: str              = ""
     extra_methods:      list[CodeMethod] = Field(default_factory=list)
+    atoms:              list[AtomInvocation] = Field(default_factory=list)
 
     @field_validator("type", mode="before")
     @classmethod
     def normalise_type(cls, v: str) -> str:
-        # Unknown types used to clamp to "player" (rendering a duplicate fixed
-        # template under an invented name). They now become "custom" so the
-        # LLM-authored fragments carry the behavior instead.
+        # Unknown types become "custom" so LLM-authored fragments carry the behavior
         t = str(v).lower().strip()
         return t if t in _VALID_SCRIPT_TYPES else "custom"
 
@@ -303,35 +804,56 @@ class UnityScript(BaseModel):
         return s if s in frozenset(get_args(ScriptAttach)) else "systems"
 
 
+# ── Root schema ───────────────────────────────────────────────────────────────
+
 class UnitySchema(BaseModel):
+    # ── Core project identity ─────────────────────────────────────────────────
     project_name:    str
-    company_name:    str          = "MyCompany"
-    description:     str          = ""
+    company_name:    str           = "MyCompany"
+    description:     str           = ""
     game_type:       GameType
     platform:        Platform
     locomotion:      Literal["walk", "drive", "fly", "swim"] = "walk"
     render_pipeline: RenderPipeline
-    unity_version:   UnityVersion = "6000.0"
+    unity_version:   UnityVersion  = "6000.0"
     color_space:     Literal["Linear", "Gamma"] = "Linear"
-    visual_style:    str          = "stylized"
-    scenes:          list[str]        = Field(default_factory=lambda: ["Main", "MainMenu"])
-    features:        list[str]        = Field(default_factory=list)
-    packages:        list[UnityPackage] = Field(default_factory=list, max_length=20)
-    scripts:           list[UnityScript]       = Field(default_factory=list, max_length=24)
-    story_beats:       list[StoryBeat]         = Field(default_factory=list)
-    audio_tracks:      list[AudioTrack]        = Field(default_factory=list)
-    procedural_meshes: list[ProceduralMesh]    = Field(default_factory=list)
-    entities:          list[EntitySpec]        = Field(default_factory=list, max_length=40)
-    environment:       Optional[EnvironmentSpec] = None
-    color_palette:     Optional[ColorPalette]  = None
-    meta:              dict                    = Field(default_factory=dict)   # theme/seed bookkeeping
+    visual_style:    str           = "stylized"
+
+    # ── Legacy/existing collections (kept for backward compat) ────────────────
+    scenes:            list[str]             = Field(default_factory=lambda: ["Main", "MainMenu"])
+    features:          list[str]             = Field(default_factory=list)
+    packages:          list[UnityPackage]    = Field(default_factory=list, max_length=20)
+    scripts:           list[UnityScript]     = Field(default_factory=list, max_length=24)
+    story_beats:       list[StoryBeat]       = Field(default_factory=list)
+    audio_tracks:      list[AudioTrack]      = Field(default_factory=list)
+    procedural_meshes: list[ProceduralMesh]  = Field(default_factory=list)
+    entities:          list[EntitySpec]      = Field(default_factory=list, max_length=40)
+    atoms:             list[AtomInvocation]  = Field(default_factory=list)
+    capabilities:      Optional[ProjectCapabilities] = None
+    environment:       Optional[EnvironmentSpec]     = None
+    color_palette:     Optional[ColorPalette]        = None
+    meta:              dict                          = Field(default_factory=dict)
+
+    # ── Multimodal IR — the full design space ─────────────────────────────────
+    world_spec:     Optional[WorldSpec]   = None
+    characters:     list[CharacterSpec]   = Field(default_factory=list)
+    missions:       list[MissionSpec]     = Field(default_factory=list)
+    audio_specs:    list[AudioSpec]       = Field(default_factory=list)
+    materials:      list[MaterialSpec]    = Field(default_factory=list)
+    models:         list[ModelSpec]       = Field(default_factory=list)
+    animations:     list[AnimationSpec]   = Field(default_factory=list)
+    vfx:            list[VfxSpec]         = Field(default_factory=list)
+    shaders:        list[ShaderSpec]      = Field(default_factory=list)
+    behavior_trees: list[AIBehaviorTree]  = Field(default_factory=list)
+    microgens:      list[MicrogensSpec]   = Field(default_factory=list)
+    wiring:         Optional[WiringMap]   = None
+
+    # ── Validators ────────────────────────────────────────────────────────────
 
     @field_validator("game_type", mode="before")
     @classmethod
     def normalise_game_type(cls, v: str) -> str:
-        """Accept '2d'/'2D'/'2.5d'/'3d' etc."""
         t = str(v).strip()
-        # normalise casing
         upper = t.upper()
         if upper in {"2D", "2.5D", "3D", "VR"}:
             return upper
@@ -379,7 +901,6 @@ class UnitySchema(BaseModel):
     @classmethod
     def normalise_version(cls, v: str) -> str:
         s = str(v).strip()
-        # Accept "6", "6.0", "6000", "6000.0", "Unity 6", "6000.4", etc.
         if "6000.4" in s:
             return "6000.4"
         if "6000.1" in s:
@@ -395,7 +916,6 @@ class UnitySchema(BaseModel):
     @field_validator("features", mode="before")
     @classmethod
     def normalise_features(cls, v: list) -> list:
-        """Clamp any unknown feature flag to nothing rather than raising."""
         return [f for f in (str(x).lower().strip() for x in v) if f in _VALID_FEATURES]
 
     @field_validator("visual_style", mode="before")
@@ -412,14 +932,12 @@ class UnitySchema(BaseModel):
 
     @model_validator(mode="after")
     def derive_color_space(self) -> "UnitySchema":
-        """HDRP/URP prefer Linear; builtin can use Gamma."""
         if self.render_pipeline in ("URP", "HDRP"):
             self.color_space = "Linear"
         return self
 
     @model_validator(mode="after")
     def fill_default_palette(self) -> "UnitySchema":
-        """Populate color_palette from visual_style defaults if omitted."""
         if self.color_palette is None:
             pal_data = _DEFAULT_PALETTES.get(self.visual_style,
                                              _DEFAULT_PALETTES["stylized"])

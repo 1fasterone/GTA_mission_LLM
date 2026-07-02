@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
 )
@@ -105,7 +106,7 @@ _DEFAULT_ITEMS: dict[str, list[str]] = {
 }
 
 
-class MenuPipeline(MicroPipeline):
+class MenuPipeline(UnityMicroPipeline):
     kind            = "menu"
     display_name    = "Unity Menu"
     schema_cls      = MenuSchema

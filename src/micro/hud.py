@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
 )
@@ -99,7 +100,7 @@ OUTPUT:
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 
-class HUDPipeline(MicroPipeline):
+class HUDPipeline(UnityMicroPipeline):
     kind            = "hud"
     display_name    = "Unity HUD"
     schema_cls      = HUDSchema

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.lock
+*.min.js
+target/
+__pycache__/
+Models/
+output/
+USER_MANUAL.md
+QUICKSTART.md
+README.md
+scuba_preview.cs
+themes/
+rag_docs/
+prompts/

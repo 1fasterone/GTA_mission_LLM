@@ -2,16 +2,31 @@
 // Custom behavior authored from the prompt (type: custom, attach: {{ script.attach_to }})
 // {{ script.description }}
 using UnityEngine;
+{% if atom_body %}
+using System.Collections;
+{% endif %}
 {% for u in script.extra_usings %}
 using {{ u }};
 {% endfor %}
-
+{% if stub_classes %}
+{{ stub_classes }}
+{% endif %}
 /// <summary>{{ script.description }}</summary>
 public class {{ script.name }} : MonoBehaviour
 {
 {% for f in script.extra_fields %}
 {{ "    " }}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
 {% endfor %}
+{% if atom_body %}
+
+    private void Start() => StartCoroutine(AtomSequence());
+
+    private IEnumerator AtomSequence()
+    {
+        {{ atom_body | indent(8) }}
+        yield return null;
+    }
+{% endif %}
 {% if script.awake_extra %}
 
     private void Awake()

@@ -18,6 +18,13 @@ public class AudioCue : ScriptableObject
 
     public AudioClip PickClip()
     {
+        // Generated banks ship clips empty and drop the .wav files in
+        // Resources/Audio/<id>/ — lazy-load them by id on first use (cached).
+        if ((clips == null || clips.Length == 0) && !string.IsNullOrEmpty(id))
+        {
+            var loaded = Resources.LoadAll<AudioClip>("Audio/" + id);
+            if (loaded != null && loaded.Length > 0) clips = loaded;
+        }
         if (clips == null || clips.Length == 0) return null;
         return clips[Random.Range(0, clips.Length)];
     }

@@ -11,6 +11,12 @@ config.yaml
 output/
 dist/
 
+# ── RAG ontology corpus + index (regenerable, do not commit) ─────────
+# Rebuild with: python -m rag.build
+# Index with:   python -m rag.indexer  (Phase 2)
+rag/corpus/
+rag/index/
+
 # ── Scratch / redirected logs ───────────────────────────────────────
 err.txt
 out.txt

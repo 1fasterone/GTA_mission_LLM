@@ -21,20 +21,42 @@ public static class SetupDefaultModels
         EditorApplication.delayCall += RunOnce;
     }
 
+    // Depth-first search for a transform by name (used to detect a humanoid skeleton).
+    private static Transform FindDeep(Transform root, string name)
+    {
+        if (root.name == name) return root;
+        for (int i = 0; i < root.childCount; i++)
+        {
+            var found = FindDeep(root.GetChild(i), name);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
     private static void RunOnce()
     {
         if (!AssetDatabase.IsValidFolder(ModelsRoot)) return;
 
-        // 1. Force Humanoid + looping clips on every model in the pack.
+        // 1. Set rig type + looping clips per model. Humanoid ONLY when the model
+        //    actually has a humanoid skeleton (a 'Hips' bone) — forcing Humanoid on
+        //    a skeleton-less mesh (e.g. a procedural vehicle) throws "Invalid Avatar
+        //    Rig Configuration. Required human bone 'Hips' not found". Skeleton-less
+        //    meshes are left Generic so they import clean.
         foreach (var guid in AssetDatabase.FindAssets("t:Model", new[] { ModelsRoot }))
         {
             var path = AssetDatabase.GUIDToAssetPath(guid);
             var imp = AssetImporter.GetAtPath(path) as ModelImporter;
             if (imp == null) continue;
             bool dirty = false;
-            if (imp.animationType != ModelImporterAnimationType.Human)
+
+            var go = AssetDatabase.LoadMainAssetAtPath(path) as GameObject;
+            bool hasHips = go != null && FindDeep(go.transform, "Hips") != null;
+            var want = hasHips
+                ? ModelImporterAnimationType.Human
+                : ModelImporterAnimationType.Generic;
+            if (imp.animationType != want)
             {
-                imp.animationType = ModelImporterAnimationType.Human;
+                imp.animationType = want;
                 dirty = true;
             }
             var clips = imp.defaultClipAnimations;

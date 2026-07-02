@@ -70,25 +70,46 @@ def resolve_default_models(lookups_dir: str = "lookups",
 
 
 def models_for_schema(schema, resolved: dict[str, ResolvedModel],
-                      composed_units: list | None = None) -> dict[str, ResolvedModel]:
-    """Filter the resolved pack down to the kinds this project actually uses:
-    player (player script OR composed controller — compose strips covered script
-    types before write), enemy (enemy script / composed ai / enemy entities),
-    vehicle (locomotion=drive), and any entity kind with a catalog match."""
+                      composed_units: list | None = None,
+                      override_kinds: set[str] | None = None) -> dict[str, ResolvedModel]:
+    """Filter the resolved pack down to the kinds this project actually uses.
+
+    Selection rules (first match wins per kind):
+    - player   : player script present OR composed controller
+    - enemy    : enemy script / composed ai / any enemy entity
+    - vehicle  : locomotion is drive or fly, OR any vehicle entity
+    - <other>  : any entity whose kind has a catalog entry
+    - overrides: any kind in override_kinds is always included when resolved
+                 (ensures Blender-built models are wired in regardless of schema)
+    """
     if not resolved:
         return {}
     used: dict[str, ResolvedModel] = {}
     stypes = {s.type for s in schema.scripts}
     ckinds = {u.kind for u in (composed_units or [])}
+
     if ("player" in stypes or "controller" in ckinds) and "player" in resolved:
         used["player"] = resolved["player"]
+
     wants_enemy = ("enemy" in stypes or "ai" in ckinds
                    or any(e.kind == "enemy" for e in schema.entities))
     if wants_enemy and "enemy" in resolved:
         used["enemy"] = resolved["enemy"]
-    if getattr(schema, "locomotion", "walk") == "drive" and "vehicle" in resolved:
+
+    loco = getattr(schema, "locomotion", "walk")
+    wants_vehicle = (loco in ("drive", "fly")
+                     or any(e.kind == "vehicle" for e in schema.entities))
+    if wants_vehicle and "vehicle" in resolved:
         used["vehicle"] = resolved["vehicle"]
+
     for e in schema.entities:
         if e.kind in resolved and e.kind not in used:
             used[e.kind] = resolved[e.kind]
+
+    # Always include explicitly Blender-built kinds — the pipeline built them
+    # for this project, so they should be wired in regardless of schema flags.
+    for kind in (override_kinds or set()):
+        if kind in resolved and kind not in used:
+            used[kind] = resolved[kind]
+
     return used

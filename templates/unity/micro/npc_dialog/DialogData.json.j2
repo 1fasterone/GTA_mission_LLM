@@ -1,0 +1,27 @@
+{
+  "name": {{ s.name | tojson }},
+  "speaker": {{ s.speaker_name | tojson }},
+  "variant": {{ variant | tojson }},
+  "interaction_type": {{ s.interaction_type | tojson }},
+  "audio_style": {{ s.audio_style | tojson }},
+  "prefab_path": {{ s.prefab_path | tojson }},
+  "context_tags": {{ s.context_tags | tojson }},
+  "multilingual_targets": {{ s.multilingual_targets | tojson }},
+{% if s.timing %}
+  "timing": {{ s.timing | tojson }},
+{% endif %}
+  "lines": [
+{% for line in s.lines %}
+    {
+      "line_id": {{ line.line_id | tojson }},
+      "text": {{ line.text | tojson }},
+      "emotion": {{ line.emotion | tojson }},
+      "language": {{ line.language | tojson }},
+      "voice_id": {{ line.voice_id | tojson }},
+      "tags": {{ line.tags | tojson }},
+      "audio_path": {{ ("Audio/Dialog/" + s.speaker_name | lower + "/" + line.line_id + "_" + line.language + ".wav") | tojson }}
+    }{% if not loop.last %},{% endif %}
+
+{% endfor %}
+  ]
+}

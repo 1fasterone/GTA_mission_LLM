@@ -275,6 +275,8 @@ def resolve_theme(
 
     if theme_name and theme_name.lower() == "random":
         theme = pick_random_theme(rng=rng, themes_dir=themes_dir)
+    elif theme_name and theme_name.lower() == "none":
+        theme = None  # explicit opt-out of theme injection
     elif theme_name:
         theme = load_theme(theme_name, themes_dir=themes_dir)
     else:

@@ -1,0 +1,426 @@
+// Auto-generated — {{ project_name }}  SceneSetup.cs
+// Creates all scene-specific UI and level elements at runtime so scenes are
+// immediately playable when opened in the Unity Editor.
+using System.Collections;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+/// <summary>
+/// Per-scene UI and entity bootstrap. Runs once on Awake() to build:
+///   MainMenu    — Title + Start / Quit buttons
+///   Gameplay    — HUD health bar + pause panel (ESC) + scene-exit trigger
+///   BossRoom    — Boss entity (red scaled cube) + HP bar
+///   InventoryUI — Inventory panel with item slots
+///   EndingCutscene — Ending screen with credit text + Main Menu button
+/// </summary>
+[DefaultExecutionOrder(-50)]
+public class SceneSetup : MonoBehaviour
+{
+    // ── internal state ────────────────────────────────────────────────────────
+    private Canvas       _canvas;
+    private GameObject   _pausePanel;
+    private GameObject   _hudPanel;
+    private Text         _hudHealthText;
+    private Text         _hudScoreText;
+    private bool         _pauseSubscribed;
+
+    static readonly Color _panelBg   = new Color(0f,  0f,  0f,  0.82f);
+    static readonly Color _btnNormal  = new Color(0.18f, 0.18f, 0.18f, 1f);
+    static readonly Color _btnHover   = new Color(0.28f, 0.28f, 0.28f, 1f);
+    static readonly Color _bossColor  = new Color(0.8f, 0.1f, 0.1f, 1f);
+
+    // ── lifecycle ─────────────────────────────────────────────────────────────
+    void Awake()
+    {
+        _canvas = FindObjectOfType<Canvas>();
+        if (_canvas == null)
+        {
+            var cgo = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            _canvas = cgo.GetComponent<Canvas>();
+            _canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            var cs = cgo.GetComponent<CanvasScaler>();
+            cs.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            cs.referenceResolution = new Vector2(1920, 1080);
+            if (FindObjectOfType<UnityEngine.EventSystems.EventSystem>() == null)
+                new GameObject("EventSystem",
+                    typeof(UnityEngine.EventSystems.EventSystem),
+                    typeof(UnityEngine.EventSystems.StandaloneInputModule));
+        }
+
+        string scene = SceneManager.GetActiveScene().name.ToLowerInvariant();
+
+        if (scene.Contains("mainmenu") || scene == "main")
+            BuildMainMenu();
+        else if (scene.Contains("ending") || scene.Contains("cutscene"))
+            BuildEndingScreen();
+        else if (scene.Contains("inventory"))
+            BuildInventoryUI();
+        else if (scene.Contains("boss"))
+            BuildBossRoom();
+        else
+            BuildGameplayUI(scene);
+    }
+
+    void Start()
+    {
+        if (!_pauseSubscribed && GameManager.Instance != null)
+        {
+            GameManager.Instance.OnStateChanged += OnGameStateChanged;
+            _pauseSubscribed = true;
+        }
+    }
+
+    void OnDestroy()
+    {
+        if (GameManager.Instance != null)
+            GameManager.Instance.OnStateChanged -= OnGameStateChanged;
+    }
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.Escape) && GameManager.Instance == null)
+        {
+            // Fallback when GameManager isn't present — toggle pause manually.
+            bool paused = Time.timeScale < 0.01f;
+            Time.timeScale = paused ? 1f : 0f;
+            if (_pausePanel != null) _pausePanel.SetActive(!paused);
+        }
+
+        if (_hudHealthText != null && GameManager.Instance != null)
+            _hudHealthText.text = $"HP  {GameManager.Instance.Lives * 33}";
+        if (_hudScoreText != null && GameManager.Instance != null)
+            _hudScoreText.text  = $"SCORE  {GameManager.Instance.Score}";
+    }
+
+    // ── state listener ────────────────────────────────────────────────────────
+    void OnGameStateChanged(GameManager.GameState state)
+    {
+        if (_pausePanel != null)
+            _pausePanel.SetActive(state == GameManager.GameState.Paused);
+        if (_hudPanel != null)
+            _hudPanel.SetActive(state == GameManager.GameState.Playing);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // ── Scene builders ───────────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+
+    void BuildMainMenu()
+    {
+        // Dim fullscreen background
+        var bg = MakePanel("MenuBG", Vector2.zero, Vector2.one, new Color(0.04f,0.04f,0.08f,1f));
+
+        // Game title
+        MakeText(bg, "GameTitle", "{{ project_name }}", 68,
+            new Vector2(0.5f,0.68f), new Vector2(0.5f,0.82f), Color.white, true);
+
+        // Sub-title hint
+        MakeText(bg, "Subtitle", "SURVIVAL HORROR", 24,
+            new Vector2(0.5f,0.60f), new Vector2(0.5f,0.68f),
+            new Color(0.6f,0.6f,0.6f,1f), false);
+
+        // Buttons
+        MakeButton(bg, "StartBtn", "START GAME",
+            new Vector2(0.5f,0.46f), new Vector2(0.5f,0.56f),
+            () => SceneManager.LoadScene("Level1"), 36);
+
+        MakeButton(bg, "QuitBtn", "QUIT",
+            new Vector2(0.5f,0.32f), new Vector2(0.5f,0.42f),
+            () => Application.Quit(), 32);
+
+        // Version watermark
+        MakeText(bg, "Version", "v0.1  — generated by {{ project_name }}", 18,
+            new Vector2(0f,0f), new Vector2(0.5f,0.06f),
+            new Color(0.4f,0.4f,0.4f,1f), false);
+    }
+
+    void BuildGameplayUI(string scene)
+    {
+        // ── HUD ──────────────────────────────────────────────────────────────
+        _hudPanel = MakePanel("HUD", Vector2.zero, Vector2.one,
+            new Color(0,0,0,0));  // transparent container
+        _hudHealthText = MakeText(_hudPanel, "HealthText", "HP  100",
+            24, new Vector2(0f,0.92f), new Vector2(0.25f,1f),
+            Color.white, false);
+        _hudScoreText  = MakeText(_hudPanel, "ScoreText", "SCORE  0",
+            24, new Vector2(0.75f,0.92f), new Vector2(1f,1f),
+            Color.white, false);
+        string scenePretty = System.Globalization.CultureInfo.CurrentCulture
+            .TextInfo.ToTitleCase(scene.Replace("_"," ").Replace("-"," "));
+        MakeText(_hudPanel, "SceneLabel", scenePretty,
+            20, new Vector2(0.35f,0.92f), new Vector2(0.65f,1f),
+            new Color(0.7f,0.7f,0.7f,1f), false);
+
+        // ── Pause panel (hidden) ──────────────────────────────────────────────
+        _pausePanel = MakePanel("PausePanel",
+            new Vector2(0.3f,0.2f), new Vector2(0.7f,0.8f), _panelBg);
+        _pausePanel.SetActive(false);
+
+        MakeText(_pausePanel, "PauseTitle", "PAUSED",
+            52, new Vector2(0.05f,0.78f), new Vector2(0.95f,0.95f),
+            Color.white, true);
+
+        MakeButton(_pausePanel, "ResumeBtn", "RESUME",
+            new Vector2(0.15f,0.62f), new Vector2(0.85f,0.74f),
+            () => {
+                GameManager.Instance?.ResumeGame();
+                _pausePanel.SetActive(false);
+                Time.timeScale = 1f;
+            }, 34);
+
+        MakeButton(_pausePanel, "MenuBtn", "MAIN MENU",
+            new Vector2(0.15f,0.46f), new Vector2(0.85f,0.58f),
+            () => { Time.timeScale = 1f; SceneManager.LoadScene("MainMenu"); }, 34);
+
+        MakeButton(_pausePanel, "QuitBtn", "QUIT",
+            new Vector2(0.15f,0.30f), new Vector2(0.85f,0.42f),
+            () => Application.Quit(), 34);
+
+        // ── Level exit trigger ───────────────────────────────────────────────
+        string nextScene = "";
+        if (scene.Contains("level1"))        nextScene = "Level2";
+        else if (scene.Contains("level2"))   nextScene = "BossRoom";
+        else if (scene.Contains("escape"))   nextScene = "EndingCutscene";
+
+        if (!string.IsNullOrEmpty(nextScene))
+        {
+            StartCoroutine(SpawnExitTrigger(nextScene));
+        }
+    }
+
+    void BuildBossRoom()
+    {
+        BuildGameplayUI("bossroom");  // adds HUD + pause menu
+
+        // Boss entity
+        StartCoroutine(SpawnBoss());
+
+        // Boss label
+        var bg = MakePanel("BossHUD", Vector2.zero, new Vector2(1f,0.12f),
+            new Color(0.5f,0f,0f,0.6f));
+        MakeText(bg, "BossName", "BOSS  —  THE WARDEN",
+            32, Vector2.zero, Vector2.one, Color.white, true);
+    }
+
+    void BuildInventoryUI()
+    {
+        var bg = MakePanel("InventoryBG",
+            new Vector2(0.05f,0.05f), new Vector2(0.95f,0.95f), _panelBg);
+
+        MakeText(bg, "Title", "INVENTORY",
+            44, new Vector2(0f,0.88f), new Vector2(1f,1f), Color.white, true);
+
+        // 4×4 item slot grid
+        var grid = new GameObject("SlotGrid", typeof(RectTransform));
+        grid.transform.SetParent(bg.transform, false);
+        var grt = grid.GetComponent<RectTransform>();
+        grt.anchorMin = new Vector2(0.05f, 0.15f);
+        grt.anchorMax = new Vector2(0.65f, 0.82f);
+        grt.offsetMin = grt.offsetMax = Vector2.zero;
+        var glg = grid.AddComponent<GridLayoutGroup>();
+        glg.padding    = new RectOffset(8, 8, 8, 8);
+        glg.cellSize   = new Vector2(80, 80);
+        glg.spacing    = new Vector2(8, 8);
+        glg.constraint = GridLayoutGroup.Constraint.FixedColumnCount;
+        glg.constraintCount = 4;
+        for (int i = 0; i < 16; i++)
+        {
+            var slot = MakePanel("Slot" + i, Vector2.zero, Vector2.zero,
+                new Color(0.25f,0.25f,0.25f,1f));
+            slot.transform.SetParent(grid.transform, false);
+        }
+
+        // Item detail panel (right side)
+        var detail = MakePanel("ItemDetail",
+            new Vector2(0.68f,0.15f), new Vector2(0.95f,0.82f),
+            new Color(0.15f,0.15f,0.15f,1f));
+        MakeText(detail, "ItemName", "(select an item)", 22,
+            new Vector2(0f,0.80f), new Vector2(1f,0.95f), Color.white, false);
+        MakeText(detail, "ItemDesc", "", 18,
+            new Vector2(0.05f,0.40f), new Vector2(0.95f,0.78f),
+            new Color(0.8f,0.8f,0.8f,1f), false);
+
+        MakeButton(bg, "CloseBtn", "CLOSE",
+            new Vector2(0.35f,0.02f), new Vector2(0.65f,0.11f),
+            () => {
+                var ps = GameManager.Instance?.State;
+                if (ps != null) Time.timeScale = 1f;
+                SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex - 1);
+            }, 28);
+    }
+
+    void BuildEndingScreen()
+    {
+        var bg = MakePanel("EndingBG", Vector2.zero, Vector2.one,
+            new Color(0f,0f,0f,1f));
+
+        MakeText(bg, "EndTitle", "YOU ESCAPED", 72,
+            new Vector2(0.5f,0.65f), new Vector2(0.5f,0.82f), Color.white, true);
+
+        MakeText(bg, "SubTitle", "Congratulations — the maze has been defeated.",
+            28, new Vector2(0.5f,0.54f), new Vector2(0.5f,0.64f),
+            new Color(0.75f,0.75f,0.75f,1f), false);
+
+        MakeText(bg, "Credits",
+            "{{ project_name }}\nGenerated with the Unity Project Pipeline",
+            20, new Vector2(0.5f,0.35f), new Vector2(0.5f,0.50f),
+            new Color(0.5f,0.5f,0.5f,1f), false);
+
+        MakeButton(bg, "MenuBtn", "MAIN MENU",
+            new Vector2(0.35f,0.18f), new Vector2(0.65f,0.28f),
+            () => SceneManager.LoadScene("MainMenu"), 32);
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // ── Level-element spawners (coroutines so physics is ready) ──────────────
+    // ═════════════════════════════════════════════════════════════════════════
+
+    IEnumerator SpawnExitTrigger(string nextScene)
+    {
+        yield return new WaitForSeconds(0.1f);
+
+        var exit = new GameObject("LevelExit_" + nextScene);
+        exit.transform.position = new Vector3(0, 1, 18);
+        var col = exit.AddComponent<BoxCollider>();
+        col.isTrigger = true;
+        col.size      = new Vector3(4, 3, 2);
+        exit.AddComponent<LevelExitTrigger>().nextScene = nextScene;
+
+        // Visible exit marker (green pillar)
+        var marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        marker.name = "ExitMarker";
+        marker.transform.SetParent(exit.transform);
+        marker.transform.localPosition = new Vector3(0, 2, 0);
+        marker.transform.localScale    = new Vector3(0.3f, 4f, 0.3f);
+        var mr = marker.GetComponent<MeshRenderer>();
+        mr.material.color = Color.green;
+    }
+
+    IEnumerator SpawnBoss()
+    {
+        yield return new WaitForSeconds(0.2f);
+
+        var boss = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        boss.name = "Boss_TheWarden";
+        boss.tag  = "Enemy";
+        boss.transform.position  = new Vector3(0, 2, 15);
+        boss.transform.localScale = new Vector3(3, 4, 3);
+        boss.GetComponent<MeshRenderer>().material.color = _bossColor;
+        var rb = boss.AddComponent<Rigidbody>();
+        rb.isKinematic = true;
+        boss.AddComponent<BossController>();
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // ── UI builder helpers ───────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════════════════
+
+    Font _defaultFont;
+    Font DefaultFont => _defaultFont ??=
+        Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+
+    GameObject MakePanel(string name, Vector2 anchorMin, Vector2 anchorMax, Color col)
+    {
+        var go = new GameObject(name, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(_canvas.transform, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = anchorMin; rt.anchorMax = anchorMax;
+        rt.offsetMin = rt.offsetMax = Vector2.zero;
+        go.GetComponent<Image>().color = col;
+        return go;
+    }
+
+    Text MakeText(GameObject parent, string name, string content, int fontSize,
+        Vector2 anchorMin, Vector2 anchorMax, Color color, bool bold)
+    {
+        var go = new GameObject(name, typeof(RectTransform), typeof(Text));
+        go.transform.SetParent(parent.transform, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = anchorMin; rt.anchorMax = anchorMax;
+        rt.offsetMin = rt.offsetMax = Vector2.zero;
+        var t = go.GetComponent<Text>();
+        t.text      = content;
+        t.fontSize  = fontSize;
+        t.alignment = TextAnchor.MiddleCenter;
+        t.color     = color;
+        t.font      = DefaultFont;
+        t.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+        return t;
+    }
+
+    void MakeButton(GameObject parent, string name, string label,
+        Vector2 anchorMin, Vector2 anchorMax, System.Action onClick, int fontSize = 30)
+    {
+        var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(parent.transform, false);
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = anchorMin; rt.anchorMax = anchorMax;
+        rt.offsetMin = rt.offsetMax = Vector2.zero;
+        go.GetComponent<Image>().color = _btnNormal;
+        var btn = go.GetComponent<Button>();
+        btn.onClick.AddListener(new System.Action(onClick));
+        var cb = ColorBlock.defaultColorBlock;
+        cb.normalColor      = _btnNormal;
+        cb.highlightedColor = _btnHover;
+        cb.pressedColor     = new Color(0.1f,0.1f,0.1f,1f);
+        btn.colors          = cb;
+        MakeText(go, "Label", label, fontSize,
+            Vector2.zero, Vector2.one, Color.white, true);
+    }
+}
+
+// ── Helper components spawned at runtime ─────────────────────────────────────
+
+/// <summary>Trigger on a zone exit that loads the next scene.</summary>
+public class LevelExitTrigger : MonoBehaviour
+{
+    public string nextScene = "";
+
+    void OnTriggerEnter(Collider other)
+    {
+        if (!other.CompareTag("Player") || string.IsNullOrEmpty(nextScene)) return;
+        if (GameManager.Instance != null)
+            GameManager.Instance.AdvanceLevel();
+        else
+            SceneManager.LoadScene(nextScene);
+    }
+}
+
+/// <summary>Simple boss AI — patrols and charges at the player.</summary>
+public class BossController : MonoBehaviour
+{
+    Transform _player;
+    float _hp = 500f;
+    float _speed = 2.5f;
+
+    void Start()
+    {
+        var p = GameObject.FindWithTag("Player");
+        if (p != null) _player = p.transform;
+    }
+
+    void Update()
+    {
+        if (_player == null) return;
+        float dist = Vector3.Distance(transform.position, _player.position);
+        if (dist < 20f)
+        {
+            var dir = (_player.position - transform.position).normalized;
+            dir.y = 0;
+            transform.position += dir * _speed * Time.deltaTime;
+            transform.LookAt(new Vector3(_player.position.x, transform.position.y,
+                                         _player.position.z));
+        }
+    }
+
+    public void TakeDamage(float dmg)
+    {
+        _hp -= dmg;
+        if (_hp <= 0)
+        {
+            Debug.Log("[Boss] Defeated — loading ending.");
+            SceneManager.LoadScene("EndingCutscene");
+        }
+    }
+}

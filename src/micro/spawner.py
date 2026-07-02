@@ -7,7 +7,8 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from ..micro_pipeline import MicroPipeline, to_pascal
+from ..micro_pipeline import to_pascal
+from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
 )
@@ -112,7 +113,7 @@ OUTPUT:
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 
-class SpawnerPipeline(MicroPipeline):
+class SpawnerPipeline(UnityMicroPipeline):
     kind            = "spawner"
     display_name    = "Unity Spawner"
     schema_cls      = SpawnerSchema

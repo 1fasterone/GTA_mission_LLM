@@ -17,8 +17,7 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .lm_studio_client   import LMStudioClient
-from .backends           import make_chat_client
-from .anythingllm_client import AnythingLLMClient
+from .backends           import make_chat_client, make_rag_client
 from .resolver           import ModelResolver, _load_lookups
 from .mission_schema     import MissionSchema, MissionObject
 from .code_generator     import CodeGenerator
@@ -155,17 +154,13 @@ class MissionPipeline:
         pipe_cfg = config["pipeline"]
 
         self.llm = make_chat_client(config)
-        self.rag = AnythingLLMClient(
-            base_url       = llm_cfg["base_url"],
-            api_key        = llm_cfg["api_key"],
-            workspace_slug = llm_cfg["workspace_slug"],
-        )
+        self.rag = make_rag_client(config)
         lookups_dir = pipe_cfg.get("lookups_dir", "lookups")
         self.resolver = ModelResolver(
             rag         = self.rag,
             lookups_dir = lookups_dir,
             fallback    = llm_cfg.get("fallback_to_local", True),
-            use_rag     = not config.get("basic_mode", False),
+            use_rag     = not config.get("basic_mode", False) and self.rag is not None,
         )
         self.lookups = _load_lookups(lookups_dir)
         self.generator = CodeGenerator(

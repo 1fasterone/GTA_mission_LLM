@@ -78,6 +78,38 @@ def make_chat_client(config: dict) -> LMStudioClient:
     )
 
 
+def make_rag_client(config: dict):
+    """
+    Build the resolver RAG client.
+
+    rag:
+      backend: local        -> RagClient  (local ChromaDB, no API key)
+      backend: anythingllm  -> AnythingLLMClient (legacy / remote)
+      (absent or basic_mode)-> None  (resolver falls back to local lookups only)
+    """
+    if config.get("basic_mode", False):
+        return None
+
+    rag_cfg = config.get("rag", {})
+    backend = (rag_cfg.get("backend") or "anythingllm").lower()
+
+    if backend == "local":
+        from rag.query import RagClient  # lazy: only paid when local backend chosen
+        idx_dir = rag_cfg.get("index_dir")   # optional override
+        return RagClient(index_dir=idx_dir)
+
+    # anythingllm (default, backward-compatible)
+    llm_cfg = config.get("anythingllm", {})
+    base_url = llm_cfg.get("base_url", "")
+    if not base_url:
+        return None   # not configured — resolver uses local lookups
+    return AnythingLLMClient(
+        base_url       = base_url,
+        api_key        = llm_cfg.get("api_key", ""),
+        workspace_slug = llm_cfg.get("workspace_slug", ""),
+    )
+
+
 def rag_enabled(config: dict) -> bool:
     """RAG is on unless Basic Mode is explicitly set."""
     return not bool(config.get("basic_mode", False))
