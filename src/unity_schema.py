@@ -190,6 +190,11 @@ class EntitySpec(BaseModel):
     scale:      float = 1.0
     tag:        str   = "Untagged"
     behavior:   str   = ""
+    # 2-5 plain words describing the physical object ("pine tree", "wooden
+    # ramp", "hanging banner") — steers the per-entity asset-catalog match so
+    # the group spawns a fitting real model instead of the shared default prop.
+    # "default prop" is the escape hatch that keeps Models/Defaults' Prop.fbx.
+    model_hint: str   = ""
     atoms:      list[AtomInvocation] = Field(default_factory=list)
     # placement == "path": world-space [x, y, z] points (y = elevation!). The
     # spawner lays the instances along this polyline AND emits a "Waypoints"
@@ -213,6 +218,13 @@ class EntitySpec(BaseModel):
                 nums.append(0.0)
             out.append([max(-2000.0, min(2000.0, n)) for n in nums])
         return out
+
+    @field_validator("model_hint", mode="before")
+    @classmethod
+    def _clamp_model_hint(cls, v) -> str:
+        """Lowercase, ≤ 6 plain words — a search phrase, not a sentence."""
+        words = re.sub(r"[^a-z0-9\s-]", " ", str(v or "").lower()).split()
+        return " ".join(words[:6])
 
     @field_validator("count", mode="before")
     @classmethod

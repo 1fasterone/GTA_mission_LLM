@@ -135,6 +135,9 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
     color_role: primary | secondary | accent | trim | background  (picks a palette color)
     count:      how many (e.g. 6 rivals → 6); tag: e.g. "Enemy" so AI/health find them
     behavior:   OPTIONAL — the PascalCase name of one of your `scripts` to attach to each
+    model_hint: 2-5 plain words naming the PHYSICAL OBJECT ("pine tree", "wooden ramp",
+      "hanging banner") — matches the group to a real 3D model from the asset library,
+      so choose words a model file would be named after. Set it on EVERY entity group.
     path_points: for placement "path" ONLY — up to 64 [x, y, z] world points. y is
       ELEVATION, so author hills/banking by varying y. Instances are laid evenly along
       the polyline, AND a "Waypoints" container is emitted at the points — AI racers /
@@ -142,9 +145,9 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
   Example: "a race with 6 rivals on a winding road, grandstands, and a crowd" →
     [{{"name":"RoadSegments","kind":"road","count":40,"shape":"cube","placement":"path","color_role":"secondary","scale":4,
        "path_points":[[0,0,0],[40,2,20],[60,5,60],[30,8,90],[-20,6,80],[-40,3,40],[-20,1,10],[0,0,0]]}},
-     {{"name":"Rivals","kind":"enemy","count":6,"shape":"capsule","placement":"line","color_role":"accent","tag":"Enemy"}},
-     {{"name":"Stands","kind":"building","count":8,"shape":"cube","placement":"ring","color_role":"secondary","scale":3}},
-     {{"name":"Crowd","kind":"crowd","count":40,"shape":"sphere","placement":"grid","color_role":"trim","scale":0.6}}]
+     {{"name":"Rivals","kind":"enemy","count":6,"shape":"capsule","placement":"line","color_role":"accent","tag":"Enemy","model_hint":"rival race car"}},
+     {{"name":"Stands","kind":"building","count":8,"shape":"cube","placement":"ring","color_role":"secondary","scale":3,"model_hint":"grandstand structure"}},
+     {{"name":"Crowd","kind":"crowd","count":40,"shape":"sphere","placement":"grid","color_role":"trim","scale":0.6,"model_hint":"spectator character"}}]
 
 PROJECT CONCEPT:
 {concept}

@@ -19,6 +19,7 @@ from .lm_studio_client   import LMStudioClient
 from .backends           import make_chat_client, make_rag_client
 from .unity_schema       import UnityPackage, UnitySchema, UnityScript
 from .capability_resolver import resolve_capabilities
+from .unity_asset_catalog import asset_vocabulary
 from .unity_resolver     import UnityResolver
 from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
@@ -289,8 +290,9 @@ class UnityPipeline:
         use_rag = not config.get("basic_mode", False)
         unity_rag = make_rag_client(config) if use_rag else None
 
+        self.lookups_dir = pipe_cfg.get("lookups_dir", "lookups")
         self.resolver = UnityResolver(
-            lookups_dir = pipe_cfg.get("lookups_dir", "lookups"),
+            lookups_dir = self.lookups_dir,
             rag         = unity_rag,
             use_rag     = use_rag and unity_rag is not None,
         )
@@ -429,6 +431,12 @@ class UnityPipeline:
         intent = classify_intent(user_prompt)
         theme_block  += intent.concept_hint()
         schema_hints += intent.structure_hint()
+        # Asset-library vocabulary (categories + top tags from the generated
+        # catalog) so entity model_hints name models that actually exist.
+        # Deterministic lookup; missing catalog → empty string, prompt unchanged.
+        _vocab = asset_vocabulary(self.lookups_dir)
+        if _vocab:
+            schema_hints += "\n" + _vocab + "\n"
         if intent.matched:
             self._ok(
                 "Intent: "
@@ -562,10 +570,12 @@ class UnityPipeline:
             manifest_deps = {**manifest_deps, **composer.module_deps(composed_units)}
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
+        _asset_cfg = self.config.get("assets", {}) or {}
         project_root, file_count = self.generator.write(
             schema, manifest_deps, self.output_dir, composed_units=composed_units,
             model_overrides=model_overrides,
-            strict_assets=bool(self.config.get("assets", {}).get("strict", True)))
+            strict_assets=bool(_asset_cfg.get("strict", True)),
+            asset_cfg=_asset_cfg)
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
             if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):

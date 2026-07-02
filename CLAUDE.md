@@ -101,11 +101,15 @@ C:\Users\Owner\claude projects\GTA_mission_LLM\docs\model-pipeline-architecture.
 Model Pack v1 (Unity)
 Claude must preserve this chain:
 
-default_models.json → catalog
+default_models.json → catalog (explicit kinds)
+
+asset_catalog.json → full-library catalog (generated: python main.py unity-catalog; scans config assets.roots, merges kenney_catalog.json curated overrides)
 
 unity_model_resolver.py → resolves to Models/Defaults/<kind>/
 
-unity_generator.py → copies + writes .meta
+unity_entity_asset_resolver.py → per-entity tiering: explicit kind → catalog semantic match (name + kind + model_hint, deterministic variety rotation) → strict hard-fail (assets.strict) / logged prop fallback
+
+unity_generator.py (_resolve_all_models — single source of truth for generate() AND write()) → copies binaries + Kenney Textures/ + writes .meta
 
 ModelSwap.cs.j2 / EntitySpawner.cs.j2 → runtime swap
 

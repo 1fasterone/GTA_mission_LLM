@@ -16,6 +16,7 @@ from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
 from .unity_schema import ColorPalette, ProceduralMesh, UnitySchema, UnityScript
 from .unity_asset_resolver import resolve_assets
+from .unity_entity_asset_resolver import resolve_entity_assets, texture_dirs_for
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .micro.code_fields import lint_extensible
 
@@ -1040,6 +1041,67 @@ class UnityProjectGenerator:
         )
         self.template_dir = tpl_path
 
+    # ── model resolution (single source of truth) ──────────────────────────────
+
+    def _resolve_all_models(self, schema: UnitySchema, lookups_dir: str,
+                            model_source_dir: str | None,
+                            model_overrides: dict[str, str] | None,
+                            composed_units: list | None,
+                            strict_assets: bool,
+                            asset_cfg: dict | None) -> tuple[dict, dict[str, str]]:
+        """Resolve every model the project uses: default pack → Blender
+        overrides → per-entity catalog picks → rig downgrades.
+
+        Both generate() (.meta emission + template paths) and write() (binary
+        copies) call this — they MUST see identical results or the copies and
+        .meta files desync. Deterministic: pure lookups, no LLM.
+
+        Returns (used_models, entity_model_paths).
+        """
+        _override_kinds = set(model_overrides.keys()) if model_overrides else None
+        all_models = _apply_model_overrides(
+            resolve_default_models(lookups_dir=lookups_dir,
+                                   model_source_dir=model_source_dir),
+            model_overrides)
+        used_models = models_for_schema(
+            schema, all_models, composed_units, override_kinds=_override_kinds)
+
+        # Per-entity assignment: explicit kind → full-catalog semantic match →
+        # strict hard-fail / logged prop fallback (FAIL-FAST doctrine: scene
+        # content comes from a real asset or the build stops — the schema
+        # default kind "prop" no longer funnels everything to one model).
+        entity_model_paths = resolve_entity_assets(
+            schema, used_models, all_models,
+            lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=strict_assets)
+
+        # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
+        # two independent cases:
+        #  1. 2D games render in 2.5D (orthographic) — never import a Humanoid
+        #     avatar there regardless of the model's actual rig quality.
+        #  2. The STATIC default pack's player/enemy FBX placeholders are
+        #     confirmed to carry NO real humanoid skeleton at all (verified:
+        #     zero Hips/Spine/UpperLeg/LowerLeg bone names in
+        #     Models/Defaults/{player,enemy}/*.fbx) despite the catalog
+        #     labeling them `rig: "humanoid"` — forcing Humanoid on them always
+        #     throws "Invalid Avatar Rig Configuration: Required human bone
+        #     'LeftLowerLeg' not found" (hit live on a VR project — the crash
+        #     is NOT 2D-specific, gating on game_type alone was too narrow).
+        #     Only a genuine Blender-built override (_apply_model_overrides,
+        #     kind in model_overrides) actually ships a real named skeleton, so
+        #     only THAT case is trusted to keep Humanoid.
+        # Runs after entity resolution: the fallback path can still insert a
+        # fresh used_models entry, and a humanoid model added that late would
+        # otherwise skip the downgrade. Living here (not generate()) also keeps
+        # write()'s binary copies in step — a downgrade that drops clips must
+        # drop their copies too, not just their .meta files.
+        _blender_kinds = set(model_overrides.keys()) if model_overrides else set()
+        _is_2d = schema.game_type in ("2D", "2.5D")
+        for _kind, _m in used_models.items():
+            if _m.rig == "humanoid" and (_is_2d or _kind not in _blender_kinds):
+                _m.rig = "generic"
+                _m.clips = {}
+        return used_models, entity_model_paths
+
     # ── public entry point ─────────────────────────────────────────────────────
 
     def generate(self, schema: UnitySchema, manifest_deps: dict[str, str],
@@ -1048,7 +1110,8 @@ class UnityProjectGenerator:
                  composed_units: list | None = None,
                  model_source_dir: str | None = None,
                  model_overrides: dict[str, str] | None = None,
-                 strict_assets: bool = False) -> dict[str, str]:
+                 strict_assets: bool = False,
+                 asset_cfg: dict | None = None) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
         Caller writes the dict to disk.
@@ -1105,73 +1168,10 @@ class UnityProjectGenerator:
         kenney_assets = resolve_assets(schema, lookups_dir=lookups_dir,
                                        source_dir=kenney_source_dir)
 
-        # ── Default model pack (Model Pack v1) ────────────────────────────────
-        # Real models replace the primitive placeholders. Resolution is purely
-        # what exists under Models/Defaults — missing files degrade to primitives.
-        _override_kinds = set(model_overrides.keys()) if model_overrides else None
-        all_models = _apply_model_overrides(
-            resolve_default_models(lookups_dir=lookups_dir,
-                                   model_source_dir=model_source_dir),
-            model_overrides)
-        used_models = models_for_schema(
-            schema, all_models, composed_units, override_kinds=_override_kinds)
-        # Resource path each entity group instantiates. An entity kind with no
-        # specific model falls back to a REAL default prop — never a primitive
-        # (the no-generic-defaults doctrine). The fallback is logged, not silent,
-        # so a fitting model can be added. assets.strict hard-fails only when there
-        # is no real model AT ALL (the asset library is missing/empty).
-        prop_fallback = all_models.get("prop") or next(iter(all_models.values()), None)
-        entity_model_paths: dict[str, str] = {}
-        _defaulted: list[tuple[str, str]] = []
-        for e in schema.entities:
-            if e.kind in used_models:
-                entity_model_paths[e.name] = used_models[e.kind].resource_path
-            elif prop_fallback is not None:
-                used_models.setdefault("prop", prop_fallback)  # ensure it is copied + meta'd
-                entity_model_paths[e.name] = prop_fallback.resource_path
-                _defaulted.append((e.name, e.kind))
-        if _defaulted:
-            _log.warning(
-                "[assets] no specific model for kind(s) %s — using default prop '%s'. "
-                "Add a mapping in lookups/unity/default_models.json for a better fit.",
-                sorted({k for _, k in _defaulted}),
-                prop_fallback.resource_path if prop_fallback else "?")
-        if strict_assets:
-            missing = [(e.name, e.kind) for e in schema.entities
-                       if not entity_model_paths.get(e.name)]
-            if missing:
-                kinds = sorted({k for _, k in missing})
-                raise ValueError(
-                    f"[assets.strict] no real model — not even a default prop — for "
-                    f"entity kind(s) {kinds} (entities {[n for n, _ in missing]}). The "
-                    "Models/Defaults asset library is missing/empty; populate it "
-                    "(see Models/Defaults/README.md) or set assets.strict: false."
-                )
-        # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
-        # two independent cases:
-        #  1. 2D games render in 2.5D (orthographic) — never import a Humanoid
-        #     avatar there regardless of the model's actual rig quality.
-        #  2. The STATIC default pack's player/enemy FBX placeholders are
-        #     confirmed to carry NO real humanoid skeleton at all (verified:
-        #     zero Hips/Spine/UpperLeg/LowerLeg bone names in
-        #     Models/Defaults/{player,enemy}/*.fbx) despite the catalog
-        #     labeling them `rig: "humanoid"` — forcing Humanoid on them always
-        #     throws "Invalid Avatar Rig Configuration: Required human bone
-        #     'LeftLowerLeg' not found" (hit live on a VR project — the crash
-        #     is NOT 2D-specific, gating on game_type alone was too narrow).
-        #     Only a genuine Blender-built override (_apply_model_overrides,
-        #     kind in model_overrides) actually ships a real named skeleton, so
-        #     only THAT case is trusted to keep Humanoid.
-        # This MUST run after the entity-model-path resolution above: the
-        # prop-fallback loop can still insert a fresh used_models entry
-        # (setdefault("prop", ...)), and any humanoid model added that late
-        # would otherwise skip the downgrade.
-        _blender_kinds = set(model_overrides.keys()) if model_overrides else set()
-        _is_2d = schema.game_type in ("2D", "2.5D")
-        for _kind, _m in used_models.items():
-            if _m.rig == "humanoid" and (_is_2d or _kind not in _blender_kinds):
-                _m.rig = "generic"
-                _m.clips = {}
+        # ── Model resolution (default pack + per-entity catalog picks) ────────
+        used_models, entity_model_paths = self._resolve_all_models(
+            schema, lookups_dir, model_source_dir, model_overrides,
+            composed_units, strict_assets, asset_cfg)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
         palette   = schema.color_palette  # always non-None after model_validator
@@ -1659,16 +1659,17 @@ class UnityProjectGenerator:
               composed_units: list | None = None,
               model_source_dir: str | None = None,
               model_overrides: dict[str, str] | None = None,
-              strict_assets: bool = False) -> tuple[Path, int]:
+              strict_assets: bool = False,
+              asset_cfg: dict | None = None) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
-        _override_kinds = set(model_overrides.keys()) if model_overrides else None
         files = self.generate(schema, manifest_deps,
                               lookups_dir=lookups_dir,
                               kenney_source_dir=kenney_source_dir,
                               composed_units=composed_units,
                               model_source_dir=model_source_dir,
                               model_overrides=model_overrides,
-                              strict_assets=strict_assets)
+                              strict_assets=strict_assets,
+                              asset_cfg=asset_cfg)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.
@@ -1690,32 +1691,47 @@ class UnityProjectGenerator:
             tmp.write_text(content, encoding="utf-8")
             os.replace(tmp, dest)
 
-        # Binary model copies (generate() emitted the matching .meta files —
-        # same resolution, so the pair always lines up).
-        used_models = models_for_schema(
-            schema,
-            _apply_model_overrides(
-                resolve_default_models(lookups_dir=lookups_dir,
-                                       model_source_dir=model_source_dir),
-                model_overrides),
-            composed_units,
-            override_kinds=_override_kinds,
-        )
+        # Binary model copies. Same _resolve_all_models call as generate() —
+        # deterministic, so the .meta files emitted there and the binaries
+        # copied here always line up (including rig downgrades that drop clips).
+        used_models, _ = self._resolve_all_models(
+            schema, lookups_dir, model_source_dir, model_overrides,
+            composed_units, strict_assets, asset_cfg)
         n_models = 0
         for m in used_models.values():
             for item in [m] + list(m.clips.values()):
-                # Primary copy: Assets/Resources/Models/Default/... (for Resources.Load)
+                # Primary copy: Assets/Resources/Models/... (for Resources.Load)
                 dest = root / schema.project_name / "Assets" / "Resources" / item.dest_rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(Path(item.src).read_bytes())
                 # Secondary copy: Assets/Models/<Kind>/<file> (user-visible clean folder).
-                # item.dest_rel starts with "Models/Default/" — strip that prefix so the
-                # secondary path is Assets/Models/<Kind>/<file> not Assets/Models/Models/Default/...
+                # item.dest_rel starts with "Models/Default/" or "Models/Kenney/" —
+                # strip that prefix so the secondary path is Assets/Models/<Kind>/<file>.
                 _rel_parts = Path(item.dest_rel).parts
                 _kind_relative = Path(*_rel_parts[2:]) if len(_rel_parts) > 2 else Path(_rel_parts[-1])
                 dest2 = root / schema.project_name / "Assets" / "Models" / _kind_relative
                 dest2.parent.mkdir(parents=True, exist_ok=True)
                 dest2.write_bytes(Path(item.src).read_bytes())
+                n_models += 1
+
+        # Texture folders for catalog picks. Kenney FBX reference PNGs from a
+        # Textures/ folder shipped beside the models; Unity's importer searches
+        # Textures folders up the parent chain, so a copy next to each import
+        # location keeps materials from importing blank/magenta. Unity generates
+        # the TextureImporter .metas itself on first open.
+        _tex_exts = {".png", ".jpg", ".jpeg", ".tga"}
+        for tex_dir in texture_dirs_for(used_models):
+            for tex in sorted(tex_dir.iterdir()):
+                if tex.suffix.lower() not in _tex_exts or not tex.is_file():
+                    continue
+                for dest in (
+                    root / schema.project_name / "Assets" / "Resources"
+                         / "Models" / "Kenney" / "Textures" / tex.name,
+                    root / schema.project_name / "Assets" / "Models"
+                         / "Textures" / tex.name,
+                ):
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(tex.read_bytes())
                 n_models += 1
 
         return root / schema.project_name, len(files) + n_models

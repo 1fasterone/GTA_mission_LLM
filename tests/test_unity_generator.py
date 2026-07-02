@@ -936,18 +936,28 @@ class TestModelPack:
         for banned in ("SURVIVAL HORROR", "Warden", "YOU ESCAPED", "Level1", "BossRoom"):
             assert banned not in ss, f"SceneSetup still emits boilerplate: {banned}"
 
-    def test_unmapped_kind_falls_back_to_real_prop(self, gen):
-        # No-generic-defaults: an unmapped kind uses a REAL default prop (never a
-        # primitive), so even strict mode succeeds when a library exists.
+    def test_strict_unmatched_kind_hard_fails(self, gen):
+        # FAIL-FAST doctrine: in strict mode an entity matching neither the
+        # default pack nor the asset catalog stops the build with an actionable
+        # error — it must NOT silently share one generic prop.
+        from src.unity_schema import EntitySpec
+        with pytest.raises(ValueError, match="assets.strict"):
+            gen.generate(self._schema(entities=[
+                EntitySpec(name="Wyrm", kind="dragon", count=1),
+            ]), {}, strict_assets=True)
+
+    def test_nonstrict_unmatched_kind_falls_back_to_real_prop(self, gen):
+        # Non-strict keeps the old graceful path: a REAL default prop (never a
+        # primitive), logged so a fitting model can be added later.
         from src.unity_schema import EntitySpec
         files = gen.generate(self._schema(entities=[
             EntitySpec(name="Wyrm", kind="dragon", count=1),
-        ]), {}, strict_assets=True)
+        ]), {}, strict_assets=False)
         cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
         assert '"Models/Default/Prop/Prop"' in cs        # real prop fallback, not a primitive
 
     def test_strict_assets_raises_when_library_missing(self, gen):
-        # Strict only hard-fails when there is no real model AT ALL (empty library).
+        # Strict hard-fails when there is nothing real to resolve to at all.
         from src.unity_schema import EntitySpec
         with pytest.raises(ValueError, match="assets.strict"):
             gen.generate(self._schema(entities=[EntitySpec(name="X", kind="prop", count=1)]),
