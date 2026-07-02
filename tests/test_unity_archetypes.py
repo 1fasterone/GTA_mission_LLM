@@ -95,3 +95,16 @@ class TestDeepDivePromptRegression:
         assert schema.game_type == "3D"
         assert schema.locomotion == "swim"
         assert schema.meta["genre"] != "racing"
+
+
+def test_drifting_clouds_is_not_racing():
+    # Regression (TerminalHorizon, live): "animated title over drifting clouds"
+    # matched the racing keyword "drifting" and concept_hint() then steered the
+    # whole LLM concept toward a racing game. Mood/physics uses of drift must
+    # never signal the racing genre.
+    from src.unity_archetypes import classify
+    i = classify("A freefall survival game. MainMenu: animated title over "
+                 "drifting clouds. The player dives through jetstreams.")
+    assert i.genre != "racing"
+    j = classify("A street racing game with drift racing and kart racers")
+    assert j.genre == "racing"

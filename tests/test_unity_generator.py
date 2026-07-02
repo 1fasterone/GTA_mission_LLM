@@ -1192,3 +1192,51 @@ class TestAtmosphere:
                      / "AtmosphereRenderFeature.cs").is_file()
         assert (root / "Assets" / "Resources" / "Atmosphere"
                      / "DefaultAtmosphereProfile.asset").is_file()
+
+
+# ── Service-locator + undeclared-identifier sanitizers (TerminalHorizon repro) ──
+
+class TestFragmentSanitizers:
+    def _script(self, update_extra):
+        from src.unity_schema import UnityScript
+        return UnityScript(
+            name="VelocityManager", type="custom", description="d",
+            update_extra=update_extra,
+            extra_fields=[{"name": "safeVelocityLimit", "type": "float",
+                           "default": "45.0f"}])
+
+    def test_phantom_service_type_calls_stripped(self):
+        # Get<PlayerFSM>() where PlayerFSM exists nowhere → CS1061 live.
+        from src.unity_generator import _sanitize_project_service_calls
+        s = self._script(
+            'var playerFSM = GameContext.Instance.Get<PlayerFSM>(); '
+            'if (playerFSM != null) { playerFSM.SetState("Blackout"); }')
+        _sanitize_project_service_calls(s, {"VelocityManager": frozenset()}, set())
+        assert "PlayerFSM" not in s.update_extra
+
+    def test_known_custom_class_member_check(self):
+        from src.unity_generator import _sanitize_project_service_calls
+        api = {"DialogueManager": frozenset({"ShowLine"})}
+        good = self._script('GameContext.Instance.Get<DialogueManager>().ShowLine();')
+        bad  = self._script('GameContext.Instance.Get<DialogueManager>().TriggerBeat();')
+        _sanitize_project_service_calls(good, api, set())
+        _sanitize_project_service_calls(bad, api, set())
+        assert "ShowLine" in good.update_extra          # declared → kept
+        assert "TriggerBeat" not in bad.update_extra    # undeclared → stripped
+
+    def test_opaque_types_left_alone(self):
+        from src.unity_generator import _sanitize_project_service_calls
+        s = self._script('GameContext.Instance.Get<GameHud>().SetObjective("x");')
+        _sanitize_project_service_calls(s, {}, {"GameHud"})
+        assert "SetObjective" in s.update_extra
+
+    def test_undeclared_foreach_stripped_declared_kept(self):
+        from src.unity_generator import _strip_undeclared_foreach
+        s = self._script(
+            'foreach (var bird in FindObjectsOfType<BirdSwarmFlocking>()) { '
+            'foreach (var b in birds) b.Disperse(); }')
+        _strip_undeclared_foreach(s)
+        assert "birds" not in s.update_extra            # undeclared → line gone
+        ok = self._script('var flock = GetFlock(); foreach (var b in flock) b.ToString();')
+        _strip_undeclared_foreach(ok)
+        assert "foreach" in ok.update_extra             # declared local → kept

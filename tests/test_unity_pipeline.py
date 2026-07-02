@@ -559,3 +559,27 @@ class TestUnitySchemaExtractionFromArtifacts:
         project_root = pipeline.run("a 2D game")
         assert project_root.name == "PixelPlatformer"
 
+
+
+class TestBriefAndFeatureReconciliation:
+    def test_input_system_feature_injected_when_package_present(self):
+        from src.unity_schema import UnityPackage, UnityScript, UnitySchema
+        schema = UnitySchema(
+            project_name="T", company_name="C", description="d",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", scenes=["Main"], features=["physics"],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            packages=[UnityPackage(
+                description="Input System for granular multi-axis adjustments",
+                package_id="com.unity.inputsystem")])
+        fixed, fixes = _check_consistency(schema)
+        assert "input_system" in fixed.features          # → activeInputHandler: 2
+        assert any("input_system" in f for f in fixes)
+
+    def test_structured_brief_detection(self):
+        from src.unity_pipeline import _is_structured_brief
+        brief = ("TITLE: Terminal Horizon\nGENRE: survival\n"
+                 "SCENES (8 total)\nENTITIES\nAUDIO — cues\n")
+        assert _is_structured_brief(brief)
+        assert not _is_structured_brief("a cozy skydiving game over the desert")
+        assert not _is_structured_brief("")

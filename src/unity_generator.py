@@ -421,6 +421,108 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
         m.body = _strip(m.body)
 
 
+# Members every MonoBehaviour instance legitimately has — never grounds to strip.
+_MB_COMMON_MEMBERS = frozenset({
+    "transform", "gameObject", "enabled", "name", "tag",
+    "isActiveAndEnabled", "GetComponent", "SendMessage",
+})
+
+
+def _sanitize_project_service_calls(script: UnityScript,
+                                    custom_api: dict[str, frozenset],
+                                    opaque_types: set[str]) -> None:
+    """Strip GameContext.Instance.Get<T>() misuse the composed-API pass can't see:
+
+      - T is a phantom type the LLM invented (hit live: TerminalHorizon's
+        VelocityManager called Get<PlayerFSM>().SetState(...) — no PlayerFSM
+        script, stub has no members → CS1061). Every line touching the getter
+        or its bound variable is dead code.
+      - T is another GENERATED CUSTOM script: its complete public surface IS
+        its declared extra_fields + extra_methods, so calls to anything else
+        are guaranteed CS1061 (hit live: DialogueManager.TriggerBeat).
+
+    Canonical script classes (GameManager...), composed micro classes and Unity
+    types are opaque here — their template APIs are validated by the existing
+    _sanitize_singleton_calls / _sanitize_composed_component_calls passes."""
+    getter_chain_re = re.compile(
+        r"GameContext\.Instance\.Get<(\w+)>\(\)\s*\??\.\s*(\w+)")
+    var_decl_re = re.compile(
+        r"\b\w+\s+(\w+)\s*=\s*GameContext\.Instance\.Get<(\w+)>\(\)")
+
+    def _member_bad(t: str, member: str) -> bool:
+        if t in opaque_types:
+            return False
+        if t in custom_api:
+            return member not in custom_api[t] and member not in _MB_COMMON_MEMBERS
+        return True                       # phantom type — nothing on it is real
+
+    def _strip(body: str) -> str:
+        if not body or "GameContext" not in body:
+            return body
+        var_types = {m.group(1): m.group(2) for m in var_decl_re.finditer(body)}
+        # variables bound to phantom types poison every line that touches them
+        phantom_vars = {v for v, t in var_types.items()
+                        if t not in opaque_types and t not in custom_api}
+        var_call_re = None
+        if var_types:
+            var_alt = "|".join(re.escape(v) for v in var_types)
+            var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)")
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(_member_bad(m.group(1), m.group(2))
+                      for m in getter_chain_re.finditer(line))
+            if not bad and phantom_vars:
+                bad = any(re.search(r"\b" + re.escape(v) + r"\b", line)
+                          for v in phantom_vars)
+            if not bad and var_call_re:
+                bad = any(_member_bad(var_types[m.group(1)], m.group(2))
+                          for m in var_call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+_FOREACH_BARE_RE = re.compile(
+    r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+\w+\s+in\s+([A-Za-z_]\w*)\s*\)")
+_LOCAL_DECL_RE = re.compile(r"\b(?:var|[\w<>\[\],.]+)\s+(\w+)\s*=")
+_FOREACH_VAR_RE = re.compile(r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+(\w+)\s+in\b")
+
+
+def _strip_undeclared_foreach(script: UnityScript) -> None:
+    """foreach over a bare identifier that is declared NOWHERE (not a field,
+    not a local, not a loop variable) is a guaranteed CS0103 — the LLM
+    referenced a collection it never created (hit live: TerminalHorizon's
+    BirdSwarmFlocking iterated `birds`). Strip the offending line; everything
+    declared stays untouched."""
+    fields = {f.name for f in script.extra_fields}
+
+    def _strip(body: str) -> str:
+        if not body or "foreach" not in body:
+            return body
+        declared = set(fields)
+        declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(m.group(1) not in declared
+                      for m in _FOREACH_BARE_RE.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
 # ── Visual style -> lighting config ───────────────────────────────────────────
 
 _LIGHTING_BY_STYLE: dict[str, dict] = {
@@ -1186,6 +1288,18 @@ class UnityProjectGenerator:
         # Done here — not in the pipeline — so unity-validate and the webui get
         # it too. CustomBehaviour.cs.j2 emits no fields of its own, so the only
         # reserved name is nothing; usings dedupe against the template's.
+        # Service-locator validation context: a custom script's COMPLETE public
+        # surface is its declared extra bits; canonical/composed/Unity classes
+        # are opaque (validated by their own dedicated passes).
+        _sig_name_re = re.compile(r"(\w+)\s*\(")
+        _custom_api = {
+            s.name: frozenset(f.name for f in s.extra_fields)
+                    | frozenset(mm.group(1) for m in s.extra_methods
+                                if (mm := _sig_name_re.search(m.signature or "")))
+            for s in schema.scripts if s.type == "custom"
+        }
+        _opaque_types = ({s.name for s in schema.scripts if s.type != "custom"}
+                         | {u.class_name for u in (composed_units or [])})
         for s in schema.scripts:
             if s.type == "custom":
                 lint_extensible(s, reserved_fields=set(),
@@ -1194,6 +1308,8 @@ class UnityProjectGenerator:
                 # extra_fields to know which field types are our own stubs.
                 _sanitize_stub_type_usage(s)
                 _sanitize_composed_component_calls(s, composed_units)
+                _sanitize_project_service_calls(s, _custom_api, _opaque_types)
+                _strip_undeclared_foreach(s)
                 # A custom script can only attach to the Player if one exists.
                 if s.attach_to == "player" and not any(
                         x.type == "player" for x in schema.scripts):
