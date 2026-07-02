@@ -65,6 +65,37 @@ def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> 
     return resolved
 
 
+def _environment_ctx(time_of_day: str, fog, fog_color, sun_intensity,
+                     lighting: dict, bg: dict) -> dict:
+    """Sun + fog template context for one environment (project or per-scene).
+
+    "day" / empty keeps the historical style lighting byte-for-byte; other
+    times of day swing the sun and tint it. Pure function — the same inputs
+    always render the same scene YAML.
+    """
+    preset = _TIME_OF_DAY_PRESETS.get(time_of_day) if time_of_day else None
+    if preset:
+        sun_rotation, sun_euler = _sun_rotation(preset["pitch"])
+        sun_color = {"r": preset["color"][0], "g": preset["color"][1],
+                     "b": preset["color"][2]}
+        intensity = preset["intensity"]
+    else:
+        sun_rotation = "{x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}"
+        sun_euler    = "{x: 50, y: -30, z: 0}"
+        sun_color    = {"r": lighting["r"], "g": lighting["g"], "b": lighting["b"]}
+        intensity    = lighting["intensity"]
+    if sun_intensity is not None:
+        intensity = sun_intensity
+    return {
+        "sun_rotation":  sun_rotation,
+        "sun_euler":     sun_euler,
+        "sun_color":     sun_color,
+        "sun_intensity": intensity,
+        "fog_enabled":   fog if fog is not None else lighting["fog"],
+        "fog_color":     _unity_color(fog_color) if fog_color else bg,
+    }
+
+
 # ── GUID generation ────────────────────────────────────────────────────────────
 # Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
 
@@ -1181,23 +1212,22 @@ class UnityProjectGenerator:
 
         # ── Environment mood (time of day / fog) ──────────────────────────────
         # "day" (or no environment block) keeps the historical style lighting
-        # byte-for-byte; other times of day swing the sun + tint it.
-        env    = schema.environment
-        preset = _TIME_OF_DAY_PRESETS.get(env.time_of_day) if env else None
-        if preset:
-            sun_rotation, sun_euler = _sun_rotation(preset["pitch"])
-            sun_color = {"r": preset["color"][0], "g": preset["color"][1],
-                         "b": preset["color"][2]}
-            sun_intensity = preset["intensity"]
-        else:
-            sun_rotation  = "{x: 0.40821788, y: -0.23456968, z: 0.10938163, w: 0.8754261}"
-            sun_euler     = "{x: 50, y: -30, z: 0}"
-            sun_color     = {"r": lighting["r"], "g": lighting["g"], "b": lighting["b"]}
-            sun_intensity = lighting["intensity"]
-        if env and env.sun_intensity is not None:
-            sun_intensity = env.sun_intensity
-        fog_enabled = env.fog if (env and env.fog is not None) else lighting["fog"]
-        fog_color   = _unity_color(env.fog_color) if (env and env.fog_color) else bg
+        # byte-for-byte; other times of day swing the sun + tint it. Scene specs
+        # recompute this per scene so StormShelf can be fogged night while
+        # FinalApproach is a clear dawn.
+        env     = schema.environment
+        env_ctx = _environment_ctx(
+            env.time_of_day if env else "",
+            env.fog if env else None,
+            env.fog_color if env else None,
+            env.sun_intensity if env else None,
+            lighting, bg)
+        sun_rotation  = env_ctx["sun_rotation"]
+        sun_euler     = env_ctx["sun_euler"]
+        sun_color     = env_ctx["sun_color"]
+        sun_intensity = env_ctx["sun_intensity"]
+        fog_enabled   = env_ctx["fog_enabled"]
+        fog_color     = env_ctx["fog_color"]
 
         # GUIDs for generated .mat files (deterministic)
         mat_guids = {
@@ -1244,6 +1274,12 @@ class UnityProjectGenerator:
             "procedural_meshes": schema.procedural_meshes,
             "entities":          schema.entities,
             "entity_model_paths": entity_model_paths,
+            # Scene → entity-group names for specs that declare a subset (None
+            # = all groups, absent from the map). Drives EntitySpawner's
+            # runtime per-scene filter.
+            "scene_entity_map":  {sp.name: list(sp.entities)
+                                  for sp in schema.scene_specs
+                                  if sp.entities is not None},
             "kenney_assets":     kenney_assets,
         }
 
@@ -1320,11 +1356,28 @@ class UnityProjectGenerator:
             "character_controller_res": "Models/Default/DefaultCharacter",
             "scene_setup_guid": _scene_setup_guid,
         }
+        # Per-scene content (SceneSpec): mood overrides recompute the sun/fog
+        # block for that scene only; an entity filter controls which groups the
+        # scene hosts (and whether it gets an EntitySpawner at all). Scenes
+        # without a spec render exactly as before.
+        _specs_by_scene = {sp.name: sp for sp in schema.scene_specs}
         for scene_name in schema.scenes:
+            ctx = {**scene_ctx, "scene_name": scene_name}
+            sp = _specs_by_scene.get(scene_name)
+            if sp is not None:
+                if sp.time_of_day or sp.fog is not None or sp.fog_color:
+                    ctx.update(_environment_ctx(
+                        sp.time_of_day or (env.time_of_day if env else ""),
+                        sp.fog if sp.fog is not None else (env.fog if env else None),
+                        sp.fog_color or (env.fog_color if env else None),
+                        env.sun_intensity if env else None,
+                        lighting, bg))
+                if sp.entities is not None:
+                    _allowed = set(sp.entities)
+                    ctx["entities"] = [e for e in schema.entities
+                                       if e.name in _allowed]
             scene_path = f"{pn}/Assets/Scenes/{scene_name}.unity"
-            files[scene_path] = self._render(
-                "scene.unity.j2", {**scene_ctx, "scene_name": scene_name}
-            )
+            files[scene_path] = self._render("scene.unity.j2", ctx)
             files[f"{scene_path}.meta"] = _default_meta(
                 _make_guid(f"{pn}/scene/{scene_name}")
             )

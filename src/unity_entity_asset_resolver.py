@@ -61,19 +61,26 @@ def _entry_source(entry: dict, asset_root: Optional[str]) -> Optional[Path]:
     return src if src.is_file() else None
 
 
+# Query tokens at or above this weight are "strong" — they came from the
+# entity's own name/kind/model_hint, not the scene description.
+_STRONG_HIT = 1.0
+
+
 def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     """Weighted keyword overlap + kind-hint bonus + generic tiebreak.
 
-    Returns 0.0 unless at least one keyword actually matches — a kind hint or
-    the generic bonus alone must never clear the match threshold, or bare
-    default-kind entities with meaningless names would grab arbitrary assets.
+    Returns 0.0 unless a STRONG token (entity name / kind / model_hint, weight
+    ≥ 1.0) matches. Scene-description words (weight 0.1) are tiebreakers among
+    strong matches only — hit live: "AtmosphericClouds" grabbed steps.fbx
+    because the description word "vertical" (0.1) qualified the asset and then
+    the +0.5 prop kind bonus carried it over the threshold.
     """
     kw = set(k.lower() for k in entry.get("keywords", []))
     kw.update(tokenize(Path(entry.get("filename", "")).stem))
-    hit_weight = sum(w for t, w in query_weights.items() if t in kw)
-    if hit_weight == 0.0:
+    hits = {t: w for t, w in query_weights.items() if t in kw}
+    if not hits or max(hits.values()) < _STRONG_HIT:
         return 0.0
-    score = hit_weight / max(1.0, len(kw)) ** 0.5
+    score = sum(hits.values()) / max(1.0, len(kw)) ** 0.5
     if kind in entry.get("kind_hints", []):
         score += 0.5
     return score + entry.get("generic_score", 0) / 50.0
@@ -94,6 +101,14 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
     for t in tokenize(getattr(entity, "model_hint", "") or ""):
         if t not in _STOPWORDS:
             weights[t] = 2.0
+    # Singular/plural bridging for strong tokens: entity names are usually
+    # plural ("PineTrees") while catalog keywords are singular ("tree").
+    for t, w in list(weights.items()):
+        if w >= _STRONG_HIT:
+            if t.endswith("s") and len(t) > 3:
+                weights.setdefault(t[:-1], w)
+            else:
+                weights.setdefault(t + "s", w)
     return weights
 
 

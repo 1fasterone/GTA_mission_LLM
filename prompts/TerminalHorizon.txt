@@ -1,0 +1,160 @@
+TITLE: Terminal Horizon  
+GENRE: High‑altitude freefall survival, 3D action, PC
+STYLE: Stylized realism — roaring wind fields, sun‑bleached clouds, atmospheric scattering, contrail streaks, neon HUD.
+
+CORE PREMISE
+The player is an elite skydiver investigating a catastrophic mid‑air aircraft breakup over the Mojave corridor. Dropped from 30,000 ft with only a wingsuit, emergency chute, and a data‑capture visor, they must navigate turbulent air zones, recover black‑box fragments, evade rogue drones, and survive until touchdown. The vertical world spans five atmospheric layers, each implemented as separate Unity scenes.
+
+SCENES (8 total)
+MainMenu — animated title over drifting clouds, Start / Load / Quit
+
+StratosGate — high‑altitude entry zone, thin air, contrail streaks, tutorial
+
+JetstreamCorridor — violent crosswinds, cloud tunnels, first drone encounter
+
+DebrisField — falling wreckage, black‑box fragments, high‑risk navigation
+
+StormShelf — thunderheads, lightning arcs, boss drone encounter
+
+FinalApproach — low‑altitude descent, wind shear, timed parachute deployment
+
+GearBay — inventory and equipment management
+
+LandingZoneEnding — ending cutscene: player touches down, rescue convoy arrives
+
+NARRATIVE — Eight Story Beats
+Drop Initiated — player exits aircraft (on_start)
+
+Drone Shadow — silhouette passes through cloud layer (on_enter_zone)
+
+Fragment Found — first black‑box shard recovered (on_pickup)
+
+Velocity Warning — terminal velocity threshold exceeded (on_timer)
+
+Drone Ambush — drone charges from cloud burst (on_enemy_death)
+
+Storm Breach — player enters thunderhead interior (on_enter_zone)
+
+Boss Dive — heavy combat drone guarding final fragment (manual)
+
+Touchdown — player lands safely (on_enter_zone)
+
+SCRIPTS — All Required Systems
+WingsuitController (player)
+3D freefall movement, drag curves, wind tunnels, dive/swoop transitions, turbulence impulses, parachute deployment
+
+VelocityManager (custom)
+speed tracking, terminal‑velocity thresholds, blackout vignette, recovery wobble, death on overspeed impact
+
+GrappleGun (custom)
+mid‑air ranged tool: charge, fire, retract; tether physics; attach to debris; swing momentum
+
+DroneAI (enemy)
+NavMesh‑in‑air: patrol → track → intercept → strike; reacts to player flare bursts; retreats when damaged
+
+FlockBirds (custom)
+boids‑style flocking for migrating birds; scatter on proximity or drone noise
+
+SkyCamera (camera)
+Cinemachine third‑person; wind‑lag follow; altitude‑based color grading; cloud‑density fog; roll‑tilt
+
+GameManager (game_manager)
+state machine (Menu/Playing/Paused/Downed/Win); score (fragments collected); lives (flare charges); scene transitions; save/load checkpoint
+
+UIManager (ui_manager)
+HUD: altitude meter, velocity bar, chute readiness indicator, fragment counter, overspeed pulse warning, pause panel, game‑over panel
+
+AudioManager (custom)
+spatial wind layers, jetstream rumble, cloud‑impact thumps, drone buzz, music crossfade by altitude band
+
+HealthSystem (health)
+player and drone HP, collision damage, death callbacks
+
+FragmentCollectible (collectible)
+pickup triggers story beat dialogue + score
+
+WaypointNavigator (custom)
+glowing flare beacon guiding next objective
+
+InventoryManager (custom)
+equipment slots: wingsuit mods, flare gun, grapple gun, chute upgrades
+
+SaveLoadManager (saveload)
+JSON checkpoint save between scenes
+
+DialogueManager (dialogue_manager)
+story beat subtitles + voice‑over triggers
+
+AtmospherePalette (material_palette)
+runtime sky/air color palette application
+
+ProceduralCloudscape (level_generator)
+volumetric cloud fields, debris clusters, storm cells
+
+ENTITIES
+Player: elite skydiver in wingsuit, humanoid rig
+
+Enemy: interceptor drone, multi‑joint rig, patrol + strike animations
+
+NPC: migrating bird flock (boid swarm, simple mesh)
+
+NPC: glider hawk (ambient, slow patrol)
+
+Collectible: black‑box fragment (glowing orange shard)
+
+Collectible: flare recharge station (floating supply pod)
+
+AUDIO — Twelve Cues for High‑Altitude Soundscape
+wind_stream_high (music, looping) — thin‑air hiss, high‑altitude ambience
+
+jetstream_rumble (ambient, looping) — deep wind roar, pressure oscillation
+
+cloud_whirl (ambient, looping) — muffled turbulence inside cloud
+
+drone_buzz (sfx) — rising mechanical hum, proximity cue
+
+grapple_fire (sfx) — cable whip + metal latch
+
+grapple_retract (sfx) — motor whine + tension snap
+
+bird_scatter (sfx) — feather rush + wing flaps
+
+velocity_alarm (sfx) — rapid beeps, overspeed warning
+
+fragment_pickup (sfx) — digital ping + confirm tone
+
+boss_theme (music, looping) — intense electronic percussion
+
+flare_burst (sfx) — bright ignition pop
+
+touchdown_sting (music) — triumphant landing swell
+
+PROCEDURAL GEOMETRY
+Cloud fields (volumetric, resolution 64)
+
+Jetstream tunnels (airflow ribbons, resolution 48)
+
+Debris clusters (metal fragments, resolution 32)
+
+Storm cell interior (volumetric lightning chambers, resolution 24)
+
+VISUAL STYLE
+Stylized atmospheric gradients — bright upper‑sky cyan, dense cloud whites, storm‑cell purples, neon HUD overlays.
+
+COLOR PALETTE — “SkyRift”:
+
+primary    #00A8FF (HUD + flare glow — electric sky blue)
+
+secondary  #0A0F1C (upper atmosphere base — deep navy)
+
+accent     #FF3AF0 (drone lights + fragments — neon magenta)
+
+background #050A12 (storm interior — near‑black indigo)
+
+trim       #FF6B35 (danger indicators — warning orange)
+
+FEATURES
+navmesh, cinemachine, animation_rigging, input_system, tilemaps (for debris layouts), post_processing
+RENDER PIPELINE: URP (atmospheric fog, volumetric clouds, motion blur, color grading)
+UNITY VERSION: 6000.0
+PLATFORM: PC

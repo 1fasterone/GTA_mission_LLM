@@ -1035,3 +1035,66 @@ class TestAtomicWrite:
         content = prefab.read_text(encoding="utf-8")
         # A torn/duplicated write would double the PrefabAsset document header.
         assert content.count("--- !u!1001 &1001000000") == 1
+
+
+# ── Per-scene content (SceneSpec) ───────────────────────────────────────────────
+# Regression target (TerminalHorizon, live): 7 gameplay scenes rendered as
+# byte-identical templates — per-scene mood and entity subsets must actually
+# change what each scene file contains.
+
+class TestSceneSpecs:
+    def _schema(self, **kw):
+        from src.unity_schema import EntitySpec, SceneSpec, UnitySchema
+        base = dict(
+            project_name="SS", company_name="C", description="d",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], packages=[],
+            scenes=["Main", "StormShelf", "GearBay"],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            entities=[
+                EntitySpec(name="Drones", kind="enemy", count=4, tag="Enemy"),
+                EntitySpec(name="Wreckage", kind="obstacle", count=6),
+            ],
+            scene_specs=[
+                SceneSpec(name="StormShelf", description="thunderhead interior",
+                          time_of_day="night", fog=True,
+                          entities=["Drones"]),
+                SceneSpec(name="GearBay", description="equipment hub",
+                          entities=[]),
+            ],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_scenes_render_differently(self, gen):
+        files = gen.generate(self._schema(), {})
+        main  = scene(files, "SS", "Main")
+        storm = scene(files, "SS", "StormShelf")
+        assert main != storm
+        # night sun pitch + fog land only in the spec'd scene
+        assert "m_Fog: 1" in storm
+        assert "m_Fog: 1" not in main
+
+    def test_entity_subset_controls_spawner_presence(self, gen):
+        files = gen.generate(self._schema(), {})
+        assert "EntitySpawner" in scene(files, "SS", "Main")        # all groups
+        assert "EntitySpawner" in scene(files, "SS", "StormShelf")  # subset
+        assert "EntitySpawner" not in scene(files, "SS", "GearBay") # empty scene
+
+    def test_spawner_emits_runtime_scene_filter(self, gen):
+        files = gen.generate(self._schema(), {})
+        cs = files["SS/Assets/Scripts/EntitySpawner.cs"]
+        assert "SceneManagement" in cs
+        assert "GroupActive" in cs
+        assert '"StormShelf"' in cs and '"Drones"' in cs
+        assert 'if (GroupActive(_scene, "Drones"))' in cs
+        assert 'if (GroupActive(_scene, "Wreckage"))' in cs
+
+    def test_no_scene_specs_keeps_legacy_output(self, gen):
+        files = gen.generate(self._schema(scene_specs=[]), {})
+        cs = files["SS/Assets/Scripts/EntitySpawner.cs"]
+        assert "SceneManagement" not in cs
+        assert "GroupActive" not in cs
+        # all gameplay scenes identical as before
+        assert scene(files, "SS", "Main") == scene(files, "SS", "StormShelf")

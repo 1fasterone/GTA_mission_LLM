@@ -154,6 +154,45 @@ def test_shared_model_registered_once(env, tmp_path):
     assert sum(1 for k in used if k.startswith("asset:tree-")) == 3
 
 
+def test_plural_entity_name_matches_singular_keyword(env, tmp_path):
+    # "PineTrees" (no hint) must still find the "tree"-keyword assets.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        {}, {}, lookups_dir=str(env))
+    assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_description_words_alone_never_qualify_a_match(env, tmp_path):
+    # Regression (TerminalHorizon, live): entity "AtmosphericClouds" (kind=prop,
+    # no model_hint) grabbed steps.fbx because the SCHEMA DESCRIPTION word
+    # "vertical" (weight 0.1) qualified the asset and the +0.5 prop kind bonus
+    # carried it over the threshold. Description words must only break ties
+    # between assets that already match a strong (name/kind/hint) token.
+    import json as _json
+    cat_path = env / "unity" / "asset_catalog.json"
+    cat = _json.loads(cat_path.read_text(encoding="utf-8"))
+    # steps-like asset: prop kind hint + a keyword that appears in the scene
+    # description but not in the entity name
+    root = cat["assets"][0]["root"]
+    cat["assets"].append({
+        "filename": "steps.fbx", "relpath": "steps.fbx", "root": root,
+        "category": "stairs", "keywords": ["stairs", "steps", "vertical"],
+        "kind_hints": ["prop"], "generic_score": 9, "scale": 1.0,
+        "game_contexts": ["any"], "format": "fbx", "pack": "t", "curated": True,
+    })
+    cat_path.write_text(_json.dumps(cat), encoding="utf-8")
+    (Path(root) / "steps.fbx").write_bytes(b"FBX")
+
+    schema = UnitySchema(
+        project_name="T", company_name="C",
+        description="survival in a vertical atmospheric world",
+        game_type="3D", platform="pc", render_pipeline="URP",
+        unity_version="6000.2", scenes=["Main"],
+        entities=[EntitySpec(name="AtmosphericClouds", kind="prop", count=20)])
+    with pytest.raises(ValueError, match="AtmosphericClouds"):
+        resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
+
+
 # ── fallback policy ───────────────────────────────────────────────────────────
 
 def test_strict_no_match_raises_with_suggestions(env, tmp_path):

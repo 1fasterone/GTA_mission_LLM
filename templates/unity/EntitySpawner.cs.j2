@@ -2,9 +2,26 @@
 // Spawns prompt-derived entity groups at runtime so the scene reflects the
 // concept (N enemies, a ring of buildings, a crowd) instead of one placeholder.
 using UnityEngine;
+{% if scene_entity_map %}
+using UnityEngine.SceneManagement;
+using System.Collections.Generic;
+{% endif %}
 
 public class EntitySpawner : MonoBehaviour
 {
+{% if scene_entity_map %}
+    // Per-scene entity filter (schema scene_specs). Scenes absent from this
+    // map host every group; listed scenes host only their named groups.
+    private static readonly Dictionary<string, HashSet<string>> _sceneGroups = new()
+    {
+{% for sname, enames in scene_entity_map | dictsort %}
+        { "{{ sname }}", new HashSet<string> { {% for n in enames %}"{{ n }}"{% if not loop.last %}, {% endif %}{% endfor %} } },
+{% endfor %}
+    };
+
+    private static bool GroupActive(string scene, string group) =>
+        !_sceneGroups.TryGetValue(scene, out var set) || set.Contains(group);
+{% endif %}
 {% if game_type not in ["2D", "2.5D"] %}
 {% for e in entities %}
 {% if e.placement == "path" and e.path_points %}
@@ -22,6 +39,9 @@ public class EntitySpawner : MonoBehaviour
     private void Start()
     {
         var sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+{% if scene_entity_map %}
+        var _scene = SceneManager.GetActiveScene().name;
+{% endif %}
 {% if game_type in ["2D", "2.5D"] %}
         // 2D side-scroller archetype: build a COHERENT course (continuous ground +
         // entities laid along +X) instead of formula-scattering props.
@@ -29,10 +49,15 @@ public class EntitySpawner : MonoBehaviour
 {% else %}
 {% for e in entities %}
 {% set has_path = e.placement == "path" and e.path_points %}
-        SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh);
+{% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
+        {{ guard }}{% if scene_entity_map and has_path %}{
+        {% endif %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh);
 {% if has_path %}
         EmitWaypoints({{ '"Waypoints"' if ns.first_path else '"' ~ e.name ~ '_Waypoints"' }}, _path_{{ loop.index0 }});
 {% set ns.first_path = false %}
+{% if scene_entity_map %}
+        }
+{% endif %}
 {% endif %}
 {% endfor %}
 {% endif %}
@@ -177,6 +202,9 @@ public class EntitySpawner : MonoBehaviour
     // ── 2D side-scroller archetype builders ─────────────────────────────────────
     private void BuildSideScroller2D(Shader sh)
     {
+{% if scene_entity_map %}
+        var _scene = SceneManager.GetActiveScene().name;
+{% endif %}
         int maxCount = 1;
 {% for e in entities %}{% if e.kind|lower not in ["player", "road", "ground"] %}        maxCount = Mathf.Max(maxCount, {{ e.count }});
 {% endif %}{% endfor %}
@@ -186,7 +214,7 @@ public class EntitySpawner : MonoBehaviour
 {% for e in entities %}
 {% set role = e.kind|lower %}
 {% if role not in ["player", "road", "ground"] %}
-        PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh);
+        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh);
 {% endif %}
 {% endfor %}
         PlacePlayerStart2D();

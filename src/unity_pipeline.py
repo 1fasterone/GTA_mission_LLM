@@ -116,6 +116,17 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
     return result
 
 
+def _hint_from_name(name: str, kind: str) -> str:
+    """Deterministic model_hint from an entity's own name (+ specific kind)."""
+    from .unity_asset_catalog import tokenize
+    from .unity_entity_asset_resolver import _STOPWORDS
+    words = [t for t in tokenize(name or "") if t not in _STOPWORDS]
+    k = (kind or "").lower()
+    if k and k != "prop" and k not in words:
+        words.append(k)
+    return " ".join(words[:4]) or (k or "prop")
+
+
 def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema:
     schema.project_name = _to_pascal(schema.project_name, "UnityProject")
     schema.company_name = re.sub(r"[/\\]", "_", schema.company_name).strip() or "MyCompany"
@@ -272,6 +283,77 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
             ))
             fixes.append("Injected ProBuilder package (level_generator script requires it)")
 
+    # Every entity must carry a model_hint — it drives the asset-catalog match
+    # that decides which real model the group spawns. The local LLM routinely
+    # omits optional fields (hit live: TerminalHorizon, all 6 hints empty), so
+    # backfill deterministically from the entity's own name.
+    _backfilled = []
+    for e in schema.entities:
+        if not (e.model_hint or "").strip():
+            e.model_hint = _hint_from_name(e.name, e.kind)
+            _backfilled.append(f"{e.name} -> '{e.model_hint}'")
+    if _backfilled:
+        fixes.append("Backfilled empty entity model_hint from names: "
+                     + ", ".join(_backfilled))
+
+    # Scene specs must reference real scenes and real entity groups, and their
+    # descriptions deterministically imply a mood when the LLM leaves the
+    # explicit fields unset ("thunderheads, lightning arcs" should LOOK like a
+    # storm without anyone re-typing fog:true).
+    schema, scene_fixes = _reconcile_scene_specs(schema)
+    fixes.extend(scene_fixes)
+
+    return schema, fixes
+
+
+# Description keyword → scene mood. Checked in order; first time-of-day hit
+# wins. Deterministic — pure string containment on the LLM-authored text.
+_MOOD_TOD = [
+    (("night", "midnight", "dark", "nocturnal"), "night"),
+    (("sunset", "dusk", "evening", "golden hour"), "sunset"),
+    (("dawn", "sunrise", "morning"), "dawn"),
+]
+_MOOD_FOG = ("storm", "thunder", "fog", "mist", "cloud", "haze", "smoke",
+             "blizzard", "sandstorm")
+
+
+def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
+    fixes: list[str] = []
+    if not schema.scene_specs:
+        return schema, fixes
+
+    scene_names = set(schema.scenes)
+    entity_names = {e.name for e in schema.entities}
+    seen: set[str] = set()
+    kept = []
+    dropped_scenes: list[str] = []
+    for spec in schema.scene_specs:
+        if spec.name not in scene_names or spec.name in seen:
+            dropped_scenes.append(spec.name or "?")
+            continue
+        seen.add(spec.name)
+        if spec.entities is not None:
+            unknown = [n for n in spec.entities if n not in entity_names]
+            if unknown:
+                spec.entities = [n for n in spec.entities if n in entity_names]
+                fixes.append(f"Scene '{spec.name}': dropped unknown entity "
+                             f"group(s) {unknown}")
+        desc = (spec.description or "").lower()
+        if desc and not spec.time_of_day:
+            for words, tod in _MOOD_TOD:
+                if any(w in desc for w in words):
+                    spec.time_of_day = tod
+                    fixes.append(f"Scene '{spec.name}': inferred "
+                                 f"time_of_day={tod} from description")
+                    break
+        if desc and spec.fog is None and any(w in desc for w in _MOOD_FOG):
+            spec.fog = True
+            fixes.append(f"Scene '{spec.name}': inferred fog from description")
+        kept.append(spec)
+    if dropped_scenes:
+        fixes.append("Dropped scene_specs not matching schema.scenes: "
+                     + ", ".join(dropped_scenes))
+    schema.scene_specs = kept
     return schema, fixes
 
 
@@ -571,11 +653,25 @@ class UnityPipeline:
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         _asset_cfg = self.config.get("assets", {}) or {}
-        project_root, file_count = self.generator.write(
-            schema, manifest_deps, self.output_dir, composed_units=composed_units,
-            model_overrides=model_overrides,
-            strict_assets=bool(_asset_cfg.get("strict", True)),
-            asset_cfg=_asset_cfg)
+        try:
+            project_root, file_count = self.generator.write(
+                schema, manifest_deps, self.output_dir, composed_units=composed_units,
+                model_overrides=model_overrides,
+                strict_assets=bool(_asset_cfg.get("strict", True)),
+                asset_cfg=_asset_cfg)
+        except ValueError:
+            # FAIL-FAST asset doctrine tripped AFTER the expensive LLM stages —
+            # save the filled schema so the run isn't lost: edit the entity
+            # model_hints (or the asset library) and retry with unity-validate.
+            rescue = Path(self.output_dir) / f"{schema.project_name}.schema.json"
+            try:
+                rescue.parent.mkdir(parents=True, exist_ok=True)
+                rescue.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
+                self._warn(f"Schema rescued to {rescue} — fix entity model_hints "
+                           "and retry: python main.py unity-validate " + str(rescue))
+            except OSError:
+                pass
+            raise
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
             if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):

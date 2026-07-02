@@ -297,6 +297,62 @@ class EnvironmentSpec(BaseModel):
             return None
 
 
+class SceneSpec(BaseModel):
+    """Per-scene content: mood overrides + which entity groups live there.
+
+    This is what makes "StormShelf — thunderheads, boss encounter" render
+    differently from "FinalApproach — low-altitude dawn descent" instead of
+    every gameplay scene being a byte-identical template. `name` must match an
+    entry in schema.scenes; unset fields inherit the project environment.
+    """
+    name:        str = ""
+    description: str = ""                       # one line; also drives mood inference
+    time_of_day: str = ""                       # "" = inherit project environment
+    fog:         Optional[bool] = None
+    fog_color:   Optional[str]  = None
+    # None = all entity groups spawn here (default); [] = an empty scene;
+    # otherwise the entity NAMES active in this scene.
+    entities:    Optional[list[str]] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_-]", "", str(v or ""))
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _clamp_desc(cls, v: str) -> str:
+        return str(v or "").strip()[:200]
+
+    @field_validator("time_of_day", mode="before")
+    @classmethod
+    def _clamp_tod(cls, v: str) -> str:
+        s = str(v or "").lower().strip()
+        if not s:
+            return ""                            # inherit
+        synonyms = {"morning": "dawn", "sunrise": "dawn", "noon": "day",
+                    "midday": "day", "dusk": "sunset", "evening": "sunset",
+                    "midnight": "night", "dark": "night"}
+        s = synonyms.get(s, s)
+        return s if s in ("dawn", "day", "sunset", "night") else ""
+
+    @field_validator("fog_color", mode="before")
+    @classmethod
+    def _norm_fog_color(cls, v):
+        if v is None or str(v).strip() == "":
+            return None
+        return _norm_hex(str(v))
+
+    @field_validator("entities", mode="before")
+    @classmethod
+    def _clean_entities(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            return None
+        return [str(x).strip() for x in v[:40] if str(x).strip()]
+
+
 class ColorPalette(BaseModel):
     """Six named hex colors that drive material generation and scene lighting."""
     name:       str = "Stylized"
@@ -833,6 +889,7 @@ class UnitySchema(BaseModel):
 
     # ── Legacy/existing collections (kept for backward compat) ────────────────
     scenes:            list[str]             = Field(default_factory=lambda: ["Main", "MainMenu"])
+    scene_specs:       list[SceneSpec]       = Field(default_factory=list, max_length=8)
     features:          list[str]             = Field(default_factory=list)
     packages:          list[UnityPackage]    = Field(default_factory=list, max_length=20)
     scripts:           list[UnityScript]     = Field(default_factory=list, max_length=24)

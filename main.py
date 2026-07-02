@@ -436,8 +436,11 @@ def unity_validate(
         template_dir=pipe_cfg.get("unity_template_dir", "templates/unity")
     )
     output_dir = pipe_cfg.get("unity_output_dir", "output/unity")
+    _asset_cfg = cfg.get("assets", {}) or {}
     root, count = gen.write(schema, deps, output_dir,
-                            model_overrides=model_overrides or None)
+                            model_overrides=model_overrides or None,
+                            strict_assets=bool(_asset_cfg.get("strict", True)),
+                            asset_cfg=_asset_cfg)
     # Write schema sidecar so unity-model --unity-project can find and re-inject models.
     try:
         (root / f"{schema.project_name}.schema.json").write_text(

@@ -43,6 +43,12 @@ LIMITS (keep JSON concise):
 - packages:          max 10 entries (only what's genuinely needed)
 - scripts:           max 24 entries
 - scenes:            max 8 scene names (no paths, just names like "Main", "MainMenu", "Level1")
+- scene_specs:       max 8 — ONE PER GAMEPLAY SCENE. What makes each scene distinct:
+                     {{"name": "<must match a scenes entry>", "description": "one line",
+                      "time_of_day": "dawn|day|sunset|night", "fog": true/false,
+                      "entities": ["<entity names active in this scene>"]}}
+                     Omit "entities" to spawn every group there; use it whenever a
+                     scene should host a SUBSET (a boss scene, an empty menu-like hub).
 - story_beats:       max 8 entries (omit array if no story-beat progression is needed)
 - audio_tracks:      max 8 entries (omit array if no music/audio design is needed)
 - procedural_meshes: max 4 entries (omit array if no runtime geometry is needed)
@@ -178,6 +184,15 @@ OUTPUT this exact JSON structure, fully populated:
     "trim": "#RRGGBB"
   }},
   "scenes": ["Main", "MainMenu"],
+  "scene_specs": [
+    {{
+      "name": "Main",
+      "description": "one line: what makes this scene distinct",
+      "time_of_day": "day",
+      "fog": false,
+      "entities": ["EntityGroupName1", "EntityGroupName2"]
+    }}
+  ],
   "features": ["list", "of", "feature", "flags"],
   "packages": [
     {{
