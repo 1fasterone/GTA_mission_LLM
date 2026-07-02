@@ -65,6 +65,21 @@ _CATEGORY_MAP: dict[str, str] = {
     "obstacle":   "obstacle",
     "character":  "character",
     "skateboard": "vehicle",
+    # dungeon kit
+    "corridor":   "structure",
+    "room":       "structure",
+    "gate":       "structure",
+    "door":       "structure",
+    "template":   "structure",
+    "stairs":     "structure",
+    # racing kit
+    "fence":      "structure",
+    "barrier":    "structure",
+    "grand":      "structure",    # grandStand* (camelCase → first token "grand")
+    "tower":      "structure",
+    "billboard":  "prop",
+    "flag":       "prop",
+    "grass":      "nature",
 }
 
 # Token → extra keywords, so entity names like "PineForest" or "GrindRail"
@@ -106,6 +121,20 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     "hanging":    ("suspended", "overhead"),
     "standing":   ("upright",),
     "color":      ("colored", "painted"),
+    # dungeon kit
+    "corridor":   ("hall", "hallway", "passage", "dungeon", "interior"),
+    "room":       ("chamber", "hall", "interior", "dungeon"),
+    "gate":       ("door", "portal", "entrance", "gateway"),
+    "door":       ("gate", "entrance", "doorway"),
+    "template":   ("wall", "floor", "modular", "dungeon", "tile"),
+    "stairs":     ("steps", "staircase", "climb", "elevation"),
+    # racing kit
+    "fence":      ("barrier", "rail", "wall", "railing"),
+    "barrier":    ("wall", "fence", "block", "obstacle"),
+    "grand":      ("grandstand", "stands", "bleachers", "seating", "audience"),
+    "billboard":  ("sign", "advertisement", "display", "signage"),
+    "flag":       ("banner", "checkered", "marker", "pennant"),
+    "grass":      ("lawn", "field", "ground", "turf"),
 }
 
 # Category → entity kinds (default_models.json vocabulary) the asset can serve.
@@ -122,11 +151,14 @@ _KIND_HINTS: dict[str, tuple[str, ...]] = {
 
 # First token → kind hints that are more specific than the category default.
 _TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
-    "ramp":  ("ramp",),
-    "rail":  ("rail",),
-    "floor": ("ground", "road"),
-    "steps": ("prop", "building"),
-    "tree":  ("tree",),
+    "ramp":     ("ramp",),
+    "rail":     ("rail",),
+    "floor":    ("ground", "road"),
+    "steps":    ("prop", "building"),
+    "tree":     ("tree",),
+    "fence":    ("obstacle", "prop"),
+    "barrier":  ("obstacle", "hazard"),
+    "grass":    ("ground",),
 }
 
 # Category → default import scale. Kenney packs are authored around 1 unit;
