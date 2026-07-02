@@ -71,6 +71,19 @@ public class EntitySpawner : MonoBehaviour
         System.Type behaviorType = null;
         if (!string.IsNullOrEmpty(behavior))
             behaviorType = System.Type.GetType(behavior + ", Assembly-CSharp") ?? System.Type.GetType(behavior);
+{% if has_procedural_entities %}
+        // "procedural:<type>:<res>" → build the group's mesh via MeshBuilder
+        // (the entity was routed to a schema procedural mesh — clouds, debris).
+        string[] procParts = null;
+        Mesh procMesh = null;
+        if (!string.IsNullOrEmpty(modelPath) && modelPath.StartsWith("procedural:"))
+        {
+            procParts = modelPath.Split(':');
+            if (MeshBuilder.Instance == null)
+                new GameObject("_MeshBuilder").AddComponent<MeshBuilder>();
+            procMesh = MeshBuilder.Instance.Build(procParts[1], int.Parse(procParts[2]));
+        }
+{% endif %}
         // Optional real model from the default pack (null → primitive fallback).
         GameObject modelPrefab = string.IsNullOrEmpty(modelPath)
             ? null : Resources.Load<GameObject>(modelPath);
@@ -80,7 +93,17 @@ public class EntitySpawner : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             GameObject go;
+{% if has_procedural_entities %}
+            if (procMesh != null)
+            {
+                go = new GameObject(groupName + "_" + i);
+                go.AddComponent<MeshFilter>().mesh = procMesh;
+                go.AddComponent<MeshRenderer>();
+            }
+            else if (modelPrefab != null)
+{% else %}
             if (modelPrefab != null)
+{% endif %}
             {
                 go = Instantiate(modelPrefab);
 {% if game_type not in ["2D", "2.5D"] %}

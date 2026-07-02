@@ -65,6 +65,32 @@ def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> 
     return resolved
 
 
+# Concept keywords that imply an atmosphere/sky is part of the game feel —
+# gates shipping the vendored URP-Atmosphere scattering feature (MIT, sinnwrig;
+# see templates/unity/vendor/URPAtmosphere/VENDORED.md).
+_ATMOSPHERE_WORDS = frozenset({
+    "atmosphere", "atmospheric", "sky", "skies", "altitude", "aerial",
+    "airborne", "stratosphere", "stratospheric", "cloud", "clouds",
+    "horizon", "planet", "planetary", "freefall", "skydiver", "skydiving",
+    "wingsuit", "jetstream",
+})
+
+
+def wants_atmosphere(schema) -> bool:
+    """Deterministic gate: 3D URP project whose concept implies a real sky."""
+    if schema.render_pipeline != "URP" or schema.game_type not in ("3D", "VR"):
+        return False
+    if getattr(schema, "locomotion", "walk") == "fly":
+        return True
+    text = " ".join([
+        schema.description or "",
+        " ".join(schema.scenes or []),
+        " ".join(sp.description or "" for sp in getattr(schema, "scene_specs", []) or []),
+    ]).lower()
+    words = set(re.split(r"[^a-z]+", text))
+    return bool(words & _ATMOSPHERE_WORDS)
+
+
 def _environment_ctx(time_of_day: str, fog, fog_color, sun_intensity,
                      lighting: dict, bg: dict) -> dict:
     """Sun + fog template context for one environment (project or per-scene).
@@ -1205,6 +1231,17 @@ class UnityProjectGenerator:
             composed_units, strict_assets, asset_cfg)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
+        # Entities routed to schema procedural meshes build via MeshBuilder at
+        # spawn time — make sure the class exists even when the LLM authored
+        # procedural_meshes without a mesh_builder script entry.
+        has_procedural_entities = any(
+            p.startswith("procedural:") for p in entity_model_paths.values())
+        if has_procedural_entities and not any(
+                s.type == "mesh_builder" for s in schema.scripts):
+            schema.scripts.append(UnityScript(
+                name="MeshBuilder", type="mesh_builder",
+                description="Singleton procedural mesh factory"))
+
         palette   = schema.color_palette  # always non-None after model_validator
         lighting  = _LIGHTING_BY_STYLE.get(schema.visual_style,
                                            _LIGHTING_BY_STYLE["stylized"])
@@ -1274,6 +1311,7 @@ class UnityProjectGenerator:
             "procedural_meshes": schema.procedural_meshes,
             "entities":          schema.entities,
             "entity_model_paths": entity_model_paths,
+            "has_procedural_entities": has_procedural_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's
             # runtime per-scene filter.
@@ -1600,6 +1638,22 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/Settings"), folder=True
             )
 
+        # ── Atmosphere (vendored URP-Atmosphere, MIT) ─────────────────────────
+        # write() copies the vendored feature + profile binaries; here we emit
+        # the two glue scripts: run-once renderer registration and the runtime
+        # bootstrap that spawns the effect in every scene.
+        if wants_atmosphere(schema):
+            sa_path = f"{pn}/Assets/Editor/SetupAtmosphere.cs"
+            files[sa_path]           = self._render("editor/SetupAtmosphere.cs.j2", base_ctx)
+            files[f"{sa_path}.meta"] = _meta_file(_make_guid(f"{pn}/Editor/SetupAtmosphere"))
+            files[f"{pn}/Assets/Editor.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Editor"), folder=True)
+            ab_path = f"{pn}/Assets/Scripts/AtmosphereBootstrap.cs"
+            files[ab_path]           = self._render("scripts/AtmosphereBootstrap.cs.j2", base_ctx)
+            files[f"{ab_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/AtmosphereBootstrap"))
+            _log.info("[atmosphere] concept implies a sky — shipping vendored "
+                      "URP-Atmosphere (MIT, sinnwrig)")
+
         files[f"{pn}/Assets.meta"] = _default_meta(_make_guid(f"{pn}/Assets"), folder=True)
 
         # ── Input Actions (New Input System) ──────────────────────────────────
@@ -1773,6 +1827,30 @@ class UnityProjectGenerator:
                 dest2.parent.mkdir(parents=True, exist_ok=True)
                 dest2.write_bytes(Path(item.src).read_bytes())
                 n_models += 1
+
+        # Vendored URP-Atmosphere (MIT) — the render feature sources ship with
+        # their original .metas so the profile→compute-shader GUID references
+        # stay intact; the default profile lands under Resources for the
+        # runtime bootstrap. copytree handles the binary files (png/asset).
+        if wants_atmosphere(schema):
+            import shutil
+            vendor = Path(self.template_dir) / "vendor" / "URPAtmosphere"
+            if vendor.is_dir():
+                proj = root / schema.project_name
+                shutil.copytree(vendor / "Atmosphere",
+                                proj / "Assets" / "Atmosphere",
+                                dirs_exist_ok=True)
+                shutil.copy2(vendor / "LICENSE.md",
+                             proj / "Assets" / "Atmosphere" / "LICENSE.md")
+                res_dir = proj / "Assets" / "Resources" / "Atmosphere"
+                res_dir.mkdir(parents=True, exist_ok=True)
+                for f in sorted((vendor / "Profile").iterdir()):
+                    shutil.copy2(f, res_dir / f.name)
+                n_models += sum(1 for _ in (proj / "Assets" / "Atmosphere").rglob("*")
+                                if _.is_file())
+            else:
+                _log.warning("[atmosphere] vendor dir missing: %s — skipping "
+                             "atmosphere shipment", vendor)
 
         # Texture folders for catalog picks. Kenney FBX reference PNGs from a
         # Textures/ folder shipped beside the models; Unity's importer searches

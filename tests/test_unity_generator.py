@@ -1147,3 +1147,48 @@ class TestSpritePipeline:
         assert primary.read_bytes() == b"PNG-BYTES"
         assert not primary.with_suffix(".png.meta").exists()
         assert (root / "Assets" / "Sprites" / "Creature" / "fish_blue.png").is_file()
+
+
+# ── Vendored URP-Atmosphere shipping ────────────────────────────────────────────
+
+class TestAtmosphere:
+    def _schema(self, **kw):
+        from src.unity_schema import UnitySchema
+        base = dict(
+            project_name="AT", company_name="C",
+            description="a quiet dungeon crawler", game_type="3D",
+            platform="pc", render_pipeline="URP", unity_version="6000.0",
+            color_space="Linear", features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_gate_requires_urp_3d_and_sky_concept(self):
+        from src.unity_generator import wants_atmosphere
+        assert not wants_atmosphere(self._schema())                       # no sky words
+        assert wants_atmosphere(self._schema(
+            description="high-altitude freefall above the clouds"))
+        assert wants_atmosphere(self._schema(locomotion="fly"))
+        assert not wants_atmosphere(self._schema(
+            locomotion="fly", render_pipeline="builtin"))                 # URP only
+        assert not wants_atmosphere(self._schema(
+            description="skydiving through clouds", game_type="2D"))      # 3D/VR only
+
+    def test_atmosphere_scripts_emitted_when_gated_on(self, gen):
+        files = gen.generate(self._schema(locomotion="fly"), {})
+        assert "AT/Assets/Editor/SetupAtmosphere.cs" in files
+        assert "AT/Assets/Scripts/AtmosphereBootstrap.cs" in files
+        cs = files["AT/Assets/Scripts/AtmosphereBootstrap.cs"]
+        assert "AtmosphereEffect" in cs and "RuntimeInitializeOnLoadMethod" in cs
+        off = gen.generate(self._schema(), {})
+        assert not any("Atmosphere" in p for p in off)
+
+    def test_write_ships_vendored_feature_and_profile(self, gen, tmp_path):
+        root, _ = gen.write(self._schema(locomotion="fly"), {},
+                            output_dir=str(tmp_path))
+        assert (root / "Assets" / "Atmosphere" / "LICENSE.md").is_file()
+        assert (root / "Assets" / "Atmosphere" / "Runtime" / "Scripts"
+                     / "AtmosphereRenderFeature.cs").is_file()
+        assert (root / "Assets" / "Resources" / "Atmosphere"
+                     / "DefaultAtmosphereProfile.asset").is_file()

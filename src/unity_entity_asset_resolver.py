@@ -82,7 +82,8 @@ def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     the +0.5 prop kind bonus carried it over the threshold.
     """
     kw = set(k.lower() for k in entry.get("keywords", []))
-    kw.update(tokenize(Path(entry.get("filename", "")).stem))
+    kw.update(t for t in tokenize(Path(entry.get("filename", "")).stem)
+              if len(t) > 1)   # "fence-1x2" leaves a bare "x" — never a keyword
     hits = {t: w for t, w in query_weights.items() if t in kw}
     if not hits or max(hits.values()) < _STRONG_HIT:
         return 0.0
@@ -99,13 +100,13 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
     for w in scene_words:
         weights[w] = 0.1
     for t in tokenize(entity.name):
-        if t not in _STOPWORDS:
+        if t not in _STOPWORDS and len(t) > 1:
             weights[t] = 1.0
     kind = (entity.kind or "").lower()
-    if kind and kind not in _STOPWORDS:
+    if kind and kind not in _STOPWORDS and len(kind) > 1:
         weights[kind] = max(weights.get(kind, 0.0), 1.0)
     for t in tokenize(getattr(entity, "model_hint", "") or ""):
-        if t not in _STOPWORDS:
+        if t not in _STOPWORDS and len(t) > 1:
             weights[t] = 2.0
     # Singular/plural bridging for strong tokens: entity names are usually
     # plural ("PineTrees") while catalog keywords are singular ("tree").
@@ -116,6 +117,40 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
             else:
                 weights.setdefault(t + "s", w)
     return weights
+
+
+def _tokens_with_plurals(text: str) -> set[str]:
+    toks = {t for t in tokenize(text) if t not in _STOPWORDS}
+    for t in list(toks):
+        if t.endswith("s") and len(t) > 3:
+            toks.add(t[:-1])
+        else:
+            toks.add(t + "s")
+    return toks
+
+
+def _procedural_route(entity, procedural_meshes) -> Optional[str]:
+    """Match an unresolved entity to a schema procedural mesh by token overlap.
+
+    The LLM often authors BOTH an entity group and a procedural mesh for the
+    same concept ("AtmosphericClouds" entity + "CloudLayer1" mesh) — when no
+    real model exists, the mesh IS the content, so route the group to the
+    MeshBuilder path instead of failing. Returns a "procedural:<type>:<res>"
+    path the spawner understands, or None.
+    """
+    ent_tokens = _tokens_with_plurals(entity.name) \
+        | _tokens_with_plurals(getattr(entity, "model_hint", "") or "")
+    best: Optional[tuple[int, str, str]] = None   # (-overlap, name, path)
+    for m in procedural_meshes or []:
+        mesh_tokens = _tokens_with_plurals(m.name) \
+            | _tokens_with_plurals(getattr(m, "description", "") or "")
+        overlap = len(ent_tokens & mesh_tokens)
+        if overlap == 0:
+            continue
+        key = (-overlap, m.name)
+        if best is None or key < best[:2]:
+            best = (*key, f"procedural:{m.mesh_type}:{m.resolution}")
+    return best[2] if best else None
 
 
 def _nearest_misses(catalog_assets: list[dict],
@@ -226,7 +261,17 @@ def resolve_entity_assets(schema,
             entity_model_paths[e.name] = rm.resource_path
             continue
 
-        # ── Tier 3: fallback policy ───────────────────────────────────────────
+        # ── Tier 3: schema procedural mesh ────────────────────────────────────
+        # "AtmosphericClouds" with a CloudLayer1 procedural mesh in the same
+        # schema: the mesh is the intended content — build it at spawn time.
+        proc = _procedural_route(e, getattr(schema, "procedural_meshes", None))
+        if proc is not None:
+            entity_model_paths[e.name] = proc
+            _log.info("[assets] entity '%s' routed to %s (schema procedural mesh)",
+                      e.name, proc)
+            continue
+
+        # ── Tier 4: fallback policy ───────────────────────────────────────────
         if strict:
             unmatched.append((e.name, e.kind,
                               _nearest_misses(assets, qw, kind)))
@@ -245,8 +290,9 @@ def resolve_entity_assets(schema,
             f"[assets.strict] no real model matches entity {detail}. "
             "Give the entity a model_hint matching the asset library "
             "(run: python main.py unity-catalog --dry-run for the vocabulary), "
-            "map its kind in lookups/unity/default_models.json, or set "
-            "assets.strict: false."
+            "map its kind in lookups/unity/default_models.json, add a "
+            "procedural_meshes entry sharing a name word with the entity, or "
+            "set assets.strict: false."
         )
     if defaulted:
         _log.warning(

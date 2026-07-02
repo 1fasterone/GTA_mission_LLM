@@ -84,6 +84,54 @@ _CATEGORY_MAP: dict[str, str] = {
     "billboard":  "prop",
     "flag":       "prop",
     "grass":      "nature",
+    # nature kit
+    "cliff":      "nature",
+    "stone":      "nature",
+    "ground":     "nature",
+    "crops":      "nature",
+    "flower":     "nature",
+    "stump":      "nature",
+    "log":        "nature",
+    "mushroom":   "nature",
+    "bridge":     "structure",
+    "path":       "structure",
+    "terrain":    "nature",
+    # car kit
+    "debris":     "obstacle",
+    "cone":       "obstacle",
+    "wheel":      "prop",
+    "car":        "vehicle",
+    "kart":       "vehicle",
+    "tractor":    "vehicle",
+    "truck":      "vehicle",
+    "suv":        "vehicle",
+    "sedan":      "vehicle",
+    "van":        "vehicle",
+    "taxi":       "vehicle",
+    "ambulance":  "vehicle",
+    "police":     "vehicle",
+    "race":       "vehicle",
+    "delivery":   "vehicle",
+    "firetruck":  "vehicle",
+    "hatchback":  "vehicle",
+    # space kit
+    "pipe":       "structure",
+    "platform":   "structure",
+    "monorail":   "track",
+    "rocket":     "vehicle",
+    "craft":      "vehicle",
+    "hangar":     "structure",
+    "machine":    "mechanism",
+    "satellite":  "mechanism",
+    "radar":      "mechanism",
+    "alien":      "character",
+    "astronaut":  "character",
+    "desk":       "prop",
+    "chair":      "prop",
+    # city kit
+    "building":   "structure",
+    "driveway":   "structure",
+    "planter":    "prop",
 }
 
 # Token → extra keywords, so entity names like "PineForest" or "GrindRail"
@@ -138,7 +186,47 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     "grand":      ("grandstand", "stands", "bleachers", "seating", "audience"),
     "billboard":  ("sign", "advertisement", "display", "signage"),
     "flag":       ("banner", "checkered", "marker", "pennant"),
-    "grass":      ("lawn", "field", "ground", "turf"),
+    # NOTE: no "field" — too ambiguous ("DebrisFields" grabbed grass.fbx live)
+    "grass":      ("lawn", "ground", "turf"),
+    # nature kit
+    "cliff":      ("rock", "mountain", "ledge", "crag"),
+    "stone":      ("rock", "boulder", "pebble"),
+    "ground":     ("terrain", "floor", "dirt", "earth", "tile"),
+    "crops":      ("farm", "wheat", "corn", "plant", "harvest"),
+    "flower":     ("plant", "bloom", "garden"),
+    "stump":      ("tree", "log", "wood"),
+    "log":        ("wood", "timber", "trunk"),
+    "mushroom":   ("fungus", "toadstool", "forest"),
+    "bridge":     ("crossing", "span", "walkway"),
+    "path":       ("road", "trail", "walkway", "pavement"),
+    "terrain":    ("ground", "land", "surface"),
+    # car kit
+    "debris":     ("wreckage", "wreck", "fragment", "scrap", "junk", "rubble"),
+    "cone":       ("traffic", "marker", "hazard"),
+    "wheel":      ("tire", "tyre", "rim"),
+    "kart":       ("car", "racer", "gokart"),
+    "tractor":    ("farm", "vehicle"),
+    "truck":      ("lorry", "vehicle", "cargo"),
+    "taxi":       ("cab", "car"),
+    "ambulance":  ("medical", "emergency", "rescue"),
+    "police":     ("cop", "patrol", "emergency"),
+    "race":       ("racing", "racer", "sports"),
+    # space kit
+    "pipe":       ("tube", "conduit", "duct"),
+    "platform":   ("ledge", "walkway", "deck"),
+    "monorail":   ("rail", "train", "transit"),
+    "rocket":     ("spaceship", "ship", "missile", "launch"),
+    "craft":      ("spaceship", "ship", "shuttle", "spacecraft"),
+    "hangar":     ("garage", "bay", "shed"),
+    "machine":    ("device", "generator", "equipment"),
+    "satellite":  ("dish", "antenna", "orbital"),
+    "radar":      ("dish", "antenna", "scanner"),
+    "alien":      ("creature", "monster", "extraterrestrial", "npc"),
+    "astronaut":  ("spaceman", "cosmonaut", "person", "npc"),
+    # city kit
+    "building":   ("house", "home", "structure", "suburban"),
+    "driveway":   ("road", "pavement", "entrance"),
+    "planter":    ("pot", "garden", "plant"),
 }
 
 # Category → entity kinds (default_models.json vocabulary) the asset can serve.
@@ -163,6 +251,13 @@ _TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
     "fence":    ("obstacle", "prop"),
     "barrier":  ("obstacle", "hazard"),
     "grass":    ("ground",),
+    "debris":   ("obstacle", "hazard", "prop"),
+    "building": ("building",),
+    "ground":   ("ground", "road"),
+    "terrain":  ("ground", "road"),
+    "path":     ("road", "ground"),
+    "alien":    ("enemy", "npc"),
+    "astronaut": ("player", "npc"),
 }
 
 # Category → default import scale. Kenney packs are authored around 1 unit;
@@ -204,11 +299,17 @@ _SPRITE_KIND_HINTS: dict[str, tuple[str, ...]] = {
 
 
 # Tokens that describe size/variant, not semantics — excluded from keywords.
+# Single-character tokens are always noise (variant letters, the "x" left over
+# from dimension names like fence-1x2 — which matched an entity named "X" live).
 _NOISE_TOKENS = frozenset({
-    "a", "b", "c", "d", "large", "medium", "small", "wide", "long", "short",
+    "large", "medium", "small", "wide", "long", "short",
     "high", "low", "left", "right", "inner", "outer", "single", "double",
     "two", "four", "top", "middle", "bottom", "simple", "quarter", "sides",
 })
+
+
+def _is_noise(tok: str) -> bool:
+    return len(tok) < 2 or tok in _NOISE_TOKENS
 
 
 def tokenize(stem: str) -> list[str]:
@@ -258,7 +359,7 @@ def derive_entry(path: Path, root: Path) -> dict:
             keywords.append(word)
 
     for tok in tokens:
-        if tok not in _NOISE_TOKENS:
+        if not _is_noise(tok):
             _add(tok)
         for syn in _SYNONYMS.get(tok, ()):
             _add(syn)
@@ -298,7 +399,7 @@ def derive_sprite_entry(path: Path, root: Path) -> dict:
             keywords.append(word)
 
     for tok in tokens:
-        if tok not in _NOISE_TOKENS:
+        if not _is_noise(tok):
             _add(tok)
         for syn in _SPRITE_SYNONYMS.get(tok, ()):
             _add(syn)
