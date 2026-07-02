@@ -15,7 +15,7 @@ from .code_fields import (
 
 
 CameraVariant = Literal[
-    "follow", "orbit", "first_person",
+    "follow", "follow_2d", "orbit", "first_person",
     "cinemachine_3p", "cinemachine_topdown",
     "rts_pan_zoom", "vehicle_chase", "cinematic_dolly",
 ]

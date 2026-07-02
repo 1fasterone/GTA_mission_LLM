@@ -117,6 +117,16 @@ CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
   System.Collections.Generic) — never type names like AudioSource or ParticleSystem.
   Reference other scripts via GetComponent / FindFirstObjectByType. Keep fragments under
   ~40 lines each. C# only — never Python.
+  extra_fields TYPES MUST BE DATA ONLY — a Unity/C# builtin (float, int, bool, string,
+  Vector3, GameObject, Transform, List<T> of those, etc.) or, at most, a bare data name
+  with NO methods of its own (an unrecognized type name auto-generates an EMPTY stub
+  class purely to avoid a compile error — it has no members). NEVER invent a type and
+  then call methods on it (currentState.Update(), enemy.NextState(), item.Use()) or
+  assign it an enum-like bare-word default (= Idle, = Attacking) — nothing you didn't
+  spell out in extra_fields/extra_methods exists, so both fail compilation. If a prompt
+  wants a state machine (idle/walk/attack/etc.), do NOT model it as a custom object
+  with behavior — use a plain string or int field ("state") and drive transitions with
+  if/else directly inside update_extra.
 
 ENTITIES — the actual objects in the scene, built from primitives so the concept SHOWS UP.
   Populate one group per distinct set of objects the prompt implies. Fields:
@@ -241,7 +251,12 @@ GAMECONTEXT_SCHEMA_GUIDANCE = """
       GameContext.Instance.Get<GameManager>()?.AddScore(100);
   Composed subsystem types you may Get<T>(): PlayerController, PlayerCamera,
   PlayerHealth, PlayerAnimator, PlayerFSM, GameHud, PauseMenu, SaveSystem,
-  PhysicsBody, WorldInteractable, SceneTrigger (plus GameManager)."""
+  PhysicsBody, WorldInteractable, SceneTrigger (plus GameManager).
+  A PLAYER STATE MACHINE ALREADY EXISTS (PlayerFSM) — never author your own custom
+  FSM/state-object script for player state. Drive its state via
+  GameContext.Instance.Get<PlayerFSM>() instead of inventing a ClimbState/EnemyState-
+  style type with its own Update()/NextState() methods (those methods don't exist
+  anywhere and fail compilation — see extra_fields rule above)."""
 
 # ── STEP 5: Schema validation ─────────────────────────────────────────────────
 

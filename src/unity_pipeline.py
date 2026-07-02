@@ -29,6 +29,7 @@ from .unity_prompts      import (
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
 )
+from .unity_archetypes    import classify as classify_intent, apply_intent
 
 console = Console()
 
@@ -422,6 +423,18 @@ class UnityPipeline:
         else:
             theme_block, schema_hints = "", ""
 
+        # Deterministic intent detection — game_type / locomotion / genre from
+        # keyword scoring, same weighting archetypes.py uses for GTA5 missions.
+        # No LLM involved; runs once against the raw prompt.
+        intent = classify_intent(user_prompt)
+        theme_block  += intent.concept_hint()
+        schema_hints += intent.structure_hint()
+        if intent.matched:
+            self._ok(
+                "Intent: "
+                + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched)
+            )
+
         # STEP 2 — concept ────────────────────────────────────────────────────
         self._step(2, "LLM generates project concept")
         concept = self.llm.chat(
@@ -454,6 +467,14 @@ class UnityPipeline:
         # Persist the LLM concept so the Library page can describe the project.
         schema.meta["concept"]     = concept
         schema.meta["user_prompt"] = user_prompt
+
+        # Deterministic override: if the classifier had a confident direct hit
+        # on the raw prompt and the LLM's own game_type/locomotion disagree,
+        # trust the keyword match over the LLM. genre is always stamped into
+        # schema.meta (default "universal") regardless of confidence.
+        for msg in apply_intent(schema, intent):
+            self._fix(msg)
+
         self._ok(
             f"Game: {schema.game_type}  Pipeline: {schema.render_pipeline}  "
             f"Platform: {schema.platform}  Version: {schema.unity_version}"
@@ -510,7 +531,8 @@ class UnityPipeline:
         composed_units = None
         subsystems = None
         if compose:
-            from .unity_compose import MicroComposer, subsystems_for, COVERED_SCRIPT_TYPES
+            from .unity_compose import (MicroComposer, subsystems_for,
+                                        COVERED_SCRIPT_TYPES, drop_owned_scripts)
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
@@ -524,16 +546,17 @@ class UnityPipeline:
                                         user_prompt=user_prompt,
                                         scenes=schema.scenes,
                                         entities=schema.entities,
-                                        scripts=schema.scripts)
+                                        scripts=schema.scripts,
+                                        genre=schema.meta.get("genre", "universal"))
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep
             # only the unique glue (GameManager, mesh/material, editor scripts).
             before = len(schema.scripts)
-            schema.scripts = [s for s in schema.scripts if s.type not in COVERED_SCRIPT_TYPES]
+            schema.scripts = drop_owned_scripts(schema.scripts, composed_units)
             if before != len(schema.scripts):
                 self._fix(f"composition owns {before - len(schema.scripts)} subsystem(s) — "
-                          "dropped duplicate built-in scripts")
+                          "dropped duplicate built-in/name-colliding scripts")
             # Contribute the micros' module deps (UI/UGUI/AI/...) so the composed
             # project compiles.
             manifest_deps = {**manifest_deps, **composer.module_deps(composed_units)}
@@ -541,7 +564,8 @@ class UnityPipeline:
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         project_root, file_count = self.generator.write(
             schema, manifest_deps, self.output_dir, composed_units=composed_units,
-            model_overrides=model_overrides)
+            model_overrides=model_overrides,
+            strict_assets=bool(self.config.get("assets", {}).get("strict", True)))
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
             if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):

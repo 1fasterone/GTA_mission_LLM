@@ -70,6 +70,22 @@ COVERED_SCRIPT_TYPES = {
 }
 
 
+def drop_owned_scripts(scripts: list, composed_units: list) -> list:
+    """Return LLM-authored scripts minus the ones compose already owns.
+
+    Compose is the single source of truth for composed subsystems, so a script
+    is dropped when it collides either:
+      • by TYPE  — a built-in kind the micro library covers (COVERED_SCRIPT_TYPES), or
+      • by NAME  — the LLM authored a custom script whose class name matches a
+                   composed class (e.g. its own `PhysicsBody` or `GameContext`).
+    The name check is what prevents CS0101/CS0111 duplicate-definition errors when
+    the model invents a `type: custom` script that shadows a micro.
+    """
+    reserved_names = {u.class_name for u in composed_units}
+    return [s for s in scripts
+            if s.type not in COVERED_SCRIPT_TYPES and s.name not in reserved_names]
+
+
 class MicroComposer:
     """Assemble micros into a project's Assets and report how to wire them."""
 
@@ -510,6 +526,7 @@ def subsystems_for(
     scenes:       list[str] | None  = None,
     entities      = None,            # list of schema entities (have .kind)
     scripts       = None,            # list of schema scripts  (have .type/.name)
+    genre:        str               = "universal",   # schema.meta["genre"] — see unity_archetypes.py
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
@@ -524,6 +541,7 @@ def subsystems_for(
     """
     feats = set(features or [])
     gt = (game_type or "3D").lower()
+    genre = (genre or "universal").lower()
 
     # ── Deterministic content signals (what the game actually contains) ───────
     scene_count  = len(scenes or [])
@@ -534,18 +552,29 @@ def subsystems_for(
     has_npcs     = ("npc" in entity_kinds or "dialogue_manager" in script_types
                     or any(k in prompt_low for k in ("voiced npc", "npc dialog", "quest giver")))
 
-    # Controller variant by game type
+    # Controller variant by game type. gt values with an explicit dimension/
+    # perspective (2D/top-down/isometric/VR) always win — an fps prompt doesn't
+    # turn a top-down game into a first-person one. Only the "no opinion" default
+    # branch (plain 3D) defers to genre, so an unqualified "fps" prompt gets a
+    # first-person rig instead of silently falling through to third_person.
+    ctrl_default = "first_person" if genre == "fps" else "third_person"
+    cam_default  = "first_person" if genre == "fps" else "follow"
     ctrl = {
         "2d": "2d_platformer", "2.5d": "2d_platformer", "top_down": "top_down",
         "isometric": "top_down", "vr": "first_person",
-    }.get(gt, "third_person")
+    }.get(gt, ctrl_default)
     cam = {
-        "2d": "follow", "2.5d": "follow", "top_down": "cinemachine_topdown",
+        "2d": "follow_2d", "2.5d": "follow_2d", "top_down": "cinemachine_topdown",
         "isometric": "cinemachine_topdown",
-    }.get(gt, "follow")
+    }.get(gt, cam_default)
 
-    # Locomotion overrides for 3D-ish game types
-    if gt in ("3d", "top_down", "isometric"):
+    # Locomotion overrides for 3D-ish game types. "vr" belongs here too — a VR
+    # scuba/flight game is a legitimate combination; excluding it meant a
+    # correctly-classified VR+swim project silently kept the "first_person"
+    # walking controller instead of "swimming" (hit live: an underwater VR
+    # project never got its swim controller even after game_type/locomotion
+    # were both detected correctly).
+    if gt in ("3d", "top_down", "isometric", "vr"):
         loco_ctrl = {"drive": "vehicle_car", "fly": "flying", "swim": "swimming"}
         loco_cam  = {"drive": "vehicle_chase"}
         if locomotion in loco_ctrl:
@@ -572,10 +601,22 @@ def subsystems_for(
         "drive": "vehicle", "fly": "creature", "swim": "creature",
     }.get(locomotion, "humanoid")
 
-    # Input variant from game type / features
-    input_variant = "gamepad" if gt == "vr" else (
-        "racing_wheel" if locomotion == "drive" else "keyboard_mouse"
-    )
+    # Input variant must align with the CONTROLLER, not raw locomotion: a wheel
+    # reader's OnMove is inert on a character (2d_platformer/etc.) controller, so
+    # the player can't move. Only a vehicle controller gets the wheel.
+    input_variant = ("gamepad" if gt == "vr"
+                     else "racing_wheel" if ctrl.startswith("vehicle_")
+                     else "keyboard_mouse")
+
+    # Physics body must match the controller's dimension: a 2D game uses a
+    # Rigidbody2D (the prior "rigidbody" was invalid and clamped to 3D, which
+    # then fought the 2d_platformer controller's Rigidbody2D).
+    phys_variant = "rigidbody_2d" if gt in ("2d", "2.5d") else "rigidbody_3d"
+
+    # trigger/interactable need to know the project's dimension so their
+    # generated scripts author Collider2D + OnTrigger*2D callbacks instead of
+    # the 3D Physics API — a Collider2D never raises OnTriggerEnter(Collider).
+    dim_meta = {"meta": {"game_type": game_type or "3D"}}
 
     subs: list[Subsystem] = [
         # Core (always)
@@ -586,12 +627,12 @@ def subsystems_for(
         Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),
         Subsystem(kind="saveload",    variant="json_file",    target="systems", name="SaveSystem"),
         # Always-on: physics body, input reader, interactables, animator, triggers
-        Subsystem(kind="physics",     variant="rigidbody",    target="player",  name="PhysicsBody"),
+        Subsystem(kind="physics",     variant=phys_variant,   target="player",  name="PhysicsBody"),
         Subsystem(kind="input",       variant=input_variant,  target="systems", name="InputReader"),
-        Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable"),
+        Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable", options=dim_meta),
         Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator"),
         Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
-        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger"),
+        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger", options=dim_meta),
     ]
 
     # Feature- AND content-driven additions

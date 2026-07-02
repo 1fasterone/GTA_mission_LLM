@@ -299,6 +299,18 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     {
 {% if variant.startswith("2d_") %}
         _rb = GetComponent<Rigidbody2D>();
+        if (_rb == null) _rb = gameObject.AddComponent<Rigidbody2D>();
+        _rb.freezeRotation = true;
+        // A 2D body needs a 2D collider to land on the ground (models import without one).
+        if (GetComponent<Collider2D>() == null)
+        {
+            var _box = gameObject.AddComponent<BoxCollider2D>();
+            _box.size = new Vector2(1f, 2f);
+            _box.offset = new Vector2(0f, 1f);
+        }
+{% if variant == "2d_topdown" %}
+        _rb.gravityScale = 0f;
+{% endif %}
 {% elif variant.startswith("vehicle_") %}
         _rb = GetComponent<Rigidbody>();
         if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();

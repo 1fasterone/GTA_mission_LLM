@@ -20,8 +20,9 @@ public class {{ s.name }} : MonoBehaviour
 {% if s.lock_on %}
     [SerializeField] private bool lockOn = false;
 {% endif %}
+{% if variant != "follow_2d" %}
     [SerializeField] private float fovBase   = {{ "%.2f"|format(s.fov_base) }}f;
-    [SerializeField] private float fovSprint = {{ "%.2f"|format(s.fov_sprint) }}f;
+{% endif %}
 
     private Transform _target;
     private Vector3   _vel;
@@ -30,7 +31,12 @@ public class {{ s.name }} : MonoBehaviour
     private void Awake()
     {
         _cam = GetComponent<Camera>();
+{% if variant == "follow_2d" %}
+        _cam.orthographic     = true;
+        _cam.orthographicSize = 6f;
+{% else %}
         _cam.fieldOfView = fovBase;
+{% endif %}
 {{ inject.lifecycle(s.awake_extra) }}
     }
 
@@ -47,6 +53,11 @@ public class {{ s.name }} : MonoBehaviour
         // First-person: lock to target head transform
         transform.position = _target.position;
         transform.rotation = _target.rotation;
+{% elif variant == "follow_2d" %}
+        // 2D side-on follow: track X/Y at a fixed camera depth, no roll / LookAt.
+        Vector3 desired2d = new Vector3(_target.position.x + offset.x,
+                                        _target.position.y + offset.y, -10f);
+        transform.position = Vector3.SmoothDamp(transform.position, desired2d, ref _vel, smoothTime);
 {% elif variant == "orbit" %}
         Vector3 desired = _target.position + _target.rotation * offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);

@@ -357,6 +357,7 @@
   },
 
   "always_include": [
-    "com.unity.textmeshpro"
+    "com.unity.textmeshpro",
+    "com.unity.ugui"
   ]
 }

@@ -59,6 +59,19 @@ def test_lint_balances_braces():
     assert out.count("{") == out.count("}")
 
 
+def test_lint_repairs_value_type_property_member_assign():
+    # CS1612: mutating a member of a value-type property won't compile. The lint
+    # pass must rewrite it to read-modify-write (hit live: GravityDrift.cs).
+    out = lint_code_fragment("Physics.gravity.x += shiftX;", what="x")
+    assert "Physics.gravity.x +=" not in out
+    assert "var _v = Physics.gravity;" in out and "Physics.gravity = _v;" in out
+    out2 = lint_code_fragment("transform.position.y = 3f;", what="x")
+    assert "var _v = transform.position;" in out2 and "transform.position = _v;" in out2
+    # A comparison must be left untouched (no false positive on ==).
+    assert lint_code_fragment("bool b = Physics.gravity.x == 0f;", what="x") \
+        == "bool b = Physics.gravity.x == 0f;"
+
+
 def test_lint_usings_dedupes_and_drops_template():
     out = lint_usings(["UnityEngine", "UnityEngine.UI", "using UnityEngine.UI;"],
                       already_in_template={"UnityEngine"})

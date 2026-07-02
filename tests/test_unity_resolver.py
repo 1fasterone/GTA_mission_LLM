@@ -116,6 +116,19 @@ class TestInjectRequiredPackages:
         ids = {p.package_id for p in result.packages if p.package_id}
         assert "com.unity.inputsystem" in ids
 
+    def test_ugui_always_injected_even_without_compose(self, resolver, minimal_schema):
+        # Regression (live Unity, StickmanClimber run): CS0234 "The type or
+        # namespace name 'UI' does not exist in the namespace 'UnityEngine'"
+        # + CS0246 on Text. SceneSetup.cs is ALWAYS emitted and always uses
+        # UnityEngine.UI.Text, but com.unity.ugui (Unity 6 split UnityEngine.UI
+        # out of a built-in module into a real package) was previously only
+        # injected via unity_compose.py's per-kind module map when --compose
+        # happened to select hud/menu/transition/vfx — a plain non-compose
+        # `unity_cli.py new` run never got it.
+        result = resolver.inject_required_packages(minimal_schema)
+        ids = {p.package_id for p in result.packages if p.package_id}
+        assert "com.unity.ugui" in ids
+
 
 # ── build_manifest_deps ────────────────────────────────────────────────────────
 

@@ -62,6 +62,13 @@ public class {{ s.name }} : MonoBehaviour
     public void Set{{ p.name }}({{ p.param_type }} value) => _{{ p.name|lower }} = value;
 {% endif %}
 {% endfor %}
+{% if not (s.params | selectattr("name", "equalto", "Grounded") | list) %}
+    // Wiring contract: GameWiring's grounded bridge calls animator.SetGrounded for
+    // any non-swimming/flying controller, but only the humanoid param set declares
+    // Grounded. Guarantee the setter for every variant (SetBool no-ops by name when
+    // the controller lacks the param) so non-humanoid player animators don't CS1061.
+    public void SetGrounded(bool value) { if (_anim) _anim.SetBool("Grounded", value); }
+{% endif %}
 
     public void CrossFade(string stateName, float transitionDuration = 0.1f)
         => _anim?.CrossFadeInFixedTime(stateName, transitionDuration);

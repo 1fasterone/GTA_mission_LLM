@@ -92,6 +92,23 @@ class TestFileSet:
         second = gen.generate(full_3d_schema, manifest)
         assert first == second
 
+    def test_native_asset_files_end_with_trailing_newline(self, files_3d):
+        # Regression (live Unity, StickmanClimber run): the Jinja Environment
+        # rendering these templates didn't set keep_trailing_newline=True, so
+        # Jinja silently stripped the template source's own final newline.
+        # Unity's native YAML-ish asset parser (.prefab/.unity/.asset) is not
+        # lenient about a missing final newline — it reads past EOF looking for
+        # the value after the last key and reports a confused "Parser Failure
+        # ... Expect ':' between key and value" one line past the real content,
+        # plus a spurious duplicate-fileID warning on next reimport.
+        native_exts = (".unity", ".prefab", ".asset")
+        checked = 0
+        for path, content in files_3d.items():
+            if path.endswith(native_exts) and content:
+                checked += 1
+                assert content.endswith("\n"), f"{path} is missing its trailing newline"
+        assert checked > 0, "no native asset files were exercised by this fixture"
+
 
 # ── Meta file format ───────────────────────────────────────────────────────────
 
@@ -578,6 +595,190 @@ class TestCustomScripts:
         assert "def update" not in cs
         assert "private void Update()" not in cs   # rejected fragment → no Update emitted
 
+    # ── Stub-typed field usage (invented OOP behavior on an empty stub class) ──
+    def test_stub_type_method_calls_stripped(self, gen):
+        # Regression (live Unity, AscentStickman run): the LLM invented a
+        # polymorphic FSM "state object" field (ClimbStateType) with .Update()/
+        # .ShouldTransition()/.NextState() methods it never defined anywhere.
+        # _collect_custom_type_stubs backfills an EMPTY class for the invented
+        # type (prevents CS0246), but calling methods on that empty stub is
+        # guaranteed CS1061 x3, and the field's `= Idle` default (an enum-like
+        # member that also doesn't exist) is CS0103. A 4th CS0103 (`SwitchState`,
+        # a bare undefined method on the script itself) shared the same line and
+        # must be swept up too. 2 CS0103 + 3 CS1061 observed live — this test
+        # locks in that the generator neutralizes all five deterministically.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="StubT", company_name="C", description="",
+            game_type="2D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="ClimbStateFSM", type="custom", description="climb fsm",
+                extra_fields=[
+                    {"name": "currentState", "type": "ClimbStateType", "default": "Idle"},
+                    {"name": "transitionTimer", "type": "float", "default": "0f"},
+                ],
+                update_extra=(
+                    "if (currentState != null) { currentState.Update(this); "
+                    "if (currentState.ShouldTransition()) { transitionTimer = 0.5f; } "
+                    "else if (transitionTimer > 0) { transitionTimer -= Time.deltaTime; "
+                    "if (transitionTimer <= 0) SwitchState(currentState.NextState()); } }"
+                ),
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["StubT/Assets/Scripts/ClimbStateFSM.cs"]
+        assert "= Idle" not in cs                    # CS0103 #1: undeclared enum-like member
+        assert "SwitchState" not in cs                # CS0103 #2: undefined method
+        assert ".Update(this)" not in cs              # CS1061 #1
+        assert ".ShouldTransition()" not in cs         # CS1061 #2
+        assert ".NextState()" not in cs                # CS1061 #3
+        assert "private ClimbStateType currentState;" in cs   # field kept, defaults to null
+        assert "[SerializeField] private float transitionTimer = 0f;" in cs   # unrelated field untouched
+
+    def test_stub_type_field_without_calls_is_untouched(self, gen):
+        # A stub-typed field the LLM never calls methods on (pure data holder)
+        # must not be mangled — only method-call statements are stripped.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="StubQuiet", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="Loadout", type="custom", description="x",
+                extra_fields=[{"name": "weapon", "type": "WeaponData", "default": None}],
+                update_extra="transform.position += Vector3.up * Time.deltaTime;",
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["StubQuiet/Assets/Scripts/Loadout.cs"]
+        assert "transform.position += Vector3.up * Time.deltaTime;" in cs
+        assert "private WeaponData weapon;" in cs
+
+    # ── Composed-class component calls (real class, invented member) ───────────
+    def test_getcomponent_call_to_nonexistent_member_stripped(self, gen):
+        # Regression (live Unity, DeepDive run): the LLM correctly used
+        # GetComponent<PlayerController>() — PlayerController IS a real,
+        # composed class in --compose mode — but assumed a GetSpeed() method
+        # that Controller.cs.j2 never exposes (it has ForwardSpeed/SpeedKmh
+        # instead), which is CS1061. Unlike the stub-type case, PlayerController
+        # is a genuine class, so this needs the verified-API allowlist, not the
+        # empty-stub detector.
+        from src.unity_compose import MicroComposer, subsystems_for
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="O2T", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="O2Manager", type="custom", description="oxygen",
+                extra_fields=[{"name": "_oxygenLevel", "type": "float", "default": "100f"}],
+                update_extra=(
+                    "if (_oxygenLevel > 0) _oxygenLevel -= Time.deltaTime * "
+                    "(GetComponent<PlayerController>()?.GetSpeed() ?? 1f) * 0.5f; "
+                    "if (_oxygenLevel < 0) _oxygenLevel = 0;"
+                ),
+            )],
+        )
+        units = MicroComposer("O2T").plan(subsystems_for("3D", []))
+        files = gen.generate(schema, {}, composed_units=units)
+        cs = files["O2T/Assets/Scripts/O2Manager.cs"]
+        assert "GetSpeed" not in cs
+        assert "[SerializeField] private float _oxygenLevel = 100f;" in cs   # field untouched
+
+    def test_getcomponent_call_to_real_member_survives(self, gen):
+        from src.unity_compose import MicroComposer, subsystems_for
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="O2Real", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="SpeedReader", type="custom", description="x",
+                update_extra="float s = GetComponent<PlayerController>().ForwardSpeed;",
+            )],
+        )
+        units = MicroComposer("O2Real").plan(subsystems_for("3D", []))
+        files = gen.generate(schema, {}, composed_units=units)
+        cs = files["O2Real/Assets/Scripts/SpeedReader.cs"]
+        assert "ForwardSpeed" in cs
+
+    def test_gamecontext_variable_call_to_private_member_stripped(self, gen):
+        # Regression (live Unity, DeepDive run): OxygenManager.cs reached
+        # PlayerHealth through the GameContext service locator (the --compose
+        # bridge), not GetComponent<T>(), and stashed the result in a local
+        # variable before calling the invented member on a LATER statement:
+        #   var context = GameContext.Instance.Get<PlayerHealth>();
+        #   if (context != null) { ...; if (_oxygenLevel <= 0f) context.Die(); }
+        # Die() is `private void Die()` on Health.cs.j2 — CS0122. Neither the
+        # GameContext.Instance.Get<T>() getter shape nor the assign-then-call
+        # shape was covered by the original GetComponent<T>().Member() regex.
+        from src.unity_compose import MicroComposer, subsystems_for
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="AbyssalDiver", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="OxygenManager", type="custom", description="oxygen",
+                extra_fields=[{"name": "_oxygenLevel", "type": "float", "default": "100.0f"}],
+                update_extra=(
+                    "var context = GameContext.Instance.Get<PlayerHealth>(); "
+                    "if (context != null) { _oxygenLevel -= _consumptionRate * "
+                    "Time.deltaTime; if (_oxygenLevel <= 0f) context.Die(); }"
+                ),
+            )],
+        )
+        units = MicroComposer("AbyssalDiver").plan(subsystems_for("3D", []))
+        files = gen.generate(schema, {}, composed_units=units)
+        cs = files["AbyssalDiver/Assets/Scripts/OxygenManager.cs"]
+        assert "Die" not in cs
+        assert "[SerializeField] private float _oxygenLevel = 100.0f;" in cs
+
+    def test_gamecontext_variable_call_to_real_member_survives(self, gen):
+        from src.unity_compose import MicroComposer, subsystems_for
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="HealthReader", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="HudBridge", type="custom", description="x",
+                update_extra=(
+                    "var hp = GameContext.Instance.Get<PlayerHealth>(); "
+                    "if (hp != null) hp.TakeDamage(1f);"
+                ),
+            )],
+        )
+        units = MicroComposer("HealthReader").plan(subsystems_for("3D", []))
+        files = gen.generate(schema, {}, composed_units=units)
+        cs = files["HealthReader/Assets/Scripts/HudBridge.cs"]
+        assert "TakeDamage" in cs
+
+    def test_getcomponent_call_without_compose_units_untouched(self, gen):
+        # No composed_units (non --compose run) — nothing to validate against,
+        # so the sanitizer must not touch anything.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="NoCompose", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="Whatever", type="custom", description="x",
+                update_extra="var x = GetComponent<PlayerController>()?.GetSpeed();",
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["NoCompose/Assets/Scripts/Whatever.cs"]
+        assert "GetSpeed" in cs
+
 
 # ── EntitySpawner path placement ────────────────────────────────────────────────
 
@@ -655,15 +856,40 @@ class TestModelPack:
         base.update(kw)
         return UnitySchema(**base)
 
-    def test_models_emitted_with_humanoid_meta(self, gen):
-        files = gen.generate(self._schema(), {})
+    def test_static_pack_model_downgrades_to_generic_even_in_3d(self, gen):
+        # Regression: the static default pack's Player.fbx/Enemy.fbx are
+        # confirmed to carry NO real humanoid skeleton (verified: zero
+        # Hips/Spine/UpperLeg/LowerLeg bone names in the actual FBX binaries)
+        # despite the catalog labeling them rig="humanoid". Forcing Humanoid
+        # on them throws "Required human bone 'LeftLowerLeg' not found" on
+        # EVERY game_type that isn't 2D/2.5D (hit live on a VR project) — the
+        # old fix only downgraded for 2D, which was too narrow. Without a
+        # Blender-built override, this must downgrade to Generic regardless
+        # of game_type, and SetupDefaultModels.cs (which force-reimports as
+        # Humanoid) must not even be emitted.
+        files = gen.generate(self._schema(game_type="3D"), {})
         meta = files.get("MP/Assets/Resources/Models/Default/Player/Player.fbx.meta", "")
-        assert "animationType: 3" in meta            # Humanoid rig
+        assert "animationType: 2" in meta             # Generic, not Humanoid
+        assert "animationType: 3" not in meta
         assert "MP/Assets/Scripts/ModelSwap.cs" in files
-        assert "MP/Assets/Editor/SetupDefaultModels.cs" in files
+        assert "MP/Assets/Editor/SetupDefaultModels.cs" not in files
         s = scene(files, "MP", "Main")
         assert "modelPath: Models/Default/Player/Player" in s
         assert "controllerPath: Models/Default/DefaultCharacter" in s
+
+    def test_blender_built_override_keeps_humanoid_rig(self, gen, tmp_path):
+        # A genuine Blender-built override (see _apply_model_overrides) DOES
+        # ship a real named skeleton, so that specific kind is trusted to stay
+        # Humanoid even outside 2D — only the static-pack fallback downgrades.
+        fake_fbx = tmp_path / "BuiltPlayer.fbx"
+        fake_fbx.write_bytes(b"fake")
+        files = gen.generate(self._schema(game_type="3D"), {},
+                             model_overrides={"player": str(fake_fbx)})
+        # dest_rel/resource_path are inherited from the existing catalog entry
+        # (_apply_model_overrides only swaps src+rig) — still Player/Player.fbx.
+        meta = files.get("MP/Assets/Resources/Models/Default/Player/Player.fbx.meta", "")
+        assert "animationType: 3" in meta
+        assert "MP/Assets/Editor/SetupDefaultModels.cs" in files
 
     def test_missing_pack_degrades_to_primitives(self, gen):
         files = gen.generate(self._schema(), {}, model_source_dir="does/not/exist")
@@ -684,5 +910,118 @@ class TestModelPack:
             EntitySpec(name="Crowd", kind="crowd", count=5),
         ]), {})
         cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
-        assert '"Models/Default/Enemy/Enemy"' in cs  # enemy model exists in seed
-        assert '"", null, sh);' in cs                # crowd has no file yet → primitive
+        assert '"Models/Default/Enemy/Enemy"' in cs        # enemy model exists in seed
+        assert '"Models/Default/Crowd/Spectator"' in cs    # crowd now resolves to a real model (no primitive)
+
+    # ── 2.5D coherence + fail-fast (no-generic-defaults doctrine) ──────────────
+    def test_2d_player_uses_generic_rig_not_humanoid(self, gen):
+        # 2D games render in 2.5D — never a Humanoid avatar (LeftLowerLeg crash).
+        files = gen.generate(self._schema(game_type="2D"), {})
+        meta = files.get("MP/Assets/Resources/Models/Default/Player/Player.fbx.meta", "")
+        assert "animationType: 2" in meta            # Generic
+        assert "animationType: 3" not in meta        # never Humanoid
+
+    def test_2d_entityspawner_uses_collider2d(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(game_type="2D", entities=[
+            EntitySpec(name="Crates", kind="prop", count=4),
+        ]), {})
+        cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
+        assert "BoxCollider2D" in cs                  # 2D physics collider, not 3D
+        assert "XY side-on plane" in cs              # placed in the side-on plane
+
+    def test_scenesetup_has_no_genre_boilerplate(self, gen):
+        files = gen.generate(self._schema(), {})
+        ss = files["MP/Assets/Scripts/SceneSetup.cs"]
+        for banned in ("SURVIVAL HORROR", "Warden", "YOU ESCAPED", "Level1", "BossRoom"):
+            assert banned not in ss, f"SceneSetup still emits boilerplate: {banned}"
+
+    def test_unmapped_kind_falls_back_to_real_prop(self, gen):
+        # No-generic-defaults: an unmapped kind uses a REAL default prop (never a
+        # primitive), so even strict mode succeeds when a library exists.
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(entities=[
+            EntitySpec(name="Wyrm", kind="dragon", count=1),
+        ]), {}, strict_assets=True)
+        cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
+        assert '"Models/Default/Prop/Prop"' in cs        # real prop fallback, not a primitive
+
+    def test_strict_assets_raises_when_library_missing(self, gen):
+        # Strict only hard-fails when there is no real model AT ALL (empty library).
+        from src.unity_schema import EntitySpec
+        with pytest.raises(ValueError, match="assets.strict"):
+            gen.generate(self._schema(entities=[EntitySpec(name="X", kind="prop", count=1)]),
+                         {}, model_source_dir="does/not/exist", strict_assets=True)
+
+    def test_2d_prop_fallback_still_downgrades_humanoid_rig(self, gen, monkeypatch):
+        # Regression: the humanoid->generic downgrade for 2D games used to run
+        # BEFORE the prop-fallback loop that can insert a fresh used_models entry
+        # via setdefault("prop", ...). If that fallback resolves to a humanoid
+        # model (e.g. no "prop" kind in the catalog, so the first model wins),
+        # it bypassed the downgrade entirely and re-triggered the "Required human
+        # bone 'LeftLowerLeg'" Avatar crash for a 2D project. The downgrade must
+        # run AFTER every used_models insertion, including this late one.
+        import src.unity_generator as ug
+        from src.unity_schema import EntitySpec
+        real_resolve = ug.resolve_default_models
+
+        def no_prop_catalog(*a, **kw):
+            models = dict(real_resolve(*a, **kw))
+            models.pop("prop", None)
+            return models
+        monkeypatch.setattr(ug, "resolve_default_models", no_prop_catalog)
+
+        files = gen.generate(self._schema(
+            game_type="2D",
+            entities=[EntitySpec(name="Weirdo", kind="totally_unmapped_kind", count=1)],
+        ), {})
+        metas = {p: c for p, c in files.items() if p.endswith(".fbx.meta")}
+        assert metas, "expected at least one model .meta to be emitted"
+        for path, meta in metas.items():
+            assert "animationType: 3" not in meta, f"{path} still imports as Humanoid in a 2D project"
+        assert not any("SetupDefaultModels" in p for p in files)
+
+
+# ── write() is atomic per file (torn-write / duplicate-fileID hardening) ───────
+# Regression (live Unity): regenerating into a project the Editor already has
+# open races its file watcher — a plain write_text() truncates the file to 0
+# bytes before writing new content, and a reimport inside that window sees a
+# truncated file ("Parser Failure ... Expect ':' between key and value" /
+# "same file identifier (100100000) for multiple object types"). write() must
+# stage each file and swap it into place so the Editor only ever sees a
+# complete file.
+
+class TestAtomicWrite:
+    def _schema(self):
+        from src.unity_schema import UnitySchema
+        return UnitySchema(
+            project_name="AtomicWrite", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+        )
+
+    def test_no_tmp_files_left_behind(self, gen, tmp_path):
+        gen.write(self._schema(), {}, output_dir=str(tmp_path))
+        leftovers = list(tmp_path.rglob("*.tmp"))
+        assert not leftovers, f"temp files not cleaned up: {leftovers}"
+
+    def test_written_content_matches_generated_content(self, gen, tmp_path):
+        root, _ = gen.write(self._schema(), {}, output_dir=str(tmp_path))
+        prefab = root / "Assets" / "Prefabs" / "PlayerController.prefab"
+        assert prefab.exists()
+        content = prefab.read_text(encoding="utf-8")
+        assert "PrefabAsset:" in content
+        assert content.count("{") == content.count("}")
+
+    def test_regenerating_over_existing_project_replaces_atomically(self, gen, tmp_path):
+        # Second write over the same output_dir (the normal "regenerate and
+        # look at it in Unity again" loop) must fully replace file content,
+        # never interleave/append old + new.
+        gen.write(self._schema(), {}, output_dir=str(tmp_path))
+        root, _ = gen.write(self._schema(), {}, output_dir=str(tmp_path))
+        prefab = root / "Assets" / "Prefabs" / "PlayerController.prefab"
+        content = prefab.read_text(encoding="utf-8")
+        # A torn/duplicated write would double the PrefabAsset document header.
+        assert content.count("--- !u!1001 &1001000000") == 1

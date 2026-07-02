@@ -14,6 +14,12 @@ public static class SetupDefaultModels
     private const string PrefKey = "{{ project_name }}_DefaultModelsSetupDone";
     private const string ModelsRoot = "Assets/Resources/Models/Default";
     private const string ControllerPath = ModelsRoot + "/DefaultCharacter.controller";
+    // The generator already decided Humanoid-vs-Generic per model (unity_generator.py
+    // downgrades every humanoid rig to Generic for 2D/2.5D games — a rigged FBX still
+    // has a 'Hips' transform even after that downgrade, so a hasHips-only rescan would
+    // silently re-force Humanoid here and reintroduce the 2D "Required human bone
+    // 'LeftLowerLeg'" avatar crash). Mirror that decision instead of re-deriving it.
+    private const bool AllowHumanoid = {{ "false" if game_type in ("2D", "2.5D") else "true" }};
 
     static SetupDefaultModels()
     {
@@ -51,7 +57,7 @@ public static class SetupDefaultModels
 
             var go = AssetDatabase.LoadMainAssetAtPath(path) as GameObject;
             bool hasHips = go != null && FindDeep(go.transform, "Hips") != null;
-            var want = hasHips
+            var want = (hasHips && AllowHumanoid)
                 ? ModelImporterAnimationType.Human
                 : ModelImporterAnimationType.Generic;
             if (imp.animationType != want)

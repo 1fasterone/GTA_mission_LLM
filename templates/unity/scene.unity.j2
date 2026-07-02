@@ -26,7 +26,7 @@ RenderSettings:
   m_AmbientIntensity: 1
   m_AmbientMode: {{ "3" if game_type == "2D" else "0" }}
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
-  m_SkyboxMaterial: {fileID: {{ "0" if game_type == "2D" else "10304" }}, guid: {{ "0000000000000000f000000000000000" if game_type != "2D" else "0" }}, type: 0}
+  m_SkyboxMaterial: {% if game_type == "2D" %}{fileID: 0}{% else %}{fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}{% endif %}
   m_HaloStrength: 0.5
   m_FlareStrength: 1
   m_FlareFadeSpeed: 3
@@ -1302,10 +1302,12 @@ MonoBehaviour:
 {% set player_units = composed_units | selectattr("target", "equalto", "player") | list %}
 {# target "asset" = class emitted for runtime AddComponent (entities behavior) but
    attached to no scene object — e.g. the racing-line AI that rides each rival. #}
+{# input is a ScriptableObject (assigned to GameWiring._inputSO), never a scene
+   component — excluding it avoids a phantom "missing script" on _Systems. #}
 {% if game_type == "VR" %}
-{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "asset"]) | list %}
+{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "asset"]) | rejectattr("kind", "equalto", "input") | list %}
 {% else %}
-{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "ui", "asset"]) | list %}
+{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "ui", "asset"]) | rejectattr("kind", "equalto", "input") | list %}
 {% endif %}
 {% for u in cam_units %}
 --- !u!114 &{{ u.file_id }}
@@ -1408,6 +1410,11 @@ MonoBehaviour:
 {% endfor %}
 {% endif %}
 {% if sys_units %}
+{# SceneTrigger (zone_enter/exit) and WorldInteractable (trigger detection) both
+   require a Collider(2D) ON THIS GAMEOBJECT to ever receive OnTrigger* callbacks —
+   without one, _Systems has no collider and those micros are silently dead. #}
+{% set sys_kinds = sys_units | map(attribute="kind") | list %}
+{% set needs_sys_collider = "trigger" in sys_kinds or "interactable" in sys_kinds %}
 --- !u!1 &900002000
 GameObject:
   m_ObjectHideFlags: 0
@@ -1417,6 +1424,9 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 900002001}
+{% if needs_sys_collider %}
+  - component: {fileID: 900002900}
+{% endif %}
 {% for u in sys_units %}
   - component: {fileID: {{ u.file_id }}}
 {% endfor %}
@@ -1441,6 +1451,41 @@ Transform:
   m_Father: {fileID: 0}
   m_RootOrder: 9
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+{% if needs_sys_collider %}
+{% if game_type in ("2D", "2.5D") %}
+--- !u!61 &900002900
+BoxCollider2D:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 900002000}
+  m_Enabled: 1
+  m_Density: 1
+  m_Material: {fileID: 0}
+  m_IsTrigger: 1
+  m_UsedByEffector: 0
+  m_UsedByComposite: 0
+  m_Offset: {x: 0, y: 0}
+  serializedVersion: 2
+  m_Size: {x: 10, y: 10}
+  m_EdgeRadius: 0
+{% else %}
+--- !u!65 &900002900
+BoxCollider:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 900002000}
+  m_Material: {fileID: 0}
+  m_IsTrigger: 1
+  m_Enabled: 1
+  serializedVersion: 2
+  m_Size: {x: 10, y: 4, z: 10}
+  m_Center: {x: 0, y: 2, z: 0}
+{% endif %}
+{% endif %}
 {% for u in sys_units %}
 --- !u!114 &{{ u.file_id }}
 MonoBehaviour:
