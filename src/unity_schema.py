@@ -190,6 +190,11 @@ class EntitySpec(BaseModel):
     scale:      float = 1.0
     tag:        str   = "Untagged"
     behavior:   str   = ""
+    # 2-5 plain words describing the physical object ("pine tree", "wooden
+    # ramp", "hanging banner") — steers the per-entity asset-catalog match so
+    # the group spawns a fitting real model instead of the shared default prop.
+    # "default prop" is the escape hatch that keeps Models/Defaults' Prop.fbx.
+    model_hint: str   = ""
     atoms:      list[AtomInvocation] = Field(default_factory=list)
     # placement == "path": world-space [x, y, z] points (y = elevation!). The
     # spawner lays the instances along this polyline AND emits a "Waypoints"
@@ -213,6 +218,13 @@ class EntitySpec(BaseModel):
                 nums.append(0.0)
             out.append([max(-2000.0, min(2000.0, n)) for n in nums])
         return out
+
+    @field_validator("model_hint", mode="before")
+    @classmethod
+    def _clamp_model_hint(cls, v) -> str:
+        """Lowercase, ≤ 6 plain words — a search phrase, not a sentence."""
+        words = re.sub(r"[^a-z0-9\s-]", " ", str(v or "").lower()).split()
+        return " ".join(words[:6])
 
     @field_validator("count", mode="before")
     @classmethod
@@ -283,6 +295,62 @@ class EnvironmentSpec(BaseModel):
             return max(0.0, min(3.0, float(v)))
         except (TypeError, ValueError):
             return None
+
+
+class SceneSpec(BaseModel):
+    """Per-scene content: mood overrides + which entity groups live there.
+
+    This is what makes "StormShelf — thunderheads, boss encounter" render
+    differently from "FinalApproach — low-altitude dawn descent" instead of
+    every gameplay scene being a byte-identical template. `name` must match an
+    entry in schema.scenes; unset fields inherit the project environment.
+    """
+    name:        str = ""
+    description: str = ""                       # one line; also drives mood inference
+    time_of_day: str = ""                       # "" = inherit project environment
+    fog:         Optional[bool] = None
+    fog_color:   Optional[str]  = None
+    # None = all entity groups spawn here (default); [] = an empty scene;
+    # otherwise the entity NAMES active in this scene.
+    entities:    Optional[list[str]] = None
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _clean_name(cls, v: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9_-]", "", str(v or ""))
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def _clamp_desc(cls, v: str) -> str:
+        return str(v or "").strip()[:200]
+
+    @field_validator("time_of_day", mode="before")
+    @classmethod
+    def _clamp_tod(cls, v: str) -> str:
+        s = str(v or "").lower().strip()
+        if not s:
+            return ""                            # inherit
+        synonyms = {"morning": "dawn", "sunrise": "dawn", "noon": "day",
+                    "midday": "day", "dusk": "sunset", "evening": "sunset",
+                    "midnight": "night", "dark": "night"}
+        s = synonyms.get(s, s)
+        return s if s in ("dawn", "day", "sunset", "night") else ""
+
+    @field_validator("fog_color", mode="before")
+    @classmethod
+    def _norm_fog_color(cls, v):
+        if v is None or str(v).strip() == "":
+            return None
+        return _norm_hex(str(v))
+
+    @field_validator("entities", mode="before")
+    @classmethod
+    def _clean_entities(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            return None
+        return [str(x).strip() for x in v[:40] if str(x).strip()]
 
 
 class ColorPalette(BaseModel):
@@ -821,6 +889,7 @@ class UnitySchema(BaseModel):
 
     # ── Legacy/existing collections (kept for backward compat) ────────────────
     scenes:            list[str]             = Field(default_factory=lambda: ["Main", "MainMenu"])
+    scene_specs:       list[SceneSpec]       = Field(default_factory=list, max_length=8)
     features:          list[str]             = Field(default_factory=list)
     packages:          list[UnityPackage]    = Field(default_factory=list, max_length=20)
     scripts:           list[UnityScript]     = Field(default_factory=list, max_length=24)

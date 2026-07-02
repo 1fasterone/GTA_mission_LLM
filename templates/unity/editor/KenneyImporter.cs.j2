@@ -25,7 +25,7 @@ public static class KenneyImporter
     private static readonly List<(string file, string pack, string desc)> _assets = new()
     {
 {% for asset in kenney_assets %}
-        ("{{ asset.filename }}", "{{ asset.pack }}", "{{ asset.description }}"),
+        ("{{ asset.filename }}", "{{ asset.pack }}", "{{ asset.description | default('', true) }}"),
 {% endfor %}
     };
 

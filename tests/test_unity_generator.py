@@ -936,18 +936,28 @@ class TestModelPack:
         for banned in ("SURVIVAL HORROR", "Warden", "YOU ESCAPED", "Level1", "BossRoom"):
             assert banned not in ss, f"SceneSetup still emits boilerplate: {banned}"
 
-    def test_unmapped_kind_falls_back_to_real_prop(self, gen):
-        # No-generic-defaults: an unmapped kind uses a REAL default prop (never a
-        # primitive), so even strict mode succeeds when a library exists.
+    def test_strict_unmatched_kind_hard_fails(self, gen):
+        # FAIL-FAST doctrine: in strict mode an entity matching neither the
+        # default pack nor the asset catalog stops the build with an actionable
+        # error — it must NOT silently share one generic prop.
+        from src.unity_schema import EntitySpec
+        with pytest.raises(ValueError, match="assets.strict"):
+            gen.generate(self._schema(entities=[
+                EntitySpec(name="Wyrm", kind="dragon", count=1),
+            ]), {}, strict_assets=True)
+
+    def test_nonstrict_unmatched_kind_falls_back_to_real_prop(self, gen):
+        # Non-strict keeps the old graceful path: a REAL default prop (never a
+        # primitive), logged so a fitting model can be added later.
         from src.unity_schema import EntitySpec
         files = gen.generate(self._schema(entities=[
             EntitySpec(name="Wyrm", kind="dragon", count=1),
-        ]), {}, strict_assets=True)
+        ]), {}, strict_assets=False)
         cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
         assert '"Models/Default/Prop/Prop"' in cs        # real prop fallback, not a primitive
 
     def test_strict_assets_raises_when_library_missing(self, gen):
-        # Strict only hard-fails when there is no real model AT ALL (empty library).
+        # Strict hard-fails when there is nothing real to resolve to at all.
         from src.unity_schema import EntitySpec
         with pytest.raises(ValueError, match="assets.strict"):
             gen.generate(self._schema(entities=[EntitySpec(name="X", kind="prop", count=1)]),
@@ -1025,3 +1035,66 @@ class TestAtomicWrite:
         content = prefab.read_text(encoding="utf-8")
         # A torn/duplicated write would double the PrefabAsset document header.
         assert content.count("--- !u!1001 &1001000000") == 1
+
+
+# ── Per-scene content (SceneSpec) ───────────────────────────────────────────────
+# Regression target (TerminalHorizon, live): 7 gameplay scenes rendered as
+# byte-identical templates — per-scene mood and entity subsets must actually
+# change what each scene file contains.
+
+class TestSceneSpecs:
+    def _schema(self, **kw):
+        from src.unity_schema import EntitySpec, SceneSpec, UnitySchema
+        base = dict(
+            project_name="SS", company_name="C", description="d",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], packages=[],
+            scenes=["Main", "StormShelf", "GearBay"],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            entities=[
+                EntitySpec(name="Drones", kind="enemy", count=4, tag="Enemy"),
+                EntitySpec(name="Wreckage", kind="obstacle", count=6),
+            ],
+            scene_specs=[
+                SceneSpec(name="StormShelf", description="thunderhead interior",
+                          time_of_day="night", fog=True,
+                          entities=["Drones"]),
+                SceneSpec(name="GearBay", description="equipment hub",
+                          entities=[]),
+            ],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_scenes_render_differently(self, gen):
+        files = gen.generate(self._schema(), {})
+        main  = scene(files, "SS", "Main")
+        storm = scene(files, "SS", "StormShelf")
+        assert main != storm
+        # night sun pitch + fog land only in the spec'd scene
+        assert "m_Fog: 1" in storm
+        assert "m_Fog: 1" not in main
+
+    def test_entity_subset_controls_spawner_presence(self, gen):
+        files = gen.generate(self._schema(), {})
+        assert "EntitySpawner" in scene(files, "SS", "Main")        # all groups
+        assert "EntitySpawner" in scene(files, "SS", "StormShelf")  # subset
+        assert "EntitySpawner" not in scene(files, "SS", "GearBay") # empty scene
+
+    def test_spawner_emits_runtime_scene_filter(self, gen):
+        files = gen.generate(self._schema(), {})
+        cs = files["SS/Assets/Scripts/EntitySpawner.cs"]
+        assert "SceneManagement" in cs
+        assert "GroupActive" in cs
+        assert '"StormShelf"' in cs and '"Drones"' in cs
+        assert 'if (GroupActive(_scene, "Drones"))' in cs
+        assert 'if (GroupActive(_scene, "Wreckage"))' in cs
+
+    def test_no_scene_specs_keeps_legacy_output(self, gen):
+        files = gen.generate(self._schema(scene_specs=[]), {})
+        cs = files["SS/Assets/Scripts/EntitySpawner.cs"]
+        assert "SceneManagement" not in cs
+        assert "GroupActive" not in cs
+        # all gameplay scenes identical as before
+        assert scene(files, "SS", "Main") == scene(files, "SS", "StormShelf")

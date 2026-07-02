@@ -42,6 +42,24 @@ unity_pipeline:
   # Dev-only; set false for distribution/build outputs.
   inject_mcp_bridge: true
 
+assets:
+  # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve
+  # to a REAL model — an explicit kind in the default pack
+  # (lookups/unity/default_models.json + Models/Defaults), a semantic match in
+  # the full asset catalog, or a Blender-built FBX. When strict, an entity
+  # matching nothing HARD-FAILS the build with the query tokens + near misses
+  # instead of silently spawning one shared prop. Give entities a model_hint,
+  # extend the library, or set false only for throwaway WIP.
+  strict: true
+  # Asset library roots scanned by `python main.py unity-catalog` into
+  # lookups/unity/asset_catalog.json (regenerate after adding packs).
+  roots: ["Models/FBX format"]
+  # Minimum keyword-overlap score for a catalog match (0.0-1.0-ish scale).
+  min_match_score: 0.15
+  # Same-kind entity groups rotate among the top-K near-equal matches so a
+  # forest isn't 5 copies of the same tree. Deterministic (schema order).
+  variety_top_k: 5
+
 blender:                           # external asset-fulfilment stage (blender_cli.py)
   blender_path: ''                 # empty => auto-detect (PATH + standard installs)
   output_dir: output/blender

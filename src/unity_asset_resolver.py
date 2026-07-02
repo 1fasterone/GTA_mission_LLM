@@ -37,11 +37,15 @@ _STYLE_BOOST: dict[str, float] = {
 
 
 def _load_catalog(lookups_dir: str) -> dict:
-    path = Path(lookups_dir) / "unity" / "kenney_catalog.json"
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return {}
+    # Prefer the generated full-library catalog (unity-catalog CLI); fall back
+    # to the hand-curated kenney catalog so old checkouts keep working.
+    for name in ("asset_catalog.json", "kenney_catalog.json"):
+        path = Path(lookups_dir) / "unity" / name
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            continue
+    return {}
 
 
 def _score_asset(asset: dict, query_words: set[str],

@@ -1,6 +1,31 @@
 # Free Asset Sources — Unity
 
-Every generated Unity project now ships with an empty
+## The asset catalog (how the library reaches scenes)
+
+The compiler assigns a **real model to every entity group** through a
+generated catalog of the whole on-disk library:
+
+```
+Models/…  ──python main.py unity-catalog──▶  lookups/unity/asset_catalog.json
+   asset_catalog.json ──unity_entity_asset_resolver.py──▶ entity_model_paths
+   entity_model_paths ──EntitySpawner/ModelSwap──▶ spawned scene objects
+```
+
+- `python main.py unity-catalog` scans the roots in config `assets.roots`
+  (default `Models/FBX format`), derives keywords/category/kind hints from
+  each filename, and merges curated metadata from `kenney_catalog.json`.
+  **Re-run it after adding a pack**; `--check` is the CI staleness gate.
+- Per entity, resolution tiers are: explicit kind in
+  `lookups/unity/default_models.json` → semantic match against the full
+  catalog (entity name + kind + `model_hint`) → strict hard-fail
+  (config `assets.strict`, the FAIL-FAST doctrine) or a logged default-prop
+  fallback when strict is off.
+- Same-kind groups deterministically rotate among the top matches, so a
+  forest isn't twelve copies of one tree.
+- Kenney texture folders are copied beside the imported models so materials
+  don't come in blank.
+
+Every generated Unity project also ships with an empty
 `Assets/_UserAssets/` folder. Drop your own meshes, textures, animations,
 and audio in there. The leading underscore sorts it to the top of the
 Project window so you can find it instantly.

@@ -436,8 +436,11 @@ def unity_validate(
         template_dir=pipe_cfg.get("unity_template_dir", "templates/unity")
     )
     output_dir = pipe_cfg.get("unity_output_dir", "output/unity")
+    _asset_cfg = cfg.get("assets", {}) or {}
     root, count = gen.write(schema, deps, output_dir,
-                            model_overrides=model_overrides or None)
+                            model_overrides=model_overrides or None,
+                            strict_assets=bool(_asset_cfg.get("strict", True)),
+                            asset_cfg=_asset_cfg)
     # Write schema sidecar so unity-model --unity-project can find and re-inject models.
     try:
         (root / f"{schema.project_name}.schema.json").write_text(
@@ -498,6 +501,68 @@ def unity_migrate(
 
     dest.write_text(json.dumps(updated, indent=2), encoding="utf-8")
     console.print(f"[green]Written[/] → {dest}")
+
+
+@app.command("unity-catalog")
+def unity_catalog(
+    config:  str  = typer.Option("config.yaml", "--config", "-c"),
+    lookups: str  = typer.Option("lookups", "--lookups",
+                                 help="Lookups directory (catalog output location)"),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Print stats without writing"),
+    check:   bool = typer.Option(False, "--check",
+                                 help="Exit 1 if the on-disk catalog is stale (CI hook)"),
+) -> None:
+    """Scan the asset library and (re)generate lookups/unity/asset_catalog.json.
+
+    Walks the roots from config `assets.roots` (default: Models/FBX format),
+    derives category/keywords/kind hints from each filename, and merges curated
+    metadata from kenney_catalog.json. Output is byte-idempotent — safe to
+    re-run and diff.
+
+    \b
+    Examples:
+      python main.py unity-catalog                # scan + write
+      python main.py unity-catalog --dry-run      # stats only
+      python main.py unity-catalog --check        # CI staleness gate
+    """
+    from src.unity_asset_catalog import (CATALOG_RELPATH, CURATED_RELPATH,
+                                         DEFAULT_ROOTS, build_catalog,
+                                         is_stale, write_catalog)
+
+    try:
+        asset_cfg = _cfg(config).get("assets", {}) or {}
+    except FileNotFoundError:
+        asset_cfg = {}
+    roots = asset_cfg.get("roots") or list(DEFAULT_ROOTS)
+
+    lookups_dir  = Path(lookups)
+    curated_path = lookups_dir / CURATED_RELPATH
+    out_path     = lookups_dir / CATALOG_RELPATH
+
+    catalog = build_catalog(roots, curated_path=curated_path)
+    n       = len(catalog["assets"])
+    by_cat  = {c: sum(1 for a in catalog["assets"] if a["category"] == c)
+               for c in catalog["vocabulary"]["categories"]}
+    curated_n = sum(1 for a in catalog["assets"] if a["curated"])
+
+    console.print(f"[cyan]Catalog[/] {n} assets from {roots} "
+                  f"({curated_n} curated) — {by_cat}")
+    if n == 0:
+        console.print("[red]Error:[/] no assets found — check assets.roots in config")
+        raise typer.Exit(1)
+
+    if check:
+        if is_stale(catalog, out_path):
+            console.print(f"[red]STALE[/] {out_path} differs from a fresh build — "
+                          "run: python main.py unity-catalog")
+            raise typer.Exit(1)
+        console.print(f"[green]OK[/] {out_path} is up to date")
+        return
+    if dry_run:
+        return
+    write_catalog(catalog, out_path)
+    console.print(f"[green]Written[/] → {out_path}")
 
 
 # ── Unity micro-generator subcommands ─────────────────────────────────────────

@@ -311,6 +311,49 @@ class TestUnityConsistencyChecks:
         assert "game_manager" in types
         assert any("GameManager" in f for f in fixes)
 
+    def test_scene_specs_reconciled_and_mood_inferred(self):
+        from src.unity_schema import EntitySpec, SceneSpec
+        schema = self._base_schema(
+            scenes=["Main", "StormShelf", "FinalApproach"],
+            entities=[EntitySpec(name="Drones", kind="enemy", count=4)],
+            scene_specs=[
+                SceneSpec(name="StormShelf",
+                          description="thunderheads, lightning arcs, boss drone",
+                          entities=["Drones", "GhostGroup"]),
+                SceneSpec(name="FinalApproach",
+                          description="low-altitude descent at dusk, wind shear"),
+                SceneSpec(name="NoSuchScene", description="orphan"),
+                SceneSpec(name="StormShelf", description="duplicate — dropped"),
+            ])
+        fixed, fixes = _check_consistency(schema)
+        by_name = {sp.name: sp for sp in fixed.scene_specs}
+        assert set(by_name) == {"StormShelf", "FinalApproach"}
+        assert by_name["StormShelf"].entities == ["Drones"]      # unknown dropped
+        assert by_name["StormShelf"].fog is True                 # "thunderheads"
+        assert by_name["FinalApproach"].time_of_day == "sunset"  # "dusk"
+        assert any("NoSuchScene" in f for f in fixes)
+        assert any("GhostGroup" in f for f in fixes)
+
+    def test_empty_model_hint_backfilled_from_name(self):
+        # The local LLM routinely omits model_hint (TerminalHorizon: all 6
+        # empty) — the fixer must backfill deterministically from the name.
+        from src.unity_schema import EntitySpec
+        schema = self._base_schema(entities=[
+            EntitySpec(name="AtmosphericClouds", kind="prop", count=20),
+            EntitySpec(name="InterceptorDrones", kind="enemy", count=8),
+            EntitySpec(name="Pickups", kind="pickup", count=3,
+                       model_hint="glowing shard"),   # respected, not overwritten
+        ])
+        fixed, fixes = _check_consistency(schema)
+        hints = {e.name: e.model_hint for e in fixed.entities}
+        assert hints["AtmosphericClouds"] == "atmospheric clouds"
+        assert hints["InterceptorDrones"] == "interceptor drones enemy"
+        assert hints["Pickups"] == "glowing shard"
+        assert any("model_hint" in f for f in fixes)
+        # idempotent: second pass changes nothing
+        _, fixes2 = _check_consistency(fixed)
+        assert not any("model_hint" in f for f in fixes2)
+
     def test_player_controller_injected_when_missing(self):
         schema = self._base_schema(scripts=[
             UnityScript(name="GameManager", type="game_manager", description="GM"),

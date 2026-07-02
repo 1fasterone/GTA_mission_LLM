@@ -1,0 +1,320 @@
+"""
+Asset catalog builder — deterministic scan of on-disk model libraries.
+
+Walks configured asset roots (Models/FBX format etc.), derives category,
+keywords and kind hints from each filename, merges curated metadata from the
+hand-written kenney_catalog.json, and emits lookups/unity/asset_catalog.json.
+
+The output is byte-idempotent: assets sorted by relpath, keys sorted, no
+timestamps — running the builder twice over the same tree yields identical
+bytes. Downstream (unity_entity_asset_resolver.py, unity_asset_resolver.py)
+treats the catalog as read-only lookup data, keeping Steps 4-6 deterministic.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from collections import Counter
+from pathlib import Path
+from typing import Iterable, Optional
+
+CATALOG_VERSION = 1
+DEFAULT_ROOTS = ("Models/FBX format",)
+DEFAULT_FORMATS = ("fbx",)
+CATALOG_RELPATH = Path("unity") / "asset_catalog.json"
+CURATED_RELPATH = Path("unity") / "kenney_catalog.json"
+
+# Directories that never contain spawnable scene models: shared textures,
+# animation clip libraries, and the static default pack (already covered by
+# default_models.json).
+_SKIP_DIRS = frozenset({"textures", "players", "defaults"})
+
+# First filename token → catalog category. Unmapped tokens fall back to "prop".
+_CATEGORY_MAP: dict[str, str] = {
+    "tree":       "nature",
+    "rock":       "nature",
+    "plant":      "nature",
+    "floor":      "structure",
+    "structure":  "structure",
+    "steps":      "structure",
+    "wall":       "structure",
+    "support":    "structure",
+    "ramp":       "track",
+    "rail":       "track",
+    "bowl":       "track",
+    "bend":       "track",
+    "curve":      "track",
+    "helix":      "track",
+    "funnel":     "track",
+    "slant":      "track",
+    "split":      "track",
+    "straight":   "track",
+    "wave":       "track",
+    "bump":       "track",
+    "tunnel":     "track",
+    "cross":      "track",
+    "corner":     "track",
+    "end":        "track",
+    "half":       "track",
+    "s":          "track",
+    "marble":     "track",
+    "fan":        "mechanism",
+    "banner":     "prop",
+    "pallet":     "prop",
+    "obstacle":   "obstacle",
+    "character":  "character",
+    "skateboard": "vehicle",
+}
+
+# Token → extra keywords, so entity names like "PineForest" or "GrindRail"
+# overlap the derived keyword sets without curated entries.
+_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "tree":       ("forest", "pine", "wood", "nature", "plant", "foliage"),
+    "rock":       ("stone", "boulder", "nature"),
+    "floor":      ("ground", "surface", "tile", "terrain", "base"),
+    "structure":  ("platform", "frame", "building", "scaffold"),
+    "steps":      ("stairs", "staircase", "climb", "elevation"),
+    "wall":       ("barrier", "fence", "divider"),
+    "support":    ("pillar", "column", "post", "scaffold", "beam"),
+    "ramp":       ("slope", "incline", "jump", "skate", "quarter"),
+    "rail":       ("grind", "fence", "bar", "handrail"),
+    "bowl":       ("pool", "skatepark", "basin"),
+    "bend":       ("turn", "curve", "corner"),
+    "curve":      ("turn", "bend", "arc"),
+    "helix":      ("spiral", "corkscrew", "loop"),
+    "funnel":     ("cone", "vortex"),
+    "slant":      ("slope", "incline", "diagonal"),
+    "split":      ("fork", "branch", "junction"),
+    "straight":   ("track", "lane", "segment"),
+    "wave":       ("ripple", "undulating"),
+    "bump":       ("mound", "hill", "hump"),
+    "tunnel":     ("pipe", "tube", "passage", "underground"),
+    "cross":      ("intersection", "junction", "crossing"),
+    "corner":     ("turn", "edge", "bend"),
+    "end":        ("cap", "terminus", "finish"),
+    "half":       ("halfpipe", "pipe", "skate"),
+    "marble":     ("ball", "sphere", "toy"),
+    "fan":        ("spinner", "propeller", "rotor", "windmill"),
+    "banner":     ("flag", "sign", "pennant", "decoration"),
+    "pallet":     ("crate", "box", "warehouse", "cargo"),
+    "obstacle":   ("barrier", "block", "hazard", "cover"),
+    "character":  ("person", "human", "npc", "skater", "figure"),
+    "skateboard": ("board", "deck", "ride"),
+    "solid":      (),          # structural modifier — keep token, no expansion
+    "hole":       ("gap", "opening"),
+    "hanging":    ("suspended", "overhead"),
+    "standing":   ("upright",),
+    "color":      ("colored", "painted"),
+}
+
+# Category → entity kinds (default_models.json vocabulary) the asset can serve.
+_KIND_HINTS: dict[str, tuple[str, ...]] = {
+    "nature":    ("tree",),
+    "structure": ("building", "ground", "prop"),
+    "track":     ("ramp", "rail", "road", "obstacle"),
+    "mechanism": ("prop", "hazard"),
+    "prop":      ("prop",),
+    "obstacle":  ("obstacle", "hazard"),
+    "character": ("npc", "crowd"),
+    "vehicle":   ("vehicle",),
+}
+
+# First token → kind hints that are more specific than the category default.
+_TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
+    "ramp":  ("ramp",),
+    "rail":  ("rail",),
+    "floor": ("ground", "road"),
+    "steps": ("prop", "building"),
+    "tree":  ("tree",),
+}
+
+# Category → default import scale. Kenney packs are authored around 1 unit;
+# marble-track pieces read better slightly larger next to a 1.8u character.
+_CATEGORY_SCALE: dict[str, float] = {}
+
+# Tokens that describe size/variant, not semantics — excluded from keywords.
+_NOISE_TOKENS = frozenset({
+    "a", "b", "c", "d", "large", "medium", "small", "wide", "long", "short",
+    "high", "low", "left", "right", "inner", "outer", "single", "double",
+    "two", "four", "top", "middle", "bottom", "simple", "quarter", "sides",
+})
+
+
+def tokenize(stem: str) -> list[str]:
+    """Split a filename stem (or entity name) into lowercase word tokens."""
+    # camelCase / PascalCase → separate words, then split on -, _, spaces, digits
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", stem)
+    return [t for t in re.split(r"[-_\s.\d]+", spaced.lower()) if t]
+
+
+def scan_assets(roots: Iterable[Path],
+                formats: tuple[str, ...] = DEFAULT_FORMATS) -> list[tuple[Path, Path]]:
+    """Return sorted (file, root) pairs for every model file under the roots.
+
+    Skips Textures/Players/Defaults subtrees and non-model files. Sorting by
+    relpath makes the result independent of os.walk order.
+    """
+    exts = {f".{f.lower().lstrip('.')}" for f in formats}
+    found: list[tuple[Path, Path]] = []
+    for root in roots:
+        root = Path(root)
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in exts:
+                continue
+            rel_parts = path.relative_to(root).parts[:-1]
+            if any(p.lower() in _SKIP_DIRS for p in rel_parts):
+                continue
+            found.append((path, root))
+    found.sort(key=lambda pair: (pair[0].relative_to(pair[1]).as_posix(),
+                                 pair[1].as_posix()))
+    return found
+
+
+def derive_entry(path: Path, root: Path) -> dict:
+    """Derive a catalog entry from a model file's name and location."""
+    tokens = tokenize(path.stem)
+    first = tokens[0] if tokens else "prop"
+    category = _CATEGORY_MAP.get(first, "prop")
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+
+    def _add(word: str) -> None:
+        if word and word not in seen:
+            seen.add(word)
+            keywords.append(word)
+
+    for tok in tokens:
+        if tok not in _NOISE_TOKENS:
+            _add(tok)
+        for syn in _SYNONYMS.get(tok, ()):
+            _add(syn)
+    _add(category)
+
+    kind_hints = list(_TOKEN_KIND_HINTS.get(first, _KIND_HINTS.get(category, ("prop",))))
+
+    return {
+        "filename": path.name,
+        "relpath": path.relative_to(root).as_posix(),
+        "root": root.as_posix(),
+        "format": path.suffix.lstrip(".").lower(),
+        "pack": _pack_for_root(root),
+        "category": category,
+        "description": f"{' '.join(tokens)} — {category} model",
+        "keywords": keywords,
+        "kind_hints": kind_hints,
+        "game_contexts": ["any"],
+        "generic_score": 0,
+        "scale": _CATEGORY_SCALE.get(category, 1.0),
+        "curated": False,
+    }
+
+
+def _pack_for_root(root: Path) -> str:
+    """Pack label from the root folder name (packs are merged on disk)."""
+    name = root.name.lower().replace(" ", "_")
+    return f"kenney_{name}" if "kenney" not in name else name
+
+
+def _load_curated(curated_path: Path) -> dict[str, dict]:
+    """Filename → curated entry from the hand-written kenney catalog."""
+    try:
+        data = json.loads(curated_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return {a["filename"]: a for a in data.get("assets", []) if "filename" in a}
+
+
+# Curated fields that override derived values when present.
+_CURATED_FIELDS = ("category", "keywords", "kind_hints", "game_contexts",
+                   "description", "generic_score", "scale", "pack")
+
+
+def build_catalog(roots: Iterable[str | Path],
+                  curated_path: Optional[Path] = None,
+                  formats: tuple[str, ...] = DEFAULT_FORMATS) -> dict:
+    """Scan the roots and return the full catalog dict (stable ordering)."""
+    root_paths = [Path(r) for r in roots]
+    curated = _load_curated(curated_path) if curated_path else {}
+
+    assets: list[dict] = []
+    for path, root in scan_assets(root_paths, formats):
+        entry = derive_entry(path, root)
+        cur = curated.get(entry["filename"])
+        if cur:
+            for field in _CURATED_FIELDS:
+                if field in cur:
+                    entry[field] = cur[field]
+            entry["curated"] = True
+        assets.append(entry)
+
+    categories = sorted({a["category"] for a in assets})
+    tag_counts: Counter[str] = Counter()
+    for a in assets:
+        tag_counts.update(a["keywords"])
+    # Top tags by frequency, ties broken alphabetically → deterministic.
+    top_tags = [t for t, _ in sorted(tag_counts.items(),
+                                     key=lambda kv: (-kv[1], kv[0]))[:40]]
+
+    return {
+        "version": CATALOG_VERSION,
+        "roots": sorted(p.as_posix() for p in root_paths),
+        "vocabulary": {"categories": categories, "tags": sorted(top_tags)},
+        "assets": assets,
+    }
+
+
+def catalog_json(catalog: dict) -> str:
+    """Serialize with stable key order — byte-idempotent output."""
+    return json.dumps(catalog, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+
+def write_catalog(catalog: dict, out_path: Path) -> Path:
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(catalog_json(catalog), encoding="utf-8")
+    return out_path
+
+
+def is_stale(catalog: dict, out_path: Path) -> bool:
+    """True when the on-disk catalog differs from a fresh build."""
+    try:
+        return out_path.read_text(encoding="utf-8") != catalog_json(catalog)
+    except FileNotFoundError:
+        return True
+
+
+def load_catalog(lookups_dir: str = "lookups") -> dict:
+    """Read the generated catalog; falls back to the curated kenney catalog
+    (whose entries share the same shape) so old checkouts keep working."""
+    for rel in (CATALOG_RELPATH, CURATED_RELPATH):
+        path = Path(lookups_dir) / rel
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError):
+            continue
+    return {}
+
+
+def asset_vocabulary(lookups_dir: str = "lookups") -> str:
+    """Compact asset-library vocabulary for the schema-fill prompt.
+
+    Keeps the LLM's view small (categories + top tags, not 580 filenames) so
+    it can emit useful entity kinds / model_hints without prompt bloat.
+    Missing catalog → empty string (prompt unchanged).
+    """
+    catalog = load_catalog(lookups_dir)
+    vocab = catalog.get("vocabulary") or {}
+    categories = vocab.get("categories") or []
+    tags = vocab.get("tags") or []
+    if not categories and not tags:
+        return ""
+    lines = ["ASSET LIBRARY — set each entity's model_hint to 2-5 plain words "
+             "matching a real model. Vocabulary:"]
+    if categories:
+        lines.append(f"  categories: {', '.join(categories)}")
+    if tags:
+        lines.append(f"  tags: {', '.join(tags)}")
+    return "\n".join(lines)
