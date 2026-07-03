@@ -206,9 +206,15 @@ class CachingClient:
         return self._cached(self._key("music", prompt, dur, seed),
                             lambda: self.adapter.music(prompt, dur, seed))
 
-    def tts(self, text: str, voice: str, seed: int) -> Optional[np.ndarray]:
-        return self._cached(self._key("tts", text, voice, seed),
-                            lambda: self.adapter.tts(text, voice, seed))
+    def tts(self, text: str, voice: str, seed: int, **kw) -> Optional[np.ndarray]:
+        # Dialog passes language/emotion/style beyond the base signature — they
+        # must reach the adapter AND participate in the cache key, or a happy
+        # line and an angry line of the same text collide on one .wav. (The
+        # old 3-arg signature made every dialog call TypeError into the
+        # text-only path — hit live wiring up NPC dialog TTS.)
+        extras = [f"{k}={kw[k]}" for k in sorted(kw)]
+        return self._cached(self._key("tts", text, voice, seed, *extras),
+                            lambda: self.adapter.tts(text, voice, seed, **kw))
 
 
 def make_audio_client(config: dict) -> CachingClient:

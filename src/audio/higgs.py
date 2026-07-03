@@ -223,11 +223,42 @@ def _resample(audio: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
         return np.interp(idx, np.arange(len(audio)), audio).astype(np.float32)
 
 
-def make_higgs_client(config: dict) -> "HiggsCachingClient":
-    """Build a caching Higgs TTS client from config. Mirrors make_audio_client()."""
+class _NoneTts:
+    """audio.tts_backend: none — every line stays text-only."""
+    name = "tts_none"
+    def tts(self, *a, **kw):   return None   # noqa: E704
+    def sfx(self, *a, **kw):   return None   # noqa: E704
+    def music(self, *a, **kw): return None   # noqa: E704
+
+
+def make_tts_client(config: dict):
+    """Build the caching NPC-dialog TTS client from config.
+
+    `audio.tts_backend` selects the engine (separate from `audio.backend`,
+    which drives sfx/music — SA3 stays on the big GPU budget while speech
+    uses a model that actually fits):
+      kokoro — Kokoro-82M, ~330 MB, CPU/any-GPU (default; Higgs Audio v2's
+               11 GB of weights cannot load on an 8 GB card — hit live)
+      higgs  — Higgs Audio v2 (needs ~11 GB VRAM)
+      none   — text-only dialog
+    """
     from pathlib import Path
     from .backends import CachingClient
     cfg       = (config or {}).get("audio", {})
+    backend   = str(cfg.get("tts_backend", "kokoro")).strip().lower()
+    if backend == "higgs":
+        adapter = HiggsAdapter(config)
+    elif backend == "none":
+        adapter = _NoneTts()
+    else:
+        from .kokoro_tts import KokoroAdapter   # lazy — keeps module import light
+        adapter = KokoroAdapter(config)
     cache_dir = Path(cfg.get("dialog_cache_dir",
                               cfg.get("cache_dir", "output/audio_cache")))
-    return CachingClient(HiggsAdapter(config), cache_dir)
+    return CachingClient(adapter, cache_dir)
+
+
+def make_higgs_client(config: dict):
+    """Back-compat alias — the dialog pipeline now selects its TTS engine via
+    audio.tts_backend (see make_tts_client)."""
+    return make_tts_client(config)

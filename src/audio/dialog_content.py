@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 
 from . import synth
-from .higgs import make_higgs_client
+from .higgs import make_tts_client
 
 
 def _slug(s: str) -> str:
@@ -70,7 +70,7 @@ def generate_dialog_bank(
     audio_dir.mkdir(parents=True, exist_ok=True)
     manifest_dir.mkdir(parents=True, exist_ok=True)
 
-    client   = make_higgs_client(config)
+    client   = make_tts_client(config)
     warnings: list[str] = []
     entries:  list[dict] = []
 

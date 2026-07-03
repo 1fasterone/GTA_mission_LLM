@@ -74,6 +74,16 @@ blender:                           # external asset-fulfilment stage (blender_cl
     base_url: http://127.0.0.1:7860
     timeout: 180
 
+audio:
+  backend: dsp                     # sfx/music: dsp | local | stable3 | none
+  cache_dir: output/audio_cache
+  # NPC dialog speech synthesis (separate from `backend`).
+  #   kokoro — Kokoro-82M (~330 MB, Apache-2.0), CPU or any GPU. Default.
+  #   higgs  — Higgs Audio v2: needs ~11 GB VRAM, does NOT fit an 8 GB card.
+  #   none   — dialog stays text-only.
+  # Install once: pip install kokoro soundfile
+  tts_backend: kokoro
+
 logging:
   level: INFO
   show_prompts: false
