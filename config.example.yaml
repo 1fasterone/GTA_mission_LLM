@@ -56,7 +56,7 @@ assets:
   roots: ["Models/FBX format"]
   # 2D sprite roots (PNG). Sprites are preferred over 3D models for 2D games;
   # the spawner builds Sprites at runtime, so no import settings needed.
-  sprite_roots: ["Models/FishPack/PNG/Default"]
+  sprite_roots: ["Models/FishPack/PNG/Default", "Models/2d-space-kit", "Models/space-shooter-pack/PNG", "Models/space-shooter-remastered/PNG"]
   # Minimum keyword-overlap score for a catalog match (0.0-1.0-ish scale).
   min_match_score: 0.15
   # Same-kind entity groups rotate among the top-K near-equal matches so a

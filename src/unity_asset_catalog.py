@@ -24,7 +24,12 @@ DEFAULT_ROOTS = ("Models/FBX format",)
 DEFAULT_FORMATS = ("fbx",)
 # 2D sprite library roots (PNG only — Unity has no native SVG importer, and
 # the Double/ variants are the same art at 2x resolution).
-DEFAULT_SPRITE_ROOTS = ("Models/FishPack/PNG/Default",)
+DEFAULT_SPRITE_ROOTS = (
+    "Models/FishPack/PNG/Default",
+    "Models/2d-space-kit",
+    "Models/space-shooter-pack/PNG",
+    "Models/space-shooter-remastered/PNG",
+)
 SPRITE_FORMATS = ("png",)
 CATALOG_RELPATH = Path("unity") / "asset_catalog.json"
 CURATED_RELPATH = Path("unity") / "kenney_catalog.json"
@@ -132,6 +137,29 @@ _CATEGORY_MAP: dict[str, str] = {
     "building":   "structure",
     "driveway":   "structure",
     "planter":    "prop",
+    # aviation (loose CC0 models — the skydiving gap)
+    "parachute":  "vehicle",
+    "avion":      "vehicle",
+    "corsair":    "vehicle",
+    "plane":      "vehicle",
+    "jet":        "vehicle",
+    "helicopter": "vehicle",
+    # watercraft kit
+    "boat":       "vehicle",
+    "ship":       "vehicle",
+    "canoe":      "vehicle",
+    "raft":       "vehicle",
+    "sailboat":   "vehicle",
+    # weapon kit
+    "blaster":    "weapon",
+    "sword":      "weapon",
+    "gun":        "weapon",
+    "rifle":      "weapon",
+    "pistol":     "weapon",
+    "dagger":     "weapon",
+    "axe":        "weapon",
+    "bow":        "weapon",
+    "shield":     "weapon",
 }
 
 # Token → extra keywords, so entity names like "PineForest" or "GrindRail"
@@ -227,6 +255,22 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     "building":   ("house", "home", "structure", "suburban"),
     "driveway":   ("road", "pavement", "entrance"),
     "planter":    ("pot", "garden", "plant"),
+    # aviation
+    "parachute":  ("chute", "canopy", "skydive", "skydiver", "glider", "wingsuit"),
+    "avion":      ("plane", "aircraft", "airplane"),
+    "corsaire":   ("corsair", "plane", "fighter", "aircraft"),
+    "corsair":    ("plane", "fighter", "aircraft", "warplane", "airplane"),
+    "army":       ("military", "camo", "soldier"),
+    # watercraft kit
+    "boat":       ("ship", "watercraft", "vessel", "water"),
+    "canoe":      ("boat", "paddle", "kayak"),
+    "raft":       ("boat", "float"),
+    # weapon kit
+    "blaster":    ("gun", "weapon", "laser", "pistol", "shooter"),
+    "sword":      ("blade", "weapon", "melee"),
+    "gun":        ("weapon", "firearm", "shooter"),
+    "rifle":      ("gun", "weapon", "firearm"),
+    "shield":     ("armor", "defense", "weapon"),
 }
 
 # Category → entity kinds (default_models.json vocabulary) the asset can serve.
@@ -239,6 +283,7 @@ _KIND_HINTS: dict[str, tuple[str, ...]] = {
     "obstacle":  ("obstacle", "hazard"),
     "character": ("npc", "crowd"),
     "vehicle":   ("vehicle",),
+    "weapon":    ("pickup", "item", "prop"),
 }
 
 # First token → kind hints that are more specific than the category default.
@@ -258,6 +303,10 @@ _TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
     "path":     ("road", "ground"),
     "alien":    ("enemy", "npc"),
     "astronaut": ("player", "npc"),
+    "parachute": ("vehicle", "prop", "pickup"),
+    "avion":     ("vehicle",),
+    "corsair":   ("vehicle",),
+    "boat":      ("vehicle",),
 }
 
 # Category → default import scale. Kenney packs are authored around 1 unit;
@@ -274,6 +323,34 @@ _SPRITE_CATEGORY_MAP: dict[str, str] = {
     "terrain":    "environment",
     "background": "background",
     "hud":        "ui",
+    # 2D space packs (2d-space-kit / space-shooter-*): filenames are often
+    # prefixed "space..." so category comes from the FIRST MAPPED token.
+    "ship":       "ship",
+    "ships":      "ship",
+    "craft":      "ship",
+    "rocket":     "ship",
+    "cockpit":    "ship",
+    "wing":       "ship",
+    "ufo":        "ship",
+    "turret":     "ship",
+    "laser":      "fx",
+    "missile":    "fx",
+    "bolt":       "fx",
+    "effect":     "fx",
+    "meteor":     "environment",
+    "asteroid":   "environment",
+    "pipe":       "environment",
+    "corridor":   "environment",
+    "platform":   "environment",
+    "hangar":     "environment",
+    "machine":    "environment",
+    "monorail":   "environment",
+    "star":       "background",
+    "astronaut":  "creature",
+    "astronauts": "creature",
+    "player":     "creature",
+    "enemy":      "creature",
+    "alien":      "creature",
 }
 
 _SPRITE_SYNONYMS: dict[str, tuple[str, ...]] = {
@@ -290,6 +367,7 @@ _SPRITE_SYNONYMS: dict[str, tuple[str, ...]] = {
 
 _SPRITE_KIND_HINTS: dict[str, tuple[str, ...]] = {
     "creature":    ("enemy", "npc", "crowd"),
+    "ship":        ("player", "enemy", "vehicle"),
     "fx":          ("prop",),
     "vegetation":  ("tree", "prop"),
     "environment": ("ground", "obstacle", "prop"),
@@ -385,10 +463,15 @@ def derive_entry(path: Path, root: Path) -> dict:
 
 
 def derive_sprite_entry(path: Path, root: Path) -> dict:
-    """Derive a catalog entry for a 2D sprite (PNG)."""
+    """Derive a catalog entry for a 2D sprite (PNG).
+
+    Category comes from the first MAPPED token, not the literal first token —
+    space packs prefix everything with the pack name ("spaceShips_001"), so
+    the meaningful family word is usually second.
+    """
     tokens = tokenize(path.stem)
-    first = tokens[0] if tokens else "prop"
-    category = _SPRITE_CATEGORY_MAP.get(first, "prop")
+    category = next((_SPRITE_CATEGORY_MAP[t] for t in tokens
+                     if t in _SPRITE_CATEGORY_MAP), "prop")
 
     keywords: list[str] = []
     seen: set[str] = set()
@@ -546,3 +629,13 @@ def asset_vocabulary(lookups_dir: str = "lookups") -> str:
     if tags:
         lines.append(f"  tags: {', '.join(tags)}")
     return "\n".join(lines)
+
+
+if __name__ == "__main__":   # pragma: no cover
+    # This is a library module — running it directly used to do nothing,
+    # silently. Point at the real entry point instead.
+    import sys
+    sys.exit("unity_asset_catalog.py is a library. Rebuild the catalog with:\n"
+             "  python main.py unity-catalog            # scan + write\n"
+             "  python main.py unity-catalog --dry-run  # stats only\n"
+             "  python main.py unity-catalog --check    # CI staleness gate")
