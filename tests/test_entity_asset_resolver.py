@@ -193,6 +193,54 @@ def test_description_words_alone_never_qualify_a_match(env, tmp_path):
         resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
 
 
+# ── procedural mesh routing ───────────────────────────────────────────────────
+
+def _schema_with_meshes(entities, meshes):
+    from src.unity_schema import ProceduralMesh
+    s = _schema(entities)
+    s.procedural_meshes = [ProceduralMesh(**m) for m in meshes]
+    return s
+
+
+def test_unmatched_entity_routes_to_procedural_mesh(env, tmp_path):
+    # TerminalHorizon case: AtmosphericClouds entity + CloudLayer1 mesh in the
+    # same schema — the mesh IS the content, strict must not fail.
+    schema = _schema_with_meshes(
+        [EntitySpec(name="AtmosphericClouds", kind="prop", count=20,
+                    model_hint="atmospheric clouds")],
+        [{"name": "CloudLayer1", "description": "volumetric cloud field",
+          "mesh_type": "custom", "resolution": 64}])
+    paths = resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["AtmosphericClouds"] == "procedural:custom:64"
+
+
+def test_procedural_route_prefers_best_token_overlap(env, tmp_path):
+    schema = _schema_with_meshes(
+        [EntitySpec(name="DebrisFields", kind="prop", count=12)],
+        [{"name": "CloudLayer1", "description": "clouds", "mesh_type": "custom"},
+         {"name": "DebrisField1", "description": "metal debris clusters",
+          "mesh_type": "terrain", "resolution": 32}])
+    paths = resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["DebrisFields"] == "procedural:terrain:32"
+
+
+def test_catalog_match_still_beats_procedural(env, tmp_path):
+    # A real model wins over a procedural mesh with the same tokens.
+    schema = _schema_with_meshes(
+        [EntitySpec(name="PineTrees", kind="prop", count=3)],
+        [{"name": "TreeField", "description": "trees", "mesh_type": "custom"}])
+    paths = resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_no_token_overlap_still_fails_strict(env, tmp_path):
+    schema = _schema_with_meshes(
+        [EntitySpec(name="Zzgrbl", kind="dragon", count=1)],
+        [{"name": "CloudLayer1", "description": "clouds", "mesh_type": "custom"}])
+    with pytest.raises(ValueError, match="procedural_meshes"):
+        resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
+
+
 # ── fallback policy ───────────────────────────────────────────────────────────
 
 def test_strict_no_match_raises_with_suggestions(env, tmp_path):
@@ -225,6 +273,64 @@ def test_missing_asset_file_is_skipped(env, tmp_path):
         _schema([EntitySpec(name="Pine", kind="prop", model_hint="pine tree")]),
         {}, {}, lookups_dir=str(env))
     assert "tree-pine" not in paths["Pine"]
+
+
+# ── 2D sprites ────────────────────────────────────────────────────────────────
+
+def _add_sprites(env, tmp_path):
+    import json as _json
+    lib2d = tmp_path / "sprites"
+    lib2d.mkdir(exist_ok=True)
+    (lib2d / "fish_blue.png").write_bytes(b"PNG")
+    cat_path = env / "unity" / "asset_catalog.json"
+    cat = _json.loads(cat_path.read_text(encoding="utf-8"))
+    cat["assets"].append({
+        "filename": "fish_blue.png", "relpath": "fish_blue.png",
+        "root": lib2d.as_posix(), "format": "png", "pack": "kenney_fishpack",
+        "category": "creature", "keywords": ["fish", "swim", "creature", "enemy"],
+        "kind_hints": ["enemy", "npc"], "game_contexts": ["2d"],
+        "generic_score": 0, "scale": 1.0, "curated": False,
+    })
+    cat_path.write_text(_json.dumps(cat), encoding="utf-8")
+
+
+def _schema_2d(entities):
+    return UnitySchema(project_name="T", company_name="C",
+                       description="an underwater side-scroller",
+                       game_type="2D", platform="pc", render_pipeline="URP",
+                       unity_version="6000.2", scenes=["Main"],
+                       entities=entities)
+
+
+def test_2d_game_prefers_sprite_over_model(env, tmp_path):
+    _add_sprites(env, tmp_path)
+    used: dict = {}
+    paths = resolve_entity_assets(
+        _schema_2d([EntitySpec(name="Fishes", kind="prop", count=5,
+                               model_hint="swimming fish")]),
+        used, {}, lookups_dir=str(env))
+    assert paths["Fishes"] == "Sprites/Kenney/Creature/fish_blue"
+    assert used["asset:fish_blue"].rig == "sprite"
+
+
+def test_3d_game_never_picks_a_png(env, tmp_path):
+    _add_sprites(env, tmp_path)
+    with pytest.raises(ValueError):   # no fbx fish exists → strict fail, not a png pick
+        resolve_entity_assets(
+            _schema([EntitySpec(name="Fishes", kind="prop", count=5,
+                                model_hint="swimming fish")]),
+            {}, {}, lookups_dir=str(env), strict=True)
+
+
+def test_sprite_picks_have_no_fbx_texture_dirs(env, tmp_path):
+    _add_sprites(env, tmp_path)
+    (tmp_path / "Textures").mkdir(exist_ok=True)   # decoy parent Textures dir
+    used: dict = {}
+    resolve_entity_assets(
+        _schema_2d([EntitySpec(name="Fishes", kind="prop", count=5,
+                               model_hint="swimming fish")]),
+        used, {}, lookups_dir=str(env))
+    assert texture_dirs_for(used) == []
 
 
 # ── textures ──────────────────────────────────────────────────────────────────

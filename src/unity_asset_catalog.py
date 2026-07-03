@@ -22,6 +22,15 @@ from typing import Iterable, Optional
 CATALOG_VERSION = 1
 DEFAULT_ROOTS = ("Models/FBX format",)
 DEFAULT_FORMATS = ("fbx",)
+# 2D sprite library roots (PNG only — Unity has no native SVG importer, and
+# the Double/ variants are the same art at 2x resolution).
+DEFAULT_SPRITE_ROOTS = (
+    "Models/FishPack/PNG/Default",
+    "Models/2d-space-kit",
+    "Models/space-shooter-pack/PNG",
+    "Models/space-shooter-remastered/PNG",
+)
+SPRITE_FORMATS = ("png",)
 CATALOG_RELPATH = Path("unity") / "asset_catalog.json"
 CURATED_RELPATH = Path("unity") / "kenney_catalog.json"
 
@@ -80,6 +89,77 @@ _CATEGORY_MAP: dict[str, str] = {
     "billboard":  "prop",
     "flag":       "prop",
     "grass":      "nature",
+    # nature kit
+    "cliff":      "nature",
+    "stone":      "nature",
+    "ground":     "nature",
+    "crops":      "nature",
+    "flower":     "nature",
+    "stump":      "nature",
+    "log":        "nature",
+    "mushroom":   "nature",
+    "bridge":     "structure",
+    "path":       "structure",
+    "terrain":    "nature",
+    # car kit
+    "debris":     "obstacle",
+    "cone":       "obstacle",
+    "wheel":      "prop",
+    "car":        "vehicle",
+    "kart":       "vehicle",
+    "tractor":    "vehicle",
+    "truck":      "vehicle",
+    "suv":        "vehicle",
+    "sedan":      "vehicle",
+    "van":        "vehicle",
+    "taxi":       "vehicle",
+    "ambulance":  "vehicle",
+    "police":     "vehicle",
+    "race":       "vehicle",
+    "delivery":   "vehicle",
+    "firetruck":  "vehicle",
+    "hatchback":  "vehicle",
+    # space kit
+    "pipe":       "structure",
+    "platform":   "structure",
+    "monorail":   "track",
+    "rocket":     "vehicle",
+    "craft":      "vehicle",
+    "hangar":     "structure",
+    "machine":    "mechanism",
+    "satellite":  "mechanism",
+    "radar":      "mechanism",
+    "alien":      "character",
+    "astronaut":  "character",
+    "desk":       "prop",
+    "chair":      "prop",
+    # city kit
+    "building":   "structure",
+    "driveway":   "structure",
+    "planter":    "prop",
+    # aviation (loose CC0 models — the skydiving gap)
+    "parachute":  "vehicle",
+    "avion":      "vehicle",
+    "corsair":    "vehicle",
+    "plane":      "vehicle",
+    "jet":        "vehicle",
+    "helicopter": "vehicle",
+    # watercraft kit
+    "boat":       "vehicle",
+    "ship":       "vehicle",
+    "canoe":      "vehicle",
+    "raft":       "vehicle",
+    "sailboat":   "vehicle",
+    # weapon kit
+    "blaster":    "weapon",
+    "sword":      "weapon",
+    "gun":        "weapon",
+    "rifle":      "weapon",
+    "pistol":     "weapon",
+    "dagger":     "weapon",
+    "axe":        "weapon",
+    "bow":        "weapon",
+    "shield":     "weapon",
 }
 
 # Token → extra keywords, so entity names like "PineForest" or "GrindRail"
@@ -134,7 +214,63 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     "grand":      ("grandstand", "stands", "bleachers", "seating", "audience"),
     "billboard":  ("sign", "advertisement", "display", "signage"),
     "flag":       ("banner", "checkered", "marker", "pennant"),
-    "grass":      ("lawn", "field", "ground", "turf"),
+    # NOTE: no "field" — too ambiguous ("DebrisFields" grabbed grass.fbx live)
+    "grass":      ("lawn", "ground", "turf"),
+    # nature kit
+    "cliff":      ("rock", "mountain", "ledge", "crag"),
+    "stone":      ("rock", "boulder", "pebble"),
+    "ground":     ("terrain", "floor", "dirt", "earth", "tile"),
+    "crops":      ("farm", "wheat", "corn", "plant", "harvest"),
+    "flower":     ("plant", "bloom", "garden"),
+    "stump":      ("tree", "log", "wood"),
+    "log":        ("wood", "timber", "trunk"),
+    "mushroom":   ("fungus", "toadstool", "forest"),
+    "bridge":     ("crossing", "span", "walkway"),
+    "path":       ("road", "trail", "walkway", "pavement"),
+    "terrain":    ("ground", "land", "surface"),
+    # car kit
+    "debris":     ("wreckage", "wreck", "fragment", "scrap", "junk", "rubble"),
+    "cone":       ("traffic", "marker", "hazard"),
+    "wheel":      ("tire", "tyre", "rim"),
+    "kart":       ("car", "racer", "gokart"),
+    "tractor":    ("farm", "vehicle"),
+    "truck":      ("lorry", "vehicle", "cargo"),
+    "taxi":       ("cab", "car"),
+    "ambulance":  ("medical", "emergency", "rescue"),
+    "police":     ("cop", "patrol", "emergency"),
+    "race":       ("racing", "racer", "sports"),
+    # space kit
+    "pipe":       ("tube", "conduit", "duct"),
+    "platform":   ("ledge", "walkway", "deck"),
+    "monorail":   ("rail", "train", "transit"),
+    "rocket":     ("spaceship", "ship", "missile", "launch"),
+    "craft":      ("spaceship", "ship", "shuttle", "spacecraft"),
+    "hangar":     ("garage", "bay", "shed"),
+    "machine":    ("device", "generator", "equipment"),
+    "satellite":  ("dish", "antenna", "orbital"),
+    "radar":      ("dish", "antenna", "scanner"),
+    "alien":      ("creature", "monster", "extraterrestrial", "npc"),
+    "astronaut":  ("spaceman", "cosmonaut", "person", "npc"),
+    # city kit
+    "building":   ("house", "home", "structure", "suburban"),
+    "driveway":   ("road", "pavement", "entrance"),
+    "planter":    ("pot", "garden", "plant"),
+    # aviation
+    "parachute":  ("chute", "canopy", "skydive", "skydiver", "glider", "wingsuit"),
+    "avion":      ("plane", "aircraft", "airplane"),
+    "corsaire":   ("corsair", "plane", "fighter", "aircraft"),
+    "corsair":    ("plane", "fighter", "aircraft", "warplane", "airplane"),
+    "army":       ("military", "camo", "soldier"),
+    # watercraft kit
+    "boat":       ("ship", "watercraft", "vessel", "water"),
+    "canoe":      ("boat", "paddle", "kayak"),
+    "raft":       ("boat", "float"),
+    # weapon kit
+    "blaster":    ("gun", "weapon", "laser", "pistol", "shooter"),
+    "sword":      ("blade", "weapon", "melee"),
+    "gun":        ("weapon", "firearm", "shooter"),
+    "rifle":      ("gun", "weapon", "firearm"),
+    "shield":     ("armor", "defense", "weapon"),
 }
 
 # Category → entity kinds (default_models.json vocabulary) the asset can serve.
@@ -147,6 +283,7 @@ _KIND_HINTS: dict[str, tuple[str, ...]] = {
     "obstacle":  ("obstacle", "hazard"),
     "character": ("npc", "crowd"),
     "vehicle":   ("vehicle",),
+    "weapon":    ("pickup", "item", "prop"),
 }
 
 # First token → kind hints that are more specific than the category default.
@@ -159,18 +296,98 @@ _TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
     "fence":    ("obstacle", "prop"),
     "barrier":  ("obstacle", "hazard"),
     "grass":    ("ground",),
+    "debris":   ("obstacle", "hazard", "prop"),
+    "building": ("building",),
+    "ground":   ("ground", "road"),
+    "terrain":  ("ground", "road"),
+    "path":     ("road", "ground"),
+    "alien":    ("enemy", "npc"),
+    "astronaut": ("player", "npc"),
+    "parachute": ("vehicle", "prop", "pickup"),
+    "avion":     ("vehicle",),
+    "corsair":   ("vehicle",),
+    "boat":      ("vehicle",),
 }
 
 # Category → default import scale. Kenney packs are authored around 1 unit;
 # marble-track pieces read better slightly larger next to a 1.8u character.
 _CATEGORY_SCALE: dict[str, float] = {}
 
+# ── 2D sprite vocabulary (FishPack and future sprite packs) ───────────────────
+
+_SPRITE_CATEGORY_MAP: dict[str, str] = {
+    "fish":       "creature",
+    "bubble":     "fx",
+    "seaweed":    "vegetation",
+    "rock":       "environment",
+    "terrain":    "environment",
+    "background": "background",
+    "hud":        "ui",
+    # 2D space packs (2d-space-kit / space-shooter-*): filenames are often
+    # prefixed "space..." so category comes from the FIRST MAPPED token.
+    "ship":       "ship",
+    "ships":      "ship",
+    "craft":      "ship",
+    "rocket":     "ship",
+    "cockpit":    "ship",
+    "wing":       "ship",
+    "ufo":        "ship",
+    "turret":     "ship",
+    "laser":      "fx",
+    "missile":    "fx",
+    "bolt":       "fx",
+    "effect":     "fx",
+    "meteor":     "environment",
+    "asteroid":   "environment",
+    "pipe":       "environment",
+    "corridor":   "environment",
+    "platform":   "environment",
+    "hangar":     "environment",
+    "machine":    "environment",
+    "monorail":   "environment",
+    "star":       "background",
+    "astronaut":  "creature",
+    "astronauts": "creature",
+    "player":     "creature",
+    "enemy":      "creature",
+    "alien":      "creature",
+}
+
+_SPRITE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "fish":       ("swim", "sea", "ocean", "underwater", "creature", "animal", "enemy"),
+    "bubble":     ("air", "water", "pop", "float"),
+    "seaweed":    ("plant", "kelp", "underwater", "vegetation", "grass"),
+    "rock":       ("stone", "boulder", "obstacle"),
+    "terrain":    ("ground", "floor", "sand", "dirt", "platform", "tile"),
+    "background": ("backdrop", "scenery", "distant"),
+    "hud":        ("ui", "icon", "number", "interface"),
+    "skeleton":   ("bone", "dead", "spooky"),
+    "outline":    (),
+}
+
+_SPRITE_KIND_HINTS: dict[str, tuple[str, ...]] = {
+    "creature":    ("enemy", "npc", "crowd"),
+    "ship":        ("player", "enemy", "vehicle"),
+    "fx":          ("prop",),
+    "vegetation":  ("tree", "prop"),
+    "environment": ("ground", "obstacle", "prop"),
+    "background":  ("prop",),
+    "ui":          (),          # HUD digits/icons are not spawnable scene content
+}
+
+
 # Tokens that describe size/variant, not semantics — excluded from keywords.
+# Single-character tokens are always noise (variant letters, the "x" left over
+# from dimension names like fence-1x2 — which matched an entity named "X" live).
 _NOISE_TOKENS = frozenset({
-    "a", "b", "c", "d", "large", "medium", "small", "wide", "long", "short",
+    "large", "medium", "small", "wide", "long", "short",
     "high", "low", "left", "right", "inner", "outer", "single", "double",
     "two", "four", "top", "middle", "bottom", "simple", "quarter", "sides",
 })
+
+
+def _is_noise(tok: str) -> bool:
+    return len(tok) < 2 or tok in _NOISE_TOKENS
 
 
 def tokenize(stem: str) -> list[str]:
@@ -220,7 +437,7 @@ def derive_entry(path: Path, root: Path) -> dict:
             keywords.append(word)
 
     for tok in tokens:
-        if tok not in _NOISE_TOKENS:
+        if not _is_noise(tok):
             _add(tok)
         for syn in _SYNONYMS.get(tok, ()):
             _add(syn)
@@ -245,9 +462,63 @@ def derive_entry(path: Path, root: Path) -> dict:
     }
 
 
+def derive_sprite_entry(path: Path, root: Path) -> dict:
+    """Derive a catalog entry for a 2D sprite (PNG).
+
+    Category comes from the first MAPPED token, not the literal first token —
+    space packs prefix everything with the pack name ("spaceShips_001"), so
+    the meaningful family word is usually second.
+    """
+    tokens = tokenize(path.stem)
+    category = next((_SPRITE_CATEGORY_MAP[t] for t in tokens
+                     if t in _SPRITE_CATEGORY_MAP), "prop")
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+
+    def _add(word: str) -> None:
+        if word and word not in seen:
+            seen.add(word)
+            keywords.append(word)
+
+    for tok in tokens:
+        if not _is_noise(tok):
+            _add(tok)
+        for syn in _SPRITE_SYNONYMS.get(tok, ()):
+            _add(syn)
+    _add(category)
+
+    return {
+        "filename": path.name,
+        "relpath": path.relative_to(root).as_posix(),
+        "root": root.as_posix(),
+        "format": path.suffix.lstrip(".").lower(),
+        "pack": _pack_for_root(root),
+        "category": category,
+        "description": f"{' '.join(tokens)} — 2D {category} sprite",
+        "keywords": keywords,
+        "kind_hints": list(_SPRITE_KIND_HINTS.get(category, ("prop",))),
+        "game_contexts": ["2d"],
+        "generic_score": 0,
+        "scale": 1.0,
+        "curated": False,
+    }
+
+
 def _pack_for_root(root: Path) -> str:
-    """Pack label from the root folder name (packs are merged on disk)."""
-    name = root.name.lower().replace(" ", "_")
+    """Pack label from the root path (packs are merged on disk).
+
+    Prefers the component right after "Models" so nested roots like
+    Models/FishPack/PNG/Default label as the pack (fishpack), not the
+    resolution folder (default).
+    """
+    parts = [p.lower() for p in root.parts]
+    name = root.name.lower()
+    if "models" in parts:
+        after = parts[parts.index("models") + 1:]
+        if after:
+            name = after[0]
+    name = name.replace(" ", "_")
     return f"kenney_{name}" if "kenney" not in name else name
 
 
@@ -267,8 +538,13 @@ _CURATED_FIELDS = ("category", "keywords", "kind_hints", "game_contexts",
 
 def build_catalog(roots: Iterable[str | Path],
                   curated_path: Optional[Path] = None,
-                  formats: tuple[str, ...] = DEFAULT_FORMATS) -> dict:
-    """Scan the roots and return the full catalog dict (stable ordering)."""
+                  formats: tuple[str, ...] = DEFAULT_FORMATS,
+                  sprite_roots: Iterable[str | Path] = ()) -> dict:
+    """Scan the roots and return the full catalog dict (stable ordering).
+
+    3D model roots and 2D sprite roots share one catalog — entries carry a
+    `format` field (fbx vs png) so the resolver can filter by game type.
+    """
     root_paths = [Path(r) for r in roots]
     curated = _load_curated(curated_path) if curated_path else {}
 
@@ -282,6 +558,9 @@ def build_catalog(roots: Iterable[str | Path],
                     entry[field] = cur[field]
             entry["curated"] = True
         assets.append(entry)
+
+    for path, root in scan_assets([Path(r) for r in sprite_roots], SPRITE_FORMATS):
+        assets.append(derive_sprite_entry(path, root))
 
     categories = sorted({a["category"] for a in assets})
     tag_counts: Counter[str] = Counter()
@@ -350,3 +629,13 @@ def asset_vocabulary(lookups_dir: str = "lookups") -> str:
     if tags:
         lines.append(f"  tags: {', '.join(tags)}")
     return "\n".join(lines)
+
+
+if __name__ == "__main__":   # pragma: no cover
+    # This is a library module — running it directly used to do nothing,
+    # silently. Point at the real entry point instead.
+    import sys
+    sys.exit("unity_asset_catalog.py is a library. Rebuild the catalog with:\n"
+             "  python main.py unity-catalog            # scan + write\n"
+             "  python main.py unity-catalog --dry-run  # stats only\n"
+             "  python main.py unity-catalog --check    # CI staleness gate")

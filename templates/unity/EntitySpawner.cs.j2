@@ -71,6 +71,19 @@ public class EntitySpawner : MonoBehaviour
         System.Type behaviorType = null;
         if (!string.IsNullOrEmpty(behavior))
             behaviorType = System.Type.GetType(behavior + ", Assembly-CSharp") ?? System.Type.GetType(behavior);
+{% if has_procedural_entities %}
+        // "procedural:<type>:<res>" → build the group's mesh via MeshBuilder
+        // (the entity was routed to a schema procedural mesh — clouds, debris).
+        string[] procParts = null;
+        Mesh procMesh = null;
+        if (!string.IsNullOrEmpty(modelPath) && modelPath.StartsWith("procedural:"))
+        {
+            procParts = modelPath.Split(':');
+            if (MeshBuilder.Instance == null)
+                new GameObject("_MeshBuilder").AddComponent<MeshBuilder>();
+            procMesh = MeshBuilder.Instance.Build(procParts[1], int.Parse(procParts[2]));
+        }
+{% endif %}
         // Optional real model from the default pack (null → primitive fallback).
         GameObject modelPrefab = string.IsNullOrEmpty(modelPath)
             ? null : Resources.Load<GameObject>(modelPath);
@@ -80,7 +93,17 @@ public class EntitySpawner : MonoBehaviour
         for (int i = 0; i < count; i++)
         {
             GameObject go;
+{% if has_procedural_entities %}
+            if (procMesh != null)
+            {
+                go = new GameObject(groupName + "_" + i);
+                go.AddComponent<MeshFilter>().mesh = procMesh;
+                go.AddComponent<MeshRenderer>();
+            }
+            else if (modelPrefab != null)
+{% else %}
             if (modelPrefab != null)
+{% endif %}
             {
                 go = Instantiate(modelPrefab);
 {% if game_type not in ["2D", "2.5D"] %}
@@ -237,13 +260,38 @@ public class EntitySpawner : MonoBehaviour
     private void PlaceRow2D(string groupName, int count, float scale, string modelPath,
                             Color color, string tag, bool backdrop, float courseLen, Shader sh)
     {
-        var modelPrefab = string.IsNullOrEmpty(modelPath) ? null : Resources.Load<GameObject>(modelPath);
+        // Load order: 2D sprite (Sprites/... path → Texture2D) → 3D model prefab
+        // → primitive cube. Sprite textures import with Unity's default settings,
+        // so the Sprite itself is built at runtime — no TextureImporter .meta
+        // authoring needed.
+        Sprite sprite = null;
+        GameObject modelPrefab = null;
+        if (!string.IsNullOrEmpty(modelPath))
+        {
+            var tex = Resources.Load<Texture2D>(modelPath);
+            if (tex != null)
+                sprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                                       new Vector2(0.5f, 0.5f), Mathf.Max(1f, tex.height)); // ~1 unit tall
+            else
+                modelPrefab = Resources.Load<GameObject>(modelPath);
+        }
         var parent = new GameObject(groupName).transform;
         parent.SetParent(transform, false);
         int n = Mathf.Max(1, count);
         for (int i = 0; i < n; i++)
         {
-            GameObject go = modelPrefab != null ? Instantiate(modelPrefab) : GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject go;
+            if (sprite != null)
+            {
+                go = new GameObject(groupName + "_" + i);
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = sprite;
+                if (backdrop) sr.sortingOrder = -10;
+            }
+            else
+            {
+                go = modelPrefab != null ? Instantiate(modelPrefab) : GameObject.CreatePrimitive(PrimitiveType.Cube);
+            }
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
             go.transform.localScale = Vector3.one * scale;
@@ -252,7 +300,7 @@ public class EntitySpawner : MonoBehaviour
                                                 backdrop ? 8f : 0f);
             foreach (var cc in go.GetComponentsInChildren<Collider>()) Destroy(cc);
             if (!backdrop && go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
-            if (modelPrefab == null) Apply2DColor(go, sh, color);
+            if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
             if (!backdrop && !string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
         }
     }

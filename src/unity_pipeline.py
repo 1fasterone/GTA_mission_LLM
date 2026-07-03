@@ -116,6 +116,19 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
     return result
 
 
+# Section headers that mark a fully-authored design brief (vs a one-line vibe
+# prompt). Three or more = the author already themed it.
+_BRIEF_MARKER_RE = re.compile(
+    r"^(TITLE|GENRE|STYLE|CORE PREMISE|SCENES|NARRATIVE|SCRIPTS|ENTITIES"
+    r"|AUDIO|FEATURES|VISUAL STYLE|COLOR PALETTE|PROCEDURAL)\b",
+    re.MULTILINE | re.IGNORECASE)
+
+
+def _is_structured_brief(prompt: str) -> bool:
+    return len(set(m.group(1).upper()
+                   for m in _BRIEF_MARKER_RE.finditer(prompt or ""))) >= 3
+
+
 def _hint_from_name(name: str, kind: str) -> str:
     """Deterministic model_hint from an entity's own name (+ specific kind)."""
     from .unity_asset_catalog import tokenize
@@ -282,6 +295,22 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
                 package_id  = "com.unity.probuilder",
             ))
             fixes.append("Injected ProBuilder package (level_generator script requires it)")
+
+    # The LLM routinely keeps the Input System PACKAGE but drops the
+    # input_system FEATURE flag (hit live: TerminalHorizon rerun) — the
+    # generated project then ships activeInputHandler: 0 and Unity greets
+    # every first open with the "native platform backends not enabled...
+    # *RESTART* the editor" dialog. The flag also gates the InputActions
+    # asset and the controller's new-Input-System code path, so reconcile:
+    # package present → feature on.
+    _has_input_pkg = any(
+        "inputsystem" in (p.package_id or "").lower()
+        or "input system" in (p.description or "").lower()
+        for p in schema.packages)
+    if _has_input_pkg and "input_system" not in schema.features:
+        schema.features = list(schema.features) + ["input_system"]
+        fixes.append("Input System package present — enabled input_system "
+                     "feature (native backends + InputActions asset)")
 
     # Every entity must carry a model_hint — it drives the asset-catalog match
     # that decides which real model the group spawns. The local LLM routinely
@@ -489,6 +518,16 @@ class UnityPipeline:
         # chain deterministic. None → server picks a random seed (today's default).
         if seed is not None:
             self.llm.seed = seed
+
+        # A fully-authored structured brief IS its own theme — auto-detected
+        # themes + twist seeds only pollute it (hit live twice on
+        # TerminalHorizon: "superhero_flying" grafted "flight burns calories" /
+        # "rescue costs altitude" onto a complete skydiving design). Explicit
+        # --theme still wins.
+        if theme is None and _is_structured_brief(user_prompt):
+            theme = "none"
+            self._ok("Structured brief detected — theme autodetect skipped "
+                     "(pass --theme <name> to force one)")
 
         # Resolve theme (may be None → behaves exactly as before)
         active_theme, rng, theme_meta = resolve_theme(

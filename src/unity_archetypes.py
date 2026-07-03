@@ -178,11 +178,13 @@ _GENRE: list[tuple[str, list[str]]] = [
     ]),
     ("racing", [
         "racing", "race", "street racer", "rally", "time trial", "circuit racer",
-        "kart racer", "grand prix", "drift racing", "drifting", "drift car", "power slide",
-        # NOTE: bare "drift" is deliberately excluded — it collides with
-        # non-racing physics language ("buoyancy drift", "camera drift",
-        # "drifting current") and flipped an underwater-survival prompt to
-        # genre=racing on a single ambiguous word (hit live: DeepDive project).
+        "kart racer", "grand prix", "drift racing", "drift car", "power slide",
+        # NOTE: bare "drift" AND "drifting" are deliberately excluded — they
+        # collide with non-racing physics/mood language ("buoyancy drift",
+        # "camera drift", "drifting clouds") and flipped prompts to
+        # genre=racing on a single ambiguous word twice (hit live: DeepDive's
+        # "drift", then TerminalHorizon's "drifting clouds" — which steered
+        # the whole concept toward a racing game via concept_hint()).
     ]),
     ("tower_defence", [
         "tower defense", "tower defence", "td game", "wave defense", "base defense",

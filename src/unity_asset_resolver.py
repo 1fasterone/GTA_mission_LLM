@@ -107,9 +107,12 @@ def resolve_assets(schema: UnitySchema,
     ])
     query_words = set(raw_text.lower().split())
 
-    # Score every asset
+    # Score every asset (3D models only — 2D sprites are the entity resolver's
+    # business and would produce bogus KenneyImporter source paths here)
     scored: list[tuple[float, dict]] = []
     for asset in catalog.get("assets", []):
+        if asset.get("format", "fbx") != "fbx":
+            continue
         score = _score_asset(asset, query_words, valid_contexts) * style_boost
         # Always include high generic-score assets (universal floor/box/platform)
         if score == 0.0 and asset.get("generic_score", 0) >= cfg.get("generic_score_threshold", 7):

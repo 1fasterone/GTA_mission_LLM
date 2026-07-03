@@ -65,6 +65,32 @@ def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> 
     return resolved
 
 
+# Concept keywords that imply an atmosphere/sky is part of the game feel —
+# gates shipping the vendored URP-Atmosphere scattering feature (MIT, sinnwrig;
+# see templates/unity/vendor/URPAtmosphere/VENDORED.md).
+_ATMOSPHERE_WORDS = frozenset({
+    "atmosphere", "atmospheric", "sky", "skies", "altitude", "aerial",
+    "airborne", "stratosphere", "stratospheric", "cloud", "clouds",
+    "horizon", "planet", "planetary", "freefall", "skydiver", "skydiving",
+    "wingsuit", "jetstream",
+})
+
+
+def wants_atmosphere(schema) -> bool:
+    """Deterministic gate: 3D URP project whose concept implies a real sky."""
+    if schema.render_pipeline != "URP" or schema.game_type not in ("3D", "VR"):
+        return False
+    if getattr(schema, "locomotion", "walk") == "fly":
+        return True
+    text = " ".join([
+        schema.description or "",
+        " ".join(schema.scenes or []),
+        " ".join(sp.description or "" for sp in getattr(schema, "scene_specs", []) or []),
+    ]).lower()
+    words = set(re.split(r"[^a-z]+", text))
+    return bool(words & _ATMOSPHERE_WORDS)
+
+
 def _environment_ctx(time_of_day: str, fog, fog_color, sun_intensity,
                      lighting: dict, bg: dict) -> dict:
     """Sun + fog template context for one environment (project or per-scene).
@@ -384,6 +410,108 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
             if not bad and var_call_re:
                 bad = any(m.group(2) not in _COMPOSED_CLASS_API[var_types[m.group(1)]]
                           for m in var_call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+# Members every MonoBehaviour instance legitimately has — never grounds to strip.
+_MB_COMMON_MEMBERS = frozenset({
+    "transform", "gameObject", "enabled", "name", "tag",
+    "isActiveAndEnabled", "GetComponent", "SendMessage",
+})
+
+
+def _sanitize_project_service_calls(script: UnityScript,
+                                    custom_api: dict[str, frozenset],
+                                    opaque_types: set[str]) -> None:
+    """Strip GameContext.Instance.Get<T>() misuse the composed-API pass can't see:
+
+      - T is a phantom type the LLM invented (hit live: TerminalHorizon's
+        VelocityManager called Get<PlayerFSM>().SetState(...) — no PlayerFSM
+        script, stub has no members → CS1061). Every line touching the getter
+        or its bound variable is dead code.
+      - T is another GENERATED CUSTOM script: its complete public surface IS
+        its declared extra_fields + extra_methods, so calls to anything else
+        are guaranteed CS1061 (hit live: DialogueManager.TriggerBeat).
+
+    Canonical script classes (GameManager...), composed micro classes and Unity
+    types are opaque here — their template APIs are validated by the existing
+    _sanitize_singleton_calls / _sanitize_composed_component_calls passes."""
+    getter_chain_re = re.compile(
+        r"GameContext\.Instance\.Get<(\w+)>\(\)\s*\??\.\s*(\w+)")
+    var_decl_re = re.compile(
+        r"\b\w+\s+(\w+)\s*=\s*GameContext\.Instance\.Get<(\w+)>\(\)")
+
+    def _member_bad(t: str, member: str) -> bool:
+        if t in opaque_types:
+            return False
+        if t in custom_api:
+            return member not in custom_api[t] and member not in _MB_COMMON_MEMBERS
+        return True                       # phantom type — nothing on it is real
+
+    def _strip(body: str) -> str:
+        if not body or "GameContext" not in body:
+            return body
+        var_types = {m.group(1): m.group(2) for m in var_decl_re.finditer(body)}
+        # variables bound to phantom types poison every line that touches them
+        phantom_vars = {v for v, t in var_types.items()
+                        if t not in opaque_types and t not in custom_api}
+        var_call_re = None
+        if var_types:
+            var_alt = "|".join(re.escape(v) for v in var_types)
+            var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)")
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(_member_bad(m.group(1), m.group(2))
+                      for m in getter_chain_re.finditer(line))
+            if not bad and phantom_vars:
+                bad = any(re.search(r"\b" + re.escape(v) + r"\b", line)
+                          for v in phantom_vars)
+            if not bad and var_call_re:
+                bad = any(_member_bad(var_types[m.group(1)], m.group(2))
+                          for m in var_call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+_FOREACH_BARE_RE = re.compile(
+    r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+\w+\s+in\s+([A-Za-z_]\w*)\s*\)")
+_LOCAL_DECL_RE = re.compile(r"\b(?:var|[\w<>\[\],.]+)\s+(\w+)\s*=")
+_FOREACH_VAR_RE = re.compile(r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+(\w+)\s+in\b")
+
+
+def _strip_undeclared_foreach(script: UnityScript) -> None:
+    """foreach over a bare identifier that is declared NOWHERE (not a field,
+    not a local, not a loop variable) is a guaranteed CS0103 — the LLM
+    referenced a collection it never created (hit live: TerminalHorizon's
+    BirdSwarmFlocking iterated `birds`). Strip the offending line; everything
+    declared stays untouched."""
+    fields = {f.name for f in script.extra_fields}
+
+    def _strip(body: str) -> str:
+        if not body or "foreach" not in body:
+            return body
+        declared = set(fields)
+        declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(m.group(1) not in declared
+                      for m in _FOREACH_BARE_RE.finditer(line))
             if not bad:
                 out.append(line)
         return "".join(out)
@@ -1160,6 +1288,18 @@ class UnityProjectGenerator:
         # Done here — not in the pipeline — so unity-validate and the webui get
         # it too. CustomBehaviour.cs.j2 emits no fields of its own, so the only
         # reserved name is nothing; usings dedupe against the template's.
+        # Service-locator validation context: a custom script's COMPLETE public
+        # surface is its declared extra bits; canonical/composed/Unity classes
+        # are opaque (validated by their own dedicated passes).
+        _sig_name_re = re.compile(r"(\w+)\s*\(")
+        _custom_api = {
+            s.name: frozenset(f.name for f in s.extra_fields)
+                    | frozenset(mm.group(1) for m in s.extra_methods
+                                if (mm := _sig_name_re.search(m.signature or "")))
+            for s in schema.scripts if s.type == "custom"
+        }
+        _opaque_types = ({s.name for s in schema.scripts if s.type != "custom"}
+                         | {u.class_name for u in (composed_units or [])})
         for s in schema.scripts:
             if s.type == "custom":
                 lint_extensible(s, reserved_fields=set(),
@@ -1168,6 +1308,8 @@ class UnityProjectGenerator:
                 # extra_fields to know which field types are our own stubs.
                 _sanitize_stub_type_usage(s)
                 _sanitize_composed_component_calls(s, composed_units)
+                _sanitize_project_service_calls(s, _custom_api, _opaque_types)
+                _strip_undeclared_foreach(s)
                 # A custom script can only attach to the Player if one exists.
                 if s.attach_to == "player" and not any(
                         x.type == "player" for x in schema.scripts):
@@ -1204,6 +1346,17 @@ class UnityProjectGenerator:
             schema, lookups_dir, model_source_dir, model_overrides,
             composed_units, strict_assets, asset_cfg)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
+
+        # Entities routed to schema procedural meshes build via MeshBuilder at
+        # spawn time — make sure the class exists even when the LLM authored
+        # procedural_meshes without a mesh_builder script entry.
+        has_procedural_entities = any(
+            p.startswith("procedural:") for p in entity_model_paths.values())
+        if has_procedural_entities and not any(
+                s.type == "mesh_builder" for s in schema.scripts):
+            schema.scripts.append(UnityScript(
+                name="MeshBuilder", type="mesh_builder",
+                description="Singleton procedural mesh factory"))
 
         palette   = schema.color_palette  # always non-None after model_validator
         lighting  = _LIGHTING_BY_STYLE.get(schema.visual_style,
@@ -1274,6 +1427,7 @@ class UnityProjectGenerator:
             "procedural_meshes": schema.procedural_meshes,
             "entities":          schema.entities,
             "entity_model_paths": entity_model_paths,
+            "has_procedural_entities": has_procedural_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's
             # runtime per-scene filter.
@@ -1454,6 +1608,11 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/Resources"), folder=True)
             for m in used_models.values():
                 for item in [m] + list(m.clips.values()):
+                    if item.rig == "sprite":
+                        # PNG sprites: no authored .meta — Unity's default
+                        # TextureImporter handles them, and the spawner loads
+                        # Texture2D by path (no GUID references anywhere).
+                        continue
                     guid = _make_guid(f"{pn}/{item.dest_rel}")
                     if item.rig == "humanoid":
                         meta_fn = _humanoid_model_meta(guid, item.scale)
@@ -1595,6 +1754,33 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/Settings"), folder=True
             )
 
+        # ── Scene audio (Stable Audio 3 clip playback) ────────────────────────
+        # The audio stage generates real clips into Resources/Audio/ but runs
+        # AFTER write(), so SceneAudio discovers clips at runtime instead of
+        # bake time: scene-matched ambient beds + a global music bed + a fuzzy
+        # SceneAudio.Play("cue") API for gameplay scripts. Emitted whenever the
+        # schema carries audio content; silent no-op when no clips exist yet.
+        if "audio" in schema.features or schema.audio_tracks:
+            sau_path = f"{pn}/Assets/Scripts/SceneAudio.cs"
+            files[sau_path]           = self._render("scripts/SceneAudio.cs.j2", base_ctx)
+            files[f"{sau_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/SceneAudio"))
+
+        # ── Atmosphere (vendored URP-Atmosphere, MIT) ─────────────────────────
+        # write() copies the vendored feature + profile binaries; here we emit
+        # the two glue scripts: run-once renderer registration and the runtime
+        # bootstrap that spawns the effect in every scene.
+        if wants_atmosphere(schema):
+            sa_path = f"{pn}/Assets/Editor/SetupAtmosphere.cs"
+            files[sa_path]           = self._render("editor/SetupAtmosphere.cs.j2", base_ctx)
+            files[f"{sa_path}.meta"] = _meta_file(_make_guid(f"{pn}/Editor/SetupAtmosphere"))
+            files[f"{pn}/Assets/Editor.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Editor"), folder=True)
+            ab_path = f"{pn}/Assets/Scripts/AtmosphereBootstrap.cs"
+            files[ab_path]           = self._render("scripts/AtmosphereBootstrap.cs.j2", base_ctx)
+            files[f"{ab_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/AtmosphereBootstrap"))
+            _log.info("[atmosphere] concept implies a sky — shipping vendored "
+                      "URP-Atmosphere (MIT, sinnwrig)")
+
         files[f"{pn}/Assets.meta"] = _default_meta(_make_guid(f"{pn}/Assets"), folder=True)
 
         # ── Input Actions (New Input System) ──────────────────────────────────
@@ -1630,12 +1816,18 @@ class UnityProjectGenerator:
         files.update(self._user_assets_files(pn))
 
         # ── README.md ─────────────────────────────────────────────────────────
+        # Data-driven per project: what THIS build contains (scene moods,
+        # entity→model table, audio, atmosphere), not cookie-cutter advice.
         readme_ctx = {
             **base_ctx,
             "description": schema.description,
             "scripts":     schema.scripts,
             # Pass as sorted list of (id, version) tuples for stable output
             "packages":    sorted(manifest_deps.items()),
+            "scene_specs_by_name": {sp.name: sp for sp in schema.scene_specs},
+            "locomotion":      getattr(schema, "locomotion", "walk"),
+            "has_atmosphere":  wants_atmosphere(schema),
+            "has_scene_audio": "audio" in schema.features or bool(schema.audio_tracks),
         }
         files[f"{pn}/README.md"] = self._render("readme.md.j2", readme_ctx)
 
@@ -1757,15 +1949,41 @@ class UnityProjectGenerator:
                 dest = root / schema.project_name / "Assets" / "Resources" / item.dest_rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(Path(item.src).read_bytes())
-                # Secondary copy: Assets/Models/<Kind>/<file> (user-visible clean folder).
-                # item.dest_rel starts with "Models/Default/" or "Models/Kenney/" —
-                # strip that prefix so the secondary path is Assets/Models/<Kind>/<file>.
+                # Secondary copy: Assets/<Root>/<Kind>/<file> (user-visible clean
+                # folder). item.dest_rel starts with "Models/Default/",
+                # "Models/Kenney/" or "Sprites/Kenney/" — strip the two-part
+                # prefix and mirror under the matching top folder.
                 _rel_parts = Path(item.dest_rel).parts
                 _kind_relative = Path(*_rel_parts[2:]) if len(_rel_parts) > 2 else Path(_rel_parts[-1])
-                dest2 = root / schema.project_name / "Assets" / "Models" / _kind_relative
+                _top = _rel_parts[0] if _rel_parts[0] in ("Models", "Sprites") else "Models"
+                dest2 = root / schema.project_name / "Assets" / _top / _kind_relative
                 dest2.parent.mkdir(parents=True, exist_ok=True)
                 dest2.write_bytes(Path(item.src).read_bytes())
                 n_models += 1
+
+        # Vendored URP-Atmosphere (MIT) — the render feature sources ship with
+        # their original .metas so the profile→compute-shader GUID references
+        # stay intact; the default profile lands under Resources for the
+        # runtime bootstrap. copytree handles the binary files (png/asset).
+        if wants_atmosphere(schema):
+            import shutil
+            vendor = Path(self.template_dir) / "vendor" / "URPAtmosphere"
+            if vendor.is_dir():
+                proj = root / schema.project_name
+                shutil.copytree(vendor / "Atmosphere",
+                                proj / "Assets" / "Atmosphere",
+                                dirs_exist_ok=True)
+                shutil.copy2(vendor / "LICENSE.md",
+                             proj / "Assets" / "Atmosphere" / "LICENSE.md")
+                res_dir = proj / "Assets" / "Resources" / "Atmosphere"
+                res_dir.mkdir(parents=True, exist_ok=True)
+                for f in sorted((vendor / "Profile").iterdir()):
+                    shutil.copy2(f, res_dir / f.name)
+                n_models += sum(1 for _ in (proj / "Assets" / "Atmosphere").rglob("*")
+                                if _.is_file())
+            else:
+                _log.warning("[atmosphere] vendor dir missing: %s — skipping "
+                             "atmosphere shipment", vendor)
 
         # Texture folders for catalog picks. Kenney FBX reference PNGs from a
         # Textures/ folder shipped beside the models; Unity's importer searches

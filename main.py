@@ -527,26 +527,30 @@ def unity_catalog(
       python main.py unity-catalog --check        # CI staleness gate
     """
     from src.unity_asset_catalog import (CATALOG_RELPATH, CURATED_RELPATH,
-                                         DEFAULT_ROOTS, build_catalog,
-                                         is_stale, write_catalog)
+                                         DEFAULT_ROOTS, DEFAULT_SPRITE_ROOTS,
+                                         build_catalog, is_stale, write_catalog)
 
     try:
         asset_cfg = _cfg(config).get("assets", {}) or {}
     except FileNotFoundError:
         asset_cfg = {}
-    roots = asset_cfg.get("roots") or list(DEFAULT_ROOTS)
+    roots        = asset_cfg.get("roots") or list(DEFAULT_ROOTS)
+    sprite_roots = asset_cfg.get("sprite_roots") or list(DEFAULT_SPRITE_ROOTS)
 
     lookups_dir  = Path(lookups)
     curated_path = lookups_dir / CURATED_RELPATH
     out_path     = lookups_dir / CATALOG_RELPATH
 
-    catalog = build_catalog(roots, curated_path=curated_path)
+    catalog = build_catalog(roots, curated_path=curated_path,
+                            sprite_roots=sprite_roots)
     n       = len(catalog["assets"])
+    n_2d    = sum(1 for a in catalog["assets"] if a["format"] != "fbx")
     by_cat  = {c: sum(1 for a in catalog["assets"] if a["category"] == c)
                for c in catalog["vocabulary"]["categories"]}
     curated_n = sum(1 for a in catalog["assets"] if a["curated"])
 
-    console.print(f"[cyan]Catalog[/] {n} assets from {roots} "
+    console.print(f"[cyan]Catalog[/] {n} assets ({n - n_2d} 3D models, "
+                  f"{n_2d} 2D sprites) from {roots} + {sprite_roots} "
                   f"({curated_n} curated) — {by_cat}")
     if n == 0:
         console.print("[red]Error:[/] no assets found — check assets.roots in config")

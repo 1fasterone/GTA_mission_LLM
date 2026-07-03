@@ -1098,3 +1098,201 @@ class TestSceneSpecs:
         assert "GroupActive" not in cs
         # all gameplay scenes identical as before
         assert scene(files, "SS", "Main") == scene(files, "SS", "StormShelf")
+
+
+# ── 2D sprite pipeline (PNG picks flow to disk + spawner) ──────────────────────
+
+class TestSpritePipeline:
+    def _env(self, tmp_path):
+        import json as _json
+        lib = tmp_path / "sprites"
+        lib.mkdir()
+        (lib / "fish_blue.png").write_bytes(b"PNG-BYTES")
+        lookups = tmp_path / "lookups"
+        (lookups / "unity").mkdir(parents=True)
+        (lookups / "unity" / "asset_catalog.json").write_text(_json.dumps({
+            "version": 1, "vocabulary": {"categories": [], "tags": []},
+            "assets": [{
+                "filename": "fish_blue.png", "relpath": "fish_blue.png",
+                "root": lib.as_posix(), "format": "png", "pack": "kenney_fishpack",
+                "category": "creature", "keywords": ["fish", "swim", "creature"],
+                "kind_hints": ["enemy"], "game_contexts": ["2d"],
+                "generic_score": 0, "scale": 1.0, "curated": False,
+            }],
+        }), encoding="utf-8")
+        return lookups
+
+    def _schema(self):
+        from src.unity_schema import EntitySpec, UnitySchema
+        return UnitySchema(
+            project_name="SP", company_name="C",
+            description="underwater side-scroller", game_type="2D",
+            platform="pc", render_pipeline="URP", unity_version="6000.0",
+            color_space="Linear", features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            entities=[EntitySpec(name="Fishes", kind="prop", count=5,
+                                 model_hint="swimming fish")],
+        )
+
+    def test_sprite_pick_flows_to_spawner_and_disk(self, gen, tmp_path):
+        lookups = self._env(tmp_path)
+        root, _ = gen.write(self._schema(), {}, output_dir=str(tmp_path / "out"),
+                            lookups_dir=str(lookups))
+        cs = (root / "Assets" / "Scripts" / "EntitySpawner.cs").read_text(encoding="utf-8")
+        assert '"Sprites/Kenney/Creature/fish_blue"' in cs
+        assert "Resources.Load<Texture2D>" in cs
+        assert "SpriteRenderer" in cs
+        # binary copied to Resources + user-visible Assets/Sprites, no authored .meta
+        primary = root / "Assets" / "Resources" / "Sprites" / "Kenney" / "Creature" / "fish_blue.png"
+        assert primary.read_bytes() == b"PNG-BYTES"
+        assert not primary.with_suffix(".png.meta").exists()
+        assert (root / "Assets" / "Sprites" / "Creature" / "fish_blue.png").is_file()
+
+
+# ── Vendored URP-Atmosphere shipping ────────────────────────────────────────────
+
+class TestAtmosphere:
+    def _schema(self, **kw):
+        from src.unity_schema import UnitySchema
+        base = dict(
+            project_name="AT", company_name="C",
+            description="a quiet dungeon crawler", game_type="3D",
+            platform="pc", render_pipeline="URP", unity_version="6000.0",
+            color_space="Linear", features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_gate_requires_urp_3d_and_sky_concept(self):
+        from src.unity_generator import wants_atmosphere
+        assert not wants_atmosphere(self._schema())                       # no sky words
+        assert wants_atmosphere(self._schema(
+            description="high-altitude freefall above the clouds"))
+        assert wants_atmosphere(self._schema(locomotion="fly"))
+        assert not wants_atmosphere(self._schema(
+            locomotion="fly", render_pipeline="builtin"))                 # URP only
+        assert not wants_atmosphere(self._schema(
+            description="skydiving through clouds", game_type="2D"))      # 3D/VR only
+
+    def test_atmosphere_scripts_emitted_when_gated_on(self, gen):
+        files = gen.generate(self._schema(locomotion="fly"), {})
+        assert "AT/Assets/Editor/SetupAtmosphere.cs" in files
+        assert "AT/Assets/Scripts/AtmosphereBootstrap.cs" in files
+        cs = files["AT/Assets/Scripts/AtmosphereBootstrap.cs"]
+        assert "AtmosphereEffect" in cs and "RuntimeInitializeOnLoadMethod" in cs
+        off = gen.generate(self._schema(), {})
+        assert not any("Atmosphere" in p for p in off)
+
+    def test_write_ships_vendored_feature_and_profile(self, gen, tmp_path):
+        root, _ = gen.write(self._schema(locomotion="fly"), {},
+                            output_dir=str(tmp_path))
+        assert (root / "Assets" / "Atmosphere" / "LICENSE.md").is_file()
+        assert (root / "Assets" / "Atmosphere" / "Runtime" / "Scripts"
+                     / "AtmosphereRenderFeature.cs").is_file()
+        assert (root / "Assets" / "Resources" / "Atmosphere"
+                     / "DefaultAtmosphereProfile.asset").is_file()
+
+
+# ── Service-locator + undeclared-identifier sanitizers (TerminalHorizon repro) ──
+
+class TestFragmentSanitizers:
+    def _script(self, update_extra):
+        from src.unity_schema import UnityScript
+        return UnityScript(
+            name="VelocityManager", type="custom", description="d",
+            update_extra=update_extra,
+            extra_fields=[{"name": "safeVelocityLimit", "type": "float",
+                           "default": "45.0f"}])
+
+    def test_phantom_service_type_calls_stripped(self):
+        # Get<PlayerFSM>() where PlayerFSM exists nowhere → CS1061 live.
+        from src.unity_generator import _sanitize_project_service_calls
+        s = self._script(
+            'var playerFSM = GameContext.Instance.Get<PlayerFSM>(); '
+            'if (playerFSM != null) { playerFSM.SetState("Blackout"); }')
+        _sanitize_project_service_calls(s, {"VelocityManager": frozenset()}, set())
+        assert "PlayerFSM" not in s.update_extra
+
+    def test_known_custom_class_member_check(self):
+        from src.unity_generator import _sanitize_project_service_calls
+        api = {"DialogueManager": frozenset({"ShowLine"})}
+        good = self._script('GameContext.Instance.Get<DialogueManager>().ShowLine();')
+        bad  = self._script('GameContext.Instance.Get<DialogueManager>().TriggerBeat();')
+        _sanitize_project_service_calls(good, api, set())
+        _sanitize_project_service_calls(bad, api, set())
+        assert "ShowLine" in good.update_extra          # declared → kept
+        assert "TriggerBeat" not in bad.update_extra    # undeclared → stripped
+
+    def test_opaque_types_left_alone(self):
+        from src.unity_generator import _sanitize_project_service_calls
+        s = self._script('GameContext.Instance.Get<GameHud>().SetObjective("x");')
+        _sanitize_project_service_calls(s, {}, {"GameHud"})
+        assert "SetObjective" in s.update_extra
+
+    def test_undeclared_foreach_stripped_declared_kept(self):
+        from src.unity_generator import _strip_undeclared_foreach
+        s = self._script(
+            'foreach (var bird in FindObjectsOfType<BirdSwarmFlocking>()) { '
+            'foreach (var b in birds) b.Disperse(); }')
+        _strip_undeclared_foreach(s)
+        assert "birds" not in s.update_extra            # undeclared → line gone
+        ok = self._script('var flock = GetFlock(); foreach (var b in flock) b.ToString();')
+        _strip_undeclared_foreach(ok)
+        assert "foreach" in ok.update_extra             # declared local → kept
+
+
+# ── SceneAudio emission + data-driven README ────────────────────────────────────
+
+class TestSceneAudioAndReadme:
+    def _schema(self, **kw):
+        from src.unity_schema import EntitySpec, SceneSpec, UnitySchema
+        base = dict(
+            project_name="SA", company_name="C", description="skydiving survival",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=["audio"], scenes=["Main", "StormShelf"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            entities=[EntitySpec(name="Wreckage", kind="prop", count=6,
+                                 model_hint="debris wreckage")],
+            scene_specs=[SceneSpec(name="StormShelf",
+                                   description="thunderhead interior",
+                                   time_of_day="night", fog=True)],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_scene_audio_emitted_with_audio_feature(self, gen):
+        files = gen.generate(self._schema(), {})
+        cs = files["SA/Assets/Scripts/SceneAudio.cs"]
+        assert 'Resources.LoadAll<AudioClip>("Audio")' in cs
+        assert "RuntimeInitializeOnLoadMethod" in cs
+        assert "public static void Play(string cue" in cs
+
+    def test_scene_audio_skipped_without_audio_content(self, gen):
+        files = gen.generate(self._schema(features=[]), {})
+        assert not any("SceneAudio" in p for p in files)
+
+    def test_readme_reflects_this_build(self, gen):
+        files = gen.generate(self._schema(), {"com.unity.inputsystem": "1.8.2"})
+        rm = files["SA/README.md"]
+        assert "| **StormShelf** | night, fog | thunderhead interior |" in rm
+        assert "Models/Kenney/Obstacle/debris-" in rm      # entity→model table
+        assert "SceneAudio.cs" in rm                       # audio section
+        assert "placeholder GameObjects" not in rm         # stale line gone
+        assert "unity-validate SA.schema.json" in rm       # regeneration loop
+
+    def test_readme_procedural_and_atmosphere_sections(self, gen):
+        from src.unity_schema import EntitySpec, ProceduralMesh
+        schema = self._schema(
+            locomotion="fly",
+            entities=[EntitySpec(name="AtmosphericClouds", kind="prop", count=9,
+                                 model_hint="atmospheric clouds")],
+            procedural_meshes=[ProceduralMesh(name="CloudLayer",
+                                              description="volumetric clouds",
+                                              mesh_type="custom", resolution=64)])
+        files = gen.generate(schema, {}, strict_assets=True)
+        rm = files["SA/README.md"]
+        assert "procedural mesh (`custom`, res 64)" in rm
+        assert "URP-Atmosphere" in rm                      # locomotion=fly gate
+        assert "Flight controller" in rm

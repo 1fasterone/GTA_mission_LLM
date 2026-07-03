@@ -31,10 +31,16 @@ from .unity_model_resolver import ResolvedModel
 
 _log = logging.getLogger(__name__)
 
-# Resources.Load root for catalog picks. Distinct from the default pack's
+# Resources.Load roots for catalog picks. Distinct from the default pack's
 # "Models/Default/" so the two never collide; 3 path parts keeps write()'s
-# secondary-copy prefix strip (Assets/Models/<Category>/<file>) working.
+# secondary-copy prefix strip (Assets/<root>/<Category>/<file>) working.
 _RES_ROOT = "Models/Kenney"
+_SPRITE_RES_ROOT = "Sprites/Kenney"
+
+# 2D games prefer sprites over 3D models when both match an entity — a fish
+# PNG beats a marble-track FBX in a side-scroller. Applied only to entries
+# that already cleared the strong-hit gate.
+_SPRITE_2D_BONUS = 0.75
 
 _DEFAULT_MIN_SCORE = 0.15
 _DEFAULT_TOP_K = 5
@@ -76,7 +82,8 @@ def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     the +0.5 prop kind bonus carried it over the threshold.
     """
     kw = set(k.lower() for k in entry.get("keywords", []))
-    kw.update(tokenize(Path(entry.get("filename", "")).stem))
+    kw.update(t for t in tokenize(Path(entry.get("filename", "")).stem)
+              if len(t) > 1)   # "fence-1x2" leaves a bare "x" — never a keyword
     hits = {t: w for t, w in query_weights.items() if t in kw}
     if not hits or max(hits.values()) < _STRONG_HIT:
         return 0.0
@@ -93,13 +100,13 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
     for w in scene_words:
         weights[w] = 0.1
     for t in tokenize(entity.name):
-        if t not in _STOPWORDS:
+        if t not in _STOPWORDS and len(t) > 1:
             weights[t] = 1.0
     kind = (entity.kind or "").lower()
-    if kind and kind not in _STOPWORDS:
+    if kind and kind not in _STOPWORDS and len(kind) > 1:
         weights[kind] = max(weights.get(kind, 0.0), 1.0)
     for t in tokenize(getattr(entity, "model_hint", "") or ""):
-        if t not in _STOPWORDS:
+        if t not in _STOPWORDS and len(t) > 1:
             weights[t] = 2.0
     # Singular/plural bridging for strong tokens: entity names are usually
     # plural ("PineTrees") while catalog keywords are singular ("tree").
@@ -110,6 +117,40 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
             else:
                 weights.setdefault(t + "s", w)
     return weights
+
+
+def _tokens_with_plurals(text: str) -> set[str]:
+    toks = {t for t in tokenize(text) if t not in _STOPWORDS}
+    for t in list(toks):
+        if t.endswith("s") and len(t) > 3:
+            toks.add(t[:-1])
+        else:
+            toks.add(t + "s")
+    return toks
+
+
+def _procedural_route(entity, procedural_meshes) -> Optional[str]:
+    """Match an unresolved entity to a schema procedural mesh by token overlap.
+
+    The LLM often authors BOTH an entity group and a procedural mesh for the
+    same concept ("AtmosphericClouds" entity + "CloudLayer1" mesh) — when no
+    real model exists, the mesh IS the content, so route the group to the
+    MeshBuilder path instead of failing. Returns a "procedural:<type>:<res>"
+    path the spawner understands, or None.
+    """
+    ent_tokens = _tokens_with_plurals(entity.name) \
+        | _tokens_with_plurals(getattr(entity, "model_hint", "") or "")
+    best: Optional[tuple[int, str, str]] = None   # (-overlap, name, path)
+    for m in procedural_meshes or []:
+        mesh_tokens = _tokens_with_plurals(m.name) \
+            | _tokens_with_plurals(getattr(m, "description", "") or "")
+        overlap = len(ent_tokens & mesh_tokens)
+        if overlap == 0:
+            continue
+        key = (-overlap, m.name)
+        if best is None or key < best[:2]:
+            best = (*key, f"procedural:{m.mesh_type}:{m.resolution}")
+    return best[2] if best else None
 
 
 def _nearest_misses(catalog_assets: list[dict],
@@ -142,8 +183,15 @@ def resolve_entity_assets(schema,
     top_k = max(1, int(cfg.get("variety_top_k", _DEFAULT_TOP_K)))
     asset_root = cfg.get("asset_root")  # optional override for entry roots
 
+    # Format gate by game type: 2D games may use sprites (png) and models;
+    # everything else is models-only — a flat PNG must never be picked as a
+    # 3D scene object.
+    is_2d = getattr(schema, "game_type", "3D") == "2D"
+    allowed_formats = {"fbx", "png"} if is_2d else {"fbx"}
+
     catalog = load_catalog(str(lookups_dir))
-    assets = [a for a in catalog.get("assets", []) if a.get("filename")]
+    assets = [a for a in catalog.get("assets", []) if a.get("filename")
+              and a.get("format", "fbx") in allowed_formats]
 
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
@@ -170,9 +218,16 @@ def resolve_entity_assets(schema,
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
+
+        def _final_score(a: dict) -> float:
+            s = _score(a, qw, kind)
+            if s > 0.0 and is_2d and a.get("format") == "png":
+                s += _SPRITE_2D_BONUS
+            return s
+
         scored = sorted(
             ((s, a) for a in assets
-             if (s := _score(a, qw, kind)) >= min_score
+             if (s := _final_score(a)) >= min_score
              and _entry_source(a, asset_root) is not None),
             key=lambda sa: (-sa[0], sa[1]["filename"]))
         if scored:
@@ -185,7 +240,9 @@ def resolve_entity_assets(schema,
 
             src = _entry_source(pick, asset_root)
             category = (pick.get("category") or "prop").capitalize()
-            dest_rel = f"{_RES_ROOT}/{category}/{pick['filename']}"
+            is_sprite = pick.get("format") == "png"
+            res_root = _SPRITE_RES_ROOT if is_sprite else _RES_ROOT
+            dest_rel = f"{res_root}/{category}/{pick['filename']}"
             model_key = f"asset:{Path(pick['filename']).stem}"
             rm = used_models.get(model_key)
             if rm is None:
@@ -194,14 +251,27 @@ def resolve_entity_assets(schema,
                     src=str(src.resolve()),
                     dest_rel=dest_rel,
                     resource_path=dest_rel.rsplit(".", 1)[0],
-                    rig="generic",
+                    # "sprite" rig = 2D texture: no ModelImporter .meta is
+                    # authored (Unity's default TextureImporter handles PNG),
+                    # and the spawner loads it as Texture2D → Sprite.Create.
+                    rig="sprite" if is_sprite else "generic",
                     scale=float(pick.get("scale", 1.0) or 1.0),
                 )
                 used_models[model_key] = rm
             entity_model_paths[e.name] = rm.resource_path
             continue
 
-        # ── Tier 3: fallback policy ───────────────────────────────────────────
+        # ── Tier 3: schema procedural mesh ────────────────────────────────────
+        # "AtmosphericClouds" with a CloudLayer1 procedural mesh in the same
+        # schema: the mesh is the intended content — build it at spawn time.
+        proc = _procedural_route(e, getattr(schema, "procedural_meshes", None))
+        if proc is not None:
+            entity_model_paths[e.name] = proc
+            _log.info("[assets] entity '%s' routed to %s (schema procedural mesh)",
+                      e.name, proc)
+            continue
+
+        # ── Tier 4: fallback policy ───────────────────────────────────────────
         if strict:
             unmatched.append((e.name, e.kind,
                               _nearest_misses(assets, qw, kind)))
@@ -220,8 +290,9 @@ def resolve_entity_assets(schema,
             f"[assets.strict] no real model matches entity {detail}. "
             "Give the entity a model_hint matching the asset library "
             "(run: python main.py unity-catalog --dry-run for the vocabulary), "
-            "map its kind in lookups/unity/default_models.json, or set "
-            "assets.strict: false."
+            "map its kind in lookups/unity/default_models.json, add a "
+            "procedural_meshes entry sharing a name word with the entity, or "
+            "set assets.strict: false."
         )
     if defaulted:
         _log.warning(
@@ -245,8 +316,8 @@ def texture_dirs_for(used_models: dict[str, ResolvedModel]) -> list[Path]:
     dirs: list[Path] = []
     seen: set[str] = set()
     for key, m in sorted(used_models.items()):
-        if not key.startswith("asset:"):
-            continue
+        if not key.startswith("asset:") or m.rig == "sprite":
+            continue  # sprites are self-contained PNGs — no FBX texture folder
         for parent in Path(m.src).parents:
             tex = parent / "Textures"
             if tex.is_dir():
