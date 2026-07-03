@@ -28,14 +28,7 @@ ENDHLSL
 			
 			#define ATMOSPHERE_MODEL_SIM
 
-			struct appdata 
-			{
-				float4 vertex : POSITION;
-				float4 uv : TEXCOORD0;
-			};
-
-
-			struct v2f 
+			struct v2f
 			{
 				float4 pos : SV_POSITION;
 				float2 uv : TEXCOORD0;
@@ -47,12 +40,14 @@ ENDHLSL
 			SAMPLER(sampler_Source);
 
 
-			v2f AtmosphereVertex(appdata v) 
+			// Rendered by Blitter as a procedural fullscreen triangle (no
+			// vertex buffer), so positions/uvs derive from SV_VertexID.
+			v2f AtmosphereVertex(uint vertexID : SV_VertexID)
 			{
 				v2f output;
-				output.pos = TransformObjectToHClip(v.vertex.xyz);
-				output.uv = v.uv.xy;
-				float3 viewVector = mul(unity_CameraInvProjection, float4(v.uv.xy * 2 - 1, 0, -1)).xyz;
+				output.pos = GetFullScreenTriangleVertexPosition(vertexID);
+				output.uv = GetFullScreenTriangleTexCoord(vertexID);
+				float3 viewVector = mul(unity_CameraInvProjection, float4(output.uv * 2 - 1, 0, -1)).xyz;
 				output.viewVector = mul(unity_CameraToWorld, float4(viewVector, 0)).xyz;
 				return output;
 			}

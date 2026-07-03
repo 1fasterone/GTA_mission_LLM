@@ -970,12 +970,15 @@ class UnitySchema(BaseModel):
     @classmethod
     def normalise_version(cls, v: str) -> str:
         s = str(v).strip()
-        if "6000.4" in s:
-            return "6000.4"
-        if "6000.1" in s:
-            return "6000.1"
-        if s.startswith("6") and ("6000" in s or s in {"6", "6.0"}):
-            return "6000.0"
+        m = re.search(r"6000\.(\d+)", s) or re.fullmatch(r"6(?:\.(\d+))?", s)
+        if m:
+            minor = int(m.group(1) or 0)
+            # Editors newer than the pinned minors (6.2, 6.3, 6.5, …) take the
+            # newest pin set — the 6000.0 pins (e.g. Cinemachine) are too old
+            # for them and fail compilation from the PackageCache.
+            if minor >= 2:
+                return "6000.4"
+            return "6000.1" if minor == 1 else "6000.0"
         if "2022" in s:
             return "2022.3"
         if "2021" in s:

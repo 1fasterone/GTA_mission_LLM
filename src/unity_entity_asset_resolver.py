@@ -208,12 +208,19 @@ def resolve_entity_assets(schema,
         hint = (getattr(e, "model_hint", "") or "").strip().lower()
 
         # ── Tier 1: explicit kind (schema-default "prop" is not explicit) ────
+        tier1: Optional[ResolvedModel] = None
         if kind in used_models and (kind != "prop" or hint == "default prop"):
-            entity_model_paths[e.name] = used_models[kind].resource_path
-            continue
-        if kind == "prop" and hint == "default prop" and prop_fallback is not None:
+            tier1 = used_models[kind]
+        elif kind == "prop" and hint == "default prop" and prop_fallback is not None:
             used_models.setdefault("prop", prop_fallback)
-            entity_model_paths[e.name] = prop_fallback.resource_path
+            tier1 = prop_fallback
+
+        # A real model_hint asks for something more specific than the default
+        # pack — "corsair plane" on kind="vehicle" must reach the catalog, not
+        # stop at Car.fbx. Hold the tier-1 model as the safety net and try the
+        # catalog first; `model_hint: "default <kind>"` opts back into tier 1.
+        if tier1 is not None and hint in ("", f"default {kind}", "default prop"):
+            entity_model_paths[e.name] = tier1.resource_path
             continue
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
@@ -259,6 +266,13 @@ def resolve_entity_assets(schema,
                 )
                 used_models[model_key] = rm
             entity_model_paths[e.name] = rm.resource_path
+            continue
+
+        # Hinted entity with no catalog hit: the default-pack model for its
+        # kind is still real, kind-correct content — use it rather than
+        # degrading to a procedural mesh, the generic prop, or a strict fail.
+        if tier1 is not None:
+            entity_model_paths[e.name] = tier1.resource_path
             continue
 
         # ── Tier 3: schema procedural mesh ────────────────────────────────────
