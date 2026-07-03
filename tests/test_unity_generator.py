@@ -1240,3 +1240,59 @@ class TestFragmentSanitizers:
         ok = self._script('var flock = GetFlock(); foreach (var b in flock) b.ToString();')
         _strip_undeclared_foreach(ok)
         assert "foreach" in ok.update_extra             # declared local → kept
+
+
+# ── SceneAudio emission + data-driven README ────────────────────────────────────
+
+class TestSceneAudioAndReadme:
+    def _schema(self, **kw):
+        from src.unity_schema import EntitySpec, SceneSpec, UnitySchema
+        base = dict(
+            project_name="SA", company_name="C", description="skydiving survival",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=["audio"], scenes=["Main", "StormShelf"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+            entities=[EntitySpec(name="Wreckage", kind="prop", count=6,
+                                 model_hint="debris wreckage")],
+            scene_specs=[SceneSpec(name="StormShelf",
+                                   description="thunderhead interior",
+                                   time_of_day="night", fog=True)],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_scene_audio_emitted_with_audio_feature(self, gen):
+        files = gen.generate(self._schema(), {})
+        cs = files["SA/Assets/Scripts/SceneAudio.cs"]
+        assert 'Resources.LoadAll<AudioClip>("Audio")' in cs
+        assert "RuntimeInitializeOnLoadMethod" in cs
+        assert "public static void Play(string cue" in cs
+
+    def test_scene_audio_skipped_without_audio_content(self, gen):
+        files = gen.generate(self._schema(features=[]), {})
+        assert not any("SceneAudio" in p for p in files)
+
+    def test_readme_reflects_this_build(self, gen):
+        files = gen.generate(self._schema(), {"com.unity.inputsystem": "1.8.2"})
+        rm = files["SA/README.md"]
+        assert "| **StormShelf** | night, fog | thunderhead interior |" in rm
+        assert "Models/Kenney/Obstacle/debris-" in rm      # entity→model table
+        assert "SceneAudio.cs" in rm                       # audio section
+        assert "placeholder GameObjects" not in rm         # stale line gone
+        assert "unity-validate SA.schema.json" in rm       # regeneration loop
+
+    def test_readme_procedural_and_atmosphere_sections(self, gen):
+        from src.unity_schema import EntitySpec, ProceduralMesh
+        schema = self._schema(
+            locomotion="fly",
+            entities=[EntitySpec(name="AtmosphericClouds", kind="prop", count=9,
+                                 model_hint="atmospheric clouds")],
+            procedural_meshes=[ProceduralMesh(name="CloudLayer",
+                                              description="volumetric clouds",
+                                              mesh_type="custom", resolution=64)])
+        files = gen.generate(schema, {}, strict_assets=True)
+        rm = files["SA/README.md"]
+        assert "procedural mesh (`custom`, res 64)" in rm
+        assert "URP-Atmosphere" in rm                      # locomotion=fly gate
+        assert "Flight controller" in rm

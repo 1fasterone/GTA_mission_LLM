@@ -1754,6 +1754,17 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/Settings"), folder=True
             )
 
+        # ── Scene audio (Stable Audio 3 clip playback) ────────────────────────
+        # The audio stage generates real clips into Resources/Audio/ but runs
+        # AFTER write(), so SceneAudio discovers clips at runtime instead of
+        # bake time: scene-matched ambient beds + a global music bed + a fuzzy
+        # SceneAudio.Play("cue") API for gameplay scripts. Emitted whenever the
+        # schema carries audio content; silent no-op when no clips exist yet.
+        if "audio" in schema.features or schema.audio_tracks:
+            sau_path = f"{pn}/Assets/Scripts/SceneAudio.cs"
+            files[sau_path]           = self._render("scripts/SceneAudio.cs.j2", base_ctx)
+            files[f"{sau_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/SceneAudio"))
+
         # ── Atmosphere (vendored URP-Atmosphere, MIT) ─────────────────────────
         # write() copies the vendored feature + profile binaries; here we emit
         # the two glue scripts: run-once renderer registration and the runtime
@@ -1805,12 +1816,18 @@ class UnityProjectGenerator:
         files.update(self._user_assets_files(pn))
 
         # ── README.md ─────────────────────────────────────────────────────────
+        # Data-driven per project: what THIS build contains (scene moods,
+        # entity→model table, audio, atmosphere), not cookie-cutter advice.
         readme_ctx = {
             **base_ctx,
             "description": schema.description,
             "scripts":     schema.scripts,
             # Pass as sorted list of (id, version) tuples for stable output
             "packages":    sorted(manifest_deps.items()),
+            "scene_specs_by_name": {sp.name: sp for sp in schema.scene_specs},
+            "locomotion":      getattr(schema, "locomotion", "walk"),
+            "has_atmosphere":  wants_atmosphere(schema),
+            "has_scene_audio": "audio" in schema.features or bool(schema.audio_tracks),
         }
         files[f"{pn}/README.md"] = self._render("readme.md.j2", readme_ctx)
 
