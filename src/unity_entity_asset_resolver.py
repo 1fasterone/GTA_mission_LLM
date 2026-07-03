@@ -71,6 +71,15 @@ def _entry_source(entry: dict, asset_root: Optional[str]) -> Optional[Path]:
 # entity's own name/kind/model_hint, not the scene description.
 _STRONG_HIT = 1.0
 
+# Kinds that describe engine-native content, not FBX models. They still get a
+# catalog / procedural-mesh shot (a 2D "title background" IS a real sprite),
+# but a miss routes to the matching content path instead of a strict hard-fail:
+# fx-family → runtime ParticleSystem in EntitySpawner; ui/background-family →
+# owned by SceneSetup / the sky pipeline, so the spawner skips the group.
+_FX_KINDS = frozenset({"fx", "vfx", "effect", "effects", "particles", "weather"})
+_SKIP_KINDS = frozenset({"ui", "hud", "menu", "background", "backdrop",
+                         "skybox", "sky"})
+
 
 def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     """Weighted keyword overlap + kind-hint bonus + generic tiebreak.
@@ -283,6 +292,20 @@ def resolve_entity_assets(schema,
             entity_model_paths[e.name] = proc
             _log.info("[assets] entity '%s' routed to %s (schema procedural mesh)",
                       e.name, proc)
+            continue
+
+        # ── Non-mesh kinds: fx → particles, ui/background → skip ─────────────
+        # Reached only when the catalog and procedural tiers missed — these
+        # kinds never needed an FBX, so a miss is expected, not a failure.
+        if kind in _FX_KINDS:
+            entity_model_paths[e.name] = "fx:particles"
+            _log.info("[assets] entity '%s' (kind=%s) → runtime ParticleSystem",
+                      e.name, kind)
+            continue
+        if kind in _SKIP_KINDS:
+            entity_model_paths[e.name] = f"skip:{kind}"
+            _log.info("[assets] entity '%s' (kind=%s) → no 3D spawn (owned by "
+                      "SceneSetup / sky pipeline)", e.name, kind)
             continue
 
         # ── Tier 4: fallback policy ───────────────────────────────────────────

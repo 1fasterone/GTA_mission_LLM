@@ -287,6 +287,39 @@ def test_no_token_overlap_still_fails_strict(env, tmp_path):
         resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
 
 
+# ── non-mesh kinds (ui / fx / background) ─────────────────────────────────────
+
+def test_fx_kind_routes_to_particles_not_strict_fail(env, tmp_path):
+    # Live regression (TerminalHorizon): kind="fx" entities ("StormCells")
+    # hard-failed strict resolution — they never needed an FBX.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="StormCells", kind="fx", count=6,
+                            model_hint="storm cells fx")]),
+        {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["StormCells"] == "fx:particles"
+
+
+def test_ui_and_background_kinds_skip_spawn(env, tmp_path):
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="MenuUI", kind="ui", count=1,
+                            model_hint="menu ui"),
+                 EntitySpec(name="TitleBackground", kind="background", count=1,
+                            model_hint="title background")]),
+        {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["MenuUI"] == "skip:ui"
+    assert paths["TitleBackground"] == "skip:background"
+
+
+def test_fx_kind_still_prefers_catalog_match(env, tmp_path):
+    # A non-mesh kind whose hint names a real asset gets the asset — the
+    # particle/skip routing only fires when the catalog misses.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="FallingLeaves", kind="fx", count=4,
+                            model_hint="pine tree")]),
+        {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["FallingLeaves"].startswith("Models/Kenney/Nature/tree-")
+
+
 # ── fallback policy ───────────────────────────────────────────────────────────
 
 def test_strict_no_match_raises_with_suggestions(env, tmp_path):
