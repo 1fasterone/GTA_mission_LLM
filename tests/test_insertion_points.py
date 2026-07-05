@@ -72,6 +72,25 @@ def test_lint_repairs_value_type_property_member_assign():
         == "bool b = Physics.gravity.x == 0f;"
 
 
+def test_lint_declares_inline_out_params():
+    # CS0103: the pre-C#7 raycast idiom `out hit` with no declaration. The lint
+    # pass must declare it inline as `out var hit` (hit live: GrappleGunSystem.cs
+    # in the TerminalHorizon project).
+    out = lint_code_fragment(
+        "if (Physics.Raycast(ray, out hit, 5f)) { var a = hit.transform; }", what="x")
+    assert "out var hit" in out
+    # Already-declared out param is left alone (no double declaration).
+    assert lint_code_fragment("RaycastHit hit; Physics.Raycast(ray, out hit, 5f);",
+                              what="x") == "RaycastHit hit; Physics.Raycast(ray, out hit, 5f);"
+    # A field target (`_`-prefixed) must NOT be rewritten — out-to-field is valid.
+    assert lint_code_fragment("Physics.Raycast(ray, out _hitField, 5f);", what="x") \
+        == "Physics.Raycast(ray, out _hitField, 5f);"
+    # Two raycasts sharing a name: first declares, second reuses it.
+    two = lint_code_fragment(
+        "Physics.Raycast(a, out hit, 5f); Physics.Raycast(b, out hit, 5f);", what="x")
+    assert two == "Physics.Raycast(a, out var hit, 5f); Physics.Raycast(b, out hit, 5f);"
+
+
 def test_lint_usings_dedupes_and_drops_template():
     out = lint_usings(["UnityEngine", "UnityEngine.UI", "using UnityEngine.UI;"],
                       already_in_template={"UnityEngine"})

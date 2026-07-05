@@ -179,6 +179,40 @@ def _repair_struct_member_assign(text: str) -> str:
     return new
 
 
+# CS0103: LLMs write the pre-C#7 raycast idiom `Physics.Raycast(ray, out hit, …)`
+# without ever declaring `hit`. Modern C# allows an inline `out var hit`, so
+# declare the out parameter in place. Only lowercase, non-field (`_`-prefixed)
+# identifiers that aren't already declared elsewhere in the fragment are
+# touched; a second `out hit` reuses the first's declaration.
+_OUT_UNDECLARED_RE = re.compile(r'\bout\s+(?!var\b|ref\b)([a-z][A-Za-z0-9_]*)\b')
+
+
+def _declare_inline_out_params(text: str) -> str:
+    seen: set[str] = set()
+    changed = False
+
+    def repl(m: "re.Match") -> str:
+        nonlocal changed
+        ident = m.group(1)
+        if ident in seen:
+            return m.group(0)                       # reuse the first declaration
+        # Already declared explicitly in this fragment (`var hit` / `RaycastHit
+        # hit`)? Match `var`, a primitive, or a Capitalized type name before the
+        # identifier — deliberately NOT the `out`/`ref` keyword itself (lowercase,
+        # non-primitive), which would otherwise look like a declaration.
+        if re.search(rf'\b(?:var|int|float|double|bool|string|byte|long|short|'
+                     rf'char|object|[A-Z][\w<>\[\].]*)\s+{re.escape(ident)}\b', text):
+            return m.group(0)
+        seen.add(ident)
+        changed = True
+        return f'out var {ident}'
+
+    new = _OUT_UNDECLARED_RE.sub(repl, text)
+    if changed:
+        console.print("  [magenta]FIX[/]  declared inline out parameter(s) (CS0103)")
+    return new
+
+
 def lint_code_fragment(text: str, *, what: str) -> str:
     """
     Clean an LLM-authored C# fragment intended for an injection point.
@@ -195,6 +229,7 @@ def lint_code_fragment(text: str, *, what: str) -> str:
     # Strip `using X;` lines — these belong in `extra_usings`, not the body.
     text = _USING_RE.sub("", text)
     text = _repair_struct_member_assign(text)
+    text = _declare_inline_out_params(text)
     text = _balance_braces(text)
     text = _cap_lines(text, what=what)
     return text.strip()
