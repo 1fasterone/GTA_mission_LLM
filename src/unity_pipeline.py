@@ -484,8 +484,11 @@ class UnityPipeline:
             concept,
         ]).lower()
 
+        # "fly" alone doesn't imply a pilotable vehicle (a wingsuit/skydiving
+        # game has none) — only "drive" is an unconditional vehicle signal;
+        # "fly" needs corroborating vehicle words in the schema's own text.
         has_vehicle = (
-            loco in ("drive", "fly")
+            loco == "drive"
             or any(getattr(e, "kind", "") == "vehicle" for e in schema.entities)
             or any(w in combined for w in ("vehicle", "car", "jeep", "truck",
                                            "plane", "aircraft", "jet", "bike",

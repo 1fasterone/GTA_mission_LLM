@@ -426,3 +426,117 @@ def test_texture_dirs_for_catalog_picks_only(env, tmp_path):
     assert dirs == [lib / "Textures"]
     # default-pack-only projects ship no texture folders
     assert texture_dirs_for(_default_models(tmp_path)) == []
+
+
+# ── concept layers (semantic classification: concept → layer → best asset) ────
+
+# A staircase and a real platform BOTH carry the keyword "platform". The
+# staircase has a higher generic_score, so literal token→filename matching used
+# to pick it for a platform entity ("StratoPlatform → steps.fbx"). Concept
+# layers classify the entity into platform_walkway, where the real platform is
+# a STRONG (category) member and the staircase is not.
+_DRIFT_ASSETS = [
+    {"filename": "steps.fbx", "relpath": "steps.fbx", "category": "stairs",
+     "keywords": ["stairs", "steps", "staircase", "platform"],
+     "kind_hints": ["prop", "building"], "generic_score": 9, "scale": 1.0},
+    {"filename": "platform_high.fbx", "relpath": "platform_high.fbx",
+     "category": "structure",
+     "keywords": ["platform", "ledge", "walkway", "deck", "structure"],
+     "kind_hints": ["building", "ground", "prop"], "generic_score": 1, "scale": 1.0},
+    {"filename": "alien.fbx", "relpath": "alien.fbx", "category": "character",
+     "keywords": ["alien", "creature", "monster", "npc"],
+     "kind_hints": ["enemy", "npc"], "generic_score": 0, "scale": 1.0},
+]
+
+_CONCEPT_LAYERS = {
+    "_config": {"kind_prior": 1.0, "layer_band": 0.6},
+    "layers": {
+        "platform_walkway": {
+            "vocabulary": ["platform", "ledge", "walkway", "deck", "structure"],
+            "kinds": ["platform", "structure"], "categories": ["platform", "structure"]},
+        "stairs_ramp": {
+            "vocabulary": ["stairs", "steps", "staircase", "ramp"],
+            "kinds": ["ramp", "stairs"], "categories": ["stairs", "ramp"]},
+        "creature_animal": {
+            "vocabulary": ["creature", "monster", "dragon", "beast", "alien"],
+            "kinds": ["creature", "enemy", "npc"], "categories": ["creature", "character"]},
+    },
+}
+
+
+@pytest.fixture
+def layered_env(tmp_path):
+    """A catalog with the platform/steps drift pair + a concept_layers.json."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for a in _DRIFT_ASSETS:
+        (lib / a["relpath"]).write_bytes(b"FBX")
+    catalog = {"version": 1, "vocabulary": {"categories": [], "tags": []},
+               "assets": [{**a, "root": lib.as_posix(), "game_contexts": ["any"],
+                           "format": "fbx", "pack": "t", "curated": False}
+                          for a in _DRIFT_ASSETS]}
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps(catalog), encoding="utf-8")
+    (lookups / "unity" / "concept_layers.json").write_text(
+        json.dumps(_CONCEPT_LAYERS), encoding="utf-8")
+    return lookups
+
+
+def test_concept_layer_beats_higher_generic_score_drift(layered_env):
+    # The core StratoPlatform regression: without concept layers the staircase
+    # (generic_score 9) out-points the real platform (generic_score 1) on the
+    # shared "platform" keyword. The platform_walkway layer + category-align
+    # bonus must flip that.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="StratoPlatform", kind="platform", count=1)]),
+        {}, {}, lookups_dir=str(layered_env), strict=True)
+    assert paths["StratoPlatform"] == "Models/Kenney/Structure/platform_high"
+
+
+def test_kind_constrains_layer_over_adjective(layered_env):
+    # "PlatformSteps" kind=stairs: the name carries the adjective "platform"
+    # (→ platform_walkway) but the structured kind pins the band to
+    # stairs_ramp, so the staircase wins over the platform. Kind outranks a
+    # stray descriptive token.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PlatformSteps", kind="stairs", count=1)]),
+        {}, {}, lookups_dir=str(layered_env), strict=True)
+    assert paths["PlatformSteps"] == "Models/Kenney/Stairs/steps"
+
+
+def test_best_in_layer_replaces_generic_prop_fallback(layered_env, tmp_path):
+    # A "Wyverns" (kind=beast) has no literal catalog hit — no entity token,
+    # not even the kind, appears in any asset's keywords — but "beast" names
+    # the creature layer (vocab hit). The soft best-in-layer pick must choose
+    # the real creature instead of collapsing to the generic prop.
+    all_models = _default_models(tmp_path)   # provides a "prop" default
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Wyverns", kind="beast", count=1)]),
+        {}, all_models, lookups_dir=str(layered_env), strict=False)
+    assert paths["Wyverns"] == "Models/Kenney/Character/alien"
+
+
+def test_concept_layer_absent_reverts_to_global_behavior(tmp_path):
+    # Without concept_layers.json the best-in-layer rescue is gone: the same
+    # "Wyverns" (no literal catalog hit) collapses to the generic prop, exactly
+    # as before this feature. Proves the layer file is a pure, optional
+    # enhancement — absent → today's behavior verbatim.
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    for a in _DRIFT_ASSETS:
+        (lib / a["relpath"]).write_bytes(b"FBX")
+    catalog = {"version": 1, "vocabulary": {"categories": [], "tags": []},
+               "assets": [{**a, "root": lib.as_posix(), "game_contexts": ["any"],
+                           "format": "fbx", "pack": "t", "curated": False}
+                          for a in _DRIFT_ASSETS]}
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps(catalog), encoding="utf-8")   # note: NO concept_layers.json
+    all_models = _default_models(tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Wyverns", kind="beast", count=1)]),
+        {}, all_models, lookups_dir=str(lookups), strict=False)
+    assert paths["Wyverns"] == "Models/Default/Prop/Prop"

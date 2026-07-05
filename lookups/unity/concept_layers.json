@@ -1,0 +1,125 @@
+{
+  "_config": {
+    "comment": "Concept layers — the semantic classification between entity intent and catalog filenames. resolve_entity_assets ranks layers from an entity's name/kind/model_hint tokens (kind constrains the band), then matches ONLY inside the winning layer's asset pool, so a stray shared word ('ground', 'platform') can no longer pull an unrelated asset across domains; a decisive layer with real assets yields a best-in-layer pick instead of the generic prop. Vocabulary + categories are grounded in the generated asset_catalog.json tag set (python main.py unity-catalog). 'categories' lists only UNAMBIGUOUS catalog categories for this layer (a category shared by two concepts — e.g. 'nature' holds both trees and rocks — is left out and disambiguated by keywords). 'kinds' lists entity kinds that map here (never the generic 'prop'/'object'). File missing => resolver behaves exactly as before (global match only). Deterministic: pure lookups, stable tie-breaks, no RNG, no LLM.",
+    "decisive_score": 2.0,
+    "kind_prior": 1.0,
+    "layer_band": 0.6
+  },
+  "layers": {
+    "character_humanoid": {
+      "vocabulary": ["astronaut", "astronauts", "character", "humanoid", "person", "human", "soldier", "pilot", "skydiver", "diver", "hero", "avatar", "spectator", "villager", "wizard", "knight"],
+      "kinds": ["player", "npc", "character", "crowd"],
+      "categories": ["character"]
+    },
+    "creature_animal": {
+      "vocabulary": ["creature", "creatures", "animal", "animals", "bird", "birds", "fish", "shark", "whale", "monster", "alien", "wolf", "dog", "cat", "hawk", "eagle", "flock", "swarm", "insect", "spider", "snake", "bat", "dragon", "predator", "predators", "zombie", "skeleton"],
+      "kinds": ["creature", "animal", "enemy", "npc"],
+      "categories": ["creature"]
+    },
+    "robot_drone": {
+      "vocabulary": ["drone", "drones", "robot", "robots", "turret", "turrets", "mech", "bot", "android", "interceptor", "cyborg", "sentry"],
+      "kinds": ["enemy", "boss"],
+      "categories": []
+    },
+    "vehicle_ground": {
+      "vocabulary": ["car", "cars", "truck", "jeep", "bike", "motorcycle", "motorbike", "tractor", "racer", "racing", "speeder", "van", "bus", "kart", "buggy", "rover"],
+      "kinds": ["vehicle"],
+      "categories": []
+    },
+    "aircraft_aerial": {
+      "vocabulary": ["plane", "planes", "aircraft", "airplane", "jet", "jets", "glider", "helicopter", "chopper", "corsair", "corsaire", "bomber", "fighter", "biplane", "warplane", "aviation", "avion", "parachute", "chute", "canopy", "wingsuit", "skydive", "balloon", "blimp", "zeppelin"],
+      "kinds": ["vehicle"],
+      "categories": []
+    },
+    "spacecraft": {
+      "vocabulary": ["spaceship", "spacecraft", "shuttle", "rocket", "rockets", "ufo", "starship", "starfighter", "lander", "capsule", "cruiser", "freighter", "craft"],
+      "kinds": ["vehicle", "ship"],
+      "categories": ["ship"]
+    },
+    "watercraft": {
+      "vocabulary": ["boat", "boats", "watercraft", "sail", "sailboat", "canoe", "raft", "submarine", "yacht", "vessel"],
+      "kinds": ["vehicle"],
+      "categories": []
+    },
+    "building_architecture": {
+      "vocabulary": ["building", "buildings", "house", "houses", "home", "hangar", "garage", "shed", "tent", "castle", "tower", "hut", "cabin", "barn", "suburban", "roof", "chimney", "hall", "hub", "structure"],
+      "kinds": ["building"],
+      "categories": ["structure"]
+    },
+    "platform_walkway": {
+      "vocabulary": ["platform", "platforms", "ledge", "walkway", "deck", "scaffold", "bridge", "span", "catwalk", "pier", "dock", "balcony", "structure"],
+      "kinds": ["platform", "structure"],
+      "categories": ["platform", "structure"]
+    },
+    "stairs_ramp": {
+      "vocabulary": ["stairs", "steps", "staircase", "ramp", "ramps", "ladder", "incline", "slope"],
+      "kinds": ["ramp", "stairs"],
+      "categories": ["stairs", "ramp"]
+    },
+    "terrain_ground": {
+      "vocabulary": ["ground", "floor", "floors", "terrain", "tile", "tiles", "dirt", "sand", "grass", "lawn", "turf", "land", "pavement", "mound", "snow", "ice", "mud", "field", "meadow"],
+      "kinds": ["ground", "floor", "terrain"],
+      "categories": ["floor"]
+    },
+    "vegetation": {
+      "vocabulary": ["tree", "trees", "pine", "forest", "plant", "plants", "foliage", "bush", "bushes", "flower", "flowers", "bloom", "crops", "wheat", "corn", "garden", "stump", "log", "branch", "seaweed", "kelp", "vine", "shrub", "palm", "mushroom", "vegetation"],
+      "kinds": ["tree", "plant"],
+      "categories": ["vegetation"]
+    },
+    "rock_geology": {
+      "vocabulary": ["rock", "rocks", "stone", "stones", "boulder", "boulders", "cliff", "cliffs", "crag", "mountain", "mountains", "pebble", "crater", "meteor", "meteors", "asteroid", "asteroids", "mineral", "canyon", "hill", "hills"],
+      "kinds": [],
+      "categories": []
+    },
+    "debris_wreckage": {
+      "vocabulary": ["debris", "wreckage", "wreck", "scrap", "junk", "rubble", "fragment", "fragments", "shard", "shards", "broken", "damaged", "bolt"],
+      "kinds": ["obstacle"],
+      "categories": []
+    },
+    "pickup_powerup": {
+      "vocabulary": ["pickup", "pickups", "powerup", "powerups", "coin", "coins", "gem", "gems", "crystal", "crystals", "bonus", "loot", "collectible", "orb", "token", "heart", "battery", "supply", "supplies"],
+      "kinds": ["pickup", "collectible", "coin", "gem", "item", "powerup"],
+      "categories": []
+    },
+    "weapon": {
+      "vocabulary": ["weapon", "weapons", "gun", "guns", "blaster", "pistol", "rifle", "cannon", "missile", "missiles", "sword", "bomb", "grenade", "launcher"],
+      "kinds": ["weapon"],
+      "categories": ["weapon"]
+    },
+    "container_cargo": {
+      "vocabulary": ["crate", "crates", "barrel", "barrels", "box", "boxes", "container", "cargo", "chest", "pallet", "sack", "drum"],
+      "kinds": [],
+      "categories": []
+    },
+    "machine_device": {
+      "vocabulary": ["machine", "mechanism", "generator", "computer", "console", "desk", "satellite", "dish", "antenna", "radar", "panel", "terminal", "monitor", "device", "fan", "spinner", "equipment", "engine", "reactor", "pump"],
+      "kinds": ["mechanism"],
+      "categories": ["mechanism"]
+    },
+    "road_track": {
+      "vocabulary": ["road", "roads", "track", "tracks", "trail", "lane", "street", "highway", "rail", "rails", "monorail", "railing", "train", "crossing", "intersection", "junction", "route", "corridor", "passage"],
+      "kinds": ["road", "rail", "track"],
+      "categories": ["track", "rail"]
+    },
+    "barrier_fence": {
+      "vocabulary": ["fence", "fences", "barrier", "barriers", "wall", "walls", "post", "divider", "gate", "handrail", "guardrail", "hedge", "barricade"],
+      "kinds": ["wall"],
+      "categories": []
+    },
+    "decoration_sign": {
+      "vocabulary": ["sign", "signs", "banner", "flag", "flags", "pennant", "marker", "decoration", "lamp", "lantern", "torch", "poster", "billboard"],
+      "kinds": ["decoration"],
+      "categories": ["decoration"]
+    },
+    "celestial": {
+      "vocabulary": ["planet", "planets", "star", "stars", "moon", "sun", "comet", "galaxy", "nebula"],
+      "kinds": [],
+      "categories": []
+    },
+    "water_marine": {
+      "vocabulary": ["ocean", "sea", "underwater", "river", "coral", "reef", "anchor", "buoy", "wave", "ripple"],
+      "kinds": [],
+      "categories": []
+    }
+  }
+}

@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from .unity_asset_catalog import load_catalog, tokenize
+from .unity_concept_layers import load_concept_layers
 from .unity_model_resolver import ResolvedModel
 
 _log = logging.getLogger(__name__)
@@ -45,6 +46,14 @@ _SPRITE_2D_BONUS = 0.75
 _DEFAULT_MIN_SCORE = 0.15
 _DEFAULT_TOP_K = 5
 _VARIETY_BAND = 0.85          # candidates within 85% of the best score rotate
+
+# Bonus added to a candidate that is a STRONG member of the entity's concept
+# layer (its category / kind_hint places it there, not a stray keyword). Large
+# enough to lift an on-concept asset over an off-concept one that only edges
+# ahead on generic_score — the exact flip behind "StratoPlatform → steps.fbx",
+# where a staircase (higher generic_score, category=stairs) out-pointed a real
+# platform (category=structure) purely on commonness.
+_LAYER_ALIGN_BONUS = 1.0
 
 # Generic query words that appear in almost any scene description — they carry
 # no signal about which MODEL fits, so they never count as keyword hits.
@@ -205,12 +214,60 @@ def resolve_entity_assets(schema,
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
 
+    # Concept-layer taxonomy (optional). Precompute each asset's (broad, strong)
+    # layer membership once so the per-entity pool is a cheap set intersection.
+    # Absent file → `layers is None` and every layer branch below is skipped:
+    # the resolver falls back to the original global literal matching verbatim.
+    layers = load_concept_layers(str(lookups_dir))
+    asset_membership: list[tuple[frozenset, frozenset]] = (
+        [layers.membership(a) for a in assets] if layers else [])
+
     entity_model_paths: dict[str, str] = {}
     unmatched: list[tuple[str, str, list[str]]] = []   # (name, kind, near misses)
     defaulted: list[tuple[str, str]] = []
     rotation: dict[tuple[str, ...], int] = {}          # candidate-set → next index
 
     prop_fallback = all_models.get("prop") or next(iter(all_models.values()), None)
+
+    def _register(scored: list[tuple[float, dict]]) -> Optional[str]:
+        """Variety-pick from a sorted (score, asset) list, register the pick in
+        used_models, and return its Resources.Load path (None if empty).
+
+        Deterministic: candidates within _VARIETY_BAND of the best rotate by a
+        per-candidate-set counter, so same-query groups get distinct models and
+        repeat runs match exactly. Shared across the concept-layer and global
+        match paths so every pick flows through one copy/.meta registration.
+        """
+        if not scored:
+            return None
+        best = scored[0][0]
+        band = [a for s, a in scored[:top_k] if s >= best * _VARIETY_BAND]
+        key = tuple(a["filename"] for a in band)
+        idx = rotation.get(key, 0)
+        rotation[key] = idx + 1
+        pick = band[idx % len(band)]
+
+        src = _entry_source(pick, asset_root)
+        category = (pick.get("category") or "prop").capitalize()
+        is_sprite = pick.get("format") == "png"
+        res_root = _SPRITE_RES_ROOT if is_sprite else _RES_ROOT
+        dest_rel = f"{res_root}/{category}/{pick['filename']}"
+        model_key = f"asset:{Path(pick['filename']).stem}"
+        rm = used_models.get(model_key)
+        if rm is None:
+            rm = ResolvedModel(
+                kind=model_key,
+                src=str(src.resolve()),
+                dest_rel=dest_rel,
+                resource_path=dest_rel.rsplit(".", 1)[0],
+                # "sprite" rig = 2D texture: no ModelImporter .meta is authored
+                # (Unity's default TextureImporter handles PNG), and the spawner
+                # loads it as Texture2D → Sprite.Create.
+                rig="sprite" if is_sprite else "generic",
+                scale=float(pick.get("scale", 1.0) or 1.0),
+            )
+            used_models[model_key] = rm
+        return rm.resource_path
 
     for e in schema.entities:
         kind = (e.kind or "prop").lower()
@@ -241,40 +298,97 @@ def resolve_entity_assets(schema,
                 s += _SPRITE_2D_BONUS
             return s
 
-        scored = sorted(
-            ((s, a) for a in assets
-             if (s := _final_score(a)) >= min_score
-             and _entry_source(a, asset_root) is not None),
-            key=lambda sa: (-sa[0], sa[1]["filename"]))
-        if scored:
-            best = scored[0][0]
-            band = [a for s, a in scored[:top_k] if s >= best * _VARIETY_BAND]
-            key = tuple(a["filename"] for a in band)
-            idx = rotation.get(key, 0)
-            rotation[key] = idx + 1
-            pick = band[idx % len(band)]
+        # ── Tier 2a: concept-layer match (find layer → best asset IN layer) ──
+        # Classify the entity into concept layer(s) from its own strong tokens
+        # (kind-constrained), then rank ONLY the assets that belong to those
+        # layers. A strong (category/kind_hint) member gets the alignment bonus
+        # so an on-concept asset beats an off-concept one that merely edges
+        # ahead on generic_score. This is what stops cross-domain drift before
+        # the literal global match can happen.
+        layer_band: set[str] = set()
+        layer_top_hits = 0
+        if layers:
+            layer_band, layer_top_hits = layers.band(qw, kind, _STRONG_HIT)
+        if layer_band:
+            layer_scored: list[tuple[float, dict]] = []
+            for a, (broad, strong_m) in zip(assets, asset_membership):
+                if not (broad & layer_band):
+                    continue
+                is_strong = bool(strong_m & layer_band)
+                # When a real default already covers this kind, only a STRONG
+                # (category/kind_hint) member of the layer may displace it — a
+                # stray keyword must not swap the player's humanoid for a
+                # parachute prop just because "wingsuit" is one of its tags.
+                # With no default, a keyword-only member is still better than
+                # nothing, so broad members stay in.
+                if tier1 is not None and not is_strong:
+                    continue
+                base = _final_score(a)
+                if base < min_score or _entry_source(a, asset_root) is None:
+                    continue
+                if is_strong:
+                    base += _LAYER_ALIGN_BONUS
+                layer_scored.append((base, a))
+            layer_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
+            picked = _register(layer_scored)
+            if picked is not None:
+                entity_model_paths[e.name] = picked
+                continue
 
-            src = _entry_source(pick, asset_root)
-            category = (pick.get("category") or "prop").capitalize()
-            is_sprite = pick.get("format") == "png"
-            res_root = _SPRITE_RES_ROOT if is_sprite else _RES_ROOT
-            dest_rel = f"{res_root}/{category}/{pick['filename']}"
-            model_key = f"asset:{Path(pick['filename']).stem}"
-            rm = used_models.get(model_key)
-            if rm is None:
-                rm = ResolvedModel(
-                    kind=model_key,
-                    src=str(src.resolve()),
-                    dest_rel=dest_rel,
-                    resource_path=dest_rel.rsplit(".", 1)[0],
-                    # "sprite" rig = 2D texture: no ModelImporter .meta is
-                    # authored (Unity's default TextureImporter handles PNG),
-                    # and the spawner loads it as Texture2D → Sprite.Create.
-                    rig="sprite" if is_sprite else "generic",
-                    scale=float(pick.get("scale", 1.0) or 1.0),
-                )
-                used_models[model_key] = rm
-            entity_model_paths[e.name] = rm.resource_path
+        def _kind_only_hit(a: dict) -> bool:
+            """True if `kind` is the ONLY strong token this entry matches —
+            the match carries no signal beyond the bare kind word itself."""
+            akw = set(k.lower() for k in a.get("keywords", []))
+            akw.update(t for t in tokenize(Path(a.get("filename", "")).stem)
+                       if len(t) > 1)
+            strong = {t for t, w in qw.items() if w >= _STRONG_HIT and t in akw}
+            kind_variants = {kind, kind + "s",
+                             kind[:-1] if kind.endswith("s") else kind}
+            return bool(strong) and strong <= kind_variants
+
+        def _passes_kind_guard(a: dict) -> bool:
+            """Block catalog picks whose only tie to the entity is a weak,
+            coincidental keyword — the class of bug behind two hit-live
+            regressions: "GroundEnemies" (kind=enemy) matched a wood floor
+            plank via the shared word "ground", and "StratoPlatform"
+            (kind=platform) matched Stairs/steps.fbx via the shared word
+            "platform" (one of seven loosely-associated tags on an unrelated
+            staircase asset).
+            """
+            hints = {h.lower() for h in a.get("kind_hints", [])}
+            if kind in hints:
+                return True
+            if tier1 is not None:
+                # A real default model already covers this kind — only a
+                # catalog pick the library itself categorizes as this kind
+                # may replace it; a stray overlap isn't enough to gamble away
+                # a known-good fallback (the tier-1 fallback below still
+                # fires if this empties out every candidate).
+                return False
+            if _kind_only_hit(a):
+                # No default to fall back on, so only trust a bare kind-word
+                # match when the object is actually named after the kind —
+                # not merely tagged with it alongside unrelated keywords.
+                fname_tokens = {t for t in tokenize(Path(a.get("filename", "")).stem)
+                                if len(t) > 1}
+                return kind in fname_tokens
+            return True
+
+        # ── Tier 2b: global literal match (fallback / concept-layers absent) ──
+        candidates = [(s, a) for a in assets
+                      if (s := _final_score(a)) >= min_score
+                      and _entry_source(a, asset_root) is not None]
+        guarded = [sa for sa in candidates if _passes_kind_guard(sa[1])]
+        # Guarding never regresses below today's behavior: with a tier-1
+        # default it's a hard filter (empty just falls through to the
+        # tier-1 fallback below); without one, prefer the guarded ranking
+        # but fall back to the raw one rather than risk a strict-mode
+        # hard-fail for a kind the catalog has no trustworthy tag for.
+        scored = sorted(guarded if (guarded or tier1 is not None) else candidates,
+                        key=lambda sa: (-sa[0], sa[1]["filename"]))
+        picked = _register(scored)
+        if picked is not None:
+            entity_model_paths[e.name] = picked
             continue
 
         # Hinted entity with no catalog hit: the default-pack model for its
@@ -283,6 +397,38 @@ def resolve_entity_assets(schema,
         if tier1 is not None:
             entity_model_paths[e.name] = tier1.resource_path
             continue
+
+        # ── Tier 2c: best-in-layer fallback (kill the "same 15 defaults") ────
+        # No literal token hit anywhere, and no default-pack model for this
+        # kind — the old path went straight to the generic prop (or a strict
+        # fail). But the entity DID name a concept layer (a real vocabulary
+        # token, layer_top_hits ≥ 1), and that layer has real assets, so pick
+        # the most on-concept one instead of the placeholder. Gated on a vocab
+        # hit so a kind-only band never forces an arbitrary asset.
+        if layer_band and layer_top_hits >= 1:
+            soft: list[tuple[float, dict]] = []
+            for a, (broad, strong_m) in zip(assets, asset_membership):
+                if not (broad & layer_band) or _entry_source(a, asset_root) is None:
+                    continue
+                s = 0.05
+                if strong_m & layer_band:
+                    s += _LAYER_ALIGN_BONUS
+                if kind in {h.lower() for h in a.get("kind_hints", [])}:
+                    s += 0.5
+                s += float(a.get("generic_score", 0)) / 50.0
+                akw = {k.lower() for k in a.get("keywords", [])}
+                s += 0.1 * len(scene_words & akw)
+                if is_2d and a.get("format") == "png":
+                    s += _SPRITE_2D_BONUS
+                soft.append((s, a))
+            soft.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
+            picked = _register(soft)
+            if picked is not None:
+                _log.info("[assets] entity '%s' (kind=%s) → best-in-layer %s "
+                          "(concept layers %s)", e.name, kind, picked,
+                          sorted(layer_band))
+                entity_model_paths[e.name] = picked
+                continue
 
         # ── Tier 3: schema procedural mesh ────────────────────────────────────
         # "AtmosphericClouds" with a CloudLayer1 procedural mesh in the same
