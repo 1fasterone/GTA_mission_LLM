@@ -29,21 +29,9 @@ from typing import Optional
 import numpy as np
 
 from . import synth   # SR constant + write_wav helpers
-
-# ── Emotion → prosody parameter map ──────────────────────────────────────────
-
-EMOTION_PARAMS: dict[str, dict] = {
-    "neutral":   {"speaking_rate": 1.00, "pitch_shift":  0.0, "energy": 1.00},
-    "happy":     {"speaking_rate": 1.10, "pitch_shift":  1.5, "energy": 1.20},
-    "sad":       {"speaking_rate": 0.85, "pitch_shift": -1.0, "energy": 0.75},
-    "angry":     {"speaking_rate": 1.20, "pitch_shift":  0.5, "energy": 1.40},
-    "fearful":   {"speaking_rate": 1.15, "pitch_shift":  1.0, "energy": 0.90},
-    "surprised": {"speaking_rate": 1.10, "pitch_shift":  2.0, "energy": 1.10},
-    "disgust":   {"speaking_rate": 0.95, "pitch_shift": -0.5, "energy": 0.95},
-    "whisper":   {"speaking_rate": 0.90, "pitch_shift": -2.0, "energy": 0.50},
-    "excited":   {"speaking_rate": 1.25, "pitch_shift":  2.5, "energy": 1.35},
-    "calm":      {"speaking_rate": 0.90, "pitch_shift": -0.5, "energy": 0.85},
-}
+# Emotion prosody is engine-agnostic and now lives in prosody.py; re-exported
+# here so dialog_resolver + micro.npc_dialog keep importing it from .higgs.
+from .prosody import SUPPORTED_EMOTIONS, emotion_params
 
 # ── Audio style → Higgs preset map ───────────────────────────────────────────
 
@@ -67,14 +55,8 @@ LANGUAGE_MAP: dict[str, str] = {
     "th": "th-TH",
 }
 
-SUPPORTED_EMOTIONS  = set(EMOTION_PARAMS)
 SUPPORTED_STYLES    = set(AUDIO_STYLE_PRESETS)
 SUPPORTED_LANGUAGES = set(LANGUAGE_MAP)
-
-
-def emotion_params(emotion: str) -> dict:
-    """Return prosody parameters for an emotion label (falls back to neutral)."""
-    return EMOTION_PARAMS.get(str(emotion).strip().lower(), EMOTION_PARAMS["neutral"])
 
 
 def audio_style_preset(style: str) -> dict:
@@ -192,7 +174,7 @@ class HiggsAdapter:
                 audio = audio.mean(axis=0)          # stereo → mono
             model_sr = getattr(model, "sample_rate", self._SR)
             if model_sr != self._SR:
-                audio = _resample(audio, model_sr, self._SR)
+                audio = synth.resample(audio, model_sr, self._SR)
             return audio
         except Exception as exc:  # noqa: BLE001
             self._warn_once("higgs_gen",
@@ -206,59 +188,3 @@ class HiggsAdapter:
 
     def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
         return None
-
-
-def _resample(audio: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
-    """Resample a mono float32 buffer. Prefers scipy; falls back to np.interp."""
-    if from_sr == to_sr:
-        return audio
-    try:
-        from scipy.signal import resample_poly  # type: ignore
-        from math import gcd
-        g = gcd(from_sr, to_sr)
-        return resample_poly(audio, to_sr // g, from_sr // g).astype(np.float32)
-    except ImportError:
-        n_out = int(len(audio) * to_sr / from_sr)
-        idx   = np.linspace(0, len(audio) - 1, n_out)
-        return np.interp(idx, np.arange(len(audio)), audio).astype(np.float32)
-
-
-class _NoneTts:
-    """audio.tts_backend: none — every line stays text-only."""
-    name = "tts_none"
-    def tts(self, *a, **kw):   return None   # noqa: E704
-    def sfx(self, *a, **kw):   return None   # noqa: E704
-    def music(self, *a, **kw): return None   # noqa: E704
-
-
-def make_tts_client(config: dict):
-    """Build the caching NPC-dialog TTS client from config.
-
-    `audio.tts_backend` selects the engine (separate from `audio.backend`,
-    which drives sfx/music — SA3 stays on the big GPU budget while speech
-    uses a model that actually fits):
-      kokoro — Kokoro-82M, ~330 MB, CPU/any-GPU (default; Higgs Audio v2's
-               11 GB of weights cannot load on an 8 GB card — hit live)
-      higgs  — Higgs Audio v2 (needs ~11 GB VRAM)
-      none   — text-only dialog
-    """
-    from pathlib import Path
-    from .backends import CachingClient
-    cfg       = (config or {}).get("audio", {})
-    backend   = str(cfg.get("tts_backend", "kokoro")).strip().lower()
-    if backend == "higgs":
-        adapter = HiggsAdapter(config)
-    elif backend == "none":
-        adapter = _NoneTts()
-    else:
-        from .kokoro import KokoroAdapter   # lazy — keeps module import light
-        adapter = KokoroAdapter(config)
-    cache_dir = Path(cfg.get("dialog_cache_dir",
-                              cfg.get("cache_dir", "output/audio_cache")))
-    return CachingClient(adapter, cache_dir)
-
-
-def make_higgs_client(config: dict):
-    """Back-compat alias — the dialog pipeline now selects its TTS engine via
-    audio.tts_backend (see make_tts_client)."""
-    return make_tts_client(config)

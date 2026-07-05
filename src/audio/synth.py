@@ -263,3 +263,23 @@ def rms(samples: np.ndarray) -> float:
     if samples.size == 0:
         return 0.0
     return float(np.sqrt(np.mean(np.square(samples.astype(np.float64)))))
+
+
+def resample(audio: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
+    """Resample a mono float32 buffer. Prefers scipy; falls back to np.interp.
+
+    Shared by the TTS adapters (Higgs/Kokoro emit at their own native rates and
+    must land at synth.SR), so it lives in this neutral DSP module rather than
+    inside either engine.
+    """
+    if from_sr == to_sr:
+        return audio
+    try:
+        from scipy.signal import resample_poly  # type: ignore
+        from math import gcd
+        g = gcd(from_sr, to_sr)
+        return resample_poly(audio, to_sr // g, from_sr // g).astype(np.float32)
+    except ImportError:
+        n_out = int(len(audio) * to_sr / from_sr)
+        idx   = np.linspace(0, len(audio) - 1, n_out)
+        return np.interp(idx, np.arange(len(audio)), audio).astype(np.float32)

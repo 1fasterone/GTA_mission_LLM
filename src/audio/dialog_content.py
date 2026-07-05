@@ -25,7 +25,7 @@ from typing import Any
 import numpy as np
 
 from . import synth
-from .higgs import make_tts_client
+from .backends import make_tts_client
 
 
 def _slug(s: str) -> str:

@@ -236,3 +236,48 @@ def make_audio_client(config: dict) -> CachingClient:
         adapter_cls = _ADAPTERS.get(backend, DspAdapter)
     cache_dir = Path(cfg.get("cache_dir", "output/audio_cache"))
     return CachingClient(adapter_cls(config or {}), cache_dir)
+
+
+# ── NPC-dialog TTS backend (separate axis from sfx/music above) ───────────────
+
+class _NoneTts:
+    """audio.tts_backend: none — every line stays text-only."""
+    name = "tts_none"
+    def tts(self, *a, **kw):   return None   # noqa: E704
+    def sfx(self, *a, **kw):   return None   # noqa: E704
+    def music(self, *a, **kw): return None   # noqa: E704
+
+
+def make_tts_client(config: dict) -> CachingClient:
+    """Build the caching NPC-dialog TTS client from config.
+
+    `audio.tts_backend` selects the engine (separate from `audio.backend`,
+    which drives sfx/music — SA3 stays on the big GPU budget while speech
+    uses a model that actually fits):
+      kokoro — Kokoro-82M, ~330 MB, CPU/any-GPU (default; Higgs Audio v2's
+               11 GB of weights cannot load on an 8 GB card — hit live)
+      higgs  — Higgs Audio v2 (needs ~11 GB VRAM)
+      none   — text-only dialog
+
+    Engine adapters are lazy-imported so this module never drags torch (or the
+    engines' cross-imports) in at import time.
+    """
+    cfg     = (config or {}).get("audio", {})
+    backend = str(cfg.get("tts_backend", "kokoro")).strip().lower()
+    if backend == "higgs":
+        from .higgs import HiggsAdapter    # lazy — avoids torch at startup
+        adapter = HiggsAdapter(config)
+    elif backend == "none":
+        adapter = _NoneTts()
+    else:
+        from .kokoro import KokoroAdapter  # lazy — keeps module import light
+        adapter = KokoroAdapter(config)
+    cache_dir = Path(cfg.get("dialog_cache_dir",
+                             cfg.get("cache_dir", "output/audio_cache")))
+    return CachingClient(adapter, cache_dir)
+
+
+def make_higgs_client(config: dict) -> CachingClient:
+    """Back-compat alias — the dialog pipeline now selects its TTS engine via
+    audio.tts_backend (see make_tts_client)."""
+    return make_tts_client(config)

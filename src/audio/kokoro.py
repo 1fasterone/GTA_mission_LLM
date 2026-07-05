@@ -14,7 +14,7 @@ Adapter interface matches HiggsAdapter exactly (src/audio/higgs.py):
     mono float32 @ synth.SR (44100 Hz), or None on any failure.
 
 Backend selection: audio.tts_backend in config.yaml — kokoro (default) |
-higgs | none. See make_tts_client() in higgs.py.
+higgs | none. See make_tts_client() in backends.py.
 
 Graceful degradation (never raises, always returns None or audio):
   - kokoro not installed       → None (dialog remains text-only)
@@ -29,7 +29,7 @@ from typing import Optional
 import numpy as np
 
 from . import synth
-from .higgs import _resample, emotion_params
+from .prosody import emotion_params
 
 # ── ISO 639-1 → Kokoro lang_code ──────────────────────────────────────────────
 # Kokoro pipelines are per-language: 'a' American English, 'b' British English,
@@ -155,7 +155,7 @@ class KokoroAdapter:
             # emotion energy → gentle gain (clamped to avoid clipping)
             gain = float(np.clip(prosody.get("energy", 1.0), 0.5, 1.4))
             buf = np.clip(buf * gain, -1.0, 1.0)
-            return _resample(buf, self._KOKORO_SR, self._SR)
+            return synth.resample(buf, self._KOKORO_SR, self._SR)
         except Exception as exc:  # noqa: BLE001
             self._warn_once("kokoro_gen",
                 f"Kokoro generation failed ({type(exc).__name__}: {exc}) — "

@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from src.audio.backends import CachingClient
-from src.audio.higgs import HiggsAdapter, make_tts_client
+from src.audio.backends import CachingClient, make_tts_client
+from src.audio.higgs import HiggsAdapter
 from src.audio.kokoro import KOKORO_LANG, KokoroAdapter, kokoro_voice
 
 
@@ -23,7 +23,7 @@ def test_backend_selection():
 
 def test_make_higgs_client_alias_respects_config():
     # Back-compat entry point must not silently force the 11 GB model.
-    from src.audio.higgs import make_higgs_client
+    from src.audio.backends import make_higgs_client
     assert make_higgs_client({"audio": {}}).adapter.name == "kokoro"
 
 
