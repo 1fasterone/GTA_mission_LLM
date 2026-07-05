@@ -24,7 +24,7 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
 {% if game_type not in ["2D", "2.5D"] %}
 {% for e in entities %}
-{% if e.placement == "path" and e.path_points %}
+{% if e.placement == "path" and e.path_points and not entity_model_paths.get(e.name, "").startswith("skip:") %}
     private static readonly Vector3[] _path_{{ loop.index0 }} =
     {
 {% for p in e.path_points %}
@@ -48,6 +48,7 @@ public class EntitySpawner : MonoBehaviour
         BuildSideScroller2D(sh);
 {% else %}
 {% for e in entities %}
+{% if not entity_model_paths.get(e.name, "").startswith("skip:") %}
 {% set has_path = e.placement == "path" and e.path_points %}
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
@@ -57,6 +58,7 @@ public class EntitySpawner : MonoBehaviour
 {% set ns.first_path = false %}
 {% if scene_entity_map %}
         }
+{% endif %}
 {% endif %}
 {% endif %}
 {% endfor %}
@@ -84,15 +86,48 @@ public class EntitySpawner : MonoBehaviour
             procMesh = MeshBuilder.Instance.Build(procParts[1], int.Parse(procParts[2]));
         }
 {% endif %}
+{% if has_fx_entities %}
+        // "fx:particles" → engine-native particle content (weather, storm
+        // cells) tinted with the group's palette color — no mesh involved.
+        bool isFx = modelPath == "fx:particles";
+{% endif %}
         // Optional real model from the default pack (null → primitive fallback).
+{% if has_fx_entities %}
+        GameObject modelPrefab = string.IsNullOrEmpty(modelPath) || isFx
+            ? null : Resources.Load<GameObject>(modelPath);
+{% else %}
         GameObject modelPrefab = string.IsNullOrEmpty(modelPath)
             ? null : Resources.Load<GameObject>(modelPath);
+{% endif %}
 
         var parent = new GameObject(groupName).transform;
         parent.SetParent(transform, false);
         for (int i = 0; i < count; i++)
         {
             GameObject go;
+{% if has_fx_entities %}
+            if (isFx)
+            {
+                go = new GameObject(groupName + "_" + i);
+                var ps = go.AddComponent<ParticleSystem>();
+                var main = ps.main;
+                main.startColor = new Color(color.r, color.g, color.b, 0.65f);
+                main.startSize = scale;
+                main.startSpeed = 0.4f;
+                main.startLifetime = 5f;
+                main.maxParticles = 256;
+                var em = ps.emission;
+                em.rateOverTime = 20f;
+                var pshape = ps.shape;
+                pshape.shapeType = ParticleSystemShapeType.Sphere;
+                pshape.radius = Mathf.Max(1.5f, scale * 2f);
+                var psr = go.GetComponent<ParticleSystemRenderer>();
+                var pmat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit") ?? sh);
+                pmat.color = new Color(color.r, color.g, color.b, 0.65f);
+                psr.material = pmat;
+            }
+            else
+{% endif %}
 {% if has_procedural_entities %}
             if (procMesh != null)
             {
@@ -145,7 +180,7 @@ public class EntitySpawner : MonoBehaviour
                 pos.y += scale * 0.5f;
             }
             go.transform.position = pos;
-            if (sh != null && modelPrefab == null)   // models keep their own materials
+            if (sh != null && modelPrefab == null{% if has_fx_entities %} && !isFx{% endif %})   // models keep their own materials
             {
                 var m = new Material(sh);
                 m.color = color;
@@ -236,7 +271,8 @@ public class EntitySpawner : MonoBehaviour
         BuildGround2D(courseLen, sh);
 {% for e in entities %}
 {% set role = e.kind|lower %}
-{% if role not in ["player", "road", "ground"] %}
+{% set epath = entity_model_paths.get(e.name, "") %}
+{% if role not in ["player", "road", "ground"] and not epath.startswith("skip:") and not epath.startswith("fx:") %}
         {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh);
 {% endif %}
 {% endfor %}

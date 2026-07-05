@@ -71,6 +71,15 @@ def _entry_source(entry: dict, asset_root: Optional[str]) -> Optional[Path]:
 # entity's own name/kind/model_hint, not the scene description.
 _STRONG_HIT = 1.0
 
+# Kinds that describe engine-native content, not FBX models. They still get a
+# catalog / procedural-mesh shot (a 2D "title background" IS a real sprite),
+# but a miss routes to the matching content path instead of a strict hard-fail:
+# fx-family → runtime ParticleSystem in EntitySpawner; ui/background-family →
+# owned by SceneSetup / the sky pipeline, so the spawner skips the group.
+_FX_KINDS = frozenset({"fx", "vfx", "effect", "effects", "particles", "weather"})
+_SKIP_KINDS = frozenset({"ui", "hud", "menu", "background", "backdrop",
+                         "skybox", "sky"})
+
 
 def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     """Weighted keyword overlap + kind-hint bonus + generic tiebreak.
@@ -208,12 +217,19 @@ def resolve_entity_assets(schema,
         hint = (getattr(e, "model_hint", "") or "").strip().lower()
 
         # ── Tier 1: explicit kind (schema-default "prop" is not explicit) ────
+        tier1: Optional[ResolvedModel] = None
         if kind in used_models and (kind != "prop" or hint == "default prop"):
-            entity_model_paths[e.name] = used_models[kind].resource_path
-            continue
-        if kind == "prop" and hint == "default prop" and prop_fallback is not None:
+            tier1 = used_models[kind]
+        elif kind == "prop" and hint == "default prop" and prop_fallback is not None:
             used_models.setdefault("prop", prop_fallback)
-            entity_model_paths[e.name] = prop_fallback.resource_path
+            tier1 = prop_fallback
+
+        # A real model_hint asks for something more specific than the default
+        # pack — "corsair plane" on kind="vehicle" must reach the catalog, not
+        # stop at Car.fbx. Hold the tier-1 model as the safety net and try the
+        # catalog first; `model_hint: "default <kind>"` opts back into tier 1.
+        if tier1 is not None and hint in ("", f"default {kind}", "default prop"):
+            entity_model_paths[e.name] = tier1.resource_path
             continue
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
@@ -261,6 +277,13 @@ def resolve_entity_assets(schema,
             entity_model_paths[e.name] = rm.resource_path
             continue
 
+        # Hinted entity with no catalog hit: the default-pack model for its
+        # kind is still real, kind-correct content — use it rather than
+        # degrading to a procedural mesh, the generic prop, or a strict fail.
+        if tier1 is not None:
+            entity_model_paths[e.name] = tier1.resource_path
+            continue
+
         # ── Tier 3: schema procedural mesh ────────────────────────────────────
         # "AtmosphericClouds" with a CloudLayer1 procedural mesh in the same
         # schema: the mesh is the intended content — build it at spawn time.
@@ -269,6 +292,20 @@ def resolve_entity_assets(schema,
             entity_model_paths[e.name] = proc
             _log.info("[assets] entity '%s' routed to %s (schema procedural mesh)",
                       e.name, proc)
+            continue
+
+        # ── Non-mesh kinds: fx → particles, ui/background → skip ─────────────
+        # Reached only when the catalog and procedural tiers missed — these
+        # kinds never needed an FBX, so a miss is expected, not a failure.
+        if kind in _FX_KINDS:
+            entity_model_paths[e.name] = "fx:particles"
+            _log.info("[assets] entity '%s' (kind=%s) → runtime ParticleSystem",
+                      e.name, kind)
+            continue
+        if kind in _SKIP_KINDS:
+            entity_model_paths[e.name] = f"skip:{kind}"
+            _log.info("[assets] entity '%s' (kind=%s) → no 3D spawn (owned by "
+                      "SceneSetup / sky pipeline)", e.name, kind)
             continue
 
         # ── Tier 4: fallback policy ───────────────────────────────────────────

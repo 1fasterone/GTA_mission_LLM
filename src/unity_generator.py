@@ -1352,6 +1352,11 @@ class UnityProjectGenerator:
         # procedural_meshes without a mesh_builder script entry.
         has_procedural_entities = any(
             p.startswith("procedural:") for p in entity_model_paths.values())
+        # fx-kind entities spawn runtime ParticleSystems instead of meshes —
+        # gate the spawner's particle branch so meshes-only projects stay
+        # byte-identical.
+        has_fx_entities = any(
+            p.startswith("fx:") for p in entity_model_paths.values())
         if has_procedural_entities and not any(
                 s.type == "mesh_builder" for s in schema.scripts):
             schema.scripts.append(UnityScript(
@@ -1428,6 +1433,7 @@ class UnityProjectGenerator:
             "entities":          schema.entities,
             "entity_model_paths": entity_model_paths,
             "has_procedural_entities": has_procedural_entities,
+            "has_fx_entities":   has_fx_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's
             # runtime per-scene filter.

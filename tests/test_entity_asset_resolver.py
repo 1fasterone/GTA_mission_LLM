@@ -31,6 +31,9 @@ CATALOG_ASSETS = [
     {"filename": "banner.fbx",      "relpath": "banner.fbx",
      "category": "prop", "keywords": ["banner", "flag", "sign"],
      "kind_hints": ["prop"], "generic_score": 3, "scale": 1.0},
+    {"filename": "corsair.fbx",     "relpath": "corsair.fbx",
+     "category": "aircraft", "keywords": ["plane", "corsair", "aircraft", "propeller"],
+     "kind_hints": ["vehicle"], "generic_score": 0, "scale": 1.0},
 ]
 
 
@@ -118,6 +121,49 @@ def test_model_hint_steers_the_match(env, tmp_path):
                             model_hint="hanging banner flag")]),
         {}, all_models, lookups_dir=str(env))
     assert paths["Decorations"] == "Models/Kenney/Prop/banner"
+
+
+def _vehicle_model(tmp_path):
+    src = tmp_path / "Car.fbx"
+    src.write_bytes(b"FBX")
+    return ResolvedModel(kind="vehicle", src=str(src),
+                         dest_rel="Models/Default/Vehicle/Car.fbx",
+                         resource_path="Models/Default/Vehicle/Car", rig="generic")
+
+
+def test_model_hint_overrides_default_pack_kind(env, tmp_path):
+    # Live regression (TerminalHorizon): kind="vehicle" stopped at Car.fbx and
+    # the "corsair plane" model_hint never reached the catalog.
+    vehicle = _vehicle_model(tmp_path)
+    used = {"vehicle": vehicle}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PlayerPlane", kind="vehicle", count=1,
+                            model_hint="corsair plane")]),
+        used, {"vehicle": vehicle}, lookups_dir=str(env))
+    assert paths["PlayerPlane"] == "Models/Kenney/Aircraft/corsair"
+
+
+def test_hinted_kind_falls_back_to_default_pack_on_catalog_miss(env, tmp_path):
+    # A hint that matches nothing must fall back to the kind's default-pack
+    # model — never to the generic prop, and never a strict hard-fail.
+    vehicle = _vehicle_model(tmp_path)
+    used = {"vehicle": vehicle}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="HoverPod", kind="vehicle", count=1,
+                            model_hint="zzgrbl hoverpod")]),
+        used, {"vehicle": vehicle}, lookups_dir=str(env), strict=True)
+    assert paths["HoverPod"] == "Models/Default/Vehicle/Car"
+
+
+def test_default_kind_hint_opts_back_into_tier1(env, tmp_path):
+    # model_hint "default <kind>" is the deliberate escape hatch to tier 1.
+    vehicle = _vehicle_model(tmp_path)
+    used = {"vehicle": vehicle}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PlayerPlane", kind="vehicle", count=1,
+                            model_hint="default vehicle")]),
+        used, {"vehicle": vehicle}, lookups_dir=str(env))
+    assert paths["PlayerPlane"] == "Models/Default/Vehicle/Car"
 
 
 def test_catalog_pick_shape(env, tmp_path):
@@ -239,6 +285,39 @@ def test_no_token_overlap_still_fails_strict(env, tmp_path):
         [{"name": "CloudLayer1", "description": "clouds", "mesh_type": "custom"}])
     with pytest.raises(ValueError, match="procedural_meshes"):
         resolve_entity_assets(schema, {}, {}, lookups_dir=str(env), strict=True)
+
+
+# ── non-mesh kinds (ui / fx / background) ─────────────────────────────────────
+
+def test_fx_kind_routes_to_particles_not_strict_fail(env, tmp_path):
+    # Live regression (TerminalHorizon): kind="fx" entities ("StormCells")
+    # hard-failed strict resolution — they never needed an FBX.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="StormCells", kind="fx", count=6,
+                            model_hint="storm cells fx")]),
+        {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["StormCells"] == "fx:particles"
+
+
+def test_ui_and_background_kinds_skip_spawn(env, tmp_path):
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="MenuUI", kind="ui", count=1,
+                            model_hint="menu ui"),
+                 EntitySpec(name="TitleBackground", kind="background", count=1,
+                            model_hint="title background")]),
+        {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["MenuUI"] == "skip:ui"
+    assert paths["TitleBackground"] == "skip:background"
+
+
+def test_fx_kind_still_prefers_catalog_match(env, tmp_path):
+    # A non-mesh kind whose hint names a real asset gets the asset — the
+    # particle/skip routing only fires when the catalog misses.
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="FallingLeaves", kind="fx", count=4,
+                            model_hint="pine tree")]),
+        {}, {}, lookups_dir=str(env), strict=True)
+    assert paths["FallingLeaves"].startswith("Models/Kenney/Nature/tree-")
 
 
 # ── fallback policy ───────────────────────────────────────────────────────────

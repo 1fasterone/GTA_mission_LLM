@@ -1,13 +1,13 @@
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.RenderGraphModule;
 using UnityEngine.Rendering.Universal;
 using System.Collections.Generic;
-using UnityEditor;
-
 
 #if UNITY_EDITOR
 using UnityEditor.SceneManagement;
 #endif
+
 
 public class AtmosphereRenderPass : ScriptableRenderPass
 {
@@ -20,26 +20,32 @@ public class AtmosphereRenderPass : ScriptableRenderPass
 
     private static Shader atmosphereShader;
 
+    private static readonly int sourceId = Shader.PropertyToID("_Source");
 
-    public AtmosphereRenderPass(Shader atmosphereShader) 
+
+    public AtmosphereRenderPass(Shader atmosphereShader)
     {
         AtmosphereRenderPass.atmosphereShader = atmosphereShader;
+
+        // The pass samples and rewrites the camera color target, so URP must
+        // render through an intermediate texture rather than the backbuffer.
+        requiresIntermediateTexture = true;
     }
 
 
     private static readonly List<AtmosphereEffect> currentActiveEffects = new();
 
 
-    public static void RegisterEffect(AtmosphereEffect effect) 
+    public static void RegisterEffect(AtmosphereEffect effect)
     {
-        if (!currentActiveEffects.Contains(effect)) 
+        if (!currentActiveEffects.Contains(effect))
         {
             currentActiveEffects.Add(effect);
         }
     }
 
 
-    public static void RemoveEffect(AtmosphereEffect effect) 
+    public static void RemoveEffect(AtmosphereEffect effect)
     {
         currentActiveEffects.Remove(effect);
     }
@@ -50,7 +56,7 @@ public class AtmosphereRenderPass : ScriptableRenderPass
     private Plane[] cameraPlanes;
 
 
-    private void CullAndSortEffects(Camera camera) 
+    private void CullAndSortEffects(Camera camera)
     {
         visibleEffects.Clear();
 
@@ -59,19 +65,19 @@ public class AtmosphereRenderPass : ScriptableRenderPass
 
         Vector3 viewPos = camera.transform.position;
 
-        for (int i = currentActiveEffects.Count - 1; i >= 0; i--) 
+        for (int i = currentActiveEffects.Count - 1; i >= 0; i--)
         {
-            if (currentActiveEffects[i] == null) 
+            if (currentActiveEffects[i] == null)
             {
                 currentActiveEffects.RemoveAt(i);
                 continue;
             }
 
-            if (currentActiveEffects[i].IsVisible(cameraPlanes)) 
+            if (currentActiveEffects[i].IsVisible(cameraPlanes))
             {
                 float dstToSurface = currentActiveEffects[i].DistToAtmosphere(viewPos);
-            
-                visibleEffects.Add(new SortedEffect { 
+
+                visibleEffects.Add(new SortedEffect {
                     effect = currentActiveEffects[i],
                     distanceToEffect = dstToSurface
                 });
@@ -79,88 +85,116 @@ public class AtmosphereRenderPass : ScriptableRenderPass
         }
 
         // Sort effects from far to near
-        // TODO: Stick this sorter in the loop above. Every time a visible effect is added it can be placed in the correct position, saving time.
-		for (int i = 0; i < visibleEffects.Count - 1; i++) 
+        for (int i = 0; i < visibleEffects.Count - 1; i++)
         {
-			for (int j = i + 1; j > 0; j--) 
+            for (int j = i + 1; j > 0; j--)
             {
-				if (visibleEffects[j - 1].distanceToEffect < visibleEffects[j].distanceToEffect) 
+                if (visibleEffects[j - 1].distanceToEffect < visibleEffects[j].distanceToEffect)
                 {
                     // Swap elements
                     (visibleEffects[j], visibleEffects[j - 1]) = (visibleEffects[j - 1], visibleEffects[j]);
                 }
             }
-		}
+        }
     }
 
 
-    public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData) 
+    private class PassData
     {
-        BlitUtility.SetupBlitTargets(cmd, renderingData.cameraData.cameraTargetDescriptor);
-
-        CullAndSortEffects(renderingData.cameraData.camera);
+        public readonly List<Material> materials = new();
+        public TextureHandle color;
+        public TextureHandle tempA;
+        public TextureHandle tempB;
     }
-    
 
-    public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData) 
+
+    public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
     {
-        CommandBuffer cmd = CommandBufferPool.Get("Atmosphere Effects");
-        cmd.Clear();
+        UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
+        UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
 
-        var cameraData = renderingData.cameraData;
-        Camera camera = cameraData.camera;
+        if (!cameraData.postProcessEnabled || cameraData.isPreviewCamera)
+        {
+            return;
+        }
 
-        bool isOverlay = camera.GetUniversalAdditionalCameraData().renderType == CameraRenderType.Overlay;
-        
+        CullAndSortEffects(cameraData.camera);
+
+        if (visibleEffects.Count == 0)
+        {
+            return;
+        }
 
 #if UNITY_EDITOR
-        // Likely a bug or oversight- scene camera is considered overlay camera when it shouldn't be, so ensure it's not set as overlay.
-        isOverlay = !cameraData.isSceneViewCamera && isOverlay;
-
-        bool prefabMode = PrefabStageUtility.GetCurrentPrefabStage() == StageUtility.GetCurrentStage();
-
-        if (cameraData.postProcessEnabled) 
-        {
-            RenderEffects(cmd, renderingData.cameraData.renderer.cameraColorTargetHandle, prefabMode);
-        }
+        bool prefabMode = PrefabStageUtility.GetCurrentPrefabStage() != null;
 #else
-        if (cameraData.postProcessEnabled) 
-        {
-            RenderEffects(cmd, renderingData.cameraData.renderer.cameraColorTargetHandle, false);
-        }
+        bool prefabMode = false;
 #endif
 
-
-        context.ExecuteCommandBuffer(cmd);
-        CommandBufferPool.Release(cmd);
-    }
-
-
-    private void RenderEffects(CommandBuffer cmd, RenderTargetIdentifier colorSource, bool inPrefabMode) 
-    {
-        BlitUtility.BeginBlitLoop(cmd, colorSource);
-
-        // Visible effect render loop
-        for (int i = 0; i < visibleEffects.Count; i++) 
+        // The effect chain ping-pongs between two intermediate textures via a
+        // full-screen material blit per effect, then writes the result back to
+        // the camera color target. Legacy CommandBuffer.Blit is unavailable
+        // under RenderGraph, so this runs as an unsafe pass using Blitter.
+        using (var builder = renderGraph.AddUnsafePass<PassData>("Atmosphere Effects", out PassData passData))
         {
-#if UNITY_EDITOR
-            PrefabStage stage = PrefabStageUtility.GetPrefabStage(visibleEffects[i].effect.gameObject);
-            if (stage == null && inPrefabMode) 
+            passData.materials.Clear();
+
+            foreach (SortedEffect visible in visibleEffects)
             {
-                continue;
-            }
+#if UNITY_EDITOR
+                if (prefabMode && PrefabStageUtility.GetPrefabStage(visible.effect.gameObject) == null)
+                {
+                    continue;
+                }
 #endif
-            Material blitMat = visibleEffects[i].effect.GetMaterial(atmosphereShader);
-            BlitUtility.BlitNext(blitMat, "_Source");
+                Material blitMat = visible.effect.GetMaterial(atmosphereShader);
+                if (blitMat != null)
+                {
+                    passData.materials.Add(blitMat);
+                }
+            }
+
+            if (passData.materials.Count == 0)
+            {
+                return;
+            }
+
+            RenderTextureDescriptor desc = cameraData.cameraTargetDescriptor;
+            desc.depthBufferBits = 0;
+            desc.msaaSamples = 1;
+
+            passData.color = resourceData.activeColorTexture;
+            passData.tempA = UniversalRenderer.CreateRenderGraphTexture(
+                renderGraph, desc, "_AtmosphereBlitA", false, FilterMode.Bilinear);
+            passData.tempB = UniversalRenderer.CreateRenderGraphTexture(
+                renderGraph, desc, "_AtmosphereBlitB", false, FilterMode.Bilinear);
+
+            builder.UseTexture(passData.color, AccessFlags.ReadWrite);
+            builder.UseTexture(passData.tempA, AccessFlags.ReadWrite);
+            builder.UseTexture(passData.tempB, AccessFlags.ReadWrite);
+            builder.AllowPassCulling(false);
+
+            builder.SetRenderFunc((PassData data, UnsafeGraphContext ctx) =>
+            {
+                CommandBuffer cmd = CommandBufferHelpers.GetNativeCommandBuffer(ctx.cmd);
+
+                RTHandle current = data.color;
+                bool nextIsA = true;
+
+                for (int i = 0; i < data.materials.Count; i++)
+                {
+                    RTHandle dest = nextIsA ? (RTHandle)data.tempA : (RTHandle)data.tempB;
+                    nextIsA = !nextIsA;
+
+                    cmd.SetGlobalTexture(sourceId, current);
+                    Blitter.BlitCameraTexture(cmd, current, dest, data.materials[i], 0);
+
+                    current = dest;
+                }
+
+                // Blit the final chain output back into the camera color target.
+                Blitter.BlitCameraTexture(cmd, current, data.color);
+            });
         }
-
-        // Blit to camera target
-        BlitUtility.EndBlitLoop(colorSource);
-    }
-
-
-    public override void OnCameraCleanup(CommandBuffer cmd) 
-    {
-        BlitUtility.ReleaseBlitTargets(cmd);
     }
 }
