@@ -5,7 +5,7 @@ import pytest
 
 from src.audio.backends import CachingClient
 from src.audio.higgs import HiggsAdapter, make_tts_client
-from src.audio.kokoro_tts import KOKORO_LANG, KokoroAdapter, kokoro_voice
+from src.audio.kokoro import KOKORO_LANG, KokoroAdapter, kokoro_voice
 
 
 # ── factory selection ─────────────────────────────────────────────────────────

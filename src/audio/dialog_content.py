@@ -112,7 +112,7 @@ def generate_dialog_bank(
                     buf = _silent_placeholder()
                     text_only = True
                     warnings.append(
-                        f"{line_id}[{lang}]: Higgs returned no audio — silent placeholder")
+                        f"{line_id}[{lang}]: {client.name} returned no audio — silent placeholder")
                 synth.write_wav(clip_path, buf)
             except Exception as exc:  # noqa: BLE001 — content never breaks codegen
                 synth.write_wav(clip_path, _silent_placeholder())

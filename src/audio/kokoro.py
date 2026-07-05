@@ -23,6 +23,7 @@ Graceful degradation (never raises, always returns None or audio):
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 import numpy as np
@@ -59,9 +60,8 @@ def kokoro_voice(voice: str, language: str = "en") -> str:
     Gender hints match whole tokens, not substrings — "female_scientist"
     contains the substring "male" and must still land in the female pool.
     """
-    import re as _re
     v = str(voice or "default").strip().lower()
-    tokens = set(_re.split(r"[^a-z]+", v))
+    tokens = set(re.split(r"[^a-z]+", v))
     pool = _FEMALE_VOICES  # default: af_heart is Kokoro's flagship voice
     if tokens & set(_FEMALE_HINTS):
         pool = _FEMALE_VOICES

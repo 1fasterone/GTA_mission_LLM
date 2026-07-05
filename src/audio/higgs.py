@@ -251,7 +251,7 @@ def make_tts_client(config: dict):
     elif backend == "none":
         adapter = _NoneTts()
     else:
-        from .kokoro_tts import KokoroAdapter   # lazy — keeps module import light
+        from .kokoro import KokoroAdapter   # lazy — keeps module import light
         adapter = KokoroAdapter(config)
     cache_dir = Path(cfg.get("dialog_cache_dir",
                               cfg.get("cache_dir", "output/audio_cache")))
