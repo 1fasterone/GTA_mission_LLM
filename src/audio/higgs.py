@@ -29,21 +29,11 @@ from typing import Optional
 import numpy as np
 
 from . import synth   # SR constant + write_wav helpers
-
-# ── Emotion → prosody parameter map ──────────────────────────────────────────
-
-EMOTION_PARAMS: dict[str, dict] = {
-    "neutral":   {"speaking_rate": 1.00, "pitch_shift":  0.0, "energy": 1.00},
-    "happy":     {"speaking_rate": 1.10, "pitch_shift":  1.5, "energy": 1.20},
-    "sad":       {"speaking_rate": 0.85, "pitch_shift": -1.0, "energy": 0.75},
-    "angry":     {"speaking_rate": 1.20, "pitch_shift":  0.5, "energy": 1.40},
-    "fearful":   {"speaking_rate": 1.15, "pitch_shift":  1.0, "energy": 0.90},
-    "surprised": {"speaking_rate": 1.10, "pitch_shift":  2.0, "energy": 1.10},
-    "disgust":   {"speaking_rate": 0.95, "pitch_shift": -0.5, "energy": 0.95},
-    "whisper":   {"speaking_rate": 0.90, "pitch_shift": -2.0, "energy": 0.50},
-    "excited":   {"speaking_rate": 1.25, "pitch_shift":  2.5, "energy": 1.35},
-    "calm":      {"speaking_rate": 0.90, "pitch_shift": -0.5, "energy": 0.85},
-}
+from .lang import normalize_lang
+# Emotion prosody is engine-agnostic and now lives in prosody.py; re-exported
+# here so dialog_resolver + micro.npc_dialog keep importing it from .higgs.
+from .prosody import SUPPORTED_EMOTIONS, emotion_params
+from .tts_stubs import TtsOnly
 
 # ── Audio style → Higgs preset map ───────────────────────────────────────────
 
@@ -67,14 +57,8 @@ LANGUAGE_MAP: dict[str, str] = {
     "th": "th-TH",
 }
 
-SUPPORTED_EMOTIONS  = set(EMOTION_PARAMS)
 SUPPORTED_STYLES    = set(AUDIO_STYLE_PRESETS)
 SUPPORTED_LANGUAGES = set(LANGUAGE_MAP)
-
-
-def emotion_params(emotion: str) -> dict:
-    """Return prosody parameters for an emotion label (falls back to neutral)."""
-    return EMOTION_PARAMS.get(str(emotion).strip().lower(), EMOTION_PARAMS["neutral"])
 
 
 def audio_style_preset(style: str) -> dict:
@@ -84,12 +68,12 @@ def audio_style_preset(style: str) -> dict:
 
 def higgs_language(iso_code: str) -> str:
     """Convert ISO 639-1 code to a Higgs language tag (falls back to en-US)."""
-    return LANGUAGE_MAP.get(str(iso_code).strip().lower(), "en-US")
+    return LANGUAGE_MAP.get(normalize_lang(iso_code), "en-US")
 
 
 # ── Adapter ────────────────────────────────────────────────────────────────────
 
-class HiggsAdapter:
+class HiggsAdapter(TtsOnly):
     """TTS adapter wrapping Higgs Audio v2.
 
     Lazy-imports `higgs_audio` so a missing package never breaks module load.
@@ -192,42 +176,10 @@ class HiggsAdapter:
                 audio = audio.mean(axis=0)          # stereo → mono
             model_sr = getattr(model, "sample_rate", self._SR)
             if model_sr != self._SR:
-                audio = _resample(audio, model_sr, self._SR)
+                audio = synth.resample(audio, model_sr, self._SR)
             return audio
         except Exception as exc:  # noqa: BLE001
             self._warn_once("higgs_gen",
                 f"Higgs generation failed ({type(exc).__name__}: {exc}) — "
                 "this line will be text-only")
             return None
-
-    # Stubs for interface compatibility with generic audio backend callers.
-    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
-        return None
-
-    def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
-        return None
-
-
-def _resample(audio: np.ndarray, from_sr: int, to_sr: int) -> np.ndarray:
-    """Resample a mono float32 buffer. Prefers scipy; falls back to np.interp."""
-    if from_sr == to_sr:
-        return audio
-    try:
-        from scipy.signal import resample_poly  # type: ignore
-        from math import gcd
-        g = gcd(from_sr, to_sr)
-        return resample_poly(audio, to_sr // g, from_sr // g).astype(np.float32)
-    except ImportError:
-        n_out = int(len(audio) * to_sr / from_sr)
-        idx   = np.linspace(0, len(audio) - 1, n_out)
-        return np.interp(idx, np.arange(len(audio)), audio).astype(np.float32)
-
-
-def make_higgs_client(config: dict) -> "HiggsCachingClient":
-    """Build a caching Higgs TTS client from config. Mirrors make_audio_client()."""
-    from pathlib import Path
-    from .backends import CachingClient
-    cfg       = (config or {}).get("audio", {})
-    cache_dir = Path(cfg.get("dialog_cache_dir",
-                              cfg.get("cache_dir", "output/audio_cache")))
-    return CachingClient(HiggsAdapter(config), cache_dir)
