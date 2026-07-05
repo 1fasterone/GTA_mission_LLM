@@ -938,20 +938,23 @@ class TestModelPack:
 
     def test_strict_unmatched_kind_hard_fails(self, gen):
         # FAIL-FAST doctrine: in strict mode an entity matching neither the
-        # default pack nor the asset catalog stops the build with an actionable
-        # error — it must NOT silently share one generic prop.
+        # default pack nor the asset catalog nor any CONCEPT LAYER stops the
+        # build with an actionable error — it must NOT silently share one
+        # generic prop. (kind="gizmo"/name="Zzgrbl" is genuinely unmappable —
+        # unlike e.g. "dragon", which the creature concept layer now resolves.)
         from src.unity_schema import EntitySpec
         with pytest.raises(ValueError, match="assets.strict"):
             gen.generate(self._schema(entities=[
-                EntitySpec(name="Wyrm", kind="dragon", count=1),
+                EntitySpec(name="Zzgrbl", kind="gizmo", count=1),
             ]), {}, strict_assets=True)
 
     def test_nonstrict_unmatched_kind_falls_back_to_real_prop(self, gen):
         # Non-strict keeps the old graceful path: a REAL default prop (never a
-        # primitive), logged so a fitting model can be added later.
+        # primitive), logged so a fitting model can be added later. Uses a
+        # genuinely unmappable entity so no concept layer rescues it first.
         from src.unity_schema import EntitySpec
         files = gen.generate(self._schema(entities=[
-            EntitySpec(name="Wyrm", kind="dragon", count=1),
+            EntitySpec(name="Zzgrbl", kind="gizmo", count=1),
         ]), {}, strict_assets=False)
         cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
         assert '"Models/Default/Prop/Prop"' in cs        # real prop fallback, not a primitive

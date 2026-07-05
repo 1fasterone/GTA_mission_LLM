@@ -69,6 +69,10 @@ def resolve_default_models(lookups_dir: str = "lookups",
     return out
 
 
+_VEHICLE_WORDS = ("vehicle", "car", "jeep", "truck", "plane", "aircraft",
+                  "jet", "bike", "motorcycle", "motorbike", "ship", "tank")
+
+
 def models_for_schema(schema, resolved: dict[str, ResolvedModel],
                       composed_units: list | None = None,
                       override_kinds: set[str] | None = None) -> dict[str, ResolvedModel]:
@@ -77,7 +81,12 @@ def models_for_schema(schema, resolved: dict[str, ResolvedModel],
     Selection rules (first match wins per kind):
     - player   : player script present OR composed controller
     - enemy    : enemy script / composed ai / any enemy entity
-    - vehicle  : locomotion is drive or fly, OR any vehicle entity
+    - vehicle  : locomotion is drive, OR locomotion is fly AND the schema's own
+                 text actually names a vehicle, OR any vehicle entity —
+                 "fly" alone is NOT enough (hit live: a wingsuit/skydiving
+                 game with locomotion=fly has no pilotable vehicle at all;
+                 the player's own body flies, so the blanket assumption
+                 shipped an unused Car.fbx into every such project)
     - <other>  : any entity whose kind has a catalog entry
     - overrides: any kind in override_kinds is always included when resolved
                  (ensures Blender-built models are wired in regardless of schema)
@@ -97,7 +106,10 @@ def models_for_schema(schema, resolved: dict[str, ResolvedModel],
         used["enemy"] = resolved["enemy"]
 
     loco = getattr(schema, "locomotion", "walk")
-    wants_vehicle = (loco in ("drive", "fly")
+    combined = f"{schema.description or ''} " + " ".join(e.name for e in schema.entities)
+    combined = combined.lower()
+    wants_vehicle = (loco == "drive"
+                     or (loco == "fly" and any(w in combined for w in _VEHICLE_WORDS))
                      or any(e.kind == "vehicle" for e in schema.entities))
     if wants_vehicle and "vehicle" in resolved:
         used["vehicle"] = resolved["vehicle"]
