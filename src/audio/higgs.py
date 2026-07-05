@@ -29,6 +29,7 @@ from typing import Optional
 import numpy as np
 
 from . import synth   # SR constant + write_wav helpers
+from .lang import normalize_lang
 # Emotion prosody is engine-agnostic and now lives in prosody.py; re-exported
 # here so dialog_resolver + micro.npc_dialog keep importing it from .higgs.
 from .prosody import SUPPORTED_EMOTIONS, emotion_params
@@ -66,7 +67,7 @@ def audio_style_preset(style: str) -> dict:
 
 def higgs_language(iso_code: str) -> str:
     """Convert ISO 639-1 code to a Higgs language tag (falls back to en-US)."""
-    return LANGUAGE_MAP.get(str(iso_code).strip().lower(), "en-US")
+    return LANGUAGE_MAP.get(normalize_lang(iso_code), "en-US")
 
 
 # ── Adapter ────────────────────────────────────────────────────────────────────

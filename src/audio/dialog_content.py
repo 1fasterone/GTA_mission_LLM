@@ -26,6 +26,7 @@ import numpy as np
 
 from . import synth
 from .backends import make_tts_client
+from .lang import normalize_lang
 
 
 def _slug(s: str) -> str:
@@ -74,7 +75,7 @@ def generate_dialog_bank(
     warnings: list[str] = []
     entries:  list[dict] = []
 
-    extra_langs = [str(c).strip().lower() for c in (multilingual_targets or [])]
+    extra_langs = [normalize_lang(c) for c in (multilingual_targets or [])]
 
     for line in lines:
         g = (lambda k, d: line.get(k, d)) if isinstance(line, dict) else \
@@ -83,7 +84,7 @@ def generate_dialog_bank(
         line_id  = str(g("line_id",  "line"))
         text     = str(g("text",     ""))
         emotion  = str(g("emotion",  "neutral"))
-        language = str(g("language", "en")).strip().lower()
+        language = normalize_lang(g("language", "en"))
         voice_id = str(g("voice_id", "default"))
         style    = str(g("audio_style", "natural"))   # may be at line level or schema level
 

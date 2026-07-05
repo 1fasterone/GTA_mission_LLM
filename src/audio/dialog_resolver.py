@@ -18,6 +18,7 @@ import re
 from typing import Any
 
 from .higgs import SUPPORTED_EMOTIONS, SUPPORTED_LANGUAGES, SUPPORTED_STYLES
+from .lang import normalize_lang
 
 
 # ── Voice catalogue (config.yaml audio.voices can override) ──────────────────
@@ -60,7 +61,7 @@ def resolve_voice(voice_id: str, config: dict | None = None) -> str:
 
 def resolve_language(code: str) -> str:
     """Return a normalised ISO 639-1 code, falling back to 'en' if unsupported."""
-    c = str(code).strip().lower()[:2]
+    c = normalize_lang(code)
     return c if c in SUPPORTED_LANGUAGES else "en"
 
 

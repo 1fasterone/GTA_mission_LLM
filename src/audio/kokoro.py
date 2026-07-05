@@ -29,6 +29,7 @@ from typing import Optional
 import numpy as np
 
 from . import synth
+from .lang import normalize_lang
 from .prosody import emotion_params
 
 # ── ISO 639-1 → Kokoro lang_code ──────────────────────────────────────────────
@@ -131,7 +132,7 @@ class KokoroAdapter:
         """
         if not (text or "").strip():
             return None
-        lang_code = KOKORO_LANG.get(str(language).strip().lower())
+        lang_code = KOKORO_LANG.get(normalize_lang(language))
         if lang_code is None:
             self._warn_once(f"lang_{language}",
                 f"Kokoro has no '{language}' pipeline — using English")

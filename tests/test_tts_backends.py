@@ -84,3 +84,25 @@ def test_kokoro_empty_text_is_none():
 def test_higgs_adapter_still_degrades_gracefully():
     # No higgs-audio installed → None, never an exception.
     assert HiggsAdapter({"audio": {}}).tts("hello") is None
+
+
+# ── shared ISO-639-1 normalisation (one home for all engines) ─────────────────
+
+def test_normalize_lang_strips_region_and_case():
+    from src.audio.lang import normalize_lang
+    assert normalize_lang("EN") == "en"
+    assert normalize_lang("  fr ") == "fr"
+    assert normalize_lang("pt-BR") == "pt"
+    assert normalize_lang("en_US") == "en"
+
+
+def test_engine_language_maps_share_one_normaliser():
+    # Region-coded input resolves through each engine's own map after the shared
+    # normalise step — no engine re-implements strip/lower/2-char.
+    from src.audio.higgs import higgs_language
+    from src.audio.kokoro import KOKORO_LANG
+    from src.audio.dialog_resolver import resolve_language
+    from src.audio.lang import normalize_lang
+    assert higgs_language("pt-BR") == "pt-BR"          # -> "pt" -> Higgs tag
+    assert KOKORO_LANG[normalize_lang("pt-BR")] == "p"  # -> "pt" -> Kokoro code
+    assert resolve_language("pt-BR") == "pt"
