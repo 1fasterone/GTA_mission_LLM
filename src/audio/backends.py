@@ -29,6 +29,7 @@ from typing import Optional
 import numpy as np
 
 from . import synth
+from .tts_stubs import TtsOnly
 
 
 # ── adapters ──────────────────────────────────────────────────────────────────
@@ -240,12 +241,10 @@ def make_audio_client(config: dict) -> CachingClient:
 
 # ── NPC-dialog TTS backend (separate axis from sfx/music above) ───────────────
 
-class _NoneTts:
+class _NoneTts(TtsOnly):
     """audio.tts_backend: none — every line stays text-only."""
     name = "tts_none"
-    def tts(self, *a, **kw):   return None   # noqa: E704
-    def sfx(self, *a, **kw):   return None   # noqa: E704
-    def music(self, *a, **kw): return None   # noqa: E704
+    def tts(self, *a, **kw): return None   # noqa: E704
 
 
 def make_tts_client(config: dict) -> CachingClient:

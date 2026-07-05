@@ -31,6 +31,7 @@ import numpy as np
 from . import synth
 from .lang import normalize_lang
 from .prosody import emotion_params
+from .tts_stubs import TtsOnly
 
 # ── ISO 639-1 → Kokoro lang_code ──────────────────────────────────────────────
 # Kokoro pipelines are per-language: 'a' American English, 'b' British English,
@@ -75,7 +76,7 @@ def kokoro_voice(voice: str, language: str = "en") -> str:
     return pool[idx]
 
 
-class KokoroAdapter:
+class KokoroAdapter(TtsOnly):
     """TTS adapter wrapping Kokoro-82M (lazy-imported; per-language pipelines)."""
 
     name = "kokoro"
@@ -162,10 +163,3 @@ class KokoroAdapter:
                 f"Kokoro generation failed ({type(exc).__name__}: {exc}) — "
                 "this line will be text-only")
             return None
-
-    # Interface-compatibility stubs (dialog client is TTS-only).
-    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
-        return None
-
-    def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
-        return None

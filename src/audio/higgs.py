@@ -33,6 +33,7 @@ from .lang import normalize_lang
 # Emotion prosody is engine-agnostic and now lives in prosody.py; re-exported
 # here so dialog_resolver + micro.npc_dialog keep importing it from .higgs.
 from .prosody import SUPPORTED_EMOTIONS, emotion_params
+from .tts_stubs import TtsOnly
 
 # ── Audio style → Higgs preset map ───────────────────────────────────────────
 
@@ -72,7 +73,7 @@ def higgs_language(iso_code: str) -> str:
 
 # ── Adapter ────────────────────────────────────────────────────────────────────
 
-class HiggsAdapter:
+class HiggsAdapter(TtsOnly):
     """TTS adapter wrapping Higgs Audio v2.
 
     Lazy-imports `higgs_audio` so a missing package never breaks module load.
@@ -182,10 +183,3 @@ class HiggsAdapter:
                 f"Higgs generation failed ({type(exc).__name__}: {exc}) — "
                 "this line will be text-only")
             return None
-
-    # Stubs for interface compatibility with generic audio backend callers.
-    def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
-        return None
-
-    def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
-        return None
