@@ -1244,6 +1244,102 @@ class TestFragmentSanitizers:
         _strip_undeclared_foreach(ok)
         assert "foreach" in ok.update_extra             # declared local → kept
 
+    # ── _custom_script_api: extra_fields always private, methods need `public` ──
+
+    def test_custom_script_api_excludes_fields(self):
+        from src.unity_generator import _custom_script_api
+        s = UnityScript(name="InventoryManager", type="custom", description="d",
+                        extra_fields=[{"name": "moraleValue", "type": "int", "default": "100"}])
+        api = _custom_script_api([s])
+        assert "moraleValue" not in api["InventoryManager"]
+
+    def test_custom_script_api_excludes_private_methods(self):
+        from src.unity_generator import _custom_script_api
+        s = UnityScript(name="InventoryManager", type="custom", description="d",
+                        extra_methods=[
+                            {"signature": "private void Restock()", "body": ""},
+                            {"signature": "public void Refill()", "body": ""},
+                        ])
+        api = _custom_script_api([s])
+        assert "Restock" not in api["InventoryManager"]
+        assert "Refill" in api["InventoryManager"]
+
+    def test_custom_script_field_access_stripped_always_private(self):
+        # Live bug: MoraleSystem.cs did `inv.moraleValue` where inv = Get<
+        # InventoryManager>() and moraleValue is one of InventoryManager's OWN
+        # extra_fields — extra_fields always render private (CS0122).
+        from src.unity_generator import _custom_script_api, _sanitize_project_service_calls
+        inventory = UnityScript(name="InventoryManager", type="custom", description="d",
+                                extra_fields=[{"name": "moraleValue", "type": "int", "default": "100"}])
+        morale = self._script(
+            'if (GameContext.Instance.Get<InventoryManager>() != null) { '
+            'var inv = GameContext.Instance.Get<InventoryManager>(); '
+            'if (inv.moraleValue > moraleLevel) { moraleLevel = inv.moraleValue; } }')
+        morale.name = "MoraleSystem"
+        custom_api = _custom_script_api([inventory, morale])
+        _sanitize_project_service_calls(morale, custom_api, set())
+        assert "moraleValue" not in morale.update_extra
+
+
+# ── _sanitize_composed_component_calls: per-composed-class member validation ──
+
+class TestComposedClassApiCoverage:
+    def _script(self, update_extra):
+        return UnityScript(name="Custom", type="custom", description="d",
+                           update_extra=update_extra)
+
+    def _unit(self, class_name):
+        from src.unity_compose import ComposedUnit
+        return ComposedUnit(kind="x", variant="x", class_name=class_name,
+                            guid="g", target="world")
+
+    def test_world_interactable_member_validated(self):
+        # Live bug: InventoryManager.cs did interact.CanPickup()/interact.ItemName
+        # where interact = Get<WorldInteractable>() — neither exists on the real
+        # template (only OnPrompt/OnInteract/OnToggled events + Interact()).
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            'if (GameContext.Instance.Get<WorldInteractable>() != null) { '
+            'var interact = GameContext.Instance.Get<WorldInteractable>(); '
+            'if (interact != null && interact.CanPickup()) { '
+            'inventoryList.Add(interact.ItemName); moraleValue += 5; } }')
+        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
+        assert "CanPickup" not in s.update_extra
+        assert "ItemName" not in s.update_extra
+
+    def test_world_interactable_real_member_kept(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<WorldInteractable>()?.Interact();")
+        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
+        assert "Interact()" in s.update_extra
+
+    def test_player_camera_has_zero_public_members(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<PlayerCamera>()?.Shake(1f);")
+        _sanitize_composed_component_calls(s, [self._unit("PlayerCamera")])
+        assert "Shake" not in s.update_extra
+
+    def test_player_camera_base_monobehaviour_member_kept(self):
+        # Regression guard: base MonoBehaviour access must survive even for a
+        # composed type with an empty verified API.
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            "GameContext.Instance.Get<PlayerCamera>()?.gameObject.SetActive(false);")
+        _sanitize_composed_component_calls(s, [self._unit("PlayerCamera")])
+        assert "gameObject" in s.update_extra
+
+    def test_player_animator_dynamic_setter_kept(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<PlayerAnimator>()?.SetOxygenLevel(0.5f);")
+        _sanitize_composed_component_calls(s, [self._unit("PlayerAnimator")])
+        assert "SetOxygenLevel" in s.update_extra
+
+    def test_player_animator_invented_member_stripped(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<PlayerAnimator>()?.ForceIdlePose();")
+        _sanitize_composed_component_calls(s, [self._unit("PlayerAnimator")])
+        assert "ForceIdlePose" not in s.update_extra
+
 
 # ── SceneAudio emission + data-driven README ────────────────────────────────────
 

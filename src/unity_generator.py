@@ -344,7 +344,9 @@ def _sanitize_stub_type_usage(script: UnityScript) -> None:
 # active one survives unstripped (acceptable false-negative); a member that is
 # never real on ANY variant (the actual failure mode) never does. Extend this
 # table as more of these calls get hit live; an unlisted composed class is left
-# untouched (nothing to validate against).
+# untouched (nothing to validate against). Covers all 10 types GAMECONTEXT_
+# SCHEMA_GUIDANCE (src/unity_prompts.py) tells the LLM it may Get<T>() (plus
+# GameManager, validated separately by _sanitize_singleton_calls).
 _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
     # Controller.cs.j2 PUBLIC PROPERTIES section.
     "PlayerController": frozenset({
@@ -359,7 +361,56 @@ _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
         "CurrentHealth", "MaxHealth", "TakeDamage", "Heal",
         "OnHealthChanged", "OnDamaged", "OnHealed", "OnDeath",
     }),
+    # CameraRig.cs.j2 — zero public members beyond MonoBehaviour; ANY member
+    # access must come from _MB_COMMON_MEMBERS or it's invented.
+    "PlayerCamera": frozenset(),
+    # StateMachine.cs.j2 public surface.
+    "PlayerFSM": frozenset({
+        "State", "OnStateChanged", "CurrentState", "IsIn",
+        "SetMove", "SetJump", "SetGrounded", "Kill",
+    }),
+    # HUD.cs.j2 public surface.
+    "GameHud": frozenset({
+        "SetHealth", "SetAmmo", "SetScore", "Show", "Hide", "ShowLine", "SetPaused",
+    }),
+    # Menu.cs.j2 public surface.
+    "PauseMenu": frozenset({
+        "OnItemSelected", "Items", "Select", "Activate", "Show", "Hide",
+    }),
+    # SaveSystem.cs.j2 public surface (union across json_file/slotted/checkpoint variants).
+    "SaveSystem": frozenset({
+        "Data", "SlotCount", "Save", "Load", "HasSave", "DeleteSave",
+        "SetCheckpoint", "Respawn",
+    }),
+    # Body.cs.j2 public surface — mass/drag are private serialized fields.
+    "PhysicsBody": frozenset({"OnImpact", "OnTriggerEnterEvent"}),
+    # Interactable.cs.j2 public surface (hit live: InventoryManager.cs called
+    # GameContext.Instance.Get<WorldInteractable>().CanPickup()/.ItemName —
+    # neither exists; only Interact() + the three events are real — CS1061 x2).
+    "WorldInteractable": frozenset({"OnPrompt", "OnInteract", "OnToggled", "Interact"}),
+    # TriggerZone.cs.j2 — the entire public surface is Reset().
+    "SceneTrigger": frozenset({"Reset"}),
+    # Animator.cs.j2 — SetGrounded/CrossFade are fixed; Play{Param}()/
+    # Set{Param}(value) are dynamic per-project animator parameters not known
+    # at this point in the pipeline, so they're matched by shape instead of
+    # name (see _ANIMATOR_DYNAMIC_MEMBER_RE / _composed_member_ok).
+    "PlayerAnimator": frozenset({"SetGrounded", "CrossFade"}),
 }
+
+# PlayerAnimator's per-project dynamic parameter setters/triggers — real names
+# aren't known until scene composition, well after this sanitizer runs.
+_ANIMATOR_DYNAMIC_MEMBER_RE = re.compile(r"^(?:Play|Set)[A-Z]\w*$")
+
+
+def _composed_member_ok(cls: str, member: str) -> bool:
+    """A member access on a Get<T>()-bound composed-micro reference is valid if
+    it's in that class's verified API, a base MonoBehaviour/Component/Object
+    member (always legitimate, never authored by the template itself), or —
+    PlayerAnimator only — matches the dynamic Play*/Set* parameter shape."""
+    return (member in _COMPOSED_CLASS_API[cls]
+            or member in _MB_COMMON_MEMBERS
+            or (cls == "PlayerAnimator" and bool(_ANIMATOR_DYNAMIC_MEMBER_RE.match(member))))
+
 
 # How a custom script reaches a composed micro class instance: a MonoBehaviour
 # sibling via GetComponent<T>(), or any composed system via the GameContext
@@ -370,13 +421,16 @@ _COMPOSED_GETTER_ALT = r"(?:GameContext\.Instance\.Get|GetComponent)"
 def _sanitize_composed_component_calls(script: UnityScript, composed_units: list | None) -> None:
     """Strip calls to a composed micro class whose verified public API doesn't
     include the called member — the LLM assumes a method that was never
-    authored on the template. Hit live twice:
+    authored on the template. Hit live:
       - O2Manager.cs: GetComponent<PlayerController>()?.GetSpeed() — doesn't
         exist, Controller.cs.j2 exposes ForwardSpeed/SpeedKmh instead (CS1061).
       - OxygenManager.cs: `var context = GameContext.Instance.Get<PlayerHealth>();
         ... context.Die();` — Die() is private on Health.cs.j2, only reachable
         via TakeDamage (CS0122). This is the chained-getter call PLUS the
         assign-to-a-variable-then-call-later shape, both handled below.
+      - InventoryManager.cs: `var interact = GameContext.Instance.Get<
+        WorldInteractable>(); ... interact.CanPickup(); ... interact.ItemName` —
+        neither exists on WorldInteractable (CS1061 x2).
     Only checked for classes with a verified entry in _COMPOSED_CLASS_API;
     anything else is left alone rather than risk a false strip."""
     if not composed_units:
@@ -405,10 +459,10 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
             var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)\s*\(")
         out = []
         for line in body.splitlines(keepends=True):
-            bad = any(m.group(2) not in _COMPOSED_CLASS_API[m.group(1)]
+            bad = any(not _composed_member_ok(m.group(1), m.group(2))
                       for m in chained_call_re.finditer(line))
             if not bad and var_call_re:
-                bad = any(m.group(2) not in _COMPOSED_CLASS_API[var_types[m.group(1)]]
+                bad = any(not _composed_member_ok(var_types[m.group(1)], m.group(2))
                           for m in var_call_re.finditer(line))
             if not bad:
                 out.append(line)
@@ -421,11 +475,44 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
         m.body = _strip(m.body)
 
 
-# Members every MonoBehaviour instance legitimately has — never grounds to strip.
+# Members every MonoBehaviour/Component/Object instance legitimately has — never
+# grounds to strip. Shared by _sanitize_composed_component_calls (via
+# _composed_member_ok) and _sanitize_project_service_calls — one source of
+# truth so a member allowed on one path is allowed on the other.
 _MB_COMMON_MEMBERS = frozenset({
     "transform", "gameObject", "enabled", "name", "tag",
-    "isActiveAndEnabled", "GetComponent", "SendMessage",
+    "isActiveAndEnabled", "hideFlags",
+    "CompareTag", "GetComponent", "GetComponents", "GetComponentInChildren",
+    "GetComponentsInChildren", "GetComponentInParent", "TryGetComponent",
+    "SendMessage", "BroadcastMessage", "Invoke", "InvokeRepeating", "CancelInvoke",
+    "StartCoroutine", "StopCoroutine", "StopAllCoroutines",
+    "ToString", "GetType", "Equals", "GetHashCode",
 })
+
+
+_PUBLIC_SIG_RE = re.compile(r"^\s*public\b")
+_SIG_NAME_RE   = re.compile(r"(\w+)\s*\(")
+
+
+def _custom_script_api(scripts: list[UnityScript]) -> dict[str, frozenset[str]]:
+    """A custom script's real externally-reachable surface: PUBLIC extra_methods
+    only. extra_fields ALWAYS render `[SerializeField] private`
+    (templates/unity/scripts/CustomBehaviour.cs.j2) — never part of the public
+    API regardless of name, so cross-script field access is always CS0122 (hit
+    live: MoraleSystem.cs did `inv.moraleValue` where inv = GameContext.Instance.
+    Get<InventoryManager>() and moraleValue is one of InventoryManager's own
+    extra_fields). CodeMethod.signature (src/micro/code_fields.py) carries
+    whichever access modifier the LLM wrote, defaulting to `private` only when
+    the LLM supplied a bare name — so a method must explicitly say `public` to
+    count."""
+    return {
+        s.name: frozenset(
+            mm.group(1) for m in s.extra_methods
+            if _PUBLIC_SIG_RE.match(m.signature or "")
+            and (mm := _SIG_NAME_RE.search(m.signature or ""))
+        )
+        for s in scripts if s.type == "custom"
+    }
 
 
 def _sanitize_project_service_calls(script: UnityScript,
@@ -438,8 +525,10 @@ def _sanitize_project_service_calls(script: UnityScript,
         script, stub has no members → CS1061). Every line touching the getter
         or its bound variable is dead code.
       - T is another GENERATED CUSTOM script: its complete public surface IS
-        its declared extra_fields + extra_methods, so calls to anything else
-        are guaranteed CS1061 (hit live: DialogueManager.TriggerBeat).
+        its PUBLIC extra_methods only (see _custom_script_api) — never its
+        extra_fields, which always render private — so calls to anything else
+        are guaranteed CS1061/CS0122 (hit live: DialogueManager.TriggerBeat;
+        MoraleSystem.cs -> InventoryManager.moraleValue).
 
     Canonical script classes (GameManager...), composed micro classes and Unity
     types are opaque here — their template APIs are validated by the existing
@@ -1288,16 +1377,11 @@ class UnityProjectGenerator:
         # Done here — not in the pipeline — so unity-validate and the webui get
         # it too. CustomBehaviour.cs.j2 emits no fields of its own, so the only
         # reserved name is nothing; usings dedupe against the template's.
-        # Service-locator validation context: a custom script's COMPLETE public
-        # surface is its declared extra bits; canonical/composed/Unity classes
-        # are opaque (validated by their own dedicated passes).
-        _sig_name_re = re.compile(r"(\w+)\s*\(")
-        _custom_api = {
-            s.name: frozenset(f.name for f in s.extra_fields)
-                    | frozenset(mm.group(1) for m in s.extra_methods
-                                if (mm := _sig_name_re.search(m.signature or "")))
-            for s in schema.scripts if s.type == "custom"
-        }
+        # Service-locator validation context: a custom script's public surface
+        # is its PUBLIC extra_methods only (never extra_fields — always
+        # private); canonical/composed/Unity classes are opaque (validated by
+        # their own dedicated passes).
+        _custom_api = _custom_script_api(schema.scripts)
         _opaque_types = ({s.name for s in schema.scripts if s.type != "custom"}
                          | {u.class_name for u in (composed_units or [])})
         for s in schema.scripts:
