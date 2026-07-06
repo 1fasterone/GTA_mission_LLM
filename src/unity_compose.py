@@ -549,6 +549,22 @@ GOLDEN_3D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
 )
 
+# The 2D golden archetype — same always-on kinds as 3D, dimension-appropriate
+# variants (2d_platformer/follow_2d/rigidbody_2d). "animator" stays "humanoid"
+# here: anim_variant is keyed off locomotion, not game_type, and Animator.cs.j2
+# is itself dimension-agnostic (no hardcoded rig/bone names) — confirmed
+# functionally correct for 2D, just a cosmetically misleading label. 2.5D
+# currently resolves to this SAME signature (ctrl/cam/phys_variant treat
+# "2d"/"2.5d" identically below) — there is no distinct 2.5D archetype yet,
+# so it intentionally has no constant of its own.
+GOLDEN_2D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
+    ("controller", "2d_platformer"), ("camera", "follow_2d"), ("health", "simple"),
+    ("hud", "health_bar"), ("menu", "pause_menu"), ("saveload", "json_file"),
+    ("physics", "rigidbody_2d"), ("input", "keyboard_mouse"),
+    ("interactable", "pickup"), ("animator", "humanoid"),
+    ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+)
+
 
 def subsystems_for(
     game_type:    str,
