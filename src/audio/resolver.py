@@ -103,6 +103,38 @@ def _infer_category_loop(source: str, desc: str) -> tuple[str, bool]:
     return "sfx", False
 
 
+# ── Gameplay-seam role matching (deterministic, no LLM) ───────────────────────
+#
+# Concept-driven cues carry no semantic-role tag (just id/category/descriptor) —
+# a wiring seam that needs a "player took damage" sound can't assume one exists
+# under a fixed generic name. match_cue_for_role() does a deterministic keyword
+# match against the cues this project actually resolved; callers must treat a
+# None result as "no matching cue" and omit the seam line, never fabricate an
+# id that isn't in the resolved bank.
+
+_ROLE_KEYWORDS: dict[str, frozenset[str]] = {
+    "hurt":  frozenset({"hurt", "damage", "injur", "pain", "hit", "impact", "wound"}),
+    "death": frozenset({"death", "die", "dying", "destroy", "shatter", "break",
+                         "kill", "collapse"}),
+    "heal":  frozenset({"heal", "recover", "restore", "repair", "regenerat",
+                         "save", "checkpoint"}),
+}
+
+
+def match_cue_for_role(role: str, cues: list[dict]) -> str | None:
+    """First cue (in existing order) whose id/descriptor contains a keyword for
+    `role` ("hurt" | "death" | "heal"). None if no cue matches — never invents
+    an id that isn't actually in the resolved cue list."""
+    keywords = _ROLE_KEYWORDS.get(role)
+    if not keywords:
+        return None
+    for cue in cues:
+        text = f"{cue.get('id', '')} {cue.get('descriptor', '')}".lower()
+        if any(kw in text for kw in keywords):
+            return cue.get("id")
+    return None
+
+
 def _parse_cue_list(raw: str) -> list[dict]:
     """Extract a JSON array from a possibly noisy LLM response."""
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)

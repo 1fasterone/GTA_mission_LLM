@@ -44,7 +44,10 @@ WIRING_ATOMS: list[AtomDef] = [
         category="wiring",
         description=(
             "Connect Health.OnDamaged/OnDeath/OnHealed → AudioDirector.Play using "
-            "stored Action delegates so -= can properly unsubscribe."
+            "stored Action delegates so -= can properly unsubscribe. cue_hurt/"
+            "cue_death/cue_heal are None unless the caller matched a real cue id "
+            "from this project's resolved audio bank — a role with no match is "
+            "omitted entirely, never wired to a fabricated generic id."
         ),
         engines=["unity"],
         duration="instant",
@@ -52,9 +55,12 @@ WIRING_ATOMS: list[AtomDef] = [
         params=[
             AtomParam(name="health_var", type="string", default="_health"),
             AtomParam(name="audio_var",  type="string", default="_audio"),
-            AtomParam(name="cue_hurt",   type="sfx_id", default="player_hurt"),
-            AtomParam(name="cue_death",  type="sfx_id", default="player_death"),
-            AtomParam(name="cue_heal",   type="sfx_id", default="checkpoint_save_led"),
+            AtomParam(name="cue_hurt",   type="sfx_id", default=None,
+                      description="Matched cue id for the hurt role, or None to omit"),
+            AtomParam(name="cue_death",  type="sfx_id", default=None,
+                      description="Matched cue id for the death role, or None to omit"),
+            AtomParam(name="cue_heal",   type="sfx_id", default=None,
+                      description="Matched cue id for the heal role, or None to omit"),
         ],
     ),
     AtomDef(

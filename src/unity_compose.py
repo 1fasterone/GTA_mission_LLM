@@ -44,6 +44,11 @@ class ComposedUnit(BaseModel):
     target:     Target
     file_id:    int = 0                # scene MonoBehaviour fileID (per-target wiring)
     scripts:    list[str] = Field(default_factory=list)   # asset-relative .cs paths
+    cues:       list[dict] = Field(default_factory=list)  # audio kind only: resolved
+                                                            # AudioCueSpec {id,category,
+                                                            # descriptor} — lets seam
+                                                            # codegen match real cues
+                                                            # instead of guessing names.
 
 
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
@@ -137,10 +142,12 @@ class MicroComposer:
         scene wiring before the project dir exists; GUIDs/fileIDs match emit()."""
         units: list[ComposedUnit] = []
         for i, sub in enumerate(subsystems):
-            _, _, variant, class_name, guid = self._resolve(sub)
+            _, schema, variant, class_name, guid = self._resolve(sub)
+            cues = ([{"id": c.id, "category": c.category, "descriptor": c.descriptor}
+                     for c in schema.cues] if sub.kind == "audio" else [])
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
-                target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i))
+                target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -279,31 +286,43 @@ class MicroComposer:
                 f"    {hv}.OnDeath -= {fv}.Kill;"
             )
 
-        # SEAM 3 — Health → Audio (hurt / death / heal sounds)
+        # SEAM 3 — Health → Audio (hurt / death / heal sounds). Cue ids are
+        # matched deterministically against this project's actually-resolved
+        # audio bank (audio.cues) — a concept with no matching diegetic sound
+        # for a role gets that line omitted, never a fabricated generic id.
         if health and audio:
-            hv, av = _fv(health), _fv(audio)
-            stored_delegates += [
-                {"type": "Action<float>", "name": "_onDamaged"},
-                {"type": "Action",        "name": "_onDeath"},
-                {"type": "Action<float>", "name": "_onHealed"},
-            ]
-            awake_seams.append({
-                "label":   "SEAM 3: Health → Audio",
-                "snippet": unity_atom_snippet("WireHealthToAudio", {
-                    "health_var": hv, "audio_var": av,
-                    "cue_hurt":  "player_hurt",
-                    "cue_death": "player_death",
-                    "cue_heal":  "checkpoint_save_led",
-                }),
-            })
-            destroy_cleanups.append(
-                f"if ({hv} != null)\n"
-                "{\n"
-                f"    if (_onDamaged != null) {hv}.OnDamaged -= _onDamaged;\n"
-                f"    if (_onDeath   != null) {hv}.OnDeath   -= _onDeath;\n"
-                f"    if (_onHealed  != null) {hv}.OnHealed  -= _onHealed;\n"
-                "}"
-            )
+            from .audio.resolver import match_cue_for_role
+            cue_hurt  = match_cue_for_role("hurt",  audio.cues)
+            cue_death = match_cue_for_role("death", audio.cues)
+            cue_heal  = match_cue_for_role("heal",  audio.cues)
+            if cue_hurt or cue_death or cue_heal:
+                hv, av = _fv(health), _fv(audio)
+                delegate_types = {
+                    "hurt": ("Action<float>", "_onDamaged", "OnDamaged"),
+                    "death": ("Action", "_onDeath", "OnDeath"),
+                    "heal": ("Action<float>", "_onHealed", "OnHealed"),
+                }
+                matched = {"hurt": cue_hurt, "death": cue_death, "heal": cue_heal}
+                stored_delegates += [
+                    {"type": t, "name": name}
+                    for role, (t, name, _evt) in delegate_types.items()
+                    if matched[role]
+                ]
+                awake_seams.append({
+                    "label":   "SEAM 3: Health → Audio",
+                    "snippet": unity_atom_snippet("WireHealthToAudio", {
+                        "health_var": hv, "audio_var": av,
+                        "cue_hurt": cue_hurt, "cue_death": cue_death, "cue_heal": cue_heal,
+                    }),
+                })
+                unsub_lines = [
+                    f"    if ({name} != null) {hv}.{evt} -= {name};"
+                    for role, (_t, name, evt) in delegate_types.items()
+                    if matched[role]
+                ]
+                destroy_cleanups.append(
+                    f"if ({hv} != null)\n" "{\n" + "\n".join(unsub_lines) + "\n}"
+                )
 
         # SEAM 4 — FSM → Animator (state changes drive CrossFade)
         if fsm and anim:
@@ -515,6 +534,21 @@ class MicroComposer:
 
 
 # ── Deterministic mapper: game concept → subsystem set ────────────────────────
+
+# The 3D "golden archetype" — the always-on core subsystems_for() emits for any
+# plain 3D project (no genre/locomotion override). Order matters: plan() assigns
+# scene fileIDs positionally (_COMPOSED_FILE_ID_BASE + 10*i), so reordering this
+# list silently reshuffles every downstream fileID. Locked + regression-tested in
+# tests/test_golden_3d_archetype.py so future subsystems_for() changes can't
+# silently drift the baseline every 3D project depends on.
+GOLDEN_3D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
+    ("controller", "third_person"), ("camera", "follow"), ("health", "simple"),
+    ("hud", "health_bar"), ("menu", "pause_menu"), ("saveload", "json_file"),
+    ("physics", "rigidbody_3d"), ("input", "keyboard_mouse"),
+    ("interactable", "pickup"), ("animator", "humanoid"),
+    ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+)
+
 
 def subsystems_for(
     game_type:    str,
