@@ -752,6 +752,77 @@ class TestUnityProgrammaticFix:
         assert "InputSystem" not in result
         assert "SiegeTimer" not in result
 
+    # ── InputSystem.current hallucination (live regression: StackMaster) ─────
+
+    def test_input_system_current_mouse_rewritten(self):
+        # Live bug: LLM emitted "InputSystem.current" (CS0117 — no such member)
+        # instead of the real per-device accessor Mouse.current.
+        schema = self._schema(scripts=[
+            UnityScript(name="RaycastSpawner", type="custom", description="x",
+                        update_extra="if (InputSystem.current != null && "
+                                     "InputSystem.current.mouse.leftButton.wasPressedThisFrame) "
+                                     "{ Fire(); }"),
+        ])
+        fixed = _programmatic_fix(schema)
+        body = fixed.scripts[0].update_extra
+        assert "InputSystem.current" not in body
+        assert "Mouse.current != null" in body
+        assert "Mouse.current.leftButton.wasPressedThisFrame" in body
+
+    def test_input_system_current_keyboard_inferred_from_device_use(self):
+        schema = self._schema(scripts=[
+            UnityScript(name="Jumper", type="custom", description="x",
+                        update_extra="if (InputSystem.current != null && "
+                                     "InputSystem.current.keyboard.spaceKey.isPressed) Jump();"),
+        ])
+        fixed = _programmatic_fix(schema)
+        body = fixed.scripts[0].update_extra
+        assert "InputSystem.current" not in body
+        assert "Keyboard.current != null" in body
+        assert "Keyboard.current.spaceKey.isPressed" in body
+
+    def test_no_input_system_current_left_untouched(self):
+        schema = self._schema(scripts=[
+            UnityScript(name="Jumper", type="custom", description="x",
+                        update_extra="if (Keyboard.current != null) Jump();"),
+        ])
+        fixed = _programmatic_fix(schema)
+        assert fixed.scripts[0].update_extra == "if (Keyboard.current != null) Jump();"
+
+    # ── Physics.Raycast bool-vs-out-param confusion (same live regression) ───
+
+    def test_raycast_bool_member_access_redirected_to_out_param(self):
+        # Live bug: `hit` is Physics.Raycast's bool return; hit.collider/hit.point
+        # don't exist on bool — the real members are on the out RaycastHit var.
+        schema = self._schema(scripts=[
+            UnityScript(name="RaycastSpawner", type="custom", description="x",
+                        update_extra=(
+                            "var hit = Physics.Raycast(transform.position, transform.forward, "
+                            "out RaycastHit hitInfo, spawnDistance); "
+                            "if (hit.collider != null) { "
+                            "Instantiate(_prefabs[0], hit.point, Quaternion.LookRotation(hit.normal)); }"
+                        )),
+        ])
+        fixed = _programmatic_fix(schema)
+        body = fixed.scripts[0].update_extra
+        assert "hit.collider" not in body
+        assert "hit.point" not in body
+        assert "hit.normal" not in body
+        assert "hitInfo.collider" in body
+        assert "hitInfo.point" in body
+        assert "hitInfo.normal" in body
+
+    def test_raycast_with_matching_var_names_left_untouched(self):
+        schema = self._schema(scripts=[
+            UnityScript(name="Shooter", type="custom", description="x",
+                        update_extra=(
+                            "var hit = Physics.Raycast(transform.position, transform.forward, "
+                            "out RaycastHit hit2, spawnDistance); if (hit) Fire(hit2.point);"
+                        )),
+        ])
+        fixed = _programmatic_fix(schema)
+        assert "hit2.point" in fixed.scripts[0].update_extra
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Schema extraction from LLM artifacts (markdown + think blocks)

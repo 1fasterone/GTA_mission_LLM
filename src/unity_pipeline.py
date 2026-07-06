@@ -140,6 +140,67 @@ def _sanitize_singleton_calls(body: str, known_classes: set[str],
     return "".join(lines_out)
 
 
+# Unity's new Input System has no `InputSystem.current` accessor — the LLM
+# regularly confuses the static package namespace (UnityEngine.InputSystem)
+# with the per-device singletons (Mouse.current, Keyboard.current, ...) and
+# emits the hallucinated CS0117 chain "InputSystem.current[.device]".
+_INPUT_DEVICE_CLASS = {
+    "mouse": "Mouse", "keyboard": "Keyboard",
+    "gamepad": "Gamepad", "touchscreen": "Touchscreen",
+}
+_INPUT_SYSTEM_CURRENT_DEVICE_RE = re.compile(
+    r"InputSystem\.current\.(mouse|keyboard|gamepad|touchscreen)\b")
+_INPUT_SYSTEM_CURRENT_RE = re.compile(r"InputSystem\.current\b")
+
+
+def _fix_input_system_current(code: str) -> str:
+    """Rewrite the hallucinated ``InputSystem.current[.device]`` chain.
+
+    Real API: ``Mouse.current`` / ``Keyboard.current`` / ``Gamepad.current`` /
+    ``Touchscreen.current`` — there is no ``.current`` on the ``InputSystem``
+    class itself. The device word (if any) also names which class the
+    fragment's OTHER bare ``InputSystem.current`` null-check should become —
+    LLM fragments consistently address one device per fragment.
+    """
+    if "InputSystem.current" not in code:
+        return code
+    m = _INPUT_SYSTEM_CURRENT_DEVICE_RE.search(code)
+    device_cls = _INPUT_DEVICE_CLASS[m.group(1)] if m else "Mouse"
+    code = _INPUT_SYSTEM_CURRENT_DEVICE_RE.sub(
+        lambda mm: f"{_INPUT_DEVICE_CLASS[mm.group(1)]}.current", code)
+    code = _INPUT_SYSTEM_CURRENT_RE.sub(f"{device_cls}.current", code)
+    return code
+
+
+# Physics.Raycast (and its Linecast/SphereCast/BoxCast/CapsuleCast siblings)
+# return a bool and write the hit details to the `out RaycastHit` parameter —
+# the LLM sometimes treats the bool return value itself as the RaycastHit,
+# calling struct members (.collider, .point, ...) directly on it (CS1061).
+_RAYCAST_HIT_MEMBERS = ("collider", "point", "normal", "distance", "transform",
+                        "rigidbody", "textureCoord", "triangleIndex",
+                        "barycentricCoordinate", "colliderInstanceID")
+_RAYCAST_OUT_RE = re.compile(
+    r"\bvar\s+(\w+)\s*=\s*Physics\.(?:Raycast|Linecast|SphereCast|BoxCast|CapsuleCast)"
+    r"\s*\([^;]*?\bout\s+RaycastHit\s+(\w+)\b")
+
+
+def _fix_raycast_bool_member_access(code: str) -> str:
+    """Redirect RaycastHit member access from the bool return onto the out-param.
+
+    ``var hit = Physics.Raycast(..., out RaycastHit hitInfo, ...); hit.point``
+    -> the second use of ``hit.point`` must read ``hitInfo.point`` — `hit` is
+    a bool and has no such member.
+    """
+    m = _RAYCAST_OUT_RE.search(code)
+    if not m:
+        return code
+    bool_var, hit_var = m.group(1), m.group(2)
+    if bool_var == hit_var:
+        return code
+    member_re = re.compile(rf"\b{re.escape(bool_var)}\.({'|'.join(_RAYCAST_HIT_MEMBERS)})\b")
+    return member_re.sub(rf"{hit_var}.\1", code)
+
+
 def _to_pascal(s: str, fallback: str = "Script") -> str:
     """Convert any string to PascalCase, preserving existing PascalCase."""
     if _IDENT_RE.match(s):
@@ -226,21 +287,33 @@ def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema
     # Strip singleton calls in custom script bodies that reference undefined
     # classes (e.g. UIManager.Instance.XXX when no UIManager exists) or
     # undefined GameManager methods (e.g. GameManager.Instance.ActiveZone).
+    # Also fix two recurring LLM API hallucinations in the same fragments:
+    # the nonexistent InputSystem.current accessor, and RaycastHit members
+    # called on Physics.Raycast's bool return instead of its out-parameter.
     known_classes: set[str] = {s.name for s in schema.scripts}
+
+    def _clean(body: str) -> str:
+        # Rewrite recoverable InputSystem.current[.device] hallucinations to
+        # their real per-device accessor BEFORE the singleton-call sanitizer's
+        # bogus-guard strip — otherwise the strip pass (which matches any bare
+        # "InputSystem.current" substring) eats the whole line first and the
+        # rewrite below never gets a chance to run.
+        body = _fix_input_system_current(body)
+        body = _sanitize_singleton_calls(body, known_classes, allow_context=compose)
+        body = _fix_raycast_bool_member_access(body)
+        return body
+
     for script in schema.scripts:
         if script.type != "custom":
             continue
         if script.update_extra:
-            script.update_extra = _sanitize_singleton_calls(
-                script.update_extra, known_classes, allow_context=compose)
+            script.update_extra = _clean(script.update_extra)
         if script.awake_extra:
-            script.awake_extra = _sanitize_singleton_calls(
-                script.awake_extra, known_classes, allow_context=compose)
+            script.awake_extra = _clean(script.awake_extra)
         if script.fixed_update_extra:
-            script.fixed_update_extra = _sanitize_singleton_calls(
-                script.fixed_update_extra, known_classes, allow_context=compose)
+            script.fixed_update_extra = _clean(script.fixed_update_extra)
         for m in script.extra_methods:
-            m.body = _sanitize_singleton_calls(m.body, known_classes, allow_context=compose)
+            m.body = _clean(m.body)
 
     return schema
 

@@ -138,6 +138,13 @@ CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
   wants a state machine (idle/walk/attack/etc.), do NOT model it as a custom object
   with behavior — use a plain string or int field ("state") and drive transitions with
   if/else directly inside update_extra.
+  INPUT SYSTEM: there is no `InputSystem.current` — the static accessors are per-device:
+  `Mouse.current`, `Keyboard.current`, `Gamepad.current`, `Touchscreen.current` (each
+  null-checked the same way, e.g. `Mouse.current != null && Mouse.current.leftButton.wasPressedThisFrame`).
+  PHYSICS.RAYCAST: `Physics.Raycast(...)` returns a bool — the hit DETAILS live in the
+  `out RaycastHit` parameter, not on the bool. `var hit = Physics.Raycast(origin, dir,
+  out RaycastHit hitInfo, dist)`, then use `hitInfo.point`, `hitInfo.collider`,
+  `hitInfo.normal` — never `hit.point` or `hit.collider` (hit is a bool, it has no members).
 
 ENTITIES — the actual objects in the scene, built from primitives so the concept SHOWS UP.
   Populate one group per distinct set of objects the prompt implies. Fields:
