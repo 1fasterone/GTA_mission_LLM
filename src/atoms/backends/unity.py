@@ -705,22 +705,29 @@ def _wire_health_to_fsm(args: dict) -> str:
 
 
 def _wire_health_to_audio(args: dict) -> str:
-    hv        = _s(args.get("health_var",  "_health"))
-    av        = _s(args.get("audio_var",   "_audio"))
-    cue_hurt  = _s(args.get("cue_hurt",   "player_hurt"))
-    cue_death = _s(args.get("cue_death",  "player_death"))
-    cue_heal  = _s(args.get("cue_heal",   "checkpoint_save_led"))
-    return (
-        f"if ({hv} != null && {av} != null)\n"
-        f"{{\n"
-        f"    _onDamaged = _ => {av}.Play(\"{cue_hurt}\");\n"
-        f"    _onDeath   = () => {av}.Play(\"{cue_death}\");\n"
-        f"    _onHealed  = _ => {av}.Play(\"{cue_heal}\");\n"
-        f"    {hv}.OnDamaged += _onDamaged;\n"
-        f"    {hv}.OnDeath   += _onDeath;\n"
-        f"    {hv}.OnHealed  += _onHealed;\n"
-        f"}}"
+    """Only wires roles with a real matched cue id (args value is not None) —
+    a concept with no diegetic cue for a role gets that line omitted, never a
+    fabricated generic id. See src/audio/resolver.py::match_cue_for_role."""
+    hv = _s(args.get("health_var", "_health"))
+    av = _s(args.get("audio_var",  "_audio"))
+    roles = (
+        ("cue_hurt",  "_onDamaged", "_", "OnDamaged"),
+        ("cue_death", "_onDeath",   "",  "OnDeath"),
+        ("cue_heal",  "_onHealed",  "_", "OnHealed"),
     )
+    lines: list[str] = []
+    subs:  list[str] = []
+    for arg_name, delegate, lam_param, evt in roles:
+        cue = args.get(arg_name)
+        if not cue:
+            continue
+        lam = f"{lam_param} => {av}.Play(\"{_s(cue)}\")" if lam_param else f"() => {av}.Play(\"{_s(cue)}\")"
+        lines.append(f"    {delegate} = {lam};")
+        subs.append(f"    {hv}.{evt} += {delegate};")
+    if not lines:
+        return "// No matched audio cue for hurt/death/heal — Health→Audio seam omitted."
+    body = "\n".join(lines + subs)
+    return f"if ({hv} != null && {av} != null)\n{{\n{body}\n}}"
 
 
 def _wire_fsm_to_animator(args: dict) -> str:
