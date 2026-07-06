@@ -534,6 +534,72 @@ class TestUnityProgrammaticFix:
         assert "GameContext.Instance.Get<T>()" in GAMECONTEXT_SCHEMA_GUIDANCE
         assert "null-check" in GAMECONTEXT_SCHEMA_GUIDANCE.lower()
 
+    # ── Real-world catches: live E2E run of prompts/newprompt.txt (SiegePlatformer,
+    #    2026-07-06) hit both of these verbatim in 2 different custom scripts. ──
+
+    def test_bogus_inputsystem_guard_stripped(self):
+        # InputSystem is a real static class (GetDevice<T>(), devices, ...) but
+        # has no `.current`, and a type name can never be null-compared — this
+        # exact guard is always CS0119 + CS0117, never a real check.
+        schema = self._schema(scripts=[
+            UnityScript(name="Reader", type="custom", description="x",
+                        update_extra="if (InputSystem != null && InputSystem.current != null) "
+                                     "{ DoThing(); }"),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        assert "InputSystem" not in fixed.scripts[0].update_extra
+
+    def test_valid_inputsystem_getdevice_call_preserved(self):
+        # A real InputSystem API call must not be caught by the bogus-guard regex.
+        schema = self._schema(scripts=[
+            UnityScript(name="Reader", type="custom", description="x",
+                        update_extra="var kb = InputSystem.GetDevice<Keyboard>();"),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        assert "InputSystem.GetDevice<Keyboard>()" in fixed.scripts[0].update_extra
+
+    def test_gamemanager_member_via_get_bound_variable_validated(self):
+        # `var context = GameContext.Instance.Get<GameManager>();` then
+        # `context.SiegeTimer` — SiegeTimer isn't part of _GAME_MANAGER_API, so
+        # this must be caught the same way as GameManager.Instance.SiegeTimer.
+        schema = self._schema(scripts=[
+            UnityScript(name="Debris", type="custom", description="x",
+                        update_extra="var context = GameContext.Instance.Get<GameManager>(); "
+                                     "if (context != null && context.SiegeTimer > 0f) DoThing();"),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        assert "SiegeTimer" not in fixed.scripts[0].update_extra
+
+    def test_gamemanager_member_via_get_bound_variable_valid_member_kept(self):
+        # context.AddScore(0) IS in _GAME_MANAGER_API — must survive untouched.
+        schema = self._schema(scripts=[
+            UnityScript(name="Inv", type="custom", description="x",
+                        update_extra="var context = GameContext.Instance.Get<GameManager>(); "
+                                     "if (context != null) context.AddScore(0);"),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        assert "context.AddScore(0)" in fixed.scripts[0].update_extra
+
+    def test_live_e2e_debris_physics_sync_bug_fully_sanitized(self):
+        # Exact update_extra the LLM produced for DebrisPhysicsSync.cs — hit both
+        # bugs at once (bogus InputSystem guard wrapping an invalid SiegeTimer
+        # access) and failed to compile with 3 errors (CS0119, CS0117, CS1061).
+        schema = self._schema(scripts=[
+            UnityScript(name="DebrisPhysicsSync", type="custom", description="x",
+                        update_extra=(
+                            "if (InputSystem != null && InputSystem.current != null) "
+                            "{ var context = GameContext.Instance.Get<GameManager>(); "
+                            "if (context != null && context.SiegeTimer > 0f) { "
+                            "siegeTimer -= Time.deltaTime; if (siegeTimer <= 0f) "
+                            "foreach (var go in triggeredCollapses) { if (go != null) Destroy(go); } "
+                            "} }"
+                        )),
+        ])
+        fixed = _programmatic_fix(schema, compose=True)
+        result = fixed.scripts[0].update_extra
+        assert "InputSystem" not in result
+        assert "SiegeTimer" not in result
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Schema extraction from LLM artifacts (markdown + think blocks)
