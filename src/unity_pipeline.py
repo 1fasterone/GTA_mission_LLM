@@ -65,6 +65,21 @@ _SINGLETON_CALL_RE = re.compile(r"\b(\w+)\.Instance\.(\w+)\b")
 # Line-level split (keeps \n in place for the join).
 _LINE_RE = re.compile(r"[^\n]*\n?")
 
+# GameManager reached indirectly via the compose locator — `var x =
+# GameContext.Instance.Get<GameManager>();` then `x.Member` — must be validated
+# the same way as a direct `GameManager.Instance.Member` call. _SINGLETON_CALL_RE
+# only sees the `Get<GameManager>()` call itself (a valid GameContext.Get), not
+# what the LLM does with the returned reference afterward.
+_GET_GAMEMANAGER_BIND_RE = re.compile(r"\b(\w+)\s*=\s*GameContext\.Instance\.Get<GameManager>\s*\(\s*\)")
+
+# Hallucinated "is the Input System available" guard. InputSystem is a real
+# static class (GetDevice<T>(), devices, AddDevice() — no `.current`, and a type
+# name can never be null-compared), so this pattern is always a compile error
+# (CS0119 + CS0117), not a real check — the package is either referenced or not,
+# resolved at compile time. No real guard is needed, so any line containing it
+# is dropped like other invalid calls.
+_BOGUS_INPUTSYSTEM_GUARD_RE = re.compile(r"\bInputSystem\s*!=\s*null\b|\bInputSystem\.current\b")
+
 
 def _sanitize_singleton_calls(body: str, known_classes: set[str],
                               allow_context: bool = False) -> str:
@@ -78,26 +93,45 @@ def _sanitize_singleton_calls(body: str, known_classes: set[str],
       3. ``GameContext.Instance.Get<...>(...)`` — kept ONLY when allow_context
          (i.e. --compose, where the GameContext locator exists); otherwise the
          locator is undefined and the line is removed.
+      4. ``var x = GameContext.Instance.Get<GameManager>(); ... x.UndefinedProp``
+         — same undefined-member check as case 2, applied to the local variable
+         the reference was bound to, not just the literal class name.
+      5. ``InputSystem != null`` / ``InputSystem.current`` — a hallucinated,
+         always-invalid "is input available" guard → entire line removed.
 
     Only lines that exclusively contain the bad call are dropped; lines with
     multiple statements are stripped only of the offending statement.
     """
+    gamemanager_vars = {m.group(1) for m in _GET_GAMEMANAGER_BIND_RE.finditer(body)}
+    member_re = None
+    if gamemanager_vars:
+        alt = "|".join(re.escape(v) for v in gamemanager_vars)
+        member_re = re.compile(rf"\b(?:{alt})\.(\w+)\b")
+
     lines_out: list[str] = []
     for line in body.splitlines(keepends=True):
         keep = True
-        for m in _SINGLETON_CALL_RE.finditer(line):
-            cls, member = m.group(1), m.group(2)
-            if cls == "GameContext":
-                if allow_context and member in _GAME_CONTEXT_API:
-                    continue
-                keep = False
-                break
-            if cls not in known_classes:
-                keep = False
-                break
-            if cls == "GameManager" and member not in _GAME_MANAGER_API:
-                keep = False
-                break
+        if _BOGUS_INPUTSYSTEM_GUARD_RE.search(line):
+            keep = False
+        if keep:
+            for m in _SINGLETON_CALL_RE.finditer(line):
+                cls, member = m.group(1), m.group(2)
+                if cls == "GameContext":
+                    if allow_context and member in _GAME_CONTEXT_API:
+                        continue
+                    keep = False
+                    break
+                if cls not in known_classes:
+                    keep = False
+                    break
+                if cls == "GameManager" and member not in _GAME_MANAGER_API:
+                    keep = False
+                    break
+        if keep and member_re:
+            for m in member_re.finditer(line):
+                if m.group(1) not in _GAME_MANAGER_API:
+                    keep = False
+                    break
         if keep:
             lines_out.append(line)
     return "".join(lines_out)
