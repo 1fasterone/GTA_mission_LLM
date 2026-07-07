@@ -238,7 +238,15 @@ def _kw_pattern(kw: str) -> re.Pattern:
 # destroy the case-transition signal a boundary split depends on), so a
 # keyword embedded in one still matches \b-bounded instead of being swallowed
 # by having no real word boundary after it ("swimming" glued to "Controller").
-_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+#
+# The lookahead requires the split-triggering capital to be followed by a
+# lowercase letter (i.e. it starts a new word, "Manager" / "Controller") —
+# not just any capital. That's what tells "O2Manager" (M followed by 'a',
+# starts a word) apart from literal dimension notation like "2D"/"3D"/"2.5D"
+# (D at a word boundary, followed by space/punctuation/EOS, not a word) —
+# without this, "2.5D" was getting mangled into "2.5 D" and silently losing
+# every "2.5d"/"2d"/"3d" keyword match in the perspective table.
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z][a-z])")
 
 
 def _normalize_for_matching(text: str) -> str:
