@@ -500,6 +500,32 @@ def test_ai_fixer_injects_default_states_for_fsm(dummy_config):
     assert {"Idle", "Chase", "Attack"}.issubset(names)
 
 
+@pytest.mark.parametrize("variant", [
+    "navmesh_patrol", "chase_player", "fsm_guard", "behaviour_tree_lite", "cover_shooter",
+])
+def test_ai_fixer_forces_kinematic_2d_for_2d_project(dummy_config, variant):
+    """A composed 2D project has no baked NavMesh — unity_compose.py threads
+    game_type into schema.meta the same way it does for trigger/interactable,
+    so these variants must fall back to direct transform-seeking instead of
+    requiring a NavMeshAgent that will never move on a flat scene."""
+    p = AIPipeline(dummy_config)
+    s = AISchema(name="X", variant=variant, meta={"game_type": "2D"})
+    s = p.default_fix(s, variant)
+    assert s.nav_backend == "kinematic_2d"
+
+
+def test_ai_2d_render_has_no_navmesh_agent(tmp_path, dummy_config):
+    p = AIPipeline(dummy_config)
+    s = AISchema(name="TestAI2D", variant="navmesh_patrol", meta={"game_type": "2D"})
+    s = p.default_fix(s, "navmesh_patrol")
+    p.write_files(s, "navmesh_patrol", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestAI2D.cs").read_text(encoding="utf-8")
+    assert "NavMeshAgent" not in cs
+    assert "using UnityEngine.AI;" not in cs
+    assert "private void MoveTowards(" in cs
+    assert "private void PatrolStep2D()" in cs
+
+
 @pytest.mark.parametrize("variant", AIPipeline.variants)
 def test_ai_renders_every_variant(tmp_path, dummy_config, variant):
     p = AIPipeline(dummy_config)

@@ -730,7 +730,7 @@ def subsystems_for(
     if has_enemies:
         ai_var = "waypoint_follow" if locomotion == "drive" else "navmesh_patrol"
         ai_tgt = "asset"           if locomotion == "drive" else "world"
-        subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI"))
+        subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=dim_meta))
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
     if "audio" in feats:
