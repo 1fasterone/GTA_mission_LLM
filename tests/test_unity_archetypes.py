@@ -56,6 +56,27 @@ class TestCamelCaseNormalization:
     def test_empty_string_untouched(self):
         assert _normalize_for_matching("") == ""
 
+    def test_literal_dimension_tokens_survive_normalization(self):
+        # Regression: the camel-boundary split used to fire on ANY digit-then-
+        # capital transition, so literal "2D"/"3D"/"2.5D" dimension notation
+        # (as a human actually types it) got mangled into "2 D"/"3 D"/"2.5 D"
+        # and silently lost every "2d"/"3d"/"2.5d" keyword match below.
+        assert _normalize_for_matching("2D") == "2d"
+        assert _normalize_for_matching("3D") == "3d"
+        assert _normalize_for_matching("2.5D") == "2.5d"
+
+    def test_game_type_2_5d_detected_from_capitalized_prompt(self):
+        intent = classify("IRONVEIN is a 2.5D game with parallax layers")
+        assert intent.game_type == "2.5D"
+
+    def test_game_type_2d_detected_from_capitalized_prompt(self):
+        intent = classify("a side-scrolling 2D platformer for mobile")
+        assert intent.game_type == "2D"
+
+    def test_game_type_3d_detected_from_capitalized_prompt(self):
+        intent = classify("a fully 3D dinosaur survival game")
+        assert intent.game_type == "3D"
+
 
 # ── Full deepdive.txt regression (the exact prompt that surfaced this bug) ─────
 
