@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import sys
 
-from src.vstack.canon import Q_POS, chash
+from src.vstack.canon import Q_POS
 from src.vstack.slice_v1_v5 import IDENTITY_KEYS, build_slice, run
 
 

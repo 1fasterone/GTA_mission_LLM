@@ -22,7 +22,6 @@ Pieces (mirrors src/blender/base_models.py):
 from __future__ import annotations
 
 import math
-import struct
 import wave
 from pathlib import Path
 from typing import Optional

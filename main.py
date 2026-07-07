@@ -593,7 +593,7 @@ def _run_micro(kind: str, prompt: Optional[str], file: Optional[Path],
         prompt = file.read_text(encoding="utf-8").strip()
 
     if not prompt:
-        console.print(f"[red]Error:[/] provide a prompt or use --file <path>")
+        console.print("[red]Error:[/] provide a prompt or use --file <path>")
         raise typer.Exit(1)
 
     pipeline_cls = REGISTRY[kind]

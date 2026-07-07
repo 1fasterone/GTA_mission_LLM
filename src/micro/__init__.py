@@ -39,6 +39,9 @@ __all__ = [
     "InteractablePipeline", "InteractableSchema",
     "TransitionPipeline",   "TransitionSchema",
     "HealthPipeline",       "HealthSchema",
+    "StateMachinePipeline", "StateMachineSchema",
+    "TriggerPipeline",      "TriggerSchema",
+    "AnimatorPipeline",     "AnimatorSchema",
     "NpcDialogPipeline",    "NpcDialogSchema",    "DialogLine",
     "VfxPipeline",          "VfxSchema",
 ]

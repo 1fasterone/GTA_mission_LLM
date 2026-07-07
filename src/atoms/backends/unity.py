@@ -264,9 +264,6 @@ def _light_flash(args: dict) -> str:
 
 
 def _screen_fade(args: dict) -> str:
-    r = _f(args.get("color_r", 0))
-    g = _f(args.get("color_g", 0))
-    b = _f(args.get("color_b", 0))
     alpha    = _f(args.get("alpha", 1))
     duration = _f(args.get("duration", 1))
     return (

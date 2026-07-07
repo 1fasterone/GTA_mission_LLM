@@ -1,0 +1,13 @@
+[tool.ruff]
+line-length = 120
+exclude = ["output", "vendor"]
+
+[tool.ruff.lint]
+# Pyflakes only (F): undefined names, unused imports/vars, redefinitions.
+# The codebase's existing compact one-line-statement style (E701/E702) is
+# intentional, not a bug, so the E/W pycodestyle series is left unselected.
+select = ["F"]
+
+[tool.mypy]
+ignore_missing_imports = true
+exclude = ["output/", "vendor/"]

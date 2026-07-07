@@ -1,0 +1,52 @@
+name: Auto-merge
+
+# Runs after the CI workflow finishes on a pull_request. workflow_run always
+# executes the version of this file committed on the default branch, so a
+# PR's own (possibly modified) copy can't grant itself a merge — only main's
+# copy decides. Squash-merges the PR the moment CI is green; no reviewer gate
+# (solo-maintained repo, private plan has no branch-protection API access).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge the PR that triggered this CI run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          PR_NUMBER=$(gh pr list --repo "$REPO" --head "$HEAD_BRANCH" --base main --state open --json number --jq '.[0].number')
+          if [ -z "${PR_NUMBER:-}" ]; then
+            echo "No open PR against main for branch $HEAD_BRANCH — nothing to merge."
+            exit 0
+          fi
+
+          CURRENT_SHA=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+          if [ "$CURRENT_SHA" != "$HEAD_SHA" ]; then
+            echo "PR #$PR_NUMBER has moved on since this CI run ($HEAD_SHA -> $CURRENT_SHA); a newer CI run will handle it."
+            exit 0
+          fi
+
+          IS_DRAFT=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json isDraft --jq '.isDraft')
+          if [ "$IS_DRAFT" = "true" ]; then
+            echo "PR #$PR_NUMBER is a draft — skipping."
+            exit 0
+          fi
+
+          echo "CI green for PR #$PR_NUMBER — squash-merging."
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --delete-branch
