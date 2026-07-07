@@ -200,7 +200,7 @@ def test_unity_no_unresolved_or_jinja_leak(project_dir: Path) -> None:
 
 _GAME_TYPE_RE = re.compile(r"GameType:\s*(\S+)", re.I)
 _TWO_D_TYPES_RE = re.compile(r"\b(Collider2D|Rigidbody2D|Physics2D)\b")
-_TWO_D_TYPES_OK_FOR = {"2D", "2.5D"}
+_TWO_D_TYPES_OK_FOR = {"2D"}
 
 
 def _detect_project_game_type(project_dir: Path) -> str | None:

@@ -930,6 +930,42 @@ class TestModelPack:
         assert "BoxCollider2D" in cs                  # 2D physics collider, not 3D
         assert "XY side-on plane" in cs              # placed in the side-on plane
 
+    def test_2_5d_player_keeps_humanoid_rig(self, gen, tmp_path):
+        """2.5D is a real 3D world/player (see GOLDEN_2_5D_CORE_SIGNATURE) — a
+        genuine Blender-built humanoid override must NOT be downgraded like 2D."""
+        fake_fbx = tmp_path / "BuiltPlayer.fbx"
+        fake_fbx.write_bytes(b"fake")
+        files = gen.generate(self._schema(game_type="2.5D"), {},
+                             model_overrides={"player": str(fake_fbx)})
+        meta = files.get("MP/Assets/Resources/Models/Default/Player/Player.fbx.meta", "")
+        assert "animationType: 3" in meta             # Humanoid retained
+        assert "MP/Assets/Editor/SetupDefaultModels.cs" in files
+
+    def test_2_5d_entityspawner_uses_3d_colliders_not_collider2d(self, gen):
+        """2.5D's player is a 3D CharacterController — world entities must use
+        real 3D colliders (a Collider2D would never collide with it)."""
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(game_type="2.5D", entities=[
+            EntitySpec(name="Crates", kind="prop", count=4),
+        ]), {})
+        cs = files["MP/Assets/Scripts/EntitySpawner.cs"]
+        assert "BoxCollider2D" not in cs
+        assert "Collider2D" not in cs
+        assert "XY side-on plane" not in cs
+
+    def test_2_5d_enemy_prefab_uses_3d_collider(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            game_type="2.5D",
+            entities=[EntitySpec(name="Guards", kind="enemy", count=2, tag="Enemy")],
+        ), {})
+        prefab = files.get("MP/Assets/Prefabs/EnemyAI.prefab", "")
+        assert prefab
+        assert "CircleCollider2D" not in prefab
+        assert "Rigidbody2D" not in prefab
+        assert "SphereCollider" in prefab
+        assert "\nRigidbody:" in prefab
+
     def test_scenesetup_has_no_genre_boilerplate(self, gen):
         files = gen.generate(self._schema(), {})
         ss = files["MP/Assets/Scripts/SceneSetup.cs"]
@@ -993,6 +1029,84 @@ class TestModelPack:
         for path, meta in metas.items():
             assert "animationType: 3" not in meta, f"{path} still imports as Humanoid in a 2D project"
         assert not any("SetupDefaultModels" in p for p in files)
+
+
+# ── Non-compose ("vanilla") 2.5D templates ──────────────────────────────────
+# unity_cli.py's `new` command has no --compose flag, so it can only ever reach
+# templates/unity/scripts/*.cs.j2 + Player.prefab.j2 + scene.unity.j2 — a
+# SEPARATE template family from the --compose micro pipeline (unity_compose.py
+# + templates/unity/micro/). Both used to bundle game_type in ("2D", "2.5D")
+# identically; the compose path was fixed first (GOLDEN_2_5D_CORE_SIGNATURE),
+# but this vanilla path was missed, so unity_cli.py runs still built a 2.5D
+# player as Rigidbody2D even after the compose path was real 3D — a mismatch
+# with the (already-fixed) 3D entity/enemy colliders that would leave the
+# player unable to collide with the world at all.
+
+class TestNonCompose25D:
+    def _schema(self, **kw):
+        from src.unity_schema import UnitySchema
+        base = dict(
+            project_name="Vanilla25D", company_name="C", description="",
+            game_type="2.5D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=["navmesh"], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m"),
+                     UnityScript(name="CameraFollow", type="camera", description="c"),
+                     UnityScript(name="EnemyAI", type="enemy", description="e"),
+                     UnityScript(name="Loot", type="collectible", description="l")],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_player_controller_is_character_controller_not_rigidbody2d(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        pc = files["Vanilla25D/Assets/Scripts/PlayerController.cs"]
+        assert "CharacterController _cc" in pc
+        assert "GetComponent<Rigidbody2D>" not in pc
+        assert "_velocity.z = 0f;" in pc     # depth locked, lateral-only input
+
+    def test_camera_follow_stays_perspective(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        cam = files["Vanilla25D/Assets/Scripts/CameraFollow.cs"]
+        assert "GetComponent<Rigidbody2D>" not in cam
+        assert "orthographic" not in cam.lower()
+
+    def test_enemy_ai_uses_navmesh_not_rigidbody2d(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        enemy = files["Vanilla25D/Assets/Scripts/EnemyAI.cs"]
+        assert "NavMeshAgent" in enemy
+        assert "GetComponent<Rigidbody2D>" not in enemy
+
+    def test_collectible_uses_3d_trigger_api(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        loot = files["Vanilla25D/Assets/Scripts/Loot.cs"]
+        assert "OnTriggerEnter2D" not in loot
+        assert "OnTriggerEnter(Collider other)" in loot
+
+    def test_player_and_enemy_prefabs_use_3d_colliders(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        pprefab = files["Vanilla25D/Assets/Prefabs/PlayerController.prefab"]
+        assert "BoxCollider2D" not in pprefab and "CapsuleCollider" in pprefab
+        eprefab = files["Vanilla25D/Assets/Prefabs/EnemyAI.prefab"]
+        assert "CircleCollider2D" not in eprefab and "SphereCollider" in eprefab
+
+    def test_scene_unity_has_no_2d_collider_leaks(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        s = scene(files, "Vanilla25D", "Main")
+        assert "BoxCollider2D" not in s
+        assert "Rigidbody2D" not in s
 
 
 # ── write() is atomic per file (torn-write / duplicate-fileID hardening) ───────

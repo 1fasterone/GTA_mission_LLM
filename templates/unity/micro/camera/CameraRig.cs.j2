@@ -58,6 +58,16 @@ public class {{ s.name }} : MonoBehaviour
         Vector3 desired2d = new Vector3(_target.position.x + offset.x,
                                         _target.position.y + offset.y, -10f);
         transform.position = Vector3.SmoothDamp(transform.position, desired2d, ref _vel, smoothTime);
+{% elif variant == "follow_2_5d" %}
+        // 2.5D: track lateral (X) movement only, at a fixed elevated/tilted
+        // offset from the target's own depth — real 3D perspective (unlike
+        // follow_2d's orthographic camera), but still reads as a side-scroller
+        // because the player's own Z is locked by its controller.
+        Vector3 desired25 = new Vector3(_target.position.x + offset.x,
+                                        _target.position.y + offset.y,
+                                        _target.position.z + offset.z);
+        transform.position = Vector3.SmoothDamp(transform.position, desired25, ref _vel, smoothTime);
+        transform.LookAt(_target.position + Vector3.up * 0.5f);
 {% elif variant == "orbit" %}
         Vector3 desired = _target.position + _target.rotation * offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);

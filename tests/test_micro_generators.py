@@ -208,6 +208,38 @@ def test_grounded_controllers_keep_ground_check(tmp_path, dummy_config):
     assert "IsGrounded" in cs and "CheckGrounded3D" in cs
 
 
+# ── 2.5D: distinct from both 2D and 3D ──────────────────────────────────────
+
+def test_2_5d_controller_uses_character_controller_not_rigidbody2d(tmp_path, dummy_config):
+    """2.5D is a real 3D CharacterController (like third_person), not Rigidbody2D
+    (like 2d_platformer) — the world/models are real 3D even though input is
+    locked to a lateral plane."""
+    p = ControllerPipeline(dummy_config)
+    s = p.default_fix(ControllerSchema(name="Side25D", variant="platformer_2_5d",
+                                       abilities=["jump", "sprint"]), "platformer_2_5d")
+    p.write_files(s, "platformer_2_5d", tmp_path)
+    cs = (tmp_path / "Scripts" / "Side25D.cs").read_text(encoding="utf-8")
+    assert "CharacterController _cc" in cs
+    assert "Rigidbody2D" not in cs
+    assert "CheckGrounded3D" in cs
+    # Lateral-only movement: h drives X, Z is explicitly zeroed (locked depth).
+    assert "_velocity.x = h * speed;" in cs
+    assert "_velocity.z = 0f;" in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_2_5d_camera_is_perspective_not_orthographic(tmp_path, dummy_config):
+    """follow_2_5d must NOT be orthographic (that's follow_2d/2D) — 2.5D renders
+    a real 3D world from a tilted/elevated perspective follow camera."""
+    p = CameraRigPipeline(dummy_config)
+    s = p.default_fix(CameraRigSchema(name="Cam25D", variant="follow_2_5d"), "follow_2_5d")
+    p.write_files(s, "follow_2_5d", tmp_path)
+    cs = (tmp_path / "Scripts" / "Cam25D.cs").read_text(encoding="utf-8")
+    assert "_cam.orthographic" not in cs
+    assert "fovBase" in cs
+    assert "LookAt" in cs
+
+
 @pytest.mark.parametrize("variant", ["humanoid", "vehicle", "creature", "object", "ui"])
 def test_animator_declares_backing_fields_and_setters(tmp_path, dummy_config, variant):
     """Regression: default animator params must declare a backing field + public
@@ -859,12 +891,25 @@ def test_interactable_3d_still_uses_collider_api(tmp_path, dummy_config):
 def test_trigger_zone_enter_2d_uses_collider2d_api(tmp_path, dummy_config):
     p = TriggerPipeline(dummy_config)
     s = p.default_fix(
-        TriggerSchema(name="TestZone", variant="zone_enter", meta={"game_type": "2.5D"}),
+        TriggerSchema(name="TestZone", variant="zone_enter", meta={"game_type": "2D"}),
         "zone_enter")
     p.write_files(s, "zone_enter", tmp_path)
     cs = (tmp_path / "Scripts" / "TestZone.cs").read_text(encoding="utf-8")
     assert "OnTriggerEnter2D(Collider2D other)" in cs
     assert "OnTriggerEnter(Collider other)" not in cs
+
+
+def test_trigger_zone_enter_2_5d_uses_3d_collider_api(tmp_path, dummy_config):
+    """2.5D is a real 3D world now (see GOLDEN_2_5D_CORE_SIGNATURE) — it must
+    use the 3D Collider/OnTriggerEnter API, not the 2D one bundled with "2D"."""
+    p = TriggerPipeline(dummy_config)
+    s = p.default_fix(
+        TriggerSchema(name="TestZone25D", variant="zone_enter", meta={"game_type": "2.5D"}),
+        "zone_enter")
+    p.write_files(s, "zone_enter", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestZone25D.cs").read_text(encoding="utf-8")
+    assert "OnTriggerEnter(Collider other)" in cs
+    assert "OnTriggerEnter2D(Collider2D other)" not in cs
 
 
 def test_trigger_zone_enter_3d_still_uses_collider_api(tmp_path, dummy_config):

@@ -466,6 +466,30 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         if (flyHeld) move3.y = flySpeed;
 {% endif %}
         _cc.Move(move3 * Time.deltaTime);
+{% elif variant == "platformer_2_5d" %}
+        // 2.5D: real 3D CharacterController, but input drives ONLY the lateral
+        // (world X) axis — depth (Z) stays locked so the player reads as a
+        // side-scroller even though the world/models are fully 3D.
+        _velocity.x = h * speed;
+        _velocity.z = 0f;
+        _grounded = CheckGrounded3D();
+        if (_grounded && _velocity.y < 0f) _velocity.y = -2f;
+{% if "jump" in s.abilities %}
+        if (jumpPressed && _grounded) _velocity.y = jumpForce;
+{% endif %}
+{% if "double_jump" in s.abilities %}
+        else if (jumpPressed && !_grounded && _airJumpsLeft > 0)
+        {
+            _velocity.y = jumpForce;
+            _airJumpsLeft--;
+        }
+        if (_grounded) _airJumpsLeft = MaxAirJumps;
+{% endif %}
+        _velocity.y += Physics.gravity.y * Time.deltaTime;
+        _cc.Move(_velocity * Time.deltaTime);
+        // Face the direction of travel (flip left/right, no free 3D rotation).
+        if (Mathf.Abs(h) > 0.01f)
+            transform.rotation = Quaternion.Euler(0f, h > 0f ? 90f : -90f, 0f);
 {% elif variant in ("first_person", "third_person", "fighting") %}
         Vector3 input3 = transform.right * h + transform.forward * v;
         _velocity.x = input3.x * speed;
