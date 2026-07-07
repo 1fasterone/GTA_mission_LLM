@@ -15,11 +15,13 @@ public static class SetupDefaultModels
     private const string ModelsRoot = "Assets/Resources/Models/Default";
     private const string ControllerPath = ModelsRoot + "/DefaultCharacter.controller";
     // The generator already decided Humanoid-vs-Generic per model (unity_generator.py
-    // downgrades every humanoid rig to Generic for 2D/2.5D games — a rigged FBX still
+    // downgrades every humanoid rig to Generic for 2D games — a rigged FBX still
     // has a 'Hips' transform even after that downgrade, so a hasHips-only rescan would
     // silently re-force Humanoid here and reintroduce the 2D "Required human bone
     // 'LeftLowerLeg'" avatar crash). Mirror that decision instead of re-deriving it.
-    private const bool AllowHumanoid = {{ "false" if game_type in ("2D", "2.5D") else "true" }};
+    // 2.5D uses real 3D models/world (see unity_compose.py's GOLDEN_2_5D_CORE_SIGNATURE),
+    // so it keeps Humanoid like a normal 3D project.
+    private const bool AllowHumanoid = {{ "false" if game_type == "2D" else "true" }};
 
     static SetupDefaultModels()
     {

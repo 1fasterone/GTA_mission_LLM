@@ -22,7 +22,7 @@ public class EntitySpawner : MonoBehaviour
     private static bool GroupActive(string scene, string group) =>
         !_sceneGroups.TryGetValue(scene, out var set) || set.Contains(group);
 {% endif %}
-{% if game_type not in ["2D", "2.5D"] %}
+{% if game_type != "2D" %}
 {% for e in entities %}
 {% if e.placement == "path" and e.path_points and not entity_model_paths.get(e.name, "").startswith("skip:") %}
     private static readonly Vector3[] _path_{{ loop.index0 }} =
@@ -42,7 +42,7 @@ public class EntitySpawner : MonoBehaviour
 {% if scene_entity_map %}
         var _scene = SceneManager.GetActiveScene().name;
 {% endif %}
-{% if game_type in ["2D", "2.5D"] %}
+{% if game_type == "2D" %}
         // 2D side-scroller archetype: build a COHERENT course (continuous ground +
         // entities laid along +X) instead of formula-scattering props.
         BuildSideScroller2D(sh);
@@ -141,7 +141,7 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
             {
                 go = Instantiate(modelPrefab);
-{% if game_type not in ["2D", "2.5D"] %}
+{% if game_type != "2D" %}
                 // Models import without colliders — behaviors/tags need one.
                 if (behaviorType != null || (tag != "Untagged" && tag.Length > 0))
                 {
@@ -158,7 +158,7 @@ public class EntitySpawner : MonoBehaviour
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
             go.transform.localScale = Vector3.one * scale;
-{% if game_type in ["2D", "2.5D"] %}
+{% if game_type == "2D" %}
             // 2D: strip imported/primitive 3D colliders, ensure one 2D collider so
             // the Rigidbody2D player can stand on / collide with this entity.
             foreach (var c3d in go.GetComponentsInChildren<Collider>()) Destroy(c3d);
@@ -174,7 +174,7 @@ public class EntitySpawner : MonoBehaviour
             else
             {
                 pos = PlaceAt(placement, i, count, spacing, radius);
-{% if game_type in ["2D", "2.5D"] %}
+{% if game_type == "2D" %}
                 pos = new Vector3(pos.x, pos.z, 0f);  // XZ layout -> XY side-on plane
 {% endif %}
                 pos.y += scale * 0.5f;
@@ -255,7 +255,7 @@ public class EntitySpawner : MonoBehaviour
                 return Vector3.zero;
         }
     }
-{% if game_type in ["2D", "2.5D"] %}
+{% if game_type == "2D" %}
 
     // ── 2D side-scroller archetype builders ─────────────────────────────────────
     private void BuildSideScroller2D(Shader sh)

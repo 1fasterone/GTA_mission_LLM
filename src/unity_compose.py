@@ -553,14 +553,31 @@ GOLDEN_3D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
 # variants (2d_platformer/follow_2d/rigidbody_2d). "animator" stays "humanoid"
 # here: anim_variant is keyed off locomotion, not game_type, and Animator.cs.j2
 # is itself dimension-agnostic (no hardcoded rig/bone names) — confirmed
-# functionally correct for 2D, just a cosmetically misleading label. 2.5D
-# currently resolves to this SAME signature (ctrl/cam/phys_variant treat
-# "2d"/"2.5d" identically below) — there is no distinct 2.5D archetype yet,
-# so it intentionally has no constant of its own.
+# functionally correct for 2D, just a cosmetically misleading label.
 GOLDEN_2D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("controller", "2d_platformer"), ("camera", "follow_2d"), ("health", "simple"),
     ("hud", "health_bar"), ("menu", "pause_menu"), ("saveload", "json_file"),
     ("physics", "rigidbody_2d"), ("input", "keyboard_mouse"),
+    ("interactable", "pickup"), ("animator", "humanoid"),
+    ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+)
+
+# The 2.5D golden archetype — DISTINCT from 2D. 2.5D means real 3D models/world
+# (matches unity_asset_resolver's "2.5D" context: it CAN use 3D Kenney models,
+# unlike pure 2D) viewed and played from a side-scroller-style constrained
+# perspective. So the world/enemies/colliders/rig are all real 3D (same as
+# GOLDEN_3D_CORE_SIGNATURE's "rigidbody_3d"/"humanoid"), but the PLAYER gets a
+# CharacterController locked to a lateral (X) movement plane
+# ("platformer_2_5d") and a tilted/elevated perspective follow camera
+# ("follow_2_5d") instead of first/third-person free-look. Was previously
+# aliased 1:1 onto GOLDEN_2D_CORE_SIGNATURE (Rigidbody2D + orthographic
+# follow_2d) — that paired 3D-capable assets with a 2D physics world, which is
+# why the asset resolver's own "2.5D can use 3D models" comment always looked
+# contradictory (see unity_asset_resolver.py's _GAME_TYPE_CONTEXTS).
+GOLDEN_2_5D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
+    ("controller", "platformer_2_5d"), ("camera", "follow_2_5d"), ("health", "simple"),
+    ("hud", "health_bar"), ("menu", "pause_menu"), ("saveload", "json_file"),
+    ("physics", "rigidbody_3d"), ("input", "keyboard_mouse"),
     ("interactable", "pickup"), ("animator", "humanoid"),
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
 )
@@ -610,11 +627,11 @@ def subsystems_for(
     ctrl_default = "first_person" if genre == "fps" else "third_person"
     cam_default  = "first_person" if genre == "fps" else "follow"
     ctrl = {
-        "2d": "2d_platformer", "2.5d": "2d_platformer", "top_down": "top_down",
+        "2d": "2d_platformer", "2.5d": "platformer_2_5d", "top_down": "top_down",
         "isometric": "top_down", "vr": "first_person",
     }.get(gt, ctrl_default)
     cam = {
-        "2d": "follow_2d", "2.5d": "follow_2d", "top_down": "cinemachine_topdown",
+        "2d": "follow_2d", "2.5d": "follow_2_5d", "top_down": "cinemachine_topdown",
         "isometric": "cinemachine_topdown",
     }.get(gt, cam_default)
 
@@ -660,8 +677,17 @@ def subsystems_for(
 
     # Physics body must match the controller's dimension: a 2D game uses a
     # Rigidbody2D (the prior "rigidbody" was invalid and clamped to 3D, which
-    # then fought the 2d_platformer controller's Rigidbody2D).
-    phys_variant = "rigidbody_2d" if gt in ("2d", "2.5d") else "rigidbody_3d"
+    # then fought the 2d_platformer controller's Rigidbody2D). 2.5D's
+    # "platformer_2_5d" controller is CharacterController-based (real 3D), so
+    # it takes the 3D physics body — only literal "2d" uses Rigidbody2D.
+    phys_variant = "rigidbody_2d" if gt == "2d" else "rigidbody_3d"
+
+    # 2.5D's tilted/elevated follow camera needs a non-default offset (matches
+    # the static camera preset already used for non-composed 2.5D projects —
+    # see _CAMERA_PRESETS["2.5D"] in unity_generator.py: y=3, z=-8, ~21 deg
+    # down-tilt). Every other camera variant is fine with CameraRigSchema's
+    # defaults.
+    cam_opts: dict = {"offset_y": 3.0, "offset_z": -8.0} if cam == "follow_2_5d" else {}
 
     # trigger/interactable need to know the project's dimension so their
     # generated scripts author Collider2D + OnTrigger*2D callbacks instead of
@@ -671,7 +697,7 @@ def subsystems_for(
     subs: list[Subsystem] = [
         # Core (always)
         Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
-        Subsystem(kind="camera",      variant=cam,            target="camera",  name="PlayerCamera"),
+        Subsystem(kind="camera",      variant=cam,            target="camera",  name="PlayerCamera", options=cam_opts),
         Subsystem(kind="health",      variant="simple",       target="player",  name="PlayerHealth"),
         Subsystem(kind="hud",         variant="health_bar",   target="ui",      name="GameHud"),
         Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),

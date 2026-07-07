@@ -32,7 +32,7 @@ public class {{ script.name }} : MonoBehaviour
         transform.Rotate(Vector3.up, spinSpeed * Time.deltaTime, Space.World);
     }
 
-{% if game_type in ("2D", "2.5D") %}
+{% if game_type == "2D" %}
     private void OnTriggerEnter2D(Collider2D other)
     {
         if (_collected || !other.CompareTag("Player")) return;

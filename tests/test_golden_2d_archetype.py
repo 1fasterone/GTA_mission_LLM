@@ -1,26 +1,28 @@
 """
-Golden 2D archetype contract tests — mirrors test_golden_3d_archetype.py.
+Golden 2D / 2.5D archetype contract tests — mirrors test_golden_3d_archetype.py.
 
-subsystems_for() emits the same 12 always-on kinds for 2D as for 3D, just with
-dimension-appropriate variants (2d_platformer/follow_2d/rigidbody_2d). These
-tests lock that composition down as a regression baseline. 2.5D is NOT given
-its own signature here — the current mapper resolves "2d" and "2.5d" to the
-identical controller/camera/physics variants (see GOLDEN_2D_CORE_SIGNATURE's
-docstring in src/unity_compose.py), so a 2.5D archetype would just duplicate
-this one until the mapper actually distinguishes them.
+subsystems_for() emits the same 12 always-on kinds for 2D/2.5D as for 3D, just
+with dimension-appropriate variants. 2D gets 2d_platformer/follow_2d/rigidbody_2d
+(Rigidbody2D world). 2.5D gets its OWN signature: platformer_2_5d/follow_2_5d/
+rigidbody_3d — a real 3D CharacterController + world (matching
+unity_asset_resolver.py's "2.5D can use 3D models" context) constrained to a
+lateral movement plane, not a Rigidbody2D game. These lock both baselines down
+as regression tests.
 """
 from __future__ import annotations
 
-from src.unity_compose import GOLDEN_2D_CORE_SIGNATURE, subsystems_for
+from src.unity_compose import (
+    GOLDEN_2D_CORE_SIGNATURE, GOLDEN_2_5D_CORE_SIGNATURE, subsystems_for,
+)
 
 
-def _core_signature(features=None, **kw) -> list[tuple[str, str]]:
-    subs = subsystems_for("2D", features, locomotion="walk", genre="universal", **kw)
-    return [(s.kind, s.variant) for s in subs[: len(GOLDEN_2D_CORE_SIGNATURE)]]
+def _core_signature(game_type: str, golden, features=None, **kw) -> list[tuple[str, str]]:
+    subs = subsystems_for(game_type, features, locomotion="walk", genre="universal", **kw)
+    return [(s.kind, s.variant) for s in subs[: len(golden)]]
 
 
 def test_golden_2d_core_signature_matches_subsystems_for():
-    assert _core_signature(features=[]) == list(GOLDEN_2D_CORE_SIGNATURE)
+    assert _core_signature("2D", GOLDEN_2D_CORE_SIGNATURE, features=[]) == list(GOLDEN_2D_CORE_SIGNATURE)
 
 
 def test_golden_2d_core_is_order_stable():
@@ -31,13 +33,22 @@ def test_golden_2d_core_is_order_stable():
 
 
 def test_golden_2d_core_survives_empty_vs_none_features():
-    assert _core_signature(features=None) == _core_signature(features=[])
+    assert (_core_signature("2D", GOLDEN_2D_CORE_SIGNATURE, features=None)
+            == _core_signature("2D", GOLDEN_2D_CORE_SIGNATURE, features=[]))
 
 
-def test_golden_2_5d_currently_matches_2d_signature():
-    """2.5D has no distinct archetype yet — documents current behavior so a
-    future intentional split shows up as a deliberate test change, not drift."""
-    core_25d = [(s.kind, s.variant)
-                for s in subsystems_for("2.5D", [], locomotion="walk", genre="universal")
-                [: len(GOLDEN_2D_CORE_SIGNATURE)]]
-    assert core_25d == list(GOLDEN_2D_CORE_SIGNATURE)
+def test_golden_2_5d_core_signature_matches_subsystems_for():
+    """2.5D now has its own distinct archetype — real 3D controller/camera/physics
+    (platformer_2_5d / follow_2_5d / rigidbody_3d), not the 2D Rigidbody2D one."""
+    assert (_core_signature("2.5D", GOLDEN_2_5D_CORE_SIGNATURE, features=[])
+            == list(GOLDEN_2_5D_CORE_SIGNATURE))
+
+
+def test_golden_2_5d_diverges_from_2d():
+    """Regression guard: 2.5D must NOT silently re-alias onto the 2D signature."""
+    core_2d  = _core_signature("2D",   GOLDEN_2D_CORE_SIGNATURE,   features=[])
+    core_25d = _core_signature("2.5D", GOLDEN_2_5D_CORE_SIGNATURE, features=[])
+    assert core_2d != core_25d
+    assert dict(core_25d)["controller"] == "platformer_2_5d"
+    assert dict(core_25d)["camera"]     == "follow_2_5d"
+    assert dict(core_25d)["physics"]    == "rigidbody_3d"

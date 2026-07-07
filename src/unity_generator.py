@@ -1498,8 +1498,11 @@ class UnityProjectGenerator:
 
         # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
         # two independent cases:
-        #  1. 2D games render in 2.5D (orthographic) — never import a Humanoid
-        #     avatar there regardless of the model's actual rig quality.
+        #  1. 2D games render orthographically (flat sprite-plane) — never
+        #     import a Humanoid avatar there regardless of the model's actual
+        #     rig quality. 2.5D no longer belongs here: it composes a real 3D
+        #     CharacterController + world (see unity_compose.py's
+        #     GOLDEN_2_5D_CORE_SIGNATURE) so a genuine humanoid rig is fine.
         #  2. The STATIC default pack's player/enemy FBX placeholders are
         #     confirmed to carry NO real humanoid skeleton at all (verified:
         #     zero Hips/Spine/UpperLeg/LowerLeg bone names in
@@ -1517,7 +1520,7 @@ class UnityProjectGenerator:
         # write()'s binary copies in step — a downgrade that drops clips must
         # drop their copies too, not just their .meta files.
         _blender_kinds = set(model_overrides.keys()) if model_overrides else set()
-        _is_2d = schema.game_type in ("2D", "2.5D")
+        _is_2d = schema.game_type == "2D"
         for _kind, _m in used_models.items():
             if _m.rig == "humanoid" and (_is_2d or _kind not in _blender_kinds):
                 _m.rig = "generic"

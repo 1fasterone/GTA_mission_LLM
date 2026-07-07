@@ -20,6 +20,8 @@ ControllerVariant = Literal[
     "first_person", "third_person", "top_down",
     # 2D
     "2d_platformer", "2d_topdown",
+    # 2.5D — real 3D CharacterController + models, lateral-plane-locked input
+    "platformer_2_5d",
     # Vehicles
     "vehicle_car", "vehicle_bike",
     # Special locomotion
@@ -168,6 +170,8 @@ Cover in 1–2 paragraphs:
 VARIANT OPTIONS:
   first_person, third_person, top_down       — CharacterController-based 3D
   2d_platformer, 2d_topdown                  — Rigidbody2D
+  platformer_2_5d                             — CharacterController, real 3D models/world,
+                                                movement locked to a lateral (side-scroll) plane
   vehicle_car, vehicle_bike                   — WheelCollider rig
   flying, swimming                            — free 3D locomotion
   aircraft                                    — Rigidbody pitch/roll/yaw/throttle
@@ -385,7 +389,7 @@ class ControllerPipeline(UnityMicroPipeline):
         schema.name = to_pascal(schema.name, "MovementController")
 
         # Variant-specific ability pruning
-        if variant.startswith("2d_"):
+        if variant.startswith("2d_") or variant == "platformer_2_5d":
             schema.abilities = [a for a in schema.abilities
                                 if a not in ("glide", "pitch", "roll_plane", "throttle")]
         if variant.startswith("vehicle_"):

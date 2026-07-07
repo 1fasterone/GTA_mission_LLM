@@ -62,23 +62,29 @@ public class {{ script.name }} : MonoBehaviour
     }
 
 {% elif game_type == "2.5D" %}
+    // 2.5D: real 3D CharacterController + real 3D models/world (matches
+    // unity_compose.py's "platformer_2_5d" composed variant) — input is
+    // lateral (X) only, depth (Z) stays locked so it still reads as a
+    // side-scroller even though nothing here is Rigidbody2D/flat.
     [Header("Movement")]
     [SerializeField] private float moveSpeed = 6f;
-    [SerializeField] private float jumpForce = 10f;
+    [SerializeField] private float jumpForce = 8f;
+    [SerializeField] private float gravity   = -20f;
     [SerializeField] private LayerMask groundLayer;
 
-    private Rigidbody2D   _rb;
-    private Animator      _anim;
-    private bool          _isGrounded;
-    private float         _moveInput;
-    private static readonly int AnimSpeed = Animator.StringToHash("Speed");
+    private CharacterController _cc;
+    private Animator            _anim;
+    private Vector3             _velocity;
+    private bool                _isGrounded;
+    private float               _moveInput;
+    private static readonly int AnimSpeed  = Animator.StringToHash("Speed");
+    private static readonly int AnimGround = Animator.StringToHash("IsGrounded");
 
     private void Awake()
     {
-        _rb   = GetComponent<Rigidbody2D>();
+        _cc = GetComponent<CharacterController>();
+        if (_cc == null) _cc = gameObject.AddComponent<CharacterController>();
         _anim = GetComponent<Animator>();
-        // Lock Z rotation so the sprite stays upright
-        _rb.constraints = RigidbodyConstraints2D.FreezeRotation;
     }
 
     private void Update()
@@ -92,19 +98,24 @@ public class {{ script.name }} : MonoBehaviour
         _moveInput  = Input.GetAxisRaw("Horizontal");
         bool jumpPressed = Input.GetButtonDown("Jump");
 {% endif %}
-        _isGrounded = Physics2D.Raycast(
-            transform.position, Vector2.down, 0.6f, groundLayer);
+        _isGrounded = Physics.Raycast(transform.position, Vector3.down, 1.05f, groundLayer);
 
-        if (jumpPressed && _isGrounded)
-            _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);
+        _velocity.x = _moveInput * moveSpeed;
+        _velocity.z = 0f;
+        if (_isGrounded && _velocity.y < 0f) _velocity.y = -2f;
+        if (jumpPressed && _isGrounded) _velocity.y = jumpForce;
+        _velocity.y += gravity * Time.deltaTime;
+        _cc.Move(_velocity * Time.deltaTime);
+
+        // Face the direction of travel (flip left/right, no free 3D rotation).
+        if (Mathf.Abs(_moveInput) > 0.01f)
+            transform.rotation = Quaternion.Euler(0f, _moveInput > 0f ? 90f : -90f, 0f);
 
         if (_anim != null)
-            _anim.SetFloat(AnimSpeed, Mathf.Abs(_moveInput));
-    }
-
-    private void FixedUpdate()
-    {
-        _rb.linearVelocity = new Vector2(_moveInput * moveSpeed, _rb.linearVelocity.y);
+        {
+            _anim.SetFloat(AnimSpeed,  Mathf.Abs(_moveInput));
+            _anim.SetBool(AnimGround,  _isGrounded);
+        }
     }
 
 {% elif game_type == "3D" %}
