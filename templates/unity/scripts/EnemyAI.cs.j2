@@ -85,7 +85,7 @@ public class {{ script.name }} : MonoBehaviour
     // Physics-based AI (no NavMesh) — works for 2D and simple 3D games.
     // Rigidbody type chosen at generate-time so 3D projects never reference
     // Physics2DModule (same CS1069 hazard noted in OnDeath below).
-{% if game_type == "2D" %}
+{% if game_type in ("2D", "2d_topdown") %}
     private Rigidbody2D _rb2d;
 
     private void Awake()
@@ -143,7 +143,7 @@ public class {{ script.name }} : MonoBehaviour
     private void MoveTowardPlayer()
     {
         Vector3 dir = (_player.position - transform.position).normalized;
-{% if game_type == "2D" %}
+{% if game_type in ("2D", "2d_topdown") %}
         if (_rb2d != null)
             _rb2d.MovePosition(_rb2d.position + (Vector2)dir * (moveSpeed * Time.deltaTime));
 {% else %}
@@ -180,7 +180,7 @@ public class {{ script.name }} : MonoBehaviour
         // generate-time so 3D projects never reference Physics2DModule — that
         // would fail to compile under URP's auto-asmdef even when the manifest
         // includes com.unity.modules.physics2d (Unity's CS1069 type forward).
-{% if game_type == "2D" %}
+{% if game_type in ("2D", "2d_topdown") %}
         var col2d = GetComponent<Collider2D>();
         if (col2d != null) col2d.enabled = false;
 {% else %}

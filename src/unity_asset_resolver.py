@@ -35,6 +35,7 @@ _LAYER_BROAD_BONUS = 0.2    # asset only keyword-touches a project concept
 
 _GAME_TYPE_CONTEXTS: dict[str, set[str]] = {
     "2D":        set(),                                     # skip 3D assets
+    "2d_topdown": set(),                                    # flat sprites too — skip 3D assets
     "2.5D":      {"platformer", "action", "any"},
     "3D":        {"action", "platformer", "racing", "any"},
     "VR":        {"action", "platformer", "any"},

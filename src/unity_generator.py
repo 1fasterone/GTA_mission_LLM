@@ -143,6 +143,13 @@ _CAMERA_PRESETS = {
         "rotation": "{x: 0, y: 0, z: 0, w: 1}",
         "euler":    "{x: 0, y: 0, z: 0}",
     },
+    # Same flat/orthographic framing as "2D" — 2d_topdown is Rigidbody2D too,
+    # just free 2-axis movement instead of gravity+jump (see PlayerController.cs.j2).
+    "2d_topdown": {
+        "position": "{x: 0, y: 0, z: -10}",
+        "rotation": "{x: 0, y: 0, z: 0, w: 1}",
+        "euler":    "{x: 0, y: 0, z: 0}",
+    },
     "2.5D": {
         "position": "{x: 0, y: 3, z: -8}",
         "rotation": "{x: 0.18198, y: 0, z: 0, w: 0.98325}",
@@ -1201,7 +1208,7 @@ def _generate_input_actions(schema: UnitySchema, pn: str) -> str:
         ]
 
     gt     = schema.game_type
-    is_2d  = gt in ("2D", "2.5D")
+    is_2d  = gt in ("2D", "2.5D", "2d_topdown")
     is_vr  = gt == "VR"
     mobile = schema.platform in ("Android", "iOS")
 
@@ -1520,7 +1527,11 @@ class UnityProjectGenerator:
         # write()'s binary copies in step — a downgrade that drops clips must
         # drop their copies too, not just their .meta files.
         _blender_kinds = set(model_overrides.keys()) if model_overrides else set()
-        _is_2d = schema.game_type == "2D"
+        # 2d_topdown is flat-sprite like "2D" (SpriteRenderer, not a real
+        # humanoid mesh) — unlike 2.5D, which uses real 3D models and keeps
+        # Humanoid. See unity_asset_resolver.py's _GAME_TYPE_CONTEXTS: "2D" and
+        # "2d_topdown" both skip 3D Kenney models entirely.
+        _is_2d = schema.game_type in ("2D", "2d_topdown")
         for _kind, _m in used_models.items():
             if _m.rig == "humanoid" and (_is_2d or _kind not in _blender_kinds):
                 _m.rig = "generic"

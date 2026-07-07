@@ -5,7 +5,7 @@
 using System;
 using UnityEngine;
 {{ inject.usings(s) }}
-{% set is2d = s.meta.get("game_type") == "2D" %}
+{% set is2d = s.meta.get("game_type") in ("2D", "2d_topdown") %}
 
 /// <summary>{{ s.description }}
 /// Subscribe to OnPrompt (show/hide a HUD prompt) and OnInteract for behaviour.</summary>

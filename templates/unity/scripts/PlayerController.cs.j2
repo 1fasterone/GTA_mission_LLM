@@ -61,6 +61,49 @@ public class {{ script.name }} : MonoBehaviour
         _rb.linearVelocity = new Vector2(_moveInput * moveSpeed, _rb.linearVelocity.y);
     }
 
+{% elif game_type == "2d_topdown" %}
+    // 2d_topdown: flat Rigidbody2D, free 2-axis movement — no gravity, no jump
+    // (matches src/micro/controller.py's "2d_topdown" variant: gravityScale=0).
+    [Header("Movement")]
+    [SerializeField] private float moveSpeed = 6f;
+
+    private Rigidbody2D    _rb;
+    private Animator       _anim;
+    private SpriteRenderer _sr;
+    private Vector2        _moveInput;
+    private static readonly int AnimSpeed = Animator.StringToHash("Speed");
+
+    private void Awake()
+    {
+        _rb   = GetComponent<Rigidbody2D>();
+        _anim = GetComponent<Animator>();
+        _sr   = GetComponent<SpriteRenderer>();
+        _rb.gravityScale = 0f;
+    }
+
+    private void Update()
+    {
+{% if "input_system" in features %}
+        _moveInput = Keyboard.current != null
+            ? new Vector2(
+                (Keyboard.current.dKey.isPressed ? 1f : 0f) - (Keyboard.current.aKey.isPressed ? 1f : 0f),
+                (Keyboard.current.wKey.isPressed ? 1f : 0f) - (Keyboard.current.sKey.isPressed ? 1f : 0f))
+            : Vector2.zero;
+{% else %}
+        _moveInput = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
+{% endif %}
+        if (_moveInput.x != 0f)
+            _sr.flipX = _moveInput.x < 0f;
+
+        if (_anim != null)
+            _anim.SetFloat(AnimSpeed, _moveInput.magnitude);
+    }
+
+    private void FixedUpdate()
+    {
+        _rb.linearVelocity = _moveInput.normalized * moveSpeed;
+    }
+
 {% elif game_type == "2.5D" %}
     // 2.5D: real 3D CharacterController + real 3D models/world (matches
     // unity_compose.py's "platformer_2_5d" composed variant) — input is

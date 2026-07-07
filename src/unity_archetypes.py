@@ -104,7 +104,8 @@ class UnityIntent:
 
 _GAME_TYPE_LABEL = {
     "2D": "2D side-scrolling", "2.5D": "2.5D (3D models, 2D gameplay plane)",
-    "3D": "fully 3D", "VR": "VR", "top_down": "top-down", "isometric": "isometric",
+    "3D": "fully 3D", "VR": "VR", "top_down": "top-down (real 3D models)",
+    "2d_topdown": "2D top-down (flat sprites/physics)", "isometric": "isometric",
 }
 _LOCOMOTION_LABEL = {
     "drive": "a vehicle", "fly": "an aircraft", "swim": "swimming/diving", "walk": "on foot",
@@ -115,9 +116,24 @@ _LOCOMOTION_LABEL = {
 # Order doesn't matter — every entry is scored, highest wins.
 
 _PERSPECTIVE: list[tuple[str, list[str]]] = [
-    ("top_down", [
-        "top-down", "top down", "topdown", "overhead view", "bird's eye", "birds eye view",
+    # "2d_topdown" is listed BEFORE "top_down" deliberately: _score() only
+    # overwrites best_name on a STRICT >, so on an exact tie (a prompt hitting
+    # one keyword from each, e.g. "2D zelda-like top-down adventure") whichever
+    # entry is scored first keeps the win. 2d_topdown's keywords are the more
+    # specific (2D-qualified) signal, so it should win ties against the
+    # dimension-neutral top_down phrases below — not the other way around.
+    ("2d_topdown", [
         "twin-stick", "twin stick", "zelda-like", "zelda-style", "bullet heaven",
+    ]),
+    ("top_down", [
+        # Dimension-neutral phrases only — could describe a real-3D dungeon
+        # crawler just as easily as a flat 2D game, so these default to the
+        # existing 3D top_down archetype. Clearly-2D-coded genre words
+        # (Zelda-like, bullet heaven, twin-stick) live under "2d_topdown"
+        # above instead — those are almost always flat sprite games in
+        # practice, and bundling them here would have silently routed a
+        # "2D zelda-like" prompt to the 3D archetype.
+        "top-down", "top down", "topdown", "overhead view", "bird's eye", "birds eye view",
     ]),
     ("isometric", [
         "isometric", "iso view", "diablo-like", "diablo-style", "isometric rpg", "isometric strategy",

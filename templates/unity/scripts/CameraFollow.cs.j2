@@ -9,7 +9,7 @@ public class {{ script.name }} : MonoBehaviour
     [SerializeField] private Transform target;
     [SerializeField] private float     smoothTime = 0.2f;
 
-{% if game_type == "2D" %}
+{% if game_type in ("2D", "2d_topdown") %}
     [Header("2D Bounds")]
     [SerializeField] private Vector2 minBounds = new Vector2(-50f, -20f);
     [SerializeField] private Vector2 maxBounds = new Vector2( 50f,  20f);
