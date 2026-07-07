@@ -607,88 +607,34 @@ def _run_micro(kind: str, prompt: Optional[str], file: Optional[Path],
     )
 
 
-def _micro_common_opts() -> dict:
-    return {}   # placeholder, kept for clarity
+def _register_micro_command(kind: str, variant_help: str, docstring: str) -> None:
+    """Register `unity-<kind>` as a typer command wrapping `_run_micro`.
 
+    Every simple micro-generator (one that just takes prompt/--file/--variant/
+    --theme/--mashup/--seed/--out/--config/--model, with no bespoke flags) shares
+    this exact CLI shape — defining it once here instead of duplicating a ~15-line
+    typer command per kind keeps that shape from drifting (e.g. --variant help
+    text quietly falling out of sync with the kind's real Literal variants).
+    Kinds with extra flags (unity-audio, unity-npc-dialog, unity-model, ...)
+    stay as their own bespoke @app.command functions below.
+    """
+    def _cmd(
+        prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
+        file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
+        variant: Optional[str]  = typer.Option(None, "--variant", help=variant_help),
+        theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
+        mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
+        seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
+        out:     Optional[str]  = typer.Option(None, "--out", help="Override output directory"),
+        config:  str            = typer.Option("config.yaml", "--config", "-c"),
+        model:   Optional[str]  = typer.Option(None, "--model", "-m",
+                                               help="Override the configured LM Studio model for this run"),
+    ) -> None:
+        _run_micro(kind, prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
 
-@app.command("unity-controller")
-def unity_controller(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="first_person|third_person|top_down|2d_platformer|2d_topdown|vehicle_car|vehicle_bike|flying|swimming"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out",  help="Override output directory"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a focused Unity character controller (drop-in script + optional input asset)."""
-    _run_micro("controller", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-camera")
-def unity_camera(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="follow|orbit|first_person|cinemachine_3p|cinemachine_topdown|rts_pan_zoom|vehicle_chase|cinematic_dolly"),
-    theme:   Optional[str]  = typer.Option(None, "--theme"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup"),
-    seed:    Optional[int]  = typer.Option(None, "--seed"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a focused Unity camera rig (Cinemachine or plain MonoBehaviour)."""
-    _run_micro("camera", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-physics")
-def unity_physics(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="rigidbody_2d|rigidbody_3d|kinematic_character|ragdoll|vehicle_wheels|soft_body_stub|trigger_zone|destructible_object|buoyancy"),
-    theme:   Optional[str]  = typer.Option(None, "--theme"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup"),
-    seed:    Optional[int]  = typer.Option(None, "--seed"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a focused Unity physics/collider body."""
-    _run_micro("physics", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-hud")
-def unity_hud(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="health_bar|ammo_counter|minimap|crosshair|interaction_prompt|score_panel|pause_menu|dialogue_box|full_hud_bundle"),
-    theme:   Optional[str]  = typer.Option(None, "--theme"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup"),
-    seed:    Optional[int]  = typer.Option(None, "--seed"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a focused Unity Canvas / UI Toolkit HUD element."""
-    _run_micro("hud", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-input")
-def unity_input(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="keyboard_mouse|gamepad|touch|dual_stick|racing_wheel|vr_xr"),
-    theme:   Optional[str]  = typer.Option(None, "--theme"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup"),
-    seed:    Optional[int]  = typer.Option(None, "--seed"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity Input System action map + InputReader ScriptableObject."""
-    _run_micro("input", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+    _cmd.__doc__  = docstring
+    _cmd.__name__ = f"unity_{kind}"
+    app.command(f"unity-{kind}")(_cmd)
 
 
 @app.command("unity-audio")
@@ -734,86 +680,6 @@ def unity_audio(
             console.print(f"  [green]overlay[/] -> {dst_res}")
 
 
-@app.command("unity-ai")
-def unity_ai(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="navmesh_patrol|chase_player|fsm_guard|behaviour_tree_lite|flocking|cover_shooter|flying_swarm"),
-    theme:   Optional[str]  = typer.Option(None, "--theme"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup"),
-    seed:    Optional[int]  = typer.Option(None, "--seed"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity AI behaviour (NavMesh patrol/chase/FSM/flocking)."""
-    _run_micro("ai", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-spawner")
-def unity_spawner(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="wave_spawner|continuous_spawner|object_pool|trigger_spawner|point_spawner|radial_spawner"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity spawner (waves, object pool, trigger/point/radial)."""
-    _run_micro("spawner", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-saveload")
-def unity_saveload(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="json_file|playerprefs_kv|save_slots|checkpoint|autosave|encrypted_json"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity save/load system (JSON file, PlayerPrefs, slots, checkpoint, autosave)."""
-    _run_micro("saveload", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-inventory")
-def unity_inventory(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="slot_based|grid|weight_based|equipment|hotbar|unlimited"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity inventory system (slot/grid/weight/equipment/hotbar)."""
-    _run_micro("inventory", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-dialogue")
-def unity_dialogue(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="linear|branching|typewriter|cutscene|barks|localized"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity dialogue system (linear/branching/typewriter/cutscene/barks)."""
-    _run_micro("dialogue", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
 @app.command("unity-npc-dialog")
 def unity_npc_dialog(
     prompt:  Optional[str]  = typer.Argument(None, help="Plain-English NPC description"),
@@ -850,140 +716,113 @@ def unity_npc_dialog(
         out=out, use_llm=not no_llm, with_audio=audio, audio_style=audio_style)
 
 
-@app.command("unity-menu")
-def unity_menu(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="main_menu|pause_menu|settings_menu|game_over|level_select|confirm_dialog"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity menu (main/pause/settings/game-over/level-select/confirm)."""
-    _run_micro("menu", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+# ── Simple micro-generators (share the exact CLI shape above) ────────────────
+# kind -> (--variant help text, command docstring). Keep each kind's variant
+# list in sync with its Literal in src/micro/<kind>.py — this is the one place
+# it's declared for the CLI now, instead of N near-duplicate command functions.
+_SIMPLE_MICROS: dict[str, tuple[str, str]] = {
+    "controller": (
+        "first_person|third_person|top_down|2d_platformer|2d_topdown|platformer_2_5d|"
+        "vehicle_car|vehicle_bike|flying|swimming|aircraft|fighting",
+        "Generate a focused Unity character controller (drop-in script + optional input asset).",
+    ),
+    "camera": (
+        "follow|follow_2d|follow_2_5d|orbit|first_person|cinemachine_3p|cinemachine_topdown|"
+        "rts_pan_zoom|vehicle_chase|cinematic_dolly",
+        "Generate a focused Unity camera rig (Cinemachine or plain MonoBehaviour).",
+    ),
+    "physics": (
+        "rigidbody_2d|rigidbody_3d|kinematic_character|ragdoll|vehicle_wheels|soft_body_stub|"
+        "trigger_zone|destructible_object|buoyancy",
+        "Generate a focused Unity physics/collider body.",
+    ),
+    "hud": (
+        "health_bar|ammo_counter|minimap|crosshair|interaction_prompt|score_panel|"
+        "pause_menu|dialogue_box|full_hud_bundle",
+        "Generate a focused Unity Canvas / UI Toolkit HUD element.",
+    ),
+    "input": (
+        "keyboard_mouse|gamepad|touch|dual_stick|racing_wheel|vr_xr",
+        "Generate a Unity Input System action map + InputReader ScriptableObject.",
+    ),
+    "ai": (
+        "navmesh_patrol|chase_player|fsm_guard|behaviour_tree_lite|flocking|cover_shooter|"
+        "flying_swarm|waypoint_follow",
+        "Generate a Unity AI behaviour (NavMesh patrol/chase/FSM/flocking; falls back to "
+        "direct 2D seeking with no NavMesh when composed into a 2D project).",
+    ),
+    "spawner": (
+        "wave_spawner|continuous_spawner|object_pool|trigger_spawner|point_spawner|radial_spawner",
+        "Generate a Unity spawner (waves, object pool, trigger/point/radial).",
+    ),
+    "saveload": (
+        "json_file|playerprefs_kv|save_slots|checkpoint|autosave|encrypted_json",
+        "Generate a Unity save/load system (JSON file, PlayerPrefs, slots, checkpoint, autosave).",
+    ),
+    "inventory": (
+        "slot_based|grid|weight_based|equipment|hotbar|unlimited",
+        "Generate a Unity inventory system (slot/grid/weight/equipment/hotbar).",
+    ),
+    "dialogue": (
+        "linear|branching|typewriter|cutscene|barks|localized",
+        "Generate a Unity dialogue system (linear/branching/typewriter/cutscene/barks).",
+    ),
+    "menu": (
+        "main_menu|pause_menu|settings_menu|game_over|level_select|confirm_dialog",
+        "Generate a Unity menu (main/pause/settings/game-over/level-select/confirm).",
+    ),
+    "interactable": (
+        "pickup|door|lever|button_switch|npc_talk|readable",
+        "Generate a Unity interactable (pickup/door/lever/switch/npc/readable).",
+    ),
+    "transition": (
+        "instant|fade|loading_bar|async_additive|trigger_door",
+        "Generate a Unity scene transition (instant/fade/loading bar/async/trigger door).",
+    ),
+    "health": (
+        "simple|regenerating|shielded|armor|lives",
+        "Generate a Unity health system (simple/regenerating/shielded/armor/lives).",
+    ),
+    "statemachine": (
+        "player_fsm|enemy_fsm|game_fsm|object_fsm",
+        """Generate a Unity FSM (player_fsm/enemy_fsm/game_fsm/object_fsm).
 
+        States and transitions are derived from the prompt concept — not generic defaults.
 
-@app.command("unity-interactable")
-def unity_interactable(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="pickup|door|lever|button_switch|npc_talk|readable"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity interactable (pickup/door/lever/switch/npc/readable)."""
-    _run_micro("interactable", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+        \b
+        Examples:
+          python main.py unity-statemachine "underwater alien that stalks the player"
+          python main.py unity-statemachine "deep-sea boss with 3 phases" --variant enemy_fsm
+        """,
+    ),
+    "trigger": (
+        "zone_enter|zone_exit|timer_trigger|distance_trigger|compound",
+        """Generate a Unity event trigger zone (enter/exit/timer/distance/compound).
 
+        Events fired are derived from the prompt — spawns enemies, starts dialogue, etc.
 
-@app.command("unity-transition")
-def unity_transition(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="instant|fade|loading_bar|async_additive|trigger_door"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity scene transition (instant/fade/loading bar/async/trigger door)."""
-    _run_micro("transition", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+        \b
+        Examples:
+          python main.py unity-trigger "ambush zone that spawns enemies when player enters"
+          python main.py unity-trigger "boss arena seal: lock door + start music" --variant zone_enter
+        """,
+    ),
+    "animator": (
+        "humanoid|vehicle|creature|object|ui",
+        """Generate a Unity Animator parameter driver (humanoid/vehicle/creature/object/ui).
 
+        Animator params and clip names are derived from the prompt concept.
 
-@app.command("unity-health")
-def unity_health(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="simple|regenerating|shielded|armor|lives"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity health system (simple/regenerating/shielded/armor/lives)."""
-    _run_micro("health", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-statemachine")
-def unity_statemachine(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description of the object and its states"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="player_fsm|enemy_fsm|game_fsm|object_fsm"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity FSM (player_fsm/enemy_fsm/game_fsm/object_fsm).
-
-    States and transitions are derived from the prompt concept — not generic defaults.
-
-    \b
-    Examples:
-      python main.py unity-statemachine "underwater alien that stalks the player"
-      python main.py unity-statemachine "deep-sea boss with 3 phases" --variant enemy_fsm
-    """
-    _run_micro("statemachine", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-trigger")
-def unity_trigger(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description of the trigger scenario"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="zone_enter|zone_exit|timer_trigger|distance_trigger|compound"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity event trigger zone (enter/exit/timer/distance/compound).
-
-    Events fired are derived from the prompt — spawns enemies, starts dialogue, etc.
-
-    \b
-    Examples:
-      python main.py unity-trigger "ambush zone that spawns enemies when player enters"
-      python main.py unity-trigger "boss arena seal: lock door + start music" --variant zone_enter
-    """
-    _run_micro("trigger", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
-
-
-@app.command("unity-animator")
-def unity_animator(
-    prompt:  Optional[str]  = typer.Argument(None, help="Plain-English description of the character or object's animations"),
-    file:    Optional[Path] = typer.Option(None, "--file", "-f", help="Read prompt from file"),
-    variant: Optional[str]  = typer.Option(None, "--variant", help="humanoid|vehicle|creature|object|ui"),
-    theme:   Optional[str]  = typer.Option(None, "--theme", help="Theme name, 'random', or 'list'"),
-    mashup_with: Optional[str] = typer.Option(None, "--mashup", help="Second theme to fuse with --theme"),
-    seed:    Optional[int]  = typer.Option(None, "--seed", help="RNG seed (reproducibility)"),
-    out:     Optional[str]  = typer.Option(None, "--out"),
-    config:  str            = typer.Option("config.yaml", "--config", "-c"),
-    model:   Optional[str]  = typer.Option(None, "--model", "-m", help="Override the configured LM Studio model for this run"),
-) -> None:
-    """Generate a Unity Animator parameter driver (humanoid/vehicle/creature/object/ui).
-
-    Animator params and clip names are derived from the prompt concept.
-
-    \b
-    Examples:
-      python main.py unity-animator "scuba diver with swim, dive, surface, and drowning states"
-      python main.py unity-animator "giant enemy crab — walk, attack, pinch, dead" --variant creature
-    """
-    _run_micro("animator", prompt, file, variant, theme, mashup_with, seed, out, config, model=model)
+        \b
+        Examples:
+          python main.py unity-animator "scuba diver with swim, dive, surface, and drowning states"
+          python main.py unity-animator "giant enemy crab — walk, attack, pinch, dead" --variant creature
+        """,
+    ),
+}
+for _kind, (_variant_help, _doc) in _SIMPLE_MICROS.items():
+    _register_micro_command(_kind, _variant_help, _doc)
+del _kind, _variant_help, _doc
 
 
 # ── Blender 3D-model micro-generator ──────────────────────────────────────────

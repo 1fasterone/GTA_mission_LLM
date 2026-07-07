@@ -21,7 +21,7 @@ AIVariant = Literal[
 ]
 VARIANTS = list(AIVariant.__args__)   # type: ignore[attr-defined]
 
-NavBackend = Literal["navmesh", "kinematic", "transform_step"]
+NavBackend = Literal["navmesh", "kinematic", "transform_step", "kinematic_2d"]
 
 
 class AIState(BaseModel):
@@ -137,10 +137,14 @@ class AIPipeline(UnityMicroPipeline):
         if schema.patrol_point_count < 1:  schema.patrol_point_count = 1
         if schema.move_speed <= 0:         schema.move_speed = 3.5
 
-        # Variant-specific nav backend
+        # Variant-specific nav backend. A composed 2D project (game_type threaded
+        # in via schema.meta, same convention as trigger.py/interactable.py) has
+        # no baked NavMesh — Unity's built-in NavMeshAgent is 3D-only — so these
+        # variants fall back to direct transform-seeking in the XY plane instead.
+        is_2d = str((schema.meta or {}).get("game_type", "")).lower() in ("2d", "2d_topdown")
         if variant in ("navmesh_patrol", "chase_player", "fsm_guard",
                        "behaviour_tree_lite", "cover_shooter"):
-            schema.nav_backend = "navmesh"
+            schema.nav_backend = "kinematic_2d" if is_2d else "navmesh"
         if variant in ("flocking", "flying_swarm"):
             schema.nav_backend = "kinematic"
         if variant == "waypoint_follow":

@@ -90,6 +90,7 @@ public class {{ s.name }} : MonoBehaviour
         }
 
 {% if variant == "navmesh_patrol" %}
+{% if s.nav_backend == "navmesh" %}
         // Patrol unless the target is in range
         if (_target != null && Vector3.Distance(transform.position, _target.position) < detectionRadius)
         {
@@ -102,9 +103,20 @@ public class {{ s.name }} : MonoBehaviour
             var p = patrolPoints[_patrolIndex];
             if (p != null) _agent.SetDestination(p.position);
         }
+{% else %}
+        // Patrol unless the target is in range — direct transform-seeking, no NavMesh.
+        if (_target != null && Vector3.Distance(transform.position, _target.position) < detectionRadius)
+            MoveTowards(_target.position);
+        else
+            PatrolStep2D();
+{% endif %}
 {% elif variant == "chase_player" %}
         if (_target == null) return;
+{% if s.nav_backend == "navmesh" %}
         if (_agent != null) _agent.SetDestination(_target.position);
+{% else %}
+        MoveTowards(_target.position);
+{% endif %}
         if (Vector3.Distance(transform.position, _target.position) < attackRadius) TryAttack();
 {% elif variant in ("fsm_guard", "behaviour_tree_lite") %}
         if (_target == null) return;
@@ -115,11 +127,19 @@ public class {{ s.name }} : MonoBehaviour
             case {{ s.name }}State.Idle:
                 if (dist < detectionRadius) _state = {{ s.name }}State.Chase;
 {% if variant == "fsm_guard" %}
+{% if s.nav_backend == "navmesh" %}
                 else PatrolStep();
+{% else %}
+                else PatrolStep2D();
+{% endif %}
 {% endif %}
                 break;
             case {{ s.name }}State.Chase:
+{% if s.nav_backend == "navmesh" %}
                 if (_agent != null) _agent.SetDestination(_target.position);
+{% else %}
+                MoveTowards(_target.position);
+{% endif %}
                 if (dist < attackRadius)      _state = {{ s.name }}State.Attack;
                 else if (dist > detectionRadius * 1.5f) _state = {{ s.name }}State.Idle;
                 break;
@@ -132,11 +152,16 @@ public class {{ s.name }} : MonoBehaviour
         if (_target == null) return;
         float dist = Vector3.Distance(transform.position, _target.position);
         // Naive: pop out at attack range, retreat at half-distance
+{% if s.nav_backend == "navmesh" %}
         if (_agent != null)
         {
             if (dist > attackRadius * 0.6f) _agent.SetDestination(_target.position);
             else _agent.SetDestination(transform.position - (_target.position - transform.position).normalized * 2f);
         }
+{% else %}
+        if (dist > attackRadius * 0.6f) MoveTowards(_target.position);
+        else MoveTowards(transform.position - (_target.position - transform.position).normalized * 2f);
+{% endif %}
         if (dist < attackRadius) TryAttack();
 {% elif variant == "waypoint_follow" %}
         if (_waypoints == null || _waypoints.Count == 0) { CollectWaypoints(); return; }
@@ -212,7 +237,7 @@ public class {{ s.name }} : MonoBehaviour
     }
 
 {% endif %}
-{% if variant in ("fsm_guard",) %}
+{% if variant == "fsm_guard" and s.nav_backend == "navmesh" %}
     private void PatrolStep()
     {
         if (patrolPoints == null || patrolPoints.Length == 0 || _agent == null) return;
@@ -220,6 +245,28 @@ public class {{ s.name }} : MonoBehaviour
             _patrolIndex = (_patrolIndex + 1) % patrolPoints.Length;
         var p = patrolPoints[_patrolIndex];
         if (p != null) _agent.SetDestination(p.position);
+    }
+{% endif %}
+{% if variant in ("navmesh_patrol", "fsm_guard") and s.nav_backend == "kinematic_2d" %}
+    private void PatrolStep2D()
+    {
+        if (patrolPoints == null || patrolPoints.Length == 0) return;
+        var p = patrolPoints[_patrolIndex];
+        if (p == null) return;
+        if (Vector3.Distance(transform.position, p.position) < 0.5f)
+            _patrolIndex = (_patrolIndex + 1) % patrolPoints.Length;
+        MoveTowards(p.position);
+    }
+{% endif %}
+{% if s.nav_backend == "kinematic_2d" %}
+    /// <summary>No-NavMesh 2D fallback: seeks `destination` directly in the XY plane.</summary>
+    private void MoveTowards(Vector3 destination)
+    {
+        Vector3 dir = destination - transform.position;
+        dir.z = 0f;
+        if (dir.sqrMagnitude < 0.0001f) return;
+        transform.position += dir.normalized * moveSpeed * Time.deltaTime;
+        transform.right = dir.normalized;
     }
 {% endif %}
 

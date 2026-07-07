@@ -14,6 +14,9 @@
 {% if s.nav_backend == "navmesh" %}
 3. The GameObject also needs a `NavMeshAgent` (auto-required). Bake a NavMesh in the
    scene (Window → AI → Navigation).
+{% elif s.nav_backend == "kinematic_2d" %}
+3. No NavMesh needed — this is a 2D project, so the AI seeks targets directly via
+   `transform.position` in the XY plane (no `NavMeshAgent`, no bake required).
 {% endif %}
 {% if variant in ("navmesh_patrol", "fsm_guard") %}
 4. Create {{ s.patrol_point_count }} empty GameObjects in the scene as patrol points
@@ -43,4 +46,4 @@ This variant uses a direct controller — no explicit state enum.
 |--------------------|---------|-------|
 | `detectionRadius`  | {{ "%.1f"|format(s.detection_radius) }} | sight range |
 | `attackRadius`     | {{ "%.1f"|format(s.attack_radius) }} | melee range |
-| `moveSpeed`        | {{ "%.1f"|format(s.move_speed) }} | passed to NavMeshAgent.speed |
+| `moveSpeed`        | {{ "%.1f"|format(s.move_speed) }} | {% if s.nav_backend == "navmesh" %}passed to NavMeshAgent.speed{% elif s.nav_backend == "kinematic_2d" %}direct 2D seek speed{% else %}direct transform seek speed{% endif %} |
