@@ -582,6 +582,20 @@ GOLDEN_2_5D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
 )
 
+# The 2D top-down golden archetype — DISTINCT from both 2D side-scroller and the
+# (real-3D) "top_down" game_type. Flat Rigidbody2D physics like GOLDEN_2D, but
+# free 2-axis movement (no gravity/jump) via the "2d_topdown" controller, which
+# already existed in src/micro/controller.py but was unreachable until this
+# game_type was added — the deterministic mapper only ever selected
+# "2d_platformer" for any 2D-flavored game_type.
+GOLDEN_2D_TOPDOWN_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
+    ("controller", "2d_topdown"), ("camera", "follow_2d"), ("health", "simple"),
+    ("hud", "health_bar"), ("menu", "pause_menu"), ("saveload", "json_file"),
+    ("physics", "rigidbody_2d"), ("input", "keyboard_mouse"),
+    ("interactable", "pickup"), ("animator", "humanoid"),
+    ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+)
+
 
 def subsystems_for(
     game_type:    str,
@@ -628,11 +642,11 @@ def subsystems_for(
     cam_default  = "first_person" if genre == "fps" else "follow"
     ctrl = {
         "2d": "2d_platformer", "2.5d": "platformer_2_5d", "top_down": "top_down",
-        "isometric": "top_down", "vr": "first_person",
+        "2d_topdown": "2d_topdown", "isometric": "top_down", "vr": "first_person",
     }.get(gt, ctrl_default)
     cam = {
         "2d": "follow_2d", "2.5d": "follow_2_5d", "top_down": "cinemachine_topdown",
-        "isometric": "cinemachine_topdown",
+        "2d_topdown": "follow_2d", "isometric": "cinemachine_topdown",
     }.get(gt, cam_default)
 
     # Locomotion overrides for 3D-ish game types. "vr" belongs here too — a VR
@@ -679,8 +693,10 @@ def subsystems_for(
     # Rigidbody2D (the prior "rigidbody" was invalid and clamped to 3D, which
     # then fought the 2d_platformer controller's Rigidbody2D). 2.5D's
     # "platformer_2_5d" controller is CharacterController-based (real 3D), so
-    # it takes the 3D physics body — only literal "2d" uses Rigidbody2D.
-    phys_variant = "rigidbody_2d" if gt == "2d" else "rigidbody_3d"
+    # it takes the 3D physics body. "2d_topdown" is Rigidbody2D too (its
+    # controller sets gravityScale=0 for free 2-axis movement) — only these
+    # two flat-2D controllers use Rigidbody2D.
+    phys_variant = "rigidbody_2d" if gt in ("2d", "2d_topdown") else "rigidbody_3d"
 
     # 2.5D's tilted/elevated follow camera needs a non-default offset (matches
     # the static camera preset already used for non-composed 2.5D projects —

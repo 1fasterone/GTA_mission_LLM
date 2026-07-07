@@ -58,7 +58,12 @@ LIMITS (keep JSON concise):
 - features:          only from the allowed list
 
 GAME TYPES — use only one of:
-  2D | 2.5D | 3D | VR | top_down | isometric
+  2D | 2.5D | 3D | VR | top_down | 2d_topdown | isometric
+  top_down = real 3D models seen from above (a dungeon-crawler/twin-stick game
+  with actual 3D geometry and NavMesh AI). 2d_topdown = flat 2D sprites/physics
+  seen from above (a classic Zelda-like — free 8-directional movement, no
+  gravity, no jump). Pick 2d_topdown only when the concept is explicitly flat
+  2D; default to top_down for anything with real 3D models.
 
 LOCOMOTION — how the player moves. Use only one of:
   walk | drive | fly | swim
@@ -163,7 +168,7 @@ OUTPUT this exact JSON structure, fully populated:
   "project_name": "PascalCase name, no spaces",
   "company_name": "Your studio name",
   "description": "One sentence description",
-  "game_type": "one of: 2D | 2.5D | 3D | VR | top_down | isometric",
+  "game_type": "one of: 2D | 2.5D | 3D | VR | top_down | 2d_topdown | isometric",
   "platform": "one of: pc | mobile | console | webgl | all",
   "locomotion": "one of: walk | drive | fly | swim",
   "environment": {{
@@ -294,7 +299,7 @@ VALIDATION RULES:
    VALID:   com.unity.render-pipelines.universal | com.unity.inputsystem | com.unity.cinemachine
    INVALID: "URP" | "universal render pipeline" | "Input System"
 2. version must match pattern: digits.digits.digits (e.g. "14.0.11") or null
-3. game_type: 2D | 2.5D | 3D | VR | top_down | isometric
+3. game_type: 2D | 2.5D | 3D | VR | top_down | 2d_topdown | isometric
 4. platform: pc | mobile | console | webgl | all
 5. render_pipeline: URP | HDRP | builtin
 6. unity_version: 6000.0 | 6000.1 | 6000.4 | 2022.3 | 2021.3  (default: 6000.0)

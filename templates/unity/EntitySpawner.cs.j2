@@ -22,7 +22,7 @@ public class EntitySpawner : MonoBehaviour
     private static bool GroupActive(string scene, string group) =>
         !_sceneGroups.TryGetValue(scene, out var set) || set.Contains(group);
 {% endif %}
-{% if game_type != "2D" %}
+{% if game_type not in ("2D", "2d_topdown") %}
 {% for e in entities %}
 {% if e.placement == "path" and e.path_points and not entity_model_paths.get(e.name, "").startswith("skip:") %}
     private static readonly Vector3[] _path_{{ loop.index0 }} =
@@ -46,6 +46,11 @@ public class EntitySpawner : MonoBehaviour
         // 2D side-scroller archetype: build a COHERENT course (continuous ground +
         // entities laid along +X) instead of formula-scattering props.
         BuildSideScroller2D(sh);
+{% elif game_type == "2d_topdown" %}
+        // 2D top-down archetype: no ground/gravity concept — scatter entity
+        // groups across an open X/Y arena instead of a side-scroller's
+        // single-lane course.
+        BuildTopDown2D(sh);
 {% else %}
 {% for e in entities %}
 {% if not entity_model_paths.get(e.name, "").startswith("skip:") %}
@@ -255,6 +260,7 @@ public class EntitySpawner : MonoBehaviour
                 return Vector3.zero;
         }
     }
+{% if game_type in ("2D", "2d_topdown") %}
 {% if game_type == "2D" %}
 
     // ── 2D side-scroller archetype builders ─────────────────────────────────────
@@ -346,6 +352,106 @@ public class EntitySpawner : MonoBehaviour
         var p = GameObject.FindWithTag("Player");
         if (p != null) p.transform.position = new Vector3(0f, 2.5f, 0f);
     }
+{% elif game_type == "2d_topdown" %}
+
+    // ── 2D top-down archetype builders ────────────────────────────────────────
+    // No ground/gravity concept (free 2-axis Rigidbody2D movement) — entity
+    // groups scatter/grid/ring/line across an open X/Y arena instead of a
+    // side-scroller's single-lane course.
+    private void BuildTopDown2D(Shader sh)
+    {
+{% if scene_entity_map %}
+        var _scene = SceneManager.GetActiveScene().name;
+{% endif %}
+{% for e in entities %}
+{% set role = e.kind|lower %}
+{% set epath = entity_model_paths.get(e.name, "") %}
+{% if role != "player" and not epath.startswith("skip:") and not epath.startswith("fx:") %}
+        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceGroup2DTopDown("{{ e.name }}", {{ e.count }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", sh);
+{% endif %}
+{% endfor %}
+        PlacePlayerStart2DTopDown();
+    }
+
+    private void PlaceGroup2DTopDown(string groupName, int count, string placement, float spacing,
+                                     float radius, float scale, string modelPath, Color color,
+                                     string tag, Shader sh)
+    {
+        // Same sprite -> model -> primitive load order as PlaceRow2D.
+        Sprite sprite = null;
+        GameObject modelPrefab = null;
+        if (!string.IsNullOrEmpty(modelPath))
+        {
+            var tex = Resources.Load<Texture2D>(modelPath);
+            if (tex != null)
+                sprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                                       new Vector2(0.5f, 0.5f), Mathf.Max(1f, tex.height));
+            else
+                modelPrefab = Resources.Load<GameObject>(modelPath);
+        }
+        var parent = new GameObject(groupName).transform;
+        parent.SetParent(transform, false);
+        int n = Mathf.Max(1, count);
+        for (int i = 0; i < n; i++)
+        {
+            GameObject go;
+            if (sprite != null)
+            {
+                go = new GameObject(groupName + "_" + i);
+                go.AddComponent<SpriteRenderer>().sprite = sprite;
+            }
+            else
+            {
+                go = modelPrefab != null ? Instantiate(modelPrefab) : GameObject.CreatePrimitive(PrimitiveType.Cube);
+            }
+            go.name = groupName + "_" + i;
+            go.transform.SetParent(parent);
+            go.transform.localScale = Vector3.one * scale;
+            go.transform.position = PlaceAt2DTopDown(placement, i, n, spacing, radius);
+            foreach (var cc in go.GetComponentsInChildren<Collider>()) Destroy(cc);
+            if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
+            if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
+            if (!string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
+        }
+    }
+
+    // Same placement vocabulary as PlaceAt() but projected onto the X/Y
+    // physics plane (Rigidbody2D moves in X/Y) instead of X/Z.
+    private Vector3 PlaceAt2DTopDown(string placement, int i, int count, float spacing, float radius)
+    {
+        int n = Mathf.Max(1, count);
+        switch (placement)
+        {
+            case "line":
+                return new Vector3((i - (n - 1) / 2f) * spacing, 0f, 0f);
+            case "ring":
+            {
+                float a = i * Mathf.PI * 2f / n;
+                return new Vector3(Mathf.Cos(a) * radius, Mathf.Sin(a) * radius, 0f);
+            }
+            case "grid":
+            {
+                int cols = Mathf.CeilToInt(Mathf.Sqrt(n));
+                int r = i / cols, c = i % cols;
+                return new Vector3((c - (cols - 1) / 2f) * spacing, (r - (Mathf.CeilToInt((float)n / cols) - 1) / 2f) * spacing, 0f);
+            }
+            case "scatter":
+            {
+                var rnd = new System.Random(i * 7 + 1);
+                return new Vector3((float)(rnd.NextDouble() * 2 - 1) * radius,
+                                   (float)(rnd.NextDouble() * 2 - 1) * radius, 0f);
+            }
+            default:
+                return Vector3.zero;
+        }
+    }
+
+    private void PlacePlayerStart2DTopDown()
+    {
+        var p = GameObject.FindWithTag("Player");
+        if (p != null) p.transform.position = Vector3.zero;
+    }
+{% endif %}
 
     private void Apply2DColor(GameObject go, Shader sh, Color color)
     {

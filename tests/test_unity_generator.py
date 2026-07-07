@@ -1109,6 +1109,155 @@ class TestNonCompose25D:
         assert "Rigidbody2D" not in s
 
 
+# ── Non-compose ("vanilla") 2D side-scroller — parity audit ────────────────────
+# game_type="2D" already IS the side-scroller archetype end-to-end (unlike the
+# 2.5D gap above, this was never bundled with anything else) — these tests lock
+# that in as a regression baseline with the same coverage 2.5D now has, rather
+# than assuming it stays correct forever.
+
+class TestNonCompose2DSideScroller:
+    def _schema(self, **kw):
+        from src.unity_schema import UnitySchema
+        base = dict(
+            project_name="Vanilla2D", company_name="C", description="",
+            game_type="2D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=["navmesh"], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m"),
+                     UnityScript(name="CameraFollow", type="camera", description="c"),
+                     UnityScript(name="EnemyAI", type="enemy", description="e"),
+                     UnityScript(name="Loot", type="collectible", description="l")],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_player_controller_uses_rigidbody2d(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        pc = files["Vanilla2D/Assets/Scripts/PlayerController.cs"]
+        assert "GetComponent<Rigidbody2D>" in pc
+
+    def test_enemy_ai_never_uses_navmesh_stays_rigidbody2d(self, gen):
+        # "navmesh" feature present, but 2D is deliberately excluded from the
+        # NavMesh-eligible game_type set — a 2D game has no meaningful NavMesh
+        # surface, so it must always fall to the Rigidbody2D chase branch.
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        enemy = files["Vanilla2D/Assets/Scripts/EnemyAI.cs"]
+        assert "NavMeshAgent" not in enemy
+        assert "GetComponent<Rigidbody2D>" in enemy
+
+    def test_collectible_uses_2d_trigger_api(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        loot = files["Vanilla2D/Assets/Scripts/Loot.cs"]
+        assert "OnTriggerEnter2D" in loot
+
+    def test_player_and_enemy_prefabs_use_2d_colliders(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        pprefab = files["Vanilla2D/Assets/Prefabs/PlayerController.prefab"]
+        assert "BoxCollider2D" in pprefab
+        eprefab = files["Vanilla2D/Assets/Prefabs/EnemyAI.prefab"]
+        assert "CircleCollider2D" in eprefab
+
+    def test_scene_unity_is_orthographic(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        s = scene(files, "Vanilla2D", "Main")
+        assert "orthographic: 1" in s
+        assert "BoxCollider2D" in s
+
+
+# ── Non-compose ("vanilla") 2D top-down ─────────────────────────────────────────
+# game_type="2d_topdown" is a new archetype: flat Rigidbody2D like "2D", but free
+# 2-axis movement (no gravity/jump) instead of a side-scroller. Must NOT alias
+# onto "2D"'s BuildSideScroller2D (ground-strip/course-lane layout — wrong shape
+# for an open top-down arena) nor onto the existing (real-3D) "top_down" game_type.
+
+class TestNonCompose2DTopdown:
+    def _schema(self, **kw):
+        from src.unity_schema import UnitySchema
+        base = dict(
+            project_name="Vanilla2DTop", company_name="C", description="",
+            game_type="2d_topdown", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=["navmesh"], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m"),
+                     UnityScript(name="CameraFollow", type="camera", description="c"),
+                     UnityScript(name="EnemyAI", type="enemy", description="e"),
+                     UnityScript(name="Loot", type="collectible", description="l")],
+        )
+        base.update(kw)
+        return UnitySchema(**base)
+
+    def test_player_controller_free_2_axis_no_gravity(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        pc = files["Vanilla2DTop/Assets/Scripts/PlayerController.cs"]
+        assert "GetComponent<Rigidbody2D>" in pc
+        assert "gravityScale = 0f" in pc
+        assert "CharacterController" not in pc
+        assert "jumpForce" not in pc     # no jump concept for free top-down movement
+
+    def test_enemy_ai_never_uses_navmesh_stays_rigidbody2d(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        enemy = files["Vanilla2DTop/Assets/Scripts/EnemyAI.cs"]
+        assert "NavMeshAgent" not in enemy
+        assert "GetComponent<Rigidbody2D>" in enemy
+
+    def test_collectible_uses_2d_trigger_api(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        loot = files["Vanilla2DTop/Assets/Scripts/Loot.cs"]
+        assert "OnTriggerEnter2D" in loot
+
+    def test_player_and_enemy_prefabs_use_2d_colliders(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        pprefab = files["Vanilla2DTop/Assets/Prefabs/PlayerController.prefab"]
+        assert "BoxCollider2D" in pprefab
+        eprefab = files["Vanilla2DTop/Assets/Prefabs/EnemyAI.prefab"]
+        assert "CircleCollider2D" in eprefab
+
+    def test_scene_unity_is_orthographic(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=1, tag="Enemy")]), {})
+        s = scene(files, "Vanilla2DTop", "Main")
+        assert "orthographic: 1" in s
+
+    def test_entityspawner_uses_topdown_archetype_not_sidescroller(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Guards", kind="enemy", count=3, tag="Enemy", placement="scatter")]
+        ), {})
+        cs = files["Vanilla2DTop/Assets/Scripts/EntitySpawner.cs"]
+        assert "BuildTopDown2D" in cs
+        assert "BuildSideScroller2D" not in cs
+        assert cs.count("{") == cs.count("}")
+
+    def test_humanoid_rig_downgraded_like_2d(self, gen, tmp_path):
+        # 2d_topdown is flat-sprite like "2D" — a genuine Blender-built humanoid
+        # override must still downgrade to Generic here (unlike 2.5D, which keeps it).
+        fake_fbx = tmp_path / "BuiltPlayer.fbx"
+        fake_fbx.write_bytes(b"fake")
+        files = gen.generate(self._schema(), {}, model_overrides={"player": str(fake_fbx)})
+        meta = files.get("Vanilla2DTop/Assets/Resources/Models/Default/Player/Player.fbx.meta", "")
+        assert "animationType: 2" in meta
+        assert "animationType: 3" not in meta
+
+
 # ── write() is atomic per file (torn-write / duplicate-fileID hardening) ───────
 # Regression (live Unity): regenerating into a project the Editor already has
 # open races its file watcher — a plain write_text() truncates the file to 0

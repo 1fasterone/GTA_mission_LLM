@@ -97,6 +97,36 @@ class TestDeepDivePromptRegression:
         assert schema.meta["genre"] != "racing"
 
 
+# ── 2d_topdown vs top_down (flat 2D vs real-3D dungeon crawler) ────────────────
+
+class Test2DTopdownVsTopDown:
+    def test_dimension_neutral_top_down_stays_3d_archetype(self):
+        # "top-down"/"overhead view" alone describe a real 3D dungeon crawler
+        # just as easily as a flat 2D game — must default to the existing
+        # (unchanged) 3D top_down archetype, not the new 2d_topdown one.
+        intent = classify("A top-down dungeon crawler with real 3D models and NavMesh enemies.")
+        assert intent.game_type == "top_down"
+
+    def test_zelda_like_alone_selects_2d_topdown(self):
+        intent = classify("A 2D zelda-like adventure with dungeons and puzzles.")
+        assert intent.game_type == "2d_topdown"
+
+    def test_twin_stick_bullet_heaven_selects_2d_topdown(self):
+        intent = classify("A twin-stick bullet heaven survival game.")
+        assert intent.game_type == "2d_topdown"
+
+    def test_tie_between_top_down_and_2d_topdown_favors_2d_topdown(self):
+        # Regression guard: a prompt that hits BOTH tables' keywords with equal
+        # score must resolve to the more specific (2D-qualified) archetype, not
+        # silently fall back to the 3D one via list-iteration-order tie-break.
+        intent = classify("A 2D zelda-like top-down adventure with dungeons and puzzles.")
+        assert intent.game_type == "2d_topdown"
+
+    def test_isometric_keywords_unaffected_by_the_split(self):
+        intent = classify("An isometric diablo-like loot game.")
+        assert intent.game_type == "isometric"
+
+
 def test_drifting_clouds_is_not_racing():
     # Regression (TerminalHorizon, live): "animated title over drifting clouds"
     # matched the racing keyword "drifting" and concept_hint() then steered the

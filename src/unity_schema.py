@@ -19,7 +19,7 @@ from .atoms.base import AtomInvocation
 
 # ── Core engine literals ───────────────────────────────────────────────────────
 
-GameType       = Literal["2D", "2.5D", "3D", "VR", "top_down", "isometric"]
+GameType       = Literal["2D", "2.5D", "3D", "VR", "top_down", "2d_topdown", "isometric"]
 Platform       = Literal["pc", "mobile", "console", "webgl", "all"]
 RenderPipeline = Literal["URP", "HDRP", "builtin"]
 UnityVersion   = Literal["6000.0", "6000.1", "6000.4", "2022.3", "2021.3"]
@@ -927,6 +927,8 @@ class UnitySchema(BaseModel):
         if upper in {"2D", "2.5D", "3D", "VR"}:
             return upper
         lower = t.lower()
+        if lower in {"2d_topdown", "2d topdown", "2d-topdown", "flat top_down", "flat topdown"}:
+            return "2d_topdown"
         if lower in {"top_down", "topdown", "top-down"}:
             return "top_down"
         if lower in {"isometric", "iso"}:
