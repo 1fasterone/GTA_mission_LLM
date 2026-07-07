@@ -15,7 +15,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel   import Panel
 
-from .lm_studio_client   import LMStudioClient
 from .backends           import make_chat_client, make_rag_client
 from .unity_schema       import UnityPackage, UnitySchema, UnityScript
 from .capability_resolver import resolve_capabilities
@@ -698,7 +697,7 @@ class UnityPipeline:
         subsystems = None
         if compose:
             from .unity_compose import (MicroComposer, subsystems_for,
-                                        COVERED_SCRIPT_TYPES, drop_owned_scripts)
+                                        drop_owned_scripts)
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
@@ -799,7 +798,7 @@ class UnityPipeline:
                 if mf.exists():
                     import shutil as _sh
                     _sh.copy2(mf, project_root / "Assets" / "Resources" / "audio_manifest.json")
-                self._ok(f"Audio clips overlaid -> Assets/Audio/ + Assets/Resources/Audio/")
+                self._ok("Audio clips overlaid -> Assets/Audio/ + Assets/Resources/Audio/")
         # Drop a discoverable sidecar so the Library page can show the concept
         # next to each saved project (Unity schemas aren't written to disk the
         # way GTA's *.schema.json files are).

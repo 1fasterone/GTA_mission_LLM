@@ -96,8 +96,6 @@ class LocalAdapter(DspAdapter):
     def _stable_audio(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
         try:
             import torch  # noqa: F401
-            from stable_audio_tools import get_pretrained_model  # type: ignore
-            from stable_audio_tools.inference.generation import generate_diffusion_cond  # type: ignore
         except Exception as exc:  # noqa: BLE001
             self._warn_once("stable_audio", f"Stable Audio unavailable ({type(exc).__name__})")
             return None

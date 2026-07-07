@@ -14,7 +14,7 @@ from pathlib import Path
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
-from .unity_schema import ColorPalette, ProceduralMesh, UnitySchema, UnityScript
+from .unity_schema import ProceduralMesh, UnitySchema, UnityScript
 from .unity_asset_resolver import resolve_assets
 from .unity_entity_asset_resolver import resolve_entity_assets, texture_dirs_for
 from .unity_model_resolver import resolve_default_models, models_for_schema

@@ -32,7 +32,7 @@ from . import synth   # SR constant + write_wav helpers
 from .lang import normalize_lang
 # Emotion prosody is engine-agnostic and now lives in prosody.py; re-exported
 # here so dialog_resolver + micro.npc_dialog keep importing it from .higgs.
-from .prosody import SUPPORTED_EMOTIONS, emotion_params
+from .prosody import emotion_params, SUPPORTED_EMOTIONS  # noqa: F401
 from .tts_stubs import TtsOnly
 
 # ── Audio style → Higgs preset map ───────────────────────────────────────────

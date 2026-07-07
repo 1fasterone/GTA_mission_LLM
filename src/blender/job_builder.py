@@ -18,7 +18,7 @@ props, sci-fi panels) that procedural nodes won't sell.
 
 from __future__ import annotations
 
-from typing import Iterable, Optional
+from typing import Optional
 
 from .job_schema import BlenderJob, TextureSpec, OutputSpec
 

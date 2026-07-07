@@ -20,7 +20,6 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .micro import REGISTRY
-from .micro_pipeline import to_pascal
 from .unity_generator import _make_guid, _meta_file, _default_meta
 
 

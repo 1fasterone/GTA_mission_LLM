@@ -37,7 +37,6 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from rich.panel import Panel
 
-from .lm_studio_client import LMStudioClient
 from .backends import make_chat_client
 from .themes import (
     resolve_theme,

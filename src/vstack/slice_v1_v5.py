@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import copy
 
-from src.vstack.canon import Q_ROT, Q_TIME, chash, q
+from src.vstack.canon import Q_ROT, chash, q
 
 # Static identity-chain keys, in canonical order (used for stability checks).
 IDENTITY_KEYS = [

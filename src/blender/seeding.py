@@ -20,7 +20,6 @@ pass a random master to vary).
 from __future__ import annotations
 
 import hashlib
-from typing import Optional
 
 DEFAULT_MASTER = 0
 
