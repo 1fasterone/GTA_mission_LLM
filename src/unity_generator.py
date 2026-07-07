@@ -612,6 +612,180 @@ def _strip_undeclared_foreach(script: UnityScript) -> None:
         m.body = _strip(m.body)
 
 
+# ── Undeclared self-reference (bare field/method the script never declared) ──
+#
+# Distinct from _sanitize_composed_component_calls/_sanitize_project_service_calls
+# (which validate DOTTED cross-reference member access on another type reached
+# via Get<T>()) — this catches a script hallucinating members on ITSELF, with no
+# dot at all (hit live: PlatformTrigger.cs, extra_fields=[] and extra_methods=[],
+# but update_extra referenced both a bare field read (healthThreshold) and a
+# bare method call (TriggerCollapse()) — neither ever declared — 2x CS0103).
+#
+# Bare identifiers appear in many LEGITIMATE positions (type names in
+# declarations, `new Vector3(...)` constructors, inherited MonoBehaviour
+# methods called with an implicit `this`, C# keyword-paren constructs,
+# `is`-pattern matching, lambda parameters) — this is regex-based "good enough"
+# validation, not a real parser, so it's split into two confidence tiers and
+# scoped narrowly rather than scanning the whole body indiscriminately.
+
+# Part A — bare method calls (`Foo()`, no receiver). Higher confidence: a truly
+# bare call in this codebase's generated C# is either a self-authored method or
+# one of a small, fixed set of inherited MonoBehaviour/Component/Object methods.
+_BARE_CALL_RE = re.compile(r"(?<![.\w])(new\s+)?([A-Za-z_]\w*)\s*\(")
+_KEYWORD_PAREN_ALLOW = frozenset({
+    "if", "while", "for", "foreach", "switch", "catch", "using", "lock", "fixed",
+    "typeof", "nameof", "sizeof", "default", "checked", "unchecked", "return", "new",
+})
+# Inherited MonoBehaviour/Component/Object methods legitimately called with no
+# receiver (implicit `this`) — never authored by the template itself.
+_BARE_CALLABLE_ALLOW = frozenset({
+    "Instantiate", "Destroy", "StartCoroutine", "StopCoroutine", "StopAllCoroutines",
+    "Invoke", "InvokeRepeating", "CancelInvoke", "GetComponent", "GetComponents",
+    "GetComponentInChildren", "GetComponentsInChildren", "GetComponentInParent",
+    "TryGetComponent", "AddComponent", "SendMessage", "BroadcastMessage",
+    "CompareTag", "GetType", "GetHashCode", "ToString", "Equals",
+})
+_DELEGATE_TYPE_RE = re.compile(r"\b(?:Action|Func|UnityEvent)\b")
+
+
+def _sanitize_undeclared_self_calls(script: UnityScript) -> None:
+    """Strip a bare method call (no receiver — not `x.Foo()`/`x?.Foo()`, those
+    are already excluded by the `(?<![.\\w])` lookbehind) that is neither one of
+    this script's own extra_methods, a delegate/Action/Func/UnityEvent-typed
+    extra_field invoked with bare-call syntax (e.g. onCollapse()), nor a
+    legitimate inherited MonoBehaviour method — always CS0103."""
+    own_callable: set[str] = set()
+    for m in script.extra_methods:
+        mm = _SIG_NAME_RE.search(m.signature or "")
+        if mm:
+            own_callable.add(mm.group(1))
+    for f in script.extra_fields:
+        if _DELEGATE_TYPE_RE.search(f.type or ""):
+            own_callable.add(f.name)
+    known = own_callable | _BARE_CALLABLE_ALLOW
+
+    def _strip(body: str) -> str:
+        if not body:
+            return body
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(
+                m.group(1) is None                      # not `new Foo(...)`
+                and m.group(2) not in known
+                and m.group(2) not in _KEYWORD_PAREN_ALLOW
+                for m in _BARE_CALL_RE.finditer(line)
+            )
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+# Part B — bare value reads inside if/while conditions. Deliberately scoped to
+# boolean-condition context only (not the whole body) — a condition is far
+# less likely to contain a type-declaration position than arbitrary code, so
+# this is the safest place to catch a bare undeclared read without risking a
+# false-positive strip of legitimate type/constructor syntax elsewhere.
+_COND_KEYWORD_ALLOW = frozenset({"true", "false", "null", "this", "base", "is", "var"})
+_STATIC_CLASS_ALLOW = frozenset({
+    "Time", "Mathf", "Debug", "Physics", "Physics2D", "Input", "Keyboard", "Gamepad",
+    "Random", "Resources", "Application", "SceneManager",
+    "Vector2", "Vector3", "Vector4", "Quaternion", "Color",
+    "GameObject", "Transform", "Rigidbody", "Rigidbody2D", "Collider", "Collider2D",
+    "float", "int", "bool", "string", "double", "long",
+})
+# `is Foo f` pattern-matching binds BOTH a type name and a new local — neither
+# is declared anywhere else, so both must be seeded as "known" for that body.
+_IS_PATTERN_RE   = re.compile(r"\bis\s+(\w+)(?:\s+(\w+))?")
+_LAMBDA_PARAM_RE = re.compile(r"(\w+)\s*=>")
+_COND_HEADER_RE  = re.compile(r"\b(?:if|while)\s*\(")
+# Bare identifier not preceded by `.`/word-char (collapses dotted chains like
+# `transform.position.y` to just the root `transform`) and not immediately
+# followed by `(` (that's Part A's job, a method call, not a value read).
+_COND_TOKEN_RE   = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\b(?!\s*\()")
+_METHOD_PARAM_LIST_RE = re.compile(r"\(([^)]*)\)")
+
+
+def _extract_conditions(text: str) -> list[str]:
+    """Text inside every if(...)/while(...) in `text`, matched by paren-count
+    (not a naive non-greedy regex, which truncates at the first `)` inside a
+    nested call like `if (Foo(x) > 0 && Bar())`)."""
+    conditions = []
+    for m in _COND_HEADER_RE.finditer(text):
+        depth = 1
+        i = m.end()
+        start = i
+        while i < len(text) and depth > 0:
+            if text[i] == "(":
+                depth += 1
+            elif text[i] == ")":
+                depth -= 1
+            i += 1
+        conditions.append(text[start:i - 1])
+    return conditions
+
+
+def _method_param_names(signature: str) -> set[str]:
+    """Parameter names declared in an extra_methods signature — these are
+    locally in scope for that method's own body, same as a field or local."""
+    m = _METHOD_PARAM_LIST_RE.search(signature or "")
+    if not m:
+        return set()
+    names: set[str] = set()
+    for part in m.group(1).split(","):
+        tokens = part.strip().split()
+        if tokens:
+            names.add(tokens[-1].lstrip("*"))
+    return names
+
+
+def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
+    """Strip an if/while condition that reads a bare value declared NOWHERE —
+    always CS0103 (hit live: PlatformTrigger.cs checked `healthThreshold < 0.2f`
+    with extra_fields=[] — the LLM invented a field it never declared)."""
+    own_fields = {f.name for f in script.extra_fields}
+
+    def _strip(body: str, extra_declared: frozenset = frozenset()) -> str:
+        if not body:
+            return body
+        declared = set(own_fields) | set(extra_declared)
+        declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
+        for m in _IS_PATTERN_RE.finditer(body):
+            declared.add(m.group(1))
+            if m.group(2):
+                declared.add(m.group(2))
+        declared.update(m.group(1) for m in _LAMBDA_PARAM_RE.finditer(body))
+
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = False
+            for cond in _extract_conditions(line):
+                for m in _COND_TOKEN_RE.finditer(cond):
+                    tok = m.group(1)
+                    if (tok in declared or tok in _COND_KEYWORD_ALLOW
+                            or tok in _STATIC_CLASS_ALLOW or tok in _MB_COMMON_MEMBERS):
+                        continue
+                    bad = True
+                    break
+                if bad:
+                    break
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body, frozenset(_method_param_names(m.signature)))
+
+
 # ── Visual style -> lighting config ───────────────────────────────────────────
 
 _LIGHTING_BY_STYLE: dict[str, dict] = {
@@ -1394,6 +1568,8 @@ class UnityProjectGenerator:
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
                 _strip_undeclared_foreach(s)
+                _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver
+                _sanitize_undeclared_condition_reads(s)   # bare if/while value read
                 # A custom script can only attach to the Player if one exists.
                 if s.attach_to == "player" and not any(
                         x.type == "player" for x in schema.scripts):

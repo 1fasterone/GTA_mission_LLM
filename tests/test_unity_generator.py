@@ -1341,6 +1341,126 @@ class TestComposedClassApiCoverage:
         assert "ForceIdlePose" not in s.update_extra
 
 
+# ── Undeclared self-reference: bare field/method the script never declared ────
+
+class TestUndeclaredSelfReferenceSanitizers:
+    def _script(self, update_extra, extra_fields=None, extra_methods=None):
+        return UnityScript(
+            name="PlatformTrigger", type="custom", description="d",
+            update_extra=update_extra,
+            extra_fields=extra_fields or [],
+            extra_methods=extra_methods or [],
+        )
+
+    # ── regression: exact live bug string ──
+    def test_platform_trigger_live_bug_stripped(self):
+        from src.unity_generator import (_sanitize_undeclared_self_calls,
+                                         _sanitize_undeclared_condition_reads)
+        s = self._script(
+            "var enemy = GameContext.Instance.Get<EnemyAI>(); "
+            "if (enemy != null && healthThreshold < 0.2f) TriggerCollapse();")
+        _sanitize_undeclared_self_calls(s)
+        _sanitize_undeclared_condition_reads(s)
+        assert "TriggerCollapse" not in s.update_extra
+        assert "healthThreshold" not in s.update_extra
+
+    # ── Part A: must strip ──
+    def test_bare_undeclared_method_call_stripped(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("DoSomethingInvented();")
+        _sanitize_undeclared_self_calls(s)
+        assert "DoSomethingInvented" not in s.update_extra
+
+    def test_declared_extra_method_call_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("TriggerCollapse();",
+                         extra_methods=[{"signature": "private void TriggerCollapse()", "body": ""}])
+        _sanitize_undeclared_self_calls(s)
+        assert "TriggerCollapse" in s.update_extra
+
+    def test_delegate_field_bare_invocation_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("onCollapse();",
+                         extra_fields=[{"name": "onCollapse", "type": "Action"}])
+        _sanitize_undeclared_self_calls(s)
+        assert "onCollapse()" in s.update_extra
+
+    # ── Part A: must NOT strip (legitimate Unity/C# shapes) ──
+    def test_new_vector3_construction_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("var v = new Vector3(1f, 2f, 3f);")
+        _sanitize_undeclared_self_calls(s)
+        assert "new Vector3" in s.update_extra
+
+    def test_instantiate_call_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("Instantiate(prefab);")
+        _sanitize_undeclared_self_calls(s)
+        assert "Instantiate(prefab)" in s.update_extra
+
+    def test_get_component_generic_call_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("var rb = GetComponent<Rigidbody>();")
+        _sanitize_undeclared_self_calls(s)
+        assert "GetComponent<Rigidbody>()" in s.update_extra
+
+    def test_null_conditional_dotted_call_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("interact?.Interact();")
+        _sanitize_undeclared_self_calls(s)
+        assert "interact?.Interact()" in s.update_extra
+
+    def test_keyword_paren_constructs_kept(self):
+        from src.unity_generator import _sanitize_undeclared_self_calls
+        s = self._script("if (transform.position.y < 0f) { while (true) { break; } }")
+        _sanitize_undeclared_self_calls(s)
+        assert "if (transform.position.y" in s.update_extra
+        assert "while (true)" in s.update_extra
+
+    # ── Part B: must strip ──
+    def test_bare_undeclared_condition_value_stripped(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script("if (healthThreshold < 0.2f) enabled = false;")
+        _sanitize_undeclared_condition_reads(s)
+        assert "healthThreshold" not in s.update_extra
+
+    def test_declared_field_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script("if (healthThreshold < 0.2f) enabled = false;",
+                         extra_fields=[{"name": "healthThreshold", "type": "float", "default": "0.3f"}])
+        _sanitize_undeclared_condition_reads(s)
+        assert "healthThreshold" in s.update_extra
+
+    # ── Part B: must NOT strip (legitimate Unity/C# shapes) ──
+    def test_transform_position_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script("if (transform.position.y < 0f) { enabled = false; }")
+        _sanitize_undeclared_condition_reads(s)
+        assert "transform.position.y" in s.update_extra
+
+    def test_is_pattern_match_kept(self):
+        # Real false-positive risk: `EnemyAI` (type) and `enemyAi` (pattern var)
+        # are both bare inside the condition and declared nowhere else. `other`
+        # is declared as the method's own parameter, isolating the is-pattern
+        # behavior from an unrelated "other is undeclared" false failure.
+        from src.unity_generator import (_sanitize_undeclared_self_calls,
+                                         _sanitize_undeclared_condition_reads)
+        s = self._script("", extra_methods=[
+            {"signature": "private void OnHit(Collider other)",
+             "body": "if (other is EnemyAI enemyAi) { enemyAi.Alert(); }"},
+        ])
+        _sanitize_undeclared_self_calls(s)
+        _sanitize_undeclared_condition_reads(s)
+        assert "is EnemyAI enemyAi" in s.extra_methods[0].body
+
+    def test_local_declared_before_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script("var speed = 5f; if (speed > walkSpeed) { }",
+                         extra_fields=[{"name": "walkSpeed", "type": "float", "default": "5f"}])
+        _sanitize_undeclared_condition_reads(s)
+        assert "speed > walkSpeed" in s.update_extra
+
+
 # ── SceneAudio emission + data-driven README ────────────────────────────────────
 
 class TestSceneAudioAndReadme:
