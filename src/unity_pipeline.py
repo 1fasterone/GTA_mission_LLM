@@ -729,6 +729,23 @@ class UnityPipeline:
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
+        # Step 6.5 — enrich entity sketchfab_query while the project LLM is
+        # still loaded (mirrors the audio concept-translator's placement).
+        # Only when Sketchfab is enabled — no wasted LLM call otherwise.
+        if _sketchfab_cfg.get("enabled") and schema.entities:
+            try:
+                from .unity_sketchfab_translator import translate_concept
+                _seed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
+                        else (seed or 0))
+                n = translate_concept(concept, schema.entities, self.llm, _seed)
+                if n:
+                    self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
+                else:
+                    self._warn("Sketchfab query translation produced nothing — "
+                              "resolver falls back to model_hint / entity name")
+            except Exception as exc:  # noqa: BLE001
+                self._warn(f"Sketchfab query translation failed "
+                          f"({type(exc).__name__}: {exc}) — mechanical fallback used")
         try:
             project_root, file_count = self.generator.write(
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,

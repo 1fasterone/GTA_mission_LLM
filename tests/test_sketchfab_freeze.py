@@ -16,23 +16,30 @@ from src.unity_asset_catalog import SKETCHFAB_RELPATH
 class _FakeClient:
     """Canned SketchfabClient stand-in — no network."""
 
-    def __init__(self, results=None, download_ok=True):
+    def __init__(self, results=None, download_ok=True, author_results=None):
         self._results = results if results is not None else [
             {"uid": "abc123", "name": "Red High Heel Shoe",
              "description": "a shiny red shoe",
              "viewerUrl": "https://sketchfab.com/3d-models/abc123",
              "license": {"slug": "by"},
-             "user": {"displayName": "Jane Doe",
+             "user": {"displayName": "Jane Doe", "username": "janedoe",
                      "profileUrl": "https://sketchfab.com/janedoe"},
              "tags": [{"name": "shoe"}, {"name": "fashion"}]},
         ]
+        # Results returned ONLY when search() is called with a matching
+        # `user=` filter — simulates the author-scoped catalog.
+        self._author_results = author_results
         self._download_ok = download_ok
         self.download_calls = 0
+        self.search_calls = []
 
     def available(self):
         return True
 
-    def search(self, query, count=24):
+    def search(self, query, count=24, user=None):
+        self.search_calls.append({"query": query, "user": user})
+        if user is not None:
+            return self._author_results or []
         return self._results
 
     def license_slug(self, model):
@@ -120,6 +127,7 @@ def test_successful_fetch_freezes_entry(tmp_path, monkeypatch):
     assert entry["sketchfab_uid"] == "abc123"
     assert entry["license"] == "by"
     assert entry["author"] == "Jane Doe"
+    assert entry["author_username"] == "janedoe"
     assert "CC-BY" in entry["attribution"]
     # Deterministic path derived from the model uid, not a timestamp.
     assert "abc123" in entry["filename"]
@@ -152,3 +160,67 @@ def test_never_raises_on_internal_error(tmp_path):
         "red shoe", _score_all_equal, client=_Explodes(),
         cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"))
     assert result is None
+
+
+# ── style-coherence: author-affinity biasing ──────────────────────────────────
+
+def _install_fake_convert(monkeypatch):
+    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None):
+        fbx_out.parent.mkdir(parents=True, exist_ok=True)
+        fbx_out.write_bytes(b"FBX-DUMMY")
+        return fbx_out
+    monkeypatch.setattr(
+        "src.blender.sketchfab_convert.convert_gltf_to_fbx", _fake_convert)
+
+
+def test_preferred_author_tried_before_global_search(tmp_path, monkeypatch):
+    """When preferred_author is set and that author has a real match, the
+    global marketplace search must never even run — style coherence wins
+    outright, not as a tiebreak."""
+    _install_fake_convert(monkeypatch)
+    author_hit = {"uid": "sword1", "name": "Stylized Longsword",
+                 "viewerUrl": "https://sketchfab.com/3d-models/sword1",
+                 "license": {"slug": "by"},
+                 "user": {"displayName": "OptiCube", "username": "OptiCube",
+                         "profileUrl": "https://sketchfab.com/OptiCube"},
+                 "tags": [{"name": "sword"}]}
+    client = _FakeClient(author_results=[author_hit])
+
+    entry = fetch_and_freeze(
+        "sword", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        preferred_author="OptiCube")
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "sword1"
+    assert entry["author_username"] == "OptiCube"
+    # Only the author-scoped call happened — no global (user=None) search.
+    assert client.search_calls == [{"query": "sword", "user": "OptiCube"}]
+
+
+def test_preferred_author_no_match_falls_back_to_global(tmp_path, monkeypatch):
+    """The author has nothing matching this query — falls through to the
+    open marketplace rather than returning nothing."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(author_results=[])  # OptiCube has nothing for this query
+
+    entry = fetch_and_freeze(
+        "red high heel shoe", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        preferred_author="OptiCube")
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "abc123"   # the global-search fixture result
+    assert client.search_calls == [
+        {"query": "red high heel shoe", "user": "OptiCube"},
+        {"query": "red high heel shoe", "user": None},
+    ]
+
+
+def test_no_preferred_author_only_does_global_search(tmp_path, monkeypatch):
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient()
+    fetch_and_freeze(
+        "red high heel shoe", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"))
+    assert client.search_calls == [{"query": "red high heel shoe", "user": None}]

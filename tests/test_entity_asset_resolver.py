@@ -548,7 +548,7 @@ def _add_sketchfab_entry(lookups: Path, tmp_path: Path, *, uid="sk1",
                          filename="ultimate-pine-sk1.fbx",
                          keywords=("pine", "tree", "forest"),
                          kind_hints=("tree", "prop"), category="nature",
-                         license="cc0") -> dict:
+                         license="cc0", author_username="janedoe") -> dict:
     sk_root = tmp_path / "sketchfab_lib"
     sk_root.mkdir(exist_ok=True)
     (sk_root / filename).write_bytes(b"FBX")
@@ -560,7 +560,8 @@ def _add_sketchfab_entry(lookups: Path, tmp_path: Path, *, uid="sk1",
         "game_contexts": ["any"], "generic_score": 0, "scale": 1.0,
         "curated": False, "query": "pine tree", "sketchfab_uid": uid,
         "sketchfab_url": f"https://sketchfab.com/3d-models/{uid}",
-        "license": license, "author": "Jane Doe", "author_url": "",
+        "license": license, "author": "Jane Doe",
+        "author_username": author_username, "author_url": "",
         "attribution": f'"Pine Tree" by Jane Doe is licensed under {license.upper()}.',
         "fetched_at": "2026-01-01T00:00:00Z",
     }
@@ -634,7 +635,8 @@ def test_sketchfab_auto_fetch_registers_once_and_caches_across_calls(env, tmp_pa
     calls = {"n": 0}
 
     def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
-                    lookups_dir, category, kind_hints, min_score):
+                    lookups_dir, category, kind_hints, min_score,
+                    preferred_author=None):
         calls["n"] += 1
         entry = _add_sketchfab_entry(Path(lookups_dir), tmp_path, uid="live1",
                                      filename="live-fetched-pine.fbx")
@@ -671,3 +673,114 @@ def test_sketchfab_fetch_failure_falls_through_cleanly(env, tmp_path, monkeypatc
         used, all_models, lookups_dir=str(env),
         sketchfab_cfg={"enabled": True, "auto_fetch": True})
     assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+# ── style coherence: sketchfab_query preference + author-affinity threading ──
+
+def test_sketchfab_query_field_wins_over_model_hint_for_live_fetch(env, tmp_path, monkeypatch):
+    """src/unity_sketchfab_translator.py's enriched sketchfab_query must be
+    the query handed to a live fetch, not the mechanical model_hint/token
+    fallback — that's the whole point of running the translator."""
+    seen_queries = []
+
+    def _fake_fetch(query, score_fn, **kw):
+        seen_queries.append(query)
+        return None
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5,
+                            model_hint="pine tree",
+                            sketchfab_query="grimdark low-fantasy pine tree")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert seen_queries == ["grimdark low-fantasy pine tree"]
+
+
+def test_preferred_author_established_from_cache_hit_threads_to_next_entity(
+        env, tmp_path, monkeypatch):
+    """The FIRST entity resolves from an already-frozen cache entry (no live
+    fetch at all) — its author must still become the preferred_author for
+    the SECOND entity's live fetch."""
+    _add_sketchfab_entry(env, tmp_path, uid="sk1", filename="pine-sk1.fbx",
+                         author_username="opticube")
+
+    seen_authors = []
+
+    def _fake_fetch(query, score_fn, **kw):
+        seen_authors.append(kw.get("preferred_author"))
+        return None
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5),
+                EntitySpec(name="StoneWalls", kind="prop", count=3,
+                          model_hint="zzgrbl no catalog match")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    # PineTrees hit the cache (no fetch call); StoneWalls' live fetch must
+    # have received the author established by PineTrees' cache hit.
+    assert seen_authors == ["opticube"]
+
+
+def test_preferred_author_established_from_live_fetch_threads_to_next_entity(
+        env, tmp_path, monkeypatch):
+    """The FIRST entity's live fetch succeeds and returns an author — the
+    SECOND entity's fetch must be called with that author as preferred."""
+    calls = []
+
+    def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
+                    lookups_dir, category, kind_hints, min_score,
+                    preferred_author=None):
+        calls.append(preferred_author)
+        if len(calls) == 1:
+            return _add_sketchfab_entry(
+                Path(lookups_dir), tmp_path, uid="live1",
+                filename="live-first.fbx", author_username="opticube")
+        return None
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5),
+                EntitySpec(name="StoneWalls", kind="prop", count=3,
+                          model_hint="zzgrbl no catalog match")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert calls == [None, "opticube"]
+
+
+def test_preferred_author_never_overwritten_by_later_fallback(env, tmp_path, monkeypatch):
+    """Once established, preferred_author sticks for the rest of the run even
+    when a later entity's own fetch falls back to a different author — no
+    drift away from the first-established style anchor."""
+    _add_sketchfab_entry(env, tmp_path, uid="sk1", filename="pine-sk1.fbx",
+                         author_username="opticube")
+    calls = []
+
+    def _fake_fetch(query, score_fn, *, preferred_author=None, **kw):
+        calls.append(preferred_author)
+        return _add_sketchfab_entry(
+            Path(kw["lookups_dir"]), tmp_path, uid=f"live{len(calls)}",
+            filename=f"live{len(calls)}.fbx", author_username="someone_else")
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5),
+                EntitySpec(name="StoneWalls", kind="prop", count=3,
+                          model_hint="zzgrbl no catalog match a"),
+                EntitySpec(name="Barrels", kind="prop", count=2,
+                          model_hint="zzgrbl no catalog match b")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    # PineTrees establishes "opticube" from the cache; both later live
+    # fetches must still be called with "opticube", even though each one's
+    # OWN result comes back authored by "someone_else".
+    assert calls == ["opticube", "opticube"]

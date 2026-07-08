@@ -129,3 +129,40 @@ Two differences from the generative-mesh case worth calling out:
   `auto_fetch: true` as accepting that one-notch looser guarantee in exchange
   for not having to pre-populate the cache by hand — `auto_fetch: false`
   (the shipped default) keeps the resolver a pure, network-free lookup, full stop.
+
+### Style coherence — one marketplace, many unrelated artists
+
+Sketchfab is a marketplace of independent freelancers, not a curated pack —
+searching each entity in isolation ("knight", "sword", "castle wall") each
+independently lands on whichever artist's upload happens to rank highest for
+that one word, with no relationship to any other entity's pick. Left alone,
+a project reads as "constructed chaos": a realistic PBR knight next to a
+cartoon sword next to a toy-store wall. Two deliberately separate, composable
+mitigations, both empirically tuned against the live API (2026-07):
+
+1. **`src/unity_sketchfab_translator.py`** — a concept-translator pass (same
+   shape and pipeline placement as `src/audio/concept_translator.py`, run
+   while the project LLM is still loaded) that derives ONE shared style tag
+   for the whole project plus a plain query per entity, filling
+   `EntitySpec.sketchfab_query`. **Sketchfab's search is literal keyword
+   match, not semantic** — verified live that a descriptive multi-word style
+   sentence ("grim dark medieval siege setting, wet stone and rusted iron,
+   muted palette...") returns **zero** results, while a 1-2 word style label
+   ("medieval", "low poly", "stylized") plus a 1-3 word concrete noun phrase
+   reliably returns 15-25+ results. The prompt hard-caps style+query at 4
+   words total for exactly this reason — it's a search-engine constraint, not
+   a taste preference.
+2. **Author-affinity biasing** (`SketchfabClient.search(..., user=...)`,
+   threaded through `fetch_and_freeze(..., preferred_author=...)`) — once
+   Tier S resolves ANY entity to a real Sketchfab pick (cache hit or live
+   fetch), that model's author (`username`, not `displayName`) becomes the
+   project's "preferred author" for every later entity in the same resolve
+   call: their own catalog is searched FIRST, falling back to the open
+   marketplace only if nothing of theirs clears `min_score`. Set once, never
+   overwritten — no drift toward whichever artist a later fallback happens to
+   land on. Measured hit rate is real but modest: of ~17 authors matching
+   "medieval knight", exactly one also had a "medieval soldier" upload, and
+   none had a castle wall or barrel — closely related object types (two
+   characters) overlap far more often than unrelated ones (character vs.
+   environment vs. prop). The mechanism costs nothing when it misses (clean
+   fallthrough to the global search, same as any other Tier S miss).

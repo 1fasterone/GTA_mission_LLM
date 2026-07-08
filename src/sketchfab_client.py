@@ -123,27 +123,42 @@ class SketchfabClient:
             log.debug("sketchfab browser request failed: %s", exc)
             yield None
 
-    def search(self, query: str, *, count: int = 24) -> list[dict]:
+    def search(self, query: str, *, count: int = 24,
+              user: Optional[str] = None) -> list[dict]:
         """GET /search?type=models — raw Sketchfab model result dicts, [] on
         any failure (no token, no browser, network error, non-2xx, malformed
         body). Public search does not actually require a token, but this
         pipeline gates it on one anyway to keep `available()` a single,
-        simple readiness check for the whole client."""
+        simple readiness check for the whole client.
+
+        `user` scopes the search to one author's own catalog — verified live
+        against the real API with the author's `username` (the login-style
+        handle in a model's `user.username` field, NOT `user.displayName`).
+        Used for style-coherent sourcing: once one good model is found, later
+        entities try that same author's catalog first (see
+        src/sketchfab_freeze.py's `preferred_author`) before falling back to
+        the open marketplace, so a project doesn't end up as a "constructed
+        chaos" of mismatched independent artists' styles.
+        """
         if not self.available():
             return []
+        params: dict[str, str | int] = {
+            "type": "models", "q": query,
+            "downloadable": "true", "count": count,
+        }
+        if user:
+            params["user"] = user
         try:
             with self._browser_request_ctx() as req:
                 if req is None:
                     return []
                 r = req.get(f"{self.base_url}/search", headers=self._headers,
-                           params={"type": "models", "q": query,
-                                   "downloadable": "true", "count": count},
-                           timeout=self.timeout * 1000)
+                           params=params, timeout=self.timeout * 1000)
                 if not r.ok:
                     return []
                 return list(r.json().get("results") or [])
         except Exception as exc:  # noqa: BLE001
-            log.debug("sketchfab search(%r) failed: %s", query, exc)
+            log.debug("sketchfab search(%r, user=%r) failed: %s", query, user, exc)
             return []
 
     def license_slug(self, model: dict) -> Optional[str]:

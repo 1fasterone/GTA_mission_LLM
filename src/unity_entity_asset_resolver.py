@@ -256,6 +256,13 @@ def resolve_entity_assets(schema,
     unmatched: list[tuple[str, str, list[str]]] = []   # (name, kind, near misses)
     defaulted: list[tuple[str, str]] = []
     rotation: dict[tuple[str, ...], int] = {}          # candidate-set → next index
+    # Style-coherence: the FIRST successful Tier S pick's author (Sketchfab
+    # `username`) becomes "the project's artist" for every later entity —
+    # fetch_and_freeze() tries that author's own catalog before the open
+    # marketplace, so independently-sourced models don't drift into a
+    # "constructed chaos" of unrelated styles. Set once, never overwritten,
+    # even if a later entity has to fall back to a different author.
+    preferred_author: Optional[str] = None
 
     prop_fallback = all_models.get("prop") or next(iter(all_models.values()), None)
 
@@ -344,13 +351,18 @@ def resolve_entity_assets(schema,
                         and _entry_source(a, asset_root) is not None]
             if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
                 from .sketchfab_freeze import fetch_and_freeze
-                query = hint or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT))
+                # sketchfab_query (src/unity_sketchfab_translator.py's concept +
+                # shared-style-brief enrichment) wins when present; falls back
+                # to today's mechanical model_hint / strong-token derivation.
+                query = (getattr(e, "sketchfab_query", "") or hint
+                        or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT)))
                 new_entry = fetch_and_freeze(
                     query, score_fn=lambda a: _score(a, qw, kind),
                     client=sk_client, blender_cfg=sk_cfg,
                     cache_dir=sk_cfg.get("cache_dir", "Models/Sketchfab"),
                     lookups_dir=str(lookups_dir), category=kind or "prop",
-                    kind_hints=[kind], min_score=sk_min)
+                    kind_hints=[kind], min_score=sk_min,
+                    preferred_author=preferred_author)
                 if new_entry is not None:
                     sk_catalog_assets.append(new_entry)  # in-run cache: later
                                                           # entities this same
@@ -360,6 +372,8 @@ def resolve_entity_assets(schema,
                         sk_scored = [(s, new_entry)]
             if sk_scored:
                 sk_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
+                if preferred_author is None:
+                    preferred_author = sk_scored[0][1].get("author_username") or None
                 picked = _register(sk_scored)
                 if picked is not None:
                     entity_model_paths[e.name] = picked

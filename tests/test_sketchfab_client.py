@@ -104,6 +104,27 @@ def test_search_returns_results(monkeypatch):
     assert kwargs["params"]["q"] == "shoe"
 
 
+def test_search_with_user_scopes_params(monkeypatch):
+    """Verified live against the real API: `user` must be the Sketchfab
+    `username` (login handle), not `displayName` — the client just passes
+    it through as a query param, the caller is responsible for that."""
+    client = SketchfabClient({"api_token": "tok"})
+    req = _FakeRequest([_FakeResponse(data={"results": []})])
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
+    client.search("sword", user="OptiCube")
+    _, kwargs = req.calls[0]
+    assert kwargs["params"]["user"] == "OptiCube"
+
+
+def test_search_without_user_omits_param(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    req = _FakeRequest([_FakeResponse(data={"results": []})])
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
+    client.search("sword")
+    _, kwargs = req.calls[0]
+    assert "user" not in kwargs["params"]
+
+
 def test_search_swallows_non_ok_response(monkeypatch):
     client = SketchfabClient({"api_token": "tok"})
     req = _FakeRequest([_FakeResponse(ok=False)])

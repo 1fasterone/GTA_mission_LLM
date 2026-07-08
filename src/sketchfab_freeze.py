@@ -74,13 +74,23 @@ def _attribution_text(model: dict, license_slug: str) -> str:
     return f'"[{name}]({url})" by {by} is licensed under {label}.'
 
 
+def _rank(results: list[dict], score_fn: Callable[[dict], float],
+         kind_hints: list[str], min_score: float) -> list[tuple[float, dict]]:
+    """Score + threshold-filter raw Sketchfab search results against the
+    caller's score_fn. Shared by both the author-scoped and global search
+    passes in _fetch_and_freeze_inner so they rank identically."""
+    scored = [(score_fn(_synthetic_entry(m, kind_hints)), m) for m in results]
+    return [(s, m) for s, m in scored if s >= min_score]
+
+
 def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      client: SketchfabClient, blender_cfg: Optional[dict] = None,
                      cache_dir: Path | str = "Models/Sketchfab",
                      lookups_dir: str = "lookups",
                      category: str = "prop",
                      kind_hints: Iterable[str] = (),
-                     min_score: float = 0.0) -> Optional[dict]:
+                     min_score: float = 0.0,
+                     preferred_author: Optional[str] = None) -> Optional[dict]:
     """Search Sketchfab for `query`, rank license-compliant hits with the
     caller-supplied `score_fn`, download + convert the best one, freeze it
     into lookups/unity/sketchfab_catalog.json, and return the new catalog
@@ -88,12 +98,20 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
     per-entity scorer (e.g. `lambda a: _score(a, qw, kind)`), so Sketchfab
     candidates are ranked with the exact same weighted-keyword logic as
     Kenney catalog entries — this function does no ranking of its own.
+
+    `preferred_author` (a Sketchfab `username`, not `displayName`) tries that
+    one author's own catalog FIRST, falling back to the open marketplace only
+    if nothing of theirs clears `min_score` — style-coherent sourcing: once
+    one good model is found for a project, later entities prefer the SAME
+    artist's other uploads instead of each independently landing on a
+    different, stylistically unrelated author ("constructed chaos").
     """
     try:
         return _fetch_and_freeze_inner(
             query, score_fn, client=client, blender_cfg=blender_cfg,
             cache_dir=Path(cache_dir), lookups_dir=lookups_dir,
-            category=category, kind_hints=list(kind_hints), min_score=min_score)
+            category=category, kind_hints=list(kind_hints), min_score=min_score,
+            preferred_author=preferred_author)
     except Exception as exc:  # noqa: BLE001 — must never propagate to the resolver
         log.debug("sketchfab fetch_and_freeze(%r) failed: %s", query, exc)
         return None
@@ -102,18 +120,25 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
 def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                             client: SketchfabClient, blender_cfg: Optional[dict],
                             cache_dir: Path, lookups_dir: str, category: str,
-                            kind_hints: list[str], min_score: float) -> Optional[dict]:
+                            kind_hints: list[str], min_score: float,
+                            preferred_author: Optional[str] = None) -> Optional[dict]:
     if not client.available():
         return None
 
-    results = client.filter_licensed(client.search(query))
-    if not results:
-        return None
+    candidates: list[tuple[float, dict]] = []
+    if preferred_author:
+        author_results = client.filter_licensed(
+            client.search(query, user=preferred_author))
+        candidates = _rank(author_results, score_fn, kind_hints, min_score)
 
-    candidates = [(score_fn(_synthetic_entry(m, kind_hints)), m) for m in results]
-    candidates = [(s, m) for s, m in candidates if s >= min_score]
     if not candidates:
-        return None
+        results = client.filter_licensed(client.search(query))
+        if not results:
+            return None
+        candidates = _rank(results, score_fn, kind_hints, min_score)
+        if not candidates:
+            return None
+
     candidates.sort(key=lambda sm: (-sm[0], sm[1].get("uid", "")))
     _, model = candidates[0]
 
@@ -173,6 +198,9 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                          or f"https://sketchfab.com/3d-models/{uid}",
         "license": license_slug,
         "author": user.get("displayName") or user.get("username") or "",
+        # The actual searchable handle (SketchfabClient.search(user=...)) —
+        # distinct from the human-readable "author" (displayName) above.
+        "author_username": user.get("username") or "",
         "author_url": user.get("profileUrl") or "",
         "attribution": _attribution_text(model, license_slug),
         "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
