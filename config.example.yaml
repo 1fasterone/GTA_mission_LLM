@@ -79,8 +79,9 @@ sketchfab:
                                   # env var always wins over this
   base_url: https://api.sketchfab.com/v3
   timeout: 30                    # search / get_download_urls — small JSON calls
-  download_timeout: 120          # the archive fetch itself — photogrammetry "raw
-                                  # scan" uploads can run 25-40MB+
+  download_timeout: 240          # the archive fetch itself — transfer speed to
+                                  # Sketchfab's S3 bucket is variable (measured
+                                  # 25MB in ~31s, 70MB in ~102s minutes apart)
   accepted_licenses: ['cc0', 'by', 'by-sa', 'by-nd']   # Sketchfab v3 license slugs
   auto_fetch: false              # false = `python main.py sketchfab-fetch` pre-populates
                                   #         the cache manually; resolver stays a pure lookup.

@@ -78,10 +78,13 @@ class SketchfabClient:
         # Separate, longer timeout for the actual archive fetch in
         # download_archive() — search/download-urls are small JSON calls that
         # finish in ~1s, but the signed archive itself can be tens of MB
-        # (photogrammetry "raw scan" uploads run 25-40MB+) and 30s cuts it
-        # close enough to flake in practice (measured: a 25MB archive took
-        # ~31s against a 30s budget).
-        self.download_timeout = float(cfg.get("download_timeout", 120))
+        # (photogrammetry "raw scan" uploads run 25-40MB+) and transfer speed
+        # to Sketchfab's S3 bucket is noticeably variable in practice:
+        # measured a 25MB archive take ~31s, then a 70MB archive take ~102s
+        # (a ~0.7 MB/s rate) on the SAME connection minutes apart. This is a
+        # one-shot offline freeze step, not a hot path — err generous rather
+        # than flake on a slow-network day.
+        self.download_timeout = float(cfg.get("download_timeout", 240))
         self.accepted_licenses = frozenset(
             s.lower() for s in (cfg.get("accepted_licenses") or DEFAULT_ACCEPTED_LICENSES))
 
