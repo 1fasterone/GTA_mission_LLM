@@ -33,6 +33,12 @@ DEFAULT_SPRITE_ROOTS = (
 SPRITE_FORMATS = ("png",)
 CATALOG_RELPATH = Path("unity") / "asset_catalog.json"
 CURATED_RELPATH = Path("unity") / "kenney_catalog.json"
+# Frozen Sketchfab picks (src/sketchfab_freeze.py writes this) — merged into
+# the "assets" list by load_catalog(), never scanned from disk here. Kept in
+# its own file so a Sketchfab-less checkout's asset_catalog.json stays
+# byte-identical to today, and resetting the Sketchfab cache is a single-file
+# delete.
+SKETCHFAB_RELPATH = Path("unity") / "sketchfab_catalog.json"
 
 # Directories that never contain spawnable scene models: shared textures,
 # animation clip libraries, and the static default pack (already covered by
@@ -451,6 +457,7 @@ def derive_entry(path: Path, root: Path) -> dict:
         "root": root.as_posix(),
         "format": path.suffix.lstrip(".").lower(),
         "pack": _pack_for_root(root),
+        "source": "kenney",
         "category": category,
         "description": f"{' '.join(tokens)} — {category} model",
         "keywords": keywords,
@@ -494,6 +501,7 @@ def derive_sprite_entry(path: Path, root: Path) -> dict:
         "root": root.as_posix(),
         "format": path.suffix.lstrip(".").lower(),
         "pack": _pack_for_root(root),
+        "source": "kenney",
         "category": category,
         "description": f"{' '.join(tokens)} — 2D {category} sprite",
         "keywords": keywords,
@@ -598,15 +606,78 @@ def is_stale(catalog: dict, out_path: Path) -> bool:
 
 
 def load_catalog(lookups_dir: str = "lookups") -> dict:
-    """Read the generated catalog; falls back to the curated kenney catalog
-    (whose entries share the same shape) so old checkouts keep working."""
+    """Read the generated catalog (falling back to the curated kenney catalog,
+    whose entries share the same shape, so old checkouts keep working), then
+    merge in the frozen Sketchfab partition if one exists.
+
+    The Sketchfab merge is additive-only: entries loaded from asset_catalog.json
+    / kenney_catalog.json are tagged source="kenney" when the field is absent
+    (pre-existing catalogs predate the `source` key), and sketchfab_catalog.json
+    entries (already tagged source="sketchfab" by write_sketchfab_entry) are
+    appended. `vocabulary` is deliberately left untouched by the merge — it
+    feeds the LLM schema-fill prompt (see asset_vocabulary()) and stays scoped
+    to the stable, pre-generated Kenney vocabulary so per-project live-fetched
+    content never churns that prompt.
+    """
+    base: dict = {}
     for rel in (CATALOG_RELPATH, CURATED_RELPATH):
         path = Path(lookups_dir) / rel
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            base = json.loads(path.read_text(encoding="utf-8"))
+            break
         except (FileNotFoundError, json.JSONDecodeError):
             continue
-    return {}
+
+    sk_entries: list[dict] = []
+    sk_path = Path(lookups_dir) / SKETCHFAB_RELPATH
+    try:
+        sk = json.loads(sk_path.read_text(encoding="utf-8"))
+        sk_entries = list(sk.get("entries", []))
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    # Neither file exists — preserve the pre-Sketchfab contract of returning
+    # {} exactly (callers/tests treat that as "no catalog", not "empty one").
+    if not base and not sk_entries:
+        return {}
+
+    assets = list(base.get("assets", []))
+    for a in assets:
+        a.setdefault("source", "kenney")
+    assets.extend(sk_entries)
+
+    base["assets"] = assets
+    return base
+
+
+def write_sketchfab_entry(entry: dict, out_path: Path) -> dict:
+    """Append (or replace, keyed by sketchfab_uid) one frozen Sketchfab pick
+    into the on-disk sketchfab_catalog.json, and return the full catalog dict
+    that was written.
+
+    Read-merge-write, not a blind append: re-fetching the same Sketchfab model
+    (same `sketchfab_uid`) updates its entry in place instead of duplicating
+    it. Serialized with the same byte-idempotent discipline as catalog_json()
+    (sort_keys, no ambient timestamps beyond the entry's own `fetched_at`) so
+    running the same fetch twice in a row produces identical bytes.
+    """
+    try:
+        data = json.loads(out_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {"version": CATALOG_VERSION, "entries": []}
+
+    entries = [e for e in data.get("entries", [])
+              if e.get("sketchfab_uid") != entry.get("sketchfab_uid")]
+    entries.append(entry)
+    entries.sort(key=lambda e: e.get("sketchfab_uid", ""))
+    data["entries"] = entries
+    data["version"] = CATALOG_VERSION
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n",
+        encoding="utf-8")
+    return data
 
 
 def asset_vocabulary(lookups_dir: str = "lookups") -> str:

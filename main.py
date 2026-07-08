@@ -90,6 +90,7 @@ import typer
 import yaml
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.table import Table
 
 # Render rich output (Panels use Unicode box-drawing) safely when stdout is a
 # Windows cp1252 pipe — same guard as blender_cli.py.
@@ -437,10 +438,11 @@ def unity_validate(
     )
     output_dir = pipe_cfg.get("unity_output_dir", "output/unity")
     _asset_cfg = cfg.get("assets", {}) or {}
+    _sketchfab_cfg = cfg.get("sketchfab", {}) or {}
     root, count = gen.write(schema, deps, output_dir,
                             model_overrides=model_overrides or None,
                             strict_assets=bool(_asset_cfg.get("strict", True)),
-                            asset_cfg=_asset_cfg)
+                            asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg)
     # Write schema sidecar so unity-model --unity-project can find and re-inject models.
     try:
         (root / f"{schema.project_name}.schema.json").write_text(
@@ -567,6 +569,96 @@ def unity_catalog(
         return
     write_catalog(catalog, out_path)
     console.print(f"[green]Written[/] → {out_path}")
+
+
+@app.command("sketchfab-fetch")
+def sketchfab_fetch(
+    query:      str  = typer.Argument(..., help="Concept to search, e.g. 'red high heel shoe'"),
+    config:     str  = typer.Option("config.yaml", "--config", "-c"),
+    lookups:    str  = typer.Option("lookups", "--lookups"),
+    category:   str  = typer.Option("prop", "--category",
+                                    help="Catalog category / entity kind for the pick"),
+    kind_hints: str  = typer.Option("", "--kind-hints",
+                                    help="Comma-separated entity kinds this asset should "
+                                         "serve (defaults to --category)"),
+    limit:      int  = typer.Option(24, "--limit", help="Search results to consider"),
+    dry_run:    bool = typer.Option(False, "--dry-run",
+                                    help="Search + rank only — no download/convert/write"),
+) -> None:
+    """Manually pre-fetch a Sketchfab model into the frozen cache/catalog.
+
+    This is the `sketchfab.auto_fetch: false` workflow: populate
+    lookups/unity/sketchfab_catalog.json ahead of time for concepts you care
+    about, same shape as `unity-catalog` — the resolver only ever reads the
+    frozen result at generation time, never the network.
+
+    \b
+    Examples:
+      python main.py sketchfab-fetch "corsair fighter plane" --category vehicle
+      python main.py sketchfab-fetch "red high heel shoe" --dry-run
+    """
+    from src.sketchfab_client import SketchfabClient
+    from src.unity_asset_catalog import tokenize
+
+    sk_cfg = (_cfg(config).get("sketchfab", {}) or {})
+    client = SketchfabClient(sk_cfg)
+    if not client.available():
+        console.print("[red]Error:[/] no Sketchfab API token — set sketchfab.api_token "
+                      "in config.yaml or the SKETCHFAB_API_TOKEN env var")
+        raise typer.Exit(1)
+
+    hints = [h.strip() for h in kind_hints.split(",") if h.strip()] or [category]
+
+    results = client.filter_licensed(client.search(query, count=limit))
+    if not results:
+        console.print(f"[red]Error:[/] no license-compliant Sketchfab results for {query!r} "
+                      f"(accepted: {', '.join(sorted(client.accepted_licenses))})")
+        raise typer.Exit(1)
+
+    def _rank_key(m: dict) -> float:
+        """Ranks RAW Sketchfab search-result dicts (has `name`) for the
+        display table below — distinct from `_score_fn`, which scores the
+        catalog-entry-shaped dicts fetch_and_freeze() actually calls its
+        score_fn with (has `keywords`, not `name`)."""
+        kw = set(tokenize(m.get("name") or ""))
+        return float(len(kw & set(tokenize(query))))
+
+    def _score_fn(entry: dict) -> float:
+        """The score_fn fetch_and_freeze() calls — receives a synthetic,
+        catalog-entry-shaped dict (src.sketchfab_freeze._synthetic_entry),
+        not the raw search-result dict `_rank_key` above ranks."""
+        kw = set(entry.get("keywords") or [])
+        return float(len(kw & set(tokenize(query))))
+
+    ranked = sorted(results, key=_rank_key, reverse=True)
+    table = Table(title=f"Sketchfab — {len(ranked)} candidate(s) for {query!r}")
+    table.add_column("Name", style="cyan")
+    table.add_column("License", style="magenta")
+    table.add_column("Author")
+    table.add_column("UID", style="dim")
+    for m in ranked[:10]:
+        user = m.get("user") or {}
+        table.add_row(m.get("name", "?"), client.license_slug(m) or "?",
+                     user.get("displayName") or user.get("username") or "?",
+                     m.get("uid", "?"))
+    console.print(table)
+
+    if dry_run:
+        return
+
+    from src.sketchfab_freeze import fetch_and_freeze
+    entry = fetch_and_freeze(
+        query, score_fn=_score_fn, client=client, blender_cfg=sk_cfg,
+        cache_dir=sk_cfg.get("cache_dir", "Models/Sketchfab"),
+        lookups_dir=lookups, category=category, kind_hints=hints,
+        min_score=float(sk_cfg.get("min_match_score", 0.0)))
+    if entry is None:
+        console.print("[red]Error:[/] fetch/convert failed — check that Blender is "
+                      "installed (blender.blender_path in config.yaml) and reachable")
+        raise typer.Exit(1)
+    console.print(f"[green]Written[/] → {entry['relpath']} "
+                  f"(license={entry['license']}, author={entry['author']!r}) "
+                  f"→ {Path(lookups) / 'unity' / 'sketchfab_catalog.json'}")
 
 
 # ── Unity micro-generator subcommands ─────────────────────────────────────────

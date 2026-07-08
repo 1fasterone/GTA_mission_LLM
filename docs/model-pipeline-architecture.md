@@ -89,3 +89,43 @@ line as audio**, NOT inside the deterministic compiler.
 - Apply the "one rig class at a time, determinism-and-mutation test per class" discipline
   to rig archetypes (same generalization test pattern as the vstack fork, applied to
   rigs instead of primitives).
+
+## Sketchfab (found, not generated)
+
+Same frozen-artifact contract as Decision 4, applied to a **discovered** mesh
+instead of a **generated** one. The "instrument" is a live Sketchfab search +
+download rather than a diffusion/mesh-gen model, but the determinism boundary
+is identical: search ranking, third-party availability, and rate limits make
+the fetch itself nondeterministic, so it never runs inside the deterministic
+resolver — it runs once, its result is **frozen** to
+`lookups/unity/sketchfab_catalog.json`, and the resolver
+(`src/unity_entity_asset_resolver.py`) only ever reads that frozen file.
+
+```
+[ nondeterministic ]                       | frozen |     [ deterministic resolver ]
+ Sketchfab search + license filter          |        |  read sketchfab_catalog.json —
+ + download + Blender headless GLB→FBX      ┼─ FBX + ┼─  pure lookup, no network, no LLM,
+ (network, third-party ranking)             |  .json |  exactly like asset_catalog.json
+```
+
+Two differences from the generative-mesh case worth calling out:
+
+- **No retopo/rig step.** Sketchfab meshes are already artist-authored (unlike
+  a diffusion mesh, which needs cleanup to be usable) — the Blender conversion
+  (`src/blender/sketchfab_convert.py`) is a pure format-shift, import glTF →
+  export FBX, nothing else. This also keeps the CC-BY-ND "derivative work"
+  question as narrow as possible: format conversion alone, no geometry edits.
+- **The instrument can run from two places.** The safe, always-deterministic
+  path is a manual pre-fetch (`python main.py sketchfab-fetch`), same shape as
+  `unity-catalog` — populate the frozen cache ahead of time, the resolver never
+  touches the network. `sketchfab.auto_fetch: true` is a looser, opt-in mode:
+  the resolver triggers the fetch itself on a cache miss, *from inside*
+  `resolve_entity_assets()`. That first resolution of a new concept is
+  genuinely network/ranking-dependent — nothing in Steps 4-6 has ever been
+  network-dependent before this. It's made **idempotent-after-first-use**:
+  the fetch freezes its result to disk immediately, so the very next
+  resolution of the same entity (including `write()`'s second
+  `_resolve_all_models()` call in the same run) is a pure cache hit. Treat
+  `auto_fetch: true` as accepting that one-notch looser guarantee in exchange
+  for not having to pre-populate the cache by hand — `auto_fetch: false`
+  (the shipped default) keeps the resolver a pure, network-free lookup, full stop.

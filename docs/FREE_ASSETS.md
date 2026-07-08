@@ -7,7 +7,9 @@ generated catalog of the whole on-disk library:
 
 ```
 Models/…  ──python main.py unity-catalog──▶  lookups/unity/asset_catalog.json
-   asset_catalog.json ──unity_entity_asset_resolver.py──▶ entity_model_paths
+   asset_catalog.json ─┐
+   sketchfab_catalog.json (optional, frozen Sketchfab picks) ─┤
+                        ├─unity_entity_asset_resolver.py──▶ entity_model_paths
    entity_model_paths ──EntitySpawner/ModelSwap──▶ spawned scene objects
 ```
 
@@ -16,14 +18,44 @@ Models/…  ──python main.py unity-catalog──▶  lookups/unity/asset_cat
   each filename, and merges curated metadata from `kenney_catalog.json`.
   **Re-run it after adding a pack**; `--check` is the CI staleness gate.
 - Per entity, resolution tiers are: explicit kind in
-  `lookups/unity/default_models.json` → semantic match against the full
-  catalog (entity name + kind + `model_hint`) → strict hard-fail
-  (config `assets.strict`, the FAIL-FAST doctrine) or a logged default-prop
-  fallback when strict is off.
+  `lookups/unity/default_models.json` → **Sketchfab Tier S** (config-gated,
+  see below) → semantic match against the full Kenney catalog (entity name +
+  kind + `model_hint`) → strict hard-fail (config `assets.strict`, the
+  FAIL-FAST doctrine) or a logged default-prop fallback when strict is off.
 - Same-kind groups deterministically rotate among the top matches, so a
   forest isn't twelve copies of one tree.
 - Kenney texture folders are copied beside the imported models so materials
   don't come in blank.
+
+### Sketchfab — live search, frozen before use
+
+Set `sketchfab.enabled: true` in config.yaml to let entity resolution try
+[Sketchfab](https://sketchfab.com) *before* the Kenney catalog — real
+artist-made models matching an entity's exact concept, not the nearest generic
+Kenney prop. Kenney stays the offline fallback: with `sketchfab.enabled: false`
+(the default) nothing changes.
+
+Search/download/convert is nondeterministic (network, third-party ranking), so
+it never runs live inside the deterministic compiler — every Sketchfab pick is
+**frozen** to `lookups/unity/sketchfab_catalog.json` first (see
+[model-pipeline-architecture.md](model-pipeline-architecture.md)), and the
+resolver only ever reads that frozen file, exactly like `asset_catalog.json`.
+Two ways to populate it:
+
+```
+sketchfab.auto_fetch: false   # default — populate the cache yourself:
+python main.py sketchfab-fetch "corsair fighter plane" --category vehicle
+
+sketchfab.auto_fetch: true    # opt-in — resolver fetches live on a cache
+                               # miss and freezes the result; the SAME schema
+                               # resolved again is a pure cache hit.
+```
+
+Accepted licenses (`sketchfab.accepted_licenses`, default `cc0, by, by-sa,
+by-nd`) — anything beyond CC0 gets a `CREDITS.md` written into the generated
+project automatically. Requires a Sketchfab API token: set the
+`SKETCHFAB_API_TOKEN` environment variable (preferred — keeps a personal
+token out of the tracked config.yaml) or `sketchfab.api_token`.
 
 Every generated Unity project also ships with an empty
 `Assets/_UserAssets/` folder. Drop your own meshes, textures, animations,
@@ -72,7 +104,7 @@ shipping commercially.
 
 | Source                                          | What you'll find                              | License        |
 |-------------------------------------------------|-----------------------------------------------|----------------|
-| [Sketchfab](https://sketchfab.com/3d-models?features=downloadable&licenses=72360a83a2ce4dd1b8d63ce29ddca6c4) | Massive 3D library. Filter by CC0 / Free Standard. | Mixed (filter) |
+| [Sketchfab](https://sketchfab.com/3d-models?features=downloadable&licenses=72360a83a2ce4dd1b8d63ce29ddca6c4) | Massive 3D library. Filter by CC0 / Free Standard — or let the pipeline search it automatically, see "Sketchfab — live search, frozen before use" above. | Mixed (filter) |
 | [OpenGameArt](https://opengameart.org)          | Old-school 2D + 3D bundles, classic free assets. | Mixed (filter) |
 | [Itch.io free asset packs](https://itch.io/game-assets/free) | Curated indie packs.            | Mixed (per-pack) |
 | [Unity Asset Store — free](https://assetstore.unity.com/?free=true) | Massive free section. Pre-imported as Unity packages. | Custom (per-asset) |

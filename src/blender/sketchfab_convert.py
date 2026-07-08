@@ -1,0 +1,140 @@
+"""
+Sketchfab glTF/GLB -> FBX conversion — headless Blender subprocess.
+
+Deliberately does the minimum: import the artist-authored mesh, export it
+straight back out as FBX, unpack embedded textures to a sibling Textures/
+folder. No retopology / decimation / mesh cleanup — Sketchfab meshes are
+already artist-authored (unlike the generative-mesh pipeline in job_manager.py,
+which genuinely needs cleanup), and staying a pure format-shift keeps the
+CC-BY-ND "derivative work" question as narrow as possible.
+
+Invoked the same way src/blender/job_manager.py runs Blender headless: write a
+generated bpy script to disk, `blender --background --factory-startup --python
+<script>`, read back a JSON result the script's tail writes. Missing Blender /
+timeout / nonzero exit / no importable mesh -> None, so callers
+(src/sketchfab_freeze.py) fall through to the Kenney catalog cleanly — this is
+also how CI (no Blender installed) degrades safely, same as BlenderJobManager's
+existing stub path.
+
+The Textures/ folder sits as a SIBLING of the FBX on purpose:
+unity_entity_asset_resolver.texture_dirs_for() already walks every parent of a
+ResolvedModel's source path looking for a directory literally named
+"Textures" — this layout needs zero changes to that function.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from typing import Optional
+
+from .locator import find_blender
+from .normalize import normalize_fbx
+
+# NOTE: doubled braces are literal Python dict/f-string braces in the emitted
+# script; single braces are str.format() placeholders (same convention as
+# mcp_backend.py's _TEMPLATE).
+_TEMPLATE = '''
+import bpy, json, os
+
+GLTF_IN = r"{gltf_in}"
+FBX_OUT = r"{fbx_out}"
+TEX_DIR = r"{tex_dir}"
+
+result = {{"ok": False}}
+try:
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+    if not hasattr(bpy.ops.import_scene, "gltf"):
+        bpy.ops.preferences.addon_enable(module="io_scene_gltf2")
+    bpy.ops.import_scene.gltf(filepath=GLTF_IN)
+
+    objs = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    if not objs:
+        raise RuntimeError("no mesh objects imported")
+
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in objs:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = objs[0]
+
+    os.makedirs(os.path.dirname(FBX_OUT), exist_ok=True)
+    if not hasattr(bpy.ops.export_scene, "fbx"):
+        bpy.ops.preferences.addon_enable(module="io_scene_fbx")
+    bpy.ops.export_scene.fbx(
+        filepath=FBX_OUT, use_selection=True,
+        apply_unit_scale=True, apply_scale_options="FBX_SCALE_ALL",
+        axis_forward="-Z", axis_up="Y", bake_space_transform=True,
+        add_leaf_bones=False, mesh_smooth_type="FACE",
+        bake_anim=False,
+    )
+
+    os.makedirs(TEX_DIR, exist_ok=True)
+    n_tex = 0
+    for img in bpy.data.images:
+        if img.name == "Render Result" or not img.has_data:
+            continue
+        base = bpy.path.basename(img.filepath) or (img.name + ".png")
+        dest = os.path.join(TEX_DIR, base)
+        try:
+            img.filepath_raw = dest
+            img.file_format = "PNG"
+            img.save()
+            n_tex += 1
+        except Exception:
+            pass
+
+    result = {{"ok": True, "fbx": FBX_OUT, "textures": n_tex}}
+except Exception as exc:
+    result = {{"ok": False, "error": str(exc)}}
+
+with open(r"{result_path}", "w", encoding="utf-8") as f:
+    json.dump(result, f)
+'''
+
+
+def convert_gltf_to_fbx(gltf_path: Path, fbx_out: Path, textures_dir: Path, *,
+                        blender_cfg: Optional[dict] = None,
+                        timeout: float = 300) -> Optional[Path]:
+    """Convert a Sketchfab-downloaded glTF/GLB to FBX + a sibling Textures/
+    folder, via headless Blender. Returns fbx_out on success, None on any
+    failure (Blender missing, timeout, nonzero exit, no importable mesh) —
+    callers must treat None as a clean miss, not an error."""
+    cfg = blender_cfg or {}
+    inst = find_blender(cfg.get("blender_path"))
+    if inst is None:
+        return None
+
+    fbx_out = Path(fbx_out)
+    textures_dir = Path(textures_dir)
+    fbx_out.parent.mkdir(parents=True, exist_ok=True)
+    result_path = fbx_out.with_suffix(".convert.json")
+    script_path = fbx_out.with_suffix(".convert.py")
+    if result_path.exists():
+        result_path.unlink()
+
+    script_path.write_text(_TEMPLATE.format(
+        gltf_in=str(Path(gltf_path).resolve()).replace("\\", "/"),
+        fbx_out=str(fbx_out.resolve()).replace("\\", "/"),
+        tex_dir=str(textures_dir.resolve()).replace("\\", "/"),
+        result_path=str(result_path.resolve()).replace("\\", "/"),
+    ), encoding="utf-8")
+
+    cmd = [str(inst.path), "--background", "--factory-startup",
+           "--python", str(script_path)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+    if not result_path.exists():
+        return None
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not data.get("ok") or not fbx_out.is_file():
+        return None
+
+    normalize_fbx(fbx_out)
+    return fbx_out

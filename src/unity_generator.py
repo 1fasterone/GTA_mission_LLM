@@ -23,6 +23,30 @@ from .micro.code_fields import lint_extensible
 _log = logging.getLogger(__name__)
 
 
+def _render_credits_md(used_models: dict) -> str | None:
+    """CREDITS.md content for every non-CC0 Sketchfab pick in `used_models`,
+    or None if there are none (CC0 needs no attribution, and Kenney/default
+    picks carry no license obligation this pipeline tracks).
+
+    Pure string formatting over the already-resolved `used_models` — no
+    network, deterministic given its input — so it's safe to call from inside
+    generate()/write() without touching the determinism boundary.
+    """
+    credited = sorted(
+        (m for m in used_models.values()
+         if m.source == "sketchfab" and (m.license or "cc0") != "cc0"),
+        key=lambda m: m.attribution or "")
+    if not credited:
+        return None
+    lines = ["# Credits", "",
+             "Third-party assets used in this project, per their license terms:", ""]
+    for m in credited:
+        lines.append(f"- {m.attribution}" if m.attribution
+                     else f"- {m.dest_rel} ({m.license})")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> dict:
     """Inject Blender-built FBX paths into the resolved model catalog.
 
@@ -1477,7 +1501,8 @@ class UnityProjectGenerator:
                             model_overrides: dict[str, str] | None,
                             composed_units: list | None,
                             strict_assets: bool,
-                            asset_cfg: dict | None) -> tuple[dict, dict[str, str]]:
+                            asset_cfg: dict | None,
+                            sketchfab_cfg: dict | None = None) -> tuple[dict, dict[str, str]]:
         """Resolve every model the project uses: default pack → Blender
         overrides → per-entity catalog picks → rig downgrades.
 
@@ -1501,7 +1526,8 @@ class UnityProjectGenerator:
         # default kind "prop" no longer funnels everything to one model).
         entity_model_paths = resolve_entity_assets(
             schema, used_models, all_models,
-            lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=strict_assets)
+            lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=strict_assets,
+            sketchfab_cfg=sketchfab_cfg)
 
         # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
         # two independent cases:
@@ -1547,7 +1573,8 @@ class UnityProjectGenerator:
                  model_source_dir: str | None = None,
                  model_overrides: dict[str, str] | None = None,
                  strict_assets: bool = False,
-                 asset_cfg: dict | None = None) -> dict[str, str]:
+                 asset_cfg: dict | None = None,
+                 sketchfab_cfg: dict | None = None) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
         Caller writes the dict to disk.
@@ -1618,8 +1645,14 @@ class UnityProjectGenerator:
         # ── Model resolution (default pack + per-entity catalog picks) ────────
         used_models, entity_model_paths = self._resolve_all_models(
             schema, lookups_dir, model_source_dir, model_overrides,
-            composed_units, strict_assets, asset_cfg)
+            composed_units, strict_assets, asset_cfg, sketchfab_cfg)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
+
+        # Attribution for non-CC0 Sketchfab picks (pure string formatting over
+        # used_models — no network, deterministic given the resolution above).
+        _credits = _render_credits_md(used_models)
+        if _credits is not None:
+            files[f"{pn}/CREDITS.md"] = _credits
 
         # Entities routed to schema procedural meshes build via MeshBuilder at
         # spawn time — make sure the class exists even when the LLM authored
@@ -2185,7 +2218,8 @@ class UnityProjectGenerator:
               model_source_dir: str | None = None,
               model_overrides: dict[str, str] | None = None,
               strict_assets: bool = False,
-              asset_cfg: dict | None = None) -> tuple[Path, int]:
+              asset_cfg: dict | None = None,
+              sketchfab_cfg: dict | None = None) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
         files = self.generate(schema, manifest_deps,
                               lookups_dir=lookups_dir,
@@ -2194,7 +2228,8 @@ class UnityProjectGenerator:
                               model_source_dir=model_source_dir,
                               model_overrides=model_overrides,
                               strict_assets=strict_assets,
-                              asset_cfg=asset_cfg)
+                              asset_cfg=asset_cfg,
+                              sketchfab_cfg=sketchfab_cfg)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.
@@ -2221,7 +2256,7 @@ class UnityProjectGenerator:
         # copied here always line up (including rig downgrades that drop clips).
         used_models, _ = self._resolve_all_models(
             schema, lookups_dir, model_source_dir, model_overrides,
-            composed_units, strict_assets, asset_cfg)
+            composed_units, strict_assets, asset_cfg, sketchfab_cfg)
         n_models = 0
         for m in used_models.values():
             for item in [m] + list(m.clips.values()):

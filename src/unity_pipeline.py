@@ -728,12 +728,13 @@ class UnityPipeline:
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
         _asset_cfg = self.config.get("assets", {}) or {}
+        _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
         try:
             project_root, file_count = self.generator.write(
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
-                asset_cfg=_asset_cfg)
+                asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg)
         except ValueError:
             # FAIL-FAST asset doctrine tripped AFTER the expensive LLM stages —
             # save the filled schema so the run isn't lost: edit the entity

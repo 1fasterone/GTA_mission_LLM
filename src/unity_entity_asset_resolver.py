@@ -37,6 +37,7 @@ _log = logging.getLogger(__name__)
 # secondary-copy prefix strip (Assets/<root>/<Category>/<file>) working.
 _RES_ROOT = "Models/Kenney"
 _SPRITE_RES_ROOT = "Sprites/Kenney"
+_SKETCHFAB_RES_ROOT = "Models/Sketchfab"
 
 # 2D games prefer sprites over 3D models when both match an entity — a fish
 # PNG beats a marble-track FBX in a side-scroller. Applied only to entries
@@ -187,12 +188,25 @@ def resolve_entity_assets(schema,
                           all_models: dict[str, ResolvedModel],
                           lookups_dir: str = "lookups",
                           asset_cfg: Optional[dict] = None,
-                          strict: bool = False) -> dict[str, str]:
+                          strict: bool = False,
+                          sketchfab_cfg: Optional[dict] = None) -> dict[str, str]:
     """Assign a real model to every entity group.
 
     Mutates `used_models` (adds catalog picks so the existing copy/.meta/
     ModelSwap chain fires for them) and returns entity_model_paths
     {entity_name: Resources.Load path}.
+
+    `sketchfab_cfg` (config `sketchfab:` section) is None/absent/disabled by
+    default — every existing caller keeps today's Kenney-only behavior
+    byte-for-byte. When `sketchfab_cfg["enabled"]` is true, a Tier S runs
+    before the Kenney catalog tiers (see the loop below): it reads whatever
+    Sketchfab picks are already frozen in lookups/unity/sketchfab_catalog.json
+    (merged into `assets` by load_catalog), and — only if
+    `sketchfab_cfg["auto_fetch"]` is also true — triggers a live search on a
+    cache miss via src/sketchfab_freeze.py, freezing the result to disk before
+    using it. That live fetch is the one deliberate, documented exception to
+    this module otherwise being a pure, network-free lookup (see
+    docs/model-pipeline-architecture.md's Sketchfab section).
 
     Raises ValueError in strict mode when an entity matches nothing real.
     """
@@ -201,6 +215,13 @@ def resolve_entity_assets(schema,
     top_k = max(1, int(cfg.get("variety_top_k", _DEFAULT_TOP_K)))
     asset_root = cfg.get("asset_root")  # optional override for entry roots
 
+    sk_cfg = sketchfab_cfg or {}
+    sk_enabled = bool(sk_cfg.get("enabled"))
+    sk_client = None
+    if sk_enabled:
+        from .sketchfab_client import SketchfabClient
+        sk_client = SketchfabClient(sk_cfg)
+
     # Format gate by game type: 2D games may use sprites (png) and models;
     # everything else is models-only — a flat PNG must never be picked as a
     # 3D scene object.
@@ -208,8 +229,17 @@ def resolve_entity_assets(schema,
     allowed_formats = {"fbx", "png"} if is_2d else {"fbx"}
 
     catalog = load_catalog(str(lookups_dir))
-    assets = [a for a in catalog.get("assets", []) if a.get("filename")
-              and a.get("format", "fbx") in allowed_formats]
+    _all_assets = [a for a in catalog.get("assets", []) if a.get("filename")
+                  and a.get("format", "fbx") in allowed_formats]
+    # Kenney's tiers (2a/2b/2c, below) must never see Sketchfab-sourced
+    # entries — load_catalog() merges sketchfab_catalog.json into the SAME
+    # "assets" list, so without this split a frozen Sketchfab pick could win
+    # a Kenney-tier match even with sketchfab.enabled: false, silently
+    # breaking the "disabled = today's behavior, untouched" guarantee.
+    # Sketchfab entries live only in `sk_catalog_assets`, consumed solely by
+    # Tier S below.
+    assets = [a for a in _all_assets if a.get("source") != "sketchfab"]
+    sk_catalog_assets = [a for a in _all_assets if a.get("source") == "sketchfab"]
 
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
@@ -250,7 +280,12 @@ def resolve_entity_assets(schema,
         src = _entry_source(pick, asset_root)
         category = (pick.get("category") or "prop").capitalize()
         is_sprite = pick.get("format") == "png"
-        res_root = _SPRITE_RES_ROOT if is_sprite else _RES_ROOT
+        if pick.get("source") == "sketchfab":
+            res_root = _SKETCHFAB_RES_ROOT
+        elif is_sprite:
+            res_root = _SPRITE_RES_ROOT
+        else:
+            res_root = _RES_ROOT
         dest_rel = f"{res_root}/{category}/{pick['filename']}"
         model_key = f"asset:{Path(pick['filename']).stem}"
         rm = used_models.get(model_key)
@@ -265,6 +300,9 @@ def resolve_entity_assets(schema,
                 # loads it as Texture2D → Sprite.Create.
                 rig="sprite" if is_sprite else "generic",
                 scale=float(pick.get("scale", 1.0) or 1.0),
+                source=pick.get("source", "kenney"),
+                license=pick.get("license"),
+                attribution=pick.get("attribution"),
             )
             used_models[model_key] = rm
         return rm.resource_path
@@ -291,6 +329,41 @@ def resolve_entity_assets(schema,
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
+
+        # ── Tier S: Sketchfab-first (config-gated; runs before Kenney tiers) ──
+        # Gated the same as the FX/skip kinds below and 2D games — Sketchfab
+        # only ever yields 3D FBX, which a 2D orthographic game has no use for.
+        # Reusing _score/_query_weights/_entry_source/_register verbatim keeps
+        # Kenney's own tiers (2a/2b/2c, below) completely unchanged — they just
+        # run only when Tier S misses, which is what "leaving Kenney as an
+        # offline option" means concretely.
+        if sk_enabled and not is_2d and kind not in _FX_KINDS and kind not in _SKIP_KINDS:
+            sk_min = float(sk_cfg.get("min_match_score", min_score))
+            sk_scored = [(s, a) for a in sk_catalog_assets
+                        if (s := _score(a, qw, kind)) >= sk_min
+                        and _entry_source(a, asset_root) is not None]
+            if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
+                from .sketchfab_freeze import fetch_and_freeze
+                query = hint or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT))
+                new_entry = fetch_and_freeze(
+                    query, score_fn=lambda a: _score(a, qw, kind),
+                    client=sk_client, blender_cfg=sk_cfg,
+                    cache_dir=sk_cfg.get("cache_dir", "Models/Sketchfab"),
+                    lookups_dir=str(lookups_dir), category=kind or "prop",
+                    kind_hints=[kind], min_score=sk_min)
+                if new_entry is not None:
+                    sk_catalog_assets.append(new_entry)  # in-run cache: later
+                                                          # entities this same
+                                                          # call can reuse it
+                    s = _score(new_entry, qw, kind)
+                    if s >= sk_min:
+                        sk_scored = [(s, new_entry)]
+            if sk_scored:
+                sk_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
+                picked = _register(sk_scored)
+                if picked is not None:
+                    entity_model_paths[e.name] = picked
+                    continue
 
         def _final_score(a: dict) -> float:
             s = _score(a, qw, kind)
