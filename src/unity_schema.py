@@ -195,6 +195,15 @@ class EntitySpec(BaseModel):
     # the group spawns a fitting real model instead of the shared default prop.
     # "default prop" is the escape hatch that keeps Models/Defaults' Prop.fbx.
     model_hint: str   = ""
+    # Live Sketchfab search query (Tier S, src/unity_entity_asset_resolver.py) —
+    # deliberately SEPARATE from model_hint, which drives literal keyword-overlap
+    # matching against Kenney's short curated tags (src/unity_asset_catalog.py);
+    # an evocative multi-word phrase reused there would dilute that scoring.
+    # Normally filled by src/unity_sketchfab_translator.py (a shared project
+    # style brief + this entity's noun phrase) so independently-sourced
+    # Sketchfab picks read as one art direction instead of "constructed chaos".
+    # Empty -> the resolver falls back to model_hint / tokenized entity name.
+    sketchfab_query: str = ""
     atoms:      list[AtomInvocation] = Field(default_factory=list)
     # placement == "path": world-space [x, y, z] points (y = elevation!). The
     # spawner lays the instances along this polyline AND emits a "Waypoints"
