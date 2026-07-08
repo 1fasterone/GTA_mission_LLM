@@ -63,6 +63,34 @@ assets:
   # forest isn't 5 copies of the same tree. Deterministic (schema order).
   variety_top_k: 5
 
+sketchfab:
+  # Live Sketchfab model search — a Tier S the resolver tries BEFORE the
+  # Kenney catalog tiers (src/unity_entity_asset_resolver.py). Frozen-artifact
+  # pattern: search/download/convert is nondeterministic, but its output is
+  # frozen to lookups/unity/sketchfab_catalog.json and read back as a plain,
+  # deterministic lookup — see docs/model-pipeline-architecture.md.
+  #
+  # Requires `pip install playwright && playwright install chromium` — a
+  # real headless Chromium is the transport (not httpx/requests): Sketchfab's
+  # API sits behind AWS WAF Bot Control that fingerprints plain HTTP clients'
+  # TLS handshake, and only an actual Chromium instance clears it.
+  enabled: false                 # master switch; false = Kenney-only, untouched
+  api_token: ''                  # DO NOT commit a real token — SKETCHFAB_API_TOKEN
+                                  # env var always wins over this
+  base_url: https://api.sketchfab.com/v3
+  timeout: 30                    # search / get_download_urls — small JSON calls
+  download_timeout: 120          # the archive fetch itself — photogrammetry "raw
+                                  # scan" uploads can run 25-40MB+
+  accepted_licenses: ['cc0', 'by', 'by-sa', 'by-nd']   # Sketchfab v3 license slugs
+  auto_fetch: false              # false = `python main.py sketchfab-fetch` pre-populates
+                                  #         the cache manually; resolver stays a pure lookup.
+                                  # true  = resolver live-fetches on a cache miss —
+                                  #         nondeterministic on the first hit for a new
+                                  #         concept, frozen/idempotent from then on.
+  min_match_score: 0.15          # same scale as assets.min_match_score
+  cache_dir: Models/Sketchfab    # converted FBX + Textures/ + manifest live here
+  blender_path: ''                # empty => reuse blender.blender_path / auto-detect
+
 blender:                           # external asset-fulfilment stage (blender_cli.py)
   blender_path: ''                 # empty => auto-detect (PATH + standard installs)
   output_dir: output/blender

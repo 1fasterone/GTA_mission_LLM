@@ -25,6 +25,13 @@ class ResolvedModel(BaseModel):
     rig:           str = "none"   # "humanoid" | "none"
     scale:         float = 1.0
     clips:         dict[str, "ResolvedModel"] = Field(default_factory=dict)
+    # Provenance — additive, defaults preserve every pre-existing caller.
+    # Populated for catalog picks (Kenney or Sketchfab) by
+    # unity_entity_asset_resolver._register(); default-pack models stay
+    # source="kenney" (no license/attribution obligation).
+    source:        str = "kenney"        # "kenney" | "sketchfab"
+    license:       Optional[str] = None  # e.g. "cc0" | "by" | "by-sa" | "by-nd"
+    attribution:   Optional[str] = None  # required-credit text for non-CC0 picks
 
 
 def resolve_default_models(lookups_dir: str = "lookups",

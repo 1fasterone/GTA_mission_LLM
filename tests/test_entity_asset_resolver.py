@@ -540,3 +540,134 @@ def test_concept_layer_absent_reverts_to_global_behavior(tmp_path):
         _schema([EntitySpec(name="Wyverns", kind="beast", count=1)]),
         {}, all_models, lookups_dir=str(lookups), strict=False)
     assert paths["Wyverns"] == "Models/Default/Prop/Prop"
+
+
+# ── Sketchfab Tier S (config-gated, runs before the Kenney catalog tiers) ─────
+
+def _add_sketchfab_entry(lookups: Path, tmp_path: Path, *, uid="sk1",
+                         filename="ultimate-pine-sk1.fbx",
+                         keywords=("pine", "tree", "forest"),
+                         kind_hints=("tree", "prop"), category="nature",
+                         license="cc0") -> dict:
+    sk_root = tmp_path / "sketchfab_lib"
+    sk_root.mkdir(exist_ok=True)
+    (sk_root / filename).write_bytes(b"FBX")
+    entry = {
+        "filename": filename, "relpath": filename, "root": sk_root.as_posix(),
+        "format": "fbx", "pack": "sketchfab", "source": "sketchfab",
+        "category": category, "description": "test sketchfab pick",
+        "keywords": list(keywords), "kind_hints": list(kind_hints),
+        "game_contexts": ["any"], "generic_score": 0, "scale": 1.0,
+        "curated": False, "query": "pine tree", "sketchfab_uid": uid,
+        "sketchfab_url": f"https://sketchfab.com/3d-models/{uid}",
+        "license": license, "author": "Jane Doe", "author_url": "",
+        "attribution": f'"Pine Tree" by Jane Doe is licensed under {license.upper()}.',
+        "fetched_at": "2026-01-01T00:00:00Z",
+    }
+    (lookups / "unity" / "sketchfab_catalog.json").write_text(
+        json.dumps({"version": 1, "entries": [entry]}), encoding="utf-8")
+    return entry
+
+
+def test_sketchfab_disabled_is_byte_identical_to_today(env, tmp_path):
+    """The single most important regression guard for this feature: a
+    frozen Sketchfab entry sitting in the cache must have ZERO effect unless
+    sketchfab.enabled is explicitly true — absent/None/false all mean
+    'today's Kenney-only behavior, untouched'."""
+    _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+
+    for sk_cfg in (None, {}, {"enabled": False}):
+        used = {"prop": all_models["prop"]}
+        paths = resolve_entity_assets(
+            _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+            used, all_models, lookups_dir=str(env), sketchfab_cfg=sk_cfg)
+        assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_sketchfab_tier_wins_over_kenney_when_enabled(env, tmp_path):
+    """'Query first, fall back to Kenney' means Tier S wins outright when it
+    has a cached hit — it is never a mere tiebreaker against Kenney's score."""
+    entry = _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True})
+    assert paths["PineTrees"] == f"Models/Sketchfab/Nature/{entry['filename']}".rsplit(".", 1)[0]
+    assert any(k.startswith("asset:") for k in used)
+
+
+def test_sketchfab_cache_miss_falls_through_to_kenney(env, tmp_path):
+    """enabled=True but no Sketchfab entry matches this entity at all — Tier S
+    must be a silent no-op, not an error, and Kenney's tiers still run."""
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_sketchfab_auto_fetch_false_never_calls_fetch_and_freeze(env, tmp_path, monkeypatch):
+    calls = {"n": 0}
+    def _fake_fetch(*a, **kw):
+        calls["n"] += 1
+        return None
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert calls["n"] == 0
+
+
+def test_sketchfab_auto_fetch_registers_once_and_caches_across_calls(env, tmp_path, monkeypatch):
+    """Simulates write()'s double _resolve_all_models() call in one run: the
+    first resolution is the one place this feature is allowed to touch the
+    network; the second must be a pure, idempotent cache hit — zero extra
+    fetch_and_freeze calls."""
+    calls = {"n": 0}
+
+    def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
+                    lookups_dir, category, kind_hints, min_score):
+        calls["n"] += 1
+        entry = _add_sketchfab_entry(Path(lookups_dir), tmp_path, uid="live1",
+                                     filename="live-fetched-pine.fbx")
+        return entry
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    schema = _schema([EntitySpec(name="PineTrees", kind="prop", count=5)])
+    sk_cfg = {"enabled": True, "auto_fetch": True}
+
+    used1 = {"prop": all_models["prop"]}
+    paths1 = resolve_entity_assets(schema, used1, all_models,
+                                   lookups_dir=str(env), sketchfab_cfg=sk_cfg)
+    assert calls["n"] == 1
+    assert paths1["PineTrees"].startswith("Models/Sketchfab/")
+
+    # Second call, fresh used_models (as _resolve_all_models rebuilds it each
+    # invocation) but the SAME on-disk lookups dir — must be a pure cache hit.
+    used2 = {"prop": all_models["prop"]}
+    paths2 = resolve_entity_assets(schema, used2, all_models,
+                                   lookups_dir=str(env), sketchfab_cfg=sk_cfg)
+    assert calls["n"] == 1          # no second live fetch
+    assert paths2["PineTrees"] == paths1["PineTrees"]
+
+
+def test_sketchfab_fetch_failure_falls_through_cleanly(env, tmp_path, monkeypatch):
+    """fetch_and_freeze returning None (no Blender, no license match, etc.) on
+    auto_fetch must fall through to the Kenney tiers, never raise."""
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", lambda *a, **kw: None)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")

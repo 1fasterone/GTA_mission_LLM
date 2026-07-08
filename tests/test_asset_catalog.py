@@ -15,6 +15,7 @@ from src.unity_asset_catalog import (
     scan_assets,
     tokenize,
     write_catalog,
+    write_sketchfab_entry,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -203,6 +204,71 @@ def test_load_catalog_falls_back_to_curated(tmp_path):
         json.dumps({"assets": [{"filename": "x.fbx"}]}), encoding="utf-8")
     assert load_catalog(str(lookups))["assets"][0]["filename"] == "x.fbx"
     assert load_catalog(str(tmp_path / "empty")) == {}
+
+
+# ── Sketchfab catalog merge ────────────────────────────────────────────────────
+
+def test_load_catalog_tags_legacy_entries_kenney(tmp_path):
+    """Pre-existing catalogs predate the `source` field — load_catalog must
+    backfill source="kenney" rather than leaving it absent."""
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps({"vocabulary": {}, "assets": [{"filename": "tree.fbx"}]}),
+        encoding="utf-8")
+    assets = load_catalog(str(lookups))["assets"]
+    assert assets[0]["source"] == "kenney"
+
+
+def test_load_catalog_merges_sketchfab_partition(tmp_path):
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps({"vocabulary": {"categories": ["nature"], "tags": ["tree"]},
+                   "assets": [{"filename": "tree.fbx", "source": "kenney"}]}),
+        encoding="utf-8")
+    (lookups / "unity" / "sketchfab_catalog.json").write_text(
+        json.dumps({"version": 1, "entries": [
+            {"filename": "red-heel-abc.fbx", "source": "sketchfab",
+             "license": "by", "sketchfab_uid": "abc"},
+        ]}), encoding="utf-8")
+
+    catalog = load_catalog(str(lookups))
+    sources = {a["filename"]: a["source"] for a in catalog["assets"]}
+    assert sources == {"tree.fbx": "kenney", "red-heel-abc.fbx": "sketchfab"}
+    # vocabulary is untouched by the merge — stays scoped to the Kenney build.
+    assert catalog["vocabulary"] == {"categories": ["nature"], "tags": ["tree"]}
+
+
+def test_load_catalog_sketchfab_only_no_base_catalog(tmp_path):
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "sketchfab_catalog.json").write_text(
+        json.dumps({"version": 1, "entries": [
+            {"filename": "x.fbx", "source": "sketchfab", "sketchfab_uid": "u1"},
+        ]}), encoding="utf-8")
+    assets = load_catalog(str(lookups))["assets"]
+    assert [a["filename"] for a in assets] == ["x.fbx"]
+
+
+def test_write_sketchfab_entry_dedupes_by_uid(tmp_path):
+    out_path = tmp_path / "lookups" / "unity" / "sketchfab_catalog.json"
+    write_sketchfab_entry({"filename": "old.fbx", "sketchfab_uid": "u1"}, out_path)
+    data = write_sketchfab_entry({"filename": "new.fbx", "sketchfab_uid": "u1"}, out_path)
+    assert len(data["entries"]) == 1
+    assert data["entries"][0]["filename"] == "new.fbx"
+
+    write_sketchfab_entry({"filename": "other.fbx", "sketchfab_uid": "u2"}, out_path)
+    on_disk = json.loads(out_path.read_text(encoding="utf-8"))
+    assert {e["sketchfab_uid"] for e in on_disk["entries"]} == {"u1", "u2"}
+
+
+def test_write_sketchfab_entry_byte_idempotent(tmp_path):
+    out_path = tmp_path / "sketchfab_catalog.json"
+    write_sketchfab_entry({"filename": "x.fbx", "sketchfab_uid": "u1"}, out_path)
+    first = out_path.read_bytes()
+    write_sketchfab_entry({"filename": "x.fbx", "sketchfab_uid": "u1"}, out_path)
+    assert out_path.read_bytes() == first
 
 
 # ── prompt vocabulary helper ──────────────────────────────────────────────────

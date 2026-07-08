@@ -17,6 +17,13 @@ dist/
 rag/corpus/
 rag/index/
 
+# ── Sketchfab live fetch cache (regenerable via `sketchfab-fetch`, per-
+# developer/per-project opt-in with a personal API token — unlike the
+# curated CC0 Kenney library in Models/, don't commit ad-hoc CC-BY/-SA
+# third-party downloads) ─────────────────────────────────────────────
+Models/Sketchfab/
+lookups/unity/sketchfab_catalog.json
+
 # ── Scratch / redirected logs ───────────────────────────────────────
 err.txt
 out.txt
