@@ -885,23 +885,34 @@ class UnityPipeline:
             #   1. Assets/Audio/           — canonical user-visible folder
             #   2. Assets/Resources/Audio/ — for Resources.LoadAll<AudioClip> at runtime
             # The micro writes to Micros/audio/Resources/Audio/<id>/ — copy the
-            # inner Audio/ tree into both destinations.
+            # inner Audio/ tree into both destinations, THEN remove the source
+            # Micros/audio/Resources/ copy. Unity's Resources system is a single
+            # flat namespace merged across every "Resources" folder in the
+            # project — leaving the pre-overlay copy in place means the SAME
+            # clip exists at the same Resources-relative path under two
+            # physical folders (a real "multiple assets with the same path"
+            # risk), on top of tripling disk usage for no reader that needs it.
             import shutil
-            audio_micro_clips = (project_root / "Assets" / "Micros" / "audio"
-                                 / "Resources" / "Audio")
+            audio_micro_res = project_root / "Assets" / "Micros" / "audio" / "Resources"
+            audio_micro_clips = audio_micro_res / "Audio"
             if audio_micro_clips.exists():
                 dst_audio = project_root / "Assets" / "Audio"
                 shutil.copytree(audio_micro_clips, dst_audio, dirs_exist_ok=True)
                 dst_res_audio = project_root / "Assets" / "Resources" / "Audio"
                 shutil.copytree(audio_micro_clips, dst_res_audio, dirs_exist_ok=True)
-                mf = audio_micro_clips.parent / "audio_manifest.json"
+                mf = audio_micro_res / "audio_manifest.json"
                 if mf.exists():
-                    import shutil as _sh
-                    _sh.copy2(mf, project_root / "Assets" / "Resources" / "audio_manifest.json")
+                    shutil.copy2(mf, project_root / "Assets" / "Resources" / "audio_manifest.json")
                 self._ok("Audio clips overlaid -> Assets/Audio/ + Assets/Resources/Audio/")
+                try:
+                    shutil.rmtree(audio_micro_res)
+                except OSError:
+                    pass   # best-effort cleanup — a locked file must not break the run
             # Overlay NPC dialog (Kokoro) clips + manifest the same way as audio:
             #   Micros/npc_dialog/Resources/{Audio/Dialog, Dialog} -> Assets/Resources/
             #   Micros/npc_dialog/Resources/Audio/Dialog          -> Assets/Audio/Dialog
+            # Then remove the source copy — same duplicate-Resources-path
+            # rationale as the audio overlay above.
             npc_dialog_res = (project_root / "Assets" / "Micros" / "npc_dialog"
                               / "Resources")
             if npc_dialog_res.exists():
@@ -915,6 +926,10 @@ class UnityPipeline:
                                     dirs_exist_ok=True)
                     self._ok("NPC dialog (Kokoro) clips overlaid -> "
                              "Assets/Resources/Audio/Dialog/ + Assets/Audio/Dialog/")
+                try:
+                    shutil.rmtree(npc_dialog_res)
+                except OSError:
+                    pass
             # Copy the concept-driven Sketchfab collection into the project so all
             # 10-15 models are visibly written (per-entity resolution already
             # copied any it matched; this guarantees the full set is present).
