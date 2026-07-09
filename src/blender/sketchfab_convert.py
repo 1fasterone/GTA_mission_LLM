@@ -30,7 +30,6 @@ from pathlib import Path
 from typing import Optional
 
 from .locator import find_blender
-from .normalize import normalize_fbx
 
 # NOTE: doubled braces are literal Python dict/f-string braces in the emitted
 # script; single braces are str.format() placeholders (same convention as
@@ -74,7 +73,11 @@ try:
     for img in bpy.data.images:
         if img.name == "Render Result" or not img.has_data:
             continue
-        base = bpy.path.basename(img.filepath) or (img.name + ".png")
+        base = bpy.path.basename(img.filepath) or img.name
+        # We always write PNG data (file_format below) — force the extension to
+        # match, whatever the source file was called. A texture written with a
+        # stray .fbx/.bin name makes Unity try (and fail) to import it as a model.
+        base = os.path.splitext(base)[0] + ".png"
         dest = os.path.join(TEX_DIR, base)
         try:
             img.filepath_raw = dest
@@ -136,5 +139,7 @@ def convert_gltf_to_fbx(gltf_path: Path, fbx_out: Path, textures_dir: Path, *,
     if not data.get("ok") or not fbx_out.is_file():
         return None
 
-    normalize_fbx(fbx_out)
+    # NOTE: no normalize_fbx() here — rewriting the CreationTime invalidates
+    # the FBX footer/FileId cross-check and Unity's FBX SDK rejects the file
+    # (root-caused 2026-07-09). Blender's output is already deterministic.
     return fbx_out

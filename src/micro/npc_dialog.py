@@ -360,13 +360,33 @@ class NpcDialogPipeline(UnityMicroPipeline):
                     f"{line.emotion} {schema.audio_style} {line.language}: {line.text}"
                 )
 
-        # Inject lines if empty — primary: LLM extraction, fallback: presets
+        # Inject lines if empty — primary: pre-extracted (compose) / LLM extraction, fallback: presets
         if not schema.lines:
             meta    = getattr(schema, "meta", {}) or {}
             concept = meta.get("concept", "")
             llm     = getattr(self, "llm", None)
             injected = False
-            if concept and llm is not None:
+            # Compose path: concept-specific lines pre-extracted by the main
+            # pipeline while LM Studio was still loaded (mirrors audio meta._pre_cues),
+            # so emit stays LLM-free but the dialog is concept-driven, not preset.
+            pre_lines = meta.get("_pre_lines")
+            if pre_lines:
+                defv = default_voice_for(schema.interaction_type)
+                schema.lines = [
+                    DialogLine(
+                        line_id=d["line_id"],
+                        text=d["text"],
+                        emotion=d.get("emotion", "neutral"),
+                        language=schema.multilingual_targets[0]
+                                 if schema.multilingual_targets else "en",
+                        voice_id=defv,
+                        tags=d.get("tags", []),
+                        higgs_prompt=f"{d.get('emotion','neutral')} {schema.audio_style}: {d['text']}",
+                    )
+                    for d in pre_lines
+                ]
+                injected = True
+            if not injected and concept and llm is not None:
                 try:
                     from ..audio.dialog_resolver import extract_dialog_lines
                     raw_lines = extract_dialog_lines(

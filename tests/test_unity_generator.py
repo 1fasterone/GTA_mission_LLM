@@ -1778,3 +1778,32 @@ class TestSceneAudioAndReadme:
         assert "procedural mesh (`custom`, res 64)" in rm
         assert "URP-Atmosphere" in rm                      # locomotion=fly gate
         assert "Flight controller" in rm
+
+
+# ── Engine-type shadowing guards (hit live: 'WheelCollider' stub broke Unity) ──
+
+def test_stub_types_never_shadow_unity_engine_types():
+    """An LLM extra_field like List<WheelCollider> must NOT emit a stub class —
+    a stub named after a real UnityEngine type shadows it project-wide (global
+    namespace beats `using UnityEngine`) and every micro using the real type
+    fails with CS1061/CS0311."""
+    from types import SimpleNamespace as NS
+    from src.unity_generator import _stub_type_names
+    fields = [NS(type="List<WheelCollider>"), NS(type="WheelHit"),
+              NS(type="WheelFrictionCurve"), NS(type="CharacterController"),
+              NS(type="RectTransform"), NS(type="InputAction"),
+              NS(type="List<BountyContract>")]
+    names = _stub_type_names(fields)
+    assert names == ["BountyContract"]
+
+
+def test_programmatic_fix_renames_engine_type_script_names():
+    from src.unity_pipeline import _programmatic_fix
+    from src.unity_schema import UnitySchema
+    sch = UnitySchema(project_name="T", game_type="3D", platform="all",
+                      render_pipeline="URP", scenes=["Main"],
+                      scripts=[{"name": "WheelCollider", "type": "custom", "description": "x"},
+                               {"name": "VehicleRig", "type": "custom", "description": "y"}])
+    sch = _programmatic_fix(sch)
+    assert sch.scripts[0].name == "WheelColliderBehaviour"
+    assert sch.scripts[1].name == "VehicleRig"

@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from src.unity_compose import MicroComposer, Subsystem, ComposedUnit
+from src.unity_compose import MicroComposer, Subsystem
 
 
 def _compose(tmp_path, project="ProofProj", **sub_kw):
@@ -306,11 +306,34 @@ def test_vfx_feature_composes_impact_fx():
     assert len(v) == 1 and v[0].variant == "impact_fx" and v[0].name == "ImpactVFX"
 
 
-def test_npc_dialog_feature_composes_with_skip_audio():
+def test_npc_dialog_feature_composes_with_skip_audio_default():
+    # skip_audio is the DEFAULT so a bare MicroComposer.emit stays TTS-free.
+    # The main pipeline (unity_pipeline.run) LIFTS it — popping skip_audio and
+    # injecting concept-specific meta._pre_lines — so `unity-create --compose`
+    # renders real Kokoro clips. See test_npc_dialog_compose_lifts_skip_with_pre_lines.
     subs = subsystems_for("3D", ["npcs"])
     npc = [s for s in subs if s.kind == "npc_dialog"]
     assert len(npc) == 1
     assert npc[0].options.get("meta", {}).get("skip_audio") is True
+
+
+def test_npc_dialog_compose_lifts_skip_with_pre_lines(tmp_path):
+    # When concept-specific lines are pre-injected (as unity_pipeline.run does)
+    # and skip_audio is lifted, compose emits the real dialog data with those
+    # exact lines — concept-driven, not the generic preset.
+    subs = subsystems_for("3D", ["npcs"])
+    npc = next(s for s in subs if s.kind == "npc_dialog")
+    npc.options["meta"].pop("skip_audio", None)
+    npc.options["meta"]["_pre_lines"] = [
+        {"line_id": "greet", "text": "Rev those engines, rookie!", "emotion": "excited", "tags": []},
+    ]
+    # generate_clips off so the test stays fast (no Kokoro load) — we only assert
+    # the concept line reaches the emitted DialogData, proving skip was lifted.
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("PreLineProof",
+                  project_config={"audio": {"generate_clips": False}}).emit(subs, assets)
+    data = (assets / "Micros" / "npc_dialog" / "Data" / "NpcDialogData.json").read_text(encoding="utf-8")
+    assert "Rev those engines, rookie!" in data
 
 
 def test_transition_feature_composes_fade():
@@ -380,6 +403,28 @@ def test_swim_compose_skips_grounded_bridge(tmp_path):
           / "GameWiring.cs").read_text(encoding="utf-8")
     assert "IsGrounded" not in gw
     assert gw.count("{") == gw.count("}")
+
+
+def test_vehicle_controller_wiring_omits_input_and_grounded(tmp_path):
+    """A vehicle_car controller reads its own input and has no ground plane, so
+    Controller.cs.j2 omits SetInputReader + IsGrounded. GameWiring must not call
+    either (would be CS1061), even when a statemachine/animator is present."""
+    from src.unity_compose import Subsystem
+    subs = [
+        Subsystem(kind="controller",   variant="vehicle_car", target="player", name="PlayerController"),
+        Subsystem(kind="statemachine", variant="enemy_fsm",   target="world",  name="EnemyFSM"),
+        Subsystem(kind="animator",     variant="vehicle",     target="player", name="CarAnimator"),
+    ]
+    MicroComposer("VehicleWire").emit(subs, Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "SetInputReader" not in gw
+    assert "IsGrounded" not in gw
+    assert gw.count("{") == gw.count("}")
+    pc = (Path(tmp_path) / "Assets" / "Micros" / "controller" / "Scripts"
+          / "PlayerController.cs").read_text(encoding="utf-8")
+    assert "Transform[] FindWheelBones" in pc        # CS0029 regression
+    assert "Transform[] wheelBones = FindWheelBones" in pc
 
 
 def test_walk_compose_keeps_grounded_bridge(tmp_path):

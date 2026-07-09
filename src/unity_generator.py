@@ -263,8 +263,30 @@ _CS_BUILTIN_TYPES: frozenset[str] = frozenset({
     "YieldInstruction", "Coroutine", "AsyncOperation",
     # Scene
     "Scene",
-    # PhysicMaterial spellings
-    "PhysicMaterial", "PhysicsMaterial2D",
+    # PhysicMaterial spellings (PhysicsMaterial is the Unity 6 rename)
+    "PhysicMaterial", "PhysicsMaterial", "PhysicsMaterial2D",
+    # Physics / vehicles / joints — emitting a stub for any of these SHADOWS the
+    # real UnityEngine type project-wide (global namespace beats `using
+    # UnityEngine`), breaking every micro that uses it (hit live: an LLM
+    # extra_field `List<WheelCollider>` stubbed WheelCollider and broke the
+    # vehicle controller with CS1061/CS0311 on every member).
+    "WheelCollider", "WheelHit", "WheelFrictionCurve", "JointSpring",
+    "CharacterController", "ConstantForce", "ArticulationBody",
+    "Joint", "FixedJoint", "HingeJoint", "SpringJoint", "ConfigurableJoint",
+    "CharacterJoint", "Cloth", "Collision", "Collision2D",
+    "ContactPoint", "ContactPoint2D", "EdgeCollider2D", "CompositeCollider2D",
+    "TerrainCollider", "Terrain", "TerrainData",
+    # More engine components/types LLMs routinely reference in fields
+    "RectTransform", "Renderer", "AudioListener", "VideoPlayer",
+    "Gradient", "LODGroup", "ReflectionProbe", "WindZone",
+    "RuntimeAnimatorController", "AnimatorOverrideController", "Avatar",
+    "NavMeshObstacle", "OffMeshLink", "ParticleSystemRenderer",
+    "TextMeshProUGUI", "EventSystem",
+    # Input System
+    "InputAction", "InputActionAsset", "InputActionMap",
+    "InputActionReference", "PlayerInput",
+    # Cinemachine
+    "CinemachineCamera", "CinemachineVirtualCamera",
 })
 
 _GENERIC_WRAPPER_RE = re.compile(

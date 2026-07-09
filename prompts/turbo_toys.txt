@@ -1,0 +1,65 @@
+TITLE
+Turbo Toys 
+
+GENRE
+A fully 3D arcade kart racing game. Genre is racing — a cartoon kart racer / grand
+prix with power slides, boost pads, and lap-based circuit races.
+
+STYLE
+Bright, colorful cartoon toy world. Chunky low-poly toy cars with big rounded wheels,
+cel-shaded look, sunny saturated palette. Think toy cars racing across a playroom
+brought to life.
+
+CORE PREMISE
+The player drives a cartoon toy car in a grand prix against three rival toy cars.
+Race three laps of each circuit, drift through corners for a boost meter, hit springy
+boost pads, grab scattered coins, and cross the finish line first. Rivals rubber-band
+and taunt you. Win the cup across a season of tracks.
+
+PLAYER
+A cartoon toy race car. Uses a vehicle_car arcade controller (accelerate, brake,
+steer, handbrake power slide, boost). Rigidbody wheel-collider physics with big
+cartoon wheels. Third-person vehicle chase camera that swings wide on drifts.
+
+ENTITIES
+- PlayerCar: the player's cartoon toy race car (kind: vehicle / car).
+- RivalRedRacer: an AI rival cartoon race car, aggressive (kind: vehicle / car).
+- RivalBlueSpeedster: an AI rival cartoon sports car, fast on straights (kind: vehicle / car).
+- RivalGreenBuggy: an AI rival cartoon off-road car, cuts corners (kind: vehicle / car).
+- Coin: spinning pickup collectible scattered on the track (kind: collectible).
+- BoostPad: a springy trigger pad that launches the car forward (kind: prop).
+All four cars are cartoon toy cars and should resolve to real Sketchfab cartoon-car
+models (cartoon race car, low poly cartoon sports car).
+
+NPCS
+- Sparky the Pit Chief: a voiced NPC quest giver at the garage. He greets the player,
+  explains the controls, hands out the next cup challenge, and barks race commentary
+  (countdown, overtakes, final lap). Branching dialogue with a typewriter reveal.
+
+AI
+Rival cars use waypoint_follow racing-line AI around the track with rubber-band catch-up.
+
+SCENES
+- Main Menu: play, best times, settings, quit.
+- Garage: talk to Sparky, pick your car, start the grand prix (hub scene).
+- Sunny Speedway: the first circuit — a looping oval through a cartoon toy town.
+- Beach Circuit: a second circuit along a sunny cartoon coastline.
+Scene transitions use a fade between menu, garage, and each track.
+
+HUD
+Speedometer, lap counter (lap 1/3), race position (2nd/4), coin count, boost meter,
+and a minimap of the circuit. Countdown "3-2-1-GO!" banner at race start.
+
+AUDIO
+Revving cartoon toy engine loop, squealing cartoon tire skids on power slides,
+bouncy bumper crashes, springy boost-pad launches, bright coin-pickup chimes,
+a cheering cartoon crowd, and an upbeat bouncy race music loop. Spatial engine
+audio per car so you hear rivals around you.
+
+FEATURES
+Save/load best lap times per track (json_file). Pause menu (resume, restart, quit
+to menu). Main menu and game-over / results screen showing finish position.
+
+VISUAL STYLE
+Cel-shaded cartoon, URP with bloom and bright directional sunlight. Rounded toy
+geometry, thick outlines, playful colors.

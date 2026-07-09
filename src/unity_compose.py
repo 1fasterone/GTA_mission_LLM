@@ -249,6 +249,16 @@ class MicroComposer:
         # InputReader SO is needed whenever controller, FSM, or menu is present.
         has_input_so = bool(ctrl or fsm or menu)
 
+        # Vehicle/aircraft controllers read their own input and have no ground
+        # plane, so Controller.cs.j2 omits BOTH SetInputReader and IsGrounded on
+        # them (guarded there by `not variant.startswith("vehicle_") and
+        # variant != "aircraft"`). Wiring seams that call those methods must be
+        # gated the same way or the composed GameWiring won't compile (CS1061).
+        _ctrl_var = ctrl.variant if ctrl else ""
+        _ctrl_self_driven  = _ctrl_var.startswith("vehicle_") or _ctrl_var == "aircraft"
+        _ctrl_has_input_rd = bool(ctrl) and not _ctrl_self_driven
+        _ctrl_has_grounded = _ctrl_has_input_rd and _ctrl_var not in ("swimming", "flying")
+
         # ── Build seam lists (atom-driven) ────────────────────────────────────
         awake_seams:      list[dict] = []
         update_seams:     list[dict] = []
@@ -351,8 +361,9 @@ class MicroComposer:
                 f"    {fv}.OnStateChanged -= OnFSMStateChanged;"
             )
 
-        # SEAM 4b — InputReader → Controller
-        if has_input_so and ctrl:
+        # SEAM 4b — InputReader → Controller (only for controllers that expose
+        # SetInputReader — a vehicle/aircraft reads its own input).
+        if has_input_so and ctrl and _ctrl_has_input_rd:
             awake_seams.append({
                 "label":   "SEAM 4b: InputReader → Controller",
                 "snippet": unity_atom_snippet("WireInputToController", {
@@ -380,9 +391,10 @@ class MicroComposer:
             )
 
         # SEAM 6 — Grounded bridge (Update, not Awake)
-        # Skip for swimming/flying controllers — they have no ground, so the
-        # controller intentionally exposes no IsGrounded (would be CS1061).
-        if ctrl and (fsm or anim) and ctrl.variant not in ("swimming", "flying"):
+        # Only for controllers that expose IsGrounded. Swimming/flying have no
+        # ground; vehicle/aircraft read their own input and also omit IsGrounded —
+        # emitting the bridge for any of them would be CS1061.
+        if ctrl and (fsm or anim) and _ctrl_has_grounded:
             update_seams.append({
                 "label":   "Grounded bridge: controller → FSM + Animator",
                 "snippet": unity_atom_snippet("WireGroundedBridge", {
@@ -753,12 +765,21 @@ def subsystems_for(
     # Reachable whenever there's combat (enemies), since impacts need effects.
     if {"vfx", "effects", "particles"} & feats or has_enemies:
         subs.append(Subsystem(kind="vfx",          variant="impact_fx",     target="world",   name="ImpactVFX"))
-    # Spoken NPCs (Higgs TTS). Composed unit skips clip generation (meta.skip_audio) so
-    # codegen stays LLM/Higgs-free; the <name>Player MonoBehaviour is the attach class.
-    # Reachable whenever the world actually has NPCs (entity kind / dialogue script).
+    # Spoken NPCs (Kokoro TTS). skip_audio is the DEFAULT (a bare MicroComposer.emit
+    # stays TTS-free — no generic preset clips), but the main pipeline LIFTS it:
+    # unity_pipeline.run pre-extracts concept-specific lines while LM Studio is
+    # loaded, injects them via meta._pre_lines AND pops skip_audio before the SA3
+    # unload, so `unity-create --compose` renders REAL, concept-driven Kokoro clips.
+    # The speaker name is derived from the first NPC entity so clips/wiring aren't "NPC".
+    # The <name>Player MonoBehaviour is the attach class.
     if {"npc_dialog", "voiced_npcs", "npcs"} & feats or has_npcs:
+        npc_name = "NPC"
+        for _e in (entities or []):
+            if str(getattr(_e, "kind", "") or "").lower() == "npc":
+                npc_name = str(getattr(_e, "name", "") or "NPC") or "NPC"
+                break
         subs.append(Subsystem(kind="npc_dialog",   variant="quest_giver",   target="world",   name="NpcDialog",
-                              options={"speaker_name": "NPC", "meta": {"skip_audio": True}}))
+                              options={"speaker_name": npc_name, "meta": {"skip_audio": True}}))
     # Scene transitions — meaningful for any multi-scene project (deterministic: > 1 scene).
     if {"levels", "multi_scene", "scene_transition"} & feats or scene_count > 1:
         subs.append(Subsystem(kind="transition",   variant="fade",          target="systems", name="SceneTransition"))

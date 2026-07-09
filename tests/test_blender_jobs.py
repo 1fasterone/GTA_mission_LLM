@@ -477,7 +477,7 @@ def test_master_seed_stamps_reproducible_jobs():
 from src.blender import normalize_export
 from src.blender.normalize import (
     normalize_alembic_bytes, normalize_fbx_bytes,
-    CANONICAL_ASCTIME, CANONICAL_FBX_TS,
+    CANONICAL_ASCTIME,
 )
 
 
@@ -505,23 +505,28 @@ def test_two_exports_become_byte_identical_after_normalize():
     assert na == nb                                 # after normalize → identical
 
 
-def test_fbx_creationtime_canonicalized():
+def test_fbx_bytes_never_rewritten():
+    """FBX normalize is a hard NO-OP — root-caused 2026-07-09: binary FBX
+    cross-validates CreationTime against the FileId + footer code, and Unity's
+    FBX SDK rejects the whole file when a timestamp rewrite breaks that pact
+    (Blender ignores the footer, which masked it). Blender writes a constant
+    dummy CreationTime anyway, so output is already byte-deterministic."""
     blob = b"...CreationTimeS\x17\x00\x00\x002026-06-15 15:43:16:789 more..."
     out, n = normalize_fbx_bytes(blob)
-    assert n == 1
-    assert len(out) == len(blob)
-    assert CANONICAL_FBX_TS in out
+    assert n == 0
+    assert out == blob                              # byte-for-byte untouched
 
 
 def test_normalize_export_dispatch_and_real_files(tmp_path):
     abc = tmp_path / "a.abc"
     abc.write_bytes(b"x_ai_DateWritten=Wed Jul 01 12:00:00 2026;y")
     fbx = tmp_path / "a.fbx"
-    fbx.write_bytes(b"CreationTime|2026-07-01 12:00:00:000|")
+    fbx_raw = b"CreationTime|2026-07-01 12:00:00:000|"
+    fbx.write_bytes(fbx_raw)
     assert normalize_export(abc) == ("alembic", 1)
-    assert normalize_export(fbx) == ("fbx", 1)
+    assert normalize_export(fbx) == ("fbx", 0)      # FBX: never rewritten
     assert CANONICAL_ASCTIME in abc.read_bytes()
-    assert CANONICAL_FBX_TS in fbx.read_bytes()
+    assert fbx.read_bytes() == fbx_raw              # FBX bytes untouched
     # re-normalizing an already-clean file is a no-op
     assert normalize_export(abc) == ("alembic", 0)
     assert normalize_export(tmp_path / "nope.abc") == (None, 0)
