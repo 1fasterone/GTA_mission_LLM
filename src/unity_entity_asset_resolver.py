@@ -616,3 +616,34 @@ def texture_dirs_for(used_models: dict[str, ResolvedModel]) -> list[Path]:
                     dirs.append(tex)
                 break
     return dirs
+
+
+def texture_dirs_with_res_root_for(
+        used_models: dict[str, ResolvedModel]) -> list[tuple[Path, str]]:
+    """Like texture_dirs_for, but paired with the Resources-relative root each
+    model was actually copied under ("Models/Kenney" or "Models/Sketchfab").
+
+    Unity's FBX importer only finds a Textures/ folder by walking UP the
+    parent chain from the model's OWN copied location — a texture folder
+    dropped under the wrong subtree is never found, even though it exists
+    on disk. Root-caused live: every Sketchfab-sourced model rendered black
+    in Play mode because the caller previously wrote every catalog pick's
+    textures to the single hardcoded Assets/Resources/Models/Kenney/Textures/
+    path regardless of source, which is not an ancestor of a Sketchfab
+    pick's own Assets/Resources/Models/Sketchfab/<Category>/ location.
+    """
+    pairs: list[tuple[Path, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for key, m in sorted(used_models.items()):
+        if not key.startswith("asset:") or m.rig == "sprite":
+            continue
+        res_root = _SKETCHFAB_RES_ROOT if m.source == "sketchfab" else _RES_ROOT
+        for parent in Path(m.src).parents:
+            tex = parent / "Textures"
+            if tex.is_dir():
+                sig = (str(tex), res_root)
+                if sig not in seen:
+                    seen.add(sig)
+                    pairs.append((tex, res_root))
+                break
+    return pairs

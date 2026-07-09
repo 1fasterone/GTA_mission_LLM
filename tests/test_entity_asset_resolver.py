@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.unity_entity_asset_resolver import resolve_entity_assets, texture_dirs_for
+from src.unity_entity_asset_resolver import (resolve_entity_assets, texture_dirs_for,
+                                             texture_dirs_with_res_root_for)
 from src.unity_model_resolver import ResolvedModel
 from src.unity_schema import EntitySpec, UnitySchema
 
@@ -426,6 +427,40 @@ def test_texture_dirs_for_catalog_picks_only(env, tmp_path):
     assert dirs == [lib / "Textures"]
     # default-pack-only projects ship no texture folders
     assert texture_dirs_for(_default_models(tmp_path)) == []
+
+
+def test_texture_dirs_with_res_root_routes_by_source():
+    """Root-caused live: every Sketchfab-sourced model rendered black in Play
+    mode because textures were always copied to the hardcoded
+    Assets/Resources/Models/Kenney/Textures/ path — not an ancestor of a
+    Sketchfab pick's own Assets/Resources/Models/Sketchfab/<Category>/
+    location, so Unity's up-the-parent-chain search never found them. This
+    pins the destination-selection fix: each texture dir must pair with the
+    SAME res_root the model itself was copied under."""
+    kenney_dir = Path("/lib/kenney/tree-pine.fbx")
+    sketchfab_dir = Path("/lib/sketchfab/car-drag-racing.fbx")
+    used = {
+        "asset:tree-pine": ResolvedModel(
+            kind="asset:tree-pine", src=str(kenney_dir),
+            dest_rel="Models/Kenney/Nature/tree-pine.fbx",
+            resource_path="Models/Kenney/Nature/tree-pine", rig="generic",
+            source="kenney"),
+        "asset:car-drag-racing": ResolvedModel(
+            kind="asset:car-drag-racing", src=str(sketchfab_dir),
+            dest_rel="Models/Sketchfab/Vehicle/car-drag-racing.fbx",
+            resource_path="Models/Sketchfab/Vehicle/car-drag-racing", rig="generic",
+            source="sketchfab"),
+    }
+
+    def _fake_is_dir(self):
+        return self.name == "Textures"
+    import unittest.mock as mock
+    with mock.patch.object(Path, "is_dir", _fake_is_dir):
+        pairs = texture_dirs_with_res_root_for(used)
+
+    by_root = {res_root: tex_dir for tex_dir, res_root in pairs}
+    assert by_root["Models/Kenney"] == kenney_dir.parent / "Textures"
+    assert by_root["Models/Sketchfab"] == sketchfab_dir.parent / "Textures"
 
 
 # ── concept layers (semantic classification: concept → layer → best asset) ────

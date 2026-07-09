@@ -16,7 +16,8 @@ from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
 from .unity_schema import ProceduralMesh, UnitySchema, UnityScript
 from .unity_asset_resolver import resolve_assets
-from .unity_entity_asset_resolver import resolve_entity_assets, texture_dirs_for
+from .unity_entity_asset_resolver import (resolve_entity_assets,
+                                          texture_dirs_with_res_root_for)
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .micro.code_fields import lint_extensible
 
@@ -2322,19 +2323,27 @@ class UnityProjectGenerator:
                 _log.warning("[atmosphere] vendor dir missing: %s — skipping "
                              "atmosphere shipment", vendor)
 
-        # Texture folders for catalog picks. Kenney FBX reference PNGs from a
-        # Textures/ folder shipped beside the models; Unity's importer searches
-        # Textures folders up the parent chain, so a copy next to each import
-        # location keeps materials from importing blank/magenta. Unity generates
-        # the TextureImporter .metas itself on first open.
+        # Texture folders for catalog picks (Kenney AND Sketchfab). Both ship
+        # PNGs from a Textures/ folder beside the model; Unity's importer only
+        # finds it by walking UP the parent chain from the model's OWN copied
+        # location, so the destination must mirror the SAME res_root
+        # ("Models/Kenney" or "Models/Sketchfab") each model was itself copied
+        # under — a texture dropped under the wrong subtree is never found,
+        # which is exactly why every Sketchfab-sourced model rendered
+        # untextured/black in Play mode before this fix. The Assets/Models/
+        # mirror copy stays a single shared folder: the model's OWN secondary
+        # copy strips its res_root segment (see the dual-copy loop above), so
+        # Assets/Models/Textures/ is already the correct ancestor for every
+        # source there. Unity generates the TextureImporter .metas itself on
+        # first open.
         _tex_exts = {".png", ".jpg", ".jpeg", ".tga"}
-        for tex_dir in texture_dirs_for(used_models):
+        for tex_dir, res_root in texture_dirs_with_res_root_for(used_models):
             for tex in sorted(tex_dir.iterdir()):
                 if tex.suffix.lower() not in _tex_exts or not tex.is_file():
                     continue
                 for dest in (
                     root / schema.project_name / "Assets" / "Resources"
-                         / "Models" / "Kenney" / "Textures" / tex.name,
+                         / res_root / "Textures" / tex.name,
                     root / schema.project_name / "Assets" / "Models"
                          / "Textures" / tex.name,
                 ):
