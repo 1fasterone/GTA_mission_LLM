@@ -191,8 +191,15 @@ def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema
         schema.scenes.insert(0, "Main")
 
     schema.scripts = schema.scripts[:24]
+    from .unity_generator import _CS_BUILTIN_TYPES
     for script in schema.scripts:
         script.name = _to_pascal(script.name, "Script")
+        # A script class named after a Unity/C# engine type (WheelCollider,
+        # Animator, ...) shadows the real type project-wide — global namespace
+        # wins over `using UnityEngine` — breaking every other script that uses
+        # it. Rename deterministically instead of shipping the collision.
+        if script.name in _CS_BUILTIN_TYPES:
+            script.name = script.name + "Behaviour"
 
     # Several templates hard-reference singleton/component classes by name —
     # UIManager & Collectible -> GameManager, ProceduralMesh -> MeshBuilder,
@@ -725,14 +732,89 @@ class UnityPipeline:
             # Contribute the micros' module deps (UI/UGUI/AI/...) so the composed
             # project compiles.
             manifest_deps = {**manifest_deps, **composer.module_deps(composed_units)}
+            # Composed input/controller micros always `using UnityEngine.InputSystem`
+            # (see controller.py _TEMPLATE_USINGS + the input micro), so the project
+            # needs com.unity.inputsystem or it won't compile (CS0234/CS0246). Its
+            # version is Unity-version-specific, so module_deps (versionless) can't
+            # carry it — resolve it here through the version-aware package table.
+            if any(u.kind in ("input", "controller") for u in composed_units):
+                _pkg_id, _pkg_ver = self.resolver.resolve_package(
+                    "input system", schema.unity_version)
+                if _pkg_id and _pkg_id not in manifest_deps:
+                    manifest_deps[_pkg_id] = _pkg_ver or "1.8.2"
+                    self._fix(f"compose: added {_pkg_id} {manifest_deps[_pkg_id]} "
+                              "(input/controller micros use UnityEngine.InputSystem)")
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
+            # Pre-extract concept-specific NPC dialog lines NOW — while the LLM is
+            # warm from the schema step and BEFORE the auto_fetch Blender/Chromium
+            # phase in generator.write cools it. Inject as meta._pre_lines and pop
+            # skip_audio so emit renders REAL, concept-driven Kokoro clips (mirrors
+            # the audio _pre_cues path; a bare MicroComposer.emit still stays
+            # TTS-free). Retry once — the local model very occasionally returns an
+            # unparseable first response under load.
+            _npc_subs = [s for s in subsystems if s.kind == "npc_dialog"]
+            if _npc_subs and concept:
+                _itype = {"quest_giver": "quest", "vendor": "vendor",
+                          "ambient_bark": "ambient", "combat_chatter": "combat",
+                          "follower": "follower", "cutscene": "quest"}
+                try:
+                    from .audio.dialog_resolver import extract_dialog_lines
+                    _dseed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
+                              else (seed or 0))
+                    _dialog_count = int(self.config.get("audio", {}).get("dialog_lines", 12))
+                    for _sub in _npc_subs:
+                        _spk = _sub.options.get("speaker_name", "NPC")
+                        _lines: list[dict] = []
+                        for _attempt in range(3):
+                            _lines = extract_dialog_lines(
+                                concept, self.llm, speaker=_spk,
+                                interaction_type=_itype.get(_sub.variant or "", "quest"),
+                                seed=_dseed, count=_dialog_count)
+                            if _lines:
+                                break
+                        if _lines:
+                            _meta = _sub.options.setdefault("meta", {})
+                            _meta["_pre_lines"] = _lines
+                            _meta.pop("skip_audio", None)   # lift default skip → emit renders Kokoro clips
+                            self._ok(f"Pre-extracted {len(_lines)} NPC dialog lines for "
+                                     f"{_spk} — Kokoro clips will render at emit")
+                        else:
+                            self._warn(f"No dialog lines extracted for {_spk} — "
+                                       "npc_dialog stays text-only (preset lines, no clips)")
+                except Exception as _exc:  # noqa: BLE001
+                    self._warn(f"NPC dialog pre-extraction failed "
+                               f"({type(_exc).__name__}: {_exc})")
+            # ── Concept-driven Sketchfab model collection (10-15 models) ──────
+            # Mirrors the audio cue pipeline: the LLM proposes the models this
+            # world actually needs; each is searched + downloaded + Blender-
+            # converted + frozen NOW (before generator.write) so the per-entity
+            # Tier S then matches real, on-concept models instead of a stray
+            # Kenney pick. Every model logs where it was written or why it failed.
+            self._sketchfab_collection = None
+            _coll_cfg = self.config.get("sketchfab", {}) or {}
+            if _coll_cfg.get("enabled") and _coll_cfg.get("collect", True) and concept:
+                try:
+                    from .unity_sketchfab_collection import collect_models
+                    from .sketchfab_client import SketchfabClient
+                    _cseed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
+                              else (seed or 0))
+                    self._sketchfab_collection = collect_models(
+                        concept, self.llm, client=SketchfabClient(_coll_cfg),
+                        sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
+                        count=int(_coll_cfg.get("collection_count", 12)),
+                        seed=_cseed, log_ok=self._ok, log_warn=self._warn)
+                except Exception as _exc:  # noqa: BLE001
+                    self._warn(f"Sketchfab collection failed "
+                               f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
         # Step 6.5 — enrich entity sketchfab_query while the project LLM is
         # still loaded (mirrors the audio concept-translator's placement).
-        # Only when Sketchfab is enabled — no wasted LLM call otherwise.
-        if _sketchfab_cfg.get("enabled") and schema.entities:
+        # Runs regardless of sketchfab.enabled: the concept-translated query now
+        # ALSO drives the LOCAL catalog tiers (see _query_weights), so entity →
+        # model matching is concept-aware even when Sketchfab is off or fails.
+        if schema.entities:
             try:
                 from .unity_sketchfab_translator import translate_concept
                 _seed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
@@ -817,6 +899,43 @@ class UnityPipeline:
                     import shutil as _sh
                     _sh.copy2(mf, project_root / "Assets" / "Resources" / "audio_manifest.json")
                 self._ok("Audio clips overlaid -> Assets/Audio/ + Assets/Resources/Audio/")
+            # Overlay NPC dialog (Kokoro) clips + manifest the same way as audio:
+            #   Micros/npc_dialog/Resources/{Audio/Dialog, Dialog} -> Assets/Resources/
+            #   Micros/npc_dialog/Resources/Audio/Dialog          -> Assets/Audio/Dialog
+            npc_dialog_res = (project_root / "Assets" / "Micros" / "npc_dialog"
+                              / "Resources")
+            if npc_dialog_res.exists():
+                shutil.copytree(npc_dialog_res,
+                                project_root / "Assets" / "Resources",
+                                dirs_exist_ok=True)
+                _dlg_audio = npc_dialog_res / "Audio"
+                if _dlg_audio.exists():
+                    shutil.copytree(_dlg_audio,
+                                    project_root / "Assets" / "Audio",
+                                    dirs_exist_ok=True)
+                    self._ok("NPC dialog (Kokoro) clips overlaid -> "
+                             "Assets/Resources/Audio/Dialog/ + Assets/Audio/Dialog/")
+            # Copy the concept-driven Sketchfab collection into the project so all
+            # 10-15 models are visibly written (per-entity resolution already
+            # copied any it matched; this guarantees the full set is present).
+            _coll = getattr(self, "_sketchfab_collection", None)
+            if _coll and _coll.get("written"):
+                from .unity_sketchfab_collection import copy_collection_into_project
+                copy_collection_into_project(
+                    _coll["written"],
+                    self.config.get("sketchfab", {}).get("cache_dir", "Models/Sketchfab"),
+                    project_root / "Assets", log_ok=self._ok)
+            # ── External-asset collection summary (what was written / fell back) ─
+            if _coll is not None:
+                _w = len(_coll.get("written", []))
+                _l = len(_coll.get("local", []))
+                _f = len(_coll.get("failed", []))
+                self._ok(f"ASSET SUMMARY — models: {_w} Sketchfab downloaded, "
+                         f"{_l} concept-matched from local library, {_f} unfilled"
+                         + (f" (unfilled: {', '.join(x['name'] for x in _coll['failed'][:5])})"
+                            if _f else ""))
+                for _x in _coll.get("local", []):
+                    self._ok(f"  local: '{_x['name']}' -> {_x.get('relpath') or _x.get('filename')}")
         # Drop a discoverable sidecar so the Library page can show the concept
         # next to each saved project (Unity schemas aren't written to disk the
         # way GTA's *.schema.json files are).

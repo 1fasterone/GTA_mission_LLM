@@ -33,7 +33,12 @@ CANONICAL_ASCTIME = b"Thu Jan  1 00:00:00 1970"
 
 # FBX human-readable creation time — "YYYY-MM-DD HH:MM:SS:mmm", exactly 23 bytes.
 _FBX_TS_RE = re.compile(rb"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}:\d{3}")
-CANONICAL_FBX_TS = b"1970-01-01 00:00:00:000"
+# Blender's exporter writes this CONSTANT dummy (io_scene_fbx/export_fbx_bin.py:
+# "CreationTime is replaced by dummy value") with matching constant _FILE_ID /
+# _FOOT_ID blobs — so Blender FBX output is already byte-deterministic.
+BLENDER_DUMMY_FBX_TS = b"1970-01-01 10:00:00:000"
+# Kept for backward compat with older callers/tests; no longer written anywhere.
+CANONICAL_FBX_TS = BLENDER_DUMMY_FBX_TS
 
 assert len(CANONICAL_ASCTIME) == 24
 assert len(CANONICAL_FBX_TS) == 23
@@ -62,7 +67,17 @@ def normalize_alembic_bytes(data: bytes) -> tuple[bytes, int]:
 
 
 def normalize_fbx_bytes(data: bytes) -> tuple[bytes, int]:
-    return _sub_same_length(data, _FBX_TS_RE, CANONICAL_FBX_TS)
+    """FBX: NO-OP by design — verified 2026-07-09 against Unity 6000.1.
+
+    Binary FBX cross-validates CreationTime against the FileId and the 16-byte
+    footer code; Autodesk's FBX SDK (Unity's importer) REJECTS the whole file
+    ("ImportFBX Errors: Couldn't import file") when they disagree. Blender's
+    exporter writes a CONSTANT dummy CreationTime (1970-01-01 10:00:00:000)
+    with matching constant FileId/footer blobs, so its FBX output is already
+    byte-deterministic — and any timestamp rewrite here can only corrupt it.
+    (Blender itself ignores the footer, which is why round-trips masked this.)
+    """
+    return data, 0
 
 
 def normalize_alembic(path: str | Path) -> int:

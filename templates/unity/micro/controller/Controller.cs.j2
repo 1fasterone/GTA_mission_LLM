@@ -1103,7 +1103,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         var em = _smoke.emission; em.rateOverTime = 0f;
     }
 
-    private Transform FindWheelBones(Transform root)
+    private Transform[] FindWheelBones(Transform root)
     {
         Transform fl = null, fr = null, rl = null, rr = null;
         foreach (var t in root.GetComponentsInChildren<Transform>(true))

@@ -113,8 +113,9 @@ def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
 
 
 def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
-    """Token → weight for one entity. model_hint counts double, the scene
-    description barely at all (it only breaks ties toward on-theme assets)."""
+    """Token → weight for one entity. model_hint and the concept-translated
+    sketchfab_query count double, the scene description barely at all (it only
+    breaks ties toward on-theme assets)."""
     weights: dict[str, float] = {}
     for w in scene_words:
         weights[w] = 0.1
@@ -127,6 +128,14 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
     for t in tokenize(getattr(entity, "model_hint", "") or ""):
         if t not in _STOPWORDS and len(t) > 1:
             weights[t] = 2.0
+    # Concept-translated query ("cartoon race car") — the SAME concept awareness
+    # the Sketchfab tier gets also steers the LOCAL catalog tiers (2a/2b/2c), so
+    # a Sketchfab miss falls back to an on-concept local model instead of
+    # whatever literal entity-name token happened to match (the "PlayerCar →
+    # character-skate-boy" failure mode).
+    for t in tokenize(getattr(entity, "sketchfab_query", "") or ""):
+        if t not in _STOPWORDS and len(t) > 1:
+            weights[t] = max(weights.get(t, 0.0), 2.0)
     # Singular/plural bridging for strong tokens: entity names are usually
     # plural ("PineTrees") while catalog keywords are singular ("tree").
     for t, w in list(weights.items()):

@@ -143,18 +143,29 @@ def extract_dialog_lines(
     speaker: str = "NPC",
     interaction_type: str = "ambient",
     seed: int = 0,
+    count: int = 0,
 ) -> list[dict]:
     """Primary path: extract diegetic NPC lines from the Step-2 concept via LLM.
 
     Returns a list of DialogLine-compatible dicts (no voice/audio fields yet —
     those are resolved in default_fix()). Returns [] on any failure so callers
     can fall back to default lines.
+
+    `count` (>0) requests roughly that many lines, overriding the system prompt's
+    default 3-6 — used by --compose to build a 10-15 line concept-driven bank.
     """
     if not concept or llm is None:
         return []
 
+    count_line = (
+        f"Write exactly {count} distinct lines for this speaker covering the "
+        f"whole interaction (greeting, instructions, mid-race barks, warnings, "
+        f"reactions, farewell) — this overrides any smaller count above.\n\n"
+        if count and count > 0 else ""
+    )
     user_prompt = (
         f"Speaker: {speaker}  |  interaction type: {interaction_type}\n\n"
+        f"{count_line}"
         f"Game concept (write {speaker}'s dialog lines for this world):\n\n"
         f"{concept.strip()}"
     )

@@ -90,7 +90,8 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      category: str = "prop",
                      kind_hints: Iterable[str] = (),
                      min_score: float = 0.0,
-                     preferred_author: Optional[str] = None) -> Optional[dict]:
+                     preferred_author: Optional[str] = None,
+                     max_candidates: int = 4) -> Optional[dict]:
     """Search Sketchfab for `query`, rank license-compliant hits with the
     caller-supplied `score_fn`, download + convert the best one, freeze it
     into lookups/unity/sketchfab_catalog.json, and return the new catalog
@@ -111,7 +112,7 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
             query, score_fn, client=client, blender_cfg=blender_cfg,
             cache_dir=Path(cache_dir), lookups_dir=lookups_dir,
             category=category, kind_hints=list(kind_hints), min_score=min_score,
-            preferred_author=preferred_author)
+            preferred_author=preferred_author, max_candidates=max_candidates)
     except Exception as exc:  # noqa: BLE001 — must never propagate to the resolver
         log.debug("sketchfab fetch_and_freeze(%r) failed: %s", query, exc)
         return None
@@ -121,7 +122,8 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                             client: SketchfabClient, blender_cfg: Optional[dict],
                             cache_dir: Path, lookups_dir: str, category: str,
                             kind_hints: list[str], min_score: float,
-                            preferred_author: Optional[str] = None) -> Optional[dict]:
+                            preferred_author: Optional[str] = None,
+                            max_candidates: int = 4) -> Optional[dict]:
     if not client.available():
         return None
 
@@ -140,71 +142,78 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
             return None
 
     candidates.sort(key=lambda sm: (-sm[0], sm[1].get("uid", "")))
-    _, model = candidates[0]
 
-    uid = model.get("uid") or ""
-    if not uid:
-        return None
-    license_slug = client.license_slug(model) or "cc0"
-    slug = _slug(model.get("name") or uid)
-    dest_dir = cache_dir / category / f"{slug}-{uid}"
-    fbx_out = dest_dir / f"{slug}-{uid}.fbx"
-    textures_dir = dest_dir / "Textures"
+    # Try the top-ranked candidates in order — the single best-scoring hit
+    # sometimes has a broken archive (no gltf inside) or fails Blender convert;
+    # falling through to the next viable candidate turns those single-point
+    # misses into a successful, on-concept pick instead of a whole-query
+    # failure. Also improves the resolver's per-entity Tier S (same code path).
+    from .blender.sketchfab_convert import convert_gltf_to_fbx
+    for _cand_score, model in candidates[: max(1, max_candidates)]:
+        uid = model.get("uid") or ""
+        if not uid:
+            continue
+        license_slug = client.license_slug(model) or "cc0"
+        slug = _slug(model.get("name") or uid)
+        dest_dir = cache_dir / category / f"{slug}-{uid}"
+        fbx_out = dest_dir / f"{slug}-{uid}.fbx"
+        textures_dir = dest_dir / "Textures"
 
-    with tempfile.TemporaryDirectory(prefix="sketchfab_") as tmp:
-        tmp_zip = Path(tmp) / f"{uid}.zip"
-        if client.download_archive(uid, tmp_zip) is None:
-            return None
-        raw_dir = Path(tmp) / "raw"
-        raw_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            with zipfile.ZipFile(tmp_zip) as zf:
-                zf.extractall(raw_dir)
-        except zipfile.BadZipFile:
-            return None
+        with tempfile.TemporaryDirectory(prefix="sketchfab_") as tmp:
+            tmp_zip = Path(tmp) / f"{uid}.zip"
+            if client.download_archive(uid, tmp_zip) is None:
+                continue
+            raw_dir = Path(tmp) / "raw"
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with zipfile.ZipFile(tmp_zip) as zf:
+                    zf.extractall(raw_dir)
+            except zipfile.BadZipFile:
+                continue
 
-        gltf_path = _find_gltf(raw_dir)
-        if gltf_path is None:
-            return None
+            gltf_path = _find_gltf(raw_dir)
+            if gltf_path is None:
+                continue
 
-        from .blender.sketchfab_convert import convert_gltf_to_fbx
-        converted = convert_gltf_to_fbx(
-            gltf_path, fbx_out, textures_dir, blender_cfg=blender_cfg)
-        if converted is None:
-            return None
+            converted = convert_gltf_to_fbx(
+                gltf_path, fbx_out, textures_dir, blender_cfg=blender_cfg)
+            if converted is None:
+                continue
 
-    keywords = sorted(set(tokenize(model.get("name") or ""))
-                      | {t.get("name", "").lower()
-                         for t in (model.get("tags") or []) if isinstance(t, dict)})
-    user = model.get("user") or {}
-    entry = {
-        "filename": fbx_out.name,
-        "relpath": str(fbx_out.relative_to(cache_dir).as_posix()),
-        "root": str(cache_dir.as_posix()),
-        "format": "fbx",
-        "pack": "sketchfab",
-        "source": "sketchfab",
-        "category": category,
-        "description": str(model.get("description") or model.get("name") or ""),
-        "keywords": keywords,
-        "kind_hints": list(kind_hints) or ["prop"],
-        "game_contexts": ["any"],
-        "generic_score": 0,
-        "scale": 1.0,
-        "curated": False,
-        "query": query,
-        "sketchfab_uid": uid,
-        "sketchfab_url": model.get("viewerUrl")
-                         or f"https://sketchfab.com/3d-models/{uid}",
-        "license": license_slug,
-        "author": user.get("displayName") or user.get("username") or "",
-        # The actual searchable handle (SketchfabClient.search(user=...)) —
-        # distinct from the human-readable "author" (displayName) above.
-        "author_username": user.get("username") or "",
-        "author_url": user.get("profileUrl") or "",
-        "attribution": _attribution_text(model, license_slug),
-        "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
+        keywords = sorted(set(tokenize(model.get("name") or ""))
+                          | {t.get("name", "").lower()
+                             for t in (model.get("tags") or []) if isinstance(t, dict)})
+        user = model.get("user") or {}
+        entry = {
+            "filename": fbx_out.name,
+            "relpath": str(fbx_out.relative_to(cache_dir).as_posix()),
+            "root": str(cache_dir.as_posix()),
+            "format": "fbx",
+            "pack": "sketchfab",
+            "source": "sketchfab",
+            "category": category,
+            "description": str(model.get("description") or model.get("name") or ""),
+            "keywords": keywords,
+            "kind_hints": list(kind_hints) or ["prop"],
+            "game_contexts": ["any"],
+            "generic_score": 0,
+            "scale": 1.0,
+            "curated": False,
+            "query": query,
+            "sketchfab_uid": uid,
+            "sketchfab_url": model.get("viewerUrl")
+                             or f"https://sketchfab.com/3d-models/{uid}",
+            "license": license_slug,
+            "author": user.get("displayName") or user.get("username") or "",
+            # The actual searchable handle (SketchfabClient.search(user=...)) —
+            # distinct from the human-readable "author" (displayName) above.
+            "author_username": user.get("username") or "",
+            "author_url": user.get("profileUrl") or "",
+            "attribution": _attribution_text(model, license_slug),
+            "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
 
-    write_sketchfab_entry(entry, Path(lookups_dir) / SKETCHFAB_RELPATH)
-    return entry
+        write_sketchfab_entry(entry, Path(lookups_dir) / SKETCHFAB_RELPATH)
+        return entry
+
+    return None
