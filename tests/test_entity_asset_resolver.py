@@ -952,3 +952,176 @@ def test_sketchfab_pick_with_unmapped_kind_gets_no_fit(env, tmp_path):
     picks = [m for k, m in used.items() if k.startswith("asset:")]
     assert picks and picks[0].source == "sketchfab"
     assert picks[0].fit_size == 0.0
+
+
+# ── genre-aware resolution (racing must never pick aircraft) ─────────────────
+
+_VEHICLE_LAYERS_RAW = {
+    "layers": {
+        "vehicle_ground": {
+            "vocabulary": ["car", "cars", "racer", "racing", "race", "kart"],
+            "kinds": ["vehicle"], "categories": [],
+        },
+        "aircraft_aerial": {
+            "vocabulary": ["plane", "planes", "aircraft", "corsair", "propeller"],
+            "kinds": ["vehicle"], "categories": [],
+        },
+        "vegetation": {
+            "vocabulary": ["tree", "trees", "pine", "forest"],
+            "kinds": ["tree"], "categories": ["nature"],
+        },
+    },
+}
+
+_GENRE_BIAS_RAW = {
+    "racing": {"vehicle_ground": 0.75, "aircraft_aerial": -1.5},
+}
+
+_RACE_CAR = {
+    "filename": "race-car.fbx", "relpath": "race-car.fbx",
+    "category": "vehicle", "keywords": ["car", "race", "racer"],
+    "kind_hints": ["vehicle"], "generic_score": 0, "scale": 1.0,
+}
+
+
+def _genre_env(env, extra_assets=()):
+    """Add concept layers + genre bias + extra catalog assets to an env dir."""
+    (env / "unity" / "concept_layers.json").write_text(
+        json.dumps(_VEHICLE_LAYERS_RAW), encoding="utf-8")
+    (env / "unity" / "genre_layer_bias.json").write_text(
+        json.dumps(_GENRE_BIAS_RAW), encoding="utf-8")
+    if extra_assets:
+        cat_path = env / "unity" / "asset_catalog.json"
+        cat = json.loads(cat_path.read_text(encoding="utf-8"))
+        lib = Path(cat["assets"][0]["root"])
+        for a in extra_assets:
+            (lib / a["relpath"]).write_bytes(b"FBX")
+            cat["assets"].append({**a, "root": lib.as_posix(),
+                                  "game_contexts": ["any"], "format": "fbx",
+                                  "pack": "test", "curated": False})
+        cat_path.write_text(json.dumps(cat), encoding="utf-8")
+    return env
+
+
+def _racing_schema(entities):
+    s = _schema(entities)
+    s.meta["genre"] = "racing"
+    return s
+
+
+def test_membership_kind_hint_demoted_by_sibling_vocabulary():
+    # The DriftArcade root cause: vehicle_ground / aircraft_aerial both declare
+    # kinds:["vehicle"], so an airplane was a STRONG vehicle_ground member on
+    # its kind_hint alone and round-robined into car slots. An asset whose own
+    # vocabulary places it in a sibling layer now belongs strongly ONLY there.
+    from src.unity_concept_layers import ConceptLayers
+    layers = ConceptLayers(_VEHICLE_LAYERS_RAW)
+
+    plane = {"filename": "corsair.fbx", "category": "aircraft",
+             "keywords": ["plane", "corsair", "propeller"],
+             "kind_hints": ["vehicle"]}
+    broad, strong = layers.membership(plane)
+    assert "aircraft_aerial" in strong
+    assert "vehicle_ground" not in strong
+    assert "vehicle_ground" not in broad
+
+    car = {"filename": "race-car.fbx", "category": "vehicle",
+           "keywords": ["car", "race"], "kind_hints": ["vehicle"]}
+    broad, strong = layers.membership(car)
+    assert "vehicle_ground" in strong
+    assert "aircraft_aerial" not in strong
+
+    # No vocabulary signal anywhere → today's behavior preserved: strong in
+    # every layer sharing the kind.
+    mystery = {"filename": "widget.fbx", "category": "misc",
+               "keywords": ["widget"], "kind_hints": ["vehicle"]}
+    _, strong = layers.membership(mystery)
+    assert {"vehicle_ground", "aircraft_aerial"} <= strong
+
+
+def test_racing_genre_never_resolves_vehicles_to_aircraft(env, tmp_path):
+    # Generic vehicle entities under genre=racing must all land on the car —
+    # without the bias they tie with the plane inside the variety band and the
+    # rotation deals planes out (the ring-of-airplanes screenshot).
+    _genre_env(env, extra_assets=[_RACE_CAR])
+    all_models = _default_models(tmp_path)
+    used = {}
+    paths = resolve_entity_assets(
+        _racing_schema([EntitySpec(name="RaceCars", kind="vehicle", count=6),
+                        EntitySpec(name="Opponents", kind="vehicle", count=4),
+                        EntitySpec(name="TrafficVehicles", kind="vehicle", count=3)]),
+        used, all_models, lookups_dir=str(env))
+    for name in ("RaceCars", "Opponents", "TrafficVehicles"):
+        assert "corsair" not in paths[name], f"{name} resolved to an airplane"
+    assert not any("corsair" in k for k in used)
+
+
+def test_universal_genre_keeps_vehicle_variety(env, tmp_path):
+    # Genre gating: with no genre, an entity whose OWN tokens name both
+    # domains ("racer plane") still reaches both car and aircraft picks —
+    # the bias must only activate when schema.meta.genre is set.
+    _genre_env(env, extra_assets=[_RACE_CAR])
+    all_models = _default_models(tmp_path)
+    used = {}
+    resolve_entity_assets(
+        _schema([EntitySpec(name=f"Vehicles{i}", kind="vehicle", count=1,
+                            model_hint="racer plane corsair car")
+                 for i in range(4)]),
+        used, all_models, lookups_dir=str(env))
+    picked = {k for k in used if k.startswith("asset:")}
+    assert any("corsair" in k for k in picked)
+    assert any("race-car" in k for k in picked)
+
+
+def test_racing_strict_fails_fast_without_racing_content(env, tmp_path):
+    _genre_env(env)   # no car in catalog; corsair is the only "vehicle"
+    all_models = _default_models(tmp_path)
+    with pytest.raises(ValueError, match="racing"):
+        resolve_entity_assets(
+            _racing_schema([EntitySpec(name="PineTrees", kind="tree", count=5)]),
+            {"tree": all_models["tree"]}, all_models,
+            lookups_dir=str(env), strict=True)
+
+
+def test_racing_strict_passes_with_a_vehicle_pick(env, tmp_path):
+    _genre_env(env, extra_assets=[_RACE_CAR])
+    all_models = _default_models(tmp_path)
+    paths = resolve_entity_assets(
+        _racing_schema([EntitySpec(name="RaceCars", kind="vehicle", count=6),
+                        EntitySpec(name="PineTrees", kind="tree", count=5)]),
+        {"tree": all_models["tree"]}, all_models,
+        lookups_dir=str(env), strict=True)
+    assert "race-car" in paths["RaceCars"]
+
+
+def test_racing_strict_satisfied_by_default_pack_vehicle(env, tmp_path):
+    # A racing game whose vehicle rides the default-pack Car.fbx is coherent —
+    # the fail-fast must not fire just because the pick skipped the catalog.
+    _genre_env(env)
+    vehicle = _vehicle_model(tmp_path)
+    all_models = {**_default_models(tmp_path), "vehicle": vehicle}
+    paths = resolve_entity_assets(
+        _racing_schema([EntitySpec(name="PlayerCar", kind="vehicle", count=1)]),
+        {"vehicle": vehicle}, all_models, lookups_dir=str(env), strict=True)
+    assert paths["PlayerCar"] == "Models/Default/Vehicle/Car"
+
+
+def test_genre_prefixes_mechanical_sketchfab_query(env, tmp_path, monkeypatch):
+    # The live-fetch fallback query for a racing project must carry the genre
+    # ("racing ..."), but an LLM-authored sketchfab_query wins as-is.
+    _genre_env(env)
+    queries = []
+
+    def _fake_fetch(query, **kw):
+        queries.append(query)
+        return None
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _racing_schema([EntitySpec(name="Grandstands", kind="prop", count=2,
+                                   model_hint="zzgrbl nothing matches")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert queries and queries[0].startswith("racing ")
