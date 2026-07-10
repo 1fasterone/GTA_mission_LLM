@@ -47,7 +47,8 @@ _LAYER_BAND = 0.6           # layers within 60% of the top score share the pool
 class ConceptLayers:
     """Parsed concept-layer taxonomy with entity→layer and asset→layer logic."""
 
-    __slots__ = ("layers", "decisive_score", "kind_prior", "layer_band")
+    __slots__ = ("layers", "decisive_score", "kind_prior", "layer_band",
+                 "siblings")
 
     def __init__(self, raw: dict):
         cfg = raw.get("_config", {}) or {}
@@ -62,6 +63,15 @@ class ConceptLayers:
                 frozenset(k.lower() for k in spec.get("kinds", [])),
                 frozenset(c.lower() for c in spec.get("categories", [])),
             )
+        # Sibling map: layers that share an entity kind (vehicle_ground /
+        # aircraft_aerial / watercraft / spacecraft all declare kinds:
+        # ["vehicle"]). Used by membership() to demote a kind-hint-only strong
+        # membership when the asset's own vocabulary places it in a sibling.
+        self.siblings: dict[str, frozenset[str]] = {}
+        for name, (_v, kinds, _c) in self.layers.items():
+            sibs = {other for other, (_v2, k2, _c2) in self.layers.items()
+                    if other != name and (kinds & k2)}
+            self.siblings[name] = frozenset(sibs)
 
     # ── entity → layers ──────────────────────────────────────────────────────
     def classify(self, query_weights: dict[str, float], kind: str,
@@ -171,12 +181,47 @@ class ConceptLayers:
         strong: set[str] = set()
         broad: set[str] = set()
         for name, (vocab, kinds, cats) in self.layers.items():
-            if (cat and cat in cats) or (include_kind_hints and (hints & kinds)):
+            cat_strong = bool(cat and cat in cats)
+            hint_strong = bool(include_kind_hints and (hints & kinds))
+            if hint_strong and not cat_strong and not (kw & vocab):
+                # Kind-hint-only membership in a layer that shares its kind
+                # with siblings (vehicle_ground / aircraft_aerial / watercraft
+                # / spacecraft are all kinds:["vehicle"]): when the asset's own
+                # vocabulary places it in a SIBLING layer, that sibling is its
+                # primary domain — a corsair airplane must not be a strong
+                # vehicle_ground member just because it is kind-tagged
+                # "vehicle" (the exact tie that round-robined airplanes into a
+                # racing game's car pool). No vocabulary signal anywhere keeps
+                # today's behavior: strong in every kind-sharing layer.
+                if any(kw & self.layers[s][0] for s in self.siblings[name]):
+                    continue
+            if cat_strong or hint_strong:
                 strong.add(name)
                 broad.add(name)
             elif kw & vocab:
                 broad.add(name)
         return frozenset(broad), frozenset(strong)
+
+
+@lru_cache(maxsize=8)
+def load_genre_layer_bias(lookups_dir: str = "lookups"
+                          ) -> dict[str, dict[str, float]]:
+    """lookups/unity/genre_layer_bias.json: genre → {layer: additive bias}.
+
+    Applied by resolve_entity_assets inside the concept-layer tiers when the
+    schema carries a detected genre — a racing game boosts road_track /
+    vehicle_ground picks and penalizes aircraft/watercraft, so the shared
+    kinds:["vehicle"] tie can never rotate an airplane into a car slot.
+    Missing/malformed file → {} and the resolver scores exactly as before.
+    """
+    path = Path(lookups_dir) / "unity" / "genre_layer_bias.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return {g: {layer: float(v) for layer, v in m.items()}
+            for g, m in raw.items()
+            if not g.startswith("_") and isinstance(m, dict)}
 
 
 @lru_cache(maxsize=8)
