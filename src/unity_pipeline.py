@@ -30,6 +30,7 @@ from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
 )
 from .unity_archetypes    import classify as classify_intent, apply_intent
+from .unity_racetrack     import compose_racetrack, is_racing_degenerate
 
 console = Console()
 
@@ -695,6 +696,19 @@ class UnityPipeline:
             self._fix(msg)
         if not fix_msgs:
             self._ok("Schema is consistent — no fixes needed")
+
+        # Racing-genre scaffold: a racing project whose entities carry no real
+        # vehicle/track content (the LLM wrote a themed prop scatter instead
+        # of an actual circuit) gets a deterministic closed-circuit injected —
+        # mirrors GTA5's archetypes.apply_scaffold "trust non-degenerate LLM
+        # output, rescue degenerate output" contract. 3D-only: EntitySpawner's
+        # path placement (which the circuit is built from) has no 2D/2d_topdown
+        # equivalent.
+        if (schema.meta.get("genre") == "racing"
+                and schema.game_type not in ("2D", "2d_topdown")
+                and is_racing_degenerate(schema)):
+            for msg in compose_racetrack(schema):
+                self._fix(msg)
 
         # Capability graph: schema.capabilities → atoms (Step 5b)
         schema, cap_msgs = resolve_capabilities(schema)
