@@ -22,7 +22,7 @@
       "categories": []
     },
     "vehicle_ground": {
-      "vocabulary": ["car", "cars", "truck", "jeep", "bike", "motorcycle", "motorbike", "tractor", "racer", "racing", "speeder", "van", "bus", "kart", "buggy", "rover"],
+      "vocabulary": ["car", "cars", "truck", "jeep", "bike", "motorcycle", "motorbike", "tractor", "racer", "racing", "race", "speeder", "van", "bus", "kart", "buggy", "rover", "sedan", "suv", "hatchback", "formula", "hotrod", "roadster", "ambulance", "taxi", "police"],
       "kinds": ["vehicle"],
       "categories": []
     },

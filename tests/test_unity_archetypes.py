@@ -34,6 +34,28 @@ class TestWordBoundaryMatching:
         intent = classify("An arcade drift racing game with neon cars")
         assert intent.genre == "racing"
 
+    def test_pascalcase_project_title_driftarcade_is_racing(self):
+        # Live (DriftArcade run): the title was the only racing signal in the
+        # prompt; camel-splitting yields "drift arcade", which must classify as
+        # racing or zero genre bias reaches asset selection downstream.
+        intent = classify("DriftArcade: sliding cars around tight corners")
+        assert intent.genre == "racing"
+
+    def test_racetrack_and_speedway_trigger_racing(self):
+        assert classify("Build a racetrack level").genre == "racing"
+        assert classify("A stock-car speedway at night").genre == "racing"
+
+    def test_drifting_mood_language_still_not_racing(self):
+        # The new phrases must not reopen the bare-drift landmine.
+        intent = classify("A calm scene with drifting clouds and a drift of "
+                          "snow across the field at sunset")
+        assert intent.genre != "racing"
+
+    def test_racing_structure_hint_names_required_entities(self):
+        intent = classify("An arcade drift racing game with neon cars")
+        hint = intent.structure_hint()
+        assert "vehicle" in hint and "track" in hint and "barrier" in hint.lower()
+
 
 # ── camelCase/PascalCase compound identifiers in structured prompts ────────────
 
