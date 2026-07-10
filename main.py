@@ -62,6 +62,14 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
   python main.py unity-model "red sports coupe" -u output/unity/TopDownRacingGame
   python main.py unity-model "glider" --variant plane --emit    # emit bpy script only
 
+━━━ Sketchfab — freeze real marketplace models into the Unity catalog ━━━━━━
+  python main.py sketchfab-fetch "corsair fighter plane" --category vehicle
+  python main.py sketchfab-fetch "red high heel shoe" --dry-run   # preview only, no download
+  #   Solo tool: searches Sketchfab, freezes the best license-compliant hit to
+  #   lookups/unity/sketchfab_catalog.json; unity-create then resolves it OFFLINE.
+  #   Needs SKETCHFAB_API_TOKEN + `pip install playwright && playwright install chromium` + Blender.
+  #   See `python main.py sketchfab-fetch --help` for the full solo workflow.
+
 ━━━ Atoms (engine-agnostic IR building blocks) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   python main.py atom-list                            # all atoms by category
   python main.py atom-list movement --params          # show parameter details
@@ -574,28 +582,49 @@ def unity_catalog(
 @app.command("sketchfab-fetch")
 def sketchfab_fetch(
     query:      str  = typer.Argument(..., help="Concept to search, e.g. 'red high heel shoe'"),
-    config:     str  = typer.Option("config.yaml", "--config", "-c"),
-    lookups:    str  = typer.Option("lookups", "--lookups"),
+    config:     str  = typer.Option("config.yaml", "--config", "-c",
+                                    help="Pipeline config YAML (Sketchfab token, licenses, Blender path)"),
+    lookups:    str  = typer.Option("lookups", "--lookups",
+                                    help="Lookups dir the frozen catalog is written under"),
     category:   str  = typer.Option("prop", "--category",
                                     help="Catalog category / entity kind for the pick"),
     kind_hints: str  = typer.Option("", "--kind-hints",
                                     help="Comma-separated entity kinds this asset should "
                                          "serve (defaults to --category)"),
-    limit:      int  = typer.Option(24, "--limit", help="Search results to consider"),
+    limit:      int  = typer.Option(24, "--limit",
+                                    help="Number of search results to rank before picking"),
     dry_run:    bool = typer.Option(False, "--dry-run",
-                                    help="Search + rank only — no download/convert/write"),
+                                    help="Search + rank + print candidates only — no download/convert/write"),
 ) -> None:
-    """Manually pre-fetch a Sketchfab model into the frozen cache/catalog.
+    """Search Sketchfab and freeze the best licensed model into the catalog.
 
-    This is the `sketchfab.auto_fetch: false` workflow: populate
-    lookups/unity/sketchfab_catalog.json ahead of time for concepts you care
-    about, same shape as `unity-catalog` — the resolver only ever reads the
-    frozen result at generation time, never the network.
+    Run this SOLO to hand-pick real marketplace models ahead of time — it is a
+    standalone tool, independent of `unity-create`. Given a plain-English
+    `query`, it searches Sketchfab, keeps only license-compliant hits, ranks
+    them by keyword overlap, then downloads + Blender-converts the top pick to a
+    Unity-ready FBX and writes a frozen entry into
+    lookups/unity/sketchfab_catalog.json. From then on `unity-create` resolves
+    that concept OFFLINE (resolver Tier S) — the network is never touched at
+    generation time.
+
+    This is the `sketchfab.auto_fetch: false` workflow: pre-populate the cache
+    for the concepts you care about, same shape as `unity-catalog`. (With
+    `auto_fetch: true` the resolver runs this same freeze on a cache miss instead.)
 
     \b
-    Examples:
-      python main.py sketchfab-fetch "corsair fighter plane" --category vehicle
-      python main.py sketchfab-fetch "red high heel shoe" --dry-run
+    Prerequisites (all three — otherwise the command exits with a clear error):
+      * Token   — set SKETCHFAB_API_TOKEN, or sketchfab.api_token in config.yaml
+      * Browser — pip install playwright && playwright install chromium
+      * Blender — blender.blender_path in config.yaml (glTF -> FBX convert step)
+
+    \b
+    Solo workflow:
+      1. python main.py sketchfab-fetch "corsair fighter plane" --dry-run
+         -> preview the licensed candidates + authors; downloads nothing
+      2. python main.py sketchfab-fetch "corsair fighter plane" --category vehicle
+         -> freeze the top pick into lookups/unity/sketchfab_catalog.json
+      3. python main.py unity-create "dogfight over the channel"
+         -> the frozen plane is resolved offline as a Tier S model
     """
     from src.sketchfab_client import SketchfabClient
     from src.unity_asset_catalog import tokenize

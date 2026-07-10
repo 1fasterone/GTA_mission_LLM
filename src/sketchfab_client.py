@@ -23,6 +23,9 @@ generation. Missing `playwright` or its Chromium binary degrades the same
 way — see _browser_request_ctx(). No scoring/ranking logic lives here — that
 stays in src/unity_entity_asset_resolver.py so Kenney and Sketchfab
 candidates are ranked by the exact same weighted-keyword-overlap function.
+Style logic doesn't live here either (see src/sketchfab_style.py) — this
+client only exposes the raw API knobs (tags, face-count bounds) that the
+style layer drives.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional
+from urllib.parse import urlencode
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +128,10 @@ class SketchfabClient:
             yield None
 
     def search(self, query: str, *, count: int = 24,
-              user: Optional[str] = None) -> list[dict]:
+              user: Optional[str] = None,
+              tags: Optional[list[str]] = None,
+              max_face_count: Optional[int] = None,
+              min_face_count: Optional[int] = None) -> list[dict]:
         """GET /search?type=models — raw Sketchfab model result dicts, [] on
         any failure (no token, no browser, network error, non-2xx, malformed
         body). Public search does not actually require a token, but this
@@ -139,21 +146,44 @@ class SketchfabClient:
         src/sketchfab_freeze.py's `preferred_author`) before falling back to
         the open marketplace, so a project doesn't end up as a "constructed
         chaos" of mismatched independent artists' styles.
+
+        `max_face_count` / `min_face_count` are the structural style filter —
+        face count is the cheapest reliable proxy for visual class in the
+        search metadata. A max bound on toon-ish styles excludes the
+        million-face photogrammetry-scan class from the pool BEFORE any
+        ranking happens; a min bound on realistic styles does the inverse.
+        Driven per-run by sketchfab_style.search_params_for().
+
+        `tags` is the strict API param (`tags=a&tags=b`, exact tag must
+        exist on the model). It over-restricts for general sourcing — prefer
+        putting style tokens in the free-text `q` (free text matches tags) —
+        but it's exposed for config-driven use.
+
+        The URL is built with urlencode(doseq-style pair list) instead of
+        Playwright's `params=` because repeated keys (`tags=a&tags=b`) can't
+        be expressed as a flat dict.
         """
         if not self.available():
             return []
-        params: dict[str, str | int] = {
-            "type": "models", "q": query,
-            "downloadable": "true", "count": count,
-        }
+        pairs: list[tuple[str, str]] = [
+            ("type", "models"), ("q", query),
+            ("downloadable", "true"), ("count", str(count)),
+        ]
         if user:
-            params["user"] = user
+            pairs.append(("user", user))
+        for t in (tags or []):
+            pairs.append(("tags", t))
+        if max_face_count is not None:
+            pairs.append(("max_face_count", str(int(max_face_count))))
+        if min_face_count is not None:
+            pairs.append(("min_face_count", str(int(min_face_count))))
+        url = f"{self.base_url}/search?{urlencode(pairs)}"
         try:
             with self._browser_request_ctx() as req:
                 if req is None:
                     return []
-                r = req.get(f"{self.base_url}/search", headers=self._headers,
-                           params=params, timeout=self.timeout * 1000)
+                r = req.get(url, headers=self._headers,
+                           timeout=self.timeout * 1000)
                 if not r.ok:
                     return []
                 return list(r.json().get("results") or [])
