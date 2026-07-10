@@ -97,10 +97,27 @@ class UnityIntent:
             lines.append(f'  "locomotion" MUST be "{self.locomotion}" — the prompt names it explicitly.')
         if self.genre != "universal":
             lines.append(f'  Bias entities/features/scripts toward a {self.genre.replace("_", " ")} game.')
+            req = _GENRE_SCHEMA_REQUIREMENTS.get(self.genre)
+            if req:
+                lines.append(req)
         if not lines:
             return ""
         return "SCHEMA CONSTRAINTS (deterministically detected, not a suggestion):\n" + "\n".join(lines) + "\n"
 
+
+# Genre-specific entity requirements, injected into the Step-3 schema prompt
+# when that genre is detected. The asset resolver's genre coherence check
+# (unity_entity_asset_resolver) hard-fails a strict racing project with no
+# vehicle/track content — this guidance makes the LLM author it up front.
+_GENRE_SCHEMA_REQUIREMENTS = {
+    "racing": (
+        '  A racing game MUST include entities for: a drivable vehicle '
+        '(kind="vehicle"), the course itself (kind="track", model_hint like '
+        '"race track straight"), barriers lining it (kind="wall", model_hint '
+        '"barrier"), and checkpoint/finish markers (kind="decoration", '
+        'model_hint "banner checkpoint").'
+    ),
+}
 
 _GAME_TYPE_LABEL = {
     "2D": "2D side-scrolling", "2.5D": "2.5D (3D models, 2D gameplay plane)",
@@ -195,6 +212,12 @@ _GENRE: list[tuple[str, list[str]]] = [
     ("racing", [
         "racing", "race", "street racer", "rally", "time trial", "circuit racer",
         "kart racer", "grand prix", "drift racing", "drift car", "power slide",
+        "drift arcade", "drift race", "drift track", "race track", "racetrack",
+        "speedway",
+        # "drift arcade" catches PascalCase project titles: _normalize_for_
+        # matching splits "DriftArcade" into "drift arcade" before this table
+        # runs (hit live: the DriftArcade run classified genre=universal, so
+        # zero racing bias reached asset selection → a ring of airplanes).
         # NOTE: bare "drift" AND "drifting" are deliberately excluded — they
         # collide with non-racing physics/mood language ("buoyancy drift",
         # "camera drift", "drifting clouds") and flipped prompts to
