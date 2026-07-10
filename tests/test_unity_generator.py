@@ -281,6 +281,45 @@ class TestEditorScript:
     def test_settings_folder_stub_generated_for_urp(self, files_3d):
         assert "FullProject/Assets/Settings/.gitkeep" in files_3d
 
+    def test_urp_pipeline_switch_reimports_models(self, files_3d):
+        # Models imported before SetupRenderPipeline's deferred URP switch keep
+        # built-in Standard materials; the script must force a reimport so
+        # material generation reruns under URP.
+        cs = files_3d["FullProject/Assets/Editor/SetupRenderPipeline.cs"]
+        assert 'FindAssets("t:Model")' in cs
+        assert "ImportAssetOptions.ForceUpdate" in cs
+
+
+class TestURPMaterialPostprocessor:
+    KEY = "FullProject/Assets/Editor/URPMaterialPostprocessor.cs"
+
+    def test_emitted_for_urp(self, files_3d):
+        assert self.KEY in files_3d
+        assert f"{self.KEY}.meta" in files_3d
+
+    def test_remaps_standard_to_urp_lit(self, files_3d):
+        cs = files_3d[self.KEY]
+        assert "Universal Render Pipeline/Lit" in cs
+        assert "_BaseMap" in cs and "_BaseColor" in cs
+
+    def test_not_emitted_for_hdrp_or_builtin(self, gen, schema_hdrp, files_minimal):
+        hdrp_files = gen.generate(schema_hdrp, {})
+        assert not any("URPMaterialPostprocessor" in p for p in hdrp_files)
+        assert not any("URPMaterialPostprocessor" in p for p in files_minimal)
+
+
+class TestModelMetaMaterialImport:
+    def test_model_metas_use_material_description_mode(self):
+        # materialImportMode 1 (legacy ImportStandard) builds materials on the
+        # built-in Standard shader, which URP renders magenta/black. Mode 2
+        # (ImportViaMaterialDescription) routes through the active pipeline.
+        from src.unity_generator import (
+            _generic_model_meta, _humanoid_model_meta, _model_meta)
+        for meta in (_humanoid_model_meta("a" * 32), _model_meta("b" * 32),
+                     _generic_model_meta("c" * 32)):
+            assert "materialImportMode: 2" in meta
+            assert "materialImportMode: 1" not in meta
+
 
 # ── Input Actions ──────────────────────────────────────────────────────────────
 

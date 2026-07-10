@@ -1060,6 +1060,13 @@ def _native_meta(guid: str, main_object_id: int) -> str:
     )
 
 
+# All three ModelImporter .meta emitters below use materialImportMode: 2
+# (ImportViaMaterialDescription): the active render pipeline's material
+# description postprocessor generates the materials, so URP projects get
+# URP/Lit instead of the built-in Standard shader (mode 1), which URP cannot
+# render — every imported FBX showed up magenta/black in Play mode.
+
+
 def _humanoid_model_meta(guid: str, scale: float = 1.0) -> str:
     """ModelImporter .meta for rigged characters/clips — Humanoid rig
     (animationType: 3) so any Mixamo-style clip retargets to any character."""
@@ -1071,7 +1078,7 @@ def _humanoid_model_meta(guid: str, scale: float = 1.0) -> str:
         "  internalIDToNameTable: []\n"
         "  externalObjects: {}\n"
         "  materials:\n"
-        "    materialImportMode: 1\n"
+        "    materialImportMode: 2\n"
         "    materialName: 0\n"
         "    materialSearch: 1\n"
         "    materialLocation: 1\n"
@@ -1125,7 +1132,7 @@ def _model_meta(guid: str) -> str:
         "  internalIDToNameTable: []\n"
         "  externalObjects: {}\n"
         "  materials:\n"
-        "    materialImportMode: 1\n"
+        "    materialImportMode: 2\n"
         "    materialName: 0\n"
         "    materialSearch: 1\n"
         "    materialLocation: 1\n"
@@ -1163,7 +1170,7 @@ def _generic_model_meta(guid: str, scale: float = 1.0) -> str:
         "  internalIDToNameTable: []\n"
         "  externalObjects: {}\n"
         "  materials:\n"
-        "    materialImportMode: 1\n"
+        "    materialImportMode: 2\n"
         "    materialName: 0\n"
         "    materialSearch: 1\n"
         "    materialLocation: 1\n"
@@ -2206,6 +2213,13 @@ class UnityProjectGenerator:
             files[f"{pn}/Assets/Editor.meta"] = _default_meta(
                 _make_guid(f"{pn}/Assets/Editor"), folder=True
             )
+            if schema.render_pipeline == "URP":
+                mp_path = f"{pn}/Assets/Editor/URPMaterialPostprocessor.cs"
+                files[mp_path] = self._render(
+                    "editor/URPMaterialPostprocessor.cs.j2", base_ctx)
+                files[f"{mp_path}.meta"] = _meta_file(
+                    _make_guid(f"{pn}/Editor/URPMaterialPostprocessor")
+                )
             # Settings folder — created at runtime by the script; stub keeps git happy
             settings_path = f"{pn}/Assets/Settings"
             files[f"{settings_path}/.gitkeep"]  = ""
@@ -2316,6 +2330,8 @@ class UnityProjectGenerator:
             m[f"Assets/Scripts/{mesh.name}Mesh.cs"] = "scripts/ProceduralMesh.cs.j2"
         if schema.render_pipeline in ("URP", "HDRP"):
             m["Assets/Editor/SetupRenderPipeline.cs"] = "editor/SetupRenderPipeline.cs.j2"
+        if schema.render_pipeline == "URP":
+            m["Assets/Editor/URPMaterialPostprocessor.cs"] = "editor/URPMaterialPostprocessor.cs.j2"
         if has_kenney:
             m["Assets/Editor/KenneyImporter.cs"] = "editor/KenneyImporter.cs.j2"
         return m

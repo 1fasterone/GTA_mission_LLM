@@ -65,6 +65,17 @@ public static class SetupRenderPipeline
         GraphicsSettings.defaultRenderPipeline = pipelineAsset;
         QualitySettings.renderPipeline       = pipelineAsset;
 
+        // Models imported BEFORE this switch generated their materials against
+        // the built-in pipeline (Standard shader — magenta/black under {{ render_pipeline }}).
+        // Reimport them so material generation reruns under the now-active
+        // pipeline (materialImportMode 2 + URPMaterialPostprocessor).
+        foreach (var guid in AssetDatabase.FindAssets("t:Model"))
+        {
+            var p = AssetDatabase.GUIDToAssetPath(guid);
+            if (p.StartsWith("Assets/"))
+                AssetDatabase.ImportAsset(p, ImportAssetOptions.ForceUpdate);
+        }
+
         EditorPrefs.SetBool(PrefKey, true);
         Debug.Log($"[SetupRenderPipeline] {{ render_pipeline }} asset created at {pipelinePath} and applied to Graphics Settings.");
     }

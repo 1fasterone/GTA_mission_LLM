@@ -27,7 +27,8 @@ public static class {{ script.name }}
         if (mat == null)
             Debug.LogWarning($"[{{ script.name }}] Material '{matName}.mat' not found — " +
                              "using Fallback. Run the pipeline again to regenerate materials.");
-        return mat != null ? mat : new Material(Shader.Find("Standard"));
+        return mat != null ? mat : new Material(
+            Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
     }
 
     // ── Entry point ───────────────────────────────────────────────────────────
