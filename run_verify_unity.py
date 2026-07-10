@@ -66,11 +66,24 @@ public static class AssetImportCheck
             int skinned = go ? go.GetComponentsInChildren<SkinnedMeshRenderer>(true).Length : 0;
             int filters = go ? go.GetComponentsInChildren<MeshFilter>(true).Length : 0;
             bool ok = meshes > 0 && go != null;
+            // Per-material shader + texture binding. A material stuck on the
+            // built-in Standard shader in a URP-active project renders
+            // magenta/black — that combination is a hard failure.
+            bool urpActive = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline != null;
+            var matJson = string.Join(", ", objs.OfType<Material>().Select(m2 => {
+                string shName = m2.shader ? m2.shader.name : "null";
+                bool hasTex = (m2.HasProperty("_BaseMap") && m2.GetTexture("_BaseMap") != null)
+                           || (m2.HasProperty("_MainTex") && m2.GetTexture("_MainTex") != null);
+                if (urpActive && (shName == "Standard" || shName.StartsWith("Standard ("))) ok = false;
+                return "{\"name\": \"" + m2.name + "\", \"shader\": \"" + shName +
+                       "\", \"textured\": " + (hasTex ? "true" : "false") + "}";
+            }));
             allOk &= ok;
             if (!first) sb.Append(",\n"); first = false;
             sb.Append("    {\"path\": \"" + path + "\", \"ok\": " + (ok?"true":"false") +
                 ", \"meshes\": " + meshes + ", \"materials\": " + mats + ", \"avatars\": " + avatars +
-                ", \"skinned\": " + skinned + ", \"meshFilters\": " + filters + ", \"verts\": " + verts + "}");
+                ", \"skinned\": " + skinned + ", \"meshFilters\": " + filters + ", \"verts\": " + verts +
+                ", \"urpActive\": " + (urpActive?"true":"false") + ", \"mats\": [" + matJson + "]}");
         }
         sb.Append("\n  ],\n  \"count\": " + guids.Length + ",\n  \"allOk\": " +
             ((allOk && guids.Length > 0) ? "true" : "false") + "\n}\n");
@@ -113,7 +126,7 @@ def main():
            "-projectPath", str(PROJ), "-executeMethod", "AssetImportCheck.Run",
            "-logFile", str(log)]
     print("  running Unity batchmode import check (first launch resolves packages — be patient)...")
-    rc = subprocess.run(cmd, timeout=900).returncode
+    rc = subprocess.run(cmd, timeout=900, env=env).returncode
     print(f"  Unity exited rc={rc}")
 
     if not REPORT.exists():
