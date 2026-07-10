@@ -1,0 +1,32 @@
+{
+  "_comment": "Target longest-bounding-box-axis size (meters) per entity kind, used ONLY to bounds-fit Sketchfab-sourced models at runtime (BoundsFit.cs.j2) — Kenney/default-pack models keep their pack-native scale untouched (normalizing individual modular pieces, e.g. car-kit track segments, would break their relative tiling). A kind with no entry, or value null, gets no fit (fit_size stays 0.0). unity_entity_asset_resolver._register consults this only when pick['source'] == 'sketchfab'.",
+  "sizes": {
+    "player": 1.8,
+    "npc": 1.8,
+    "character": 1.8,
+    "crowd": 1.8,
+    "enemy": 1.8,
+    "creature": 1.8,
+    "animal": 1.2,
+    "vehicle": 4.5,
+    "ship": 6.0,
+    "building": 10.0,
+    "structure": 8.0,
+    "tree": 6.0,
+    "plant": 1.5,
+    "prop": 1.0,
+    "weapon": 0.8,
+    "pickup": 0.5,
+    "collectible": 0.5,
+    "coin": 0.4,
+    "gem": 0.4,
+    "powerup": 0.5,
+    "wall": 3.0,
+    "platform": 4.0,
+    "decoration": 1.0,
+    "track": null,
+    "road": null,
+    "rail": null,
+    "obstacle": null
+  }
+}

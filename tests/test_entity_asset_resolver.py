@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from src.unity_entity_asset_resolver import (resolve_entity_assets, texture_dirs_for,
-                                             texture_dirs_with_res_root_for)
+                                             texture_dirs_with_res_root_for,
+                                             load_kind_sizes)
 from src.unity_model_resolver import ResolvedModel
 from src.unity_schema import EntitySpec, UnitySchema
 
@@ -882,3 +883,72 @@ def test_preferred_author_never_overwritten_by_later_fallback(env, tmp_path, mon
     # fetches must still be called with "opticube", even though each one's
     # OWN result comes back authored by "someone_else".
     assert calls == ["opticube", "opticube"]
+
+
+# ── scale consistency: bounds-fit target, Sketchfab picks only ───────────────
+
+def _kind_sizes_env(env, sizes):
+    (env / "unity" / "kind_sizes.json").write_text(
+        json.dumps({"sizes": sizes}), encoding="utf-8")
+    return env
+
+
+def test_load_kind_sizes_missing_file_returns_empty(tmp_path):
+    assert load_kind_sizes(str(tmp_path / "nope")) == {}
+
+
+def test_load_kind_sizes_drops_null_and_non_numeric(tmp_path):
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "kind_sizes.json").write_text(
+        json.dumps({"sizes": {"vehicle": 4.5, "track": None, "prop": "bogus"}}),
+        encoding="utf-8")
+    assert load_kind_sizes(str(lookups)) == {"vehicle": 4.5}
+
+
+def test_sketchfab_pick_gets_fit_size_from_kind_sizes(env, tmp_path):
+    _kind_sizes_env(env, {"vehicle": 4.5})
+    entry = _add_sketchfab_entry(env, tmp_path, filename="corsair-sk.fbx",
+                                 keywords=("corsair", "plane", "aircraft"),
+                                 kind_hints=("vehicle",), category="vehicle")
+    all_models = _default_models(tmp_path)
+    used = {}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PlayerPlane", kind="vehicle", count=1,
+                            model_hint="corsair plane")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True})
+    picks = [m for k, m in used.items() if k.startswith("asset:")]
+    assert picks and picks[0].source == "sketchfab"
+    assert picks[0].fit_size == 4.5
+
+
+def test_kenney_pick_never_gets_fit_size(env, tmp_path):
+    # Even with a matching kind_sizes entry, a Kenney/catalog pick's scale is
+    # already pack-internally consistent — bounds-fit is Sketchfab-only.
+    _kind_sizes_env(env, {"vehicle": 4.5})
+    all_models = _default_models(tmp_path)
+    used = {}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PlayerPlane", kind="vehicle", count=1,
+                            model_hint="corsair plane")]),
+        used, all_models, lookups_dir=str(env))
+    picks = [m for k, m in used.items() if k.startswith("asset:")]
+    assert picks and picks[0].source == "kenney"
+    assert picks[0].fit_size == 0.0
+
+
+def test_sketchfab_pick_with_unmapped_kind_gets_no_fit(env, tmp_path):
+    # kind_sizes.json has no entry for "prop" here — fit_size stays 0.0, not
+    # some arbitrary default.
+    _kind_sizes_env(env, {"vehicle": 4.5})
+    _add_sketchfab_entry(env, tmp_path)   # kind_hints=("tree","prop")
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True})
+    picks = [m for k, m in used.items() if k.startswith("asset:")]
+    assert picks and picks[0].source == "sketchfab"
+    assert picks[0].fit_size == 0.0

@@ -1794,6 +1794,17 @@ class UnityProjectGenerator:
             composed_units, strict_assets, asset_cfg, sketchfab_cfg)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
+        # Entity name -> bounds-fit target (0.0 = no fit), for BoundsFit at
+        # spawn time. entity_model_paths maps name -> resource_path; look up
+        # the ResolvedModel that owns that path to read its fit_size (set only
+        # for Sketchfab picks — see unity_entity_asset_resolver._register).
+        _by_resource_path = {m.resource_path: m for m in used_models.values()}
+        entity_fit_sizes = {
+            name: (_by_resource_path[path].fit_size
+                   if path in _by_resource_path else 0.0)
+            for name, path in entity_model_paths.items()
+        }
+
         # Attribution for non-CC0 Sketchfab picks (pure string formatting over
         # used_models — no network, deterministic given the resolution above).
         _credits = _render_credits_md(used_models)
@@ -1885,6 +1896,7 @@ class UnityProjectGenerator:
             "procedural_meshes": schema.procedural_meshes,
             "entities":          schema.entities,
             "entity_model_paths": entity_model_paths,
+            "entity_fit_sizes":  entity_fit_sizes,
             "has_procedural_entities": has_procedural_entities,
             "has_fx_entities":   has_fx_entities,
             # Scene → entity-group names for specs that declare a subset (None

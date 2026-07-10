@@ -805,9 +805,46 @@ class TestEntityPath:
         assert "new Vector3(40.00f, 2.00f, 20.00f)" in cs       # elevation honored
         assert 'EmitWaypoints("Waypoints", _path_0)' in cs      # AI-consumable route
         assert "PointAlongPath" in cs
-        assert ', _path_0, sh);' in cs                          # path passed to group
-        assert ', null, sh);' in cs                             # non-path group gets null
+        assert ', _path_0, sh,' in cs                           # path passed to group
+        assert ', null, sh,' in cs                              # non-path group gets null
         assert cs.count("{") == cs.count("}")
+
+
+# ── Scale consistency: bounds-fit wiring (3D only) ──────────────────────────
+
+class TestBoundsFit:
+    def test_compute_fit_factor_helper_emitted_for_3d(self, gen):
+        from src.unity_schema import UnitySchema, EntitySpec
+        schema = UnitySchema(
+            project_name="FitT3D", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[EntitySpec(name="Trees", kind="prop", count=3,
+                                 placement="scatter", radius=10)],
+        )
+        files = gen.generate(schema, {})
+        cs = files["FitT3D/Assets/Scripts/EntitySpawner.cs"]
+        assert "ComputeFitFactor" in cs
+        assert "fitSize" in cs
+        # No Sketchfab pick in this schema -> fit_size defaults to 0.0000f.
+        assert "0.0000f);" in cs
+
+    def test_bounds_fit_not_emitted_for_2d(self, gen):
+        from src.unity_schema import UnitySchema, EntitySpec
+        schema = UnitySchema(
+            project_name="FitT2D", company_name="C", description="",
+            game_type="2D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[EntitySpec(name="Trees", kind="prop", count=3,
+                                 placement="scatter", radius=10)],
+        )
+        files = gen.generate(schema, {})
+        cs = files["FitT2D/Assets/Scripts/EntitySpawner.cs"]
+        assert "ComputeFitFactor" not in cs
 
 
 # ── Environment mood (sun + fog) ────────────────────────────────────────────────

@@ -57,7 +57,7 @@ public class EntitySpawner : MonoBehaviour
 {% set has_path = e.placement == "path" and e.path_points %}
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
-        {% endif %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh);
+        {% endif %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f);
 {% if has_path %}
         EmitWaypoints({{ '"Waypoints"' if ns.first_path else '"' ~ e.name ~ '_Waypoints"' }}, _path_{{ loop.index0 }});
 {% set ns.first_path = false %}
@@ -72,7 +72,8 @@ public class EntitySpawner : MonoBehaviour
 
     private void SpawnGroup(string groupName, int count, PrimitiveType shape, string placement,
                             float spacing, float radius, float scale, Color color, string tag,
-                            string behavior, string modelPath, Vector3[] path, Shader sh)
+                            string behavior, string modelPath, Vector3[] path, Shader sh,
+                            float fitSize = 0f)
     {
         // Resolve an optional behavior script once (e.g. a chase-AI micro).
         System.Type behaviorType = null;
@@ -162,7 +163,18 @@ public class EntitySpawner : MonoBehaviour
             }
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
+{% if game_type not in ("2D", "2d_topdown") %}
+            // Bounds-fit: Sketchfab-sourced models arrive at an arbitrary
+            // artist-authored scale (a real live-verified upload measured
+            // 632 meters long) — fitSize (0 for every Kenney/default/no-fit
+            // pick) normalizes the imported mesh's longest axis to a
+            // plausible per-kind size BEFORE the entity's own `scale` field
+            // applies as a relative multiplier on top.
+            float fitFactor = modelPrefab != null ? ComputeFitFactor(go, fitSize) : 1f;
+            go.transform.localScale = Vector3.one * (fitFactor * scale);
+{% else %}
             go.transform.localScale = Vector3.one * scale;
+{% endif %}
 {% if game_type == "2D" %}
             // 2D: strip imported/primitive 3D colliders, ensure one 2D collider so
             // the Rigidbody2D player can stand on / collide with this entity.
@@ -200,6 +212,24 @@ public class EntitySpawner : MonoBehaviour
                 go.AddComponent(behaviorType);
         }
     }
+
+{% if game_type not in ("2D", "2d_topdown") %}
+    // Uniform scale factor that fits an instantiated model's encapsulated
+    // renderer bounds (longest axis) to fitSize meters. fitSize <= 0 (every
+    // Kenney/default-pack pick, and any entity kind absent from
+    // lookups/unity/kind_sizes.json) is a deliberate no-op — those sources are
+    // already scaled correctly or pack-internally consistent.
+    private static float ComputeFitFactor(GameObject go, float fitSize)
+    {
+        if (fitSize <= 0f) return 1f;
+        var renderers = go.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0) return 1f;
+        var b = renderers[0].bounds;
+        for (int r = 1; r < renderers.Length; r++) b.Encapsulate(renderers[r].bounds);
+        float maxDim = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
+        return maxDim > 0.0001f ? fitSize / maxDim : 1f;
+    }
+{% endif %}
 
     // Empty waypoint GameObjects along a path — consumed by waypoint-following AI
     // (route runners look for a container named "Waypoints" by default).
