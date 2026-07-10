@@ -108,6 +108,34 @@ public class EntitySpawner : MonoBehaviour
 
         var parent = new GameObject(groupName).transform;
         parent.SetParent(transform, false);
+{% if game_type not in ("2D", "2d_topdown") %}
+        // Measure the model ONCE (not per-instance): a uniform bounds-fit
+        // factor (Sketchfab-sourced models only, fitSize==0 elsewhere), the
+        // XZ footprint (drives spacing so neighbors don't overlap), and the
+        // pivot's vertical offset from the mesh base (drives ground-snap —
+        // imported FBX pivots vary; a primitive's default center pivot keeps
+        // today's `scale * 0.5f` heuristic exactly).
+        float fitFactor = 1f, footprintXZ = 1f, pivotOffsetY = 0.5f;
+        if (modelPrefab != null && TryMeasureBounds(modelPrefab, out var _mb))
+        {
+            float maxDim = Mathf.Max(_mb.size.x, Mathf.Max(_mb.size.y, _mb.size.z));
+            if (fitSize > 0f && maxDim > 0.0001f) fitFactor = fitSize / maxDim;
+            footprintXZ = Mathf.Max(_mb.size.x, _mb.size.z);
+            pivotOffsetY = -_mb.min.y;
+        }
+        float finalScale = fitFactor * scale;
+        // `spacing`/`radius` are AUTHORED MINIMUMS — the model's own measured
+        // footprint (post-scale) can only widen them, never shrink below what
+        // the schema asked for. Fixes entities overlapping when a real
+        // model's footprint exceeds the schema's guessed spacing (default 2).
+        float effectiveSpacing = Mathf.Max(spacing, footprintXZ * finalScale * 1.15f);
+        float effectiveRadius = radius;
+        if (placement == "ring")
+            effectiveRadius = Mathf.Max(radius, count * effectiveSpacing / (2f * Mathf.PI));
+{% else %}
+        float finalScale = scale;
+        float effectiveSpacing = spacing, effectiveRadius = radius, pivotOffsetY = 0.5f;
+{% endif %}
         for (int i = 0; i < count; i++)
         {
             GameObject go;
@@ -163,18 +191,7 @@ public class EntitySpawner : MonoBehaviour
             }
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
-{% if game_type not in ("2D", "2d_topdown") %}
-            // Bounds-fit: Sketchfab-sourced models arrive at an arbitrary
-            // artist-authored scale (a real live-verified upload measured
-            // 632 meters long) — fitSize (0 for every Kenney/default/no-fit
-            // pick) normalizes the imported mesh's longest axis to a
-            // plausible per-kind size BEFORE the entity's own `scale` field
-            // applies as a relative multiplier on top.
-            float fitFactor = modelPrefab != null ? ComputeFitFactor(go, fitSize) : 1f;
-            go.transform.localScale = Vector3.one * (fitFactor * scale);
-{% else %}
-            go.transform.localScale = Vector3.one * scale;
-{% endif %}
+            go.transform.localScale = Vector3.one * finalScale;
 {% if game_type == "2D" %}
             // 2D: strip imported/primitive 3D colliders, ensure one 2D collider so
             // the Rigidbody2D player can stand on / collide with this entity.
@@ -186,15 +203,15 @@ public class EntitySpawner : MonoBehaviour
             {
                 // Lay instances evenly along the polyline — honors elevation (y).
                 pos = PointAlongPath(path, count > 1 ? (float)i / (count - 1) : 0f);
-                pos.y += scale * 0.5f;
+                pos.y += pivotOffsetY * finalScale;
             }
             else
             {
-                pos = PlaceAt(placement, i, count, spacing, radius);
+                pos = PlaceAt(placement, i, count, effectiveSpacing, effectiveRadius);
 {% if game_type == "2D" %}
                 pos = new Vector3(pos.x, pos.z, 0f);  // XZ layout -> XY side-on plane
 {% endif %}
-                pos.y += scale * 0.5f;
+                pos.y += pivotOffsetY * finalScale;
             }
             go.transform.position = pos;
             if (sh != null && modelPrefab == null{% if has_fx_entities %} && !isFx{% endif %})   // models keep their own materials
@@ -214,20 +231,17 @@ public class EntitySpawner : MonoBehaviour
     }
 
 {% if game_type not in ("2D", "2d_topdown") %}
-    // Uniform scale factor that fits an instantiated model's encapsulated
-    // renderer bounds (longest axis) to fitSize meters. fitSize <= 0 (every
-    // Kenney/default-pack pick, and any entity kind absent from
-    // lookups/unity/kind_sizes.json) is a deliberate no-op — those sources are
-    // already scaled correctly or pack-internally consistent.
-    private static float ComputeFitFactor(GameObject go, float fitSize)
+    // Encapsulated renderer bounds of a model (prefab asset or instance) —
+    // the shared measurement behind bounds-fit scaling, footprint-derived
+    // spacing, and pivot-aware ground-snap. False (bounds left at default)
+    // when the model has no renderers (e.g. a bare empty).
+    private static bool TryMeasureBounds(GameObject go, out Bounds bounds)
     {
-        if (fitSize <= 0f) return 1f;
         var renderers = go.GetComponentsInChildren<Renderer>();
-        if (renderers.Length == 0) return 1f;
-        var b = renderers[0].bounds;
-        for (int r = 1; r < renderers.Length; r++) b.Encapsulate(renderers[r].bounds);
-        float maxDim = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
-        return maxDim > 0.0001f ? fitSize / maxDim : 1f;
+        if (renderers.Length == 0) { bounds = default; return false; }
+        bounds = renderers[0].bounds;
+        for (int r = 1; r < renderers.Length; r++) bounds.Encapsulate(renderers[r].bounds);
+        return true;
     }
 {% endif %}
 

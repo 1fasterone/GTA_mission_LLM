@@ -414,6 +414,53 @@ class TestUnityConsistencyChecks:
         # Only fix should be the auto-materialpalette (already present), so no new injections
         assert all("Injected" not in f for f in fixes)
 
+    # ── placement="single" + count>1 auto-upgrade (stacking fix) ────────────
+
+    def test_single_placement_with_small_count_upgrades_to_line(self):
+        from src.unity_schema import EntitySpec
+        schema = self._base_schema(
+            entities=[EntitySpec(name="Buildings", kind="building", count=5)])
+        fixed, fixes = _check_consistency(schema)
+        e = next(e for e in fixed.entities if e.name == "Buildings")
+        assert e.placement == "line"
+        assert any("Buildings" in f and "line" in f for f in fixes)
+
+    def test_single_placement_with_large_count_upgrades_to_grid(self):
+        from src.unity_schema import EntitySpec
+        schema = self._base_schema(
+            entities=[EntitySpec(name="Crowd", kind="npc", count=20)])
+        fixed, fixes = _check_consistency(schema)
+        e = next(e for e in fixed.entities if e.name == "Crowd")
+        assert e.placement == "grid"
+
+    def test_single_placement_with_count_one_is_untouched(self):
+        from src.unity_schema import EntitySpec
+        schema = self._base_schema(
+            entities=[EntitySpec(name="Boss", kind="enemy", count=1)])
+        fixed, fixes = _check_consistency(schema)
+        e = next(e for e in fixed.entities if e.name == "Boss")
+        assert e.placement == "single"
+        assert all("placement" not in f.lower() for f in fixes)
+
+    def test_explicit_non_single_placement_is_never_overridden(self):
+        from src.unity_schema import EntitySpec
+        schema = self._base_schema(
+            entities=[EntitySpec(name="Stands", kind="structure", count=6,
+                                 placement="ring")])
+        fixed, fixes = _check_consistency(schema)
+        e = next(e for e in fixed.entities if e.name == "Stands")
+        assert e.placement == "ring"
+
+    def test_path_placement_is_never_overridden(self):
+        from src.unity_schema import EntitySpec
+        schema = self._base_schema(
+            entities=[EntitySpec(name="Road", kind="road", count=10,
+                                 placement="path",
+                                 path_points=[[0, 0, 0], [10, 0, 10]])])
+        fixed, fixes = _check_consistency(schema)
+        e = next(e for e in fixed.entities if e.name == "Road")
+        assert e.placement == "path"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Programmatic fixer (_programmatic_fix)
