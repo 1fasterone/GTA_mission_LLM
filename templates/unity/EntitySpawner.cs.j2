@@ -202,8 +202,18 @@ public class EntitySpawner : MonoBehaviour
             if (placement == "path" && path != null && path.Length > 0)
             {
                 // Lay instances evenly along the polyline — honors elevation (y).
-                pos = PointAlongPath(path, count > 1 ? (float)i / (count - 1) : 0f);
+                float _t = count > 1 ? (float)i / (count - 1) : 0f;
+                pos = PointAlongPath(path, _t);
                 pos.y += pivotOffsetY * finalScale;
+                // Face the direction of travel — a forward-sampled tangent —
+                // instead of every instance sharing one static default
+                // rotation. Yaw-only (flattened) so elevation changes don't
+                // pitch pieces; skipped at the very end of an open path where
+                // the forward sample can't advance (dir ~ zero).
+                Vector3 _ahead = PointAlongPath(path, Mathf.Clamp01(_t + 0.01f));
+                Vector3 _dir = _ahead - pos; _dir.y = 0f;
+                if (_dir.sqrMagnitude > 0.0001f)
+                    go.transform.rotation = Quaternion.LookRotation(_dir.normalized, Vector3.up);
             }
             else
             {

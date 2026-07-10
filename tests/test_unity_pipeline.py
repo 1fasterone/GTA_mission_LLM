@@ -277,6 +277,79 @@ class TestUnityPipelineHappyPath3D:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Racing-genre track scaffold (end-to-end): DriftArcade regression
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUnityPipelineRacingScaffold:
+    """A racing-genre prompt whose LLM-authored schema has NO vehicle/track
+    entities (the exact DriftArcade failure mode) must come out of the
+    pipeline with a real closed circuit, not a themed prop scatter or a
+    strict-mode hard-fail."""
+
+    @pytest.fixture
+    def racing_schema_json_degenerate(self) -> str:
+        return json.dumps({
+            "project_name":    "DriftArcade",
+            "company_name":    "TestCo",
+            "game_type":       "3D",
+            "platform":        "PC",
+            "render_pipeline": "URP",
+            "unity_version":   "6000.2",
+            "color_space":     "Linear",
+            "description":     "A neon drift racing arcade game",
+            "features":        ["input_system"],
+            "scenes":          ["Main"],
+            "scripts": [
+                {"name": "GameManager",      "type": "game_manager", "description": "GM"},
+                {"name": "PlayerController", "type": "player",       "description": "Player"},
+            ],
+            "packages": [{"description": "universal render pipeline"}],
+            # Degenerate on purpose: scenery only, no vehicle/road/track kind —
+            # this is what the composer must rescue.
+            "entities": [
+                {"name": "Grandstands", "kind": "building", "count": 8,
+                 "placement": "ring", "model_hint": "grandstand structure"},
+            ],
+        })
+
+    def _run_racing(self, config, concept, schema_json):
+        pipeline = _make_pipeline(config)
+        pipeline.llm.chat = MagicMock(side_effect=[concept, schema_json])
+        return pipeline.run("DriftArcade: a neon drift racing arcade game "
+                            "with tight corners and rival racers")
+
+    def test_track_and_vehicle_entities_injected(
+        self, unity_pipeline_config, racing_schema_json_degenerate
+    ):
+        project_root = self._run_racing(
+            unity_pipeline_config, "concept text", racing_schema_json_degenerate)
+        cs = (project_root / "Assets" / "Scripts" / "EntitySpawner.cs").read_text(
+            encoding="utf-8")
+        for name in ("TrackSurface", "PlayerKart", "OpponentKarts",
+                     "TrackBarriersOuter", "ApexCones", "CheckpointBanners"):
+            assert f'"{name}"' in cs, f"{name} missing from generated EntitySpawner.cs"
+
+    def test_existing_grandstands_entity_preserved(
+        self, unity_pipeline_config, racing_schema_json_degenerate
+    ):
+        project_root = self._run_racing(
+            unity_pipeline_config, "concept text", racing_schema_json_degenerate)
+        cs = (project_root / "Assets" / "Scripts" / "EntitySpawner.cs").read_text(
+            encoding="utf-8")
+        assert '"Grandstands"' in cs
+
+    def test_project_builds_without_strict_asset_failure(
+        self, unity_pipeline_config, racing_schema_json_degenerate
+    ):
+        # The whole point: this must not raise — a racing project with no
+        # real vehicle/track content used to either hard-fail (strict) or
+        # silently resolve to unrelated assets (an airplane).
+        project_root = self._run_racing(
+            unity_pipeline_config, "concept text", racing_schema_json_degenerate)
+        assert project_root.exists()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Consistency checks (_check_consistency)
 # ══════════════════════════════════════════════════════════════════════════════
 
