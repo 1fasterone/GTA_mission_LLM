@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from .unity_asset_catalog import load_catalog, tokenize
-from .unity_concept_layers import load_concept_layers
+from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
 from .unity_model_resolver import ResolvedModel
 
 _log = logging.getLogger(__name__)
@@ -55,6 +55,12 @@ _VARIETY_BAND = 0.85          # candidates within 85% of the best score rotate
 # where a staircase (higher generic_score, category=stairs) out-pointed a real
 # platform (category=structure) purely on commonness.
 _LAYER_ALIGN_BONUS = 1.0
+
+# FAIL-FAST genre coherence (racing): a strict-mode racing project whose
+# entities resolve to zero assets from these core layers — no drivable ground
+# vehicle, no track/road piece — is not a racing game, it's a themed prop
+# scatter. Better to hard-fail with an actionable message than ship it.
+_RACING_CORE_LAYERS = frozenset({"vehicle_ground", "road_track"})
 
 # Generic query words that appear in almost any scene description — they carry
 # no signal about which MODEL fits, so they never count as keyword hits.
@@ -261,6 +267,23 @@ def resolve_entity_assets(schema,
     asset_membership: list[tuple[frozenset, frozenset]] = (
         [layers.membership(a) for a in assets] if layers else [])
 
+    # Genre-aware layer bias. schema.meta.genre is stamped by
+    # unity_archetypes.apply_intent ("universal" = no opinion → zero bias, so
+    # every genre-less run scores byte-identically to before). The bias is an
+    # additive term on an asset's STRONG layer memberships in the concept
+    # tiers: a racing game boosts road_track/vehicle_ground and penalizes
+    # aircraft/watercraft — the missing signal behind the DriftArcade run
+    # resolving its kind="vehicle" opponents to a round-robin of airplanes.
+    genre = str((getattr(schema, "meta", None) or {}).get("genre", "universal"))
+    gbias: dict[str, float] = (
+        load_genre_layer_bias(str(lookups_dir)).get(genre, {})
+        if genre != "universal" else {})
+
+    def _genre_bias(strong_m: frozenset) -> float:
+        if not gbias or not strong_m:
+            return 0.0
+        return sum(gbias.get(layer, 0.0) for layer in sorted(strong_m))
+
     entity_model_paths: dict[str, str] = {}
     unmatched: list[tuple[str, str, list[str]]] = []   # (name, kind, near misses)
     defaulted: list[tuple[str, str]] = []
@@ -274,6 +297,11 @@ def resolve_entity_assets(schema,
     preferred_author: Optional[str] = None
 
     prop_fallback = all_models.get("prop") or next(iter(all_models.values()), None)
+
+    # Set True the moment any entity resolves to racing-core content (a
+    # vehicle_ground/road_track catalog pick, or the default-pack vehicle);
+    # checked after the loop when genre == "racing".
+    racing_core_seen = False
 
     def _register(scored: list[tuple[float, dict]]) -> Optional[str]:
         """Variety-pick from a sorted (score, asset) list, register the pick in
@@ -292,6 +320,11 @@ def resolve_entity_assets(schema,
         idx = rotation.get(key, 0)
         rotation[key] = idx + 1
         pick = band[idx % len(band)]
+
+        nonlocal racing_core_seen
+        if (not racing_core_seen and layers
+                and layers.membership(pick)[1] & _RACING_CORE_LAYERS):
+            racing_core_seen = True
 
         src = _entry_source(pick, asset_root)
         category = (pick.get("category") or "prop").capitalize()
@@ -340,6 +373,8 @@ def resolve_entity_assets(schema,
         # stop at Car.fbx. Hold the tier-1 model as the safety net and try the
         # catalog first; `model_hint: "default <kind>"` opts back into tier 1.
         if tier1 is not None and hint in ("", f"default {kind}", "default prop"):
+            if kind == "vehicle":
+                racing_core_seen = True   # default-pack car is real racing content
             entity_model_paths[e.name] = tier1.resource_path
             continue
 
@@ -402,17 +437,31 @@ def resolve_entity_assets(schema,
         # protection Tier 2b already enforces.
         if sk_enabled and not is_2d and kind not in _FX_KINDS and kind not in _SKIP_KINDS:
             sk_min = float(sk_cfg.get("min_match_score", min_score))
+
+            def _sk_score(a: dict) -> float:
+                # Same genre bias the local concept tiers get — a cached
+                # Sketchfab airplane must not win a racing game's vehicle
+                # slot any more than a Kenney one.
+                s = _score(a, qw, kind)
+                if s > 0.0 and gbias and layers:
+                    s += _genre_bias(layers.membership(a)[1])
+                return s
+
             sk_scored = [(s, a) for a in sk_catalog_assets
-                        if (s := _score(a, qw, kind)) >= sk_min
+                        if (s := _sk_score(a)) >= sk_min
                         and _entry_source(a, asset_root) is not None
                         and _passes_kind_guard(a)]
             if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
                 from .sketchfab_freeze import fetch_and_freeze
                 # sketchfab_query (src/unity_sketchfab_translator.py's concept +
                 # shared-style-brief enrichment) wins when present; falls back
-                # to today's mechanical model_hint / strong-token derivation.
+                # to today's mechanical model_hint / strong-token derivation,
+                # genre-prefixed so a bare "vehicle" search in a racing
+                # project asks the marketplace for "racing vehicle".
                 query = (getattr(e, "sketchfab_query", "") or hint
                         or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT)))
+                if genre != "universal" and not getattr(e, "sketchfab_query", ""):
+                    query = f"{genre.replace('_', ' ')} {query}".strip()
                 new_entry = fetch_and_freeze(
                     query, score_fn=lambda a: _score(a, qw, kind),
                     client=sk_client, blender_cfg=sk_cfg,
@@ -424,7 +473,7 @@ def resolve_entity_assets(schema,
                     sk_catalog_assets.append(new_entry)  # in-run cache: later
                                                           # entities this same
                                                           # call can reuse it
-                    s = _score(new_entry, qw, kind)
+                    s = _sk_score(new_entry)
                     if s >= sk_min and _passes_kind_guard(new_entry):
                         sk_scored = [(s, new_entry)]
             if sk_scored:
@@ -472,6 +521,9 @@ def resolve_entity_assets(schema,
                     continue
                 if is_strong:
                     base += _LAYER_ALIGN_BONUS
+                base += _genre_bias(strong_m)
+                if base < min_score:
+                    continue   # genre penalty pushed an off-genre asset out
                 layer_scored.append((base, a))
             layer_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
             picked = _register(layer_scored)
@@ -502,6 +554,8 @@ def resolve_entity_assets(schema,
         # kind is still real, kind-correct content — use it rather than
         # degrading to a procedural mesh, the generic prop, or a strict fail.
         if tier1 is not None:
+            if kind == "vehicle":
+                racing_core_seen = True
             entity_model_paths[e.name] = tier1.resource_path
             continue
 
@@ -527,6 +581,10 @@ def resolve_entity_assets(schema,
                 s += 0.1 * len(scene_words & akw)
                 if is_2d and a.get("format") == "png":
                     s += _SPRITE_2D_BONUS
+                s += _genre_bias(strong_m)
+                if s <= 0.0:
+                    continue   # genre penalty: off-genre beats nothing, but
+                               # never at a negative score
                 soft.append((s, a))
             soft.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
             picked = _register(soft)
@@ -590,6 +648,22 @@ def resolve_entity_assets(schema,
             "prop '%s'. Add a model_hint or extend the asset library.",
             sorted({f"{n}({k})" for n, k in defaulted}),
             prop_fallback.resource_path if prop_fallback else "?")
+
+    # FAIL-FAST genre coherence: a strict-mode 3D racing project that resolved
+    # every entity yet holds zero racing-core content (no ground vehicle, no
+    # track piece) matches the intended genre in name only — hard-fail with
+    # the fix, exactly like the strict unmatched-entity path above. Gated on
+    # `layers` (no taxonomy → membership can't be judged) and on 3D (2D racing
+    # resolves sprites the layer vocabulary doesn't reliably cover).
+    if (genre == "racing" and strict and not is_2d and layers
+            and schema.entities and not racing_core_seen):
+        raise ValueError(
+            "[assets.strict] genre is 'racing' but no entity resolved to a "
+            "ground vehicle or track piece (concept layers vehicle_ground/"
+            "road_track). Add entities like a drivable car (kind='vehicle'), "
+            "track segments (kind='track' or model_hint 'race track'), and "
+            "barriers/checkpoints, or set assets.strict: false."
+        )
 
     return entity_model_paths
 

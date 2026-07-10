@@ -1,0 +1,30 @@
+{
+  "_comment": "Genre -> {concept layer -> additive score bias}, applied by resolve_entity_assets in the concept-layer tiers (2a/2c) when schema.meta.genre is set and != 'universal'. Genre names come from rag.tags.taxonomy UNITY_GENRE_ATOM['genre'] (the same vocabulary unity_archetypes.classify emits); layer names from concept_layers.json. Positive = this genre wants assets whose PRIMARY domain is that layer; negative = an asset primarily from that layer is off-genre even when the entity's kind ties them (a racing game's kind='vehicle' opponents must resolve to ground vehicles, never the airplane that shares the 'vehicle' kind_hint). File missing => zero bias, resolver behaves exactly as before. Deterministic: pure lookup.",
+  "racing": {
+    "road_track": 0.75,
+    "vehicle_ground": 0.75,
+    "barrier_fence": 0.5,
+    "decoration_sign": 0.25,
+    "aircraft_aerial": -1.5,
+    "spacecraft": -1.5,
+    "watercraft": -1.0
+  },
+  "fps": {
+    "weapon": 0.5,
+    "barrier_fence": 0.25
+  },
+  "platformer": {
+    "platform_walkway": 0.75,
+    "stairs_ramp": 0.5,
+    "pickup_powerup": 0.25
+  },
+  "horror": {
+    "building_architecture": 0.25,
+    "decoration_sign": 0.25
+  },
+  "tower_defence": {
+    "road_track": 0.5,
+    "machine_device": 0.5,
+    "robot_drone": 0.25
+  }
+}
