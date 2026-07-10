@@ -106,7 +106,7 @@ def test_download_failure_returns_none(tmp_path):
 
 
 def test_successful_fetch_freezes_entry(tmp_path, monkeypatch):
-    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None):
+    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None, **_kw):
         fbx_out.parent.mkdir(parents=True, exist_ok=True)
         fbx_out.write_bytes(b"FBX-DUMMY")
         return fbx_out
@@ -165,7 +165,7 @@ def test_never_raises_on_internal_error(tmp_path):
 # ── style-coherence: author-affinity biasing ──────────────────────────────────
 
 def _install_fake_convert(monkeypatch):
-    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None):
+    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None, **_kw):
         fbx_out.parent.mkdir(parents=True, exist_ok=True)
         fbx_out.write_bytes(b"FBX-DUMMY")
         return fbx_out
