@@ -32,6 +32,11 @@ class ResolvedModel(BaseModel):
     source:        str = "kenney"        # "kenney" | "sketchfab"
     license:       Optional[str] = None  # e.g. "cc0" | "by" | "by-sa" | "by-nd"
     attribution:   Optional[str] = None  # required-credit text for non-CC0 picks
+    # Runtime bounds-fit target (longest-axis meters), Sketchfab picks only —
+    # Kenney/default-pack models keep their pack-native scale (0.0 = no fit;
+    # BoundsFit.cs.j2 is a no-op at 0). See lookups/unity/kind_sizes.json and
+    # unity_entity_asset_resolver._register.
+    fit_size:      float = 0.0
 
 
 def resolve_default_models(lookups_dir: str = "lookups",

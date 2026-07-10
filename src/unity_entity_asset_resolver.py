@@ -21,8 +21,10 @@ Deterministic: pure lookup + arithmetic, stable tie-breaks, no RNG, no LLM.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -31,6 +33,25 @@ from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
 from .unity_model_resolver import ResolvedModel
 
 _log = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=8)
+def load_kind_sizes(lookups_dir: str = "lookups") -> dict[str, float]:
+    """lookups/unity/kind_sizes.json: entity kind -> target longest-axis size
+    (meters), used to bounds-fit Sketchfab-sourced models at runtime (a
+    Sketchfab car authored at 632 meters — a real, live-verified upload unit
+    mistake — otherwise dwarfs everything else in the scene). Kenney/default-
+    pack picks never consult this; their pack-native scale is already mutually
+    consistent. Missing/malformed file, or a kind mapped to null, -> no entry
+    -> no fit. Deterministic: pure lookup.
+    """
+    path = Path(lookups_dir) / "unity" / "kind_sizes.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return {k: float(v) for k, v in (raw.get("sizes") or {}).items()
+            if isinstance(v, (int, float))}
 
 # Resources.Load roots for catalog picks. Distinct from the default pack's
 # "Models/Default/" so the two never collide; 3 path parts keeps write()'s
@@ -259,6 +280,8 @@ def resolve_entity_assets(schema,
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
 
+    kind_sizes = load_kind_sizes(str(lookups_dir))
+
     # Concept-layer taxonomy (optional). Precompute each asset's (broad, strong)
     # layer membership once so the per-entity pool is a cheap set intersection.
     # Absent file → `layers is None` and every layer branch below is skipped:
@@ -339,6 +362,13 @@ def resolve_entity_assets(schema,
         model_key = f"asset:{Path(pick['filename']).stem}"
         rm = used_models.get(model_key)
         if rm is None:
+            # Bounds-fit target: Sketchfab picks only. Kenney/default-pack
+            # scale is already pack-internally consistent (modular pieces like
+            # car-kit track segments would break their relative tiling if
+            # individually normalized) — only the wild-card source (arbitrary
+            # artist-authored real-world scale) gets a runtime fit.
+            fit_size = (kind_sizes.get(kind, 0.0)
+                        if pick.get("source") == "sketchfab" else 0.0)
             rm = ResolvedModel(
                 kind=model_key,
                 src=str(src.resolve()),
@@ -352,6 +382,7 @@ def resolve_entity_assets(schema,
                 source=pick.get("source", "kenney"),
                 license=pick.get("license"),
                 attribution=pick.get("attribution"),
+                fit_size=fit_size,
             )
             used_models[model_key] = rm
         return rm.resource_path
