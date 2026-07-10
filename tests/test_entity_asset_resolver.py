@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from src.unity_entity_asset_resolver import resolve_entity_assets, texture_dirs_for
+from src.unity_entity_asset_resolver import (resolve_entity_assets, texture_dirs_for,
+                                             texture_dirs_with_res_root_for)
 from src.unity_model_resolver import ResolvedModel
 from src.unity_schema import EntitySpec, UnitySchema
 
@@ -428,6 +429,40 @@ def test_texture_dirs_for_catalog_picks_only(env, tmp_path):
     assert texture_dirs_for(_default_models(tmp_path)) == []
 
 
+def test_texture_dirs_with_res_root_routes_by_source():
+    """Root-caused live: every Sketchfab-sourced model rendered black in Play
+    mode because textures were always copied to the hardcoded
+    Assets/Resources/Models/Kenney/Textures/ path — not an ancestor of a
+    Sketchfab pick's own Assets/Resources/Models/Sketchfab/<Category>/
+    location, so Unity's up-the-parent-chain search never found them. This
+    pins the destination-selection fix: each texture dir must pair with the
+    SAME res_root the model itself was copied under."""
+    kenney_dir = Path("/lib/kenney/tree-pine.fbx")
+    sketchfab_dir = Path("/lib/sketchfab/car-drag-racing.fbx")
+    used = {
+        "asset:tree-pine": ResolvedModel(
+            kind="asset:tree-pine", src=str(kenney_dir),
+            dest_rel="Models/Kenney/Nature/tree-pine.fbx",
+            resource_path="Models/Kenney/Nature/tree-pine", rig="generic",
+            source="kenney"),
+        "asset:car-drag-racing": ResolvedModel(
+            kind="asset:car-drag-racing", src=str(sketchfab_dir),
+            dest_rel="Models/Sketchfab/Vehicle/car-drag-racing.fbx",
+            resource_path="Models/Sketchfab/Vehicle/car-drag-racing", rig="generic",
+            source="sketchfab"),
+    }
+
+    def _fake_is_dir(self):
+        return self.name == "Textures"
+    import unittest.mock as mock
+    with mock.patch.object(Path, "is_dir", _fake_is_dir):
+        pairs = texture_dirs_with_res_root_for(used)
+
+    by_root = {res_root: tex_dir for tex_dir, res_root in pairs}
+    assert by_root["Models/Kenney"] == kenney_dir.parent / "Textures"
+    assert by_root["Models/Sketchfab"] == sketchfab_dir.parent / "Textures"
+
+
 # ── concept layers (semantic classification: concept → layer → best asset) ────
 
 # A staircase and a real platform BOTH carry the keyword "platform". The
@@ -673,6 +708,69 @@ def test_sketchfab_fetch_failure_falls_through_cleanly(env, tmp_path, monkeypatc
         used, all_models, lookups_dir=str(env),
         sketchfab_cfg={"enabled": True, "auto_fetch": True})
     assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_sketchfab_tier_s_rejects_coincidental_kind_mismatch(env, tmp_path):
+    """Root-caused live: 5 unrelated entities (pickup/crowd/enemy/prop x2) all
+    resolved to the SAME collected Sketchfab prop ("traffic cone") because
+    Tier S ran raw _score() with none of the _passes_kind_guard protection
+    Tier 2b already has (the guard exists specifically for this failure class
+    — see test_kind_guard_blocks_wood_plank_for_enemy below). A Sketchfab
+    entry with a coincidentally-shared keyword ("crowd", from loose/broad
+    uploader tags — its OWN kind_hints say "prop", not "crowd") must NOT
+    outrank a real, correctly-tagged default for an unrelated entity."""
+    entry = _add_sketchfab_entry(
+        env, tmp_path, uid="cone1", filename="traffic-cone.fbx",
+        keywords=("traffic", "cone", "road", "crowd"),  # "crowd" = coincidental tag
+        kind_hints=("prop",), category="prop")
+    all_models = _default_models(tmp_path)
+    crowd_src = tmp_path / "Spectator.fbx"
+    crowd_src.write_bytes(b"FBX")
+    crowd = ResolvedModel(kind="crowd", src=str(crowd_src),
+                          dest_rel="Models/Default/Crowd/Spectator.fbx",
+                          resource_path="Models/Default/Crowd/Spectator", rig="generic")
+    all_models["crowd"] = crowd
+    used = {"prop": all_models["prop"], "crowd": crowd}
+
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="BirdFlock", kind="crowd", model_hint="crowd", count=20)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+
+    assert entry["filename"] not in paths["BirdFlock"]
+    assert paths["BirdFlock"] == "Models/Default/Crowd/Spectator"
+
+
+def test_kind_guard_blocks_wood_plank_for_enemy(env, tmp_path):
+    """Same failure class via the Kenney tiers (the original hit-live
+    regression the guard was built for) — kept here alongside the Tier S
+    version above so both code paths are covered side by side."""
+    plank = {"filename": "floor-plank.fbx", "relpath": "floor-plank.fbx",
+             "category": "structure", "keywords": ["wood", "floor", "plank", "ground"],
+             "kind_hints": ["structure"], "generic_score": 0, "scale": 1.0}
+    (Path(env).parent / "lib" / "floor-plank.fbx").write_bytes(b"FBX")
+    cat_path = env / "unity" / "asset_catalog.json"
+    catalog = json.loads(cat_path.read_text(encoding="utf-8"))
+    catalog["assets"].append({**plank, "root": (Path(env).parent / "lib").as_posix(),
+                              "game_contexts": ["any"], "format": "fbx",
+                              "pack": "test", "curated": False})
+    cat_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    all_models = _default_models(tmp_path)
+    enemy_src = tmp_path / "Enemy.fbx"
+    enemy_src.write_bytes(b"FBX")
+    enemy = ResolvedModel(kind="enemy", src=str(enemy_src),
+                          dest_rel="Models/Default/Enemy/Enemy.fbx",
+                          resource_path="Models/Default/Enemy/Enemy", rig="generic")
+    all_models["enemy"] = enemy
+    used = {"prop": all_models["prop"], "enemy": enemy}
+
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="GroundEnemies", kind="enemy", model_hint="ground", count=3)]),
+        used, all_models, lookups_dir=str(env))
+
+    assert "floor-plank" not in paths["GroundEnemies"]
+    assert paths["GroundEnemies"] == "Models/Default/Enemy/Enemy"
 
 
 # ── style coherence: sketchfab_query preference + author-affinity threading ──

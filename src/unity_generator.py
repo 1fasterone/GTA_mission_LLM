@@ -16,9 +16,10 @@ from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
 from .unity_schema import ProceduralMesh, UnitySchema, UnityScript
 from .unity_asset_resolver import resolve_assets
-from .unity_entity_asset_resolver import resolve_entity_assets, texture_dirs_for
+from .unity_entity_asset_resolver import (resolve_entity_assets,
+                                          texture_dirs_with_res_root_for)
 from .unity_model_resolver import resolve_default_models, models_for_schema
-from .micro.code_fields import lint_extensible
+from .micro.code_fields import CodeField, lint_extensible
 
 _log = logging.getLogger(__name__)
 
@@ -839,6 +840,127 @@ def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
         m.body = _strip(m.body, frozenset(_method_param_names(m.signature)))
 
 
+# ── Nullable value-type null-conditional chains ────────────────────────────────
+# `X?.transform.position` (X reference-typed, possibly null) infers Vector3? —
+# passing that anywhere a plain Vector3/Quaternion is expected is CS1503 (hit
+# live: AIManager.cs did `Vector3.Distance(GameContext.Instance.Get<PlayerController>()
+# ?.transform.position, ...)`). This is the direct, expected consequence of
+# GAMECONTEXT_SCHEMA_GUIDANCE (src/unity_prompts.py) steering the LLM toward
+# `GameContext.Instance.Get<T>()?.X` instead of a null check — the guidance
+# stays (it's the right pattern for a possibly-absent service), the fix lives
+# here.
+#
+# The declaration itself is left ALONE (stays Vector3?) — the LLM routinely
+# null-checks that same variable right after (`if (playerPos != null)`), which
+# only compiles while it's still nullable; converting the declaration itself
+# to a plain Vector3 would fix the Distance() call but break that null check
+# (CS0019, Vector3 has no operator!=(Vector3, <null>)). Instead, every OTHER
+# bare use of the variable — anything that isn't the declaration and isn't
+# part of a null check — gets `.GetValueOrDefault()` appended, converting back
+# to a plain value (Vector3.zero / Quaternion.identity on a miss) only where
+# a non-nullable value is actually required.
+_NULLABLE_MEMBER_SUFFIX = (
+    r"(?:transform\.)?(?:position|rotation|localPosition|localRotation|"
+    r"forward|right|up|localScale|eulerAngles)"
+)
+_NULLABLE_DECL_RE = re.compile(
+    r"\b(?:var|[\w<>\[\],.]+)\s+(\w+)\s*=\s*[^;{}]*?\?\." + _NULLABLE_MEMBER_SUFFIX + r"\b"
+)
+_NULL_COMPARE_AFTER_RE      = re.compile(r"\A\s*(?:!=|==)\s*null\b")
+_NULL_COMPARE_BEFORE_RE     = re.compile(r"null\s*(?:!=|==)\s*\Z")
+_NULLABLE_ACCESSOR_AFTER_RE = re.compile(r"\A\s*\.(?:HasValue|Value|GetValueOrDefault)\b")
+
+
+def _sanitize_nullable_valuetype_access(script: UnityScript) -> None:
+    """Fix `X?.transform.position`-shaped CS1503s — see module comment above."""
+    def _fix(body: str) -> str:
+        if not body or "?." not in body:
+            return body
+        decls = list(_NULLABLE_DECL_RE.finditer(body))
+        if not decls:
+            return body
+        decl_spans = [(m.start(1), m.end(1)) for m in decls]
+        names = sorted({m.group(1) for m in decls}, key=len, reverse=True)
+        name_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in names) + r")\b")
+
+        def _replace(m: "re.Match[str]") -> str:
+            start, end = m.start(), m.end()
+            if any(s <= start and end <= e for s, e in decl_spans):
+                return m.group(0)          # the declaration's own LHS — leave nullable
+            after  = body[end:end + 24]
+            before = body[max(0, start - 24):start]
+            if (_NULL_COMPARE_AFTER_RE.match(after)
+                    or _NULL_COMPARE_BEFORE_RE.search(before)
+                    or _NULLABLE_ACCESSOR_AFTER_RE.match(after)):
+                return m.group(0)          # a null check / already-safe access — leave it
+            return m.group(0) + ".GetValueOrDefault()"
+
+        return name_re.sub(_replace, body)
+
+    script.awake_extra        = _fix(script.awake_extra)
+    script.update_extra       = _fix(script.update_extra)
+    script.fixed_update_extra = _fix(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _fix(m.body)
+
+
+# ── Undeclared persisted scalars (auto-declare, don't strip) ──────────────────
+# Unlike the strip passes above (self-calls, condition reads — genuinely unsafe
+# to guess a fix for), a bare assignment target the LLM never gave a field
+# (hit live: DriftCamera.cs tracked frame-to-frame delta via `lastX` but never
+# wrote `private float lastX;`, so both the read and the write were CS0103) is
+# a case where AUTO-DECLARING the field preserves the intended behavior instead
+# of deleting it — the same rationale as the existing needs_rigidbody
+# auto-declare below, generalized to any plain persisted scalar. Fields are
+# shared across a script's whole class, so this scans awake+update+
+# fixed_update+extra_methods TOGETHER before deciding what's genuinely
+# undeclared (a `var`/typed local declared in one body must not be flagged).
+_ASSIGN_TARGET_RE = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\s*(?:[+\-*/%&|^])?=(?!=)")
+_CS_KEYWORDS = frozenset({
+    "if", "else", "for", "foreach", "while", "do", "switch", "case", "default",
+    "return", "break", "continue", "new", "true", "false", "null", "this",
+    "base", "var", "is", "as", "in", "out", "ref", "throw", "try", "catch",
+    "finally", "using", "yield", "await", "async",
+})
+
+
+def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
+    """Auto-declare a bare assignment-target identifier the LLM never gave a
+    field for (see module comment above). Skips anything already known:
+    extra_fields, method params, locally var/typed-declared, foreach vars,
+    `is`-pattern bindings, lambda params, or Unity/C#/keyword built-ins.
+
+    Not fully precise (e.g. an object-initializer `new Foo { X = 1 }` reads as
+    an assignment target too) — worst case is one harmless extra unused field,
+    never a compile break, matching this module's existing heuristic passes.
+    """
+    combined = "\n".join(filter(None, [
+        script.awake_extra, script.update_extra, script.fixed_update_extra,
+    ] + [m.body for m in script.extra_methods]))
+    if not combined:
+        return
+
+    declared: set[str] = {f.name for f in script.extra_fields}
+    declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(combined))
+    declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(combined))
+    for m in _IS_PATTERN_RE.finditer(combined):
+        declared.add(m.group(1))
+        if m.group(2):
+            declared.add(m.group(2))
+    declared.update(m.group(1) for m in _LAMBDA_PARAM_RE.finditer(combined))
+    for m in script.extra_methods:
+        declared.update(_method_param_names(m.signature))
+
+    seen: set[str] = set()
+    for m in _ASSIGN_TARGET_RE.finditer(combined):
+        tok = m.group(1)
+        if (tok in declared or tok in _CS_KEYWORDS or tok in _STATIC_CLASS_ALLOW
+                or tok in _MB_COMMON_MEMBERS or tok in seen):
+            continue
+        seen.add(tok)
+        script.extra_fields.append(CodeField(name=tok, type="float"))
+
+
 # ── Visual style -> lighting config ───────────────────────────────────────────
 
 _LIGHTING_BY_STYLE: dict[str, dict] = {
@@ -1630,6 +1752,8 @@ class UnityProjectGenerator:
                 _sanitize_stub_type_usage(s)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
+                _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
+                _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)
                 _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver
                 _sanitize_undeclared_condition_reads(s)   # bare if/while value read
@@ -2322,19 +2446,27 @@ class UnityProjectGenerator:
                 _log.warning("[atmosphere] vendor dir missing: %s — skipping "
                              "atmosphere shipment", vendor)
 
-        # Texture folders for catalog picks. Kenney FBX reference PNGs from a
-        # Textures/ folder shipped beside the models; Unity's importer searches
-        # Textures folders up the parent chain, so a copy next to each import
-        # location keeps materials from importing blank/magenta. Unity generates
-        # the TextureImporter .metas itself on first open.
+        # Texture folders for catalog picks (Kenney AND Sketchfab). Both ship
+        # PNGs from a Textures/ folder beside the model; Unity's importer only
+        # finds it by walking UP the parent chain from the model's OWN copied
+        # location, so the destination must mirror the SAME res_root
+        # ("Models/Kenney" or "Models/Sketchfab") each model was itself copied
+        # under — a texture dropped under the wrong subtree is never found,
+        # which is exactly why every Sketchfab-sourced model rendered
+        # untextured/black in Play mode before this fix. The Assets/Models/
+        # mirror copy stays a single shared folder: the model's OWN secondary
+        # copy strips its res_root segment (see the dual-copy loop above), so
+        # Assets/Models/Textures/ is already the correct ancestor for every
+        # source there. Unity generates the TextureImporter .metas itself on
+        # first open.
         _tex_exts = {".png", ".jpg", ".jpeg", ".tga"}
-        for tex_dir in texture_dirs_for(used_models):
+        for tex_dir, res_root in texture_dirs_with_res_root_for(used_models):
             for tex in sorted(tex_dir.iterdir()):
                 if tex.suffix.lower() not in _tex_exts or not tex.is_file():
                     continue
                 for dest in (
                     root / schema.project_name / "Assets" / "Resources"
-                         / "Models" / "Kenney" / "Textures" / tex.name,
+                         / res_root / "Textures" / tex.name,
                     root / schema.project_name / "Assets" / "Models"
                          / "Textures" / tex.name,
                 ):

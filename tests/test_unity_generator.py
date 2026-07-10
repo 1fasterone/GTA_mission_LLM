@@ -1543,6 +1543,65 @@ class TestFragmentSanitizers:
         _sanitize_project_service_calls(morale, custom_api, set())
         assert "moraleValue" not in morale.update_extra
 
+    # ── Nullable value-type null-conditional chains (CS1503) ──────────────────
+
+    def test_nullable_valuetype_fixed_at_use_site_not_declaration(self):
+        """Root-caused live: AIManager.cs passed a GameContext.Instance.Get<T>()
+        ?.transform.position (Vector3?) straight into Vector3.Distance (Vector3)
+        -> CS1503. The declaration must stay nullable (the LLM's own
+        `playerPos != null` check right after only compiles on Vector3?) —
+        only the Distance() call needs .GetValueOrDefault()."""
+        from src.unity_generator import _sanitize_nullable_valuetype_access
+        s = self._script(
+            'var playerPos = GameContext.Instance.Get<PlayerController>()'
+            '?.transform.position; '
+            'if (playerPos != null) { '
+            'var dist = Vector3.Distance(playerPos, transform.position); }')
+        _sanitize_nullable_valuetype_access(s)
+        assert ("var playerPos = GameContext.Instance.Get<PlayerController>()"
+                "?.transform.position;") in s.update_extra
+        assert "playerPos != null" in s.update_extra
+        assert "Vector3.Distance(playerPos.GetValueOrDefault(), transform.position)" \
+            in s.update_extra
+
+    def test_nullable_valuetype_noop_without_pattern(self):
+        from src.unity_generator import _sanitize_nullable_valuetype_access
+        s = self._script("transform.position += Vector3.forward * Time.deltaTime;")
+        original = s.update_extra
+        _sanitize_nullable_valuetype_access(s)
+        assert s.update_extra == original
+
+    # ── Undeclared persisted scalars (auto-declare, not strip) ─────────────────
+
+    def test_auto_declares_undeclared_persisted_scalar(self):
+        """Root-caused live: DriftCamera.cs tracked frame delta via `lastX` but
+        never declared `private float lastX;` — both the read and the write
+        were CS0103. Must be auto-declared (preserves the behavior), not
+        stripped (would delete the whole drift-FOV feature)."""
+        from src.unity_generator import _auto_declare_undeclared_scalars
+        s = self._script(
+            'var lateralSpeed = transform.position.x - lastX; '
+            'lastX = transform.position.x;')
+        _auto_declare_undeclared_scalars(s)
+        names = {f.name: f.type for f in s.extra_fields}
+        assert names.get("lastX") == "float"
+        assert "lateralSpeed" not in names   # var-declared local, not a field
+
+    def test_auto_declare_skips_already_declared_field(self):
+        from src.unity_generator import _auto_declare_undeclared_scalars
+        s = self._script("safeVelocityLimit = 10f;")
+        _auto_declare_undeclared_scalars(s)
+        assert sum(f.name == "safeVelocityLimit" for f in s.extra_fields) == 1
+
+    def test_auto_declare_skips_comparisons_and_compound_assign(self):
+        from src.unity_generator import _auto_declare_undeclared_scalars
+        s = self._script(
+            'if (safeVelocityLimit >= 10f) { cooldown -= Time.deltaTime; }')
+        _auto_declare_undeclared_scalars(s)
+        names = {f.name for f in s.extra_fields}
+        assert "cooldown" in names           # compound assign -> still caught
+        assert "safeVelocityLimit" in names  # pre-existing field, not duplicated
+
 
 # ── _sanitize_composed_component_calls: per-composed-class member validation ──
 

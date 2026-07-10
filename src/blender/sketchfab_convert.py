@@ -35,11 +35,32 @@ from .locator import find_blender
 # script; single braces are str.format() placeholders (same convention as
 # mcp_backend.py's _TEMPLATE).
 _TEMPLATE = '''
-import bpy, json, os
+import bpy, json, os, mathutils
 
 GLTF_IN = r"{gltf_in}"
 FBX_OUT = r"{fbx_out}"
 TEX_DIR = r"{tex_dir}"
+CATEGORY = "{category}"
+
+# Plausible real-world size (largest bounding-box dimension, meters) per
+# catalog category. Many Sketchfab uploads are authored in the wrong unit
+# (cm/mm mistaken for meters) with no way for Blender to detect this from the
+# file alone -- glTF mandates 1 unit = 1 meter, so Blender faithfully
+# reproduces whatever the artist's tool actually wrote. (target, min, max);
+# a corrective uniform scale fires ONLY when the imported size is off by more
+# than 3x the (already generous) max/min bound -- normal size variation
+# within a category (a bus vs a compact car, both "vehicle") is left alone.
+_SIZE_TABLE = {{
+    "vehicle":     (4.5, 1.0,  15.0),
+    "character":   (1.8, 0.3,  3.0),
+    "prop":        (0.6, 0.05, 3.0),
+    "environment": (4.0, 0.5,  30.0),
+    "nature":      (3.0, 0.1,  25.0),
+    "building":    (8.0, 1.5,  60.0),
+    "weapon":      (0.8, 0.05, 2.5),
+    "furniture":   (1.0, 0.2,  3.5),
+}}
+_DEFAULT_SIZE = (1.5, 0.05, 20.0)
 
 result = {{"ok": False}}
 try:
@@ -51,6 +72,38 @@ try:
     objs = [o for o in bpy.context.scene.objects if o.type == "MESH"]
     if not objs:
         raise RuntimeError("no mesh objects imported")
+
+    # ── Bounding-box sanity scale (root-caused 2026-07-09: a Sketchfab car
+    # imported at 345 x 632 x 259 METERS -- ~150x too large in every axis) ──
+    bpy.context.view_layer.update()
+    bb_min = mathutils.Vector((1e18, 1e18, 1e18))
+    bb_max = mathutils.Vector((-1e18, -1e18, -1e18))
+    for o in objs:
+        for corner in o.bound_box:
+            wc = o.matrix_world @ mathutils.Vector(corner)
+            bb_min.x = min(bb_min.x, wc.x); bb_max.x = max(bb_max.x, wc.x)
+            bb_min.y = min(bb_min.y, wc.y); bb_max.y = max(bb_max.y, wc.y)
+            bb_min.z = min(bb_min.z, wc.z); bb_max.z = max(bb_max.z, wc.z)
+    largest_dim = max((bb_max - bb_min).x, (bb_max - bb_min).y, (bb_max - bb_min).z)
+    target, plaus_min, plaus_max = _SIZE_TABLE.get(CATEGORY, _DEFAULT_SIZE)
+    scale_factor = None
+    if largest_dim > 0:
+        if largest_dim > plaus_max * 3:
+            scale_factor = target / largest_dim
+        elif largest_dim < plaus_min / 3:
+            scale_factor = target / largest_dim
+    if scale_factor:
+        # Root-caused: Sketchfab glTF imports nest every mesh several levels
+        # deep under empties (Sketchfab_model -> <hash>.fbx -> RootNode ->
+        # <node> -> mesh) -- NO mesh object itself has parent=None, so scaling
+        # only mesh-level roots is a silent no-op. Scale the true scene
+        # root(s) instead (ANY object type, not just MESH); parenting
+        # cascades the correction to every descendant automatically.
+        for o in bpy.context.scene.objects:
+            if o.parent is None:
+                o.location = o.location * scale_factor
+                o.scale = o.scale * scale_factor
+        bpy.context.view_layer.update()
 
     bpy.ops.object.select_all(action="DESELECT")
     for o in objs:
@@ -71,7 +124,22 @@ try:
     os.makedirs(TEX_DIR, exist_ok=True)
     n_tex = 0
     for img in bpy.data.images:
-        if img.name == "Render Result" or not img.has_data:
+        if img.name == "Render Result":
+            continue
+        if not img.has_data:
+            # Blender's gltf importer PACKS every texture but does not eagerly
+            # decode pixel data -- has_data reports False until the buffer is
+            # actually touched, even though img.size/packed_file already show
+            # real data is present. Force the decode, then re-check; a
+            # genuinely empty/corrupt image still reports False afterward and
+            # is correctly skipped. (Root-caused 2026-07-09: this unconditional
+            # `continue` silently produced 0 extracted textures for EVERY
+            # Sketchfab model ever converted, regardless of source content.)
+            try:
+                _ = img.pixels[0]
+            except Exception:
+                pass
+        if not img.has_data:
             continue
         base = bpy.path.basename(img.filepath) or img.name
         # We always write PNG data (file_format below) — force the extension to
@@ -87,7 +155,8 @@ try:
         except Exception:
             pass
 
-    result = {{"ok": True, "fbx": FBX_OUT, "textures": n_tex}}
+    result = {{"ok": True, "fbx": FBX_OUT, "textures": n_tex,
+              "scale_corrected": scale_factor, "largest_dim_before": largest_dim}}
 except Exception as exc:
     result = {{"ok": False, "error": str(exc)}}
 
@@ -98,11 +167,21 @@ with open(r"{result_path}", "w", encoding="utf-8") as f:
 
 def convert_gltf_to_fbx(gltf_path: Path, fbx_out: Path, textures_dir: Path, *,
                         blender_cfg: Optional[dict] = None,
-                        timeout: float = 300) -> Optional[Path]:
+                        timeout: float = 300,
+                        category: str = "prop") -> Optional[Path]:
     """Convert a Sketchfab-downloaded glTF/GLB to FBX + a sibling Textures/
     folder, via headless Blender. Returns fbx_out on success, None on any
     failure (Blender missing, timeout, nonzero exit, no importable mesh) —
-    callers must treat None as a clean miss, not an error."""
+    callers must treat None as a clean miss, not an error.
+
+    `category` (the same catalog category the pick is filed under) drives a
+    bounding-box sanity check: many Sketchfab uploads are authored in the
+    wrong unit (cm/mm mistaken for meters), and a uniform corrective scale is
+    applied to the mesh BEFORE export when the imported size is grossly
+    implausible for its category (see _SIZE_TABLE in _TEMPLATE) — the
+    exported FBX is then already correctly sized, no changes needed anywhere
+    else in the resolve/copy/import pipeline.
+    """
     cfg = blender_cfg or {}
     inst = find_blender(cfg.get("blender_path"))
     if inst is None:
@@ -121,6 +200,7 @@ def convert_gltf_to_fbx(gltf_path: Path, fbx_out: Path, textures_dir: Path, *,
         fbx_out=str(fbx_out.resolve()).replace("\\", "/"),
         tex_dir=str(textures_dir.resolve()).replace("\\", "/"),
         result_path=str(result_path.resolve()).replace("\\", "/"),
+        category=(category or "prop").replace('"', ""),
     ), encoding="utf-8")
 
     cmd = [str(inst.path), "--background", "--factory-startup",

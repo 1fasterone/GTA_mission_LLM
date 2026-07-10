@@ -83,6 +83,28 @@ def _rank(results: list[dict], score_fn: Callable[[dict], float],
     return [(s, m) for s, m in scored if s >= min_score]
 
 
+def _report_scale_correction(fbx_out: Path, model_name: str) -> None:
+    """Log when convert_gltf_to_fbx's bounding-box sanity check corrected an
+    implausible import scale — visibility for a class of upstream authoring
+    error (wrong unit in the source upload) this pipeline can't prevent, only
+    compensate for. Best-effort: a missing/unreadable convert.json is not an
+    error, just nothing to report."""
+    import json as _json
+    result_path = fbx_out.with_suffix(".convert.json")
+    try:
+        data = _json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    factor = data.get("scale_corrected")
+    if factor:
+        before = data.get("largest_dim_before")
+        log.warning(
+            "[sketchfab] %r imported at an implausible scale (largest "
+            "dimension %.1fm) — auto-corrected by %.4fx before export. The "
+            "source upload itself uses the wrong unit; this is compensating,"
+            " not fixing, the upstream error.", model_name, before or 0.0, factor)
+
+
 def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      client: SketchfabClient, blender_cfg: Optional[dict] = None,
                      cache_dir: Path | str = "Models/Sketchfab",
@@ -176,9 +198,11 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                 continue
 
             converted = convert_gltf_to_fbx(
-                gltf_path, fbx_out, textures_dir, blender_cfg=blender_cfg)
+                gltf_path, fbx_out, textures_dir, blender_cfg=blender_cfg,
+                category=category)
             if converted is None:
                 continue
+            _report_scale_correction(fbx_out, model.get("name") or uid)
 
         keywords = sorted(set(tokenize(model.get("name") or ""))
                           | {t.get("name", "").lower()

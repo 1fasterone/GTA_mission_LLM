@@ -346,18 +346,66 @@ def resolve_entity_assets(schema,
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
 
+        def _kind_only_hit(a: dict) -> bool:
+            """True if `kind` is the ONLY strong token this entry matches —
+            the match carries no signal beyond the bare kind word itself."""
+            akw = set(k.lower() for k in a.get("keywords", []))
+            akw.update(t for t in tokenize(Path(a.get("filename", "")).stem)
+                       if len(t) > 1)
+            strong = {t for t, w in qw.items() if w >= _STRONG_HIT and t in akw}
+            kind_variants = {kind, kind + "s",
+                             kind[:-1] if kind.endswith("s") else kind}
+            return bool(strong) and strong <= kind_variants
+
+        def _passes_kind_guard(a: dict) -> bool:
+            """Block catalog picks whose only tie to the entity is a weak,
+            coincidental keyword — the class of bug behind two hit-live
+            regressions: "GroundEnemies" (kind=enemy) matched a wood floor
+            plank via the shared word "ground", and "StratoPlatform"
+            (kind=platform) matched Stairs/steps.fbx via the shared word
+            "platform" (one of seven loosely-associated tags on an unrelated
+            staircase asset). Applied to Tier S (Sketchfab) as well as the
+            Kenney tiers below — without it, a Sketchfab pick with a short
+            keyword list can clear min_score on a single coincidental token
+            (e.g. a "traffic cone" model matching an unrelated "AntigravDevice"
+            or "BirdFlock" entity) and win over a real, correctly-tagged
+            default (hit live: 5 unrelated entity kinds all resolved to the
+            same collected Sketchfab prop).
+            """
+            hints = {h.lower() for h in a.get("kind_hints", [])}
+            if kind in hints:
+                return True
+            if tier1 is not None:
+                # A real default model already covers this kind — only a
+                # catalog pick the library itself categorizes as this kind
+                # may replace it; a stray overlap isn't enough to gamble away
+                # a known-good fallback (the tier-1 fallback below still
+                # fires if this empties out every candidate).
+                return False
+            if _kind_only_hit(a):
+                # No default to fall back on, so only trust a bare kind-word
+                # match when the object is actually named after the kind —
+                # not merely tagged with it alongside unrelated keywords.
+                fname_tokens = {t for t in tokenize(Path(a.get("filename", "")).stem)
+                                if len(t) > 1}
+                return kind in fname_tokens
+            return True
+
         # ── Tier S: Sketchfab-first (config-gated; runs before Kenney tiers) ──
         # Gated the same as the FX/skip kinds below and 2D games — Sketchfab
         # only ever yields 3D FBX, which a 2D orthographic game has no use for.
         # Reusing _score/_query_weights/_entry_source/_register verbatim keeps
         # Kenney's own tiers (2a/2b/2c, below) completely unchanged — they just
         # run only when Tier S misses, which is what "leaving Kenney as an
-        # offline option" means concretely.
+        # offline option" means concretely. _passes_kind_guard applies here too
+        # (see its docstring) — Tier S is not exempt from the same weak-match
+        # protection Tier 2b already enforces.
         if sk_enabled and not is_2d and kind not in _FX_KINDS and kind not in _SKIP_KINDS:
             sk_min = float(sk_cfg.get("min_match_score", min_score))
             sk_scored = [(s, a) for a in sk_catalog_assets
                         if (s := _score(a, qw, kind)) >= sk_min
-                        and _entry_source(a, asset_root) is not None]
+                        and _entry_source(a, asset_root) is not None
+                        and _passes_kind_guard(a)]
             if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
                 from .sketchfab_freeze import fetch_and_freeze
                 # sketchfab_query (src/unity_sketchfab_translator.py's concept +
@@ -377,7 +425,7 @@ def resolve_entity_assets(schema,
                                                           # entities this same
                                                           # call can reuse it
                     s = _score(new_entry, qw, kind)
-                    if s >= sk_min:
+                    if s >= sk_min and _passes_kind_guard(new_entry):
                         sk_scored = [(s, new_entry)]
             if sk_scored:
                 sk_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
@@ -431,46 +479,9 @@ def resolve_entity_assets(schema,
                 entity_model_paths[e.name] = picked
                 continue
 
-        def _kind_only_hit(a: dict) -> bool:
-            """True if `kind` is the ONLY strong token this entry matches —
-            the match carries no signal beyond the bare kind word itself."""
-            akw = set(k.lower() for k in a.get("keywords", []))
-            akw.update(t for t in tokenize(Path(a.get("filename", "")).stem)
-                       if len(t) > 1)
-            strong = {t for t, w in qw.items() if w >= _STRONG_HIT and t in akw}
-            kind_variants = {kind, kind + "s",
-                             kind[:-1] if kind.endswith("s") else kind}
-            return bool(strong) and strong <= kind_variants
-
-        def _passes_kind_guard(a: dict) -> bool:
-            """Block catalog picks whose only tie to the entity is a weak,
-            coincidental keyword — the class of bug behind two hit-live
-            regressions: "GroundEnemies" (kind=enemy) matched a wood floor
-            plank via the shared word "ground", and "StratoPlatform"
-            (kind=platform) matched Stairs/steps.fbx via the shared word
-            "platform" (one of seven loosely-associated tags on an unrelated
-            staircase asset).
-            """
-            hints = {h.lower() for h in a.get("kind_hints", [])}
-            if kind in hints:
-                return True
-            if tier1 is not None:
-                # A real default model already covers this kind — only a
-                # catalog pick the library itself categorizes as this kind
-                # may replace it; a stray overlap isn't enough to gamble away
-                # a known-good fallback (the tier-1 fallback below still
-                # fires if this empties out every candidate).
-                return False
-            if _kind_only_hit(a):
-                # No default to fall back on, so only trust a bare kind-word
-                # match when the object is actually named after the kind —
-                # not merely tagged with it alongside unrelated keywords.
-                fname_tokens = {t for t in tokenize(Path(a.get("filename", "")).stem)
-                                if len(t) > 1}
-                return kind in fname_tokens
-            return True
-
         # ── Tier 2b: global literal match (fallback / concept-layers absent) ──
+        # _kind_only_hit / _passes_kind_guard are defined above (before Tier S)
+        # so both Tier S and Tier 2b share the exact same weak-match guard.
         candidates = [(s, a) for a in assets
                       if (s := _final_score(a)) >= min_score
                       and _entry_source(a, asset_root) is not None]
@@ -605,3 +616,34 @@ def texture_dirs_for(used_models: dict[str, ResolvedModel]) -> list[Path]:
                     dirs.append(tex)
                 break
     return dirs
+
+
+def texture_dirs_with_res_root_for(
+        used_models: dict[str, ResolvedModel]) -> list[tuple[Path, str]]:
+    """Like texture_dirs_for, but paired with the Resources-relative root each
+    model was actually copied under ("Models/Kenney" or "Models/Sketchfab").
+
+    Unity's FBX importer only finds a Textures/ folder by walking UP the
+    parent chain from the model's OWN copied location — a texture folder
+    dropped under the wrong subtree is never found, even though it exists
+    on disk. Root-caused live: every Sketchfab-sourced model rendered black
+    in Play mode because the caller previously wrote every catalog pick's
+    textures to the single hardcoded Assets/Resources/Models/Kenney/Textures/
+    path regardless of source, which is not an ancestor of a Sketchfab
+    pick's own Assets/Resources/Models/Sketchfab/<Category>/ location.
+    """
+    pairs: list[tuple[Path, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for key, m in sorted(used_models.items()):
+        if not key.startswith("asset:") or m.rig == "sprite":
+            continue
+        res_root = _SKETCHFAB_RES_ROOT if m.source == "sketchfab" else _RES_ROOT
+        for parent in Path(m.src).parents:
+            tex = parent / "Textures"
+            if tex.is_dir():
+                sig = (str(tex), res_root)
+                if sig not in seen:
+                    seen.add(sig)
+                    pairs.append((tex, res_root))
+                break
+    return pairs
