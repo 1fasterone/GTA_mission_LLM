@@ -826,7 +826,7 @@ class TestBoundsFit:
         )
         files = gen.generate(schema, {})
         cs = files["FitT3D/Assets/Scripts/EntitySpawner.cs"]
-        assert "ComputeFitFactor" in cs
+        assert "TryMeasureBounds" in cs
         assert "fitSize" in cs
         # No Sketchfab pick in this schema -> fit_size defaults to 0.0000f.
         assert "0.0000f);" in cs
@@ -844,7 +844,36 @@ class TestBoundsFit:
         )
         files = gen.generate(schema, {})
         cs = files["FitT2D/Assets/Scripts/EntitySpawner.cs"]
-        assert "ComputeFitFactor" not in cs
+        assert "TryMeasureBounds" not in cs
+
+    def _fitt3d_files(self, gen):
+        from src.unity_schema import UnitySchema, EntitySpec
+        schema = UnitySchema(
+            project_name="FitT3D", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[EntitySpec(name="Trees", kind="prop", count=3,
+                                 placement="scatter", radius=10)],
+        )
+        return gen.generate(schema, {})
+
+    def test_spacing_and_radius_are_bounds_derived_minimums(self, gen):
+        # spacing/radius must flow through effectiveSpacing/effectiveRadius —
+        # never used as literal PlaceAt args directly (that was the fixed
+        # spacing-ignores-model-size bug behind overlapping entities).
+        cs = self._fitt3d_files(gen)["FitT3D/Assets/Scripts/EntitySpawner.cs"]
+        assert "effectiveSpacing" in cs and "effectiveRadius" in cs
+        assert "PlaceAt(placement, i, count, effectiveSpacing, effectiveRadius)" in cs
+        assert "Mathf.Max(spacing, footprintXZ" in cs
+
+    def test_ground_snap_uses_measured_pivot_offset(self, gen):
+        cs = self._fitt3d_files(gen)["FitT3D/Assets/Scripts/EntitySpawner.cs"]
+        assert "pivotOffsetY" in cs
+        assert "pos.y += pivotOffsetY * finalScale;" in cs
+        # The old fixed-half-height heuristic must be gone from the 3D path.
+        assert "pos.y += scale * 0.5f;" not in cs
 
 
 # ── Environment mood (sun + fog) ────────────────────────────────────────────────

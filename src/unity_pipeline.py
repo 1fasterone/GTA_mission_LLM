@@ -365,6 +365,25 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
         fixes.append("Backfilled empty entity model_hint from names: "
                      + ", ".join(_backfilled))
 
+    # "single" placement means every instance spawns at the SAME position —
+    # EntitySpawner's PlaceAt default case returns Vector3.zero for every i,
+    # so a group left on the schema default (placement="single") with
+    # count > 1 stacks every copy at the origin (hit live: DriftArcade's
+    # buildings piled on top of each other). The LLM regularly leaves
+    # placement unset for multi-instance groups; a real layout is required,
+    # not a suggestion — auto-upgrade deterministically by group size rather
+    # than leaving a scene-breaking default in place. "path" placement is
+    # untouched (already a real, explicit layout).
+    _placement_fixed = []
+    for e in schema.entities:
+        if e.placement == "single" and e.count > 1:
+            e.placement = "line" if e.count <= 8 else "grid"
+            _placement_fixed.append(f"{e.name} (count={e.count}) -> '{e.placement}'")
+    if _placement_fixed:
+        fixes.append("Entities with count>1 left on placement='single' "
+                     "(every instance would spawn stacked at one point) — "
+                     "auto-upgraded: " + ", ".join(_placement_fixed))
+
     # Scene specs must reference real scenes and real entity groups, and their
     # descriptions deterministically imply a mood when the LLM leaves the
     # explicit fields unset ("thunderheads, lightning arcs" should LOOK like a

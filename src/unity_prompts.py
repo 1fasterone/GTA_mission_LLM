@@ -142,13 +142,21 @@ CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
 ENTITIES — the actual objects in the scene, built from primitives so the concept SHOWS UP.
   Populate one group per distinct set of objects the prompt implies. Fields:
     shape:      cube | sphere | capsule | cylinder | quad | plane
-    placement:  single | line | ring | grid | scatter | path
+    placement:  single | line | ring | grid | scatter | path — "single" is for count=1
+      ONLY (a real model spawned once); a group with count>1 needs a real spread
+      (line/ring/grid/scatter/path), or it gets auto-upgraded and a fix is logged.
     color_role: primary | secondary | accent | trim | background  (picks a palette color)
     count:      how many (e.g. 6 rivals → 6); tag: e.g. "Enemy" so AI/health find them
     behavior:   OPTIONAL — the PascalCase name of one of your `scripts` to attach to each
     model_hint: 2-5 plain words naming the PHYSICAL OBJECT ("pine tree", "wooden ramp",
       "hanging banner") — matches the group to a real 3D model from the asset library,
       so choose words a model file would be named after. Set it on EVERY entity group.
+    spacing/radius: MINIMUMS, not exact values — the engine widens them at spawn time
+      to fit each group's actual model size, so instances never overlap. Guess a
+      reasonable value; you do not need to know the model's real footprint.
+    scale:      a RELATIVE multiplier on the model's own natural size (1 = as authored),
+      not an absolute world size — the engine ground-snaps every instance to sit on
+      the floor regardless of the model's pivot, so you don't need to hand-tune height.
     path_points: for placement "path" ONLY — up to 64 [x, y, z] world points. y is
       ELEVATION, so author hills/banking by varying y. Instances are laid evenly along
       the polyline, AND a "Waypoints" container is emitted at the points — AI racers /
