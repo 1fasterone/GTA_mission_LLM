@@ -7,6 +7,7 @@ generation.
 """
 
 from contextlib import contextmanager
+from urllib.parse import parse_qs, urlparse
 
 from src.sketchfab_client import SketchfabClient
 
@@ -99,9 +100,11 @@ def test_search_returns_results(monkeypatch):
     req = _FakeRequest([_FakeResponse(data={"results": [{"uid": "abc"}]})])
     monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
     assert client.search("shoe") == [{"uid": "abc"}]
-    url, kwargs = req.calls[0]
+    url, _ = req.calls[0]
     assert "search" in url
-    assert kwargs["params"]["q"] == "shoe"
+    # Query params are now baked into the URL (urlencode) so repeated keys
+    # like tags=a&tags=b can be expressed — no more Playwright `params=` dict.
+    assert parse_qs(urlparse(url).query)["q"] == ["shoe"]
 
 
 def test_search_with_user_scopes_params(monkeypatch):
@@ -112,8 +115,8 @@ def test_search_with_user_scopes_params(monkeypatch):
     req = _FakeRequest([_FakeResponse(data={"results": []})])
     monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
     client.search("sword", user="OptiCube")
-    _, kwargs = req.calls[0]
-    assert kwargs["params"]["user"] == "OptiCube"
+    url, _ = req.calls[0]
+    assert parse_qs(urlparse(url).query)["user"] == ["OptiCube"]
 
 
 def test_search_without_user_omits_param(monkeypatch):
@@ -121,8 +124,8 @@ def test_search_without_user_omits_param(monkeypatch):
     req = _FakeRequest([_FakeResponse(data={"results": []})])
     monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
     client.search("sword")
-    _, kwargs = req.calls[0]
-    assert "user" not in kwargs["params"]
+    url, _ = req.calls[0]
+    assert "user" not in parse_qs(urlparse(url).query)
 
 
 def test_search_swallows_non_ok_response(monkeypatch):

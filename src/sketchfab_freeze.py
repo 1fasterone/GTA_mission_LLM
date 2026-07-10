@@ -11,6 +11,14 @@ data — exactly like the existing Kenney catalog. Nothing in this module is eve
 called from generate()/write() directly; the resolver's Tier S is the only
 caller, and only when `sketchfab.auto_fetch: true`.
 
+Style coherence lives one level up in src/sketchfab_style.py
+(SketchfabStyleSession): the resolver composes the query (entity + style
+tokens), wraps score_fn with anchor-similarity scoring, and passes
+`search_params` (face-count bounds) + `style_meta` (provenance) down through
+here. This module stays ranking-free and style-free on purpose — it only
+threads those knobs through to the client and stamps provenance into the
+frozen entry.
+
 fetch_and_freeze() never raises — every failure mode (no token, no search hits,
 no license-compliant hit, download failure, missing Blender, convert failure)
 returns None so the caller falls through to the Kenney catalog cleanly.
@@ -40,7 +48,9 @@ def _slug(text: str) -> str:
 def _synthetic_entry(model: dict, kind_hints: Iterable[str]) -> dict:
     """A catalog-entry-shaped dict for one Sketchfab search result, just
     enough for the caller's score_fn (unity_entity_asset_resolver._score) to
-    rank it against real catalog entries — same keyword-overlap contract."""
+    rank it against real catalog entries — same keyword-overlap contract.
+    `_model` is stashed so a style-aware score wrapper
+    (SketchfabStyleSession.wrap_score) can also read author/user fields."""
     name = str(model.get("name") or "")
     tags = [t.get("name", "") for t in (model.get("tags") or []) if isinstance(t, dict)]
     keywords = sorted(set(tokenize(name)) | {t.lower() for t in tags if t})
@@ -113,14 +123,18 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      kind_hints: Iterable[str] = (),
                      min_score: float = 0.0,
                      preferred_author: Optional[str] = None,
-                     max_candidates: int = 4) -> Optional[dict]:
+                     max_candidates: int = 4,
+                     search_params: Optional[dict] = None,
+                     style_meta: Optional[dict] = None) -> Optional[dict]:
     """Search Sketchfab for `query`, rank license-compliant hits with the
     caller-supplied `score_fn`, download + convert the best one, freeze it
     into lookups/unity/sketchfab_catalog.json, and return the new catalog
     entry — or None on any failure. `score_fn` should be the resolver's own
-    per-entity scorer (e.g. `lambda a: _score(a, qw, kind)`), so Sketchfab
-    candidates are ranked with the exact same weighted-keyword logic as
-    Kenney catalog entries — this function does no ranking of its own.
+    per-entity scorer (e.g. `lambda a: _score(a, qw, kind)`), optionally
+    wrapped by SketchfabStyleSession.wrap_score for anchor-similarity — so
+    Sketchfab candidates are ranked with the exact same weighted-keyword
+    logic as Kenney catalog entries; this function does no ranking of its
+    own.
 
     `preferred_author` (a Sketchfab `username`, not `displayName`) tries that
     one author's own catalog FIRST, falling back to the open marketplace only
@@ -128,13 +142,27 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
     one good model is found for a project, later entities prefer the SAME
     artist's other uploads instead of each independently landing on a
     different, stylistically unrelated author ("constructed chaos").
+
+    `search_params` (extra kwargs for SketchfabClient.search — typically
+    sketchfab_style.search_params_for(): face-count bounds, optionally
+    strict tags) applies to BOTH the author-scoped and global passes, so the
+    structural style filter never lapses on fallback.
+
+    `style_meta` (typically SketchfabStyleSession.provenance()) is stamped
+    into the frozen catalog entry — setdefault-merged so it can never
+    clobber a core field — recording style_id / style_tokens / anchor so a
+    replay can reconstruct why this model was chosen without touching the
+    network. When the resolver runs with min_score=0.0 and no session, both
+    default to no-ops and behavior is byte-identical to before.
     """
     try:
         return _fetch_and_freeze_inner(
             query, score_fn, client=client, blender_cfg=blender_cfg,
             cache_dir=Path(cache_dir), lookups_dir=lookups_dir,
             category=category, kind_hints=list(kind_hints), min_score=min_score,
-            preferred_author=preferred_author, max_candidates=max_candidates)
+            preferred_author=preferred_author, max_candidates=max_candidates,
+            search_params=dict(search_params or {}),
+            style_meta=dict(style_meta or {}))
     except Exception as exc:  # noqa: BLE001 — must never propagate to the resolver
         log.debug("sketchfab fetch_and_freeze(%r) failed: %s", query, exc)
         return None
@@ -145,18 +173,21 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                             cache_dir: Path, lookups_dir: str, category: str,
                             kind_hints: list[str], min_score: float,
                             preferred_author: Optional[str] = None,
-                            max_candidates: int = 4) -> Optional[dict]:
+                            max_candidates: int = 4,
+                            search_params: Optional[dict] = None,
+                            style_meta: Optional[dict] = None) -> Optional[dict]:
     if not client.available():
         return None
+    search_params = search_params or {}
 
     candidates: list[tuple[float, dict]] = []
     if preferred_author:
         author_results = client.filter_licensed(
-            client.search(query, user=preferred_author))
+            client.search(query, user=preferred_author, **search_params))
         candidates = _rank(author_results, score_fn, kind_hints, min_score)
 
     if not candidates:
-        results = client.filter_licensed(client.search(query))
+        results = client.filter_licensed(client.search(query, **search_params))
         if not results:
             return None
         candidates = _rank(results, score_fn, kind_hints, min_score)
@@ -236,6 +267,11 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
             "attribution": _attribution_text(model, license_slug),
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+        # Style provenance (style_id / style_tokens / style_anchor_*) — merged
+        # setdefault-style so caller-supplied metadata can never clobber a core
+        # catalog field.
+        for k, v in (style_meta or {}).items():
+            entry.setdefault(k, v)
 
         write_sketchfab_entry(entry, Path(lookups_dir) / SKETCHFAB_RELPATH)
         return entry
