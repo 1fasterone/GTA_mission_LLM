@@ -41,6 +41,9 @@ _GTA_RESERVED_FIELDS = {
     "_state", "_step", "_lastblipstep", "_startblip", "_startready",
     "_peds", "_vehicles", "_props", "_blip", "_lapsdone", "_cpidx",
     "_stepstart", "spawnorigin", "waypoints",
+    # HeliRace-style AI difficulty + config menu (see mission.cs.j2)
+    "_aidifficultyidx", "_menuopen", "_menuselection",
+    "_cfgweatheridx", "_cfgweatheroptions",
 }
 _GTA_TEMPLATE_USINGS = {
     "System", "System.Collections.Generic", "System.Windows.Forms",
