@@ -35,6 +35,18 @@ _WEATHER_NATIVE = {
     "SNOW":       "XMAS",
 }
 
+# ── AI rival difficulty → cruise speed curve (mirrors the hand-tuned HeliRace
+# mod's GetAICruiseSpeed table). "medium" reproduces the historical hardcoded
+# 40f/45f values so existing generated output is unaffected by default. ─────
+_AI_DIFFICULTY_ORDER = ["easy", "medium", "hard"]
+_AI_SPAWN_SPEED = {"easy": 28.0, "medium": 40.0, "hard": 55.0}
+_AI_CHASE_SPEED = {"easy": 32.0, "medium": 45.0, "hard": 65.0}
+
+# ── Ordered weather options for the optional in-mission config menu ─────────
+_WEATHER_MENU_OPTIONS = [
+    "CLEAR", "OVERCAST", "RAIN", "THUNDER", "FOGGY", "SMOG", "EXTRASUNNY",
+]
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -324,6 +336,26 @@ def _build_template_context(schema: MissionSchema) -> dict:
     audio_pass = next((a.name for a in schema.audio if a.type == "mission_passed"), "FRANKLIN_BIG_01")
     audio_fail = next((a.name for a in schema.audio if a.type == "mission_failed"), "FRANKLIN_LOSE_1")
 
+    # ── AI rival difficulty curve (HeliRace-style) ────────────────────────────
+    ai_rival_present = any(v["is_race_opponent"] for v in vehicles)
+    ai_difficulty_idx = _AI_DIFFICULTY_ORDER.index(schema.ai_difficulty) \
+        if schema.ai_difficulty in _AI_DIFFICULTY_ORDER else 1
+    ai_speed_curve = [
+        {"idx": i, "spawn": _AI_SPAWN_SPEED[name], "chase": _AI_CHASE_SPEED[name]}
+        for i, name in enumerate(_AI_DIFFICULTY_ORDER)
+    ]
+
+    # ── Optional F10 config menu (weather + AI difficulty, pre-mission only) ──
+    config_menu = bool(schema.config_menu)
+    weather_default_idx = _WEATHER_MENU_OPTIONS.index(weather_str) \
+        if weather_str in _WEATHER_MENU_OPTIONS else 0
+    menu_options: list[dict] = []
+    if config_menu:
+        menu_options.append({"key": "weather", "label": "Weather"})
+        if ai_rival_present:
+            menu_options.append({"key": "ai_difficulty", "label": "AI Difficulty"})
+        menu_options.append({"key": "close", "label": "CLOSE MENU"})
+
     # ── Editor-authored shapes: triggers + patrol paths ──────────────────────
     # Pulled from meta.editor.* (Day-2 of the GTA5 Mission Editor). Triggers wire
     # into the OnTick loop; paths are emitted as Vector3 arrays for future use.
@@ -389,6 +421,14 @@ def _build_template_context(schema: MissionSchema) -> dict:
         "editor_triggers":  editor_triggers,
         "editor_paths":     editor_paths,
         "editor_zones":     editor_zones,
+        # AI rival difficulty curve + optional F10 config menu (HeliRace-style)
+        "ai_rival_present":    ai_rival_present,
+        "ai_difficulty_idx":   ai_difficulty_idx,
+        "ai_speed_curve":      ai_speed_curve,
+        "config_menu":         config_menu,
+        "weather_options":     _WEATHER_MENU_OPTIONS,
+        "weather_default_idx": weather_default_idx,
+        "menu_options":        menu_options,
         # LLM-authored mission-specific C# (insertion points)
         "extra_usings":     schema.extra_usings,
         "extra_fields":     schema.extra_fields,

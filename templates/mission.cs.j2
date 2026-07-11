@@ -54,6 +54,24 @@ public class {{ class_name }} : Script
 {% endif %}
     // -- Timer state ----------------------------------------------------------
     private DateTime _stepStart = DateTime.MinValue;
+{% if ai_rival_present %}
+
+    // -- AI rival difficulty (HeliRace-style speed curve) ---------------------
+    private int _aiDifficultyIdx = {{ ai_difficulty_idx }}; // 0=Easy 1=Medium 2=Hard
+{% endif %}
+{% if config_menu %}
+
+    // -- Config menu state (F10, pre-mission only) -----------------------------
+    private bool _menuOpen = false;
+    private int  _menuSelection = 0;
+    private int  _cfgWeatherIdx = {{ weather_default_idx }};
+    private static readonly string[] _cfgWeatherOptions =
+    {
+{% for w in weather_options %}
+        "{{ w }}",
+{% endfor %}
+    };
+{% endif %}
 {% if extra_fields %}
 
     // -- Mission-specific state (LLM-authored) --------------------------------
@@ -155,10 +173,34 @@ public class {{ class_name }} : Script
     {
         Tick    += OnTick;
         Aborted += OnAborted;
+{% if config_menu %}
+        KeyDown += OnKeyDown;
+{% endif %}
     }
+{% if config_menu %}
+
+    // -- Config menu toggle -----------------------------------------------------
+
+    private void OnKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.KeyCode == Keys.F10 && _state != State.Active)
+        {
+            _menuOpen = !_menuOpen;
+            if (_menuOpen) _menuSelection = 0;
+        }
+    }
+{% endif %}
 
     private void OnTick(object sender, EventArgs e)
     {
+{% if config_menu %}
+        if (_menuOpen)
+        {
+            DrawConfigMenu();
+            HandleMenuControls();
+            return;
+        }
+{% endif %}
         switch (_state)
         {
             case State.Inactive: CheckStart(); break;
@@ -237,7 +279,11 @@ public class {{ class_name }} : Script
 
     private void Init()
     {
+{% if config_menu %}
+        Function.Call(Hash.SET_WEATHER_TYPE_NOW_PERSIST, _cfgWeatherOptions[_cfgWeatherIdx]);
+{% else %}
         Function.Call(Hash.SET_WEATHER_TYPE_NOW_PERSIST, "{{ weather }}");
+{% endif %}
         Function.Call(Hash.SET_CLOCK_TIME, {{ time_of_day }}, 0, 0);
 
         SpawnPeds();
@@ -548,7 +594,7 @@ public class {{ class_name }} : Script
             // circuit every tick (one-shot DriveTo only reaches the first point).
             // SHVDN3 3.9.0: DriveTo(Vehicle, Vector3, radius, VehicleDrivingFlags, speed)
             rdriver.Task.DriveTo(rveh, {{ race_checkpoints[0].array_name }}[0],
-                5f, (VehicleDrivingFlags)786603, 40f);
+                5f, (VehicleDrivingFlags)786603, AiSpawnSpeedFor(_aiDifficultyIdx));
             _rivalDrivers.Add(rdriver);
             _rivalCp.Add(0);
 {% endif %}
@@ -633,8 +679,34 @@ public class {{ class_name }} : Script
                 cp = (cp + 1) % {{ race_checkpoints[0].array_name }}.Length;
                 _rivalCp[i] = cp;
                 d.Task.DriveTo(veh, {{ race_checkpoints[0].array_name }}[cp],
-                    5f, (VehicleDrivingFlags)786603, 45f);
+                    5f, (VehicleDrivingFlags)786603, AiChaseSpeedFor(_aiDifficultyIdx));
             }
+        }
+    }
+{% endif %}
+{% if ai_rival_present %}
+
+    // AI rival difficulty → cruise speed curve (mirrors a hand-tuned HeliRace-style
+    // mod's GetAICruiseSpeed table). idx: 0=Easy 1=Medium(default) 2=Hard.
+    private static float AiSpawnSpeedFor(int idx)
+    {
+        switch (idx)
+        {
+{% for c in ai_speed_curve %}
+            case {{ c.idx }}: return {{ "%.1f"|format(c.spawn) }}f;
+{% endfor %}
+            default: return {{ "%.1f"|format(ai_speed_curve[1].spawn) }}f;
+        }
+    }
+
+    private static float AiChaseSpeedFor(int idx)
+    {
+        switch (idx)
+        {
+{% for c in ai_speed_curve %}
+            case {{ c.idx }}: return {{ "%.1f"|format(c.chase) }}f;
+{% endfor %}
+            default: return {{ "%.1f"|format(ai_speed_curve[1].chase) }}f;
         }
     }
 {% endif %}
@@ -671,6 +743,116 @@ public class {{ class_name }} : Script
             _blip.Name  = "{{ mission_name }}";
         }
     }
+{% if config_menu %}
+
+    // -- Config menu (native DrawRect/DrawText, F10, pre-mission only) --------
+
+    private void DrawConfigMenu()
+    {
+        Function.Call(Hash.DRAW_RECT, 0.50f, 0.465f, 0.44f, 0.30f, 18, 18, 26, 225);
+        Function.Call(Hash.DRAW_RECT, 0.50f, 0.335f, 0.44f, 0.05f, 0, 95, 160, 235);
+        DrawMenuText("MISSION CONFIG", 0.50f, 0.315f, 0.62f, 255, 255, 255, 255, true);
+
+        float startY  = 0.375f;
+        float spacing = 0.045f;
+{% for opt in menu_options %}
+        {
+            bool selected = (_menuSelection == {{ loop.index0 }});
+            float y = startY + {{ loop.index0 }} * spacing;
+            if (selected)
+                Function.Call(Hash.DRAW_RECT, 0.50f, y + 0.016f, 0.40f, 0.038f, 45, 55, 95, 190);
+            string value   = MenuValueFor({{ loop.index0 }});
+            string display = (selected ? "~b~> " : "~w~") + "{{ opt.label }}"
+                + (value.Length > 0 ? ":  ~s~" + value : "");
+            DrawMenuText(display, 0.30f, y, 0.42f, 255, 255, 255, 255, false);
+        }
+{% endfor %}
+        DrawMenuText("UP/DOWN Nav | LEFT/RIGHT Cycle | ENTER Select | F10 Close",
+            0.50f, startY + {{ menu_options|length }} * spacing + 0.02f, 0.30f, 170, 170, 170, 255, true);
+    }
+
+    private string MenuValueFor(int i)
+    {
+        switch (i)
+        {
+{% for opt in menu_options %}
+{% if opt.key == "weather" %}
+            case {{ loop.index0 }}: return _cfgWeatherOptions[_cfgWeatherIdx];
+{% elif opt.key == "ai_difficulty" %}
+            case {{ loop.index0 }}: return _aiDifficultyIdx == 0 ? "Easy" : (_aiDifficultyIdx == 2 ? "Hard" : "Medium");
+{% else %}
+            case {{ loop.index0 }}: return "";
+{% endif %}
+{% endfor %}
+            default: return "";
+        }
+    }
+
+    private void HandleMenuControls()
+    {
+        if (Game.IsControlJustPressed(GTA.Control.PhoneUp))
+            _menuSelection = (_menuSelection - 1 + {{ menu_options|length }}) % {{ menu_options|length }};
+        if (Game.IsControlJustPressed(GTA.Control.PhoneDown))
+            _menuSelection = (_menuSelection + 1) % {{ menu_options|length }};
+
+        bool left   = Game.IsControlJustPressed(GTA.Control.PhoneLeft);
+        bool right  = Game.IsControlJustPressed(GTA.Control.PhoneRight);
+        bool select = Game.IsControlJustPressed(GTA.Control.PhoneSelect);
+
+        if (left || right) AdjustConfig(_menuSelection, right ? 1 : -1);
+        if (select)
+        {
+            switch (_menuSelection)
+            {
+{% for opt in menu_options %}
+{% if opt.key == "close" %}
+                case {{ loop.index0 }}: _menuOpen = false; break;
+{% else %}
+                case {{ loop.index0 }}: AdjustConfig(_menuSelection, 1); break;
+{% endif %}
+{% endfor %}
+            }
+        }
+
+        if (Game.IsControlJustPressed(GTA.Control.PhoneCancel) ||
+            Game.IsKeyPressed(Keys.Escape) || Game.IsKeyPressed(Keys.Back))
+        {
+            _menuOpen = false;
+        }
+    }
+
+    private void AdjustConfig(int i, int dir)
+    {
+        switch (i)
+        {
+{% for opt in menu_options %}
+{% if opt.key == "weather" %}
+            case {{ loop.index0 }}:
+                _cfgWeatherIdx = (_cfgWeatherIdx + dir + _cfgWeatherOptions.Length) % _cfgWeatherOptions.Length;
+                break;
+{% elif opt.key == "ai_difficulty" %}
+            case {{ loop.index0 }}:
+                _aiDifficultyIdx = (_aiDifficultyIdx + dir + 3) % 3;
+                break;
+{% endif %}
+{% endfor %}
+        }
+    }
+
+    private void DrawMenuText(string text, float x, float y, float scale,
+        int r, int g, int b, int a, bool center)
+    {
+        Function.Call(Hash.SET_TEXT_FONT, 0);
+        Function.Call(Hash.SET_TEXT_SCALE, 0.0f, scale);
+        Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, a);
+        Function.Call(Hash.SET_TEXT_CENTRE, center ? 1 : 0);
+        Function.Call(Hash.SET_TEXT_WRAP, 0.0f, 1.0f);
+        Function.Call(Hash.SET_TEXT_OUTLINE);
+        Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, text);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, x, y);
+    }
+{% endif %}
 
 {% if editor_paths %}
     private void UpdatePatrols()

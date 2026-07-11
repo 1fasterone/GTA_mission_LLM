@@ -213,6 +213,35 @@ class TestMissionSchemaWeatherValidator:
             assert s.weather == w
 
 
+class TestMissionSchemaAiDifficultyAndConfigMenu:
+    """HeliRace-style opt-in polish: AI rival difficulty curve + F10 config menu."""
+
+    def test_ai_difficulty_defaults_to_medium(self):
+        s = MissionSchema(mission_name="X", steps=[], peds=[], vehicles=[], objects=[])
+        assert s.ai_difficulty == "medium"
+
+    def test_config_menu_defaults_to_false(self):
+        s = MissionSchema(mission_name="X", steps=[], peds=[], vehicles=[], objects=[])
+        assert s.config_menu is False
+
+    def test_all_valid_ai_difficulties_accepted(self):
+        for d in ("easy", "medium", "hard"):
+            s = MissionSchema(mission_name="X", ai_difficulty=d, steps=[], peds=[], vehicles=[], objects=[])
+            assert s.ai_difficulty == d
+
+    def test_ai_difficulty_case_normalised(self):
+        s = MissionSchema(mission_name="X", ai_difficulty="HARD", steps=[], peds=[], vehicles=[], objects=[])
+        assert s.ai_difficulty == "hard"
+
+    def test_unknown_ai_difficulty_clamps_to_medium(self):
+        s = MissionSchema(mission_name="X", ai_difficulty="nightmare", steps=[], peds=[], vehicles=[], objects=[])
+        assert s.ai_difficulty == "medium"
+
+    def test_config_menu_true_accepted(self):
+        s = MissionSchema(mission_name="X", config_menu=True, steps=[], peds=[], vehicles=[], objects=[])
+        assert s.config_menu is True
+
+
 class TestMissionSchemaTimeOfDay:
     def test_time_of_day_defaults_to_20(self):
         s = MissionSchema(mission_name="X", steps=[], peds=[], vehicles=[], objects=[])

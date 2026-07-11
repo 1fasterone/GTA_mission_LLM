@@ -31,6 +31,7 @@ LocationName = Literal[
     "paleto_bay", "alamo_sea", "military_base", "prison", "port", "highway"
 ]
 WeatherName = Literal["CLEAR", "OVERCAST", "RAIN", "THUNDER", "FOGGY", "SMOG", "EXTRASUNNY"]
+AiDifficulty = Literal["easy", "medium", "hard"]
 
 
 def _clamp_int(v, lo: int, hi: int, default: int) -> int:
@@ -141,6 +142,13 @@ class MissionSchema(BaseModel):
     audio:         list[MissionAudio]   = Field(default_factory=list)
     meta:          dict                  = Field(default_factory=dict)   # theme/seed bookkeeping
 
+    # ── HeliRace-style polish (opt-in, deterministic — see race_opponent vehicles) ──
+    #   ai_difficulty  -> speed curve for any race_opponent driver (SpawnVehicles/UpdateRivals)
+    #   config_menu    -> emit an F10 native DrawRect/DrawText settings panel
+    #                     (weather + AI difficulty, only shown before the mission starts)
+    ai_difficulty: str  = "medium"
+    config_menu:   bool = False
+
     # ── LLM-authored mission-specific C# (insertion points) ──
     # Frozen into the schema, so Step 6 stays a pure function — determinism intact.
     #   extra_init  -> end of Init()   (runs once when the mission starts)
@@ -181,6 +189,11 @@ class MissionSchema(BaseModel):
         """Upper-case and clamp unknown weather to CLEAR."""
         up = str(v).strip().upper()
         return up if up in _VALID_WEATHER else "CLEAR"
+
+    @field_validator("ai_difficulty", mode="before")
+    @classmethod
+    def _clamp_ai_difficulty(cls, v) -> str:
+        return clamp_enum(str(v), get_args(AiDifficulty), "medium")
 
     @model_validator(mode="after")
     def _default_step_params(self) -> "MissionSchema":

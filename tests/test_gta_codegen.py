@@ -433,3 +433,95 @@ class TestRaceDemo:
         # around the airport spawn origin.
         cs = gen.generate(self._race_schema(track="does.not.exist"))
         assert "-1740.0f" in cs
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HeliRace-style polish: AI rival difficulty curve + F10 config menu
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAiRivalDifficultyAndConfigMenu:
+    def _race_schema(self, **kwargs):
+        defaults = dict(
+            mission_name="Runway Sprint", location_name="airport",
+            steps=[MissionStep(type="get_in_vehicle", label="Get to the start"),
+                   MissionStep(type="race_lap", label="Win the race",
+                               params={"track": "airport.figure_8", "lap_count": 3,
+                                       "require_vehicle": True})],
+            vehicles=[MissionVehicle(description="rival", model="sultan",
+                                     role="race_opponent", count=2)],
+        )
+        defaults.update(kwargs)
+        return MissionSchema(**defaults)
+
+    def test_ai_speed_helpers_present_when_race_opponent_exists(self, gen):
+        cs = gen.generate(self._race_schema())
+        assert "AiSpawnSpeedFor" in cs
+        assert "AiChaseSpeedFor" in cs
+
+    def test_ai_speed_helpers_absent_without_race_opponent(self, gen):
+        cs = gen.generate(MissionSchema(
+            mission_name="Cleanup", location_name="downtown",
+            steps=[MissionStep(type="kill_all", label="Clear them")],
+            peds=[MissionPed(description="thug", model="g_m_y_lost_01",
+                             role="guard", count=3)]))
+        assert "AiSpawnSpeedFor" not in cs
+        assert "AiChaseSpeedFor" not in cs
+
+    def test_default_medium_difficulty_preserves_historical_speeds(self, gen):
+        # Backward-compat: unset ai_difficulty must still drive the rival at the
+        # original hardcoded 40f/45f so pre-existing generated missions don't change.
+        cs = gen.generate(self._race_schema())
+        assert "_aiDifficultyIdx = 1;" in cs
+        assert "case 1: return 40.0f;" in cs
+        assert "case 1: return 45.0f;" in cs
+
+    def test_hard_difficulty_sets_higher_default_index(self, gen):
+        cs = gen.generate(self._race_schema(ai_difficulty="hard"))
+        assert "_aiDifficultyIdx = 2;" in cs
+
+    def test_easy_difficulty_sets_lower_default_index(self, gen):
+        cs = gen.generate(self._race_schema(ai_difficulty="easy"))
+        assert "_aiDifficultyIdx = 0;" in cs
+
+    def test_rival_spawn_and_chase_calls_use_difficulty_lookup(self, gen):
+        cs = gen.generate(self._race_schema(ai_difficulty="hard"))
+        assert "AiSpawnSpeedFor(_aiDifficultyIdx)" in cs
+        assert "AiChaseSpeedFor(_aiDifficultyIdx)" in cs
+        assert "786603, 40f" not in cs   # old hardcoded call site must be gone
+
+    def test_config_menu_off_by_default(self, gen):
+        cs = gen.generate(self._race_schema())
+        assert "DrawConfigMenu" not in cs
+        assert "KeyDown += OnKeyDown" not in cs
+
+    def test_config_menu_emits_menu_machinery(self, gen):
+        cs = gen.generate(self._race_schema(config_menu=True))
+        for tok in ("DrawConfigMenu", "HandleMenuControls", "AdjustConfig",
+                    "MenuValueFor", "KeyDown += OnKeyDown", "_cfgWeatherOptions",
+                    "MISSION CONFIG"):
+            assert tok in cs, f"config menu C# missing {tok}"
+
+    def test_config_menu_includes_ai_difficulty_row_when_rival_present(self, gen):
+        cs = gen.generate(self._race_schema(config_menu=True))
+        assert "AI Difficulty" in cs
+
+    def test_config_menu_omits_ai_difficulty_row_without_rival(self, gen):
+        cs = gen.generate(MissionSchema(
+            mission_name="Scenic Drive", location_name="downtown", config_menu=True,
+            steps=[MissionStep(type="go_to", label="Drive there")]))
+        assert "AI Difficulty" not in cs
+        assert "MISSION CONFIG" in cs   # menu itself still emitted (weather row)
+
+    def test_config_menu_weather_default_index_matches_schema_weather(self, gen):
+        cs = gen.generate(self._race_schema(config_menu=True, weather="THUNDER"))
+        # THUNDER is index 3 in the menu's weather option list.
+        assert "_cfgWeatherIdx = 3;" in cs
+
+    def test_config_menu_output_braces_and_parens_balanced(self, gen):
+        cs = gen.generate(self._race_schema(config_menu=True, ai_difficulty="hard"))
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+
+    def test_config_menu_is_deterministic(self, gen):
+        schema = self._race_schema(config_menu=True, ai_difficulty="hard")
+        assert gen.generate(schema) == gen.generate(schema)
