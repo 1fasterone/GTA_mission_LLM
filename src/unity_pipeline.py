@@ -31,6 +31,7 @@ from .themes              import (
 )
 from .unity_archetypes    import classify as classify_intent, apply_intent
 from .unity_racetrack     import compose_racetrack, is_racing_degenerate
+from .unity_concept_entities import inject_missing_concept_entities
 
 console = Console()
 
@@ -696,6 +697,14 @@ class UnityPipeline:
             self._fix(msg)
         if not fix_msgs:
             self._ok("Schema is consistent — no fixes needed")
+
+        # Concept-named entity rescue: a structured brief's own "ENTITIES"
+        # bullets are the ground truth for what the scene needs — restore any
+        # the schema-fill LLM dropped/replaced with its own invented content
+        # before anything downstream (racing scaffold gate, sketchfab query
+        # enrichment, asset resolution) runs against schema.entities.
+        for msg in inject_missing_concept_entities(schema):
+            self._fix(msg)
 
         # Racing-genre scaffold: a racing project whose entities carry no real
         # vehicle/track content (the LLM wrote a themed prop scatter instead
