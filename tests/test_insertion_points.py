@@ -18,7 +18,7 @@ from src.micro.code_fields import (
     CodeField, CodeMethod, CodeExtensibleSchema,
     lint_code_fragment, lint_usings, lint_fields, lint_method, lint_extensible,
     lint_hash_references, lint_member_references, lint_vector3_static_misuse,
-    find_invalid_member_refs,
+    find_invalid_member_refs, lint_enum_references, find_invalid_enum_refs,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -220,6 +220,82 @@ def test_lint_member_references_disables_control_flow_header():
     assert "if (false)" in out
     assert out.count("{") == out.count("}")
     assert "DoSomething();" in out   # block body untouched
+
+
+# ── Enum member reference checker (extends Hash/member lint to invented enum
+# values, e.g. Weather.Rain — the real member is Weather.Raining) ────────────
+
+_FAKE_ENUMS = {
+    "Weather": ["Clear", "Raining", "ThunderStorm", "Foggy", "Overcast"],
+    "BlipColor": ["White", "Red", "Green", "Blue", "Yellow"],
+}
+
+
+def test_find_invalid_enum_refs_catches_bad_member():
+    bad = find_invalid_enum_refs("World.Weather = Weather.Rain;", enums=_FAKE_ENUMS)
+    assert any(e == "Weather" and m == "Rain" for _pos, e, m in bad)
+
+
+def test_find_invalid_enum_refs_ignores_valid_member():
+    bad = find_invalid_enum_refs("World.Weather = Weather.Raining;", enums=_FAKE_ENUMS)
+    assert bad == []
+
+
+def test_find_invalid_enum_refs_no_type_inference_needed():
+    """Unlike member checking, an enum name is unambiguous wherever it appears —
+    no local declaration or chain pattern required to trust the check."""
+    bad = find_invalid_enum_refs("var w = Weather.Rain;", enums=_FAKE_ENUMS)
+    assert any(e == "Weather" and m == "Rain" for _pos, e, m in bad)
+
+
+def test_find_invalid_enum_refs_noop_on_empty_or_missing():
+    assert find_invalid_enum_refs("Weather.Rain;", enums={}) == []
+    assert find_invalid_enum_refs("Weather.Rain;", enums=None) == []
+
+
+def test_lint_enum_references_comments_out_invalid_value():
+    body = "World.Weather = Weather.Rain;"
+    out = lint_enum_references(body, enums=_FAKE_ENUMS)
+    assert "// AUDIT: removed invalid enum reference(s) Weather.Rain" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Weather.Rain" in ln for ln in active_lines)
+
+
+def test_lint_enum_references_keeps_valid_value():
+    body = "World.Weather = Weather.Raining;"
+    assert lint_enum_references(body, enums=_FAKE_ENUMS) == body
+
+
+def test_lint_enum_references_noop_without_allowlist():
+    body = "World.Weather = Weather.Rain;"
+    assert lint_enum_references(body, enums=None) == body
+    assert lint_enum_references(body, enums={}) == body
+
+
+def test_lint_enum_references_disables_control_flow_header():
+    body = (
+        "if (World.Weather == Weather.Rain)\n"
+        "{\n"
+        "    DoSomething();\n"
+        "}"
+    )
+    out = lint_enum_references(body, enums=_FAKE_ENUMS)
+    assert "if (false)" in out
+    assert out.count("{") == out.count("}")
+    assert "DoSomething();" in out
+
+
+def test_lint_enum_references_does_not_collide_with_hash_or_member_checks():
+    """Mixed content: only the bad enum reference gets flagged, valid Hash and
+    member references are untouched by this checker."""
+    body = (
+        'Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, "X", "Y", true);\n'
+        "Game.Player.Character.Delete();\n"
+        "World.Weather = Weather.Rain;"
+    )
+    bad = find_invalid_enum_refs(body, enums=_FAKE_ENUMS)
+    assert len(bad) == 1
+    assert bad[0][1:] == ("Weather", "Rain")
 
 
 # ── Vector3.Distance/.Dot instance-call misuse (CS1501) ──────────────────────
@@ -501,6 +577,27 @@ def test_gta_lint_keeps_real_member_and_valid_vector3_call():
     cs = CodeGenerator().generate(s)
     assert "Game.Player.Character.Delete();" in cs
     assert "Vector3.Distance(a, b);" in cs
+
+
+def test_gta_lint_neutralizes_invented_enum_value():
+    """End-to-end using the REAL lookups/gta_enum_allowlist.json (via
+    _programmatic_fix), not a mock. Corpus-mined regression: 133 occurrences of
+    exactly this shape (e.g. Weather.Rain, the real member is Weather.Raining)
+    across a 1191-file independent dataset — the 4th most common real failure."""
+    s = _mission(extra_tick="World.Weather = Weather.Rain;")
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Weather.Rain" in ln for ln in active_lines)
+    assert "// AUDIT: removed invalid enum reference(s) Weather.Rain" in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_gta_lint_keeps_real_enum_value():
+    s = _mission(extra_tick="World.Weather = Weather.Raining;")
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    assert "World.Weather = Weather.Raining;" in cs
 
 
 # ── B1 regression: the prompt's few-shot shape renders into the mission ────────

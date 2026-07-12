@@ -391,6 +391,12 @@ def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | Non
     flagged: set[str] = set()
     skipped: set[str] = set()
     for line in text.splitlines():
+        if line.lstrip().startswith("//"):
+            # Already neutralized by an earlier lint pass (its "// AUDIT:"
+            # comment preserves the original text for traceability, which
+            # would otherwise re-trigger this same regex on every later pass).
+            out.append(line)
+            continue
         bad = [n for n in _HASH_REF_RE.findall(line) if n not in allowed]
         if not bad:
             out.append(line)
@@ -543,6 +549,9 @@ def lint_member_references(text: str, *, surface: "dict | None") -> str:
     flagged: set[str] = set()
     skipped: set[str] = set()
     for i, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
         names = bad_lines.get(i)
         if not names:
             out.append(line)
@@ -570,6 +579,101 @@ def lint_member_references(text: str, *, surface: "dict | None") -> str:
     return "\n".join(out)
 
 
+# ── Enum member reference checker ─────────────────────────────────────────────
+# LLMs also invent plausible-but-wrong ENUM values (Weather.Rain -- the real
+# member is Weather.Raining), not just methods and natives. Corpus-mined:
+# 133 occurrences of exactly this shape across a 1191-file independent
+# dataset, the 4th most common real failure after Hash natives, invented
+# members, and an optional-DLL dependency issue that doesn't apply here.
+# Unlike member-on-type checking, no variable/chain type inference is
+# needed: in `EnumType.Member`, EnumType names the type directly and
+# unambiguously wherever it appears (Weather.X always means the Weather
+# enum), so this checks every occurrence of a known enum name, full stop.
+_MIN_ENUM_SURFACE = 2
+
+
+def find_invalid_enum_refs(source: str, *, enums: "dict | None") -> list[tuple[int, str, str]]:
+    """Return [(char_offset, enum_name, member), ...] for EnumType.Member
+    references where EnumType is a known SHVDN3 enum (`enums` maps enum
+    name -> list of valid member names) but Member isn't a real value."""
+    if not enums:
+        return []
+    usable = {k: v for k, v in enums.items()
+              if isinstance(v, list) and len(v) >= _MIN_ENUM_SURFACE}
+    if not usable:
+        return []
+    pattern = re.compile(
+        r'\b(' + "|".join(re.escape(k) for k in usable) + r')\.([A-Za-z_]\w*)\b')
+
+    out: list[tuple[int, str, str]] = []
+    seen_keys: set[tuple[str, str]] = set()
+    for m in pattern.finditer(source):
+        enum_name, member = m.group(1), m.group(2)
+        if member in _MEMBER_ALWAYS_OK or member in usable[enum_name]:
+            continue
+        key = (enum_name, member)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        out.append((m.start(2), enum_name, member))
+
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def lint_enum_references(text: str, *, enums: "dict | None") -> str:
+    """Neutralize any line referencing an invented enum value (e.g.
+    Weather.Rain, which doesn't exist -- the real member is Raining). Same
+    conservative strategy as lint_hash_references/lint_member_references:
+    comment out a complete statement, swap a bare if/while header's
+    condition for `false`, or leave the line alone entirely if neither is
+    safe. `enums=None`/empty is a no-op.
+    """
+    if not text or not enums:
+        return text
+    bad = find_invalid_enum_refs(text, enums=enums)
+    if not bad:
+        return text
+
+    bad_lines: dict[int, list[str]] = {}
+    for pos, enum_name, member in bad:
+        line_no = text.count("\n", 0, pos)
+        bad_lines.setdefault(line_no, []).append(f"{enum_name}.{member}")
+
+    out: list[str] = []
+    flagged: set[str] = set()
+    skipped: set[str] = set()
+    for i, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        names = bad_lines.get(i)
+        if not names:
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, names)
+            if disabled is not None:
+                flagged.update(names)
+                out.append(disabled)
+                continue
+            skipped.update(names)
+            out.append(line)
+            continue
+        flagged.update(names)
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed invalid enum reference(s) "
+                   f"{', '.join(sorted(set(names)))} -- {line.strip()}")
+    if flagged:
+        console.print(f"  [yellow]FIX[/]  removed statement(s) referencing "
+                      f"invalid enum member(s): {', '.join(sorted(flagged))}")
+    if skipped:
+        console.print(f"  [yellow]WARN[/] could not safely remove invalid enum "
+                      f"member(s) on a control-flow or brace-mixed line: "
+                      f"{', '.join(sorted(skipped))}")
+    return "\n".join(out)
+
+
 # CS1501 — Vector3.Distance(v)/.Dot(v) called as a single-arg INSTANCE method.
 # Both are static-only two-argument methods on Vector3; no SHVDN3 type has an
 # instance .Distance(Vector3)/.Dot(Vector3) overload, so this pattern is always
@@ -591,6 +695,9 @@ def lint_vector3_static_misuse(text: str) -> str:
     flagged = False
     skipped = False
     for line in text.splitlines():
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
         if not _VEC_STATIC_MISUSE_RE.search(line):
             out.append(line)
             continue
