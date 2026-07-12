@@ -19,6 +19,7 @@ from src.micro.code_fields import (
     lint_code_fragment, lint_usings, lint_fields, lint_method, lint_extensible,
     lint_hash_references, lint_member_references, lint_vector3_static_misuse,
     find_invalid_member_refs, lint_enum_references, find_invalid_enum_refs,
+    lint_bare_task_static_misuse, _safe_to_comment_out,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -296,6 +297,73 @@ def test_lint_enum_references_does_not_collide_with_hash_or_member_checks():
     bad = find_invalid_enum_refs(body, enums=_FAKE_ENUMS)
     assert len(bad) == 1
     assert bad[0][1:] == ("Weather", "Rain")
+
+
+# ── _safe_to_comment_out: trailing inline comment must not block neutralizing ──
+
+def test_safe_to_comment_out_true_for_statement_with_trailing_comment():
+    """Regression: a real corpus line (`Task.GoTo(...); // Initial nudge`) was
+    wrongly treated as unsafe to neutralize because `_safe_to_comment_out` only
+    checked the raw line, which ends in comment text, not `;`."""
+    assert _safe_to_comment_out("Function.Call(Hash.BAD, true); // explanatory note") is True
+
+
+def test_safe_to_comment_out_ignores_url_style_double_slash():
+    """A `//` inside a string literal (no preceding space, e.g. a URL) must NOT
+    be mistaken for a comment start."""
+    assert _safe_to_comment_out('Function.Call(Hash.BAD, "http://example.com");') is True
+
+
+def test_safe_to_comment_out_false_for_header_with_trailing_comment():
+    assert _safe_to_comment_out("if (Hash.BAD) // comment") is False
+
+
+# ── Bare Task.X() static misuse (Task is instance-only via ped.Task) ─────────
+
+def test_lint_bare_task_static_misuse_comments_out_bad_call():
+    """Real corpus line, pulled verbatim: LLMs frequently write bare Task.X()
+    as if TaskInvoker were a static class — it only exists as ped.Task."""
+    body = "Task.GoTo(ped, fleeTarget);"
+    out = lint_bare_task_static_misuse(body)
+    assert "// AUDIT: removed bare Task.X() static misuse" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Task.GoTo" in ln for ln in active_lines)
+
+
+def test_lint_bare_task_static_misuse_handles_trailing_inline_comment():
+    """The exact real corpus line that exposed the _safe_to_comment_out bug."""
+    body = ("Task.GoTo(player.Position + new Vector3((float)(_rng.NextDouble() * 2), "
+             "(float)(_rng.NextDouble() * 2), 0f)); // Initial nudge")
+    out = lint_bare_task_static_misuse(body)
+    assert out.startswith("// AUDIT:")
+
+
+def test_lint_bare_task_static_misuse_keeps_valid_instance_call():
+    body = "ped.Task.GoTo(pos);"
+    assert lint_bare_task_static_misuse(body) == body
+
+
+def test_lint_bare_task_static_misuse_keeps_valid_chain_call():
+    body = "Game.Player.Character.Task.FightAgainst(target);"
+    assert lint_bare_task_static_misuse(body) == body
+
+
+def test_lint_bare_task_static_misuse_disables_control_flow_header():
+    body = (
+        "if (someCondition)\n"
+        "{\n"
+        "    Task.Wait(1500);\n"
+        "}"
+    )
+    out = lint_bare_task_static_misuse(body)
+    assert "if (someCondition)" in out  # header itself untouched — the misuse is inside the block
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Task.Wait" in ln for ln in active_lines)
+    assert out.count("{") == out.count("}")
+
+
+def test_lint_bare_task_static_misuse_noop_on_empty_text():
+    assert lint_bare_task_static_misuse("") == ""
 
 
 # ── Vector3.Distance/.Dot instance-call misuse (CS1501) ──────────────────────
@@ -598,6 +666,30 @@ def test_gta_lint_keeps_real_enum_value():
     s = _programmatic_fix(s)
     cs = CodeGenerator().generate(s)
     assert "World.Weather = Weather.Raining;" in cs
+
+
+def test_gta_lint_neutralizes_bare_task_static_misuse():
+    """Corpus-mined regression: bare Task.X() (43 occurrences across a 1191-file
+    independent dataset) — Task only exists as ped.Task, never as a static
+    class. Real corpus line, pulled verbatim (with its trailing inline
+    comment, which exposed a _safe_to_comment_out bug during development)."""
+    s = _mission(extra_tick=(
+        "Task.GoTo(player.Position + new Vector3((float)(_rng.NextDouble() * 2), "
+        "(float)(_rng.NextDouble() * 2), 0f)); // Initial nudge"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Task.GoTo" in ln for ln in active_lines)
+    assert "// AUDIT: removed bare Task.X() static misuse" in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_gta_lint_keeps_valid_task_instance_call():
+    s = _mission(extra_tick="Game.Player.Character.Task.FightAgainst(target);")
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    assert "Game.Player.Character.Task.FightAgainst(target);" in cs
 
 
 # ── B1 regression: the prompt's few-shot shape renders into the mission ────────

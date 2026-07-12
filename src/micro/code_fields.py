@@ -327,20 +327,36 @@ def lint_usings(usings: list[str], *, already_in_template: set[str],
 _HASH_REF_RE = re.compile(r'\bHash\.([A-Z][A-Z0-9_]*)\b')
 
 
+def _strip_trailing_comment(line: str) -> str:
+    """Best-effort strip of a trailing ` // ...` inline comment so
+    _safe_to_comment_out can see the CODE ends in `;`/`}` even when followed
+    by one (confirmed live: `Task.GoTo(...); // Initial nudge`, a real
+    corpus line, was wrongly skipped as "unsafe" before this). Deliberately
+    conservative: only strips when `//` is preceded by whitespace -- an
+    inline comment almost always is, while `//` inside a string literal like
+    "http://x" never has a space before it. A wrong guess here only makes
+    this MORE conservative (skip a line that was actually safe), never less
+    safe, so a simple heuristic is fine -- this is not a real tokenizer."""
+    idx = line.find(" //")
+    return line[:idx] if idx != -1 else line
+
+
 def _safe_to_comment_out(line: str) -> bool:
     """A line is safe to replace with a `//` comment only if it's a complete,
     self-terminating statement: its own brace count is balanced AND it ends
     in `;` or `}` (closing a fully self-contained statement/block on the same
-    line). A bare control-flow header (`if (cond)`, `while (cond)`, ...)
-    whose `{` opens on a LATER line must never be commented out here --
-    doing so would silently turn a conditional block into an
-    always-executing bare block (or an orphaned brace), which is a
-    correctness bug worse than the compile error the line would otherwise
-    surface. Confirmed live: an LLM-authored `if (... GetNearestVehicle...)`
-    header (brace on the next line) would have been silently neutered into
-    an unconditional block before this guard was added."""
-    stripped = line.rstrip()
-    if line.count("{") != line.count("}"):
+    line, ignoring any trailing inline comment). A bare control-flow header
+    (`if (cond)`, `while (cond)`, ...) whose `{` opens on a LATER line must
+    never be commented out here -- doing so would silently turn a
+    conditional block into an always-executing bare block (or an orphaned
+    brace), which is a correctness bug worse than the compile error the line
+    would otherwise surface. Confirmed live: an LLM-authored `if (...
+    GetNearestVehicle...)` header (brace on the next line) would have been
+    silently neutered into an unconditional block before this guard was
+    added."""
+    code = _strip_trailing_comment(line)
+    stripped = code.rstrip()
+    if code.count("{") != code.count("}"):
         return False
     return stripped.endswith((";", "}"))
 
@@ -719,6 +735,56 @@ def lint_vector3_static_misuse(text: str) -> str:
                       "Vector3.Distance/.Dot as an instance method")
     if skipped:
         console.print("  [yellow]WARN[/] could not safely remove a Vector3.Distance/.Dot "
+                      "misuse on a control-flow or brace-mixed line")
+    return "\n".join(out)
+
+
+# CS1061/CS0117 — bare `Task.X(...)` static calls. TaskInvoker ("Task") only
+# exists as an instance member (`ped.Task`), never as a static class — no
+# SHVDN3 type has any static Task.* method. Corpus-mined: 43 occurrences
+# across a 1191-file independent dataset, right behind Hash/member/enum
+# invention. Pure blocklist, no type inference needed — mirrors the
+# reference audit tool's own broader rule (its narrower sibling only
+# flags a curated list of ~25 known method names; this catches ANY bare
+# `Task.` reference regardless of what follows, the same way `ped.Task.X`
+# vs. bare `Task.X` is unambiguous without needing to know X at all).
+_BARE_TASK_RE = re.compile(r'(?<!\.)\bTask\s*\.')
+
+
+def lint_bare_task_static_misuse(text: str) -> str:
+    """Neutralize `Task.X(...)` used as if Task were a static class — it only
+    exists as `ped.Task`. Same comment-out-or-disable-header strategy as the
+    other lint_* passes here."""
+    if not text or not _BARE_TASK_RE.search(text):
+        return text
+    out: list[str] = []
+    flagged = False
+    skipped = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        if not _BARE_TASK_RE.search(line):
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, ["bare Task.X() static misuse"])
+            if disabled is not None:
+                flagged = True
+                out.append(disabled)
+                continue
+            skipped = True
+            out.append(line)
+            continue
+        flagged = True
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed bare Task.X() static misuse "
+                   f"(Task is instance-only via ped.Task) -- {line.strip()}")
+    if flagged:
+        console.print("  [yellow]FIX[/]  removed statement(s) misusing "
+                      "Task as a static class")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a bare Task.X() "
                       "misuse on a control-flow or brace-mixed line")
     return "\n".join(out)
 
