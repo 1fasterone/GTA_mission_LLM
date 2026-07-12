@@ -116,6 +116,8 @@ OUTPUT this exact JSON structure, fully populated:
       "context": "when this audio plays"
     }}
   ],
+  "ai_difficulty": "one of: easy | medium | hard — ONLY meaningful if you added a race_opponent vehicle; scale it to how tough the concept says the rivals are (default medium)",
+  "config_menu": "true only if the concept explicitly asks for a pre-race settings/options menu the player can open (e.g. an F10 menu to adjust weather or rival difficulty); otherwise false",
   "extra_usings": [],
   "extra_fields": [],
   "extra_init": "",

@@ -112,7 +112,12 @@ ARCHETYPES: list[Archetype] = [
             "REQUIREMENTS:\n"
             "  - Add 2-3 vehicles with role \"race_opponent\" (the rivals) besides the player's car.\n"
             "  - Do NOT add kill_all or unrelated combat — finishing the laps IS the mission.\n"
-            "  - Add a \"mission_passed\" audio cue for crossing the finish line."
+            "  - Add a \"mission_passed\" audio cue for crossing the finish line.\n"
+            "  - Set \"ai_difficulty\" (easy|medium|hard) to match how tough the concept says the\n"
+            "    rivals are — e.g. \"a punishing ace pilot\" or \"the toughest street racer in the "
+            "city\" is hard.\n"
+            "  - Set \"config_menu\": true only if the concept explicitly wants the player to be\n"
+            "    able to open a pre-race settings menu (adjust weather / rival difficulty)."
         ),
     ),
     Archetype(

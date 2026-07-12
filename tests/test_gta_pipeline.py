@@ -396,3 +396,82 @@ class TestSchemaExtractionFromFence:
         pipeline.llm.chat = MagicMock(side_effect=[gta_concept_text, with_think])
         out = pipeline.run("heist")
         assert out.exists()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# End-to-end: HeliRace-style AI rival difficulty + F10 config menu
+#
+# Proves the full wire-up (race archetype hint in archetypes.py → SCHEMA_FILL_USER
+# output keys in prompts.py → MissionSchema fields → CodeGenerator) survives a
+# realistic race-flavored prompt/concept/schema all the way to compiled C#,
+# without needing a live LM Studio instance.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPipelineAiDifficultyAndConfigMenu:
+    def _race_concept_text(self) -> str:
+        return (
+            "A high-stakes illegal street race at Los Santos International Airport. "
+            "The player challenges Vice, a ruthless, unbeatable ace racer who has "
+            "never lost a circuit. Three punishing laps of the airport's figure-8 "
+            "circuit at night in a thunderstorm, with two more rivals on the grid. "
+            "Before the race, the player can open a settings menu to adjust the "
+            "weather and the rival's difficulty."
+        )
+
+    def _race_schema_json(self) -> str:
+        return json.dumps({
+            "mission_name":  "Apex Circuit Grand Prix",
+            "location_name": "airport",
+            "time_of_day":   21,
+            "weather":       "THUNDER",
+            "ai_difficulty": "hard",
+            "config_menu":   True,
+            "steps": [
+                {"type": "get_in_vehicle", "label": "Get to the start line"},
+                {"type": "race_lap", "label": "Beat Vice to the finish",
+                 "params": {"track": "airport.figure_8", "lap_count": 3,
+                            "require_vehicle": True}},
+            ],
+            "vehicles": [
+                {"description": "sports car", "role": "race_opponent", "count": 3},
+            ],
+            "audio": [
+                {"type": "mission_passed", "context": "crossing the finish line"},
+            ],
+        })
+
+    def _run_race(self, gta_pipeline_config) -> Path:
+        pipeline = _make_pipeline(gta_pipeline_config)
+        pipeline.llm.chat = MagicMock(
+            side_effect=[self._race_concept_text(), self._race_schema_json()]
+        )
+        return pipeline.run(
+            "A brutal airport street race against an unbeatable ace rival, with a "
+            "pre-race settings menu to adjust weather and rival difficulty"
+        )
+
+    def test_hard_ai_difficulty_reaches_generated_code(self, gta_pipeline_config):
+        out = self._run_race(gta_pipeline_config)
+        code = out.read_text(encoding="utf-8")
+        assert "_aiDifficultyIdx = 2;" in code   # 0=Easy 1=Medium 2=Hard
+        assert "AiSpawnSpeedFor(_aiDifficultyIdx)" in code
+
+    def test_config_menu_reaches_generated_code(self, gta_pipeline_config):
+        out = self._run_race(gta_pipeline_config)
+        code = out.read_text(encoding="utf-8")
+        for tok in ("DrawConfigMenu", "HandleMenuControls", "KeyDown += OnKeyDown",
+                    "AI Difficulty", "MISSION CONFIG"):
+            assert tok in code, f"missing {tok}"
+
+    def test_schema_json_sidecar_round_trips_new_fields(self, gta_pipeline_config):
+        out = self._run_race(gta_pipeline_config)
+        schema_file = out.with_suffix("").with_suffix(".schema.json")
+        data = json.loads(schema_file.read_text(encoding="utf-8"))
+        assert data["ai_difficulty"] == "hard"
+        assert data["config_menu"] is True
+
+    def test_generated_code_compiles_balanced(self, gta_pipeline_config):
+        out = self._run_race(gta_pipeline_config)
+        code = out.read_text(encoding="utf-8")
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
