@@ -34,6 +34,7 @@ from .archetypes         import (
 )
 from .micro.code_fields  import (
     lint_usings, lint_fields, lint_code_fragment, lint_method, lint_hash_references,
+    lint_member_references, lint_vector3_static_misuse,
 )
 
 # Names + namespaces the mission template already emits — LLM extras that
@@ -69,6 +70,24 @@ def _load_hash_allowlist(lookups_dir: str = "lookups") -> "frozenset[str] | None
 _GTA_HASH_ALLOWLIST: "frozenset[str] | None" = _load_hash_allowlist()
 
 
+# ── Real SHVDN3 member surface for a fixed set of commonly-referenced types —
+# catches LLM-invented members (e.g. the confirmed Ped.GetNearestVehicle /
+# Ped.SetPositionAndRotation, neither of which exist) the same way the hash
+# allowlist catches invented natives. Sourced from the same SHVDN3 audit
+# tool's reflected API extraction, trimmed to the types this checker
+# understands. Missing file → None → lint_member_references() is a no-op.
+def _load_api_surface(lookups_dir: str = "lookups") -> "dict | None":
+    path = Path(lookups_dir) / "gta_api_surface.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+_GTA_API_SURFACE: "dict | None" = _load_api_surface()
+
+
 def _lint_mission_extras(schema: MissionSchema) -> None:
     """Defensively clean the LLM-authored mission-specific C# (in place)."""
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=_GTA_TEMPLATE_USINGS)
@@ -83,12 +102,19 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
             cleaned.append(m2)
     schema.extra_methods = cleaned
 
-    # Neutralize any invented GTA.Native.Hash reference — run last, after the
-    # other passes have already balanced braces / capped lines / etc.
-    schema.extra_init = lint_hash_references(schema.extra_init, allowed=_GTA_HASH_ALLOWLIST)
-    schema.extra_tick = lint_hash_references(schema.extra_tick, allowed=_GTA_HASH_ALLOWLIST)
+    # Neutralize any invented GTA.Native.Hash reference, invented C# member on
+    # a known SHVDN3 type, or Vector3.Distance/.Dot instance-call misuse — run
+    # last, after the other passes have already balanced braces / capped lines.
+    for field in ("extra_init", "extra_tick"):
+        value = getattr(schema, field)
+        value = lint_hash_references(value, allowed=_GTA_HASH_ALLOWLIST)
+        value = lint_member_references(value, surface=_GTA_API_SURFACE)
+        value = lint_vector3_static_misuse(value)
+        setattr(schema, field, value)
     for m in schema.extra_methods:
         m.body = lint_hash_references(m.body, allowed=_GTA_HASH_ALLOWLIST)
+        m.body = lint_member_references(m.body, surface=_GTA_API_SURFACE)
+        m.body = lint_vector3_static_misuse(m.body)
 
 console = Console()
 

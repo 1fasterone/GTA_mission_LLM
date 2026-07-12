@@ -327,6 +327,48 @@ def lint_usings(usings: list[str], *, already_in_template: set[str],
 _HASH_REF_RE = re.compile(r'\bHash\.([A-Z][A-Z0-9_]*)\b')
 
 
+def _safe_to_comment_out(line: str) -> bool:
+    """A line is safe to replace with a `//` comment only if it's a complete,
+    self-terminating statement: its own brace count is balanced AND it ends
+    in `;` or `}` (closing a fully self-contained statement/block on the same
+    line). A bare control-flow header (`if (cond)`, `while (cond)`, ...)
+    whose `{` opens on a LATER line must never be commented out here --
+    doing so would silently turn a conditional block into an
+    always-executing bare block (or an orphaned brace), which is a
+    correctness bug worse than the compile error the line would otherwise
+    surface. Confirmed live: an LLM-authored `if (... GetNearestVehicle...)`
+    header (brace on the next line) would have been silently neutered into
+    an unconditional block before this guard was added."""
+    stripped = line.rstrip()
+    if line.count("{") != line.count("}"):
+        return False
+    return stripped.endswith((";", "}"))
+
+
+# A bare if/else-if/while header (condition only, `{` opens on a later line)
+# whose condition references a bad identifier can't be commented out, but its
+# condition CAN always be swapped for the literal `false` -- syntactically
+# valid regardless of what the original expression was, and always disables
+# the guarded block without touching any other line's braces. Restricted to
+# if/while: for/foreach/switch conditions aren't simple boolean swaps, so
+# those are left alone (skipped) for the compiler to catch.
+_DISABLEABLE_HEADER_RE = re.compile(
+    r'^(?P<indent>\s*)(?P<prefix>(?:\}\s*)?(?:else\s+)?(?:if|while))\s*\((?P<cond>.*)\)\s*$')
+
+
+def _disable_bad_header(line: str, names: "list[str] | set[str]") -> "str | None":
+    """Return `line` with an if/else-if/while condition replaced by `false`,
+    or None if `line` isn't a bare header of that shape (e.g. has a trailing
+    `{`/`;`, or is a for/foreach/switch -- those are left for the caller to
+    handle via the normal comment-out / skip path)."""
+    m = _DISABLEABLE_HEADER_RE.match(line)
+    if not m:
+        return None
+    return (f"{m.group('indent')}{m.group('prefix')} (false) "
+            f"/* AUDIT: condition removed, referenced invalid "
+            f"{', '.join(sorted(set(names)))} */")
+
+
 def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | None") -> str:
     """Neutralize any line referencing an unknown GTA.Native.Hash member.
 
@@ -340,10 +382,8 @@ def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | Non
     `allowed=None` is a no-op (skips the check, e.g. when no allowlist is
     loaded). Line-based, not a real parser -- assumes one statement per
     physical line, which matches how LLMs emit Function.Call(...)
-    fragments in this project's few-shot examples. A line whose own brace
-    count isn't locally balanced (opens or closes a block on the same
-    line as the bad reference) is left alone rather than risk unbalancing
-    the rest of the fragment -- the compiler will surface CS0117 instead.
+    fragments in this project's few-shot examples. See
+    `_safe_to_comment_out` for when a flagged line is left alone instead.
     """
     if not text or allowed is None:
         return text
@@ -355,7 +395,12 @@ def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | Non
         if not bad:
             out.append(line)
             continue
-        if line.count("{") != line.count("}"):
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, bad)
+            if disabled is not None:
+                flagged.update(bad)
+                out.append(disabled)
+                continue
             skipped.update(bad)
             out.append(line)
             continue
@@ -368,7 +413,206 @@ def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | Non
                       f"invalid Hash member(s): {', '.join(sorted(flagged))}")
     if skipped:
         console.print(f"  [yellow]WARN[/] could not safely remove invalid Hash "
-                      f"member(s) on a brace-mixed line: {', '.join(sorted(skipped))}")
+                      f"member(s) on a control-flow or brace-mixed line: "
+                      f"{', '.join(sorted(skipped))}")
+    return "\n".join(out)
+
+
+# ── Type-aware member reference checker ───────────────────────────────────────
+# LLMs invent plausible-but-wrong C# members on known SHVDN3 types just as
+# readily as they invent Hash native names (Ped.GetNearestVehicle,
+# Ped.SetPositionAndRotation, ...) -- both are the same failure mode
+# (confident hallucination of API surface) on a different attack surface.
+# Mirrors a battle-tested SHVDN3 audit tool's approach: type inference is
+# deliberately conservative -- only fires on an explicit local declaration
+# (`Ped p = ...`) or one of a few unambiguous chain/static patterns, never
+# guesses across assignment from an unknown expression, and skips a variable
+# name bound to two different types in the same fragment rather than risk a
+# false accusation.
+
+_MEMBER_VAR_TYPES = {
+    "Ped": "GTA.Ped", "Vehicle": "GTA.Vehicle", "Weapon": "GTA.Weapon",
+    "Model": "GTA.Model", "RaycastResult": "GTA.RaycastResult",
+    "Prop": "GTA.Prop", "Blip": "GTA.Blip", "Camera": "GTA.Camera",
+    "Player": "GTA.Player",
+}
+_MEMBER_VAR_DECL_RE = re.compile(
+    r'\b(' + "|".join(_MEMBER_VAR_TYPES) + r')\s+([A-Za-z_]\w*)\b(?=\s*[=,;)\]])')
+
+# Chain patterns that identify a type without needing a declared variable.
+# Each yields (regex, type_fqn) — the regex's single capture group is the member.
+_MEMBER_CHAIN_PATTERNS = [
+    (re.compile(r'\bGame\.Player\.Character\.([A-Za-z_]\w*)\b'), "GTA.Ped"),
+    (re.compile(r'\.Task\.([A-Za-z_]\w*)\b'), "GTA.TaskInvoker"),
+    (re.compile(r'\.Weapons\.([A-Za-z_]\w*)\b'), "GTA.WeaponCollection"),
+]
+# Static classes checked directly (top-level member only).
+_MEMBER_STATIC_PATTERNS = [
+    (re.compile(r'(?<!\w)World\.([A-Za-z_]\w*)\b'), "GTA.World"),
+    (re.compile(r'(?<!\w)Game\.([A-Za-z_]\w*)\b'), "GTA.Game"),
+]
+
+# Object-level members every type has; never indicate a fake member.
+_MEMBER_ALWAYS_OK = {"ToString", "Equals", "GetHashCode", "GetType", "ReferenceEquals"}
+# A surface smaller than this is untrustworthy (a thin/partial extraction would
+# cause false positives on every use) — never check against it.
+_MIN_MEMBER_SURFACE = 5
+
+
+def _infer_member_var_types(source: str) -> dict[str, str]:
+    """Return {var_name: type_fqn}, dropping any name bound to more than one
+    distinct type in this fragment (ambiguous — safer to skip than misattribute)."""
+    seen: dict[str, str] = {}
+    ambiguous: set[str] = set()
+    for m in _MEMBER_VAR_DECL_RE.finditer(source):
+        keyword, name = m.group(1), m.group(2)
+        fqn = _MEMBER_VAR_TYPES[keyword]
+        if name in seen and seen[name] != fqn:
+            ambiguous.add(name)
+        else:
+            seen[name] = fqn
+    for name in ambiguous:
+        seen.pop(name, None)
+    return seen
+
+
+def find_invalid_member_refs(source: str, *, surface: dict) -> list[tuple[int, str, str]]:
+    """Return [(char_offset, type_fqn, member), ...] for member references
+    against a confidently-inferred type that aren't in that type's known
+    surface. `surface` maps FQN ("GTA.Ped") -> list of valid member names."""
+    if not surface:
+        return []
+    usable = {k: v for k, v in surface.items()
+              if isinstance(v, list) and len(v) >= _MIN_MEMBER_SURFACE}
+    if not usable:
+        return []
+
+    out: list[tuple[int, str, str]] = []
+    seen_keys: set[tuple[str, str]] = set()
+
+    def _check(pos: int, type_fqn: str, member: str) -> None:
+        if member in _MEMBER_ALWAYS_OK:
+            return
+        valid = usable.get(type_fqn)
+        if not valid or member in valid:
+            return
+        key = (type_fqn, member)
+        if key in seen_keys:
+            return
+        seen_keys.add(key)
+        out.append((pos, type_fqn, member))
+
+    var_types = _infer_member_var_types(source)
+    if var_types:
+        var_member_re = re.compile(
+            r'\b(' + "|".join(re.escape(v) for v in var_types) + r')\.([A-Za-z_]\w*)\b')
+        for m in var_member_re.finditer(source):
+            _check(m.start(2), var_types[m.group(1)], m.group(2))
+
+    for pat, type_fqn in _MEMBER_CHAIN_PATTERNS:
+        for m in pat.finditer(source):
+            _check(m.start(1), type_fqn, m.group(1))
+
+    for pat, type_fqn in _MEMBER_STATIC_PATTERNS:
+        for m in pat.finditer(source):
+            _check(m.start(1), type_fqn, m.group(1))
+
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def lint_member_references(text: str, *, surface: "dict | None") -> str:
+    """Neutralize any line referencing an invented member on a confidently-
+    inferred SHVDN3 type (e.g. Ped.GetNearestVehicle, which doesn't exist).
+    Same conservative strategy as lint_hash_references: comment out the whole
+    line, skip (leave alone) a line whose own brace count isn't locally
+    balanced, never guess a replacement. `surface=None`/empty is a no-op.
+    """
+    if not text or not surface:
+        return text
+    bad = find_invalid_member_refs(text, surface=surface)
+    if not bad:
+        return text
+
+    bad_lines: dict[int, list[str]] = {}
+    for pos, type_fqn, member in bad:
+        line_no = text.count("\n", 0, pos)
+        bad_lines.setdefault(line_no, []).append(f"{type_fqn.split('.')[-1]}.{member}")
+
+    out: list[str] = []
+    flagged: set[str] = set()
+    skipped: set[str] = set()
+    for i, line in enumerate(text.splitlines()):
+        names = bad_lines.get(i)
+        if not names:
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, names)
+            if disabled is not None:
+                flagged.update(names)
+                out.append(disabled)
+                continue
+            skipped.update(names)
+            out.append(line)
+            continue
+        flagged.update(names)
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed invalid member reference(s) "
+                   f"{', '.join(sorted(set(names)))} -- {line.strip()}")
+    if flagged:
+        console.print(f"  [yellow]FIX[/]  removed statement(s) referencing "
+                      f"invalid member(s): {', '.join(sorted(flagged))}")
+    if skipped:
+        console.print(f"  [yellow]WARN[/] could not safely remove invalid member "
+                      f"reference(s) on a control-flow or brace-mixed line: "
+                      f"{', '.join(sorted(skipped))}")
+    return "\n".join(out)
+
+
+# CS1501 — Vector3.Distance(v)/.Dot(v) called as a single-arg INSTANCE method.
+# Both are static-only two-argument methods on Vector3; no SHVDN3 type has an
+# instance .Distance(Vector3)/.Dot(Vector3) overload, so this pattern is always
+# wrong regardless of the receiver's type (mirrors the reference audit tool's
+# rule exactly — same detection regex, receiver-blind by design).
+_VEC_STATIC_MISUSE_RE = re.compile(r'(?<!\bVector3)\b\w+\.(?:Distance|Dot)\s*\(\s*\w+\s*\)')
+
+
+def lint_vector3_static_misuse(text: str) -> str:
+    """Neutralize `receiver.Distance(x)` / `receiver.Dot(x)` — CS1501, since
+    both are static-only on Vector3. No safe mechanical rewrite is attempted:
+    the receiver may be a multi-segment chain (`a.b.Position.Distance(x)`),
+    and this checker only sees the last identifier before the dot, so a
+    rewrite could reconstruct the wrong expression. Same comment-out strategy
+    as the other lint_* passes here."""
+    if not text or not _VEC_STATIC_MISUSE_RE.search(text):
+        return text
+    out: list[str] = []
+    flagged = False
+    skipped = False
+    for line in text.splitlines():
+        if not _VEC_STATIC_MISUSE_RE.search(line):
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, ["Vector3.Distance/.Dot misuse"])
+            if disabled is not None:
+                flagged = True
+                out.append(disabled)
+                continue
+            skipped = True
+            out.append(line)
+            continue
+        flagged = True
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed Vector3.Distance/.Dot instance-call "
+                   f"misuse (CS1501) -- {line.strip()}")
+    if flagged:
+        console.print("  [yellow]FIX[/]  removed statement(s) misusing "
+                      "Vector3.Distance/.Dot as an instance method")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a Vector3.Distance/.Dot "
+                      "misuse on a control-flow or brace-mixed line")
     return "\n".join(out)
 
 

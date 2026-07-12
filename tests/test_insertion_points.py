@@ -17,7 +17,8 @@ import pytest
 from src.micro.code_fields import (
     CodeField, CodeMethod, CodeExtensibleSchema,
     lint_code_fragment, lint_usings, lint_fields, lint_method, lint_extensible,
-    lint_hash_references,
+    lint_hash_references, lint_member_references, lint_vector3_static_misuse,
+    find_invalid_member_refs,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -116,6 +117,135 @@ def test_lint_hash_references_skips_brace_mixed_line():
     body = "if (x) { Function.Call(Hash.BAD_NATIVE, true); "  # unmatched: only opens
     out = lint_hash_references(body, allowed=frozenset())
     assert out == body   # untouched — compiler will surface CS0117 instead
+
+
+def test_lint_hash_references_disables_control_flow_header_instead_of_commenting():
+    """SAFETY REGRESSION TEST: a bare `if (cond)` header whose `{` opens on the NEXT
+    line must NEVER be commented out — that would silently turn the guarded block
+    into an always-executing bare block (compiles, but changes behavior). Instead
+    the condition is swapped for `false`, which always disables the block safely."""
+    body = (
+        "if (Function.Call<bool>(Hash.INVENTED_CHECK, x))\n"
+        "{\n"
+        "    DoSomething();\n"
+        "}"
+    )
+    out = lint_hash_references(body, allowed=frozenset())
+    assert "if (false)" in out
+    assert "Hash.INVENTED_CHECK" not in out.split("\n")[0].split("/*")[0]  # not in the live condition
+    assert out.count("{") == out.count("}")
+    # The block itself (and its brace) must be untouched — only the condition changed.
+    assert "{\n    DoSomething();\n}" in out or "{" in out.splitlines()[1]
+
+
+# ── Type-aware member reference checker (extends the Hash-native lint to
+# invented C# members/methods on known SHVDN3 types) ────────────────────────
+
+_FAKE_SURFACE = {
+    "GTA.Ped": ["Position", "Heading", "IsAlive", "Task", "Delete", "CurrentVehicle"],
+    "GTA.Vehicle": ["Position", "Speed", "Driver", "Delete", "Heading"],
+    "GTA.World": ["CreatePed", "CreateVehicle", "CreateBlip", "GetAllPeds", "CreateProp"],
+    "GTA.Game": ["Player", "IsKeyPressed", "GameTime", "LastFrameTime", "MaxWantedLevel"],
+}
+
+
+def test_find_invalid_member_refs_catches_chain_pattern():
+    bad = find_invalid_member_refs(
+        "Game.Player.Character.GetNearestVehicle(\"x\", 10);", surface=_FAKE_SURFACE)
+    assert any(t == "GTA.Ped" and m == "GetNearestVehicle" for _pos, t, m in bad)
+
+
+def test_find_invalid_member_refs_ignores_valid_member():
+    bad = find_invalid_member_refs("Game.Player.Character.Position;", surface=_FAKE_SURFACE)
+    assert bad == []
+
+
+def test_find_invalid_member_refs_catches_static_world():
+    bad = find_invalid_member_refs("World.SpawnVehicle(x);", surface=_FAKE_SURFACE)
+    assert any(t == "GTA.World" and m == "SpawnVehicle" for _pos, t, m in bad)
+
+
+def test_find_invalid_member_refs_var_declaration_inference():
+    bad = find_invalid_member_refs(
+        "Ped p = World.CreatePed(model, pos);\np.ClearTasks();", surface=_FAKE_SURFACE)
+    assert any(t == "GTA.Ped" and m == "ClearTasks" for _pos, t, m in bad)
+
+
+def test_find_invalid_member_refs_skips_ambiguous_var_name():
+    """The same identifier bound to two different types in one fragment is
+    genuinely ambiguous — skip rather than risk a false accusation."""
+    bad = find_invalid_member_refs(
+        "Ped p = World.CreatePed(m1, pos1);\nVehicle p = World.CreateVehicle(m2, pos2);\np.NotAMember();",
+        surface=_FAKE_SURFACE,
+    )
+    assert bad == []
+
+
+def test_find_invalid_member_refs_noop_on_empty_surface():
+    assert find_invalid_member_refs("Game.Player.Character.Fake();", surface={}) == []
+    assert find_invalid_member_refs("Game.Player.Character.Fake();", surface=None) == []
+
+
+def test_lint_member_references_comments_out_invalid_member():
+    body = "Game.Player.Character.SetPositionAndRotation(pos, rot);"
+    out = lint_member_references(body, surface=_FAKE_SURFACE)
+    assert "// AUDIT: removed invalid member reference(s) Ped.SetPositionAndRotation" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("SetPositionAndRotation" in ln for ln in active_lines)
+
+
+def test_lint_member_references_keeps_valid_member():
+    body = "Game.Player.Character.Delete();"
+    assert lint_member_references(body, surface=_FAKE_SURFACE) == body
+
+
+def test_lint_member_references_noop_without_surface():
+    body = "Game.Player.Character.Fake();"
+    assert lint_member_references(body, surface=None) == body
+    assert lint_member_references(body, surface={}) == body
+
+
+def test_lint_member_references_disables_control_flow_header():
+    """Mirror of the real SkyHighPrisonInterception regression: an invented member
+    inside a bare `if (cond)` header (brace on the next line) must be disabled via
+    `if (false)`, never commented out (which would silently drop the condition)."""
+    body = (
+        'if (Game.Player.Character.IsInVehicle() '
+        '&& Game.Player.Character.GetNearestVehicle("x", 15) == _targetVehicle)\n'
+        "{\n"
+        "    DoSomething();\n"
+        "}"
+    )
+    out = lint_member_references(body, surface=_FAKE_SURFACE)
+    assert "if (false)" in out
+    assert out.count("{") == out.count("}")
+    assert "DoSomething();" in out   # block body untouched
+
+
+# ── Vector3.Distance/.Dot instance-call misuse (CS1501) ──────────────────────
+
+def test_lint_vector3_static_misuse_comments_out_bad_call():
+    body = "float d = a.Distance(b);"
+    out = lint_vector3_static_misuse(body)
+    assert "// AUDIT: removed Vector3.Distance/.Dot instance-call misuse" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any(".Distance(" in ln for ln in active_lines)
+
+
+def test_lint_vector3_static_misuse_keeps_correct_static_call():
+    body = "float d = Vector3.Distance(a, b);"
+    assert lint_vector3_static_misuse(body) == body
+
+
+def test_lint_vector3_static_misuse_keeps_distanceto_instance_method():
+    """Entity.DistanceTo(pos) is a REAL instance method (different name) — must
+    never be caught by the Distance/Dot-specific pattern."""
+    body = "float d = Game.Player.Character.Position.DistanceTo(pos);"
+    assert lint_vector3_static_misuse(body) == body
+
+
+def test_lint_vector3_static_misuse_noop_on_empty_text():
+    assert lint_vector3_static_misuse("") == ""
 
 
 def test_lint_declares_inline_out_params():
@@ -327,6 +457,50 @@ def test_gta_lint_keeps_real_native_in_extras():
     s = _programmatic_fix(s)
     cs = CodeGenerator().generate(s)
     assert "Function.Call(Hash.PLAY_SOUND_FRONTEND" in cs
+
+
+def test_gta_lint_neutralizes_invented_members_and_vector3_misuse():
+    """End-to-end: the actual SkyHighPrisonInterception.3.cs regression caught by
+    the SHVDN3 audit tool (rules 21-Member + 22-F) — an LLM-authored extra_tick
+    that invents Ped.GetNearestVehicle / Ped.SetPositionAndRotation, and misuses
+    Vector3.Distance as an instance method, must not reach compiled output. Uses
+    the REAL lookups/gta_api_surface.json (via _programmatic_fix), not a mock."""
+    s = _mission(
+        extra_tick=(
+            'if (Game.Player.Character.IsInVehicle() '
+            '&& Game.Player.Character.GetNearestVehicle("armored_prison_transport", 15) == _targetVehicle)\n'
+            "{\n"
+            "    float dist = Game.Player.Character.Position.Distance(_landingZone);\n"
+            "    if (dist < 3f)\n"
+            "    {\n"
+            "        Game.Player.Character.SetPositionAndRotation(_landingZone, new GTA.Math.Quaternion(0, 0, 1));\n"
+            "    }\n"
+            "}"
+        ),
+    )
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("SetPositionAndRotation" in ln for ln in active_lines)
+    assert not any("Position.Distance(" in ln for ln in active_lines)
+    # The GetNearestVehicle header can't be commented (brace on next line) —
+    # it must be disabled via `if (false)` instead, never left calling the
+    # invented member live.
+    assert not any("GetNearestVehicle" in ln and "if (false)" not in ln for ln in active_lines)
+    assert "if (false)" in cs
+    assert cs.count("{") == cs.count("}")
+    assert cs.count("(") == cs.count(")")
+
+
+def test_gta_lint_keeps_real_member_and_valid_vector3_call():
+    s = _mission(extra_tick=(
+        "Game.Player.Character.Delete();\n"
+        "float d = Vector3.Distance(a, b);"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    assert "Game.Player.Character.Delete();" in cs
+    assert "Vector3.Distance(a, b);" in cs
 
 
 # ── B1 regression: the prompt's few-shot shape renders into the mission ────────
