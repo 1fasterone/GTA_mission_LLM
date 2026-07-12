@@ -1,0 +1,4 @@
+An underwater salvage dive in the Alamo Sea. The player boards a boat, travels out
+to a sunken wreck, dives down to recover a waterlogged strongbox from the wreckage,
+and brings it back to shore before their oxygen runs out. The deeper they go, the
+faster their air supply drains, so every second spent searching the wreck matters.
