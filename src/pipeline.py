@@ -10,6 +10,7 @@ STEP 5 — Python fixer + per-item LLM pick for UNRESOLVED models
 STEP 6 — Pipeline compiles schema → .NET 4.8 C# (no LLM involved)
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -32,7 +33,7 @@ from .archetypes         import (
     detect_archetype, render_concept_hint, render_structure_hint, apply_scaffold,
 )
 from .micro.code_fields  import (
-    lint_usings, lint_fields, lint_code_fragment, lint_method,
+    lint_usings, lint_fields, lint_code_fragment, lint_method, lint_hash_references,
 )
 
 # Names + namespaces the mission template already emits — LLM extras that
@@ -51,6 +52,23 @@ _GTA_TEMPLATE_USINGS = {
 }
 
 
+# ── Real GTA.Native.Hash members — catches LLM-invented natives (e.g. the
+# hallucinated SET_MISSION_FAILED / SET_MISSION_PASSED that fail CS0117 at
+# compile time) before they reach the generated .3.cs. Sourced from a real
+# SHVDN3 audit tool's allowlist (6,460 native names); missing file → None,
+# which makes lint_hash_references() a no-op rather than a hard failure.
+def _load_hash_allowlist(lookups_dir: str = "lookups") -> "frozenset[str] | None":
+    path = Path(lookups_dir) / "gta_hash_allowlist.json"
+    if not path.exists():
+        return None
+    try:
+        return frozenset(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return None
+
+_GTA_HASH_ALLOWLIST: "frozenset[str] | None" = _load_hash_allowlist()
+
+
 def _lint_mission_extras(schema: MissionSchema) -> None:
     """Defensively clean the LLM-authored mission-specific C# (in place)."""
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=_GTA_TEMPLATE_USINGS)
@@ -64,6 +82,13 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
         if m2 is not None:
             cleaned.append(m2)
     schema.extra_methods = cleaned
+
+    # Neutralize any invented GTA.Native.Hash reference — run last, after the
+    # other passes have already balanced braces / capped lines / etc.
+    schema.extra_init = lint_hash_references(schema.extra_init, allowed=_GTA_HASH_ALLOWLIST)
+    schema.extra_tick = lint_hash_references(schema.extra_tick, allowed=_GTA_HASH_ALLOWLIST)
+    for m in schema.extra_methods:
+        m.body = lint_hash_references(m.body, allowed=_GTA_HASH_ALLOWLIST)
 
 console = Console()
 
