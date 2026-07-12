@@ -34,7 +34,7 @@ from .archetypes         import (
 )
 from .micro.code_fields  import (
     lint_usings, lint_fields, lint_code_fragment, lint_method, lint_hash_references,
-    lint_member_references, lint_vector3_static_misuse,
+    lint_member_references, lint_vector3_static_misuse, lint_enum_references,
 )
 
 # Names + namespaces the mission template already emits — LLM extras that
@@ -88,6 +88,24 @@ def _load_api_surface(lookups_dir: str = "lookups") -> "dict | None":
 _GTA_API_SURFACE: "dict | None" = _load_api_surface()
 
 
+# ── Real SHVDN3 enum members — catches LLM-invented enum values (e.g.
+# Weather.Rain, which doesn't exist — the real member is Weather.Raining).
+# Corpus-mined: the 4th most common real failure (133 occurrences) across a
+# 1191-file independent dataset. No type inference needed — an enum name in
+# `EnumType.Member` is unambiguous wherever it appears. Missing file → None
+# → lint_enum_references() is a no-op.
+def _load_enum_allowlist(lookups_dir: str = "lookups") -> "dict | None":
+    path = Path(lookups_dir) / "gta_enum_allowlist.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+_GTA_ENUM_ALLOWLIST: "dict | None" = _load_enum_allowlist()
+
+
 def _lint_mission_extras(schema: MissionSchema) -> None:
     """Defensively clean the LLM-authored mission-specific C# (in place)."""
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=_GTA_TEMPLATE_USINGS)
@@ -103,17 +121,20 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
     schema.extra_methods = cleaned
 
     # Neutralize any invented GTA.Native.Hash reference, invented C# member on
-    # a known SHVDN3 type, or Vector3.Distance/.Dot instance-call misuse — run
-    # last, after the other passes have already balanced braces / capped lines.
+    # a known SHVDN3 type, invented enum value, or Vector3.Distance/.Dot
+    # instance-call misuse — run last, after the other passes have already
+    # balanced braces / capped lines.
     for field in ("extra_init", "extra_tick"):
         value = getattr(schema, field)
         value = lint_hash_references(value, allowed=_GTA_HASH_ALLOWLIST)
         value = lint_member_references(value, surface=_GTA_API_SURFACE)
+        value = lint_enum_references(value, enums=_GTA_ENUM_ALLOWLIST)
         value = lint_vector3_static_misuse(value)
         setattr(schema, field, value)
     for m in schema.extra_methods:
         m.body = lint_hash_references(m.body, allowed=_GTA_HASH_ALLOWLIST)
         m.body = lint_member_references(m.body, surface=_GTA_API_SURFACE)
+        m.body = lint_enum_references(m.body, enums=_GTA_ENUM_ALLOWLIST)
         m.body = lint_vector3_static_misuse(m.body)
 
 console = Console()
