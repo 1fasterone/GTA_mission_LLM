@@ -323,6 +323,55 @@ def lint_usings(usings: list[str], *, already_in_template: set[str],
     return out
 
 
+# Matches `Hash.SOME_NATIVE_NAME` references in an LLM-authored C# fragment.
+_HASH_REF_RE = re.compile(r'\bHash\.([A-Z][A-Z0-9_]*)\b')
+
+
+def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | None") -> str:
+    """Neutralize any line referencing an unknown GTA.Native.Hash member.
+
+    LLMs invent plausible-looking native names (SET_MISSION_FAILED,
+    SET_MISSION_PASSED, ...) that don't exist in GTA.Native.Hash and fail
+    CS0117 at compile time -- the #1 real-world compile failure in
+    generated SHVDN3 scripts (confirmed via the SHVDN3 audit tool). This
+    comments out the offending line entirely rather than half-editing it:
+    a missing side effect beats a script that won't compile.
+
+    `allowed=None` is a no-op (skips the check, e.g. when no allowlist is
+    loaded). Line-based, not a real parser -- assumes one statement per
+    physical line, which matches how LLMs emit Function.Call(...)
+    fragments in this project's few-shot examples. A line whose own brace
+    count isn't locally balanced (opens or closes a block on the same
+    line as the bad reference) is left alone rather than risk unbalancing
+    the rest of the fragment -- the compiler will surface CS0117 instead.
+    """
+    if not text or allowed is None:
+        return text
+    out: list[str] = []
+    flagged: set[str] = set()
+    skipped: set[str] = set()
+    for line in text.splitlines():
+        bad = [n for n in _HASH_REF_RE.findall(line) if n not in allowed]
+        if not bad:
+            out.append(line)
+            continue
+        if line.count("{") != line.count("}"):
+            skipped.update(bad)
+            out.append(line)
+            continue
+        flagged.update(bad)
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed invalid Hash member(s) "
+                   f"{', '.join(sorted(set(bad)))} -- {line.strip()}")
+    if flagged:
+        console.print(f"  [yellow]FIX[/]  removed statement(s) referencing "
+                      f"invalid Hash member(s): {', '.join(sorted(flagged))}")
+    if skipped:
+        console.print(f"  [yellow]WARN[/] could not safely remove invalid Hash "
+                      f"member(s) on a brace-mixed line: {', '.join(sorted(skipped))}")
+    return "\n".join(out)
+
+
 def clamp_enum(v: str, allowed: tuple[str, ...], default: str) -> str:
     """Map an LLM value onto an allowed literal, tolerant of case and of models
     that echo the whole option menu (e.g. "uGUI | UIToolkit"). Falls back to

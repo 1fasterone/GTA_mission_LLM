@@ -17,6 +17,7 @@ import pytest
 from src.micro.code_fields import (
     CodeField, CodeMethod, CodeExtensibleSchema,
     lint_code_fragment, lint_usings, lint_fields, lint_method, lint_extensible,
+    lint_hash_references,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -70,6 +71,51 @@ def test_lint_repairs_value_type_property_member_assign():
     # A comparison must be left untouched (no false positive on ==).
     assert lint_code_fragment("bool b = Physics.gravity.x == 0f;", what="x") \
         == "bool b = Physics.gravity.x == 0f;"
+
+
+def test_lint_hash_references_comments_out_invalid_native():
+    """The exact real-world regression: an LLM invents SET_MISSION_FAILED /
+    SET_MISSION_PASSED (neither exists in GTA.Native.Hash) -> CS0117 at
+    compile time, confirmed live by the SHVDN3 audit tool."""
+    body = (
+        "if (_finishOrder == 0) {\n"
+        "  Function.Call(Hash.SET_MISSION_FAILED, true);\n"
+        "} else {\n"
+        "  Function.Call(Hash.SET_MISSION_PASSED, true);\n"
+        "}"
+    )
+    out = lint_hash_references(body, allowed=frozenset({"SET_ENTITY_AS_MISSION_ENTITY"}))
+    # The original line text is preserved inside the "// AUDIT:" comment for
+    # traceability, so check no ACTIVE (non-comment) line still calls the
+    # invalid native, rather than a raw substring check.
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Hash.SET_MISSION_FAILED" in ln for ln in active_lines)
+    assert not any("Hash.SET_MISSION_PASSED" in ln for ln in active_lines)
+    assert "// AUDIT: removed invalid Hash member(s) SET_MISSION_FAILED" in out
+    assert "// AUDIT: removed invalid Hash member(s) SET_MISSION_PASSED" in out
+    assert out.count("{") == out.count("}")
+
+
+def test_lint_hash_references_keeps_valid_native():
+    body = 'Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, "X", "Y", true);'
+    out = lint_hash_references(body, allowed=frozenset({"PLAY_SOUND_FRONTEND"}))
+    assert out == body
+
+
+def test_lint_hash_references_noop_without_allowlist():
+    """allowed=None (e.g. lookups/gta_hash_allowlist.json missing) must not touch the text."""
+    body = "Function.Call(Hash.TOTALLY_MADE_UP, true);"
+    assert lint_hash_references(body, allowed=None) == body
+
+
+def test_lint_hash_references_skips_brace_mixed_line():
+    """A line that opens/closes a block on the SAME line as the bad reference is left
+    alone rather than risk unbalancing the rest of the fragment — e.g. a one-liner
+    `if (x) Function.Call(Hash.BAD, ...);` has no braces so it's fine to comment, but
+    a line mixing an unmatched brace with the reference must not be touched."""
+    body = "if (x) { Function.Call(Hash.BAD_NATIVE, true); "  # unmatched: only opens
+    out = lint_hash_references(body, allowed=frozenset())
+    assert out == body   # untouched — compiler will surface CS0117 instead
 
 
 def test_lint_declares_inline_out_params():
@@ -248,6 +294,39 @@ def test_gta_lint_drops_template_using():
     s = _mission(extra_usings=["GTA", "MyMod.Helpers"])
     s = _programmatic_fix(s)
     assert s.extra_usings == ["MyMod.Helpers"]   # "GTA" already in template
+
+
+def test_gta_lint_neutralizes_invented_hash_native():
+    """End-to-end: the actual RunwayRumbleTheCrowdSChoice.3.cs regression caught by
+    the SHVDN3 audit tool (rule 21-Y) — an LLM-authored extra_method that invents
+    Hash.SET_MISSION_FAILED / Hash.SET_MISSION_PASSED must not reach compiled output."""
+    s = _mission(
+        extra_methods=[CodeMethod(
+            signature="private void _EvaluateFinishOrder()",
+            body=(
+                "if (_finishOrder == 0) {\n"
+                "  Function.Call(Hash.SET_MISSION_FAILED, true);\n"
+                "} else {\n"
+                "  Function.Call(Hash.SET_MISSION_PASSED, true);\n"
+                "}"
+            ),
+        )],
+    )
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Hash.SET_MISSION_FAILED" in ln for ln in active_lines)
+    assert not any("Hash.SET_MISSION_PASSED" in ln for ln in active_lines)
+    assert "_EvaluateFinishOrder" in cs   # the method itself still lands
+    assert cs.count("{") == cs.count("}")
+    assert cs.count("(") == cs.count(")")
+
+
+def test_gta_lint_keeps_real_native_in_extras():
+    s = _mission(extra_tick='Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, "X", "Y", true);')
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    assert "Function.Call(Hash.PLAY_SOUND_FRONTEND" in cs
 
 
 # ── B1 regression: the prompt's few-shot shape renders into the mission ────────
