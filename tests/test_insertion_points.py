@@ -20,6 +20,9 @@ from src.micro.code_fields import (
     lint_hash_references, lint_member_references, lint_vector3_static_misuse,
     find_invalid_member_refs, lint_enum_references, find_invalid_enum_refs,
     lint_bare_task_static_misuse, _safe_to_comment_out,
+    lint_function_call_ref_misuse, lint_world_get_out_param_misuse,
+    lint_vector3_raw_call_arg, find_vector3_raw_call_args,
+    lint_undeclared_catch_exception_var,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -392,6 +395,116 @@ def test_lint_vector3_static_misuse_noop_on_empty_text():
     assert lint_vector3_static_misuse("") == ""
 
 
+# ── Function.Call(ref ...) misuse (CS1502/CS1503 — no ref->InputArgument) ────
+
+def test_lint_function_call_ref_misuse_comments_out_bad_call():
+    body = "Function.Call(Hash.GET_GROUND_Z_FOR_3D_COORD, x, y, z, ref height);"
+    out = lint_function_call_ref_misuse(body)
+    assert "// AUDIT: removed Function.Call(ref ...) misuse" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Function.Call" in ln for ln in active_lines)
+
+
+def test_lint_function_call_ref_misuse_keeps_valid_call():
+    body = "Function.Call(Hash.GET_GROUND_Z_FOR_3D_COORD, x, y, z, oa, false);"
+    assert lint_function_call_ref_misuse(body) == body
+
+
+def test_lint_function_call_ref_misuse_noop_on_empty_text():
+    assert lint_function_call_ref_misuse("") == ""
+
+
+# ── World.GetX(out ...) misuse (CS1061/CS0117 — these return their result directly) ─
+
+def test_lint_world_get_out_param_misuse_comments_out_bad_call():
+    body = "World.GetNearbyPeds(pos, 10f, out Ped[] nearby);"
+    out = lint_world_get_out_param_misuse(body)
+    assert "// AUDIT: removed hallucinated `out` parameter" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("World.GetNearbyPeds" in ln for ln in active_lines)
+
+
+def test_lint_world_get_out_param_misuse_keeps_valid_call():
+    body = "Ped[] nearby = World.GetNearbyPeds(pos, 10f);"
+    assert lint_world_get_out_param_misuse(body) == body
+
+
+def test_lint_world_get_out_param_misuse_keeps_legitimate_out_method():
+    """World.GetGroundHeight legitimately uses `out` — must never be flagged."""
+    body = "World.GetGroundHeight(pos, out float height);"
+    assert lint_world_get_out_param_misuse(body) == body
+
+
+def test_lint_world_get_out_param_misuse_noop_on_empty_text():
+    assert lint_world_get_out_param_misuse("") == ""
+
+
+# ── Raw Vector3 passed to Function.Call (CS1503 — no Vector3->InputArgument) ──
+
+def test_find_vector3_raw_call_args_catches_declared_variable():
+    src = "Vector3 spawnPos = pos;\nFunction.Call(Hash.CREATE_VEHICLE, hash, spawnPos);"
+    assert find_vector3_raw_call_args(src) == [1]
+
+
+def test_find_vector3_raw_call_args_catches_position_property():
+    src = "Function.Call(Hash.CREATE_VEHICLE, hash, ped.Position);"
+    assert find_vector3_raw_call_args(src) == [0]
+
+
+def test_find_vector3_raw_call_args_ignores_decomposed_floats():
+    src = "Function.Call(Hash.CREATE_VEHICLE, hash, pos.X, pos.Y, pos.Z);"
+    assert find_vector3_raw_call_args(src) == []
+
+
+def test_lint_vector3_raw_call_arg_comments_out_bad_call():
+    body = "Vector3 spawnPos = pos;\nFunction.Call(Hash.CREATE_VEHICLE, hash, spawnPos);"
+    out = lint_vector3_raw_call_arg(body)
+    assert "// AUDIT: removed Function.Call passing a raw Vector3 argument" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Function.Call" in ln for ln in active_lines)
+
+
+def test_lint_vector3_raw_call_arg_keeps_decomposed_call():
+    body = "Function.Call(Hash.CREATE_VEHICLE, hash, pos.X, pos.Y, pos.Z);"
+    assert lint_vector3_raw_call_arg(body) == body
+
+
+def test_lint_vector3_raw_call_arg_noop_on_empty_text():
+    assert lint_vector3_raw_call_arg("") == ""
+
+
+# ── Undeclared catch (Exception) referencing bare `ex` (CS0103) ──────────────
+
+def test_lint_undeclared_catch_exception_var_declares_missing_variable():
+    body = (
+        "try\n"
+        "{\n"
+        "    DoSomething();\n"
+        "}\n"
+        "catch (Exception)\n"
+        "{\n"
+        "    Notification.PostTicker(ex.Message, false);\n"
+        "}"
+    )
+    out = lint_undeclared_catch_exception_var(body)
+    assert "catch (Exception ex)" in out
+    assert "ex.Message" in out
+
+
+def test_lint_undeclared_catch_exception_var_leaves_unused_catch_alone():
+    body = "try { DoSomething(); } catch (Exception) { Notification.PostTicker(\"failed\", false); }"
+    assert lint_undeclared_catch_exception_var(body) == body
+
+
+def test_lint_undeclared_catch_exception_var_leaves_already_declared_alone():
+    body = "try { DoSomething(); } catch (Exception ex) { Notification.PostTicker(ex.Message, false); }"
+    assert lint_undeclared_catch_exception_var(body) == body
+
+
+def test_lint_undeclared_catch_exception_var_noop_on_empty_text():
+    assert lint_undeclared_catch_exception_var("") == ""
+
+
 def test_lint_declares_inline_out_params():
     # CS0103: the pre-C#7 raycast idiom `out hit` with no declaration. The lint
     # pass must declare it inline as `out var hit` (hit live: GrappleGunSystem.cs
@@ -690,6 +803,68 @@ def test_gta_lint_keeps_valid_task_instance_call():
     s = _programmatic_fix(s)
     cs = CodeGenerator().generate(s)
     assert "Game.Player.Character.Task.FightAgainst(target);" in cs
+
+
+def test_gta_lint_neutralizes_function_call_ref_misuse():
+    """Corpus-mined regression: `ref x` passed into Function.Call (26 occurrences
+    across a 1191-file independent dataset) — InputArgument has no ref conversion."""
+    s = _mission(extra_tick=(
+        "Function.Call(Hash.GET_GROUND_Z_FOR_3D_COORD, x, y, z, ref height);"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Function.Call(Hash.GET_GROUND_Z_FOR_3D_COORD" in ln for ln in active_lines)
+    assert "// AUDIT: removed Function.Call(ref ...) misuse" in cs
+
+
+def test_gta_lint_neutralizes_world_get_out_param_misuse():
+    """Corpus-mined regression: hallucinated `out` param on World.GetNearbyPeds
+    (22 occurrences across a 1191-file independent dataset) — it returns the
+    array directly, no out overload exists."""
+    s = _mission(extra_tick=(
+        "World.GetNearbyPeds(Game.Player.Character.Position, 10f, out Ped[] nearby);"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("World.GetNearbyPeds" in ln for ln in active_lines)
+    assert "// AUDIT: removed hallucinated `out` parameter" in cs
+
+
+def test_gta_lint_neutralizes_vector3_raw_call_arg():
+    """Corpus-mined regression: a whole Vector3 passed to Function.Call (15
+    occurrences across a 1191-file independent dataset) — InputArgument has no
+    Vector3 conversion."""
+    s = _mission(extra_tick=(
+        "Vector3 spawnPos = Game.Player.Character.Position;\n"
+        "Function.Call(Hash.CREATE_VEHICLE, (uint)VehicleHash.Sultan, spawnPos);"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Function.Call(Hash.CREATE_VEHICLE" in ln for ln in active_lines)
+    assert "// AUDIT: removed Function.Call passing a raw Vector3 argument" in cs
+
+
+def test_gta_lint_declares_missing_catch_exception_var():
+    """Corpus-mined regression: `catch (Exception)` referencing a bare `ex`
+    inside the block (42 occurrences across a 1191-file independent dataset) —
+    `ex` is out of scope without a declared variable name (CS0103)."""
+    s = _mission(extra_tick=(
+        "try\n"
+        "{\n"
+        "    DoRiskyThing();\n"
+        "}\n"
+        "catch (Exception)\n"
+        "{\n"
+        "    Notification.PostTicker(ex.Message, false);\n"
+        "}"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    assert "catch (Exception ex)" in cs
+    assert "ex.Message" in cs
 
 
 # ── B1 regression: the prompt's few-shot shape renders into the mission ────────

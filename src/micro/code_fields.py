@@ -789,6 +789,261 @@ def lint_bare_task_static_misuse(text: str) -> str:
     return "\n".join(out)
 
 
+# CS1502/CS1503 — `ref x` passed to Function.Call. SHVDN3's Function.Call
+# takes InputArgument[] params; `ref float`/`ref int`/etc. isn't implicitly
+# convertible to InputArgument, so a model reaching for .NET's normal
+# out-param idiom on a native call fails to compile. The correct shape
+# routes through OutputArgument + GetResult<T>(), which needs three lines
+# and knowledge of the target type — too much to safely synthesize here, so
+# (like the other lint_* passes in this file) this only neutralizes the bad
+# line rather than attempting the OutputArgument rewrite.
+_FUNCTION_CALL_REF_RE = re.compile(
+    r'\bFunction\.Call\s*(?:<[^>]+>)?\s*\([^;]*?\bref\s+\w+\b[^;]*?\)\s*;')
+
+
+def lint_function_call_ref_misuse(text: str) -> str:
+    """Neutralize `Function.Call(..., ref x, ...)` — InputArgument has no
+    implicit conversion from a `ref` parameter (CS1502/CS1503). Same
+    comment-out-or-disable-header strategy as the other lint_* passes here."""
+    if not text or not _FUNCTION_CALL_REF_RE.search(text):
+        return text
+    out: list[str] = []
+    flagged = False
+    skipped = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        if not _FUNCTION_CALL_REF_RE.search(line):
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, ["Function.Call(ref ...) misuse"])
+            if disabled is not None:
+                flagged = True
+                out.append(disabled)
+                continue
+            skipped = True
+            out.append(line)
+            continue
+        flagged = True
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed Function.Call(ref ...) misuse "
+                   f"(InputArgument has no ref conversion, use OutputArgument) "
+                   f"-- {line.strip()}")
+    if flagged:
+        console.print("  [yellow]FIX[/]  removed statement(s) passing `ref` "
+                      "into Function.Call")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a Function.Call(ref ...) "
+                      "misuse on a control-flow or brace-mixed line")
+    return "\n".join(out)
+
+
+# CS1061/CS0117 — World's array/direct-return lookups (GetNearbyPeds,
+# GetAllVehicles, ...) hallucinated with a C#-idiomatic `out` parameter that
+# doesn't exist on these particular overloads; they just return the array
+# directly. Restricted to methods confirmed to have NO out-parameter overload
+# at all (some World.GetX methods legitimately use `out`, e.g.
+# GetGroundHeight/GetSafePositionForPed/GetStreetName — deliberately excluded).
+_WORLD_OUT_PARAM_RE = re.compile(
+    r'\bWorld\.(?:GetNearbyPeds|GetNearbyVehicles|GetAllPeds|GetAllVehicles|'
+    r'GetAllProps|GetAllEntities|GetClosestPed|GetClosestVehicle|'
+    r'GetAllProjectiles|GetAllPickupObjects)\s*\([^;]*?\bout\s+\w+\b[^;]*?\)')
+
+
+def lint_world_get_out_param_misuse(text: str) -> str:
+    """Neutralize a hallucinated `out` parameter on a World.GetX call that
+    just returns its result directly (CS1061/CS0117). Same
+    comment-out-or-disable-header strategy as the other lint_* passes here."""
+    if not text or not _WORLD_OUT_PARAM_RE.search(text):
+        return text
+    out: list[str] = []
+    flagged = False
+    skipped = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        if not _WORLD_OUT_PARAM_RE.search(line):
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, ["World.GetX(out ...) misuse"])
+            if disabled is not None:
+                flagged = True
+                out.append(disabled)
+                continue
+            skipped = True
+            out.append(line)
+            continue
+        flagged = True
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed hallucinated `out` parameter on "
+                   f"World.GetX call (it returns its result directly) "
+                   f"-- {line.strip()}")
+    if flagged:
+        console.print("  [yellow]FIX[/]  removed statement(s) passing a "
+                      "hallucinated `out` parameter to a World.GetX call")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a World.GetX(out ...) "
+                      "misuse on a control-flow or brace-mixed line")
+    return "\n".join(out)
+
+
+# CS1503 — a whole Vector3 value passed straight into Function.Call.
+# InputArgument has no Vector3 conversion, so a model that hasn't decomposed
+# a position into X/Y/Z floats (or reached for the World.CreateX wrapper
+# instead of the raw native) fails to compile. Needs real type inference —
+# a receiver-blind regex would flag every non-Vector3 argument too — so this
+# tracks locally-declared Vector3 variables plus the handful of confirmed
+# Vector3-typed properties (Position/Rotation/*Vector) used as a whole
+# argument rather than decomposed.
+_VECTOR3_VAR_DECL_RE = re.compile(r'\bVector3\s+([A-Za-z_]\w*)\b(?=\s*[=,;)\]])')
+_VECTOR3_PROP_ARG_RE = re.compile(
+    r'^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.(?:Position|Rotation|ForwardVector|UpVector|RightVector)$')
+_FUNCTION_CALL_ARGS_RE = re.compile(r'Function\.Call\s*(?:<[^>]+>)?\s*\(([^;]*?)\)\s*;')
+
+
+def _split_top_level_args(args_text: str) -> list[str]:
+    """Split a Function.Call argument list on top-level commas only — commas
+    inside a nested call/indexer (`new Vector3(x, y, z)`) don't separate
+    arguments."""
+    depth = 0
+    parts: list[str] = []
+    current: list[str] = []
+    for ch in args_text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    parts.append("".join(current))
+    return parts
+
+
+def find_vector3_raw_call_args(source: str) -> list[int]:
+    """Return the sorted 0-based line numbers of Function.Call(...) statements
+    that pass a locally-declared Vector3 variable, or a Vector3-typed
+    property chain, directly as an argument instead of decomposed X/Y/Z."""
+    if not source:
+        return []
+    declared = {m.group(1) for m in _VECTOR3_VAR_DECL_RE.finditer(source)}
+    bad_lines: set[int] = set()
+    for m in _FUNCTION_CALL_ARGS_RE.finditer(source):
+        for part in _split_top_level_args(m.group(1)):
+            p = part.strip()
+            if not p:
+                continue
+            if p in declared or _VECTOR3_PROP_ARG_RE.match(p):
+                bad_lines.add(source.count("\n", 0, m.start()))
+                break
+    return sorted(bad_lines)
+
+
+def lint_vector3_raw_call_arg(text: str) -> str:
+    """Neutralize a Function.Call(...) statement that passes a whole Vector3
+    value directly (CS1503 — InputArgument has no Vector3 conversion). Same
+    comment-out-or-disable-header strategy as the other lint_* passes here."""
+    if not text:
+        return text
+    bad_lines = set(find_vector3_raw_call_args(text))
+    if not bad_lines:
+        return text
+    out: list[str] = []
+    flagged = False
+    skipped = False
+    for i, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        if i not in bad_lines:
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, ["Vector3-as-raw-Function.Call-arg misuse"])
+            if disabled is not None:
+                flagged = True
+                out.append(disabled)
+                continue
+            skipped = True
+            out.append(line)
+            continue
+        flagged = True
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed Function.Call passing a raw Vector3 "
+                   f"argument (decompose into .X/.Y/.Z, InputArgument has no Vector3 "
+                   f"conversion) -- {line.strip()}")
+    if flagged:
+        console.print("  [yellow]FIX[/]  removed statement(s) passing a raw Vector3 "
+                      "value into Function.Call")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a Vector3-as-raw-arg "
+                      "misuse on a control-flow or brace-mixed line")
+    return "\n".join(out)
+
+
+# CS0103 — `catch (Exception) { ... ex ... }`. Writing `catch (Exception)`
+# without a variable name leaves `ex` out of scope, so a reference to it
+# inside the block fails to compile. Unlike the other lint_* passes here,
+# this has a fully safe mechanical fix (rather than a neutralize-the-line
+# fallback): declare the variable the block already expects, since doing so
+# can only ever make previously-uncompilable code compile, never change
+# behavior for code that already worked.
+def _find_matching_brace(text: str, open_idx: int) -> int:
+    """Return the index of the `}` matching the `{` at `open_idx`, or -1 if
+    the braces from that point on are unbalanced."""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+_UNDECLARED_CATCH_RE = re.compile(r'catch\s*\(\s*Exception\s*\)\s*\{')
+_BARE_EX_RE = re.compile(r'\bex\b')
+
+
+def lint_undeclared_catch_exception_var(text: str) -> str:
+    """Rewrite `catch (Exception) { ... ex ... }` to `catch (Exception ex) { ... }`
+    whenever the block references a bare `ex` that would otherwise be out of
+    scope (CS0103). A block that never uses the caught exception is left
+    alone — `catch (Exception)` with no reference to `ex` already compiles."""
+    if not text or not _UNDECLARED_CATCH_RE.search(text):
+        return text
+    out: list[str] = []
+    pos = 0
+    fixed = 0
+    for m in _UNDECLARED_CATCH_RE.finditer(text):
+        if m.start() < pos:
+            continue  # inside an already-rewritten block, skip
+        brace_idx = m.end() - 1
+        close_idx = _find_matching_brace(text, brace_idx)
+        if close_idx == -1:
+            continue  # unbalanced braces -- leave for the compiler to report
+        body = text[brace_idx + 1:close_idx]
+        if not _BARE_EX_RE.search(body):
+            continue
+        out.append(text[pos:m.start()])
+        out.append("catch (Exception ex) {")
+        pos = m.end()
+        fixed += 1
+    out.append(text[pos:])
+    if not fixed:
+        return text
+    console.print("  [yellow]FIX[/]  declared the missing exception variable in "
+                  f"{fixed} `catch (Exception)` block(s) referencing bare `ex`")
+    return "".join(out)
+
+
 def clamp_enum(v: str, allowed: tuple[str, ...], default: str) -> str:
     """Map an LLM value onto an allowed literal, tolerant of case and of models
     that echo the whole option menu (e.g. "uGUI | UIToolkit"). Falls back to
