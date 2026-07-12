@@ -35,7 +35,9 @@ from .archetypes         import (
 from .micro.code_fields  import (
     lint_usings, lint_fields, lint_code_fragment, lint_method, lint_hash_references,
     lint_member_references, lint_vector3_static_misuse, lint_enum_references,
-    lint_bare_task_static_misuse,
+    lint_bare_task_static_misuse, lint_function_call_ref_misuse,
+    lint_world_get_out_param_misuse, lint_vector3_raw_call_arg,
+    lint_undeclared_catch_exception_var,
 )
 
 # Names + namespaces the mission template already emits — LLM extras that
@@ -123,22 +125,35 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
 
     # Neutralize any invented GTA.Native.Hash reference, invented C# member on
     # a known SHVDN3 type, invented enum value, Vector3.Distance/.Dot
-    # instance-call misuse, or bare Task.X() static misuse — run last, after
-    # the other passes have already balanced braces / capped lines.
+    # instance-call misuse, bare Task.X() static misuse, Function.Call(ref
+    # ...) misuse, a hallucinated `out` param on World.GetX, or a raw Vector3
+    # passed to Function.Call — run last, after the other passes have already
+    # balanced braces / capped lines. lint_undeclared_catch_exception_var runs
+    # first among these since it rewrites (rather than neutralizes) — a
+    # corrected `catch (Exception ex)` header must be in place before any
+    # comment-out pass might otherwise touch the same line.
     for field in ("extra_init", "extra_tick"):
         value = getattr(schema, field)
+        value = lint_undeclared_catch_exception_var(value)
         value = lint_hash_references(value, allowed=_GTA_HASH_ALLOWLIST)
         value = lint_member_references(value, surface=_GTA_API_SURFACE)
         value = lint_enum_references(value, enums=_GTA_ENUM_ALLOWLIST)
         value = lint_vector3_static_misuse(value)
         value = lint_bare_task_static_misuse(value)
+        value = lint_function_call_ref_misuse(value)
+        value = lint_world_get_out_param_misuse(value)
+        value = lint_vector3_raw_call_arg(value)
         setattr(schema, field, value)
     for m in schema.extra_methods:
+        m.body = lint_undeclared_catch_exception_var(m.body)
         m.body = lint_hash_references(m.body, allowed=_GTA_HASH_ALLOWLIST)
         m.body = lint_member_references(m.body, surface=_GTA_API_SURFACE)
         m.body = lint_enum_references(m.body, enums=_GTA_ENUM_ALLOWLIST)
         m.body = lint_vector3_static_misuse(m.body)
         m.body = lint_bare_task_static_misuse(m.body)
+        m.body = lint_function_call_ref_misuse(m.body)
+        m.body = lint_world_get_out_param_misuse(m.body)
+        m.body = lint_vector3_raw_call_arg(m.body)
 
 console = Console()
 
