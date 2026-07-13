@@ -1,0 +1,76 @@
+{# HUD micro — macro partial. Composable into the minigame skeleton or the
+   standalone wrapper. The enclosing class provides DrawPanelRect/DrawPanelText.
+   Public surface: SetHudValue(int), SetHudBanner(string, seconds). #}
+
+{% macro fields(s) %}
+    // -- {{ s.name }} state ({{ s.variant }}) -----------------------------------
+    private int      _hudValue = 0;
+    private int      _hudBest  = 0;
+    private DateTime _hudStart = DateTime.UtcNow;
+{% if s.variant == "wave_banner" %}
+    private string   _hudBanner      = "";
+    private DateTime _hudBannerUntil = DateTime.MinValue;
+{% endif %}
+{%- endmacro %}
+
+{% macro tick(s) %}
+        DrawRoundHudPanel();
+{%- endmacro %}
+
+{% macro methods(s) %}
+{% if s.corner == "top_left" %}
+{% set cx = "0.10f" %}
+{% elif s.corner == "bottom_center" %}
+{% set cx = "0.50f" %}
+{% else %}
+{% set cx = "0.90f" %}
+{% endif %}
+{% if s.corner == "bottom_center" %}
+{% set cy = "0.90f" %}
+{% else %}
+{% set cy = "0.045f" %}
+{% endif %}
+    public void SetHudValue(int value)
+    {
+        _hudValue = value;
+        if (value > _hudBest) _hudBest = value;
+    }
+{% if s.variant == "wave_banner" %}
+
+    public void SetHudBanner(string text, float seconds)
+    {
+        _hudBanner      = text;
+        _hudBannerUntil = DateTime.UtcNow.AddSeconds(seconds);
+    }
+{% endif %}
+
+    private void DrawRoundHudPanel()
+    {
+        DrawPanelRect({{ cx }}, {{ cy }} + 0.02f, 0.15f, 0.085f, 15, 15, 22, 195);
+        DrawPanelText("~y~{{ s.label }}: ~w~" + _hudValue
+{% if s.show_best %}
+            + "   ~s~Best: ~w~" + _hudBest
+{% endif %}
+            , {{ cx }}, {{ cy }}, 0.42f, 255, 255, 255, 255, true);
+{% if s.show_timer %}
+        var _hudT = DateTime.UtcNow - _hudStart;
+        DrawPanelText("~w~" + ((int)_hudT.TotalMinutes).ToString("00") + ":" + _hudT.Seconds.ToString("00"),
+            {{ cx }}, {{ cy }} + 0.038f, 0.36f, 200, 200, 200, 255, true);
+{% endif %}
+{% if s.variant == "wave_banner" %}
+        if (DateTime.UtcNow < _hudBannerUntil && _hudBanner.Length > 0)
+        {
+            DrawPanelRect(0.50f, 0.18f, 0.34f, 0.06f, 0, 95, 160, 220);
+            DrawPanelText("~w~" + _hudBanner, 0.50f, 0.158f, 0.64f, 255, 255, 255, 255, true);
+        }
+{% endif %}
+{% if s.variant == "timer_bar" %}
+        // Elapsed-seconds bar that refills each minute (visual heartbeat).
+        float _hudPct = (float)((DateTime.UtcNow - _hudStart).TotalSeconds % 60.0) / 60f;
+        DrawPanelRect({{ cx }}, {{ cy }} + 0.062f, 0.13f, 0.010f, 40, 40, 40, 160);
+        if (_hudPct > 0.01f)
+            DrawPanelRect({{ cx }} - 0.065f + (0.13f * _hudPct) / 2f, {{ cy }} + 0.062f,
+                0.13f * _hudPct, 0.008f, 90, 220, 130, 220);
+{% endif %}
+    }
+{%- endmacro %}

@@ -1,0 +1,16 @@
+# {{ s.name }} — GTA5 menu micro ({{ variant }})
+
+{{ s.description }}
+
+## Install
+Copy `{{ s.name }}.3.cs` into `GTA V/scripts/` (requires Script Hook V + SHVDN3).
+
+## Use
+- **{{ s.hotkey }}** — toggle the overlay
+- **UP/DOWN** — navigate rows
+- **Backspace/Esc** — close
+
+## Rows
+{% for row in s.rows %}
+- {{ row }}
+{% endfor %}

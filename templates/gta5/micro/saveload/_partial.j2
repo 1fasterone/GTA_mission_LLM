@@ -1,0 +1,85 @@
+{# SaveLoad micro — ScriptSettings .ini vault partial.
+   Public surface: LoadVault(), RecordScore(int) -> bool newBest, BestScore(),
+   (settings_profile) GetSetting/SetSetting. Explicit ini path — SHVDN's
+   Script.Settings auto-name derives from the .cs filename, which breaks when
+   this partial is composed into another script. #}
+
+{% macro fields(s) %}
+    // -- {{ s.name }} state ({{ s.variant }}) -----------------------------------
+    private ScriptSettings _vault;
+    private bool _loaded = false;
+{%- endmacro %}
+
+{% macro methods(s) %}
+    public void LoadVault()
+    {
+        if (_loaded) return;
+        try
+        {
+            _vault  = ScriptSettings.Load("scripts\\{{ s.ini_name }}.ini");
+            _loaded = true;
+        }
+        catch
+        {
+            // Unreadable/missing ini — vault stays session-only.
+        }
+    }
+{% if s.variant == "highscore_table" %}
+
+    public int BestScore()
+    {
+        LoadVault();
+        if (_vault == null) return 0;
+        return _vault.GetValue("{{ s.section }}", "Rank1", 0);
+    }
+
+    // Insert a score into the ranked table (Rank1 = best). Returns true when
+    // the score is a new personal best.
+    public bool RecordScore(int score)
+    {
+        LoadVault();
+        if (_vault == null) return false;
+        var _table = new List<int>();
+        for (int i = 1; i <= {{ s.max_entries }}; i++)
+            _table.Add(_vault.GetValue("{{ s.section }}", "Rank" + i, 0));
+        bool _newBest = score > _table[0];
+        _table.Add(score);
+        _table.Sort();
+        _table.Reverse();
+        try
+        {
+            for (int i = 0; i < {{ s.max_entries }}; i++)
+                _vault.SetValue("{{ s.section }}", "Rank" + (i + 1), _table[i]);
+            _vault.Save();
+        }
+        catch
+        {
+            // Read-only install dir — table stays session-only.
+        }
+        return _newBest;
+    }
+{% else %}
+
+    public string GetSetting(string key, string fallback)
+    {
+        LoadVault();
+        if (_vault == null) return fallback;
+        return _vault.GetValue("{{ s.section }}", key, fallback);
+    }
+
+    public void SetSetting(string key, string value)
+    {
+        LoadVault();
+        if (_vault == null) return;
+        try
+        {
+            _vault.SetValue("{{ s.section }}", key, value);
+            _vault.Save();
+        }
+        catch
+        {
+            // Read-only install dir — setting stays session-only.
+        }
+    }
+{% endif %}
+{%- endmacro %}

@@ -1,0 +1,15 @@
+# {{ s.name }} — GTA5 spawner micro ({{ variant }})
+
+{{ s.description }}
+
+## Install
+Copy `{{ s.name }}.3.cs` into `GTA V/scripts/` (requires Script Hook V + SHVDN3).
+
+## Use
+- **F6** — spawn a wave of {{ s.count }} ({{ variant }}) in a {{ s.radius }}m ring
+- **F7** — delete everything this spawner created
+
+## Surface
+- `SpawnWave(int count)` — deterministic evenly-spaced ring placement
+- `AliveCount()` — living spawned peds
+- `CleanupWave()` — delete + clear all tracked entities

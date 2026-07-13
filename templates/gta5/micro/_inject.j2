@@ -1,0 +1,65 @@
+{# Shared injection macros for GTA5 micro templates (SHVDN flavor).
+   Imported by each kind's standalone wrapper:
+     {% import "_inject.j2" as inject %}
+   Mirrors templates/unity/micro/_inject.j2 but emits plain private fields
+   (no [SerializeField]) and Script-lifecycle bodies. #}
+
+{% macro usings(s) -%}
+{% for u in s.extra_usings %}
+using {{ u }};
+{%- endfor %}
+{%- endmacro %}
+
+{% macro fields(s) -%}
+{% for f in s.extra_fields %}
+{% if f.tooltip %}
+{{ "    " }}// {{ f.tooltip }}
+{% endif %}
+{{ "    " }}private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
+{%- endfor %}
+{%- endmacro %}
+
+{% macro lifecycle(body) -%}
+{% if body %}
+        // ── prompt-specific ──
+{{ body | indent(8, True) }}
+{%- endif %}
+{%- endmacro %}
+
+{% macro methods(s) -%}
+{% for m in s.extra_methods %}
+
+    // ── prompt-specific ──
+    {{ m.signature }}
+    {
+{{ m.body | indent(8, True) }}
+    }
+{%- endfor %}
+{%- endmacro %}
+
+{# Native draw helpers — inlined into every STANDALONE micro wrapper. SHVDN3
+   compiles each raw .cs into its own assembly, so helpers can't be shared
+   across scripts. Partials reference DrawPanelRect/DrawPanelText by name;
+   when a partial is composed into the minigame skeleton instead, the
+   skeleton's _minigame_helpers.j2 provides the same two methods once. #}
+{% macro draw_helpers() -%}
+    private static void DrawPanelRect(float x, float y, float w, float h,
+        int r, int g, int b, int a)
+    {
+        Function.Call(Hash.DRAW_RECT, x, y, w, h, r, g, b, a);
+    }
+
+    private static void DrawPanelText(string text, float x, float y, float scale,
+        int r, int g, int b, int a, bool center)
+    {
+        Function.Call(Hash.SET_TEXT_FONT, 0);
+        Function.Call(Hash.SET_TEXT_SCALE, 0.0f, scale);
+        Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, a);
+        Function.Call(Hash.SET_TEXT_CENTRE, center ? 1 : 0);
+        Function.Call(Hash.SET_TEXT_WRAP, 0.0f, 1.0f);
+        Function.Call(Hash.SET_TEXT_OUTLINE);
+        Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, text);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, x, y);
+    }
+{%- endmacro %}
