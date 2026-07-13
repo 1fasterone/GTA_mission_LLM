@@ -421,6 +421,34 @@ def _build_template_context(schema: MissionSchema) -> dict:
 
     # ── Minigame skeleton (menu-primary arcade loop) ──────────────────────────
     mg = schema.minigame
+    rp = dict(mg.round_params) if mg else {}
+
+    # survive_waves round: enemy model + weapon ride the normal ped-resolution
+    # path (Step 4) — first resolved ped wins; FAIL-SOFT to a known-good model.
+    _enemy_ped = next((p for p in schema.peds
+                       if p.model and p.model != "UNRESOLVED"), None)
+    wave_spawner_cfg = {
+        "name":          "WaveSpawner",
+        "variant":       "radial_arena",
+        "ped_model":     _enemy_ped.model if _enemy_ped else "g_m_y_lost_01",
+        "vehicle_model": "police2",
+        "prop_model":    "prop_barrel_02a",
+        "count":         int(rp.get("enemies_per_wave", 3)),
+        "radius":        float(rp.get("arena_radius", 35.0)),
+        "hostile":       True,
+    }
+    wave_weapon_native = _WEAPON_NAME.get(_enemy_ped.weapon) if _enemy_ped else "weapon_pistol"
+    waves_cfg = {
+        "name":                 "WaveDirector",
+        # Steep growth reads as exponential escalation; gentle as linear.
+        "variant":              "exponential" if float(rp.get("wave_growth", 1.5)) >= 2.0 else "linear",
+        "base_count":           int(rp.get("enemies_per_wave", 3)),
+        "growth":               float(rp.get("wave_growth", 1.5)),
+        "max_waves":            int(rp.get("wave_count", 5)),
+        "intermission_seconds": int(rp.get("intermission_seconds", 8)),
+        "pressure_seconds":     45,
+    }
+
     minigame_rows: list[dict] = []
     if mg is not None:
         for s in mg.settings:
@@ -535,8 +563,11 @@ def _build_template_context(schema: MissionSchema) -> dict:
         "score_metric":   mg.score_metric if mg else "points",
         "score_label":    _escape_cs_string(mg.score_label) if mg else "SCORE",
         "round_type":     mg.round_type if mg else "timed",
-        "round_params":   dict(mg.round_params) if mg else {},
+        "round_params":   rp,
         "ini_file":       f"scripts\\\\{class_name}.ini",
+        "wave_spawner_cfg":   wave_spawner_cfg,
+        "wave_weapon_native": wave_weapon_native,
+        "waves_cfg":          waves_cfg,
         # LLM-authored mission-specific C# (insertion points)
         "extra_usings":     schema.extra_usings,
         "extra_fields":     schema.extra_fields,

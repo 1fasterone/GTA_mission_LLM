@@ -55,6 +55,10 @@ _GTA_RESERVED_FIELDS = {
     # Minigame skeleton (see minigame.cs.j2)
     "_cfgrows", "_cfgvalues", "_score", "_bestscore", "_roundstart",
     "_ini", "_resultsat", "cfgrow",
+    # Minigame round types (survive_waves / pursuit_survive + micro partials)
+    "_spawned", "_spawnedvehicles", "_spawnedprops",
+    "_wave", "_intermissionuntil", "_waveendsat", "_prevalive",
+    "_nextescalation", "_helispawned",
 }
 _GTA_TEMPLATE_USINGS = {
     "System", "System.Collections.Generic", "System.Windows.Forms",

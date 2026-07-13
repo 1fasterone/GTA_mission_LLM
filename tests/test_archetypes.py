@@ -97,7 +97,16 @@ def test_non_degenerate_output_is_trusted():
 
 def test_every_archetype_has_a_scaffold_and_signature():
     for arch in ARCHETYPES:
-        assert arch.signature_steps, f"{arch.name} has no signature steps"
+        if arch.wants_skeleton == "minigame":
+            # Minigame archetypes (survival_waves, pursuit_escape) don't use
+            # the step machine at all — their scaffold is always-enforced
+            # rather than gated on a missing signature step. See
+            # apply_scaffold()'s wants_skeleton branch.
+            assert not arch.signature_steps, (
+                f"{arch.name} wants the minigame skeleton but declares "
+                f"signature_steps — degenerate-step detection doesn't apply to it")
+        else:
+            assert arch.signature_steps, f"{arch.name} has no signature steps"
         assert arch.name in _SCAFFOLDS, f"{arch.name} has no scaffold builder"
         assert render_structure_hint(arch), f"{arch.name} has no structure hint"
 
