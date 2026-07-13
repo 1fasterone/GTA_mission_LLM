@@ -6,6 +6,7 @@ Two stages:
 """
 
 from __future__ import annotations
+import re
 from typing import Literal, Optional, get_args
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -23,6 +24,12 @@ StepType    = Literal[
     "scavenger",
 ]
 EventType   = Literal["thunderstorm", "police_pursuit"]
+
+# ── Minigame skeleton (menu-primary replayable arcade loop) ──────────────────
+SkeletonKind = Literal["mission", "minigame"]
+SettingKind  = Literal["cycle", "toggle", "int"]
+ScoreMetric  = Literal["points", "kills", "seconds"]
+RoundType    = Literal["timed", "survive_waves", "pursuit_survive"]
 PedRole     = Literal["guard", "patrol", "target", "civilian", "ally"]
 VehicleRole = Literal["patrol", "escape", "delivery", "parked", "chase", "race_opponent"]
 ObjectRole  = Literal["pickup", "obstacle", "decoration"]
@@ -67,6 +74,144 @@ class MissionStep(BaseModel):
         # Loose models emit unknown/aliased step types; clamp to a harmless
         # 'wait' rather than crashing the whole mission (mirrors the micro layer).
         return clamp_enum(v, get_args(StepType), "wait")
+
+
+_SETTING_KEY_RE = re.compile(r"[^a-z0-9_]+")
+
+
+class MinigameSetting(BaseModel):
+    """One row in a minigame's config menu — also becomes its .ini [Settings] key."""
+    key:       str
+    label:     str
+    kind:      SettingKind = "int"
+    options:   list[str] = Field(default_factory=list, max_length=8)   # cycle only
+    min_value: int = 0                                                 # int only
+    max_value: int = 100
+    step:      int = 1
+    default:   str = ""   # normalized by the model validator per kind
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _clamp_kind(cls, v: str) -> str:
+        return clamp_enum(v, get_args(SettingKind), "int")
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def _sanitize_key(cls, v) -> str:
+        cleaned = _SETTING_KEY_RE.sub("_", str(v).strip().lower()).strip("_")
+        return cleaned or "setting"
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "MinigameSetting":
+        # A cycle row without at least 2 options can't cycle — degrade to toggle.
+        if self.kind == "cycle" and len(self.options) < 2:
+            self.kind = "toggle"
+        if self.min_value > self.max_value:
+            self.min_value, self.max_value = self.max_value, self.min_value
+        self.step = max(1, int(self.step))
+        if self.kind == "cycle":
+            if self.default not in self.options:
+                self.default = self.options[0]
+        elif self.kind == "toggle":
+            if str(self.default).lower() not in ("true", "false"):
+                self.default = "true"
+            else:
+                self.default = str(self.default).lower()
+        else:  # int
+            self.default = str(_clamp_int(self.default, self.min_value,
+                                          self.max_value, self.min_value))
+        return self
+
+
+class WaveRoundParams(BaseModel):
+    """survive_waves round: arena horde escalation. Enemy model + weapon come
+    from schema.peds (RAG-resolved via the normal Step-4 path), not from here."""
+    wave_count:           int   = 5
+    enemies_per_wave:     int   = 3
+    wave_growth:          float = 1.5
+    arena_radius:         float = 35.0
+    intermission_seconds: int   = 8
+
+    @field_validator("wave_count", "enemies_per_wave", "intermission_seconds", mode="before")
+    @classmethod
+    def _clamp_ints(cls, v, info):
+        bounds = {"wave_count": (3, 10, 5), "enemies_per_wave": (2, 8, 3),
+                  "intermission_seconds": (3, 30, 8)}
+        lo, hi, default = bounds[info.field_name]
+        return _clamp_int(v, lo, hi, default)
+
+    @field_validator("wave_growth", mode="before")
+    @classmethod
+    def _clamp_growth(cls, v):
+        return _clamp_float(v, 1.0, 3.0, 1.5)
+
+    @field_validator("arena_radius", mode="before")
+    @classmethod
+    def _clamp_radius(cls, v):
+        return _clamp_float(v, 20.0, 100.0, 35.0)
+
+
+class PursuitRoundParams(BaseModel):
+    """pursuit_survive round: outlast escalating police heat; score = seconds."""
+    start_wanted:          int = 2
+    escalation_interval_s: int = 45
+    max_wanted:            int = 5
+    spawn_heli_at_level:   int = 4    # 0 = never spawn the attack heli
+
+    @field_validator("start_wanted", "escalation_interval_s", "max_wanted",
+                     "spawn_heli_at_level", mode="before")
+    @classmethod
+    def _clamp_ints(cls, v, info):
+        bounds = {"start_wanted": (1, 3, 2), "escalation_interval_s": (15, 120, 45),
+                  "max_wanted": (3, 5, 5), "spawn_heli_at_level": (0, 5, 4)}
+        lo, hi, default = bounds[info.field_name]
+        return _clamp_int(v, lo, hi, default)
+
+    @model_validator(mode="after")
+    def _order(self) -> "PursuitRoundParams":
+        if self.start_wanted > self.max_wanted:
+            self.start_wanted = self.max_wanted
+        return self
+
+
+class MinigameSpec(BaseModel):
+    """Replayable-arcade configuration: menu rows, scoring, and the round body."""
+    settings:     list[MinigameSetting] = Field(default_factory=list, max_length=8)
+    score_metric: ScoreMetric = "points"
+    score_label:  str = "SCORE"
+    round_type:   RoundType = "timed"
+    round_params: dict = Field(default_factory=dict)
+
+    @field_validator("score_metric", mode="before")
+    @classmethod
+    def _clamp_metric(cls, v: str) -> str:
+        return clamp_enum(v, get_args(ScoreMetric), "points")
+
+    @field_validator("round_type", mode="before")
+    @classmethod
+    def _clamp_round(cls, v: str) -> str:
+        return clamp_enum(v, get_args(RoundType), "timed")
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "MinigameSpec":
+        # Dedupe setting keys (keep first) — keys become ini entries and must be unique.
+        seen: set[str] = set()
+        unique: list[MinigameSetting] = []
+        for s in self.settings:
+            if s.key not in seen:
+                seen.add(s.key)
+                unique.append(s)
+        self.settings = unique
+        if self.round_type == "timed":
+            secs = self.round_params.get("seconds", 60)
+            self.round_params["seconds"] = _clamp_int(secs, 10, 600, 60)
+        elif self.round_type == "survive_waves":
+            self.round_params = WaveRoundParams.model_validate(
+                self.round_params or {}).model_dump()
+        elif self.round_type == "pursuit_survive":
+            self.round_params = PursuitRoundParams.model_validate(
+                self.round_params or {}).model_dump()
+        return self
 
 
 class MissionEvent(BaseModel):
@@ -184,6 +329,12 @@ class MissionSchema(BaseModel):
     hud:           bool = False
     reward_cash:   int  = 0
 
+    # ── Minigame skeleton (menu-primary replayable arcade loop) ──
+    #   skeleton   -> "mission" = classic blip→F5→steps; "minigame" = menu→round→results loop
+    #   minigame   -> config-menu rows + scoring + round body (only when skeleton="minigame")
+    skeleton:      str = "mission"
+    minigame:      Optional[MinigameSpec] = None
+
     # ── LLM-authored mission-specific C# (insertion points) ──
     # Frozen into the schema, so Step 6 stays a pure function — determinism intact.
     #   extra_init  -> end of Init()   (runs once when the mission starts)
@@ -234,6 +385,21 @@ class MissionSchema(BaseModel):
     @classmethod
     def _clamp_reward_cash(cls, v) -> int:
         return _clamp_int(v, 0, 1_000_000, 0)
+
+    @field_validator("skeleton", mode="before")
+    @classmethod
+    def _clamp_skeleton(cls, v) -> str:
+        return clamp_enum(str(v), get_args(SkeletonKind), "mission")
+
+    @model_validator(mode="after")
+    def _normalize_skeleton(self) -> "MissionSchema":
+        # Minigame skeleton always has a spec (defaults if the LLM omitted it);
+        # mission skeleton never carries one — keeps the classic path byte-identical.
+        if self.skeleton == "minigame" and self.minigame is None:
+            self.minigame = MinigameSpec()
+        elif self.skeleton == "mission":
+            self.minigame = None
+        return self
 
     @model_validator(mode="after")
     def _default_step_params(self) -> "MissionSchema":

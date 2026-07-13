@@ -31,6 +31,7 @@ pipeline:
   lookups_dir: lookups
   rag_docs_dir: rag_docs
   template_file: templates/mission.cs.j2
+  minigame_template_file: templates/minigame.cs.j2
 
 unity_pipeline:
   lookups_dir: lookups
