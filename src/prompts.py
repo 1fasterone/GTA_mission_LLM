@@ -167,6 +167,23 @@ SHVDN3 RULES (this is GTA5, NOT Unity):
 - Pure C#, no Python. No "using" lines inside bodies — those go in extra_usings.
 - No braces around extra_methods bodies — the template adds them.
 - Only a truly generic concept with no distinctive ideas leaves every extra_* empty.
+- CRITICAL: extra_tick runs on EVERY frame regardless of mission state — the
+  switch(_state) above it only dispatches CheckStart()/RunStep(), it does NOT
+  gate your extra_tick code. Any side effect that can hurt/kill the player or
+  fail the mission (Health = 0, forcing State.Failed, etc.) MUST be wrapped in
+  `if (_state == State.Active) {{ ... }}` yourself, or it fires before the
+  mission even starts (State.Inactive) and after it's already over
+  (State.Complete/State.Failed). Live regression: an oxygen meter that
+  decremented and force-killed the player unconditionally, instantly killing
+  them on script load before they ever reached the mission start blip.
+- CRITICAL: OnTick fires many times per SECOND, not once per second. A plain
+  `_meter -= 2;` in extra_tick depletes almost instantly (e.g. 100 in well
+  under a second at 60fps) — that is virtually never what "N per second"
+  language in the concept means. For any time-based meter/countdown/decay,
+  accumulate `Game.LastFrameTime` (seconds since last frame) in a float field
+  and only apply the change once the accumulator crosses 1f (resetting it by
+  subtracting 1f, not zeroing, so no time is lost): e.g. add
+  `_meterTimer += Game.LastFrameTime; if (_meterTimer >= 1f) {{ _meterTimer -= 1f; _meter -= 2; }}`.
 
 Output ONLY the JSON. No other text."""
 
