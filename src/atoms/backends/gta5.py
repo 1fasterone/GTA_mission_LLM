@@ -329,8 +329,8 @@ def _light_flash(args: dict) -> str:
 
 def _despawn(args: dict) -> str:
     return (
-        f"var _doomed = GTA.World.GetNearestPed(Game.Player.Character.Position, 50f);\n"
-        f"if (_doomed != null) _doomed.Delete();"
+        "var _doomed = GTA.World.GetNearestPed(Game.Player.Character.Position, 50f);\n"
+        "if (_doomed != null) _doomed.Delete();"
     )
 
 
