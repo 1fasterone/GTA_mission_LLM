@@ -10,7 +10,6 @@ STEP 5 — Python fixer + per-item LLM pick for UNRESOLVED models
 STEP 6 — Pipeline compiles schema → .NET 4.8 C# (no LLM involved)
 """
 
-import json
 import re
 from pathlib import Path
 
