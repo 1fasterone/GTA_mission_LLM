@@ -475,3 +475,118 @@ class TestPipelineAiDifficultyAndConfigMenu:
         code = out.read_text(encoding="utf-8")
         assert code.count("{") == code.count("}")
         assert code.count("(") == code.count(")")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# End-to-end: HeliRace-derived events / HUD / cash reward / scavenger step
+#
+# Proves the wire-up (SCHEMA_FILL_USER output keys in prompts.py → MissionSchema
+# fields → _programmatic_fix clamps → CodeGenerator) survives a realistic
+# scavenger-hunt prompt/concept/schema all the way to compiled C#, without a
+# live LM Studio instance. Deliberately includes out-of-range values so the
+# fixer clamps are exercised on the real path.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestPipelineHeliRaceFeatures:
+    def _concept_text(self) -> str:
+        return (
+            "A frantic scavenger hunt across the docks: five hidden stashes must "
+            "be collected in any order before a rival crew gets wise. Halfway "
+            "through, a thunderstorm rolls in; near the end the police scramble "
+            "an attack helicopter. An on-screen timer and progress bar track the "
+            "hunt, and the fixer pays $45,000 on completion."
+        )
+
+    def _schema_json(self) -> str:
+        return json.dumps({
+            "mission_name":  "Dockside Dead Drops",
+            "location_name": "docks",
+            "time_of_day":   21,
+            "weather":       "OVERCAST",
+            "hud":           True,
+            "reward_cash":   45000,
+            "events": [
+                # at_progress out of the fixer's 0.1-0.9 band on purpose
+                {"event_type": "thunderstorm",   "at_progress": 0.05},
+                {"event_type": "police_pursuit", "at_progress": 0.95,
+                 "params": {"wanted_level": 3, "spawn_heli": True}},
+            ],
+            "steps": [
+                # target_count above the fixer's 3-10 clamp on purpose
+                {"type": "scavenger", "label": "Collect the dead drops",
+                 "params": {"target_count": 50}},
+                {"type": "escape", "label": "Lose the heat"},
+            ],
+            "audio": [
+                {"type": "mission_passed", "context": "all drops collected"},
+            ],
+        })
+
+    def _run(self, gta_pipeline_config) -> Path:
+        pipeline = _make_pipeline(gta_pipeline_config)
+        pipeline.llm.chat = MagicMock(
+            side_effect=[self._concept_text(), self._schema_json()]
+        )
+        return pipeline.run(
+            "A dockside scavenger hunt with a mid-mission storm, a police attack "
+            "chopper, an on-screen progress HUD, and a cash payout"
+        )
+
+    def test_feature_tokens_reach_generated_code(self, gta_pipeline_config):
+        out = self._run(gta_pipeline_config)
+        code = out.read_text(encoding="utf-8")
+        for tok in ("Step0_SCAVENGER", "_scavVisited", "BlipColor.Green",
+                    "UpdateEvents", 'SET_WEATHER_TYPE_NOW_PERSIST, "THUNDER"',
+                    "TASK_HELI_MISSION", "DrawHud", "STAT_SET_INT",
+                    "Game.Player.Money += 45000"):
+            assert tok in code, f"missing {tok}"
+
+    def test_fixer_clamps_survive_to_sidecar(self, gta_pipeline_config):
+        out = self._run(gta_pipeline_config)
+        schema_file = out.with_suffix("").with_suffix(".schema.json")
+        data = json.loads(schema_file.read_text(encoding="utf-8"))
+        assert data["hud"] is True
+        assert data["reward_cash"] == 45000
+        progresses = [e["at_progress"] for e in data["events"]]
+        assert progresses == [0.1, 0.9]        # clamped from 0.05 / 0.95
+        scav = next(s for s in data["steps"] if s["type"] == "scavenger")
+        assert scav["params"]["target_count"] == 10   # clamped from 50
+
+    def test_generated_code_compiles_balanced(self, gta_pipeline_config):
+        out = self._run(gta_pipeline_config)
+        code = out.read_text(encoding="utf-8")
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
+
+
+class TestProgrammaticFixHeliRaceFeatures:
+    def test_scavenger_target_count_clamped(self):
+        schema = MissionSchema(mission_name="X", steps=[
+            MissionStep(type="scavenger", label="Collect",
+                        params={"target_count": 50, "radius": 99.0})])
+        fixed = _programmatic_fix(schema)
+        assert fixed.steps[0].params["target_count"] == 10
+        assert fixed.steps[0].params["radius"] == 10.0
+
+    def test_scavenger_garbage_params_fall_back(self):
+        schema = MissionSchema(mission_name="X", steps=[
+            MissionStep(type="scavenger", label="Collect",
+                        params={"target_count": "many", "radius": "wide"})])
+        fixed = _programmatic_fix(schema)
+        assert fixed.steps[0].params["target_count"] == 5
+        assert fixed.steps[0].params["radius"] == 3.0
+
+    def test_event_progress_clamped_and_sorted(self):
+        schema = MissionSchema(mission_name="X", steps=[], events=[
+            {"event_type": "police_pursuit", "at_progress": 0.95},
+            {"event_type": "thunderstorm",   "at_progress": 0.02},
+        ])
+        fixed = _programmatic_fix(schema)
+        assert [(e.event_type, e.at_progress) for e in fixed.events] == [
+            ("thunderstorm", 0.1), ("police_pursuit", 0.9)]
+
+    def test_reward_cash_clamped(self):
+        schema = MissionSchema(mission_name="X", steps=[])
+        schema.reward_cash = 5_000_000        # bypass validator, fixer must clamp
+        fixed = _programmatic_fix(schema)
+        assert fixed.reward_cash == 1_000_000

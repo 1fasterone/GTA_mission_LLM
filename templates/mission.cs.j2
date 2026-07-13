@@ -54,6 +54,33 @@ public class {{ class_name }} : Script
 {% endif %}
     // -- Timer state ----------------------------------------------------------
     private DateTime _stepStart = DateTime.MinValue;
+{% if scavenger_sets %}
+
+    // -- Scavenger state (any-order collection, HeliRace-style) ----------------
+    private readonly HashSet<int> _scavVisited = new HashSet<int>();
+    private readonly List<Blip>   _scavBlips   = new List<Blip>();
+{% for sc in scavenger_sets %}
+    private static readonly Vector3[] {{ sc.array_name }} =
+    {
+{% for pt in sc.points %}
+        new Vector3({{ "%.1f"|format(pt.x) }}f, {{ "%.1f"|format(pt.y) }}f, {{ "%.1f"|format(pt.z) }}f),
+{% endfor %}
+    };
+{% endfor %}
+{% endif %}
+{% if mission_events %}
+
+    // -- Mid-mission events (fire once when progress crosses at_progress) ------
+    private readonly bool[] _eventsFired = new bool[{{ mission_events|length }}];
+{% if events_change_weather %}
+    private bool _weatherChanged = false;
+{% endif %}
+{% endif %}
+{% if hud %}
+
+    // -- HUD state --------------------------------------------------------------
+    private DateTime _missionStart = DateTime.MinValue;
+{% endif %}
 {% if ai_rival_present %}
 
     // -- AI rival difficulty (HeliRace-style speed curve) ---------------------
@@ -232,6 +259,12 @@ public class {{ class_name }} : Script
 {% if editor_zones %}
         if (_state == State.Active) CheckZones();
 {% endif %}
+{% if mission_events %}
+        if (_state == State.Active) UpdateEvents();
+{% endif %}
+{% if hud %}
+        if (_state == State.Active) DrawHud();
+{% endif %}
 {% if extra_tick %}
         // ── prompt-specific (runs every tick) ──
 {{ extra_tick | indent(8, True) }}
@@ -289,6 +322,9 @@ public class {{ class_name }} : Script
         SpawnPeds();
         SpawnVehicles();
         SpawnProps();
+{% if hud %}
+        _missionStart = DateTime.UtcNow;
+{% endif %}
 
         GTA.UI.Notification.PostTicker("~y~{{ mission_name }}", false);
 {% if extra_init %}
@@ -491,6 +527,48 @@ public class {{ class_name }} : Script
         {
             GTA.UI.Screen.ShowSubtitle(
                 "~y~Time remaining: ~w~" + ((int)_remain{{ step.index }}).ToString() + "s", 200);
+        }
+{% elif step.type == "scavenger" and step.scavenger_idx is not none %}
+{% set sc = scavenger_sets[step.scavenger_idx] %}
+        // Any-order collection: visit every point, blips flip Yellow → Green.
+        if (_scavBlips.Count == 0)
+        {
+            for (int si = 0; si < {{ sc.array_name }}.Length; si++)
+            {
+                var b = World.CreateBlip({{ sc.array_name }}[si]);
+                b.Color = BlipColor.Yellow;
+                b.Name  = "{{ step.label }}";
+                _scavBlips.Add(b);
+            }
+        }
+        var _scPos{{ step.index }} = Game.Player.Character.Position;
+        for (int si = 0; si < {{ sc.array_name }}.Length; si++)
+        {
+            if (_scavVisited.Contains(si)) continue;
+            if (_scPos{{ step.index }}.DistanceTo({{ sc.array_name }}[si]) < {{ "%.1f"|format(sc.radius) }}f)
+            {
+                _scavVisited.Add(si);
+                if (si < _scavBlips.Count && _scavBlips[si] != null)
+                {
+                    _scavBlips[si].Color = BlipColor.Green;
+                    _scavBlips[si].Scale = 0.6f;
+                }
+                Function.Call(Hash.PLAY_SOUND_FRONTEND, -1,
+                    "CHECKPOINT_NORMAL", "HUD_MINI_GAME_SOUNDSET", true);
+            }
+        }
+        if (_scavVisited.Count >= {{ sc.array_name }}.Length)
+        {
+            foreach (var b in _scavBlips) { if (b != null) b.Delete(); }
+            _scavBlips.Clear();
+            _scavVisited.Clear();
+            GTA.UI.Notification.PostTicker("~g~{{ step.label }}", false);
+            _step++;
+        }
+        else
+        {
+            GTA.UI.Screen.ShowSubtitle("~y~Collected: ~w~" + _scavVisited.Count
+                + " ~s~/ ~w~" + {{ sc.array_name }}.Length + " ~s~(any order)", 200);
         }
 {% else %}
 #error Unknown step type "{{ step.type }}" in mission template — add a handler in mission.cs.j2
@@ -733,6 +811,8 @@ public class {{ class_name }} : Script
                 _blip = World.CreateBlip(Waypoints[{{ step.next_waypoint }}]);
 {% elif step.type in ("checkpoint", "race_lap") and step.race_checkpoint_idx is not none %}
                 _blip = World.CreateBlip({{ race_checkpoints[step.race_checkpoint_idx].array_name }}[_cpIdx]);
+{% elif step.type == "scavenger" %}
+                // scavenger manages its own per-location blips (_scavBlips)
 {% endif %}
                 break;
 {% endfor %}
@@ -743,6 +823,108 @@ public class {{ class_name }} : Script
             _blip.Name  = "{{ mission_name }}";
         }
     }
+{% if mission_events or hud %}
+
+    // Mission progress 0..1: completed steps / total, plus the intra-step
+    // fraction (visited / total points) while a scavenger step is running.
+    private float MissionProgress()
+    {
+        float p = (float)_step;
+{% for step in steps %}
+{% if step.type == "scavenger" and step.scavenger_idx is not none %}
+        if (_step == {{ step.index }})
+            p += (float)_scavVisited.Count / (float){{ scavenger_sets[step.scavenger_idx].array_name }}.Length;
+{% endif %}
+{% endfor %}
+        p /= {{ total_steps }}f;
+        return p < 0f ? 0f : (p > 1f ? 1f : p);
+    }
+{% endif %}
+{% if mission_events %}
+
+    // -- Mid-mission events (HeliRace-style one-shot twists) --------------------
+    private void UpdateEvents()
+    {
+        float _prog = MissionProgress();
+{% for evt in mission_events %}
+        if (!_eventsFired[{{ evt.index }}] && _prog >= {{ "%.2f"|format(evt.at_progress) }}f)
+        {
+            _eventsFired[{{ evt.index }}] = true;
+{% if evt.event_type == "thunderstorm" %}
+            Function.Call(Hash.SET_WEATHER_TYPE_NOW_PERSIST, "THUNDER");
+            Function.Call(Hash.SET_WIND_SPEED, {{ "%.1f"|format(evt.wind_speed) }}f);
+            _weatherChanged = true;
+            GTA.UI.Notification.PostTicker("~b~A violent storm rolls in...", false);
+{% elif evt.event_type == "police_pursuit" %}
+            Function.Call(Hash.SET_PLAYER_WANTED_LEVEL, Game.Player, {{ evt.wanted_level }}, false);
+            Function.Call(Hash.SET_PLAYER_WANTED_LEVEL_NOW, Game.Player, false);
+            GTA.UI.Notification.PostTicker("~r~The police are onto you!", false);
+{% if evt.spawn_heli %}
+            {
+                var _hpos = Game.Player.Character.Position + new Vector3(60f, 60f, 40f);
+                var _heli = World.CreateVehicle(new Model("{{ event_heli_model }}"), _hpos);
+                if (_heli != null)
+                {
+                    var _pilot = World.CreatePed(new Model("{{ event_pilot_model }}"), _hpos);
+                    if (_pilot != null)
+                    {
+                        _pilot.IsPersistent = true;
+                        _pilot.SetIntoVehicle(_heli, VehicleSeat.Driver);
+                        // TASK_HELI_MISSION mode 6 = attack target
+                        Function.Call(Hash.TASK_HELI_MISSION, _pilot, _heli, 0,
+                            Game.Player.Character, 0f, 0f, 0f, 6, 40f, 30f, -1f, 0, 40, -1f, 0);
+                        _vehicles.Add(_heli);   // existing Cleanup() deletes both
+                        _peds.Add(_pilot);
+                    }
+                    else
+                    {
+                        _heli.Delete();
+                    }
+                }
+            }
+{% endif %}
+{% endif %}
+        }
+{% endfor %}
+    }
+{% endif %}
+{% if hud %}
+
+    // -- Custom HUD (timer + progress bar + counter, native draw) ---------------
+    private void DrawHud()
+    {
+        var _elapsed = _missionStart == DateTime.MinValue
+            ? TimeSpan.Zero : DateTime.UtcNow - _missionStart;
+        string _clock = ((int)_elapsed.TotalMinutes).ToString("00")
+            + ":" + _elapsed.Seconds.ToString("00");
+        DrawHudText("~w~" + _clock, 0.90f, 0.045f, 0.55f, 255, 255, 255, 255, true);
+
+        // Progress bar: dark background + left-anchored fill (center-x math).
+        float _prog = MissionProgress();
+        Function.Call(Hash.DRAW_RECT, 0.90f, 0.105f, 0.12f, 0.018f, 18, 18, 26, 200);
+        if (_prog > 0f)
+            Function.Call(Hash.DRAW_RECT, 0.84f + (0.12f * _prog) / 2f, 0.105f,
+                0.12f * _prog, 0.012f, 90, 220, 130, 230);
+
+        int _done = _step > {{ total_steps }} ? {{ total_steps }} : _step;
+        DrawHudText("~y~" + _done + " ~s~/ ~w~{{ total_steps }}",
+            0.90f, 0.125f, 0.38f, 255, 255, 255, 255, true);
+    }
+
+    private void DrawHudText(string text, float x, float y, float scale,
+        int r, int g, int b, int a, bool center)
+    {
+        Function.Call(Hash.SET_TEXT_FONT, 0);
+        Function.Call(Hash.SET_TEXT_SCALE, 0.0f, scale);
+        Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, a);
+        Function.Call(Hash.SET_TEXT_CENTRE, center ? 1 : 0);
+        Function.Call(Hash.SET_TEXT_WRAP, 0.0f, 1.0f);
+        Function.Call(Hash.SET_TEXT_OUTLINE);
+        Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, text);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, x, y);
+    }
+{% endif %}
 {% if config_menu %}
 
     // -- Config menu (native DrawRect/DrawText, F10, pre-mission only) --------
@@ -937,6 +1119,25 @@ public class {{ class_name }} : Script
 {% if audio_pass %}
         Function.Call(Hash.PLAY_MISSION_COMPLETE_AUDIO, "{{ audio_pass }}");
 {% endif %}
+{% if reward_cash > 0 %}
+        // Cash reward — SP total-cash stat (HeliRace pattern), money fallback.
+        try
+        {
+            var _pm = (PedHash)Game.Player.Character.Model.Hash;
+            string _stat = _pm == PedHash.Michael  ? "SP0_TOTAL_CASH"
+                         : _pm == PedHash.Franklin ? "SP1_TOTAL_CASH"
+                         : "SP2_TOTAL_CASH";
+            int _sh = Function.Call<int>(Hash.GET_HASH_KEY, _stat);
+            var _cur = new OutputArgument();
+            Function.Call(Hash.STAT_GET_INT, _sh, _cur, -1);
+            Function.Call(Hash.STAT_SET_INT, _sh, _cur.GetResult<int>() + {{ reward_cash }}, true);
+        }
+        catch
+        {
+            Game.Player.Money += {{ reward_cash }};
+        }
+        GTA.UI.Notification.PostTicker("~g~Reward: ~w~${{ reward_cash }}", false);
+{% endif %}
         Cleanup();
         _state = State.Complete;
     }
@@ -949,6 +1150,24 @@ public class {{ class_name }} : Script
 
     private void Cleanup()
     {
+{% if events_change_weather %}
+        // Restore the mission's configured weather if a storm event changed it.
+        if (_weatherChanged)
+        {
+{% if config_menu %}
+            Function.Call(Hash.SET_WEATHER_TYPE_NOW_PERSIST, _cfgWeatherOptions[_cfgWeatherIdx]);
+{% else %}
+            Function.Call(Hash.SET_WEATHER_TYPE_NOW_PERSIST, "{{ weather }}");
+{% endif %}
+            Function.Call(Hash.SET_WIND_SPEED, 0f);
+            _weatherChanged = false;
+        }
+{% endif %}
+{% if scavenger_sets %}
+        foreach (var sb in _scavBlips) { if (sb != null) sb.Delete(); }
+        _scavBlips.Clear();
+        _scavVisited.Clear();
+{% endif %}
         if (_blip != null) _blip.Delete();
         foreach (var p in _peds)     { if (p != null) p.Delete(); }
         foreach (var v in _vehicles) { if (v != null) v.Delete(); }

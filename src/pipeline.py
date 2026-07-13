@@ -49,6 +49,9 @@ _GTA_RESERVED_FIELDS = {
     # HeliRace-style AI difficulty + config menu (see mission.cs.j2)
     "_aidifficultyidx", "_menuopen", "_menuselection",
     "_cfgweatheridx", "_cfgweatheroptions",
+    # HeliRace-style events / HUD / scavenger (see mission.cs.j2)
+    "_eventsfired", "_weatherchanged", "_missionstart",
+    "_scavvisited", "_scavblips",
 }
 _GTA_TEMPLATE_USINGS = {
     "System", "System.Collections.Generic", "System.Windows.Forms",
@@ -207,6 +210,22 @@ def _programmatic_fix(schema: MissionSchema) -> MissionSchema:
                 step.params["seconds"] = max(10, min(600, int(sec)))
             except (TypeError, ValueError):
                 step.params["seconds"] = 120
+        if step.type == "scavenger":
+            tc = step.params.get("target_count", 5)
+            try:
+                step.params["target_count"] = max(3, min(10, int(tc)))
+            except (TypeError, ValueError):
+                step.params["target_count"] = 5
+            rad = step.params.get("radius", 3.0)
+            try:
+                step.params["radius"] = max(2.0, min(10.0, float(rad)))
+            except (TypeError, ValueError):
+                step.params["radius"] = 3.0
+    # Events: never fire at the very start or after the finish line; stable order.
+    for evt in schema.events:
+        evt.at_progress = round(max(0.1, min(0.9, evt.at_progress)), 2)
+    schema.events.sort(key=lambda e: (e.at_progress, e.event_type))
+    schema.reward_cash = max(0, min(1_000_000, int(schema.reward_cash)))
     # Clean any LLM-authored mission-specific C# fragments
     _lint_mission_extras(schema)
     return schema
@@ -389,6 +408,21 @@ class MissionPipeline:
             if step.type == "timer" and not step.params.get("seconds"):
                 self._fix("timer missing seconds — defaulting to 120")
                 step.params["seconds"] = 120
+            if step.type == "scavenger":
+                # Editor-drawn 'locations' need >=2 valid points to be a course;
+                # otherwise drop the param so codegen derives a compass scatter.
+                drawn = step.params.get("locations")
+                if drawn is not None:
+                    valid = 0
+                    if isinstance(drawn, list):
+                        for q in drawn:
+                            if isinstance(q, (list, tuple)) and len(q) >= 2:
+                                valid += 1
+                            elif isinstance(q, dict) and "x" in q and "y" in q:
+                                valid += 1
+                    if valid < 2:
+                        self._warn("scavenger 'locations' has <2 valid points — using derived points")
+                        step.params.pop("locations", None)
 
         # DELIVER needs at least one preceding go_to (sets the blip via SetBlip(0) in Init).
         # If none exists, _blip is always null and the step can never complete.
@@ -507,7 +541,8 @@ class MissionPipeline:
                 user_msg += (
                     "\n\nREMINDER: Output ONE valid JSON object only — no prose. Use the "
                     "exact enum values listed (ped role is guard|patrol|target|civilian|ally; "
-                    "race rivals are VEHICLES with role race_opponent, never peds)."
+                    "race rivals are VEHICLES with role race_opponent, never peds). Optional "
+                    "events use event_type thunderstorm|police_pursuit with at_progress 0.1-0.9."
                 )
             try:
                 schema_raw = self.llm.chat(

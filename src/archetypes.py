@@ -270,9 +270,17 @@ def render_structure_hint(arch: Optional[Archetype]) -> str:
 
 # ── Anti-repetition scaffold (deterministic guard) ────────────────────────────
 
+# Step types that are a real sub-game in their own right, whatever archetype the
+# keyword classifier picked. A scavenger hunt with combat-flavoured wording must
+# not have its any-order spine replaced by an assault/chase scaffold.
+_SELF_SUFFICIENT_STEPS: frozenset[str] = frozenset({"scavenger"})
+
+
 def is_degenerate(schema: MissionSchema, arch: Archetype) -> bool:
     """True when the LLM's steps contain NONE of the genre-defining step types."""
     present = {s.type for s in schema.steps}
+    if present & _SELF_SUFFICIENT_STEPS:
+        return False
     return not (present & set(arch.signature_steps))
 
 
