@@ -52,6 +52,9 @@ _GTA_RESERVED_FIELDS = {
     # HeliRace-style events / HUD / scavenger (see mission.cs.j2)
     "_eventsfired", "_weatherchanged", "_missionstart",
     "_scavvisited", "_scavblips",
+    # Minigame skeleton (see minigame.cs.j2)
+    "_cfgrows", "_cfgvalues", "_score", "_bestscore", "_roundstart",
+    "_ini", "_resultsat", "cfgrow",
 }
 _GTA_TEMPLATE_USINGS = {
     "System", "System.Collections.Generic", "System.Windows.Forms",
@@ -241,7 +244,9 @@ class MissionPipeline:
         )
         self.lookups = _load_lookups(lookups_dir)
         self.generator = CodeGenerator(
-            template_file = pipe_cfg.get("template_file", "templates/mission.cs.j2")
+            template_file          = pipe_cfg.get("template_file", "templates/mission.cs.j2"),
+            minigame_template_file = pipe_cfg.get("minigame_template_file",
+                                                  "templates/minigame.cs.j2"),
         )
         self.output_dir   = pipe_cfg.get("output_dir", "output")
         self.show_prompts = config.get("logging", {}).get("show_prompts", False)
@@ -593,13 +598,15 @@ class MissionPipeline:
 # author, so steps 1–5 (LLM concept, schema fill, RAG, fixers) are skipped.
 def compile_from_schema(schema_path: Path | str,
                         output_dir: str = "output",
-                        template_file: str = "templates/mission.cs.j2") -> Path:
+                        template_file: str = "templates/mission.cs.j2",
+                        minigame_template_file: str = "templates/minigame.cs.j2") -> Path:
     import json
     schema_path = Path(schema_path)
     data = json.loads(schema_path.read_text(encoding="utf-8"))
     schema = MissionSchema(**data)
     _lint_mission_extras(schema)
-    gen = CodeGenerator(template_file=template_file)
+    gen = CodeGenerator(template_file=template_file,
+                        minigame_template_file=minigame_template_file)
     return gen.write(schema, output_dir)
 
 

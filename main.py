@@ -207,7 +207,11 @@ def validate(
     cfg    = _cfg(config)
     data   = json.loads(Path(schema_file).read_text(encoding="utf-8"))
     schema = MissionSchema.model_validate(data)
-    gen    = CodeGenerator(cfg["pipeline"]["template_file"])
+    gen    = CodeGenerator(
+        cfg["pipeline"]["template_file"],
+        minigame_template_file=cfg["pipeline"].get("minigame_template_file",
+                                                   "templates/minigame.cs.j2"),
+    )
     out    = gen.write(schema, cfg["pipeline"]["output_dir"])
     console.print(f"[green]OK[/]  Generated -> {out}")
 

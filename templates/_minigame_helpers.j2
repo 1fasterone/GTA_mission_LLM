@@ -1,0 +1,105 @@
+{# Shared C# helper macros for minigame templates.
+   SHVDN3 compiles each raw .cs into its OWN assembly — scripts cannot reference
+   each other's classes — so these helpers are INLINED into every minigame .3.cs
+   rather than living in a shared class. Keep them small and dependency-free. #}
+{% macro draw_methods() %}
+    // -- Native draw helpers (inlined; SHVDN scripts can't share classes) ------
+    private static void DrawPanelRect(float x, float y, float w, float h,
+        int r, int g, int b, int a)
+    {
+        Function.Call(Hash.DRAW_RECT, x, y, w, h, r, g, b, a);
+    }
+
+    private static void DrawPanelText(string text, float x, float y, float scale,
+        int r, int g, int b, int a, bool center)
+    {
+        Function.Call(Hash.SET_TEXT_FONT, 0);
+        Function.Call(Hash.SET_TEXT_SCALE, 0.0f, scale);
+        Function.Call(Hash.SET_TEXT_COLOUR, r, g, b, a);
+        Function.Call(Hash.SET_TEXT_CENTRE, center ? 1 : 0);
+        Function.Call(Hash.SET_TEXT_WRAP, 0.0f, 1.0f);
+        Function.Call(Hash.SET_TEXT_OUTLINE);
+        Function.Call(Hash.BEGIN_TEXT_COMMAND_DISPLAY_TEXT, "STRING");
+        Function.Call(Hash.ADD_TEXT_COMPONENT_SUBSTRING_PLAYER_NAME, text);
+        Function.Call(Hash.END_TEXT_COMMAND_DISPLAY_TEXT, x, y);
+    }
+{% endmacro %}
+{% macro score_store(ini_file) %}
+    // -- .ini persistence (explicit path — Script.Settings would derive a
+    //    different name from the .3.cs file; see R2 in the design notes) -------
+    private void LoadIni()
+    {
+        try
+        {
+            _ini = ScriptSettings.Load("{{ ini_file }}");
+            for (int i = 0; i < _cfgRows.Length; i++)
+            {
+                switch (_cfgRows[i].Kind)
+                {
+                    case RowKind.Cycle:
+                        string sv = _ini.GetValue("Settings", _cfgRows[i].Key, "");
+                        int idx = Array.IndexOf(_cfgRows[i].Options, sv);
+                        if (idx >= 0) _cfgValues[i] = idx;
+                        break;
+                    case RowKind.Toggle:
+                        _cfgValues[i] = _ini.GetValue("Settings", _cfgRows[i].Key,
+                            _cfgValues[i] == 1) ? 1 : 0;
+                        break;
+                    default:
+                        int iv = _ini.GetValue("Settings", _cfgRows[i].Key, _cfgValues[i]);
+                        _cfgValues[i] = Math.Max(_cfgRows[i].Min,
+                            Math.Min(_cfgRows[i].Max, iv));
+                        break;
+                }
+            }
+            _bestScore = _ini.GetValue("Scores", "Best", 0);
+        }
+        catch
+        {
+            // Missing/unreadable ini — run on defaults, session-only persistence.
+        }
+    }
+
+    private void SaveIniSettings()
+    {
+        if (_ini == null) return;
+        try
+        {
+            for (int i = 0; i < _cfgRows.Length; i++)
+            {
+                switch (_cfgRows[i].Kind)
+                {
+                    case RowKind.Cycle:
+                        _ini.SetValue("Settings", _cfgRows[i].Key,
+                            _cfgRows[i].Options[_cfgValues[i]]);
+                        break;
+                    case RowKind.Toggle:
+                        _ini.SetValue("Settings", _cfgRows[i].Key, _cfgValues[i] == 1);
+                        break;
+                    default:
+                        _ini.SetValue("Settings", _cfgRows[i].Key, _cfgValues[i]);
+                        break;
+                }
+            }
+            _ini.Save();
+        }
+        catch
+        {
+            // Read-only install dir — settings stay session-only.
+        }
+    }
+
+    private void SaveBestScore()
+    {
+        if (_ini == null) return;
+        try
+        {
+            _ini.SetValue("Scores", "Best", _bestScore);
+            _ini.Save();
+        }
+        catch
+        {
+            // Read-only install dir — best score stays session-only.
+        }
+    }
+{% endmacro %}
