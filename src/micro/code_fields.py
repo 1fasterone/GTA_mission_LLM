@@ -987,6 +987,103 @@ def lint_vector3_raw_call_arg(text: str) -> str:
     return "\n".join(out)
 
 
+# CS1061 — `.Position`/`.Rotation`/etc. accessed on a value confidently known
+# to be a plain GTA.Math.Vector3 (a bare X/Y/Z struct), not an Entity. Live
+# regression: an LLM-authored extra_init wrote `SpawnOrigin.Position + new
+# Vector3(5f, 0f, 0f)` — SpawnOrigin is the mission template's own
+# `private static readonly Vector3 SpawnOrigin` constant (see mission.cs.j2),
+# always a raw Vector3, never an Entity — Vector3 has no `.Position` member.
+# Almost certainly an overgeneralization of the few-shot idiom
+# `Game.Player.Character.Position + new Vector3(...)` onto a receiver that's
+# already a Vector3. Same conservative-inference approach as
+# find_invalid_member_refs: only fires on a local `Vector3 x = ...;`
+# declaration or the reserved template constant name, never on an unknown
+# identifier.
+_VECTOR3_RESERVED_IDENTS = {"SpawnOrigin"}
+_VECTOR3_ENTITY_ONLY_PROPS = {
+    "Position", "Rotation", "Heading", "ForwardVector", "UpVector",
+    "RightVector", "Quaternion", "RelativePosition",
+}
+
+
+def find_vector3_entity_prop_misuse(source: str) -> list[tuple[int, str, str]]:
+    """Return [(char_offset, var_name, prop), ...] for Entity-only property
+    access (`.Position`, `.Rotation`, ...) on an identifier confidently known
+    to be a `GTA.Math.Vector3` — either a local `Vector3 x = ...;`
+    declaration or the reserved template-declared `SpawnOrigin` constant.
+    Vector3 has no such properties; they only exist on Entity-derived types
+    (Ped/Vehicle/Prop/Camera)."""
+    declared = {m.group(1) for m in _VECTOR3_VAR_DECL_RE.finditer(source)}
+    idents = declared | _VECTOR3_RESERVED_IDENTS
+    pattern = re.compile(
+        r'\b(' + "|".join(re.escape(n) for n in idents) + r')\.([A-Za-z_]\w*)\b')
+    out: list[tuple[int, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for m in pattern.finditer(source):
+        var, member = m.group(1), m.group(2)
+        if member not in _VECTOR3_ENTITY_ONLY_PROPS:
+            continue
+        key = (var, member)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((m.start(2), var, member))
+    out.sort(key=lambda t: t[0])
+    return out
+
+
+def lint_vector3_entity_prop_misuse(text: str) -> str:
+    """Neutralize `<Vector3>.Position` / `.Rotation` / etc. — these are
+    Entity-only properties that don't exist on a plain Vector3 (CS1061).
+    Same comment-out-or-disable-header strategy as the other lint_* passes
+    here."""
+    if not text:
+        return text
+    bad = find_vector3_entity_prop_misuse(text)
+    if not bad:
+        return text
+
+    bad_lines: dict[int, list[str]] = {}
+    for pos, var, member in bad:
+        line_no = text.count("\n", 0, pos)
+        bad_lines.setdefault(line_no, []).append(f"{var}.{member}")
+
+    out: list[str] = []
+    flagged: set[str] = set()
+    skipped: set[str] = set()
+    for i, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        names = bad_lines.get(i)
+        if not names:
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, names)
+            if disabled is not None:
+                flagged.update(names)
+                out.append(disabled)
+                continue
+            skipped.update(names)
+            out.append(line)
+            continue
+        flagged.update(names)
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed Entity-only property access on a "
+                   f"Vector3 {', '.join(sorted(set(names)))} (Vector3 has no such "
+                   f"member) -- {line.strip()}")
+    if flagged:
+        console.print(f"  [yellow]FIX[/]  removed statement(s) accessing an "
+                      f"Entity-only property on a Vector3: "
+                      f"{', '.join(sorted(flagged))}")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a Vector3 "
+                      "Entity-only-property misuse on a control-flow or "
+                      "brace-mixed line")
+    return "\n".join(out)
+
+
 # CS0103 — `catch (Exception) { ... ex ... }`. Writing `catch (Exception)`
 # without a variable name leaves `ex` out of scope, so a reference to it
 # inside the block fails to compile. Unlike the other lint_* passes here,

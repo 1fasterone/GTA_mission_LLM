@@ -37,7 +37,7 @@ from .micro.code_fields  import (
     lint_member_references, lint_vector3_static_misuse, lint_enum_references,
     lint_bare_task_static_misuse, lint_function_call_ref_misuse,
     lint_world_get_out_param_misuse, lint_vector3_raw_call_arg,
-    lint_undeclared_catch_exception_var,
+    lint_vector3_entity_prop_misuse, lint_undeclared_catch_exception_var,
 )
 
 # Names + namespaces the mission template already emits — LLM extras that
@@ -126,10 +126,11 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
     # Neutralize any invented GTA.Native.Hash reference, invented C# member on
     # a known SHVDN3 type, invented enum value, Vector3.Distance/.Dot
     # instance-call misuse, bare Task.X() static misuse, Function.Call(ref
-    # ...) misuse, a hallucinated `out` param on World.GetX, or a raw Vector3
-    # passed to Function.Call — run last, after the other passes have already
-    # balanced braces / capped lines. lint_undeclared_catch_exception_var runs
-    # first among these since it rewrites (rather than neutralizes) — a
+    # ...) misuse, a hallucinated `out` param on World.GetX, a raw Vector3
+    # passed to Function.Call, or an Entity-only property (.Position, ...)
+    # accessed on a plain Vector3 — run last, after the other passes have
+    # already balanced braces / capped lines. lint_undeclared_catch_exception_var
+    # runs first among these since it rewrites (rather than neutralizes) — a
     # corrected `catch (Exception ex)` header must be in place before any
     # comment-out pass might otherwise touch the same line.
     for field in ("extra_init", "extra_tick"):
@@ -143,6 +144,7 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
         value = lint_function_call_ref_misuse(value)
         value = lint_world_get_out_param_misuse(value)
         value = lint_vector3_raw_call_arg(value)
+        value = lint_vector3_entity_prop_misuse(value)
         setattr(schema, field, value)
     for m in schema.extra_methods:
         m.body = lint_undeclared_catch_exception_var(m.body)
@@ -154,6 +156,7 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
         m.body = lint_function_call_ref_misuse(m.body)
         m.body = lint_world_get_out_param_misuse(m.body)
         m.body = lint_vector3_raw_call_arg(m.body)
+        m.body = lint_vector3_entity_prop_misuse(m.body)
 
 console = Console()
 

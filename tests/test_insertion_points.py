@@ -22,7 +22,8 @@ from src.micro.code_fields import (
     lint_bare_task_static_misuse, _safe_to_comment_out,
     lint_function_call_ref_misuse, lint_world_get_out_param_misuse,
     lint_vector3_raw_call_arg, find_vector3_raw_call_args,
-    lint_undeclared_catch_exception_var,
+    lint_undeclared_catch_exception_var, lint_vector3_entity_prop_misuse,
+    find_vector3_entity_prop_misuse,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -473,6 +474,59 @@ def test_lint_vector3_raw_call_arg_noop_on_empty_text():
     assert lint_vector3_raw_call_arg("") == ""
 
 
+# ── Entity-only property (.Position, .Rotation, ...) accessed on a Vector3 ───
+# (CS1061 — live regression: SpawnOrigin.Position, SpawnOrigin already being
+# a Vector3 declared by the mission template itself)
+
+def test_find_vector3_entity_prop_misuse_catches_reserved_spawn_origin():
+    src = "var pos = SpawnOrigin.Position + new Vector3(5f, 0f, 0f);"
+    bad = find_vector3_entity_prop_misuse(src)
+    assert bad == [(src.index("Position"), "SpawnOrigin", "Position")]
+
+
+def test_find_vector3_entity_prop_misuse_catches_locally_declared_var():
+    src = "Vector3 anchor = pos;\nvar p2 = anchor.Rotation;"
+    bad = find_vector3_entity_prop_misuse(src)
+    assert [(var, member) for _, var, member in bad] == [("anchor", "Rotation")]
+
+
+def test_find_vector3_entity_prop_misuse_ignores_unrelated_identifier():
+    """An identifier not confidently known to be Vector3 must never be
+    flagged — this stays conservative like the other member checks."""
+    src = "var pos = ped.Position + new Vector3(5f, 0f, 0f);"
+    assert find_vector3_entity_prop_misuse(src) == []
+
+
+def test_lint_vector3_entity_prop_misuse_comments_out_bad_call():
+    """Live regression, pulled verbatim from a failed compile: SpawnOrigin is
+    a Vector3 (declared in mission.cs.j2), not an Entity — it has no
+    .Position member (CS1061)."""
+    body = (
+        'var engineer = World.CreatePed(new Model("s_m_indian_01"), '
+        "SpawnOrigin.Position + new Vector3(5f, 0f, 0f)); _peds.Add(engineer);"
+    )
+    out = lint_vector3_entity_prop_misuse(body)
+    assert "// AUDIT: removed Entity-only property access on a Vector3" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("SpawnOrigin" in ln for ln in active_lines)
+
+
+def test_lint_vector3_entity_prop_misuse_keeps_correct_usage():
+    body = "var pos = SpawnOrigin + new Vector3(5f, 0f, 0f);"
+    assert lint_vector3_entity_prop_misuse(body) == body
+
+
+def test_lint_vector3_entity_prop_misuse_keeps_real_entity_position():
+    """Game.Player.Character is a Ped (Entity), not a Vector3 — .Position is
+    a real, valid property there and must never be flagged."""
+    body = "var pos = Game.Player.Character.Position;"
+    assert lint_vector3_entity_prop_misuse(body) == body
+
+
+def test_lint_vector3_entity_prop_misuse_noop_on_empty_text():
+    assert lint_vector3_entity_prop_misuse("") == ""
+
+
 # ── Undeclared catch (Exception) referencing bare `ex` (CS0103) ──────────────
 
 def test_lint_undeclared_catch_exception_var_declares_missing_variable():
@@ -845,6 +899,34 @@ def test_gta_lint_neutralizes_vector3_raw_call_arg():
     active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
     assert not any("Function.Call(Hash.CREATE_VEHICLE" in ln for ln in active_lines)
     assert "// AUDIT: removed Function.Call passing a raw Vector3 argument" in cs
+
+
+def test_gta_lint_neutralizes_vector3_entity_prop_misuse():
+    """Live regression pulled from a real ScriptHookVDotNet.log compile
+    failure (AbyssalDescent.recompiled.3.cs, 6x CS1061 'Vector3 does not
+    contain a definition for Position'): the LLM-authored extra_init wrote
+    `SpawnOrigin.Position + new Vector3(...)`, but SpawnOrigin is already a
+    Vector3 (declared by the mission template itself) — Vector3 has no
+    .Position member."""
+    s = _mission(extra_init=(
+        'var engineer = World.CreatePed(new Model("s_m_indian_01"), '
+        "SpawnOrigin.Position + new Vector3(5f, 0f, 0f)); _peds.Add(engineer);"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("SpawnOrigin.Position" in ln for ln in active_lines)
+    assert "// AUDIT: removed Entity-only property access on a Vector3" in cs
+
+
+def test_gta_lint_keeps_correct_spawn_origin_usage():
+    s = _mission(extra_init=(
+        'var engineer = World.CreatePed(new Model("s_m_indian_01"), '
+        "SpawnOrigin + new Vector3(5f, 0f, 0f)); _peds.Add(engineer);"
+    ))
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    assert 'SpawnOrigin + new Vector3(5f, 0f, 0f)); _peds.Add(engineer);' in cs
 
 
 def test_gta_lint_declares_missing_catch_exception_var():
