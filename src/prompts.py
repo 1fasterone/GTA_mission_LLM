@@ -124,6 +124,8 @@ OUTPUT this exact JSON structure, fully populated:
   "events": "OPTIONAL list (max 3) of one-shot mid-mission twists, each {{\\"event_type\\": \\"thunderstorm | police_pursuit\\", \\"at_progress\\": 0.5, \\"params\\": {{}}}} — at_progress is the mission fraction (0.1-0.9) when it fires; police_pursuit params may set {{\\"wanted_level\\": 3, \\"spawn_heli\\": true}} for an attack helicopter. Use [] if the concept has no mid-mission twist",
   "hud": "true only if the concept wants an on-screen timer / progress bar display during the mission; otherwise false",
   "reward_cash": "integer cash paid on mission completion (max 1000000); 0 if the concept mentions no payment",
+  "skeleton": "\\"mission\\" (default — story mission with sequential steps) or \\"minigame\\" (replayable arcade round with a config menu, score, and best-score tracking — ONLY when the concept is explicitly a repeatable minigame/arcade challenge, not a one-shot story)",
+  "minigame": "null for missions. For skeleton=\\"minigame\\": {{\\"settings\\": [{{\\"key\\": \\"round_time\\", \\"label\\": \\"Round Time\\", \\"kind\\": \\"cycle | toggle | int\\", \\"options\\": [], \\"min_value\\": 0, \\"max_value\\": 100, \\"step\\": 1, \\"default\\": \\"\\"}}], \\"score_metric\\": \\"points | kills | seconds\\", \\"score_label\\": \\"SCORE\\", \\"round_type\\": \\"timed\\", \\"round_params\\": {{\\"seconds\\": 60}}}}",
   "extra_usings": [],
   "extra_fields": [],
   "extra_init": "",
@@ -221,7 +223,7 @@ VALIDATION RULES:
 7. object roles: pickup | obstacle | decoration
 8. count must be an integer between 1 and 8
 9. Remove any extra fields not in the schema — EXCEPTIONS: keep "params" on steps, keep
-   "events"/"hud"/"reward_cash" as given, and keep
+   "events"/"hud"/"reward_cash"/"skeleton"/"minigame" as given, and keep
    "extra_usings"/"extra_fields"/"extra_init"/"extra_tick"/"extra_methods" EXACTLY as given
    (they are the mission-specific C# channel; never strip, rewrite, or empty them)
 

@@ -419,6 +419,33 @@ def _build_template_context(schema: MissionSchema) -> dict:
         })
     events_change_weather = any(e["event_type"] == "thunderstorm" for e in mission_events)
 
+    # ── Minigame skeleton (menu-primary arcade loop) ──────────────────────────
+    mg = schema.minigame
+    minigame_rows: list[dict] = []
+    if mg is not None:
+        for s in mg.settings:
+            if s.kind == "cycle":
+                default_idx = s.options.index(s.default) if s.default in s.options else 0
+                default_val = default_idx
+            elif s.kind == "toggle":
+                default_idx = 1 if s.default == "true" else 0
+                default_val = default_idx
+            else:  # int
+                default_idx = 0
+                default_val = int(s.default)
+            minigame_rows.append({
+                "key":         s.key,
+                "label":       _escape_cs_string(s.label),
+                "kind":        s.kind,
+                "options":     [_escape_cs_string(o) for o in s.options],
+                "min":         s.min_value,
+                "max":         s.max_value,
+                "step":        s.step,
+                "default_idx": default_idx,
+                "default_val": default_val,
+                "default_raw": s.default,
+            })
+
     # ── Editor-authored shapes: triggers + patrol paths ──────────────────────
     # Pulled from meta.editor.* (Day-2 of the GTA5 Mission Editor). Triggers wire
     # into the OnTick loop; paths are emitted as Vector3 arrays for future use.
@@ -502,6 +529,14 @@ def _build_template_context(schema: MissionSchema) -> dict:
         "reward_cash":           int(schema.reward_cash),
         "total_steps":           max(1, len(schema.steps)),
         "scavenger_sets":        scavenger_sets,
+        # Minigame skeleton (always present — StrictUndefined — empty for missions)
+        "skeleton":       schema.skeleton,
+        "minigame_rows":  minigame_rows,
+        "score_metric":   mg.score_metric if mg else "points",
+        "score_label":    _escape_cs_string(mg.score_label) if mg else "SCORE",
+        "round_type":     mg.round_type if mg else "timed",
+        "round_params":   dict(mg.round_params) if mg else {},
+        "ini_file":       f"scripts\\\\{class_name}.ini",
         # LLM-authored mission-specific C# (insertion points)
         "extra_usings":     schema.extra_usings,
         "extra_fields":     schema.extra_fields,
@@ -511,20 +546,55 @@ def _build_template_context(schema: MissionSchema) -> dict:
     }
 
 
+def _render_minigame_ini(schema: MissionSchema, ctx: dict) -> str:
+    """Default .ini for a minigame: [Minigame] marker (scanned by the hub),
+    [Settings] defaults (one line per config row), [Scores] best-score slot."""
+    lines = [
+        "[Minigame]",
+        f"Name={schema.mission_name}",
+        f"Metric={ctx['score_metric']}",
+        f"Label={schema.minigame.score_label if schema.minigame else 'SCORE'}",
+        "",
+        "[Settings]",
+    ]
+    for row in ctx["minigame_rows"]:
+        lines.append(f"{row['key']}={row['default_raw']}")
+    lines += ["", "[Scores]", "Best=0", ""]
+    return "\n".join(lines)
+
+
 class CodeGenerator:
-    def __init__(self, template_file: str = "templates/mission.cs.j2"):
+    def __init__(self, template_file: str = "templates/mission.cs.j2",
+                 minigame_template_file: str = "templates/minigame.cs.j2"):
         template_path = Path(template_file)
-        env = Environment(
+        self._env = Environment(
             loader    = FileSystemLoader(str(template_path.parent)),
             undefined = StrictUndefined,
             trim_blocks   = True,
             lstrip_blocks = True,
         )
-        self.template = env.get_template(template_path.name)
+        self.template = self._env.get_template(template_path.name)
+        # Minigame templates load lazily so mission-only setups (custom template
+        # dirs, old configs) never require the minigame files to exist.
+        self._minigame_template_name = Path(minigame_template_file).name
+        self._minigame_template = None
+        self._services_template = None
+
+    def _get_minigame_template(self):
+        if self._minigame_template is None:
+            self._minigame_template = self._env.get_template(self._minigame_template_name)
+        return self._minigame_template
+
+    def _get_services_template(self):
+        if self._services_template is None:
+            self._services_template = self._env.get_template("minigame_services.cs.j2")
+        return self._services_template
 
     def generate(self, schema: MissionSchema) -> str:
         """Compile MissionSchema → .NET 4.8 C# source."""
         ctx = _build_template_context(schema)
+        if schema.skeleton == "minigame":
+            return self._get_minigame_template().render(**ctx)
         return self.template.render(**ctx)
 
     def write(self, schema: MissionSchema, output_dir: str = "output") -> Path:
@@ -543,5 +613,16 @@ class CodeGenerator:
 
         cs_path.write_text(code, encoding="utf-8")
         schema_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
+
+        if schema.skeleton == "minigame":
+            # Default .ini (settings + best score) — the mod loads/saves this at
+            # runtime via ScriptSettings; the hub reads the [Minigame] marker.
+            ini_path = out / f"{ctx['class_name']}.ini"
+            ini_path.write_text(_render_minigame_ini(schema, ctx), encoding="utf-8")
+
+            # Shared hub companion — deterministic content, idempotent overwrite.
+            services_path = out / "MinigameServices.3.cs"
+            services_path.write_text(
+                self._get_services_template().render(), encoding="utf-8")
 
         return cs_path
