@@ -47,6 +47,12 @@ _WEATHER_MENU_OPTIONS = [
     "CLEAR", "OVERCAST", "RAIN", "THUNDER", "FOGGY", "SMOG", "EXTRASUNNY",
 ]
 
+# ── Mid-mission event constants (deterministic, template-owned) ──────────────
+# The police_pursuit interceptor mirrors the hand-tuned HeliRace mod's Buzzard
+# chase; fixed models keep Step 6 a pure function of the schema.
+_EVENT_HELI_MODEL  = "buzzard"
+_EVENT_PILOT_MODEL = "s_m_y_pilot_01"
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -223,6 +229,48 @@ def _build_template_context(schema: MissionSchema) -> dict:
         race_checkpoint_idx[i] = rc_counter
         rc_counter += 1
 
+    # ── Scavenger point sets (one entry per scavenger step) ──────────────────
+    scavenger_sets: list[dict] = []
+    scavenger_idx: dict[int, int] = {}   # step_index → scavenger_sets list index
+    sv_counter = 0
+    for i, step in enumerate(schema.steps):
+        if step.type != "scavenger":
+            continue
+        count  = int(step.params.get("target_count", 5))
+        radius = float(step.params.get("radius", 3.0))
+
+        # ── Editor-drawn locations win (exact map→game fidelity) ────────────
+        # Same shape-parsing as race 'checkpoints': list/tuple or {x,y,z} entries.
+        drawn = step.params.get("locations")
+        pts: list[dict] = []
+        if isinstance(drawn, list) and len(drawn) >= 2:
+            for q in drawn:
+                if isinstance(q, (list, tuple)) and len(q) >= 2:
+                    pts.append({"x": float(q[0]), "y": float(q[1]),
+                                "z": float(q[2]) if len(q) > 2 else location["z"]})
+                elif isinstance(q, dict):
+                    pts.append({"x": float(q.get("x", 0.0)), "y": float(q.get("y", 0.0)),
+                                "z": float(q.get("z", location["z"]))})
+            if len(pts) < 2:
+                pts = []
+        if not pts:
+            # Deterministic compass scatter around the location origin (~90 m),
+            # widening ring per lap of the 8 directions so counts > 8 stay distinct.
+            for k in range(count):
+                dx, dy = _WP_DIRS[k % len(_WP_DIRS)]
+                ring = 1.0 + (k // len(_WP_DIRS)) * 0.8
+                pts.append({"x": location["x"] + dx * 1.5 * ring,
+                            "y": location["y"] + dy * 1.5 * ring,
+                            "z": location["z"]})
+
+        scavenger_sets.append({
+            "array_name": f"ScavengerPoints{sv_counter}",
+            "points":     pts,
+            "radius":     radius,
+        })
+        scavenger_idx[i] = sv_counter
+        sv_counter += 1
+
     # ── Steps with pre-computed next-waypoint index ───────────────────────────
     processed_steps = []
     for i, step in enumerate(schema.steps):
@@ -240,6 +288,8 @@ def _build_template_context(schema: MissionSchema) -> dict:
             "next_waypoint":       next_wp,
             "race_checkpoint_idx": race_checkpoint_idx.get(i),          # None for non-racing steps
             "timer_seconds":       int(step.params.get("seconds", 120)) if step.type == "timer" else None,
+            "scavenger_idx":       scavenger_idx.get(i),                # None for non-scavenger steps
+            "scavenger_radius":    float(step.params.get("radius", 3.0)) if step.type == "scavenger" else None,
         })
 
     # ── Patrol-path → ped binding ─────────────────────────────────────────────
@@ -356,6 +406,19 @@ def _build_template_context(schema: MissionSchema) -> dict:
             menu_options.append({"key": "ai_difficulty", "label": "AI Difficulty"})
         menu_options.append({"key": "close", "label": "CLOSE MENU"})
 
+    # ── Mid-mission events (HeliRace-style one-shot twists) ──────────────────
+    mission_events: list[dict] = []
+    for i, evt in enumerate(schema.events):
+        mission_events.append({
+            "index":        i,
+            "event_type":   evt.event_type,
+            "at_progress":  round(float(evt.at_progress), 2),
+            "wind_speed":   float(evt.params.get("wind_speed", 40.0)),
+            "wanted_level": max(1, min(5, int(evt.params.get("wanted_level", 3)))),
+            "spawn_heli":   bool(evt.params.get("spawn_heli", False)),
+        })
+    events_change_weather = any(e["event_type"] == "thunderstorm" for e in mission_events)
+
     # ── Editor-authored shapes: triggers + patrol paths ──────────────────────
     # Pulled from meta.editor.* (Day-2 of the GTA5 Mission Editor). Triggers wire
     # into the OnTick loop; paths are emitted as Vector3 arrays for future use.
@@ -429,6 +492,16 @@ def _build_template_context(schema: MissionSchema) -> dict:
         "weather_options":     _WEATHER_MENU_OPTIONS,
         "weather_default_idx": weather_default_idx,
         "menu_options":        menu_options,
+        # HeliRace-style events / HUD / reward / scavenger (always present —
+        # StrictUndefined — empty/falsy when the feature is off)
+        "mission_events":        mission_events,
+        "events_change_weather": events_change_weather,
+        "event_heli_model":      _EVENT_HELI_MODEL,
+        "event_pilot_model":     _EVENT_PILOT_MODEL,
+        "hud":                   bool(schema.hud),
+        "reward_cash":           int(schema.reward_cash),
+        "total_steps":           max(1, len(schema.steps)),
+        "scavenger_sets":        scavenger_sets,
         # LLM-authored mission-specific C# (insertion points)
         "extra_usings":     schema.extra_usings,
         "extra_fields":     schema.extra_fields,

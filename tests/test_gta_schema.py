@@ -361,3 +361,93 @@ class TestUnresolvedModels:
         u = s.unresolved_models()
         assert len(u) == 1
         assert "ped:alien" in u
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HeliRace-derived features: events / hud / reward_cash / scavenger step
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMissionEventModel:
+    def test_defaults_are_backward_compatible(self):
+        # Old .schema.json sidecars have none of the new fields — must still load.
+        s = MissionSchema(mission_name="Legacy", steps=[])
+        assert s.events == []
+        assert s.hud is False
+        assert s.reward_cash == 0
+
+    def test_valid_event_types(self):
+        from src.mission_schema import MissionEvent
+        for t in ("thunderstorm", "police_pursuit"):
+            assert MissionEvent(event_type=t).event_type == t
+
+    def test_unknown_event_type_clamps_to_thunderstorm(self):
+        from src.mission_schema import MissionEvent
+        assert MissionEvent(event_type="earthquake").event_type == "thunderstorm"
+
+    def test_at_progress_clamps_above_one(self):
+        from src.mission_schema import MissionEvent
+        assert MissionEvent(event_type="thunderstorm", at_progress=1.7).at_progress == 1.0
+
+    def test_at_progress_clamps_below_zero(self):
+        from src.mission_schema import MissionEvent
+        assert MissionEvent(event_type="thunderstorm", at_progress=-0.3).at_progress == 0.0
+
+    def test_at_progress_garbage_falls_back_to_half(self):
+        from src.mission_schema import MissionEvent
+        assert MissionEvent(event_type="thunderstorm", at_progress="soon").at_progress == 0.5
+
+    def test_thunderstorm_params_get_wind_speed_default(self):
+        s = MissionSchema(mission_name="X", steps=[],
+                          events=[{"event_type": "thunderstorm"}])
+        assert s.events[0].params["wind_speed"] == 40.0
+
+    def test_police_pursuit_params_get_defaults(self):
+        s = MissionSchema(mission_name="X", steps=[],
+                          events=[{"event_type": "police_pursuit"}])
+        assert s.events[0].params["wanted_level"] == 3
+        assert s.events[0].params["spawn_heli"] is False
+
+    def test_events_list_truncated_to_three(self):
+        s = MissionSchema(mission_name="X", steps=[], events=[
+            {"event_type": "thunderstorm", "at_progress": p}
+            for p in (0.1, 0.3, 0.5, 0.7, 0.9)
+        ])
+        assert len(s.events) == 3
+
+
+class TestRewardCash:
+    def test_negative_clamps_to_zero(self):
+        assert MissionSchema(mission_name="X", steps=[], reward_cash=-5).reward_cash == 0
+
+    def test_huge_clamps_to_one_million(self):
+        assert MissionSchema(mission_name="X", steps=[],
+                             reward_cash=99_999_999).reward_cash == 1_000_000
+
+    def test_string_number_coerces(self):
+        assert MissionSchema(mission_name="X", steps=[], reward_cash="5000").reward_cash == 5000
+
+    def test_garbage_falls_back_to_zero(self):
+        assert MissionSchema(mission_name="X", steps=[], reward_cash="lots").reward_cash == 0
+
+
+class TestScavengerStep:
+    def test_scavenger_is_valid_step_type(self):
+        s = MissionStep(type="scavenger", label="Collect the stashes")
+        assert s.type == "scavenger"
+
+    def test_scavenger_params_get_defaults(self):
+        s = MissionSchema(mission_name="X", steps=[
+            MissionStep(type="scavenger", label="Collect")])
+        assert s.steps[0].params["target_count"] == 5
+        assert s.steps[0].params["radius"] == 3.0
+
+    def test_scavenger_explicit_params_preserved(self):
+        s = MissionSchema(mission_name="X", steps=[
+            MissionStep(type="scavenger", label="Collect",
+                        params={"target_count": 8, "radius": 5.0})])
+        assert s.steps[0].params["target_count"] == 8
+        assert s.steps[0].params["radius"] == 5.0
+
+    def test_unknown_step_type_still_clamps_to_wait(self):
+        # The new literal must not break the existing clamp behavior.
+        assert MissionStep(type="treasure_hunt", label="x").type == "wait"

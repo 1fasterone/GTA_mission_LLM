@@ -525,3 +525,176 @@ class TestAiRivalDifficultyAndConfigMenu:
     def test_config_menu_is_deterministic(self, gen):
         schema = self._race_schema(config_menu=True, ai_difficulty="hard")
         assert gen.generate(schema) == gen.generate(schema)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HeliRace-derived features: mid-mission events / HUD / cash reward / scavenger
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _feature_schema(**kwargs):
+    defaults = dict(
+        mission_name="Storm Scavenger", location_name="docks",
+        steps=[MissionStep(type="scavenger", label="Collect the stashes"),
+               MissionStep(type="escape", label="Lose the heat")],
+    )
+    defaults.update(kwargs)
+    return MissionSchema(**defaults)
+
+
+class TestMissionEvents:
+    def _events(self, spawn_heli=False):
+        return [
+            {"event_type": "thunderstorm", "at_progress": 0.4},
+            {"event_type": "police_pursuit", "at_progress": 0.6,
+             "params": {"spawn_heli": spawn_heli}},
+        ]
+
+    def test_no_events_emits_no_event_machinery(self, gen):
+        cs = gen.generate(_feature_schema())
+        for tok in ("UpdateEvents", "_eventsFired", "SET_WIND_SPEED",
+                    "SET_PLAYER_WANTED_LEVEL", "_weatherChanged"):
+            assert tok not in cs, f"leaked without events: {tok}"
+
+    def test_thunderstorm_event_emits_weather_natives(self, gen):
+        cs = gen.generate(_feature_schema(events=self._events()))
+        assert "UpdateEvents" in cs
+        assert '_eventsFired' in cs
+        assert 'SET_WEATHER_TYPE_NOW_PERSIST, "THUNDER"' in cs
+        assert "SET_WIND_SPEED, 40.0f" in cs
+        assert "_prog >= 0.40f" in cs
+
+    def test_police_pursuit_event_emits_wanted_natives(self, gen):
+        cs = gen.generate(_feature_schema(events=self._events()))
+        assert "SET_PLAYER_WANTED_LEVEL, Game.Player, 3" in cs
+        assert "SET_PLAYER_WANTED_LEVEL_NOW" in cs
+        assert "_prog >= 0.60f" in cs
+
+    def test_spawn_heli_off_omits_attack_heli(self, gen):
+        cs = gen.generate(_feature_schema(events=self._events(spawn_heli=False)))
+        assert "TASK_HELI_MISSION" not in cs
+
+    def test_spawn_heli_emits_attack_heli(self, gen):
+        cs = gen.generate(_feature_schema(events=self._events(spawn_heli=True)))
+        assert "TASK_HELI_MISSION" in cs
+        assert "buzzard" in cs
+        assert "s_m_y_pilot_01" in cs
+
+    def test_thunderstorm_restores_schema_weather_in_cleanup(self, gen):
+        cs = gen.generate(_feature_schema(events=self._events(), weather="EXTRASUNNY"))
+        assert "_weatherChanged" in cs
+        assert 'SET_WEATHER_TYPE_NOW_PERSIST, "EXTRASUNNY"' in cs
+        assert "SET_WIND_SPEED, 0f" in cs
+
+    def test_pursuit_only_omits_weather_reset(self, gen):
+        cs = gen.generate(_feature_schema(
+            events=[{"event_type": "police_pursuit", "at_progress": 0.5}]))
+        assert "_weatherChanged" not in cs
+
+    def test_events_output_balanced_and_deterministic(self, gen):
+        schema = _feature_schema(events=self._events(spawn_heli=True), hud=True)
+        cs = gen.generate(schema)
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+        assert gen.generate(schema) == cs
+
+
+class TestHud:
+    def test_hud_off_by_default(self, gen):
+        cs = gen.generate(_feature_schema())
+        assert "DrawHud" not in cs
+        assert "_missionStart" not in cs
+
+    def test_hud_emits_timer_bar_and_counter(self, gen):
+        cs = gen.generate(_feature_schema(hud=True))
+        for tok in ("DrawHud", "DrawHudText", "Hash.DRAW_RECT", "_missionStart",
+                    "MissionProgress", "BEGIN_TEXT_COMMAND_DISPLAY_TEXT"):
+            assert tok in cs, f"HUD C# missing {tok}"
+
+    def test_hud_counter_uses_total_step_count(self, gen):
+        cs = gen.generate(_feature_schema(hud=True))   # 2 steps
+        assert "/ ~w~2" in cs
+
+    def test_hud_output_balanced(self, gen):
+        cs = gen.generate(_feature_schema(hud=True))
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+
+
+class TestRewardCash:
+    def test_no_reward_by_default(self, gen):
+        cs = gen.generate(_feature_schema())
+        assert "STAT_SET_INT" not in cs
+        assert "Game.Player.Money" not in cs
+
+    def test_reward_emits_stat_pattern_with_money_fallback(self, gen):
+        cs = gen.generate(_feature_schema(reward_cash=45000))
+        assert "SP0_TOTAL_CASH" in cs
+        assert "STAT_GET_INT" in cs
+        assert "STAT_SET_INT" in cs
+        assert "Game.Player.Money += 45000" in cs
+        assert "$45000" in cs
+
+    def test_reward_output_balanced(self, gen):
+        cs = gen.generate(_feature_schema(reward_cash=45000))
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+
+
+class TestScavengerCodegen:
+    def test_context_builds_scavenger_set(self):
+        ctx = _build_template_context(_feature_schema())
+        assert len(ctx["scavenger_sets"]) == 1
+        sc = ctx["scavenger_sets"][0]
+        assert sc["array_name"] == "ScavengerPoints0"
+        assert len(sc["points"]) == 5          # default target_count
+        assert sc["radius"] == 3.0
+        # Points must be distinct (compass scatter, not a pile-up).
+        coords = {(p["x"], p["y"]) for p in sc["points"]}
+        assert len(coords) == 5
+
+    def test_context_respects_target_count(self):
+        schema = _feature_schema(steps=[MissionStep(
+            type="scavenger", label="Collect", params={"target_count": 10})])
+        ctx = _build_template_context(schema)
+        assert len(ctx["scavenger_sets"][0]["points"]) == 10
+        coords = {(p["x"], p["y"]) for p in ctx["scavenger_sets"][0]["points"]}
+        assert len(coords) == 10               # ring multiplier keeps >8 distinct
+
+    def test_editor_locations_win_verbatim(self):
+        schema = _feature_schema(steps=[MissionStep(
+            type="scavenger", label="Collect",
+            params={"locations": [[10.0, 20.0, 30.0], {"x": 40.0, "y": 50.0, "z": 60.0}]})])
+        ctx = _build_template_context(schema)
+        pts = ctx["scavenger_sets"][0]["points"]
+        assert pts == [{"x": 10.0, "y": 20.0, "z": 30.0},
+                       {"x": 40.0, "y": 50.0, "z": 60.0}]
+
+    def test_scavenger_step_emits_any_order_machinery(self, gen):
+        cs = gen.generate(_feature_schema())
+        for tok in ("Step0_SCAVENGER", "HashSet<int> _scavVisited", "_scavBlips",
+                    "BlipColor.Green", "Scale = 0.6f", "ScavengerPoints0",
+                    "PLAY_SOUND_FRONTEND"):
+            assert tok in cs, f"scavenger C# missing {tok}"
+        assert "#error" not in cs
+
+    def test_scavenger_absent_from_plain_mission(self, gen, gta_full_schema):
+        cs = gen.generate(gta_full_schema)
+        assert "_scavVisited" not in cs
+        assert "ScavengerPoints" not in cs
+
+    def test_scavenger_cleanup_clears_blips(self, gen):
+        cs = gen.generate(_feature_schema())
+        assert "_scavBlips.Clear();" in cs
+
+    def test_scavenger_output_balanced_and_deterministic(self, gen):
+        schema = _feature_schema(events=[{"event_type": "thunderstorm"}],
+                                 hud=True, reward_cash=1000)
+        cs = gen.generate(schema)
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+        assert gen.generate(schema) == cs
+
+    def test_mission_progress_includes_scavenger_fraction(self, gen):
+        cs = gen.generate(_feature_schema(hud=True))
+        assert "MissionProgress" in cs
+        assert "_scavVisited.Count / (float)ScavengerPoints0.Length" in cs

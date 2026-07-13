@@ -72,6 +72,9 @@ STEP TYPES — use only these:
                    params: {{"lap_count": 5, "track": "airport.figure_8", "require_vehicle": true}}
   timer          — player must survive or hold position for N seconds
                    params: {{"seconds": 60}}
+  scavenger      — player visits N scattered points in ANY order (true scavenger
+                   hunt, not linear); blips turn green as each is collected
+                   params: {{"target_count": 5}}   (3-10 points)
 
 MISSION CONCEPT:
 {concept}
@@ -84,7 +87,7 @@ OUTPUT this exact JSON structure, fully populated:
   "weather": "one of: CLEAR | OVERCAST | RAIN | THUNDER | FOGGY | SMOG",
   "steps": [
     {{
-      "type": "one of: go_to | kill_all | pickup | deliver | get_in_vehicle | escape | wait | checkpoint | race_lap | timer",
+      "type": "one of: go_to | kill_all | pickup | deliver | get_in_vehicle | escape | wait | checkpoint | race_lap | timer | scavenger",
       "label": "Brief on-screen instruction shown to the player (under 8 words)",
       "params": {{}}
     }}
@@ -118,6 +121,9 @@ OUTPUT this exact JSON structure, fully populated:
   ],
   "ai_difficulty": "one of: easy | medium | hard — ONLY meaningful if you added a race_opponent vehicle; scale it to how tough the concept says the rivals are (default medium)",
   "config_menu": "true only if the concept explicitly asks for a pre-race settings/options menu the player can open (e.g. an F10 menu to adjust weather or rival difficulty); otherwise false",
+  "events": "OPTIONAL list (max 3) of one-shot mid-mission twists, each {{\\"event_type\\": \\"thunderstorm | police_pursuit\\", \\"at_progress\\": 0.5, \\"params\\": {{}}}} — at_progress is the mission fraction (0.1-0.9) when it fires; police_pursuit params may set {{\\"wanted_level\\": 3, \\"spawn_heli\\": true}} for an attack helicopter. Use [] if the concept has no mid-mission twist",
+  "hud": "true only if the concept wants an on-screen timer / progress bar display during the mission; otherwise false",
+  "reward_cash": "integer cash paid on mission completion (max 1000000); 0 if the concept mentions no payment",
   "extra_usings": [],
   "extra_fields": [],
   "extra_init": "",
@@ -206,13 +212,16 @@ VALIDATION RULES:
    INVALID: "cop"  |  "Police Car"  |  "Cop_01"
 2. If a model field still looks like plain English, set it to "UNRESOLVED"
 3. weather must be uppercase: CLEAR | OVERCAST | RAIN | THUNDER | FOGGY | SMOG
-4. step types: go_to | kill_all | pickup | deliver | get_in_vehicle | escape | wait | checkpoint | race_lap | timer
+4. step types: go_to | kill_all | pickup | deliver | get_in_vehicle | escape | wait | checkpoint | race_lap | timer | scavenger
 4b. params field on steps is optional — preserve it if present, default to {} if absent; do NOT strip it
+4c. events (optional list): event_type must be thunderstorm | police_pursuit; at_progress a number
+    between 0 and 1; preserve the list as given, do NOT strip it
 5. ped roles: guard | patrol | target | civilian | ally
 6. vehicle roles: patrol | escape | delivery | parked | chase | race_opponent
 7. object roles: pickup | obstacle | decoration
 8. count must be an integer between 1 and 8
-9. Remove any extra fields not in the schema — EXCEPTIONS: keep "params" on steps, and keep
+9. Remove any extra fields not in the schema — EXCEPTIONS: keep "params" on steps, keep
+   "events"/"hud"/"reward_cash" as given, and keep
    "extra_usings"/"extra_fields"/"extra_init"/"extra_tick"/"extra_methods" EXACTLY as given
    (they are the mission-specific C# channel; never strip, rewrite, or empty them)
 
