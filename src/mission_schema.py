@@ -29,7 +29,7 @@ EventType   = Literal["thunderstorm", "police_pursuit"]
 SkeletonKind = Literal["mission", "minigame"]
 SettingKind  = Literal["cycle", "toggle", "int"]
 ScoreMetric  = Literal["points", "kills", "seconds"]
-RoundType    = Literal["timed"]   # extended by minigame archetypes (waves, pursuit)
+RoundType    = Literal["timed", "survive_waves", "pursuit_survive"]
 PedRole     = Literal["guard", "patrol", "target", "civilian", "ally"]
 VehicleRole = Literal["patrol", "escape", "delivery", "parked", "chase", "race_opponent"]
 ObjectRole  = Literal["pickup", "obstacle", "decoration"]
@@ -123,6 +123,57 @@ class MinigameSetting(BaseModel):
         return self
 
 
+class WaveRoundParams(BaseModel):
+    """survive_waves round: arena horde escalation. Enemy model + weapon come
+    from schema.peds (RAG-resolved via the normal Step-4 path), not from here."""
+    wave_count:           int   = 5
+    enemies_per_wave:     int   = 3
+    wave_growth:          float = 1.5
+    arena_radius:         float = 35.0
+    intermission_seconds: int   = 8
+
+    @field_validator("wave_count", "enemies_per_wave", "intermission_seconds", mode="before")
+    @classmethod
+    def _clamp_ints(cls, v, info):
+        bounds = {"wave_count": (3, 10, 5), "enemies_per_wave": (2, 8, 3),
+                  "intermission_seconds": (3, 30, 8)}
+        lo, hi, default = bounds[info.field_name]
+        return _clamp_int(v, lo, hi, default)
+
+    @field_validator("wave_growth", mode="before")
+    @classmethod
+    def _clamp_growth(cls, v):
+        return _clamp_float(v, 1.0, 3.0, 1.5)
+
+    @field_validator("arena_radius", mode="before")
+    @classmethod
+    def _clamp_radius(cls, v):
+        return _clamp_float(v, 20.0, 100.0, 35.0)
+
+
+class PursuitRoundParams(BaseModel):
+    """pursuit_survive round: outlast escalating police heat; score = seconds."""
+    start_wanted:          int = 2
+    escalation_interval_s: int = 45
+    max_wanted:            int = 5
+    spawn_heli_at_level:   int = 4    # 0 = never spawn the attack heli
+
+    @field_validator("start_wanted", "escalation_interval_s", "max_wanted",
+                     "spawn_heli_at_level", mode="before")
+    @classmethod
+    def _clamp_ints(cls, v, info):
+        bounds = {"start_wanted": (1, 3, 2), "escalation_interval_s": (15, 120, 45),
+                  "max_wanted": (3, 5, 5), "spawn_heli_at_level": (0, 5, 4)}
+        lo, hi, default = bounds[info.field_name]
+        return _clamp_int(v, lo, hi, default)
+
+    @model_validator(mode="after")
+    def _order(self) -> "PursuitRoundParams":
+        if self.start_wanted > self.max_wanted:
+            self.start_wanted = self.max_wanted
+        return self
+
+
 class MinigameSpec(BaseModel):
     """Replayable-arcade configuration: menu rows, scoring, and the round body."""
     settings:     list[MinigameSetting] = Field(default_factory=list, max_length=8)
@@ -154,6 +205,12 @@ class MinigameSpec(BaseModel):
         if self.round_type == "timed":
             secs = self.round_params.get("seconds", 60)
             self.round_params["seconds"] = _clamp_int(secs, 10, 600, 60)
+        elif self.round_type == "survive_waves":
+            self.round_params = WaveRoundParams.model_validate(
+                self.round_params or {}).model_dump()
+        elif self.round_type == "pursuit_survive":
+            self.round_params = PursuitRoundParams.model_validate(
+                self.round_params or {}).model_dump()
         return self
 
 

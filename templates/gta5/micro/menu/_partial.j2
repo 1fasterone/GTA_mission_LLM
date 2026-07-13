@@ -1,0 +1,70 @@
+{# Menu micro — macro partial. Composable: the minigame skeleton can include
+   these macros to inline the menu into a single .3.cs; the standalone wrapper
+   (Menu.3.cs.j2) uses the same macros. Assumes DrawPanelRect/DrawPanelText
+   exist in the enclosing class (from _inject.draw_helpers() or the minigame
+   skeleton's _minigame_helpers.j2). #}
+
+{% macro fields(s) %}
+    // -- {{ s.name }} state ({{ s.variant }}) -----------------------------------
+    private bool _open = false;
+    private int  _selection = 0;
+    private static readonly string[] _rows =
+    {
+{% for row in s.rows %}
+        "{{ row }}",
+{% endfor %}
+    };
+{%- endmacro %}
+
+{% macro keydown(s) %}
+        if (e.KeyCode == Keys.{{ s.hotkey }})
+        {
+            _open = !_open;
+            if (_open) _selection = 0;
+        }
+{%- endmacro %}
+
+{% macro tick(s) %}
+        if (_open)
+        {
+            DrawOverlayPanel();
+            HandleOverlayControls();
+        }
+{%- endmacro %}
+
+{% macro methods(s) %}
+    private void DrawOverlayPanel()
+    {
+        float startY  = 0.32f;
+        float spacing = 0.040f;
+        DrawPanelRect(0.50f, 0.42f, 0.40f, 0.10f + _rows.Length * spacing, 18, 18, 26, 225);
+        DrawPanelRect(0.50f, 0.27f, 0.40f, 0.05f, 0, 95, 160, 235);
+        DrawPanelText("{{ s.title }}", 0.50f, 0.252f, 0.60f, 255, 255, 255, 255, true);
+
+        for (int i = 0; i < _rows.Length; i++)
+        {
+            float y = startY + i * spacing;
+            if (i == _selection)
+                DrawPanelRect(0.50f, y + 0.012f, 0.36f, 0.030f, 45, 55, 95, 190);
+            DrawPanelText((i == _selection ? "~b~> ~w~" : "~w~") + _rows[i],
+                0.33f, y, 0.38f, 255, 255, 255, 255, false);
+        }
+{% if s.variant == "pause_menu" %}
+        DrawPanelText("~c~Game paused — {{ s.hotkey }} resumes",
+            0.50f, startY + _rows.Length * spacing + 0.01f, 0.28f, 170, 170, 170, 255, true);
+{% else %}
+        DrawPanelText("UP/DOWN navigate  |  {{ s.hotkey }} close",
+            0.50f, startY + _rows.Length * spacing + 0.01f, 0.28f, 170, 170, 170, 255, true);
+{% endif %}
+    }
+
+    private void HandleOverlayControls()
+    {
+        if (Game.IsControlJustPressed(GTA.Control.PhoneUp))
+            _selection = (_selection - 1 + _rows.Length) % _rows.Length;
+        if (Game.IsControlJustPressed(GTA.Control.PhoneDown))
+            _selection = (_selection + 1) % _rows.Length;
+        if (Game.IsControlJustPressed(GTA.Control.PhoneCancel))
+            _open = false;
+    }
+{%- endmacro %}

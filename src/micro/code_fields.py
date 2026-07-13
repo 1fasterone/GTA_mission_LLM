@@ -1265,3 +1265,109 @@ Add these keys to your JSON output (alongside the structural keys):
   "extra_usings": [], "extra_fields": [], "awake_extra": "",
   "update_extra": "", "fixed_update_extra": "", "extra_methods": []
 """
+
+
+# ── GTA5 / SHVDN variant ──────────────────────────────────────────────────────
+
+class GtaCodeExtensibleSchema(BaseModel):
+    """
+    SHVDN twin of CodeExtensibleSchema — the lifecycle names map onto a
+    GTA.Script subclass instead of a MonoBehaviour:
+      on_start_extra -> end of the Script constructor (runs once at load)
+      on_tick_extra  -> end of OnTick() (runs every frame)
+      on_abort_extra -> Aborted handler (script unload cleanup)
+    """
+    extra_usings:   list[str]        = Field(default_factory=list)
+    extra_fields:   list[CodeField]  = Field(default_factory=list)
+    on_start_extra: str              = ""
+    on_tick_extra:  str              = ""
+    on_abort_extra: str              = ""
+    extra_methods:  list[CodeMethod] = Field(default_factory=list)
+
+
+_GTA_KNOWN_NAMESPACES = frozenset({
+    "System", "System.Collections.Generic", "System.Linq", "System.IO",
+    "System.Windows.Forms", "GTA", "GTA.Math", "GTA.Native", "GTA.UI",
+})
+
+
+def lint_gta_extensible(schema: GtaCodeExtensibleSchema, *,
+                        reserved_fields: set[str],
+                        template_usings: set[str],
+                        lookups_dir: str = "lookups") -> GtaCodeExtensibleSchema:
+    """
+    GTA twin of lint_extensible: the structural passes plus the full SHVDN
+    reality lint (hash/member/enum allowlists + misuse neutralizers) over every
+    fragment — the same battle-tested cleaning the mission pipeline applies to
+    its extra_* channel.
+    """
+    from ..gta_allowlists import (
+        load_hash_allowlist, load_api_surface, load_enum_allowlist,
+    )
+    hash_allow = load_hash_allowlist(lookups_dir)
+    api_surface = load_api_surface(lookups_dir)
+    enum_allow = load_enum_allowlist(lookups_dir)
+
+    schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=template_usings,
+                                      allowed=_GTA_KNOWN_NAMESPACES)
+    schema.extra_fields = lint_fields(schema.extra_fields, reserved=reserved_fields)
+    schema.on_start_extra = lint_code_fragment(schema.on_start_extra, what="ctor body")
+    schema.on_tick_extra  = lint_code_fragment(schema.on_tick_extra,  what="OnTick() body")
+    schema.on_abort_extra = lint_code_fragment(schema.on_abort_extra, what="Aborted() body")
+    taken: set[str] = set()
+    cleaned: list[CodeMethod] = []
+    for m in schema.extra_methods:
+        m2 = lint_method(m, taken_names=taken)
+        if m2 is not None:
+            cleaned.append(m2)
+    schema.extra_methods = cleaned
+
+    def _shvdn_pass(fragment: str) -> str:
+        fragment = lint_undeclared_catch_exception_var(fragment)
+        fragment = lint_hash_references(fragment, allowed=hash_allow)
+        fragment = lint_member_references(fragment, surface=api_surface)
+        fragment = lint_enum_references(fragment, enums=enum_allow)
+        fragment = lint_vector3_static_misuse(fragment)
+        fragment = lint_bare_task_static_misuse(fragment)
+        fragment = lint_function_call_ref_misuse(fragment)
+        fragment = lint_world_get_out_param_misuse(fragment)
+        fragment = lint_vector3_raw_call_arg(fragment)
+        fragment = lint_vector3_entity_prop_misuse(fragment)
+        return fragment
+
+    schema.on_start_extra = _shvdn_pass(schema.on_start_extra)
+    schema.on_tick_extra  = _shvdn_pass(schema.on_tick_extra)
+    schema.on_abort_extra = _shvdn_pass(schema.on_abort_extra)
+    for m in schema.extra_methods:
+        m.body = _shvdn_pass(m.body)
+    return schema
+
+
+GTA_EXTRA_INSTRUCTIONS = """\
+
+────────── PROMPT-SPECIFIC BEHAVIOR (this is how the prompt reaches the file) ──────────
+The template already emits the BASELINE for the chosen variant — you do NOT
+re-write it. You author the details unique to THIS prompt using the extra_* fields.
+This is GTA5 / ScriptHookVDotNet 3 C# — NEVER UnityEngine:
+
+  extra_usings:   extra namespaces, e.g. "System.Linq" (no "using", no ";")
+  extra_fields:   extra private members the behavior needs
+                  each: {{"name": "_myTimer", "type": "int", "default": "0", "tooltip": "..."}}
+  on_start_extra: C# statements run ONCE when the script loads (end of constructor)
+  on_tick_extra:  C# statements run EVERY frame (end of OnTick)
+  on_abort_extra: cleanup statements when the script unloads (Aborted handler)
+  extra_methods:  helper methods, each {{"signature": "private void Foo()", "body": "..."}}
+
+SHVDN RULES:
+- Use SHVDN3 API: Game.Player.Character, World.CreatePed, Function.Call(Hash.XXX, ...),
+  GTA.UI.Notification.PostTicker("~y~text", false), GTA.Math.Vector3.
+- Pure C#, never Python. No "using" lines inside bodies — those go in extra_usings.
+- No braces around extra_methods bodies — the template adds them.
+- OnTick fires many times per SECOND — accumulate Game.LastFrameTime for any
+  per-second meter/countdown instead of decrementing every tick.
+- If the prompt has no special behavior, leave every extra_* empty.
+
+Add these keys to your JSON output (alongside the structural keys):
+  "extra_usings": [], "extra_fields": [], "on_start_extra": "",
+  "on_tick_extra": "", "on_abort_extra": "", "extra_methods": []
+"""

@@ -1,0 +1,16 @@
+# {{ s.name }} — GTA5 hud micro ({{ variant }})
+
+{{ s.description }}
+
+## Install
+Copy `{{ s.name }}.3.cs` into `GTA V/scripts/` (requires Script Hook V + SHVDN3).
+
+## Surface
+- Draws a `{{ s.label }}` readout at {{ s.corner }} every tick
+- `SetHudValue(int)` — update the tracked number (best is tracked automatically)
+{% if variant == "wave_banner" %}
+- `SetHudBanner(string, seconds)` — flash a centered banner (e.g. "WAVE 3")
+{% endif %}
+{% if s.show_timer %}
+- Session timer shown as mm:ss
+{% endif %}

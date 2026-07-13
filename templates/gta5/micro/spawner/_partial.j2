@@ -1,0 +1,97 @@
+{# Spawner micro — macro partial. Public surface: SpawnWave(int count),
+   AliveCount(), CleanupWave(). Spawned entities are tracked in lists the
+   enclosing class owns via fields(s). #}
+
+{% macro fields(s) %}
+    // -- {{ s.name }} state ({{ s.variant }}) -----------------------------------
+    private readonly List<Ped>     _spawned         = new List<Ped>();
+    private readonly List<Vehicle> _spawnedVehicles = new List<Vehicle>();
+    private readonly List<Prop>    _spawnedProps    = new List<Prop>();
+{%- endmacro %}
+
+{% macro methods(s, weapon_native) %}
+    public void SpawnWave(int count)
+    {
+        var _origin = Game.Player.Character.Position;
+        for (int i = 0; i < count; i++)
+        {
+            // Deterministic ring placement — evenly spaced, no RNG.
+            double _ang = (Math.PI * 2.0 / count) * i;
+            var _pos = new Vector3(
+                _origin.X + (float)(Math.Cos(_ang) * {{ "%.1f"|format(s.radius) }}f),
+                _origin.Y + (float)(Math.Sin(_ang) * {{ "%.1f"|format(s.radius) }}f),
+                _origin.Z);
+{% if s.variant == "prop_scatter" %}
+            var _pModel = new Model("{{ s.prop_model }}");
+            _pModel.Request(5000);
+            if (_pModel.IsLoaded)
+            {
+                var _prop = World.CreateProp(_pModel, _pos, false, true);
+                if (_prop != null) _spawnedProps.Add(_prop);
+            }
+            _pModel.MarkAsNoLongerNeeded();
+{% elif s.variant == "vehicle_pursuit" %}
+            var _vModel = new Model("{{ s.vehicle_model }}");
+            var _dModel = new Model("{{ s.ped_model }}");
+            _vModel.Request(5000);
+            _dModel.Request(5000);
+            if (_vModel.IsLoaded && _dModel.IsLoaded)
+            {
+                var _veh = World.CreateVehicle(_vModel, _pos);
+                if (_veh != null)
+                {
+                    _spawnedVehicles.Add(_veh);
+                    var _drv = World.CreatePed(_dModel, _pos);
+                    if (_drv != null)
+                    {
+                        _drv.IsPersistent = true;
+                        _drv.SetIntoVehicle(_veh, VehicleSeat.Driver);
+                        _drv.Task.VehicleChase(Game.Player.Character);
+                        _spawned.Add(_drv);
+                    }
+                }
+            }
+            _vModel.MarkAsNoLongerNeeded();
+            _dModel.MarkAsNoLongerNeeded();
+{% else %}
+            var _eModel = new Model("{{ s.ped_model }}");
+            _eModel.Request(5000);
+            if (_eModel.IsLoaded)
+            {
+                var _ped = World.CreatePed(_eModel, _pos);
+                if (_ped != null)
+                {
+                    _ped.IsPersistent = true;
+{% if weapon_native %}
+                    int _wh = Function.Call<int>(Hash.GET_HASH_KEY, "{{ weapon_native }}");
+                    Function.Call(Hash.GIVE_WEAPON_TO_PED, _ped, _wh, 100, false, true);
+{% endif %}
+{% if s.hostile %}
+                    _ped.Task.Combat(Game.Player.Character);
+{% endif %}
+                    _spawned.Add(_ped);
+                }
+            }
+            _eModel.MarkAsNoLongerNeeded();
+{% endif %}
+        }
+    }
+
+    public int AliveCount()
+    {
+        int _alive = 0;
+        foreach (var p in _spawned)
+            if (p != null && p.Exists() && p.IsAlive) _alive++;
+        return _alive;
+    }
+
+    public void CleanupWave()
+    {
+        foreach (var p in _spawned)         { if (p != null) p.Delete(); }
+        foreach (var v in _spawnedVehicles) { if (v != null) v.Delete(); }
+        foreach (var r in _spawnedProps)    { if (r != null) r.Delete(); }
+        _spawned.Clear();
+        _spawnedVehicles.Clear();
+        _spawnedProps.Clear();
+    }
+{%- endmacro %}

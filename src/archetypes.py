@@ -85,6 +85,10 @@ class Archetype(BaseModel):
     # If NONE of these step types appears in the LLM's output, the mission is
     # degenerate for this genre and the scaffold is injected.
     signature_steps: list[str]           = Field(default_factory=list)
+    # "" = classic mission skeleton. "minigame" = this archetype IS a replayable
+    # arcade loop — apply_scaffold always runs its builder to guarantee the
+    # skeleton flag + round config, whatever the LLM emitted.
+    wants_skeleton:  str                  = ""
 
 
 # ── Archetype catalogue ───────────────────────────────────────────────────────
@@ -206,6 +210,65 @@ ARCHETYPES: list[Archetype] = [
         ),
     ),
     Archetype(
+        name="survival_waves", display="Survival Waves",
+        keywords=["survival", "horde", "waves", "wave defense", "arena",
+                  "last stand", "onslaught", "swarm", "endless enemies",
+                  "hold out against"],
+        signature_steps=[],                 # minigames don't use the step machine
+        wants_skeleton="minigame",
+        concept_hint=(
+            "This is a SURVIVAL WAVES MINIGAME — a replayable arcade round, not a "
+            "story mission. Frame it as an arena last-stand: escalating enemy "
+            "waves, a kill score, short breathers between waves, and an instant "
+            "'play again'. No plot, no fetch objectives — just the loop."
+        ),
+        structure_hint=(
+            "MISSION ARCHETYPE: SURVIVAL WAVES MINIGAME.\n"
+            "Set \"skeleton\": \"minigame\" and fill the \"minigame\" block:\n"
+            "  \"score_metric\": \"kills\", \"score_label\": \"KILLS\",\n"
+            "  \"round_type\": \"survive_waves\",\n"
+            "  \"round_params\": {\"wave_count\": 3-10, \"enemies_per_wave\": 2-8,\n"
+            "                     \"wave_growth\": 1.0-3.0, \"arena_radius\": 20-100,\n"
+            "                     \"intermission_seconds\": 3-30}\n"
+            "  \"settings\": 2-4 config-menu rows the player can tune before a round\n"
+            "    (e.g. an int row for wave count, a toggle for hardcore).\n"
+            "REQUIREMENTS:\n"
+            "  - Add 1-2 ped entries describing the enemy type (role \"target\", a real\n"
+            "    weapon) — the compiler resolves them to models and spawns them per wave.\n"
+            "  - Leave \"steps\" as [] — the minigame loop replaces the step machine.\n"
+            "  - No go_to/deliver/story steps."
+        ),
+    ),
+    Archetype(
+        name="pursuit_escape", display="Pursuit Escape",
+        keywords=["survive the heat", "most wanted", "cop chase survival",
+                  "outlast the police", "evade the police", "five stars",
+                  "wanted level survival", "outlast the cops", "survive the cops",
+                  "police survival", "survive the police", "endless police pursuit",
+                  "survive as long as possible"],
+        signature_steps=[],
+        wants_skeleton="minigame",
+        concept_hint=(
+            "This is a PURSUIT ESCAPE MINIGAME — a replayable arcade round, not a "
+            "story mission. The player survives an escalating police pursuit as "
+            "long as possible; the score is seconds survived. Heat keeps rising "
+            "on a timer, eventually sending an attack helicopter."
+        ),
+        structure_hint=(
+            "MISSION ARCHETYPE: PURSUIT ESCAPE MINIGAME.\n"
+            "Set \"skeleton\": \"minigame\" and fill the \"minigame\" block:\n"
+            "  \"score_metric\": \"seconds\", \"score_label\": \"SURVIVED\",\n"
+            "  \"round_type\": \"pursuit_survive\",\n"
+            "  \"round_params\": {\"start_wanted\": 1-3, \"escalation_interval_s\": 15-120,\n"
+            "                     \"max_wanted\": 3-5, \"spawn_heli_at_level\": 0-5}\n"
+            "  \"settings\": 2-4 config-menu rows (e.g. int row for starting heat,\n"
+            "    cycle row for escalation speed).\n"
+            "REQUIREMENTS:\n"
+            "  - Leave \"steps\" as [] and \"peds\" as [] — the game itself supplies police.\n"
+            "  - spawn_heli_at_level 0 means the helicopter never comes."
+        ),
+    ),
+    Archetype(
         name="chase", display="Chase / Pursuit",
         keywords=["chase", "pursuit", "pursue", "tail", "follow", "getaway",
                   "escape the", "outrun", "catch the", "hunt down", "intercept"],
@@ -291,9 +354,22 @@ def apply_scaffold(schema: MissionSchema, arch: Archetype) -> list[str]:
     output is at least a real <genre> sub-game rather than generic filler. Also
     injects the minimum entities each scaffold needs. Returns log messages.
 
-    Non-degenerate output is trusted and left alone (the structure hint already
-    nudged the LLM, and _check_consistency fills in race_opponent/lap defaults).
+    Minigame archetypes (wants_skeleton == "minigame") ALWAYS run their builder:
+    the builder is the deterministic guard that guarantees the skeleton flag and
+    round config even when the LLM ignored the minigame block entirely. The
+    builders are idempotent — LLM-authored settings/params survive.
+
+    Non-degenerate mission output is trusted and left alone (the structure hint
+    already nudged the LLM, and _check_consistency fills in defaults).
     """
+    if arch.wants_skeleton == "minigame":
+        builder = _SCAFFOLDS.get(arch.name)
+        if builder is None:
+            return []
+        msgs = [f"Archetype '{arch.display}': enforcing the minigame skeleton"]
+        builder(schema, msgs)
+        return msgs
+
     if not is_degenerate(schema, arch):
         return []
 
@@ -404,6 +480,59 @@ def _scaffold_chase(schema: MissionSchema, msgs: list[str]) -> None:
     msgs.append("  chase scaffold: get_in_vehicle -> go_to -> timer")
 
 
+def _scaffold_survival_waves(schema: MissionSchema, msgs: list[str]) -> None:
+    from .mission_schema import MinigameSetting, MinigameSpec, MissionPed
+    schema.skeleton = "minigame"
+    schema.steps = []                       # the round loop replaces the step machine
+    if schema.minigame is None:
+        schema.minigame = MinigameSpec()
+    mg = schema.minigame
+    mg.round_type = "survive_waves"
+    # Re-validate params through the round model (idempotent — LLM values kept).
+    from .mission_schema import WaveRoundParams
+    mg.round_params = WaveRoundParams.model_validate(mg.round_params or {}).model_dump()
+    if mg.score_metric == "points":
+        mg.score_metric = "kills"
+        mg.score_label = "KILLS"
+    if not mg.settings:
+        mg.settings = [
+            MinigameSetting(key="wave_count", label="Waves", kind="int",
+                            min_value=3, max_value=10,
+                            default=str(mg.round_params["wave_count"])),
+            MinigameSetting(key="hardcore", label="Hardcore Mode", kind="toggle",
+                            default="false"),
+        ]
+    # Wave enemies ride the normal ped resolution path (Step 4 RAG).
+    if not schema.peds:
+        schema.peds.append(MissionPed(
+            description="gang enforcer", role="target", count=1, weapon="pistol"))
+        msgs.append("  survival scaffold: added a default wave enemy ped")
+    msgs.append("  survival scaffold: skeleton=minigame, round_type=survive_waves")
+
+
+def _scaffold_pursuit_escape(schema: MissionSchema, msgs: list[str]) -> None:
+    from .mission_schema import MinigameSetting, MinigameSpec, PursuitRoundParams
+    schema.skeleton = "minigame"
+    schema.steps = []
+    if schema.minigame is None:
+        schema.minigame = MinigameSpec()
+    mg = schema.minigame
+    mg.round_type = "pursuit_survive"
+    mg.round_params = PursuitRoundParams.model_validate(mg.round_params or {}).model_dump()
+    if mg.score_metric == "points":
+        mg.score_metric = "seconds"
+        mg.score_label = "SURVIVED"
+    if not mg.settings:
+        mg.settings = [
+            MinigameSetting(key="start_wanted", label="Starting Heat", kind="int",
+                            min_value=1, max_value=3,
+                            default=str(mg.round_params["start_wanted"])),
+            MinigameSetting(key="heli", label="Attack Helicopter", kind="toggle",
+                            default="true" if mg.round_params["spawn_heli_at_level"] else "false"),
+        ]
+    msgs.append("  pursuit scaffold: skeleton=minigame, round_type=pursuit_survive")
+
+
 _SCAFFOLDS = {
     "race":    _scaffold_race,
     "heist":   _scaffold_heist,
@@ -411,4 +540,6 @@ _SCAFFOLDS = {
     "fly":     _scaffold_fly,
     "assault": _scaffold_assault,
     "chase":   _scaffold_chase,
+    "survival_waves": _scaffold_survival_waves,
+    "pursuit_escape": _scaffold_pursuit_escape,
 }

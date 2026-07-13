@@ -10,7 +10,6 @@ STEP 5 — Python fixer + per-item LLM pick for UNRESOLVED models
 STEP 6 — Pipeline compiles schema → .NET 4.8 C# (no LLM involved)
 """
 
-import json
 import re
 from pathlib import Path
 
@@ -55,6 +54,10 @@ _GTA_RESERVED_FIELDS = {
     # Minigame skeleton (see minigame.cs.j2)
     "_cfgrows", "_cfgvalues", "_score", "_bestscore", "_roundstart",
     "_ini", "_resultsat", "cfgrow",
+    # Minigame round types (survive_waves / pursuit_survive + micro partials)
+    "_spawned", "_spawnedvehicles", "_spawnedprops",
+    "_wave", "_intermissionuntil", "_waveendsat", "_prevalive",
+    "_nextescalation", "_helispawned",
 }
 _GTA_TEMPLATE_USINGS = {
     "System", "System.Collections.Generic", "System.Windows.Forms",
@@ -62,57 +65,19 @@ _GTA_TEMPLATE_USINGS = {
 }
 
 
-# ── Real GTA.Native.Hash members — catches LLM-invented natives (e.g. the
-# hallucinated SET_MISSION_FAILED / SET_MISSION_PASSED that fail CS0117 at
-# compile time) before they reach the generated .3.cs. Sourced from a real
-# SHVDN3 audit tool's allowlist (6,460 native names); missing file → None,
-# which makes lint_hash_references() a no-op rather than a hard failure.
-def _load_hash_allowlist(lookups_dir: str = "lookups") -> "frozenset[str] | None":
-    path = Path(lookups_dir) / "gta_hash_allowlist.json"
-    if not path.exists():
-        return None
-    try:
-        return frozenset(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
-        return None
+# ── SHVDN3 reality allowlists — loaders shared with the GTA micro layer.
+# Kept as module-level constants here so existing call sites (and tests that
+# monkeypatch them) keep working; the loaders themselves moved to
+# src/gta_allowlists.py to avoid a pipeline <-> micro import cycle.
+from .gta_allowlists import (
+    load_hash_allowlist as _load_hash_allowlist,
+    load_api_surface as _load_api_surface,
+    load_enum_allowlist as _load_enum_allowlist,
+)
 
 _GTA_HASH_ALLOWLIST: "frozenset[str] | None" = _load_hash_allowlist()
-
-
-# ── Real SHVDN3 member surface for a fixed set of commonly-referenced types —
-# catches LLM-invented members (e.g. the confirmed Ped.GetNearestVehicle /
-# Ped.SetPositionAndRotation, neither of which exist) the same way the hash
-# allowlist catches invented natives. Sourced from the same SHVDN3 audit
-# tool's reflected API extraction, trimmed to the types this checker
-# understands. Missing file → None → lint_member_references() is a no-op.
-def _load_api_surface(lookups_dir: str = "lookups") -> "dict | None":
-    path = Path(lookups_dir) / "gta_api_surface.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-_GTA_API_SURFACE: "dict | None" = _load_api_surface()
-
-
-# ── Real SHVDN3 enum members — catches LLM-invented enum values (e.g.
-# Weather.Rain, which doesn't exist — the real member is Weather.Raining).
-# Corpus-mined: the 4th most common real failure (133 occurrences) across a
-# 1191-file independent dataset. No type inference needed — an enum name in
-# `EnumType.Member` is unambiguous wherever it appears. Missing file → None
-# → lint_enum_references() is a no-op.
-def _load_enum_allowlist(lookups_dir: str = "lookups") -> "dict | None":
-    path = Path(lookups_dir) / "gta_enum_allowlist.json"
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-_GTA_ENUM_ALLOWLIST: "dict | None" = _load_enum_allowlist()
+_GTA_API_SURFACE:    "dict | None"           = _load_api_surface()
+_GTA_ENUM_ALLOWLIST: "dict | None"           = _load_enum_allowlist()
 
 
 def _lint_mission_extras(schema: MissionSchema) -> None:

@@ -1,0 +1,17 @@
+# {{ s.name }} — GTA5 waves micro ({{ variant }})
+
+{{ s.description }}
+
+## Install
+Copy `{{ s.name }}.3.cs` into `GTA V/scripts/` (requires Script Hook V + SHVDN3).
+
+## Surface (escalation director)
+- `WaveSizeFor(int wave)` — {{ variant }} sizing from base {{ s.base_count }}, growth {{ s.growth }}
+- `BeginWave()` / `BeginIntermission()` / `InIntermission()` / `WavesRemaining()` / `ResetWaves()`
+{% if variant == "timed_pressure" %}
+- `WaveTimedOut()` — true when the {{ s.pressure_seconds }}s per-wave deadline passes
+{% endif %}
+- {{ s.max_waves }} waves, {{ s.intermission_seconds }}s intermissions
+
+Standalone demo: **F6** runs the director with ticker announcements (pair with
+the spawner micro for real enemies).

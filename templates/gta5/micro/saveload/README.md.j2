@@ -1,0 +1,17 @@
+# {{ s.name }} — GTA5 saveload micro ({{ variant }})
+
+{{ s.description }}
+
+## Install
+Copy `{{ s.name }}.3.cs` into `GTA V/scripts/` (requires Script Hook V + SHVDN3).
+Persists to `scripts/{{ s.ini_name }}.ini` ([{{ s.section }}] section).
+
+## Surface
+{% if variant == "highscore_table" %}
+- `RecordScore(int)` — insert into the ranked top-{{ s.max_entries }} table; returns true on a new best
+- `BestScore()` — current Rank1
+- Standalone demo: **F6** records a test score
+{% else %}
+- `GetSetting(key, fallback)` / `SetSetting(key, value)` — named string settings
+{% endif %}
+- Save failures (read-only install dirs) degrade to session-only silently

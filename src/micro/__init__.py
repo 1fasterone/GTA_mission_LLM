@@ -71,3 +71,10 @@ REGISTRY = {
     "npc_dialog":   NpcDialogPipeline,
     "vfx":          VfxPipeline,
 }
+
+
+# GTA5 micro registry — separate namespace so kind names ("menu", "hud", ...)
+# never collide with the Unity kinds above. CLI prefix: gta-<kind>.
+# Redundant alias marks this as an intentional re-export (main.py imports it
+# from here), not a stray unused import.
+from .gta5 import GTA_REGISTRY as GTA_REGISTRY  # noqa: E402

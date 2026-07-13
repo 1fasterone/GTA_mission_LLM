@@ -1,0 +1,69 @@
+{# Waves micro — escalation director partial. Owns wave counting + pacing;
+   the consumer (minigame skeleton or standalone wrapper) asks it what to do.
+   Public surface: BeginWave(), BeginIntermission(), WaveSizeFor(int),
+   WavesRemaining(), plus the _wave/_intermissionUntil{% if s.variant == "timed_pressure" %}/_waveEndsAt{% endif %} fields. #}
+
+{% macro fields(s) %}
+    // -- {{ s.name }} state ({{ s.variant }}) -----------------------------------
+    private int      _wave = 0;                              // 0 = not started
+    private DateTime _intermissionUntil = DateTime.MinValue;
+{% if s.variant == "timed_pressure" %}
+    private DateTime _waveEndsAt = DateTime.MinValue;        // per-wave deadline
+{% endif %}
+{%- endmacro %}
+
+{% macro methods(s) %}
+    public int WaveSizeFor(int wave)
+    {
+{% if s.variant == "exponential" %}
+        // {{ s.base_count }} * {{ s.growth }}^(wave-1), integer-floored.
+        double _size = {{ s.base_count }} * Math.Pow({{ "%.2f"|format(s.growth) }}, wave - 1);
+        return (int)Math.Max(1, Math.Floor(_size));
+{% else %}
+        // {{ s.base_count }} + ({{ s.growth }}-1)*{{ s.base_count }} per wave, linear ramp.
+        double _size = {{ s.base_count }} + ({{ "%.2f"|format(s.growth) }} - 1.0) * {{ s.base_count }} * (wave - 1);
+        return (int)Math.Max(1, Math.Floor(_size));
+{% endif %}
+    }
+
+    public void BeginWave()
+    {
+        _wave++;
+        _intermissionUntil = DateTime.MinValue;
+{% if s.variant == "timed_pressure" %}
+        _waveEndsAt = DateTime.UtcNow.AddSeconds({{ s.pressure_seconds }});
+{% endif %}
+    }
+
+    public void BeginIntermission()
+    {
+        _intermissionUntil = DateTime.UtcNow.AddSeconds({{ s.intermission_seconds }});
+    }
+
+    public bool InIntermission()
+    {
+        return DateTime.UtcNow < _intermissionUntil;
+    }
+
+    public int WavesRemaining()
+    {
+        return Math.Max(0, {{ s.max_waves }} - _wave);
+    }
+{% if s.variant == "timed_pressure" %}
+
+    public bool WaveTimedOut()
+    {
+        return _wave > 0 && _waveEndsAt != DateTime.MinValue
+            && DateTime.UtcNow > _waveEndsAt;
+    }
+{% endif %}
+
+    public void ResetWaves()
+    {
+        _wave = 0;
+        _intermissionUntil = DateTime.MinValue;
+{% if s.variant == "timed_pressure" %}
+        _waveEndsAt = DateTime.MinValue;
+{% endif %}
+    }
+{%- endmacro %}
