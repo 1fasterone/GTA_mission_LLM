@@ -1065,7 +1065,9 @@ def atom_list(
     category: Optional[str] = typer.Argument(None, help="Filter by category: movement|animation|camera|audio|fx|logic|entity"),
     show_params: bool        = typer.Option(False, "--params", "-p", help="Show parameter details"),
     show_snippet: Optional[str] = typer.Option(None, "--snippet", "-s",
-                                               help="Show Unity C# snippet for a named atom"),
+                                               help="Show C# snippet for a named atom"),
+    engine: str = typer.Option("unity", "--engine", "-e",
+                               help="Snippet backend: unity | gta5"),
 ) -> None:
     """List Phase 2 atoms — engine-agnostic building blocks for the compiler."""
     from src.atoms import list_atoms, get_atom, CATEGORIES
@@ -1073,15 +1075,20 @@ def atom_list(
     from rich.panel import Panel
 
     if show_snippet:
-        from src.atoms.backends.unity import unity_atom_snippet
+        from src.atoms.backends import atom_snippet
         atom = get_atom(show_snippet)
         if atom is None:
             console.print(f"[red]Unknown atom:[/] {show_snippet}")
             raise typer.Exit(1)
-        snippet = unity_atom_snippet(atom.name, {p.name: p.default for p in atom.params})
+        try:
+            snippet = atom_snippet(engine, atom.name,
+                                   {p.name: p.default for p in atom.params})
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
+            raise typer.Exit(1)
         console.print(Panel(
             snippet,
-            title=f"[cyan]{atom.name}[/] — Unity C# snippet (default args)",
+            title=f"[cyan]{atom.name}[/] — {engine} C# snippet (default args)",
             subtitle=f"category: {atom.category} | duration: {atom.duration}",
             expand=False,
         ))
