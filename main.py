@@ -956,6 +956,16 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
           python main.py unity-shader "collectible pulses a glowing outline" --variant outline_pulse
         """,
     ),
+    "vfx": (
+        "particle_system|vfx_sequence|screen_fx|impact_fx",
+        """Generate a Unity VFX controller (particle system/scripted sequence/screen fx/impact fx).
+
+        \b
+        Examples:
+          python main.py unity-vfx "explosion burst when the barrel is shot"
+          python main.py unity-vfx "screen flashes red and fades when the player takes damage" --variant screen_fx
+        """,
+    ),
 }
 for _kind, (_variant_help, _doc) in _SIMPLE_MICROS.items():
     _register_micro_command(_kind, _variant_help, _doc)
