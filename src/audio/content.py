@@ -118,6 +118,13 @@ def generate_bank(cues, resources_dir: str | Path, config: dict,
             "clips": clip_paths, "variations": len(bufs),
         })
 
+    # Batch is done — free any model the adapter kept resident across cues
+    # (stable3 keeps the sfx/music model loaded between same-type calls
+    # instead of reloading per cue; other adapters don't define this).
+    unload_all = getattr(client.adapter, "unload_all", None)
+    if unload_all is not None:
+        unload_all()
+
     manifest = {
         "seed": int(seed), "backend": client.name, "cue_count": len(entries),
         "cues": entries, "warnings": warnings,
