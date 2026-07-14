@@ -58,6 +58,38 @@ def _rounded_rect_loop(half_w: float, half_l: float, radius: float,
     return pts
 
 
+def _unit_xz(a: list[float], b: list[float]) -> tuple[float, float]:
+    """Unit vector from point a to point b in the XZ plane (ignores y)."""
+    dx, dz = b[0] - a[0], b[2] - a[2]
+    length = math.hypot(dx, dz) or 1.0
+    return dx / length, dz / length
+
+
+def _start_grid(centerline: list[list[float]], count: int,
+                 lane_width: float, row_spacing: float = 4.0) -> list[list[float]]:
+    """Deterministic starting-grid positions anchored to the track's actual
+    start/finish line (centerline[0] — the same point CheckpointBanners[0]
+    marks), staggered two-wide behind the line so karts read as lined up ON
+    the track instead of floating wherever the schema's authored
+    radius/spacing happened to place them relative to the whole scene's
+    origin (which is centered on the track loop itself, not the start
+    line)."""
+    start = centerline[0]
+    nxt = centerline[1] if len(centerline) > 1 else centerline[0]
+    fx, fz = _unit_xz(start, nxt)
+    rx, rz = -fz, fx  # right-hand perpendicular in the XZ plane
+    lane_gap = lane_width * 0.28
+    positions = []
+    for i in range(count):
+        row, col = divmod(i, 2)
+        lateral = (col - 0.5) * lane_gap * 2.0
+        longitudinal = -(row + 1) * row_spacing
+        positions.append([round(start[0] + rx * lateral + fx * longitudinal, 3),
+                          0.0,
+                          round(start[2] + rz * lateral + fz * longitudinal, 3)])
+    return positions
+
+
 def _every_nth(points: list[list[float]], n: int) -> list[list[float]]:
     """Sparse subsample of a closed loop (keeps the closing duplicate)."""
     if n <= 1 or len(points) <= n:
@@ -121,11 +153,16 @@ def compose_racetrack(schema) -> list[str]:
         EntitySpec(name="PlayerKart", kind="vehicle", count=1,
                    shape="cube", placement="single", color_role="primary",
                    scale=1.0, model_hint="kart racer vehicle",
-                   tag="Player"),
+                   tag="Player",
+                   # Pole position: right on the start/finish line, centered
+                   # across the track — not the scene origin, which is the
+                   # track LOOP's center, not the start line.
+                   instance_positions=[[centerline[0][0], 0.0, centerline[0][2]]]),
         EntitySpec(name="OpponentKarts", kind="vehicle", count=3,
                    shape="cube", placement="grid", spacing=4.0, radius=6.0,
                    color_role="accent", scale=1.0,
-                   model_hint="kart racer opponent vehicle", tag="Enemy"),
+                   model_hint="kart racer opponent vehicle", tag="Enemy",
+                   instance_positions=_start_grid(centerline, 3, _TRACK_WIDTH)),
     ]
     schema.entities = list(schema.entities) + new_entities
     msgs.append(

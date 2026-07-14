@@ -171,6 +171,23 @@ _VALID_ENTITY_PLACEMENTS: frozenset[str] = frozenset(get_args(EntityPlacement))
 _VALID_ENTITY_ROLES:      frozenset[str] = frozenset(get_args(EntityColorRole))
 
 
+def _clamp_points(v, cap: int) -> list:
+    """Shared coercion for point-list fields: ≤ `cap` [x, y, z] float triples,
+    dropping anything malformed."""
+    if not isinstance(v, list):
+        return []
+    out: list[list[float]] = []
+    for p in v[:cap]:
+        try:
+            nums = [float(x) for x in list(p)[:3]]
+        except (TypeError, ValueError):
+            continue
+        while len(nums) < 3:
+            nums.append(0.0)
+        out.append([max(-2000.0, min(2000.0, n)) for n in nums])
+    return out
+
+
 class EntitySpec(BaseModel):
     """A prompt-derived group of scene objects: N primitives placed by a rule.
 
@@ -210,23 +227,58 @@ class EntitySpec(BaseModel):
     # container of empty GameObjects at the points — winding roads, patrol
     # routes, and racing lines that waypoint-following AI can consume.
     path_points: list[list[float]] = Field(default_factory=list)
+    # World-space [x, z] center this group is packed into by src/unity_layout.py
+    # (Step 5 of the pipeline) — every group used to spawn centered on the
+    # scene origin regardless of `radius`, so distinct groups (e.g. a ring of
+    # buildings and a ring of vehicles, both radius=8) landed on the exact
+    # same circle and stacked. [0, 0] until the layout pass runs.
+    origin_offset: list[float] = Field(default_factory=lambda: [0.0, 0.0])
+    # Bounding radius (world units) of this group's footprint AFTER layout —
+    # used both for non-overlapping group packing and for sizing the scene's
+    # ground plane to the content instead of a fixed constant. 0.0 = not yet
+    # computed (placement == "path", or the layout pass hasn't run).
+    group_radius: float = 0.0
+    # Baked-deterministic per-instance [x, y, z] world positions computed by
+    # the layout pass for placement in {single, line, ring, grid, scatter} —
+    # supersedes EntitySpawner's runtime PlaceAt() formulas (which only knew
+    # about ONE group at a time and, for "scatter", ignored `spacing`/scale
+    # entirely) with positions that already account for group_radius packing,
+    # scale-derived footprint, and guaranteed minimum inter-instance spacing.
+    # Empty -> spawner falls back to its legacy runtime formulas (2D archetypes
+    # never populate this).
+    instance_positions: list[list[float]] = Field(default_factory=list)
 
     @field_validator("path_points", mode="before")
     @classmethod
     def _clamp_path(cls, v) -> list:
         """Coerce to ≤ 64 [x, y, z] float triples; drop anything malformed."""
-        if not isinstance(v, list):
-            return []
-        out: list[list[float]] = []
-        for p in v[:64]:
-            try:
-                nums = [float(x) for x in list(p)[:3]]
-            except (TypeError, ValueError):
-                continue
-            while len(nums) < 3:
-                nums.append(0.0)
-            out.append([max(-2000.0, min(2000.0, n)) for n in nums])
-        return out
+        return _clamp_points(v, 64)
+
+    @field_validator("instance_positions", mode="before")
+    @classmethod
+    def _clamp_instance_positions(cls, v) -> list:
+        """Coerce to ≤ 200 [x, y, z] float triples (matches `count`'s cap)."""
+        return _clamp_points(v, 200)
+
+    @field_validator("origin_offset", mode="before")
+    @classmethod
+    def _clamp_offset(cls, v) -> list:
+        """Coerce to exactly [x, z] floats, clamped to a sane world range."""
+        try:
+            nums = [float(x) for x in list(v)[:2]]
+        except (TypeError, ValueError):
+            return [0.0, 0.0]
+        while len(nums) < 2:
+            nums.append(0.0)
+        return [max(-2000.0, min(2000.0, n)) for n in nums]
+
+    @field_validator("group_radius", mode="before")
+    @classmethod
+    def _clamp_group_radius(cls, v) -> float:
+        try:
+            return max(0.0, min(2000.0, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
 
     @field_validator("model_hint", mode="before")
     @classmethod
