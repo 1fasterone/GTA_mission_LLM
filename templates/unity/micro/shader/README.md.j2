@@ -1,0 +1,34 @@
+# {{ s.name }} — Shader/Material Controller
+
+**Variant:** {{ variant }}
+
+{{ s.description }}
+
+Drives `{{ s.property_name }}` via a **MaterialPropertyBlock** — the shared
+Material asset is never touched, so no per-instance material leaks.
+
+## Setup
+
+{% if variant == "color_cycle" %}
+1. Attach `{{ s.name }}` to a GameObject with a **Renderer** (MeshRenderer, SpriteRenderer, etc.).
+2. Cycles through {{ s.stops | length }} color stop(s) on `{{ s.property_name }}`, looping: **{{ s.loop }}**.
+3. Call `Play()` / `Stop()` to control the cycle at runtime.
+{% for stop in s.stops %}
+   - Stop {{ loop.index }}: RGBA({{ stop.r }}, {{ stop.g }}, {{ stop.b }}, {{ stop.a }}), hold {{ stop.hold }}s
+{% endfor %}
+{% elif variant == "dissolve" %}
+1. Attach `{{ s.name }}` to a GameObject whose material exposes a dissolve-style float property (`{{ s.property_name }}`).
+2. Sweeps 0 → 1 over {{ s.duration }}s. Auto-starts on `Start()`: **{{ s.auto_start }}**.
+3. Call `Dissolve()` to sweep out, `Appear()` to sweep in.
+{% elif variant == "hit_flash" %}
+1. Attach `{{ s.name }}` to a GameObject with a **Renderer**.
+2. Call `Flash()` (e.g. from a damage handler) to tint `{{ s.property_name }}` to RGB({{ s.flash_color_r }}, {{ s.flash_color_g }}, {{ s.flash_color_b }}) for {{ s.flash_duration }}s, then restore the original color.
+{% elif variant == "uv_scroll" %}
+1. Attach `{{ s.name }}` to a GameObject with a **Renderer** whose material has a texture property (`{{ s.property_name }}`).
+2. Continuously scrolls the UV offset at ({{ s.speed_x }}, {{ s.speed_y }}) units/sec.
+3. Call `SetSpeed(x, y)` to change scroll speed at runtime.
+{% elif variant == "outline_pulse" %}
+1. Attach `{{ s.name }}` to a GameObject with a **Renderer** whose material exposes an outline/rim float property (`{{ s.property_name }}`).
+2. Pulses sinusoidally between {{ s.min_value }} and {{ s.max_value }} at speed {{ s.pulse_speed }}.
+3. Call `SetRange(min, max)` to change the pulse bounds at runtime.
+{% endif %}

@@ -944,6 +944,18 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
           python main.py unity-animator "giant enemy crab — walk, attack, pinch, dead" --variant creature
         """,
     ),
+    "shader": (
+        "color_cycle|dissolve|hit_flash|uv_scroll|outline_pulse",
+        """Generate a Unity runtime shader/material controller (color cycle/dissolve/hit flash/UV scroll/outline pulse).
+
+        Drives shader properties via MaterialPropertyBlock — never touches the shared Material asset.
+
+        \b
+        Examples:
+          python main.py unity-shader "enemy flashes white when hit"
+          python main.py unity-shader "collectible pulses a glowing outline" --variant outline_pulse
+        """,
+    ),
 }
 for _kind, (_variant_help, _doc) in _SIMPLE_MICROS.items():
     _register_micro_command(_kind, _variant_help, _doc)

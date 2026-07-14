@@ -740,6 +740,34 @@ class UnityPipeline:
         model_overrides: dict[str, str] = {}
         if blender_models:
             model_overrides = self._blender_model_overrides(schema, concept)
+        # Step 6.5 — enrich entity sketchfab_query while the project LLM is
+        # STILL WARM (mirrors the audio concept-translator's placement, and the
+        # NPC dialog pre-extraction below: it MUST run before any Blender/
+        # Chromium-heavy phase cools the LLM). Deliberately placed ahead of the
+        # `if compose:` block below — the bulk Sketchfab collection nested in
+        # there runs 10-15 rounds of search+download+Blender-convert and
+        # previously ran BEFORE this step; by the time translate_concept ran,
+        # the local model had gone cold (LM Studio idle-unload), llm.chat()
+        # failed/timed out, translate_concept's try/except swallowed it, every
+        # entity kept an empty sketchfab_query, and per-entity Tier S had
+        # nothing to match on — silently falling through to Kenney. Runs
+        # regardless of `compose`/`subsystems`: the concept-translated query
+        # also drives the LOCAL catalog tiers (see _query_weights), so entity
+        # -> model matching is concept-aware even when Sketchfab is off or fails.
+        if schema.entities:
+            try:
+                from .unity_sketchfab_translator import translate_concept
+                _seed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
+                        else (seed or 0))
+                n = translate_concept(concept, schema.entities, self.llm, _seed)
+                if n:
+                    self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
+                else:
+                    self._warn("Sketchfab query translation produced nothing — "
+                              "resolver falls back to model_hint / entity name")
+            except Exception as exc:  # noqa: BLE001
+                self._warn(f"Sketchfab query translation failed "
+                          f"({type(exc).__name__}: {exc}) — mechanical fallback used")
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
         composed_units = None
@@ -851,25 +879,6 @@ class UnityPipeline:
                                f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
-        # Step 6.5 — enrich entity sketchfab_query while the project LLM is
-        # still loaded (mirrors the audio concept-translator's placement).
-        # Runs regardless of sketchfab.enabled: the concept-translated query now
-        # ALSO drives the LOCAL catalog tiers (see _query_weights), so entity →
-        # model matching is concept-aware even when Sketchfab is off or fails.
-        if schema.entities:
-            try:
-                from .unity_sketchfab_translator import translate_concept
-                _seed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
-                        else (seed or 0))
-                n = translate_concept(concept, schema.entities, self.llm, _seed)
-                if n:
-                    self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
-                else:
-                    self._warn("Sketchfab query translation produced nothing — "
-                              "resolver falls back to model_hint / entity name")
-            except Exception as exc:  # noqa: BLE001
-                self._warn(f"Sketchfab query translation failed "
-                          f"({type(exc).__name__}: {exc}) — mechanical fallback used")
         try:
             project_root, file_count = self.generator.write(
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,
