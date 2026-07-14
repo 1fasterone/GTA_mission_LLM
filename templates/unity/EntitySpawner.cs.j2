@@ -32,6 +32,18 @@ public class EntitySpawner : MonoBehaviour
 {% endfor %}
     };
 {% endif %}
+{% if e.instance_positions and not entity_model_paths.get(e.name, "").startswith("skip:") %}
+    // Baked by src/unity_layout.py (Step 5) — already accounts for this
+    // group's world-space region offset, scale-derived footprint spacing,
+    // and (for "scatter") deterministic non-overlapping jitter. Supersedes
+    // PlaceAt()'s runtime formulas for this group.
+    private static readonly Vector3[] _pos_{{ loop.index0 }} =
+    {
+{% for p in e.instance_positions %}
+        new Vector3({{ "%.3f"|format(p[0]) }}f, {{ "%.3f"|format(p[1]) }}f, {{ "%.3f"|format(p[2]) }}f),
+{% endfor %}
+    };
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -57,7 +69,7 @@ public class EntitySpawner : MonoBehaviour
 {% set has_path = e.placement == "path" and e.path_points %}
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
-        {% endif %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f);
+        {% endif %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }});
 {% if has_path %}
         EmitWaypoints({{ '"Waypoints"' if ns.first_path else '"' ~ e.name ~ '_Waypoints"' }}, _path_{{ loop.index0 }});
 {% set ns.first_path = false %}
@@ -73,7 +85,7 @@ public class EntitySpawner : MonoBehaviour
     private void SpawnGroup(string groupName, int count, PrimitiveType shape, string placement,
                             float spacing, float radius, float scale, Color color, string tag,
                             string behavior, string modelPath, Vector3[] path, Shader sh,
-                            float fitSize = 0f)
+                            float fitSize = 0f, Vector3[] bakedPositions = null)
     {
         // Resolve an optional behavior script once (e.g. a chase-AI micro).
         System.Type behaviorType = null;
@@ -199,7 +211,16 @@ public class EntitySpawner : MonoBehaviour
             if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
 {% endif %}
             Vector3 pos;
-            if (placement == "path" && path != null && path.Length > 0)
+            if (bakedPositions != null && i < bakedPositions.Length)
+            {
+                // Precomputed by src/unity_layout.py (pipeline Step 5) — already
+                // includes this group's packed world-space region offset and,
+                // for "scatter", deterministic non-overlapping jitter. Takes
+                // priority over PlaceAt()'s runtime formulas whenever present.
+                pos = bakedPositions[i];
+                pos.y += pivotOffsetY * finalScale;
+            }
+            else if (placement == "path" && path != null && path.Length > 0)
             {
                 // Lay instances evenly along the polyline — honors elevation (y).
                 float _t = count > 1 ? (float)i / (count - 1) : 0f;

@@ -19,6 +19,7 @@ from .unity_asset_resolver import resolve_assets
 from .unity_entity_asset_resolver import (resolve_entity_assets,
                                           texture_dirs_with_res_root_for)
 from .unity_model_resolver import resolve_default_models, models_for_schema
+from .unity_layout import terrain_bounds
 from .micro.code_fields import CodeField, lint_extensible
 
 _log = logging.getLogger(__name__)
@@ -2008,6 +2009,14 @@ class UnityProjectGenerator:
                     _allowed = set(sp.entities)
                     ctx["entities"] = [e for e in schema.entities
                                        if e.name in _allowed]
+            # Ground plane sized to THIS scene's hosted entity groups (a
+            # scene-filtered subset per SceneSpec.entities) rather than a
+            # fixed constant — see src/unity_layout.py:terrain_bounds.
+            _gxmin, _gzmin, _gxmax, _gzmax = terrain_bounds(ctx["entities"])
+            ctx["ground_center_x"] = round((_gxmin + _gxmax) / 2.0, 3)
+            ctx["ground_center_z"] = round((_gzmin + _gzmax) / 2.0, 3)
+            ctx["ground_scale_x"]  = round(max(1.0, _gxmax - _gxmin), 3)
+            ctx["ground_scale_z"]  = round(max(1.0, _gzmax - _gzmin), 3)
             scene_path = f"{pn}/Assets/Scenes/{scene_name}.unity"
             files[scene_path] = self._render("scene.unity.j2", ctx)
             files[f"{scene_path}.meta"] = _default_meta(

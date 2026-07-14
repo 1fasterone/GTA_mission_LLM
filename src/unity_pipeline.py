@@ -32,6 +32,7 @@ from .themes              import (
 from .unity_archetypes    import classify as classify_intent, apply_intent
 from .unity_racetrack     import compose_racetrack, is_racing_degenerate
 from .unity_concept_entities import inject_missing_concept_entities
+from .unity_layout        import compute_layout
 
 console = Console()
 
@@ -718,6 +719,14 @@ class UnityPipeline:
                 and is_racing_degenerate(schema)):
             for msg in compose_racetrack(schema):
                 self._fix(msg)
+
+        # Layout pass: pack every {single,line,ring,grid,scatter} entity group
+        # into a non-overlapping world-space region and bake exact per-instance
+        # positions (src/unity_layout.py) — runs after the racetrack scaffold
+        # so any injected vehicle groups get packed too, and after concept
+        # entity rescue/racing scaffold so it sees the FINAL entity list.
+        for msg in compute_layout(schema):
+            self._fix(msg)
 
         # Capability graph: schema.capabilities → atoms (Step 5b)
         schema, cap_msgs = resolve_capabilities(schema)
