@@ -8,10 +8,14 @@ VRAM strategy for 8 GB cards
 ──────────────────────────────
   * LM Studio must be unloaded before this adapter is called (AudioPipeline
     handles the unload via unload_lm_studio() before write_files runs).
-  * The sfx and music models are loaded per-call and immediately deleted after
-    generation; torch.cuda.empty_cache() is called after every del so the next
-    load starts with a clean slab.
-  * The two models are NEVER both resident at the same time.
+  * The sfx and music models are kept resident ACROSS consecutive same-type
+    calls (a batch of 10 sfx cues loads the sfx model once, not 10 times —
+    load from disk is ~3-13s vs. ~2s of actual diffusion work per cue, so
+    reloading per-call was paying more in load time than in generation).
+  * The two models are still NEVER both resident at the same time: switching
+    from sfx to music (or back) unloads the other model first.
+  * Caller MUST call unload_all() once the whole batch is done (content.py's
+    generate_bank() does this) so VRAM is freed before the next pipeline stage.
   * tts returns None — content.py degrades to a silent placeholder.
   * Any import error, CUDA OOM, or generation failure degrades silently:
       sfx  → falls back to the DSP synth archetype (inherited from DspAdapter)
@@ -41,6 +45,9 @@ class Stable3AudioAdapter(DspAdapter):
         self.stable3_dir = str(cfg.get("stable3_dir", _DEFAULT_STABLE3_DIR))
         self.steps       = int(cfg.get("steps", 8))
         self._warned: set[str] = set()
+        # model_key ("sfx" | "music") -> loaded StableAudioModel. At most ONE
+        # entry at a time — _ensure_loaded() evicts the other key before a load.
+        self._loaded: dict[str, object] = {}
 
     # ── internal helpers ──────────────────────────────────────────────────────
 
@@ -49,9 +56,9 @@ class Stable3AudioAdapter(DspAdapter):
             self._warned.add(key)
             print(f"[audio/stable3] {msg}")
 
-    def _load_model(self, model_key: str):
-        """Import load_audio_model from stable3audio/main.py and call it.
-        Returns the StableAudioModel or None on failure. Caller must del it."""
+    def _import_load_audio_model(self):
+        """Import load_audio_model from stable3audio/main.py. Returns the
+        function, or None if the dir/import is unavailable."""
         if not os.path.isdir(self.stable3_dir):
             self._warn_once(
                 "dir",
@@ -59,34 +66,72 @@ class Stable3AudioAdapter(DspAdapter):
                 "set audio.stable3_dir in config.yaml",
             )
             return None
-
-        # Prepend stable3audio directory so `import main` resolves correctly
         _inserted = self.stable3_dir not in sys.path
         if _inserted:
             sys.path.insert(0, self.stable3_dir)
         try:
             from main import load_audio_model  # type: ignore  # noqa: PLC0415
-            return load_audio_model(model_key)
+            return load_audio_model
         except ImportError as exc:
             self._warn_once("import", f"stable3audio import error ({exc})")
-            return None
-        except Exception as exc:  # noqa: BLE001
-            self._warn_once(f"load_{model_key}", f"model load failed ({type(exc).__name__}: {exc})")
             return None
         finally:
             if _inserted and self.stable3_dir in sys.path:
                 sys.path.remove(self.stable3_dir)
 
+    def _ensure_loaded(self, model_key: str):
+        """Return the resident model for model_key, loading it if needed.
+        Evicts the OTHER model_key first — sfx and music never coexist in VRAM
+        — but a repeat call for the SAME key (the common case: N cues of the
+        same type in a batch) is a cache hit, no reload."""
+        if model_key in self._loaded:
+            return self._loaded[model_key]
+
+        for other in list(self._loaded):
+            if other != model_key:
+                self._unload(other)
+
+        load_fn = self._import_load_audio_model()
+        if load_fn is None:
+            return None
+        try:
+            model = load_fn(model_key)
+        except Exception as exc:  # noqa: BLE001
+            self._warn_once(f"load_{model_key}", f"model load failed ({type(exc).__name__}: {exc})")
+            return None
+        self._loaded[model_key] = model
+        return model
+
+    def _unload(self, model_key: str) -> None:
+        model = self._loaded.pop(model_key, None)
+        if model is None:
+            return
+        del model
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
+    def unload_all(self) -> None:
+        """Free every resident model. Callers MUST invoke this once a whole
+        batch of sfx/music cues is done (content.py's generate_bank does)."""
+        for key in list(self._loaded):
+            self._unload(key)
+
     def _generate(self, model_key: str, prompt: str,
                   dur: float, seed: int) -> Optional[np.ndarray]:
-        """Full generate cycle for one cue: load → infer → del → empty_cache."""
+        """Generate one cue against the resident model for model_key (loading
+        it — and evicting the other model_key — only on the first call of a
+        run of same-type cues). Caller must eventually call unload_all()."""
         try:
             import torch
         except ImportError:
             self._warn_once("torch", "torch not available")
             return None
 
-        model = self._load_model(model_key)
+        model = self._ensure_loaded(model_key)
         if model is None:
             return None
 
@@ -128,6 +173,9 @@ class Stable3AudioAdapter(DspAdapter):
             return mono
 
         except Exception as exc:  # noqa: BLE001
+            # Evict this model_key so the NEXT cue gets a fresh load instead of
+            # reusing a possibly-poisoned instance (e.g. after a CUDA OOM).
+            self._unload(model_key)
             msg = str(exc)
             if "out of memory" in msg.lower() or "OOM" in msg:
                 self._warn_once(
@@ -142,14 +190,6 @@ class Stable3AudioAdapter(DspAdapter):
                     f"generation failed ({type(exc).__name__}: {exc})",
                 )
             return None
-
-        finally:
-            try:
-                del model
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
 
     # ── public adapter interface ──────────────────────────────────────────────
 
