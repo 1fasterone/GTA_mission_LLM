@@ -21,6 +21,7 @@ from .trigger       import TriggerPipeline,       TriggerSchema
 from .animator      import AnimatorPipeline,      AnimatorSchema
 from .npc_dialog    import NpcDialogPipeline,     NpcDialogSchema,   DialogLine
 from .vfx           import VfxPipeline,           VfxSchema
+from .shader        import ShaderPipeline,        ShaderSchema
 
 __all__ = [
     "ModelPipeline",
@@ -44,6 +45,7 @@ __all__ = [
     "AnimatorPipeline",     "AnimatorSchema",
     "NpcDialogPipeline",    "NpcDialogSchema",    "DialogLine",
     "VfxPipeline",          "VfxSchema",
+    "ShaderPipeline",       "ShaderSchema",
 ]
 
 
@@ -70,6 +72,7 @@ REGISTRY = {
     "animator":     AnimatorPipeline,
     "npc_dialog":   NpcDialogPipeline,
     "vfx":          VfxPipeline,
+    "shader":       ShaderPipeline,
 }
 
 

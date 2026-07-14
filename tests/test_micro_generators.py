@@ -23,6 +23,7 @@ from src.micro.interactable   import InteractablePipeline, InteractableSchema
 from src.micro.transition     import TransitionPipeline,  TransitionSchema
 from src.micro.health         import HealthPipeline,       HealthSchema
 from src.micro.trigger        import TriggerPipeline,      TriggerSchema
+from src.micro.shader         import ShaderPipeline,       ShaderSchema
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -55,6 +56,8 @@ def test_registry_has_all_known():
         "npc_dialog",
         # VFX — particle systems, sequences, screen effects, impact bursts
         "vfx",
+        # Shader — runtime material-property controllers (MaterialPropertyBlock)
+        "shader",
     }
 
 
@@ -1159,3 +1162,71 @@ def test_subsystems_for_drive_uses_waypoint_ai():
     walk_ai = next(s for s in subsystems_for("3D", ["ai"], locomotion="walk")
                    if s.kind == "ai")
     assert walk_ai.variant == "navmesh_patrol"
+
+
+# ── Shader ───────────────────────────────────────────────────────────────────
+
+def test_shader_schema_clamps_unknown_variant():
+    s = ShaderSchema(name="X", variant="bogus")
+    assert s.variant == "color_cycle"
+
+
+def test_shader_fixer_fills_default_property_per_variant(dummy_config):
+    p = ShaderPipeline(dummy_config)
+    for variant, expected in {
+        "color_cycle": "_Color", "dissolve": "_DissolveAmount",
+        "hit_flash": "_Color", "uv_scroll": "_MainTex",
+        "outline_pulse": "_OutlineIntensity",
+    }.items():
+        s = p.default_fix(ShaderSchema(name="X", variant=variant), variant)
+        assert s.property_name == expected
+
+
+def test_shader_fixer_respects_explicit_property_name(dummy_config):
+    p = ShaderPipeline(dummy_config)
+    s = p.default_fix(
+        ShaderSchema(name="X", variant="dissolve", property_name="_MyDissolve"),
+        "dissolve")
+    assert s.property_name == "_MyDissolve"
+
+
+def test_shader_fixer_seeds_color_cycle_stops(dummy_config):
+    p = ShaderPipeline(dummy_config)
+    s = p.default_fix(ShaderSchema(name="X", variant="color_cycle"), "color_cycle")
+    assert len(s.stops) >= 2
+
+
+def test_shader_fixer_swaps_inverted_pulse_range(dummy_config):
+    p = ShaderPipeline(dummy_config)
+    s = p.default_fix(
+        ShaderSchema(name="X", variant="outline_pulse", min_value=1.0, max_value=0.0),
+        "outline_pulse")
+    assert s.min_value <= s.max_value
+
+
+@pytest.mark.parametrize("variant", ShaderPipeline.variants)
+def test_shader_renders_every_variant(tmp_path, dummy_config, variant):
+    p = ShaderPipeline(dummy_config)
+    s = ShaderSchema(name="TestShader", variant=variant)
+    s = p.default_fix(s, variant)
+    count = p.write_files(s, variant, tmp_path)
+    cs = (tmp_path / "Scripts" / "TestShader.cs").read_text(encoding="utf-8")
+    assert "public class TestShader" in cs
+    assert f"Variant: {variant}" in cs
+    assert "MaterialPropertyBlock" in cs
+    assert count == 2
+
+
+def test_shader_uv_scroll_uses_st_property_suffix(tmp_path, dummy_config):
+    p = ShaderPipeline(dummy_config)
+    s = p.default_fix(ShaderSchema(name="Scroller", variant="uv_scroll"), "uv_scroll")
+    p.write_files(s, "uv_scroll", tmp_path)
+    cs = (tmp_path / "Scripts" / "Scroller.cs").read_text(encoding="utf-8")
+    assert 'Shader.PropertyToID(propertyName + "_ST")' in cs
+
+
+def test_shader_atom_behavior_map_entry_present():
+    from src.atoms.behavior_map import microgen_atoms
+    atoms = microgen_atoms("shader")
+    assert atoms
+    assert atoms[0].atom == "SetMaterial"

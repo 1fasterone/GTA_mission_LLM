@@ -125,21 +125,23 @@ class Stable3AudioAdapter(DspAdapter):
         """Generate one cue against the resident model for model_key (loading
         it — and evicting the other model_key — only on the first call of a
         run of same-type cues). Caller must eventually call unload_all()."""
-        try:
-            import torch
-        except ImportError:
-            self._warn_once("torch", "torch not available")
-            return None
-
+        # Model loading/eviction must work even when torch isn't importable
+        # (e.g. CI, which never installs it — see requirements.txt) so it's
+        # NOT gated behind a torch check here; only the actual generation call
+        # below genuinely needs torch, since it's the real model doing the work.
         model = self._ensure_loaded(model_key)
         if model is None:
             return None
 
         try:
             if seed:
-                torch.manual_seed(seed & 0x7FFFFFFF)
-                if torch.cuda.is_available():
-                    torch.cuda.manual_seed(seed & 0x7FFFFFFF)
+                try:
+                    import torch
+                    torch.manual_seed(seed & 0x7FFFFFFF)
+                    if torch.cuda.is_available():
+                        torch.cuda.manual_seed(seed & 0x7FFFFFFF)
+                except ImportError:
+                    self._warn_once("torch", "torch not available — generation proceeds unseeded")
 
             # StableAudioModel.generate returns a tensor (batch, channels, samples)
             audio_tensor = model.generate(
