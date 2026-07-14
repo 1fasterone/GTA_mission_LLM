@@ -10,9 +10,30 @@ faked via monkeypatch so this runs on any machine.
 import sys
 import types
 
+import numpy as np
 import pytest
 
 from src.audio.stable3_backend import Stable3AudioAdapter
+
+
+class _FakeTensor:
+    """Duck-types the .cpu().float().numpy() chain _generate() calls on a real
+    torch tensor, backed by plain numpy — lets _FakeModel avoid a hard torch
+    dependency so this test file genuinely runs without torch installed."""
+    def __init__(self, arr: np.ndarray):
+        self._arr = arr
+
+    def __getitem__(self, idx):
+        return _FakeTensor(self._arr[idx])
+
+    def cpu(self):
+        return self
+
+    def float(self):
+        return self
+
+    def numpy(self):
+        return self._arr
 
 
 class _FakeModel:
@@ -23,14 +44,14 @@ class _FakeModel:
 
     def generate(self, prompt, duration, steps):
         self.calls += 1
-        import torch
         # A distinct non-silent tone per model so callers can assert identity.
         # Real .generate() returns a torch tensor (batch, channels, samples);
         # _generate() calls .cpu().float().numpy() on the result, so the fake
         # must satisfy that interface too, not a bare ndarray.
         n = int(44100 * max(0.1, duration))
-        t = torch.linspace(0, 1, n)
-        return (t + (0.01 if self.key == "sfx" else 0.02)).unsqueeze(0).unsqueeze(0)
+        t = np.linspace(0, 1, n, dtype=np.float32)
+        arr = (t + (0.01 if self.key == "sfx" else 0.02)).astype(np.float32)
+        return _FakeTensor(arr[None, None, :])
 
 
 @pytest.fixture
