@@ -1893,6 +1893,20 @@ class UnityProjectGenerator:
             e.instance_yaws and e.instance_positions
             and not entity_model_paths.get(e.name, "").startswith("skip:")
             for e in schema.entities)
+        # Banked path points ([x, y, z, bank°] — schema clamps bank to ±45
+        # and drops zeros): per-tiled-group roll arrays lerped along the
+        # polyline at runtime, gated so unbanked projects stay byte-identical.
+        entity_path_banks: dict[str, list[float]] = {}
+        if schema.game_type not in ("2D", "2d_topdown"):
+            for e in schema.entities:
+                if (e.placement == "path" and e.path_points
+                        and getattr(e, "path_width", 0.0) > 0.0
+                        and not entity_model_paths.get(e.name, "").startswith("skip:")
+                        and any(len(p) > 3 for p in e.path_points)):
+                    entity_path_banks[e.name] = [
+                        round(p[3], 3) if len(p) > 3 else 0.0
+                        for p in e.path_points]
+        has_banked_paths = bool(entity_path_banks)
         if has_procedural_entities and not any(
                 s.type == "mesh_builder" for s in schema.scripts):
             schema.scripts.append(UnityScript(
@@ -1973,6 +1987,8 @@ class UnityProjectGenerator:
             "has_fx_entities":   has_fx_entities,
             "has_tiled_paths":   has_tiled_paths,
             "has_baked_yaws":    has_baked_yaws,
+            "has_banked_paths":  has_banked_paths,
+            "entity_path_banks": entity_path_banks,
             "has_clamped_entities": has_clamped_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's

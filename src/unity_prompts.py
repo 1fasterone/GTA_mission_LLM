@@ -158,9 +158,13 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
       not an absolute world size — the engine ground-snaps every instance to sit on
       the floor regardless of the model's pivot, so you don't need to hand-tune height.
     path_points: for placement "path" ONLY — up to 64 [x, y, z] world points. y is
-      ELEVATION, so author hills/banking by varying y. Instances are laid evenly along
-      the polyline, AND a "Waypoints" container is emitted at the points — AI racers /
-      patrollers follow it. Use a path for any road, track, route, river, or wall line.
+      ELEVATION, so author hills by varying y. An optional 4th number per point is
+      BANK: degrees of roll about the direction of travel (max ±45; negative leans
+      the surface LEFT, positive RIGHT), smoothly interpolated between points — use
+      it for banked corners and off-camber sections, e.g. [60, 5, 60, -12]. Instances
+      are laid evenly along the polyline, AND a "Waypoints" container is emitted at
+      the points — AI racers / patrollers follow it. Use a path for any road, track,
+      route, river, or wall line.
   Example: "a race with 6 rivals on a winding road, grandstands, and a crowd" →
     [{{"name":"RoadSegments","kind":"road","count":40,"shape":"cube","placement":"path","color_role":"secondary","scale":4,
        "path_points":[[0,0,0],[40,2,20],[60,5,60],[30,8,90],[-20,6,80],[-40,3,40],[-20,1,10],[0,0,0]]}},
