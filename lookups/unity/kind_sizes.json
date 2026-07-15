@@ -1,5 +1,5 @@
 {
-  "_comment": "Target longest-bounding-box-axis size (meters) per entity kind, used ONLY to bounds-fit Sketchfab-sourced models at runtime (BoundsFit.cs.j2) — Kenney/default-pack models keep their pack-native scale untouched (normalizing individual modular pieces, e.g. car-kit track segments, would break their relative tiling). A kind with no entry, or value null, gets no fit (fit_size stays 0.0). unity_entity_asset_resolver._register consults this only when pick['source'] == 'sketchfab'.",
+  "_comment": "Runtime scale normalization per entity kind, applied in EntitySpawner.cs.j2 (there is no BoundsFit.cs.j2 — the bounds-fit logic is inlined in the spawner). Two tables: `sizes` = target longest-bounding-box-axis meters, used to bounds-fit Sketchfab-sourced models ONLY (unity_entity_asset_resolver._register consults it only when pick['source'] == 'sketchfab'; Kenney/default-pack models keep their pack-native scale). A kind with no entry, or value null, gets no uniform fit — deliberately so for modular pieces (track/road/rail), whose relative tiling a longest-axis fit would break; path-placed groups with path_width > 0 are instead width-normalized and length-tiled at runtime (EntitySpawner SpawnTiledGroup). `clamp_sizes` = shrink-only MAXIMUM longest-axis meters applied to catalog picks of ANY source (emitted as a negative fit_size sentinel; the spawner computes min(1, clamp/measured) so a well-scaled asset is never touched and nothing is ever enlarged) — the giant-vehicle guard for sources the uniform fit doesn't cover. Values are ~3x the `sizes` target: generous enough for normal in-category variation, tight enough to stop a bus-sized kart dwarfing the scene.",
   "sizes": {
     "player": 1.8,
     "npc": 1.8,
@@ -28,5 +28,10 @@
     "road": null,
     "rail": null,
     "obstacle": null
+  },
+  "clamp_sizes": {
+    "vehicle": 13.5,
+    "ship": 18.0,
+    "building": 30.0
   }
 }

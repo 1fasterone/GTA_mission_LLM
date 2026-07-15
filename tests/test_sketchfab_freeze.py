@@ -137,6 +137,55 @@ def test_successful_fetch_freezes_entry(tmp_path, monkeypatch):
     assert on_disk["entries"][0]["sketchfab_uid"] == "abc123"
 
 
+def test_convert_diagnostics_round_trip_into_entry(tmp_path, monkeypatch):
+    """Convert-time size diagnostics (size_after / scale_corrected from the
+    .convert.json sidecar) must be persisted into the frozen catalog entry as
+    bbox_meters / scale_corrected — greppable/testable scale sanity without
+    re-opening Blender."""
+    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None, **_kw):
+        fbx_out.parent.mkdir(parents=True, exist_ok=True)
+        fbx_out.write_bytes(b"FBX-DUMMY")
+        fbx_out.with_suffix(".convert.json").write_text(json.dumps({
+            "ok": True, "textures": 0,
+            "scale_corrected": 0.0132, "largest_dim_before": 341.2,
+            "size_after": [4.5, 1.9, 1.4],
+        }), encoding="utf-8")
+        return fbx_out
+
+    monkeypatch.setattr(
+        "src.blender.sketchfab_convert.convert_gltf_to_fbx", _fake_convert)
+
+    entry = fetch_and_freeze(
+        "red high heel shoe", _score_all_equal, client=_FakeClient(),
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        category="prop", kind_hints=["prop"])
+
+    assert entry is not None
+    assert entry["bbox_meters"] == [4.5, 1.9, 1.4]
+    assert entry["scale_corrected"] == 0.0132
+
+
+def test_missing_convert_sidecar_leaves_entry_clean(tmp_path, monkeypatch):
+    """No .convert.json (older cache, stubbed Blender) → no bbox keys at all,
+    not bogus/None-filled ones."""
+    def _fake_convert(gltf_path, fbx_out, textures_dir, *, blender_cfg=None, **_kw):
+        fbx_out.parent.mkdir(parents=True, exist_ok=True)
+        fbx_out.write_bytes(b"FBX-DUMMY")
+        return fbx_out
+
+    monkeypatch.setattr(
+        "src.blender.sketchfab_convert.convert_gltf_to_fbx", _fake_convert)
+
+    entry = fetch_and_freeze(
+        "red high heel shoe", _score_all_equal, client=_FakeClient(),
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        category="prop", kind_hints=["prop"])
+
+    assert entry is not None
+    assert "bbox_meters" not in entry
+    assert "scale_corrected" not in entry
+
+
 def test_below_min_score_returns_none(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "src.blender.sketchfab_convert.convert_gltf_to_fbx", lambda *a, **kw: None)

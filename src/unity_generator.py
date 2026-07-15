@@ -1812,6 +1812,10 @@ class UnityProjectGenerator:
                    if path in _by_resource_path else 0.0)
             for name, path in entity_model_paths.items()
         }
+        # Negative fit_size = shrink-only clamp (kind_sizes.json clamp_sizes,
+        # any source) — gate the spawner's clamp branch so projects with no
+        # clamped entity render byte-identical C#.
+        has_clamped_entities = any(v < 0 for v in entity_fit_sizes.values())
 
         # Attribution for non-CC0 Sketchfab picks (pure string formatting over
         # used_models — no network, deterministic given the resolution above).
@@ -1829,6 +1833,14 @@ class UnityProjectGenerator:
         # byte-identical.
         has_fx_entities = any(
             p.startswith("fx:") for p in entity_model_paths.values())
+        # path_width > 0 on a path-placed group = end-to-end segment tiling
+        # (SpawnTiledGroup) — gate the spawner's tile branch so projects
+        # without tiled paths stay byte-identical. 3D only: 2D archetypes
+        # never take the path branch.
+        has_tiled_paths = schema.game_type not in ("2D", "2d_topdown") and any(
+            e.placement == "path" and e.path_points
+            and getattr(e, "path_width", 0.0) > 0.0
+            for e in schema.entities)
         if has_procedural_entities and not any(
                 s.type == "mesh_builder" for s in schema.scripts):
             schema.scripts.append(UnityScript(
@@ -1907,6 +1919,8 @@ class UnityProjectGenerator:
             "entity_fit_sizes":  entity_fit_sizes,
             "has_procedural_entities": has_procedural_entities,
             "has_fx_entities":   has_fx_entities,
+            "has_tiled_paths":   has_tiled_paths,
+            "has_clamped_entities": has_clamped_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's
             # runtime per-scene filter.

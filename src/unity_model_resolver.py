@@ -32,10 +32,13 @@ class ResolvedModel(BaseModel):
     source:        str = "kenney"        # "kenney" | "sketchfab"
     license:       Optional[str] = None  # e.g. "cc0" | "by" | "by-sa" | "by-nd"
     attribution:   Optional[str] = None  # required-credit text for non-CC0 picks
-    # Runtime bounds-fit target (longest-axis meters), Sketchfab picks only —
-    # Kenney/default-pack models keep their pack-native scale (0.0 = no fit;
-    # BoundsFit.cs.j2 is a no-op at 0). See lookups/unity/kind_sizes.json and
-    # unity_entity_asset_resolver._register.
+    # Runtime bounds-fit target (longest-axis meters). Positive = uniform fit
+    # to exactly this size, Sketchfab picks only — Kenney/default-pack models
+    # keep their pack-native scale. NEGATIVE = shrink-only ceiling of
+    # -fit_size meters, any catalog source (the spawner computes
+    # min(1, -fit_size/measured), never enlarging). 0.0 = no fit (the
+    # spawner's fit branch is a no-op). See lookups/unity/kind_sizes.json and
+    # unity_entity_asset_resolver._register / load_clamp_sizes.
     fit_size:      float = 0.0
 
 

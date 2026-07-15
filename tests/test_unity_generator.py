@@ -849,6 +849,67 @@ class TestEntityPath:
         assert cs.count("{") == cs.count("}")
 
 
+# ── EntitySpawner path tiling (path_width > 0) ──────────────────────────────
+
+class TestTiledPath:
+    def _schema(self, project="TileT", game_type="3D", path_width=10.0):
+        from src.unity_schema import UnitySchema, EntitySpec
+        return UnitySchema(
+            project_name=project, company_name="C", description="",
+            game_type=game_type, platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[
+                EntitySpec(name="Road", kind="road", count=20, shape="cube",
+                           placement="path", color_role="secondary", scale=4,
+                           path_points=[[0, 0, 0], [40, 0, 20], [60, 0, 60]],
+                           path_width=path_width),
+                EntitySpec(name="Trees", kind="prop", count=10, shape="cylinder",
+                           placement="scatter", radius=30),
+            ],
+        )
+
+    def test_tiled_group_emits_spawn_tiled_group(self, gen):
+        files = gen.generate(self._schema(), {})
+        cs = files["TileT/Assets/Scripts/EntitySpawner.cs"]
+        assert 'SpawnTiledGroup("Road"' in cs
+        assert ", _path_0, sh, 10.00f);" in cs          # path_width literal
+        assert "private void SpawnTiledGroup(" in cs
+        assert "ArcLength" in cs
+        assert "TILE_OVERLAP = 1.02f" in cs
+        assert "1, 256);" in cs                          # runtime tile-count cap
+        # Waypoint emission (AI route) is untouched by tiling.
+        assert 'EmitWaypoints("Waypoints", _path_0)' in cs
+        # The legacy even-spread path branch must still exist for
+        # path_width == 0 groups and the unmeasurable-model fallback.
+        assert 'placement == "path"' in cs
+        assert cs.count("{") == cs.count("}")
+
+    def test_no_tiled_entities_no_tile_code(self, gen):
+        # path_width == 0 everywhere → the entire tile branch is absent, so
+        # projects without tiled paths stay byte-identical to pre-feature
+        # output (same gating pattern as has_fx_entities).
+        files = gen.generate(self._schema(path_width=0.0), {})
+        cs = files["TileT/Assets/Scripts/EntitySpawner.cs"]
+        assert "SpawnTiledGroup" not in cs
+        assert "TILE_OVERLAP" not in cs
+        assert "ArcLength" not in cs
+        assert 'SpawnGroup("Road"' in cs
+
+    def test_2d_never_tiles(self, gen):
+        files = gen.generate(self._schema(project="TileT2D", game_type="2D",
+                                          path_width=10.0), {})
+        cs = files["TileT2D/Assets/Scripts/EntitySpawner.cs"]
+        assert "SpawnTiledGroup" not in cs
+
+    def test_tiled_generation_is_deterministic(self, gen):
+        f1 = gen.generate(self._schema(), {})
+        f2 = gen.generate(self._schema(), {})
+        assert (f1["TileT/Assets/Scripts/EntitySpawner.cs"]
+                == f2["TileT/Assets/Scripts/EntitySpawner.cs"])
+
+
 # ── Scale consistency: bounds-fit wiring (3D only) ──────────────────────────
 
 class TestBoundsFit:
@@ -915,6 +976,32 @@ class TestBoundsFit:
         assert "pos.y += pivotOffsetY * finalScale;" in cs
         # The old fixed-half-height heuristic must be gone from the 3D path.
         assert "pos.y += scale * 0.5f;" not in cs
+
+    def test_clamped_entity_emits_negative_sentinel_and_clamp_branch(self, gen):
+        # kind=vehicle resolves through the catalog with kind_sizes.json's
+        # clamp_sizes {vehicle: 13.5} → fit arg -13.5000f + the shrink-only
+        # clamp branch. Uses the real lookups dir on purpose (locks in the
+        # shipped table, same as the other catalog-integration tests).
+        from src.unity_schema import UnitySchema, EntitySpec
+        schema = UnitySchema(
+            project_name="ClampT", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[EntitySpec(name="RivalKarts", kind="vehicle", count=3,
+                                 placement="grid", model_hint="kart racer vehicle")],
+        )
+        cs = gen.generate(schema, {})["ClampT/Assets/Scripts/EntitySpawner.cs"]
+        assert "-13.5000f" in cs
+        assert "Mathf.Min(1f, -fitSize / maxDim)" in cs
+
+    def test_no_clamped_entities_no_clamp_branch(self, gen):
+        # Props have no clamp_sizes entry → the clamp branch is absent and
+        # unclamped projects stay byte-identical to pre-feature output.
+        cs = self._fitt3d_files(gen)["FitT3D/Assets/Scripts/EntitySpawner.cs"]
+        assert "Mathf.Min(1f, -fitSize / maxDim)" not in cs
+        assert "-13.5000f" not in cs
 
 
 # ── Environment mood (sun + fog) ────────────────────────────────────────────────

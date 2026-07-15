@@ -69,7 +69,9 @@ public class EntitySpawner : MonoBehaviour
 {% set has_path = e.placement == "path" and e.path_points %}
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
-        {% endif %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }});
+        {% endif %}{% if has_path and e.path_width > 0 %}SpawnTiledGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", _path_{{ loop.index0 }}, sh, {{ "%.2f"|format(e.path_width) }}f);
+{% else %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }});
+{% endif %}
 {% if has_path %}
         EmitWaypoints({{ '"Waypoints"' if ns.first_path else '"' ~ e.name ~ '_Waypoints"' }}, _path_{{ loop.index0 }});
 {% set ns.first_path = false %}
@@ -132,6 +134,13 @@ public class EntitySpawner : MonoBehaviour
         {
             float maxDim = Mathf.Max(_mb.size.x, Mathf.Max(_mb.size.y, _mb.size.z));
             if (fitSize > 0f && maxDim > 0.0001f) fitFactor = fitSize / maxDim;
+{% if has_clamped_entities %}
+            // Negative fitSize = shrink-only ceiling of -fitSize meters
+            // (kind_sizes.json clamp_sizes, any catalog source) — a
+            // well-scaled asset stays at 1, nothing is ever enlarged.
+            else if (fitSize < 0f && maxDim > 0.0001f)
+                fitFactor = Mathf.Min(1f, -fitSize / maxDim);
+{% endif %}
             footprintXZ = Mathf.Max(_mb.size.x, _mb.size.z);
             pivotOffsetY = -_mb.min.y;
         }
@@ -261,6 +270,128 @@ public class EntitySpawner : MonoBehaviour
         }
     }
 
+{% if has_tiled_paths %}
+    // Straight segments laid along curved polyline chords are stretched by
+    // this factor so they overlap slightly instead of gapping at corners.
+    private const float TILE_OVERLAP = 1.02f;
+
+    // Tile a path-placed group END-TO-END along its polyline (path_width > 0
+    // in the schema): the resolved model is width-normalized so its cross-
+    // track axis spans pathWidth meters, the instance count derives from the
+    // path's arc length / tile length (the authored count is only the
+    // degradation fallback), and every segment is yawed to the local path
+    // tangent — a continuous road ribbon / guardrail instead of scattered
+    // pieces. Deterministic: same model bounds + same path → same transforms.
+    private void SpawnTiledGroup(string groupName, int count, PrimitiveType shape,
+                                 float spacing, float radius, float scale, Color color,
+                                 string tag, string behavior, string modelPath,
+                                 Vector3[] path, Shader sh, float pathWidth)
+    {
+        GameObject modelPrefab = string.IsNullOrEmpty(modelPath)
+            ? null : Resources.Load<GameObject>(modelPath);
+
+        // Tile dimensions. Forward axis = the longer horizontal axis, with a
+        // bias toward local Z (the glTF→FBX convert bakes axis_forward="-Z",
+        // so near-square tiles should still travel along Z); width = the
+        // other horizontal axis. Primitives have no meaningful bounds — they
+        // become a thin stretched ribbon (tile length 2× the width).
+        float forwardDim, widthDim, minY;
+        bool forwardIsX = false, isPrimitive = modelPrefab == null;
+        if (isPrimitive)
+        {
+            forwardDim = 2f; widthDim = 1f; minY = 0f;
+        }
+        else if (TryMeasureBounds(modelPrefab, out var mb)
+                 && mb.size.x > 0.0001f && mb.size.z > 0.0001f)
+        {
+            if (mb.size.z >= mb.size.x * 0.9f) { forwardDim = mb.size.z; widthDim = mb.size.x; }
+            else { forwardDim = mb.size.x; widthDim = mb.size.z; forwardIsX = true; }
+            minY = mb.min.y;
+        }
+        else
+        {
+            // Model exists but can't be measured — degrade to the legacy
+            // even-spread placement rather than guessing tile geometry.
+            SpawnGroup(groupName, count, shape, "path", spacing, radius, scale,
+                       color, tag, behavior, modelPath, path, sh, 0f, null);
+            return;
+        }
+
+        float uniform = pathWidth / widthDim;          // width-normalize
+        float tileLen = forwardDim * uniform;          // world tile length
+        float arc = ArcLength(path);
+        int n = Mathf.Clamp(Mathf.RoundToInt(arc / tileLen), 1, 256);
+        // Stretch each tile's forward axis so n tiles exactly cover the arc
+        // (slot = arc/n), plus TILE_OVERLAP to hide chord gaps on corners.
+        float stretch = arc / n / tileLen * TILE_OVERLAP;
+
+        System.Type behaviorType = null;
+        if (!string.IsNullOrEmpty(behavior))
+            behaviorType = System.Type.GetType(behavior + ", Assembly-CSharp") ?? System.Type.GetType(behavior);
+
+        var parent = new GameObject(groupName).transform;
+        parent.SetParent(transform, false);
+        for (int i = 0; i < n; i++)
+        {
+            GameObject go = isPrimitive
+                ? GameObject.CreatePrimitive(shape)
+                : Instantiate(modelPrefab);
+            go.name = groupName + "_" + i;
+            go.transform.SetParent(parent);
+
+            float t = (i + 0.5f) / n;
+            Vector3 pos = PointAlongPath(path, t);
+            // Tangent from a symmetric sample around the tile center; yaw-only
+            // (flattened) so elevation changes don't pitch the pieces. A 90°
+            // correction maps X-forward models onto LookRotation's Z-forward.
+            Vector3 ahead = PointAlongPath(path, Mathf.Clamp01(t + 0.5f / n));
+            Vector3 behind = PointAlongPath(path, Mathf.Clamp01(t - 0.5f / n));
+            Vector3 dir = ahead - behind; dir.y = 0f;
+            if (dir.sqrMagnitude > 0.0001f)
+                go.transform.rotation =
+                    Quaternion.LookRotation(dir.normalized, Vector3.up)
+                    * (forwardIsX ? Quaternion.Euler(0f, -90f, 0f) : Quaternion.identity);
+
+            if (isPrimitive)
+            {
+                // Thin ribbon: full width across, low profile, slot-long.
+                go.transform.localScale = new Vector3(pathWidth, 0.3f, arc / n * TILE_OVERLAP);
+                pos.y += 0.17f;   // half height + z-fight lift over the ground
+            }
+            else
+            {
+                go.transform.localScale = forwardIsX
+                    ? new Vector3(uniform * stretch, uniform, uniform)
+                    : new Vector3(uniform, uniform, uniform * stretch);
+                pos.y += -minY * uniform + 0.02f;   // ground-snap + z-fight lift
+            }
+            go.transform.position = pos;
+
+            if (sh != null && isPrimitive)   // models keep their own materials
+            {
+                var m = new Material(sh);
+                m.color = color;
+                var rend = go.GetComponent<Renderer>();
+                if (rend != null) rend.material = m;
+            }
+            if (!string.IsNullOrEmpty(tag) && tag != "Untagged")
+            {
+                try { go.tag = tag; } catch { /* tag not in TagManager — skip */ }
+            }
+            if (behaviorType != null && typeof(MonoBehaviour).IsAssignableFrom(behaviorType))
+                go.AddComponent(behaviorType);
+        }
+    }
+
+    // Total polyline length — the tile-count denominator. (Kept separate from
+    // PointAlongPath so projects without tiled paths stay byte-identical.)
+    private static float ArcLength(Vector3[] pts)
+    {
+        float total = 0f;
+        for (int i = 1; i < pts.Length; i++) total += Vector3.Distance(pts[i - 1], pts[i]);
+        return total;
+    }
+{% endif %}
 {% if game_type not in ("2D", "2d_topdown") %}
     // Encapsulated renderer bounds of a model (prefab asset or instance) —
     // the shared measurement behind bounds-fit scaling, footprint-derived

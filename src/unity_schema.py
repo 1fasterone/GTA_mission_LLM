@@ -227,6 +227,15 @@ class EntitySpec(BaseModel):
     # container of empty GameObjects at the points — winding roads, patrol
     # routes, and racing lines that waypoint-following AI can consume.
     path_points: list[list[float]] = Field(default_factory=list)
+    # placement == "path" only: cross-track width in meters. 0.0 (default) =
+    # legacy behavior — spread `count` instances evenly along the polyline.
+    # > 0.0 = TILE mode: the spawner width-normalizes the resolved model to
+    # this many meters across, derives the instance count from the path's arc
+    # length / segment length (authored `count` is only a fallback when the
+    # model can't be measured), and lays segments end-to-end facing the path
+    # tangent — continuous road ribbons and guardrails instead of scattered
+    # pieces.
+    path_width: float = 0.0
     # World-space [x, z] center this group is packed into by src/unity_layout.py
     # (Step 5 of the pipeline) — every group used to spawn centered on the
     # scene origin regardless of `radius`, so distinct groups (e.g. a ring of
@@ -277,6 +286,14 @@ class EntitySpec(BaseModel):
     def _clamp_group_radius(cls, v) -> float:
         try:
             return max(0.0, min(2000.0, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @field_validator("path_width", mode="before")
+    @classmethod
+    def _clamp_path_width(cls, v) -> float:
+        try:
+            return max(0.0, min(100.0, float(v)))
         except (TypeError, ValueError):
             return 0.0
 

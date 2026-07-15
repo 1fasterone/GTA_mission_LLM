@@ -144,6 +144,21 @@ class TestComposeRacetrack:
         names = [r.name for r in schema.world_spec.regions]
         assert names == ["Existing", "Racetrack"]
 
+    def test_road_and_barriers_carry_path_width_for_tiling(self):
+        # path_width > 0 routes these groups to EntitySpawner's
+        # SpawnTiledGroup (end-to-end segment tiling); cones/banners/karts
+        # keep the even waypoint spread (path_width == 0).
+        schema = _schema()
+        compose_racetrack(schema)
+        widths = {e.name: e.path_width for e in schema.entities}
+        assert widths["TrackSurface"] == 10.0
+        assert widths["TrackBarriersOuter"] == 1.0
+        assert widths["TrackBarriersInner"] == 1.0
+        assert widths["ApexCones"] == 0.0
+        assert widths["CheckpointBanners"] == 0.0
+        assert widths["PlayerKart"] == 0.0
+        assert widths["OpponentKarts"] == 0.0
+
     def test_returns_a_fix_message(self):
         schema = _schema()
         msgs = compose_racetrack(schema)
