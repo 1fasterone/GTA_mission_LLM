@@ -53,6 +53,24 @@ def load_kind_sizes(lookups_dir: str = "lookups") -> dict[str, float]:
     return {k: float(v) for k, v in (raw.get("sizes") or {}).items()
             if isinstance(v, (int, float))}
 
+
+def load_clamp_sizes(lookups_dir: str = "lookups") -> dict[str, float]:
+    """lookups/unity/kind_sizes.json `clamp_sizes`: entity kind -> shrink-only
+    MAXIMUM longest-axis size (meters), applied to catalog picks of ANY source
+    (Kenney included — the uniform `sizes` fit is Sketchfab-only, so a
+    grossly-oversized Kenney/catalog vehicle had no guard at all). Emitted as
+    a NEGATIVE fit_size sentinel; the spawner computes
+    min(1, clamp/measured), so a well-scaled asset is never touched and
+    nothing is ever enlarged. Missing/malformed file or table -> {} -> no
+    clamp. Deterministic: pure lookup."""
+    path = Path(lookups_dir) / "unity" / "kind_sizes.json"
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    return {k: float(v) for k, v in (raw.get("clamp_sizes") or {}).items()
+            if isinstance(v, (int, float)) and v > 0}
+
 # Resources.Load roots for catalog picks. Distinct from the default pack's
 # "Models/Default/" so the two never collide; 3 path parts keeps write()'s
 # secondary-copy prefix strip (Assets/<root>/<Category>/<file>) working.
@@ -281,6 +299,7 @@ def resolve_entity_assets(schema,
                    if w not in _STOPWORDS}
 
     kind_sizes = load_kind_sizes(str(lookups_dir))
+    clamp_sizes = load_clamp_sizes(str(lookups_dir))
 
     # Concept-layer taxonomy (optional). Precompute each asset's (broad, strong)
     # layer membership once so the per-entity pool is a cheap set intersection.
@@ -369,6 +388,12 @@ def resolve_entity_assets(schema,
             # artist-authored real-world scale) gets a runtime fit.
             fit_size = (kind_sizes.get(kind, 0.0)
                         if pick.get("source") == "sketchfab" else 0.0)
+            # No uniform fit → the shrink-only ceiling still applies, ANY
+            # source (negative sentinel; spawner: min(1, clamp/measured)) —
+            # the giant-vehicle guard for picks the Sketchfab-only fit
+            # doesn't cover. See load_clamp_sizes.
+            if fit_size == 0.0 and clamp_sizes.get(kind):
+                fit_size = -clamp_sizes[kind]
             rm = ResolvedModel(
                 kind=model_key,
                 src=str(src.resolve()),

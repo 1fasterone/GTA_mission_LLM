@@ -977,6 +977,32 @@ class TestBoundsFit:
         # The old fixed-half-height heuristic must be gone from the 3D path.
         assert "pos.y += scale * 0.5f;" not in cs
 
+    def test_clamped_entity_emits_negative_sentinel_and_clamp_branch(self, gen):
+        # kind=vehicle resolves through the catalog with kind_sizes.json's
+        # clamp_sizes {vehicle: 13.5} → fit arg -13.5000f + the shrink-only
+        # clamp branch. Uses the real lookups dir on purpose (locks in the
+        # shipped table, same as the other catalog-integration tests).
+        from src.unity_schema import UnitySchema, EntitySpec
+        schema = UnitySchema(
+            project_name="ClampT", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[EntitySpec(name="RivalKarts", kind="vehicle", count=3,
+                                 placement="grid", model_hint="kart racer vehicle")],
+        )
+        cs = gen.generate(schema, {})["ClampT/Assets/Scripts/EntitySpawner.cs"]
+        assert "-13.5000f" in cs
+        assert "Mathf.Min(1f, -fitSize / maxDim)" in cs
+
+    def test_no_clamped_entities_no_clamp_branch(self, gen):
+        # Props have no clamp_sizes entry → the clamp branch is absent and
+        # unclamped projects stay byte-identical to pre-feature output.
+        cs = self._fitt3d_files(gen)["FitT3D/Assets/Scripts/EntitySpawner.cs"]
+        assert "Mathf.Min(1f, -fitSize / maxDim)" not in cs
+        assert "-13.5000f" not in cs
+
 
 # ── Environment mood (sun + fog) ────────────────────────────────────────────────
 

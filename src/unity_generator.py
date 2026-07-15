@@ -1812,6 +1812,10 @@ class UnityProjectGenerator:
                    if path in _by_resource_path else 0.0)
             for name, path in entity_model_paths.items()
         }
+        # Negative fit_size = shrink-only clamp (kind_sizes.json clamp_sizes,
+        # any source) — gate the spawner's clamp branch so projects with no
+        # clamped entity render byte-identical C#.
+        has_clamped_entities = any(v < 0 for v in entity_fit_sizes.values())
 
         # Attribution for non-CC0 Sketchfab picks (pure string formatting over
         # used_models — no network, deterministic given the resolution above).
@@ -1916,6 +1920,7 @@ class UnityProjectGenerator:
             "has_procedural_entities": has_procedural_entities,
             "has_fx_entities":   has_fx_entities,
             "has_tiled_paths":   has_tiled_paths,
+            "has_clamped_entities": has_clamped_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's
             # runtime per-scene filter.

@@ -887,9 +887,12 @@ def test_preferred_author_never_overwritten_by_later_fallback(env, tmp_path, mon
 
 # ── scale consistency: bounds-fit target, Sketchfab picks only ───────────────
 
-def _kind_sizes_env(env, sizes):
+def _kind_sizes_env(env, sizes, clamp_sizes=None):
+    payload = {"sizes": sizes}
+    if clamp_sizes is not None:
+        payload["clamp_sizes"] = clamp_sizes
     (env / "unity" / "kind_sizes.json").write_text(
-        json.dumps({"sizes": sizes}), encoding="utf-8")
+        json.dumps(payload), encoding="utf-8")
     return env
 
 
@@ -952,6 +955,71 @@ def test_sketchfab_pick_with_unmapped_kind_gets_no_fit(env, tmp_path):
     picks = [m for k, m in used.items() if k.startswith("asset:")]
     assert picks and picks[0].source == "sketchfab"
     assert picks[0].fit_size == 0.0
+
+
+# ── scale consistency: shrink-only clamp, ANY catalog source ─────────────────
+
+def test_load_clamp_sizes_missing_file_returns_empty(tmp_path):
+    from src.unity_entity_asset_resolver import load_clamp_sizes
+    assert load_clamp_sizes(str(tmp_path / "nope")) == {}
+
+
+def test_load_clamp_sizes_drops_null_nonnumeric_and_nonpositive(tmp_path):
+    from src.unity_entity_asset_resolver import load_clamp_sizes
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "kind_sizes.json").write_text(
+        json.dumps({"sizes": {"vehicle": 4.5},
+                    "clamp_sizes": {"vehicle": 13.5, "track": None,
+                                    "prop": "bogus", "ship": -1}}),
+        encoding="utf-8")
+    assert load_clamp_sizes(str(lookups)) == {"vehicle": 13.5}
+
+
+def test_kenney_pick_gets_negative_clamp_sentinel(env, tmp_path):
+    # The Sketchfab-only uniform fit never covers Kenney picks — the clamp
+    # (shrink-only ceiling) must, emitted as a NEGATIVE fit_size.
+    _kind_sizes_env(env, {"vehicle": 4.5}, clamp_sizes={"vehicle": 13.5})
+    all_models = _default_models(tmp_path)
+    used = {}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PlayerPlane", kind="vehicle", count=1,
+                            model_hint="corsair plane")]),
+        used, all_models, lookups_dir=str(env))
+    picks = [m for k, m in used.items() if k.startswith("asset:")]
+    assert picks and picks[0].source == "kenney"
+    assert picks[0].fit_size == -13.5
+
+
+def test_sketchfab_uniform_fit_wins_over_clamp(env, tmp_path):
+    # A Sketchfab pick with a mapped kind keeps the exact positive fit target;
+    # the clamp only fills the fit_size == 0 gap.
+    _kind_sizes_env(env, {"vehicle": 4.5}, clamp_sizes={"vehicle": 13.5})
+    _add_sketchfab_entry(env, tmp_path, filename="corsair-sk.fbx",
+                         keywords=("corsair", "plane", "aircraft"),
+                         kind_hints=("vehicle",), category="vehicle")
+    all_models = _default_models(tmp_path)
+    used = {}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PlayerPlane", kind="vehicle", count=1,
+                            model_hint="corsair plane aircraft")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True})
+    picks = [m for k, m in used.items() if k.startswith("asset:")]
+    assert picks and picks[0].source == "sketchfab"
+    assert picks[0].fit_size == 4.5
+
+
+def test_unclamped_kind_keeps_zero_fit(env, tmp_path):
+    _kind_sizes_env(env, {"vehicle": 4.5}, clamp_sizes={"vehicle": 13.5})
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="Trees", kind="tree", count=3,
+                            model_hint="pine tree")]),
+        used, all_models, lookups_dir=str(env))
+    picks = [m for k, m in used.items() if k.startswith("asset:")]
+    assert all(m.fit_size == 0.0 for m in picks)
 
 
 # ── genre-aware resolution (racing must never pick aircraft) ─────────────────

@@ -134,6 +134,13 @@ public class EntitySpawner : MonoBehaviour
         {
             float maxDim = Mathf.Max(_mb.size.x, Mathf.Max(_mb.size.y, _mb.size.z));
             if (fitSize > 0f && maxDim > 0.0001f) fitFactor = fitSize / maxDim;
+{% if has_clamped_entities %}
+            // Negative fitSize = shrink-only ceiling of -fitSize meters
+            // (kind_sizes.json clamp_sizes, any catalog source) — a
+            // well-scaled asset stays at 1, nothing is ever enlarged.
+            else if (fitSize < 0f && maxDim > 0.0001f)
+                fitFactor = Mathf.Min(1f, -fitSize / maxDim);
+{% endif %}
             footprintXZ = Mathf.Max(_mb.size.x, _mb.size.z);
             pivotOffsetY = -_mb.min.y;
         }
