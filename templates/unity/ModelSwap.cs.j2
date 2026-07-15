@@ -13,6 +13,8 @@ public class ModelSwap : MonoBehaviour
     [Tooltip("Pivot-to-feet offset: -1 for the capsule (center pivot), -0.5 for the sphere.")]
     [SerializeField] private float footOffset = -1f;
     [SerializeField] private float modelScale = 1f;
+    [Tooltip("Bounds-fit (same semantics as EntitySpawner): > 0 scales the model so its longest side spans this many meters; < 0 is a shrink-only ceiling; 0 = keep modelScale as-is.")]
+    [SerializeField] private float modelFitSize = 0f;
 
     private Animator _anim;
     private Vector3 _lastPos;
@@ -30,6 +32,29 @@ public class ModelSwap : MonoBehaviour
         vis.transform.localPosition = new Vector3(0f, footOffset, 0f);
         vis.transform.localRotation = Quaternion.identity;
         vis.transform.localScale = Vector3.one * modelScale;
+        if (modelFitSize != 0f)
+        {
+            // Bounds-fit the swapped visual (a merged player vehicle from the
+            // racing start grid) so it matches the world scale EntitySpawner
+            // gives the same model, and ground-snap its measured base to the
+            // host's feet regardless of where the FBX pivot sits.
+            var rends = vis.GetComponentsInChildren<Renderer>();
+            if (rends.Length > 0)
+            {
+                var b = rends[0].bounds;
+                for (int i = 1; i < rends.Length; i++) b.Encapsulate(rends[i].bounds);
+                float maxDim = Mathf.Max(b.size.x, Mathf.Max(b.size.y, b.size.z));
+                if (maxDim > 0.0001f)
+                {
+                    float f = modelFitSize > 0f
+                        ? modelFitSize / maxDim
+                        : Mathf.Min(1f, -modelFitSize / maxDim);
+                    vis.transform.localScale *= f;
+                    float baseOffset = (b.min.y - vis.transform.position.y) * f;
+                    vis.transform.localPosition = new Vector3(0f, footOffset - baseOffset, 0f);
+                }
+            }
+        }
 
         _anim = vis.GetComponentInChildren<Animator>();
         if (_anim == null) _anim = vis.AddComponent<Animator>();

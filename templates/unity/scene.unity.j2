@@ -416,13 +416,13 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 705507900}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {{ "{x: 0, y: 0, z: 0}" if game_type in ("2D", "2d_topdown") else "{x: 0, y: 1, z: 0}" }}
+  m_LocalRotation: {{ player_spawn.rotation if player_spawn else "{x: 0, y: 0, z: 0, w: 1}" }}
+  m_LocalPosition: {{ player_spawn.position if player_spawn else ("{x: 0, y: 0, z: 0}" if game_type in ("2D", "2d_topdown") else "{x: 0, y: 1, z: 0}") }}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
   m_RootOrder: 4
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {{ player_spawn.euler if player_spawn else "{x: 0, y: 0, z: 0}" }}
 --- !u!33 &705507902
 MeshFilter:
   m_ObjectHideFlags: 0
@@ -577,9 +577,12 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
   modelPath: {{ player_model.resource_path }}
-  controllerPath: {{ character_controller_res }}
+  controllerPath: {{ player_model.controller if player_model.controller is defined else character_controller_res }}
   footOffset: -1
   modelScale: {{ player_model.scale }}
+{% if player_model.fit_size is defined and player_model.fit_size %}
+  modelFitSize: {{ player_model.fit_size }}
+{% endif %}
 {% endif %}
 {% endif %}
 {% if game_type not in ("2D", "2d_topdown") and "menu" not in scene_name | lower %}
@@ -1369,13 +1372,13 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 900001000}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {{ "{x: 0, y: 0, z: 0}" if game_type in ("2D", "2d_topdown") else "{x: 0, y: 1, z: 0}" }}
+  m_LocalRotation: {{ player_spawn.rotation if player_spawn else "{x: 0, y: 0, z: 0, w: 1}" }}
+  m_LocalPosition: {{ player_spawn.position if player_spawn else ("{x: 0, y: 0, z: 0}" if game_type in ("2D", "2d_topdown") else "{x: 0, y: 1, z: 0}") }}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
   m_RootOrder: 8
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {{ player_spawn.euler if player_spawn else "{x: 0, y: 0, z: 0}" }}
 {% if player_model %}
 --- !u!114 &900001002
 MonoBehaviour:
@@ -1390,9 +1393,12 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
   modelPath: {{ player_model.resource_path }}
-  controllerPath: {{ character_controller_res }}
+  controllerPath: {{ player_model.controller if player_model.controller is defined else character_controller_res }}
   footOffset: -1
   modelScale: {{ player_model.scale }}
+{% if player_model.fit_size is defined and player_model.fit_size %}
+  modelFitSize: {{ player_model.fit_size }}
+{% endif %}
 {% endif %}
 {% for u in player_units %}
 --- !u!114 &{{ u.file_id }}

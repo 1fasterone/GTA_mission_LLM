@@ -44,6 +44,16 @@ public class EntitySpawner : MonoBehaviour
 {% endfor %}
     };
 {% endif %}
+{% if has_baked_yaws and e.instance_yaws and e.instance_positions and not entity_model_paths.get(e.name, "").startswith("skip:") %}
+    // Facing (yaw °, about world Y) per baked position — e.g. a start grid
+    // aligned to the race direction (src/unity_racetrack.py).
+    private static readonly float[] _yaw_{{ loop.index0 }} =
+    {
+{% for y in e.instance_yaws %}
+        {{ "%.3f"|format(y) }}f,
+{% endfor %}
+    };
+{% endif %}
 {% endfor %}
 {% endif %}
 
@@ -70,7 +80,7 @@ public class EntitySpawner : MonoBehaviour
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
         {% endif %}{% if has_path and e.path_width > 0 %}SpawnTiledGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", _path_{{ loop.index0 }}, sh, {{ "%.2f"|format(e.path_width) }}f);
-{% else %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }});
+{% else %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }}{% if has_baked_yaws %}, {{ "_yaw_" ~ loop.index0 if (e.instance_yaws and e.instance_positions) else "null" }}{% endif %});
 {% endif %}
 {% if has_path %}
         EmitWaypoints({{ '"Waypoints"' if ns.first_path else '"' ~ e.name ~ '_Waypoints"' }}, _path_{{ loop.index0 }});
@@ -87,7 +97,7 @@ public class EntitySpawner : MonoBehaviour
     private void SpawnGroup(string groupName, int count, PrimitiveType shape, string placement,
                             float spacing, float radius, float scale, Color color, string tag,
                             string behavior, string modelPath, Vector3[] path, Shader sh,
-                            float fitSize = 0f, Vector3[] bakedPositions = null)
+                            float fitSize = 0f, Vector3[] bakedPositions = null{% if has_baked_yaws %}, float[] bakedYaws = null{% endif %})
     {
         // Resolve an optional behavior script once (e.g. a chase-AI micro).
         System.Type behaviorType = null;
@@ -130,6 +140,9 @@ public class EntitySpawner : MonoBehaviour
         // imported FBX pivots vary; a primitive's default center pivot keeps
         // today's `scale * 0.5f` heuristic exactly).
         float fitFactor = 1f, footprintXZ = 1f, pivotOffsetY = 0.5f;
+{% if has_baked_yaws %}
+        bool modelForwardIsX = false;
+{% endif %}
         if (modelPrefab != null && TryMeasureBounds(modelPrefab, out var _mb))
         {
             float maxDim = Mathf.Max(_mb.size.x, Mathf.Max(_mb.size.y, _mb.size.z));
@@ -143,6 +156,13 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
             footprintXZ = Mathf.Max(_mb.size.x, _mb.size.z);
             pivotOffsetY = -_mb.min.y;
+{% if has_baked_yaws %}
+            // Same forward-axis heuristic as SpawnTiledGroup: a model
+            // clearly longer on X than Z (beyond the 0.9 bias toward Z)
+            // travels along its X axis — its baked yaw needs the -90°
+            // LookRotation correction so it faces down the track.
+            modelForwardIsX = _mb.size.z < _mb.size.x * 0.9f;
+{% endif %}
         }
         float finalScale = fitFactor * scale;
         // `spacing`/`radius` are AUTHORED MINIMUMS — the model's own measured
@@ -228,6 +248,14 @@ public class EntitySpawner : MonoBehaviour
                 // priority over PlaceAt()'s runtime formulas whenever present.
                 pos = bakedPositions[i];
                 pos.y += pivotOffsetY * finalScale;
+{% if has_baked_yaws %}
+                // Baked facing (e.g. a start grid aligned to the race
+                // direction) — yaw-only, with the same X-forward model
+                // correction SpawnTiledGroup applies to road tiles.
+                if (bakedYaws != null && i < bakedYaws.Length)
+                    go.transform.rotation = Quaternion.Euler(
+                        0f, bakedYaws[i] + (modelForwardIsX ? -90f : 0f), 0f);
+{% endif %}
             }
             else if (placement == "path" && path != null && path.Length > 0)
             {

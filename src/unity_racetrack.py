@@ -66,6 +66,24 @@ def _unit_xz(a: list[float], b: list[float]) -> tuple[float, float]:
     return dx / length, dz / length
 
 
+def _race_direction(centerline: list[list[float]]) -> tuple[float, float]:
+    """Unit race direction AT the start/finish line (centerline[0]): the
+    tangent of the segment ARRIVING at it — i.e. the final straight of the
+    closed loop. The outgoing segment (centerline[0] -> [1]) already curves
+    into turn 1, which used to skew the start grid a few degrees off the
+    straight it actually sits on."""
+    prev = centerline[-2] if len(centerline) > 2 else centerline[0]
+    return _unit_xz(prev, centerline[0])
+
+
+def _start_yaw(centerline: list[list[float]]) -> float:
+    """Race direction at the start line as a Unity yaw (degrees about world
+    Y; 0 = +Z, clockwise positive) — baked onto the start-grid karts as
+    `instance_yaws` so they face down the track instead of world +Z."""
+    fx, fz = _race_direction(centerline)
+    return round(math.degrees(math.atan2(fx, fz)), 3)
+
+
 def _start_grid(centerline: list[list[float]], count: int,
                  lane_width: float, row_spacing: float = 4.0) -> list[list[float]]:
     """Deterministic starting-grid positions anchored to the track's actual
@@ -76,8 +94,7 @@ def _start_grid(centerline: list[list[float]], count: int,
     origin (which is centered on the track loop itself, not the start
     line)."""
     start = centerline[0]
-    nxt = centerline[1] if len(centerline) > 1 else centerline[0]
-    fx, fz = _unit_xz(start, nxt)
+    fx, fz = _race_direction(centerline)
     rx, rz = -fz, fx  # right-hand perpendicular in the XZ plane
     lane_gap = lane_width * 0.28
     positions = []
@@ -159,13 +176,17 @@ def compose_racetrack(schema) -> list[str]:
                    tag="Player",
                    # Pole position: right on the start/finish line, centered
                    # across the track — not the scene origin, which is the
-                   # track LOOP's center, not the start line.
-                   instance_positions=[[centerline[0][0], 0.0, centerline[0][2]]]),
+                   # track LOOP's center, not the start line. The generator
+                   # merges this group INTO the scene's playable Player
+                   # (position, facing, model) when a player script exists.
+                   instance_positions=[[centerline[0][0], 0.0, centerline[0][2]]],
+                   instance_yaws=[_start_yaw(centerline)]),
         EntitySpec(name="OpponentKarts", kind="vehicle", count=3,
                    shape="cube", placement="grid", spacing=4.0, radius=6.0,
                    color_role="accent", scale=1.0,
                    model_hint="kart racer opponent vehicle", tag="Enemy",
-                   instance_positions=_start_grid(centerline, 3, _TRACK_WIDTH)),
+                   instance_positions=_start_grid(centerline, 3, _TRACK_WIDTH),
+                   instance_yaws=[_start_yaw(centerline)] * 3),
     ]
     schema.entities = list(schema.entities) + new_entities
     msgs.append(
