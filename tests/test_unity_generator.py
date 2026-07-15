@@ -910,6 +910,84 @@ class TestTiledPath:
                 == f2["TileT/Assets/Scripts/EntitySpawner.cs"])
 
 
+# ── Baked yaws + racing player merge ─────────────────────────────────────────
+
+class TestBakedYawsAndPlayerMerge:
+    def _racing_schema(self, project="RaceT", with_player=True):
+        from src.unity_racetrack import compose_racetrack
+        from src.unity_schema import UnitySchema
+        scripts = [UnityScript(name="GameManager", type="game_manager", description="GM")]
+        if with_player:
+            scripts.append(UnityScript(name="PlayerController", type="player", description="P"))
+        schema = UnitySchema(
+            project_name=project, company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=scripts, entities=[],
+        )
+        compose_racetrack(schema)
+        return schema
+
+    def test_yaw_arrays_and_param_emitted(self, gen):
+        files = gen.generate(self._racing_schema(with_player=False), {})
+        cs = files["RaceT/Assets/Scripts/EntitySpawner.cs"]
+        assert "float[] _yaw_" in cs
+        assert "float[] bakedYaws = null" in cs
+        assert "modelForwardIsX" in cs
+        assert cs.count("{") == cs.count("}")
+
+    def test_no_yaws_no_param(self, gen):
+        # Projects without baked facing stay byte-identical (same gating
+        # pattern as has_tiled_paths / has_clamped_entities).
+        from src.unity_schema import UnitySchema, EntitySpec
+        schema = UnitySchema(
+            project_name="NoYawT", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[EntitySpec(name="Trees", kind="prop", count=3,
+                                 placement="scatter", radius=10)],
+        )
+        files = gen.generate(schema, {})
+        cs = files["NoYawT/Assets/Scripts/EntitySpawner.cs"]
+        assert "bakedYaws" not in cs
+        assert "_yaw_" not in cs
+        assert "modelForwardIsX" not in cs
+
+    def test_player_merge_moves_scene_player_to_pole_position(self, gen):
+        files = gen.generate(self._racing_schema(), {})
+        scene_yaml = scene(files, "RaceT", "Main")
+        # Pole position (36, 0, 42) + capsule pivot 1 m up, facing yaw 0.
+        assert "m_LocalPosition: {x: 36.0, y: 1.0, z: 42.0}" in scene_yaml
+        assert "m_LocalRotation: {x: 0, y: 0.0, z: 0, w: 1.0}" in scene_yaml
+
+    def test_player_merge_skips_static_kart_group(self, gen):
+        files = gen.generate(self._racing_schema(), {})
+        cs = files["RaceT/Assets/Scripts/EntitySpawner.cs"]
+        # The static PlayerKart prop is merged INTO the playable Player —
+        # spawning it too would leave two Player-tagged objects.
+        assert 'SpawnGroup("PlayerKart"' not in cs
+        assert 'SpawnGroup("OpponentKarts"' in cs
+
+    def test_no_player_script_keeps_kart_group(self, gen):
+        files = gen.generate(self._racing_schema(with_player=False), {})
+        cs = files["RaceT/Assets/Scripts/EntitySpawner.cs"]
+        assert 'SpawnGroup("PlayerKart"' in cs
+
+    def test_non_racing_player_stays_at_origin(self, gen, files_3d):
+        scene_yaml = scene(files_3d, "FullProject", "Main")
+        assert "m_LocalPosition: {x: 0, y: 1, z: 0}" in scene_yaml
+
+    def test_merge_is_deterministic(self, gen):
+        f1 = gen.generate(self._racing_schema(), {})
+        f2 = gen.generate(self._racing_schema(), {})
+        assert f1["RaceT/Assets/Scenes/Main.unity"] == f2["RaceT/Assets/Scenes/Main.unity"]
+        assert (f1["RaceT/Assets/Scripts/EntitySpawner.cs"]
+                == f2["RaceT/Assets/Scripts/EntitySpawner.cs"])
+
+
 # ── Scale consistency: bounds-fit wiring (3D only) ──────────────────────────
 
 class TestBoundsFit:

@@ -256,6 +256,12 @@ class EntitySpec(BaseModel):
     # Empty -> spawner falls back to its legacy runtime formulas (2D archetypes
     # never populate this).
     instance_positions: list[list[float]] = Field(default_factory=list)
+    # Baked per-instance facing (yaw, degrees about world Y) parallel to
+    # `instance_positions` — for groups whose orientation matters, e.g. a
+    # starting grid aligned to the race direction (src/unity_racetrack.py).
+    # Authored by deterministic scaffolds, never by the LLM. Empty -> the
+    # spawner leaves each instance at the model's default rotation.
+    instance_yaws: list[float] = Field(default_factory=list)
 
     @field_validator("path_points", mode="before")
     @classmethod
@@ -268,6 +274,15 @@ class EntitySpec(BaseModel):
     def _clamp_instance_positions(cls, v) -> list:
         """Coerce to ≤ 200 [x, y, z] float triples (matches `count`'s cap)."""
         return _clamp_points(v, 200)
+
+    @field_validator("instance_yaws", mode="before")
+    @classmethod
+    def _clamp_instance_yaws(cls, v) -> list:
+        """Coerce to ≤ 200 floats wrapped into [-360, 360]; drop malformed."""
+        try:
+            return [max(-360.0, min(360.0, float(x))) for x in list(v)[:200]]
+        except (TypeError, ValueError):
+            return []
 
     @field_validator("origin_offset", mode="before")
     @classmethod

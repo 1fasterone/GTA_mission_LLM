@@ -3,7 +3,7 @@
 import pytest
 
 from src.unity_racetrack import (compose_racetrack, is_racing_degenerate,
-                                 _rounded_rect_loop, _every_nth)
+                                 _rounded_rect_loop, _every_nth, _start_yaw)
 from src.unity_schema import EntitySpec, UnitySchema
 
 
@@ -158,6 +158,38 @@ class TestComposeRacetrack:
         assert widths["CheckpointBanners"] == 0.0
         assert widths["PlayerKart"] == 0.0
         assert widths["OpponentKarts"] == 0.0
+
+    def test_karts_carry_race_direction_yaws(self):
+        # Facing must be baked alongside positions or the spawner leaves the
+        # grid pointing world +Z regardless of where the start line runs.
+        schema = _schema()
+        compose_racetrack(schema)
+        kart = next(e for e in schema.entities if e.name == "PlayerKart")
+        opponents = next(e for e in schema.entities if e.name == "OpponentKarts")
+        assert len(kart.instance_yaws) == 1
+        assert len(opponents.instance_yaws) == len(opponents.instance_positions)
+        # Default loop: the final straight arrives at the start line heading
+        # +Z, so the baked yaw is exactly 0.
+        assert kart.instance_yaws == [0.0]
+        assert opponents.instance_yaws == [0.0, 0.0, 0.0]
+
+    def test_start_grid_anchored_to_incoming_straight(self):
+        # The grid must line up along the straight ARRIVING at the start
+        # line, not the outgoing tangent (which already curves into turn 1
+        # and used to skew the rows off the track's centerline).
+        schema = _schema()
+        compose_racetrack(schema)
+        track = next(e for e in schema.entities if e.name == "TrackSurface")
+        opponents = next(e for e in schema.entities if e.name == "OpponentKarts")
+        start = track.path_points[0]
+        for x, _y, z in opponents.instance_positions:
+            assert z < start[2]                    # strictly behind the line
+            assert abs(x - start[0]) <= 5.0 - 1e-6  # inside the 10 m track width
+
+    def test_start_yaw_follows_track_heading(self):
+        # A straight arriving at the start line heading +X must yaw 90°.
+        centerline = [[0.0, 0.0, 0.0], [10.0, 0.0, 5.0], [-10.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        assert _start_yaw(centerline) == 90.0
 
     def test_returns_a_fix_message(self):
         schema = _schema()

@@ -1807,6 +1807,52 @@ class UnityProjectGenerator:
         # the ResolvedModel that owns that path to read its fit_size (set only
         # for Sketchfab picks — see unity_entity_asset_resolver._register).
         _by_resource_path = {m.resource_path: m for m in used_models.values()}
+
+        # ── Playable-player merge (racing start grid) ──────────────────────
+        # A count-1 "vehicle" group tagged Player carrying baked start
+        # positions (the racetrack scaffold's PlayerKart) IS the playable
+        # player. Left alone it spawns as a static second Player-tagged
+        # object (GameObject.FindWithTag picks one arbitrarily) while the
+        # real, controllable Player sits at the scene origin — the middle of
+        # the track infield — wearing the default player model at native
+        # scale. Merge them instead: the scene's Player object takes the
+        # group's pole position, race-direction facing, resolved model and
+        # bounds-fit, and the spawner skips the static duplicate.
+        player_spawn = None
+        player_vehicle_model = None
+        if schema.game_type not in ("2D", "2d_topdown") and any(
+                s.type == "player" for s in schema.scripts):
+            _pv = next(
+                (e for e in schema.entities
+                 if e.tag == "Player" and e.count == 1
+                 and (e.kind or "").lower() == "vehicle"
+                 and e.instance_positions), None)
+            if _pv is not None:
+                _px, _py, _pz = (round(v, 3) for v in _pv.instance_positions[0])
+                _yaw = round(_pv.instance_yaws[0], 3) if _pv.instance_yaws else 0.0
+                _half = math.radians(_yaw) / 2.0
+                player_spawn = {
+                    # Capsule pivot is its center — feet 1 m below.
+                    "position": f"{{x: {_px}, y: {round(_py + 1.0, 3)}, z: {_pz}}}",
+                    "rotation": (f"{{x: 0, y: {round(math.sin(_half), 6)}, "
+                                 f"z: 0, w: {round(math.cos(_half), 6)}}}"),
+                    "euler":    f"{{x: 0, y: {_yaw}, z: 0}}",
+                }
+                _pv_path = entity_model_paths.get(_pv.name, "")
+                if _pv_path and not _pv_path.startswith(
+                        ("skip:", "procedural:", "fx:")):
+                    _pv_model = _by_resource_path.get(_pv_path)
+                    player_vehicle_model = {
+                        "resource_path": _pv_path,
+                        "scale": _pv.scale,
+                        "fit_size": _pv_model.fit_size if _pv_model else 0.0,
+                        # A vehicle visual — the humanoid DefaultCharacter
+                        # animator controller doesn't apply (VehicleBoneDriver
+                        # still drives wheel bones from motion).
+                        "controller": "",
+                    }
+                entity_model_paths[_pv.name] = "skip:merged-into-player"
+
         entity_fit_sizes = {
             name: (_by_resource_path[path].fit_size
                    if path in _by_resource_path else 0.0)
@@ -1840,6 +1886,12 @@ class UnityProjectGenerator:
         has_tiled_paths = schema.game_type not in ("2D", "2d_topdown") and any(
             e.placement == "path" and e.path_points
             and getattr(e, "path_width", 0.0) > 0.0
+            for e in schema.entities)
+        # Baked per-instance facing (start grids) — gate the spawner's yaw
+        # arrays/param so projects without any stay byte-identical.
+        has_baked_yaws = schema.game_type not in ("2D", "2d_topdown") and any(
+            e.instance_yaws and e.instance_positions
+            and not entity_model_paths.get(e.name, "").startswith("skip:")
             for e in schema.entities)
         if has_procedural_entities and not any(
                 s.type == "mesh_builder" for s in schema.scripts):
@@ -1920,6 +1972,7 @@ class UnityProjectGenerator:
             "has_procedural_entities": has_procedural_entities,
             "has_fx_entities":   has_fx_entities,
             "has_tiled_paths":   has_tiled_paths,
+            "has_baked_yaws":    has_baked_yaws,
             "has_clamped_entities": has_clamped_entities,
             # Scene → entity-group names for specs that declare a subset (None
             # = all groups, absent from the map). Drives EntitySpawner's
@@ -1996,8 +2049,14 @@ class UnityProjectGenerator:
             "composed_units":   composed_units or [],
             "custom_scripts":   custom_scripts,
             "entity_spawner_guid": _make_guid(f"{pn}/Scripts/EntitySpawner"),
-            # Model Pack v1 — drive mode keeps the car visual, so no player swap.
-            "player_model": used_models.get("player") if schema.locomotion != "drive" else None,
+            # Model Pack v1 — drive mode keeps the car visual, so no player
+            # swap; a merged player-vehicle group (racing start grid) swaps
+            # in the kart regardless of locomotion.
+            "player_model": player_vehicle_model or (
+                used_models.get("player") if schema.locomotion != "drive" else None),
+            # Start-line transform for the playable Player (racing merge);
+            # None keeps the historical origin placement byte-identical.
+            "player_spawn": player_spawn,
             "enemy_model":  used_models.get("enemy"),
             "model_swap_guid": _make_guid(f"{pn}/Scripts/ModelSwap"),
             "character_controller_res": "Models/Default/DefaultCharacter",

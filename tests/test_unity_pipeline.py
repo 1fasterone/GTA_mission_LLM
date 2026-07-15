@@ -325,9 +325,16 @@ class TestUnityPipelineRacingScaffold:
             unity_pipeline_config, "concept text", racing_schema_json_degenerate)
         cs = (project_root / "Assets" / "Scripts" / "EntitySpawner.cs").read_text(
             encoding="utf-8")
-        for name in ("TrackSurface", "PlayerKart", "OpponentKarts",
+        for name in ("TrackSurface", "OpponentKarts",
                      "TrackBarriersOuter", "ApexCones", "CheckpointBanners"):
             assert f'"{name}"' in cs, f"{name} missing from generated EntitySpawner.cs"
+        # PlayerKart is NOT spawned as a static prop: with a player script in
+        # the schema it merges into the playable Player object, which takes
+        # the pole position (36, 42) + race-direction facing in the scene.
+        assert 'SpawnGroup("PlayerKart"' not in cs
+        scene_yaml = (project_root / "Assets" / "Scenes" / "Main.unity").read_text(
+            encoding="utf-8")
+        assert "m_LocalPosition: {x: 36.0, y: 1.0, z: 42.0}" in scene_yaml
 
     def test_existing_grandstands_entity_preserved(
         self, unity_pipeline_config, racing_schema_json_degenerate
