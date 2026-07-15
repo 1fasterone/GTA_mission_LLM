@@ -910,6 +910,68 @@ class TestTiledPath:
                 == f2["TileT/Assets/Scripts/EntitySpawner.cs"])
 
 
+# ── Banked path points ([x, y, z, bank]) ─────────────────────────────────────
+
+class TestBankedPaths:
+    def _schema(self, project="BankT", game_type="3D", banked=True,
+                path_width=10.0):
+        from src.unity_schema import UnitySchema, EntitySpec
+        pts = [[0, 0, 0], [40, 2, 20, -12], [60, 5, 60, 30]] if banked else \
+              [[0, 0, 0], [40, 2, 20], [60, 5, 60]]
+        return UnitySchema(
+            project_name=project, company_name="C", description="",
+            game_type=game_type, platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=[
+                EntitySpec(name="Road", kind="road", count=20, shape="cube",
+                           placement="path", color_role="secondary", scale=4,
+                           path_points=pts, path_width=path_width),
+            ],
+        )
+
+    def test_bank_array_helper_and_roll_emitted(self, gen):
+        files = gen.generate(self._schema(), {})
+        cs = files["BankT/Assets/Scripts/EntitySpawner.cs"]
+        assert "float[] _bank_0" in cs
+        assert "-12.000f," in cs and "30.000f," in cs
+        assert "0.000f," in cs                       # unbanked point reads 0
+        assert "BankAlongPath" in cs
+        assert "float[] banks = null" in cs
+        assert ", _bank_0);" in cs                   # wired into the spawn call
+        assert "Quaternion.Euler(0f, 0f, -bank)" in cs
+        assert cs.count("{") == cs.count("}")
+
+    def test_unbanked_projects_stay_clean(self, gen):
+        # Same gating pattern as has_tiled_paths: no banked point anywhere →
+        # no bank arrays, no param, no helper — byte-identical output.
+        files = gen.generate(self._schema(banked=False), {})
+        cs = files["BankT/Assets/Scripts/EntitySpawner.cs"]
+        assert "_bank_" not in cs
+        assert "BankAlongPath" not in cs
+        assert "banks" not in cs
+
+    def test_bank_ignored_without_tiling(self, gen):
+        # Bank only means something to tiled surfaces; a path_width == 0
+        # group keeps the even spread and emits no bank machinery.
+        files = gen.generate(self._schema(path_width=0.0), {})
+        cs = files["BankT/Assets/Scripts/EntitySpawner.cs"]
+        assert "_bank_" not in cs
+        assert "BankAlongPath" not in cs
+
+    def test_2d_never_banks(self, gen):
+        files = gen.generate(self._schema(project="BankT2D", game_type="2D"), {})
+        cs = files["BankT2D/Assets/Scripts/EntitySpawner.cs"]
+        assert "_bank_" not in cs
+
+    def test_banked_generation_is_deterministic(self, gen):
+        f1 = gen.generate(self._schema(), {})
+        f2 = gen.generate(self._schema(), {})
+        assert (f1["BankT/Assets/Scripts/EntitySpawner.cs"]
+                == f2["BankT/Assets/Scripts/EntitySpawner.cs"])
+
+
 # ── Baked yaws + racing player merge ─────────────────────────────────────────
 
 class TestBakedYawsAndPlayerMerge:

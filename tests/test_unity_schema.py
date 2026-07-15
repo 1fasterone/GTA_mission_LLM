@@ -162,10 +162,10 @@ class TestEntityPathPoints:
                        path_points=[[0, 0, 0], [1, 2], ["x", 1, 2], [99999, 0, -99999],
                                     "garbage", [3, 4, 5, 6]])
         # [1,2] padded to [1,2,0]; "x" entry dropped; out-of-range clamped to ±2000;
-        # "garbage" dropped; 4-tuple truncated to 3.
+        # "garbage" dropped; 4th component kept as a bank angle.
         assert [1.0, 2.0, 0.0] in e.path_points
         assert [2000.0, 0.0, -2000.0] in e.path_points
-        assert [3.0, 4.0, 5.0] in e.path_points
+        assert [3.0, 4.0, 5.0, 6.0] in e.path_points
         assert len(e.path_points) == 4   # ["x",1,2] and "garbage" dropped
 
     def test_path_points_capped_at_64(self):
@@ -173,6 +173,28 @@ class TestEntityPathPoints:
         e = EntitySpec(name="R", placement="path",
                        path_points=[[i, 0, 0] for i in range(200)])
         assert len(e.path_points) == 64
+
+    def test_bank_component_clamped_to_45_degrees(self):
+        from src.unity_schema import EntitySpec
+        e = EntitySpec(name="R", placement="path",
+                       path_points=[[0, 0, 0, 80], [1, 0, 0, -80], [2, 0, 0, 12.5]])
+        assert e.path_points == [[0.0, 0.0, 0.0, 45.0],
+                                 [1.0, 0.0, 0.0, -45.0],
+                                 [2.0, 0.0, 0.0, 12.5]]
+
+    def test_zero_bank_drops_back_to_triple(self):
+        # A 0° bank must not survive as a 4th component, or unbanked schemas
+        # authored as 4-tuples would flip the generator's has_banked_paths
+        # gate and change otherwise byte-identical output.
+        from src.unity_schema import EntitySpec
+        e = EntitySpec(name="R", placement="path",
+                       path_points=[[0, 0, 0, 0], [1, 0, 0, 0.0]])
+        assert e.path_points == [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
+
+    def test_instance_positions_never_carry_bank(self):
+        from src.unity_schema import EntitySpec
+        e = EntitySpec(name="R", instance_positions=[[1, 2, 3, 30]])
+        assert e.instance_positions == [[1.0, 2.0, 3.0]]
 
     def test_unknown_placement_still_clamps(self):
         from src.unity_schema import EntitySpec

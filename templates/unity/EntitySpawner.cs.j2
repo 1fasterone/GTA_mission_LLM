@@ -31,6 +31,17 @@ public class EntitySpawner : MonoBehaviour
         new Vector3({{ "%.2f"|format(p[0]) }}f, {{ "%.2f"|format(p[1]) }}f, {{ "%.2f"|format(p[2]) }}f),
 {% endfor %}
     };
+{% if has_banked_paths and entity_path_banks.get(e.name) %}
+    // Bank (roll °, about the direction of travel) per path point — lerped
+    // along the polyline like elevation. Negative leans the surface left of
+    // travel, positive right (schema [x, y, z, bank] convention).
+    private static readonly float[] _bank_{{ loop.index0 }} =
+    {
+{% for b in entity_path_banks[e.name] %}
+        {{ "%.3f"|format(b) }}f,
+{% endfor %}
+    };
+{% endif %}
 {% endif %}
 {% if e.instance_positions and not entity_model_paths.get(e.name, "").startswith("skip:") %}
     // Baked by src/unity_layout.py (Step 5) — already accounts for this
@@ -79,7 +90,7 @@ public class EntitySpawner : MonoBehaviour
 {% set has_path = e.placement == "path" and e.path_points %}
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
-        {% endif %}{% if has_path and e.path_width > 0 %}SpawnTiledGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", _path_{{ loop.index0 }}, sh, {{ "%.2f"|format(e.path_width) }}f);
+        {% endif %}{% if has_path and e.path_width > 0 %}SpawnTiledGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", _path_{{ loop.index0 }}, sh, {{ "%.2f"|format(e.path_width) }}f{% if has_banked_paths %}, {{ "_bank_" ~ loop.index0 if entity_path_banks.get(e.name) else "null" }}{% endif %});
 {% else %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }}{% if has_baked_yaws %}, {{ "_yaw_" ~ loop.index0 if (e.instance_yaws and e.instance_positions) else "null" }}{% endif %});
 {% endif %}
 {% if has_path %}
@@ -313,7 +324,7 @@ public class EntitySpawner : MonoBehaviour
     private void SpawnTiledGroup(string groupName, int count, PrimitiveType shape,
                                  float spacing, float radius, float scale, Color color,
                                  string tag, string behavior, string modelPath,
-                                 Vector3[] path, Shader sh, float pathWidth)
+                                 Vector3[] path, Shader sh, float pathWidth{% if has_banked_paths %}, float[] banks = null{% endif %})
     {
         GameObject modelPrefab = string.IsNullOrEmpty(modelPath)
             ? null : Resources.Load<GameObject>(modelPath);
@@ -375,10 +386,25 @@ public class EntitySpawner : MonoBehaviour
             Vector3 ahead = PointAlongPath(path, Mathf.Clamp01(t + 0.5f / n));
             Vector3 behind = PointAlongPath(path, Mathf.Clamp01(t - 0.5f / n));
             Vector3 dir = ahead - behind; dir.y = 0f;
+{% if has_banked_paths %}
+            // Bank = roll about the direction of travel, lerped between path
+            // points ([x, y, z, bank] schema convention: negative leans the
+            // surface left, positive right). Applied in the path frame BEFORE
+            // the model-axis correction so the surface tilts around the track
+            // line, not the model's own local axis. Unity's +Z euler raises
+            // the right edge (leans left), hence the sign flip.
+            float bank = BankAlongPath(path, banks, t);
+            if (dir.sqrMagnitude > 0.0001f)
+                go.transform.rotation =
+                    Quaternion.LookRotation(dir.normalized, Vector3.up)
+                    * Quaternion.Euler(0f, 0f, -bank)
+                    * (forwardIsX ? Quaternion.Euler(0f, -90f, 0f) : Quaternion.identity);
+{% else %}
             if (dir.sqrMagnitude > 0.0001f)
                 go.transform.rotation =
                     Quaternion.LookRotation(dir.normalized, Vector3.up)
                     * (forwardIsX ? Quaternion.Euler(0f, -90f, 0f) : Quaternion.identity);
+{% endif %}
 
             if (isPrimitive)
             {
@@ -419,6 +445,30 @@ public class EntitySpawner : MonoBehaviour
         for (int i = 1; i < pts.Length; i++) total += Vector3.Distance(pts[i - 1], pts[i]);
         return total;
     }
+{% if has_banked_paths %}
+
+    // Bank angle at arc-length parameter t — the same segment walk as
+    // PointAlongPath, but lerping the per-point bank values so banking ramps
+    // smoothly between authored points (a 12°-banked corner eases in/out
+    // through its neighbors instead of snapping per tile). banks[i] pairs
+    // with pts[i]; a null/short array reads as 0.
+    private static float BankAlongPath(Vector3[] pts, float[] banks, float t)
+    {
+        if (banks == null || banks.Length == 0 || pts.Length < 2) return 0f;
+        float B(int i) => i < banks.Length ? banks[i] : 0f;
+        float total = 0f;
+        for (int i = 1; i < pts.Length; i++) total += Vector3.Distance(pts[i - 1], pts[i]);
+        float dist = Mathf.Clamp01(t) * total;
+        for (int i = 1; i < pts.Length; i++)
+        {
+            float seg = Vector3.Distance(pts[i - 1], pts[i]);
+            if (dist <= seg || i == pts.Length - 1)
+                return Mathf.Lerp(B(i - 1), B(i), seg > 0f ? Mathf.Clamp01(dist / seg) : 0f);
+            dist -= seg;
+        }
+        return B(pts.Length - 1);
+    }
+{% endif %}
 {% endif %}
 {% if game_type not in ("2D", "2d_topdown") %}
     // Encapsulated renderer bounds of a model (prefab asset or instance) —

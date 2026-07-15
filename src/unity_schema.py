@@ -171,20 +171,29 @@ _VALID_ENTITY_PLACEMENTS: frozenset[str] = frozenset(get_args(EntityPlacement))
 _VALID_ENTITY_ROLES:      frozenset[str] = frozenset(get_args(EntityColorRole))
 
 
-def _clamp_points(v, cap: int) -> list:
+def _clamp_points(v, cap: int, allow_bank: bool = False) -> list:
     """Shared coercion for point-list fields: ≤ `cap` [x, y, z] float triples,
-    dropping anything malformed."""
+    dropping anything malformed. With `allow_bank`, an optional 4th component
+    is kept as a bank angle (degrees of roll about the direction of travel)
+    clamped to ±45 — a zero bank is dropped back to a plain triple so
+    unbanked schemas stay byte-identical downstream."""
     if not isinstance(v, list):
         return []
+    width = 4 if allow_bank else 3
     out: list[list[float]] = []
     for p in v[:cap]:
         try:
-            nums = [float(x) for x in list(p)[:3]]
+            nums = [float(x) for x in list(p)[:width]]
         except (TypeError, ValueError):
             continue
         while len(nums) < 3:
             nums.append(0.0)
-        out.append([max(-2000.0, min(2000.0, n)) for n in nums])
+        point = [max(-2000.0, min(2000.0, n)) for n in nums[:3]]
+        if allow_bank and len(nums) > 3:
+            bank = max(-45.0, min(45.0, nums[3]))
+            if bank != 0.0:
+                point.append(bank)
+        out.append(point)
     return out
 
 
@@ -226,6 +235,11 @@ class EntitySpec(BaseModel):
     # spawner lays the instances along this polyline AND emits a "Waypoints"
     # container of empty GameObjects at the points — winding roads, patrol
     # routes, and racing lines that waypoint-following AI can consume.
+    # An optional 4th component per point is a BANK angle: degrees of roll
+    # about the direction of travel (clamped ±45; negative leans the surface
+    # left, positive right), linearly interpolated between points exactly
+    # like elevation — consumed by tiled groups (path_width > 0) to build
+    # banked corners and off-camber sections.
     path_points: list[list[float]] = Field(default_factory=list)
     # placement == "path" only: cross-track width in meters. 0.0 (default) =
     # legacy behavior — spread `count` instances evenly along the polyline.
@@ -266,8 +280,9 @@ class EntitySpec(BaseModel):
     @field_validator("path_points", mode="before")
     @classmethod
     def _clamp_path(cls, v) -> list:
-        """Coerce to ≤ 64 [x, y, z] float triples; drop anything malformed."""
-        return _clamp_points(v, 64)
+        """Coerce to ≤ 64 [x, y, z] (or [x, y, z, bank°]) points; the bank
+        angle is clamped to ±45 and dropped when 0. Drop anything malformed."""
+        return _clamp_points(v, 64, allow_bank=True)
 
     @field_validator("instance_positions", mode="before")
     @classmethod
