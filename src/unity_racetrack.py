@@ -7,18 +7,19 @@ hard-fails resolve_entity_assets' racing FAIL-FAST check (unity_pipeline.py,
 unity_entity_asset_resolver.py).
 
 Geometry is a parametric rounded-rectangle loop (deterministic, no RNG, no
-LLM, no mesh-measurement dependency) — a prerequisite Blender-headless
-piece-dimension annotation pass was attempted live and blocked: Kenney's
-racing-kit road FBX files are legacy ASCII FBX, which the installed Blender
-(5.1.2) cannot import at all ("ASCII FBX files are not supported"), so no
-reliable per-piece footprint/socket data exists to tile oriented road
-segments edge-to-edge. This is the documented fallback: a waypoint-spline
-track — barriers, cones, checkpoint banners, and a road ribbon placed along
-the loop via the existing EntitySpawner "path" placement (which now also
-faces each instance along the path tangent — see EntitySpawner.cs.j2), plus
-a real kart on a start grid. Every entity still resolves through the normal
-genre-aware catalog match (unity_entity_asset_resolver.py); this module only
-decides WHAT entities to author, never which model file backs them.
+LLM, no mesh-measurement dependency). Historical note: a Blender-headless
+piece-dimension annotation pass was once attempted and blocked (Kenney's
+racing-kit road FBX are legacy ASCII FBX Blender can't import), so no
+per-piece footprint data exists in Python. That blocker is now resolved at
+RUNTIME instead: entities carrying `path_width > 0` are tiled edge-to-edge
+by EntitySpawner's SpawnTiledGroup (EntitySpawner.cs.j2), which measures the
+resolved model's renderer bounds in Unity, width-normalizes it to
+path_width meters, and derives the segment count from the loop's arc length
+— the road surface and barrier rails read as one continuous circuit.
+Entities without path_width keep the even waypoint spread (cones, banners).
+Every entity still resolves through the normal genre-aware catalog match
+(unity_entity_asset_resolver.py); this module only decides WHAT entities to
+author, never which model file backs them.
 """
 
 from __future__ import annotations
@@ -131,18 +132,20 @@ def compose_racetrack(schema) -> list[str]:
                   centerline[len(centerline) // 2], centerline[3 * len(centerline) // 4]]
 
     new_entities = [
+        # path_width > 0 = SpawnTiledGroup tile mode: count/scale below are
+        # only the fallback when the resolved model has no measurable bounds.
         EntitySpec(name="TrackSurface", kind="road", count=len(centerline),
                    shape="cube", placement="path", color_role="secondary",
                    scale=_TRACK_WIDTH * 0.4, model_hint="road straight racing track",
-                   path_points=centerline),
+                   path_points=centerline, path_width=_TRACK_WIDTH),
         EntitySpec(name="TrackBarriersOuter", kind="wall", count=len(outer),
                    shape="cube", placement="path", color_role="trim",
                    scale=1.5, model_hint="barrier fence guardrail",
-                   path_points=outer),
+                   path_points=outer, path_width=1.0),
         EntitySpec(name="TrackBarriersInner", kind="wall", count=len(inner),
                    shape="cube", placement="path", color_role="trim",
                    scale=1.5, model_hint="barrier fence guardrail",
-                   path_points=inner),
+                   path_points=inner, path_width=1.0),
         EntitySpec(name="ApexCones", kind="obstacle", count=len(apex_cones),
                    shape="cylinder", placement="path", color_role="accent",
                    scale=0.6, model_hint="traffic cone", path_points=apex_cones),

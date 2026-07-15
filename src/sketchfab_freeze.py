@@ -93,18 +93,24 @@ def _rank(results: list[dict], score_fn: Callable[[dict], float],
     return [(s, m) for s, m in scored if s >= min_score]
 
 
-def _report_scale_correction(fbx_out: Path, model_name: str) -> None:
+def _report_scale_correction(fbx_out: Path, model_name: str) -> dict:
     """Log when convert_gltf_to_fbx's bounding-box sanity check corrected an
     implausible import scale — visibility for a class of upstream authoring
     error (wrong unit in the source upload) this pipeline can't prevent, only
     compensate for. Best-effort: a missing/unreadable convert.json is not an
-    error, just nothing to report."""
+    error, just nothing to report.
+
+    Returns the convert-time size diagnostics to persist into the catalog
+    entry ({"bbox_meters": [x, y, z], "scale_corrected": factor-or-None}, or
+    {} when the sidecar is missing/unreadable) — NOT consumed by any
+    placement math, purely so mis-scaled models are greppable/testable
+    without re-opening Blender."""
     import json as _json
     result_path = fbx_out.with_suffix(".convert.json")
     try:
         data = _json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return
+        return {}
     factor = data.get("scale_corrected")
     if factor:
         before = data.get("largest_dim_before")
@@ -113,6 +119,10 @@ def _report_scale_correction(fbx_out: Path, model_name: str) -> None:
             "dimension %.1fm) — auto-corrected by %.4fx before export. The "
             "source upload itself uses the wrong unit; this is compensating,"
             " not fixing, the upstream error.", model_name, before or 0.0, factor)
+    diag: dict = {"scale_corrected": factor}
+    if isinstance(data.get("size_after"), list):
+        diag["bbox_meters"] = data["size_after"]
+    return diag
 
 
 def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
@@ -233,7 +243,8 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                 category=category)
             if converted is None:
                 continue
-            _report_scale_correction(fbx_out, model.get("name") or uid)
+            convert_diag = _report_scale_correction(
+                fbx_out, model.get("name") or uid)
 
         keywords = sorted(set(tokenize(model.get("name") or ""))
                           | {t.get("name", "").lower()
@@ -267,6 +278,10 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
             "attribution": _attribution_text(model, license_slug),
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+        # Convert-time size diagnostics (bbox_meters / scale_corrected) —
+        # additive keys every catalog reader ignores; see
+        # _report_scale_correction.
+        entry.update(convert_diag)
         # Style provenance (style_id / style_tokens / style_anchor_*) — merged
         # setdefault-style so caller-supplied metadata can never clobber a core
         # catalog field.

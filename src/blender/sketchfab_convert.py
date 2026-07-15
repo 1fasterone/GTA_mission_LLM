@@ -155,8 +155,16 @@ try:
         except Exception:
             pass
 
+    # Post-correction bounding-box dims (meters, Blender axis order x/y/z with
+    # z = up) — diagnostics persisted into the Sketchfab catalog entry so
+    # mis-scaled models can be spotted by grep/tests without re-opening Blender.
+    _f = scale_factor or 1.0
+    size_after = [round((bb_max - bb_min).x * _f, 4),
+                  round((bb_max - bb_min).y * _f, 4),
+                  round((bb_max - bb_min).z * _f, 4)]
     result = {{"ok": True, "fbx": FBX_OUT, "textures": n_tex,
-              "scale_corrected": scale_factor, "largest_dim_before": largest_dim}}
+              "scale_corrected": scale_factor, "largest_dim_before": largest_dim,
+              "size_after": size_after}}
 except Exception as exc:
     result = {{"ok": False, "error": str(exc)}}
 

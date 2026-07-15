@@ -178,6 +178,17 @@ class TestEntityPathPoints:
         from src.unity_schema import EntitySpec
         assert EntitySpec(name="X", placement="spline").placement == "single"
 
+    def test_path_width_defaults_to_zero(self):
+        from src.unity_schema import EntitySpec
+        assert EntitySpec(name="R", placement="path").path_width == 0.0
+
+    def test_path_width_clamped_and_coerced(self):
+        from src.unity_schema import EntitySpec
+        assert EntitySpec(name="R", path_width=-3).path_width == 0.0
+        assert EntitySpec(name="R", path_width=500).path_width == 100.0
+        assert EntitySpec(name="R", path_width="garbage").path_width == 0.0
+        assert EntitySpec(name="R", path_width=10).path_width == 10.0
+
 
 # ── EnvironmentSpec mood block ──────────────────────────────────────────────────
 
