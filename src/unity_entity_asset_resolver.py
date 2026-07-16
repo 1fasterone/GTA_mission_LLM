@@ -109,6 +109,21 @@ _STOPWORDS = frozenset({
     "group", "object", "objects", "item", "items", "prop", "props",
 })
 
+# Kinds whose entities are drivable/walkable SURFACE tiles laid along a path
+# or floor. Signage is categorically wrong content for these — see
+# _signage_blocked.
+_SURFACE_KINDS = frozenset({"road", "track", "street", "path", "ground",
+                            "floor", "terrain"})
+
+# Tokens that mark an asset as signage / roadside furniture rather than a
+# surface piece. Deliberately an explicit list, not suffix matching —
+# "design" also ends in "sign".
+_SIGNAGE_TOKENS = frozenset({
+    "sign", "signs", "signage", "signpost", "signposts", "signboard",
+    "stopsign", "stopsigns", "roadsign", "roadsigns", "streetsign",
+    "streetsigns", "trafficsign", "trafficsigns", "billboard", "billboards",
+})
+
 
 def _slug(name: str) -> str:
     parts = re.sub(r"[^a-zA-Z0-9]+", " ", name or "").split()
@@ -136,6 +151,36 @@ _SKIP_KINDS = frozenset({"ui", "hud", "menu", "background", "backdrop",
                          "skybox", "sky"})
 
 
+def _entry_tokens(entry: dict) -> set[str]:
+    """Keyword tags + filename-stem tokens — the searchable identity of a
+    catalog entry, exactly what _score matches query tokens against."""
+    kw = set(k.lower() for k in entry.get("keywords", []))
+    kw.update(t for t in tokenize(Path(entry.get("filename", "")).stem)
+              if len(t) > 1)   # "fence-1x2" leaves a bare "x" — never a keyword
+    return kw
+
+
+def _signage_blocked(entry_tokens: set[str], query_weights: dict[str, float],
+                     kind: str) -> bool:
+    """True when a signage asset must not fill a surface-kind entity.
+
+    Hit live: TrackSurface (kind="road", model_hint "road straight racing
+    track") tiled a Sketchfab STOP SIGN as the racetrack ribbon. The sign's
+    marketplace tags ("road", "street", "realistic") out-hit real road tiles
+    on keyword overlap, and fetch-and-freeze had stamped kind_hints=["road"]
+    on it, so both the kind-hint bonus and _passes_kind_guard endorsed the
+    match. No score can make a sign drivable — block signage for surface
+    kinds outright, unless the entity itself asks for a sign (a strong query
+    token in _SIGNAGE_TOKENS, e.g. model_hint "road sign").
+    """
+    if kind not in _SURFACE_KINDS:
+        return False
+    if not (entry_tokens & _SIGNAGE_TOKENS):
+        return False
+    return not any(w >= _STRONG_HIT and t in _SIGNAGE_TOKENS
+                   for t, w in query_weights.items())
+
+
 def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     """Weighted keyword overlap + kind-hint bonus + generic tiebreak.
 
@@ -145,9 +190,9 @@ def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     because the description word "vertical" (0.1) qualified the asset and then
     the +0.5 prop kind bonus carried it over the threshold.
     """
-    kw = set(k.lower() for k in entry.get("keywords", []))
-    kw.update(t for t in tokenize(Path(entry.get("filename", "")).stem)
-              if len(t) > 1)   # "fence-1x2" leaves a bare "x" — never a keyword
+    kw = _entry_tokens(entry)
+    if _signage_blocked(kw, query_weights, kind):
+        return 0.0
     hits = {t: w for t, w in query_weights.items() if t in kw}
     if not hits or max(hits.values()) < _STRONG_HIT:
         return 0.0
@@ -440,9 +485,7 @@ def resolve_entity_assets(schema,
         def _kind_only_hit(a: dict) -> bool:
             """True if `kind` is the ONLY strong token this entry matches —
             the match carries no signal beyond the bare kind word itself."""
-            akw = set(k.lower() for k in a.get("keywords", []))
-            akw.update(t for t in tokenize(Path(a.get("filename", "")).stem)
-                       if len(t) > 1)
+            akw = _entry_tokens(a)
             strong = {t for t, w in qw.items() if w >= _STRONG_HIT and t in akw}
             kind_variants = {kind, kind + "s",
                              kind[:-1] if kind.endswith("s") else kind}
@@ -626,6 +669,10 @@ def resolve_entity_assets(schema,
             soft: list[tuple[float, dict]] = []
             for a, (broad, strong_m) in zip(assets, asset_membership):
                 if not (broad & layer_band) or _entry_source(a, asset_root) is None:
+                    continue
+                # Same signage embargo the _score tiers enforce — this soft
+                # path scores without _score, so it needs its own check.
+                if _signage_blocked(_entry_tokens(a), qw, kind):
                     continue
                 s = 0.05
                 if strong_m & layer_band:
