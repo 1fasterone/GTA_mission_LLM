@@ -1193,3 +1193,109 @@ def test_genre_prefixes_mechanical_sketchfab_query(env, tmp_path, monkeypatch):
         used, all_models, lookups_dir=str(env),
         sketchfab_cfg={"enabled": True, "auto_fetch": True})
     assert queries and queries[0].startswith("racing ")
+
+
+# ── signage embargo for surface kinds ─────────────────────────────────────────
+# Live regression (SpringCreekMotocrossRacing): TrackSurface (kind="road",
+# model_hint "road straight racing track") tiled a Sketchfab STOP SIGN as the
+# racetrack ribbon. The sign's marketplace tags ("road", "street", "realistic")
+# out-hit real road tiles, and fetch_and_freeze had stamped category="road" /
+# kind_hints=["road"] onto it, so the kind guard and the +0.5 kind bonus both
+# endorsed the match.
+
+_ROAD_TILE = {
+    "filename": "road-straight.fbx", "relpath": "road-straight.fbx",
+    "category": "road", "keywords": ["road", "straight", "track", "lane",
+                                     "segment"],
+    "kind_hints": ["road"], "generic_score": 0, "scale": 1.0,
+}
+
+# The stop sign's tags exactly as frozen in the live failure (uid a9664def…).
+_STOPSIGN_KW = ("3d", "asset", "environment", "game", "realistic", "road",
+                "sign", "simulation", "stop", "street", "traffic", "urban")
+
+
+def _append_assets(env, assets):
+    """Add extra Kenney-tier assets (files + catalog entries) to an env dir."""
+    cat_path = env / "unity" / "asset_catalog.json"
+    cat = json.loads(cat_path.read_text(encoding="utf-8"))
+    lib = Path(cat["assets"][0]["root"])
+    for a in assets:
+        (lib / a["relpath"]).write_bytes(b"FBX")
+        cat["assets"].append({**a, "root": lib.as_posix(),
+                              "game_contexts": ["any"], "format": "fbx",
+                              "pack": "test", "curated": False})
+    cat_path.write_text(json.dumps(cat), encoding="utf-8")
+
+
+def _track_surface_entity():
+    return EntitySpec(name="TrackSurface", kind="road", count=8,
+                      model_hint="road straight racing track",
+                      sketchfab_query="realistic road surface material")
+
+
+def _stopsign_sketchfab_entry(env, tmp_path):
+    return _add_sketchfab_entry(env, tmp_path, uid="a9664def",
+                                filename="stopsign-a9664def.fbx",
+                                keywords=_STOPSIGN_KW, kind_hints=("road",),
+                                category="road")
+
+
+def test_frozen_signage_never_tiles_a_road_entity(env, tmp_path):
+    # The exact live failure: a frozen, road-self-certified stop sign in the
+    # Sketchfab cache. Tier S must refuse it and fall through to a real tile.
+    _append_assets(env, [_ROAD_TILE])
+    _stopsign_sketchfab_entry(env, tmp_path)
+    paths = resolve_entity_assets(
+        _schema([_track_surface_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["TrackSurface"] == "Models/Kenney/Road/road-straight"
+
+
+def test_auto_fetched_signage_is_rejected_post_fetch(env, tmp_path, monkeypatch):
+    # Same class of failure via the live-fetch path: fetch_and_freeze returns
+    # a signage model for a road query — the resolver's post-fetch re-score
+    # must reject it instead of wiring it in.
+    _append_assets(env, [_ROAD_TILE])
+
+    def _fake_fetch(query, **kw):
+        return _stopsign_sketchfab_entry(Path(kw["lookups_dir"]), tmp_path)
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    paths = resolve_entity_assets(
+        _schema([_track_surface_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert paths["TrackSurface"] == "Models/Kenney/Road/road-straight"
+
+
+def test_score_zeroes_signage_for_surface_kinds():
+    from src.unity_entity_asset_resolver import _query_weights, _score
+    entry = {"filename": "stopsign-a9664def.fbx",
+             "keywords": list(_STOPSIGN_KW), "kind_hints": ["road"],
+             "generic_score": 0}
+    qw = _query_weights(_track_surface_entity(), set())
+    assert _score(entry, qw, "road") == 0.0
+
+
+def test_surface_kind_hint_naming_sign_lifts_the_embargo():
+    # A road-kind entity that ASKS for a sign ("road sign") may still get one.
+    from src.unity_entity_asset_resolver import _query_weights, _score
+    e = EntitySpec(name="WarningSigns", kind="road", count=2,
+                   model_hint="road sign")
+    qw = _query_weights(e, set())
+    entry = {"filename": "stopsign-a9664def.fbx",
+             "keywords": list(_STOPSIGN_KW), "kind_hints": ["road"],
+             "generic_score": 0}
+    assert _score(entry, qw, "road") > 0.0
+
+
+def test_signage_still_matches_non_surface_kinds(env, tmp_path):
+    # kind="prop" + hint "stop sign": the sign IS the requested content — the
+    # embargo is scoped to surface kinds only.
+    _stopsign_sketchfab_entry(env, tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="StopSigns", kind="prop", count=2,
+                            model_hint="stop sign")]),
+        {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["StopSigns"] == "Models/Sketchfab/Road/stopsign-a9664def"
