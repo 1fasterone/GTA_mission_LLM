@@ -1299,3 +1299,120 @@ def test_signage_still_matches_non_surface_kinds(env, tmp_path):
         {}, {}, lookups_dir=str(env),
         sketchfab_cfg={"enabled": True, "auto_fetch": False})
     assert paths["StopSigns"] == "Models/Sketchfab/Road/stopsign-a9664def"
+
+
+# ── style adjectives are never match evidence ─────────────────────────────────
+# Live regression (SpringCreekMotocrossRacing, regenerated post-PR#62): the
+# signage embargo protects SURFACE kinds, but the same frozen stop sign still
+# won Barriers, Checkpoints, TrackBarriersOuter/Inner and CheckpointBanners
+# (kinds wall/decoration). Every translated sketchfab_query starts with the
+# run's style adjective ("realistic …"), the sign is marketplace-tagged
+# "realistic", and _score only needs ONE strong hit — so a style word shared
+# by every query and half the marketplace qualified the sign for any entity.
+
+_BARRIER_BLOCK = {
+    "filename": "barrier-block.fbx", "relpath": "barrier-block.fbx",
+    "category": "prop", "keywords": ["barrier", "wall", "block"],
+    "kind_hints": ["wall"], "generic_score": 0, "scale": 1.0,
+}
+
+
+def _barriers_entity():
+    return EntitySpec(name="Barriers", kind="wall", count=6,
+                      model_hint="race barrier",
+                      sketchfab_query="realistic race barrier")
+
+
+def test_style_tokens_are_weak_in_query_weights():
+    from src.unity_entity_asset_resolver import _query_weights
+    qw = _query_weights(_barriers_entity(), set())
+    assert qw["realistic"] == pytest.approx(0.1)   # style adjective → weak
+    assert qw["barrier"] == 2.0                     # the semantics stay strong
+    e = EntitySpec(name="Cones", kind="obstacle", count=3,
+                   sketchfab_query="low poly traffic cone")
+    qw = _query_weights(e, set())
+    assert qw["low"] == pytest.approx(0.1)
+    assert qw["poly"] == pytest.approx(0.1)
+    assert qw["cone"] == 2.0
+
+
+def test_style_only_overlap_scores_zero():
+    # The exact live pairing: a wall entity vs the frozen stop sign, whose
+    # only shared token is the style adjective "realistic". No strong hit →
+    # no match — a Sketchfab entry needs at least one NON-style strong hit.
+    from src.unity_entity_asset_resolver import _query_weights, _score
+    entry = {"filename": "stopsign-a9664def.fbx",
+             "keywords": list(_STOPSIGN_KW), "kind_hints": ["road"],
+             "generic_score": 0}
+    qw = _query_weights(_barriers_entity(), set())
+    assert _score(entry, qw, "wall") == 0.0
+
+
+def test_style_tokens_still_break_ties_toward_matching_style():
+    # Weak, not zero: between two real barrier matches, the one tagged with
+    # the query's style adjective must still edge ahead.
+    from src.unity_entity_asset_resolver import _query_weights, _score
+    qw = _query_weights(_barriers_entity(), set())
+    styled = {"filename": "barrier-a.fbx",
+              "keywords": ["barrier", "realistic"], "kind_hints": [],
+              "generic_score": 0}
+    plain = {"filename": "barrier-b.fbx",
+             "keywords": ["barrier", "concrete"], "kind_hints": [],
+             "generic_score": 0}
+    assert _score(styled, qw, "wall") > _score(plain, qw, "wall")
+
+
+def test_frozen_stopsign_never_wins_a_wall_entity(env, tmp_path):
+    # End-to-end mirror of the live failure: the poisoned stop sign sits in
+    # the Sketchfab cache, a real barrier sits in the Kenney catalog. Tier S
+    # must miss (style-only overlap) and fall through to the barrier.
+    _append_assets(env, [_BARRIER_BLOCK])
+    _stopsign_sketchfab_entry(env, tmp_path)
+    paths = resolve_entity_assets(
+        _schema([_barriers_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["Barriers"] == "Models/Kenney/Prop/barrier-block"
+
+
+def test_frozen_stopsign_never_wins_a_decoration_entity(env, tmp_path):
+    # The CheckpointBanners half of the live failure (kind="decoration") —
+    # the base fixture's banner.fbx is the correct pick.
+    _stopsign_sketchfab_entry(env, tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="CheckpointBanners", kind="decoration",
+                            count=4,
+                            sketchfab_query="realistic checkpoint banner")]),
+        {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["CheckpointBanners"] == "Models/Kenney/Prop/banner"
+
+
+def test_auto_fetched_style_only_match_is_rejected_post_fetch(env, tmp_path,
+                                                              monkeypatch):
+    # Live-fetch path: fetch_and_freeze hands back the stop sign for a wall
+    # query — the post-fetch re-score must refuse to wire it in.
+    _append_assets(env, [_BARRIER_BLOCK])
+
+    def _fake_fetch(query, **kw):
+        return _stopsign_sketchfab_entry(Path(kw["lookups_dir"]), tmp_path)
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    paths = resolve_entity_assets(
+        _schema([_barriers_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert paths["Barriers"] == "Models/Kenney/Prop/barrier-block"
+
+
+def test_style_pipeline_query_vocabulary_is_fully_capped():
+    # Every query token the style pipeline can prefix onto a sketchfab_query
+    # (sketchfab_style._STYLE) must be neutralized by _query_weights — via
+    # _STYLE_TOKENS or the stopword list. Keeps the two tables in sync.
+    from src.sketchfab_style import _STYLE
+    from src.unity_asset_catalog import tokenize
+    from src.unity_entity_asset_resolver import _STOPWORDS, _STYLE_TOKENS
+    for _sid, _triggers, query_tokens in _STYLE:
+        for tok in query_tokens:
+            for t in tokenize(tok):
+                assert t in _STYLE_TOKENS or t in _STOPWORDS, (
+                    f"style query token {t!r} ({tok!r}) can become a strong "
+                    "query weight — add it to _STYLE_TOKENS")
