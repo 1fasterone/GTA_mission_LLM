@@ -33,6 +33,7 @@ from .unity_archetypes    import classify as classify_intent, apply_intent
 from .unity_racetrack     import compose_racetrack, is_racing_degenerate
 from .unity_concept_entities import inject_missing_concept_entities
 from .unity_layout        import compute_layout
+from .unity_pathnorm      import normalize_paths
 
 console = Console()
 
@@ -573,7 +574,8 @@ class UnityPipeline:
             mashup_with: str | None = None,
             seed:        int | None = None,
             compose:     bool = False,
-            blender_models: bool = False) -> Path:
+            blender_models: bool = False,
+            route:       dict | None = None) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -713,12 +715,30 @@ class UnityPipeline:
         # mirrors GTA5's archetypes.apply_scaffold "trust non-degenerate LLM
         # output, rescue degenerate output" contract. 3D-only: EntitySpawner's
         # path placement (which the circuit is built from) has no 2D/2d_topdown
-        # equivalent.
-        if (schema.meta.get("genre") == "racing"
+        # equivalent. An explicit --route (a unity-path route file: authored
+        # text points or a traced image) overrides the degeneracy gate — the
+        # user asked for THIS course, so the circuit is composed around it
+        # regardless of what the LLM authored.
+        _route_pts = (route or {}).get("path_points") or None
+        if _route_pts and schema.game_type not in ("2D", "2d_topdown"):
+            for msg in compose_racetrack(
+                    schema, centerline=_route_pts,
+                    track_width=float((route or {}).get("path_width") or 0.0)):
+                self._fix(msg)
+        elif (schema.meta.get("genre") == "racing"
                 and schema.game_type not in ("2D", "2d_topdown")
                 and is_racing_degenerate(schema)):
             for msg in compose_racetrack(schema):
                 self._fix(msg)
+
+        # P1 normalization: rigid-transform the whole scene so the primary
+        # path route's first point (P1 — the start/finish line by convention)
+        # sits at the world origin heading +Z (src/unity_pathnorm.py). Runs
+        # after the racetrack scaffold (so injected circuits are normalized
+        # too) and before the layout pass (so packing and terrain sizing see
+        # normalized coordinates).
+        for msg in normalize_paths(schema):
+            self._fix(msg)
 
         # Layout pass: pack every {single,line,ring,grid,scatter} entity group
         # into a non-overlapping world-space region and bake exact per-instance
