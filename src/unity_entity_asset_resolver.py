@@ -124,6 +124,34 @@ _SIGNAGE_TOKENS = frozenset({
     "streetsigns", "trafficsign", "trafficsigns", "billboard", "billboards",
 })
 
+# Style adjectives — how a model LOOKS, never what it IS. The concept
+# translator / style session prefixes nearly every sketchfab_query with the
+# run's visual style ("realistic …", "low poly …"), and marketplace uploaders
+# tag the same words religiously, so a style word is guaranteed to co-occur on
+# both sides of almost any query/asset pair. Hit live
+# (SpringCreekMotocrossRacing): a frozen stop sign tagged "realistic" became
+# the winning Tier S match for EVERY entity whose translated query started
+# with "realistic" — Barriers, Checkpoints, TrackBarriersOuter/Inner,
+# CheckpointBanners (kinds wall/decoration) all resolved to it, because
+# "realistic" was their only strong hit and _score only requires one.
+#
+# _query_weights caps these to scene-description weight (0.1): they still
+# tie-break toward style-matching assets (a "realistic"-tagged model beats an
+# otherwise-equal untagged one), but can never QUALIFY a match on their own —
+# which also guarantees a Sketchfab entry can only win Tier S on at least one
+# non-style strong hit. Superset of the tokenized query vocabulary in
+# src/sketchfab_style.py's _STYLE table (kept in sync by test) plus common
+# marketplace synonyms.
+_STYLE_TOKENS = frozenset({
+    # sketchfab_style._STYLE query tokens, tokenized ("low poly" → low, poly)
+    "low", "poly", "lowpoly", "cartoon", "stylized", "toon", "handpainted",
+    "realistic", "pbr", "ready", "voxel", "psx", "retro",
+    # marketplace synonyms for the same styles
+    "stylised", "photorealistic", "photoreal", "cartoony", "anime",
+    "painterly", "high", "highpoly", "detailed", "textured", "minimalist",
+    "faceted", "blocky",
+})
+
 
 def _slug(name: str) -> str:
     parts = re.sub(r"[^a-zA-Z0-9]+", " ", name or "").split()
@@ -226,6 +254,13 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
     for t in tokenize(getattr(entity, "sketchfab_query", "") or ""):
         if t not in _STOPWORDS and len(t) > 1:
             weights[t] = max(weights.get(t, 0.0), 2.0)
+    # Style adjectives never qualify a match — cap to scene-description
+    # weight regardless of where the token came from, and do it BEFORE
+    # plural bridging so a style word can't smuggle in a strong variant.
+    # See _STYLE_TOKENS for the live failure this prevents.
+    for t in _STYLE_TOKENS:
+        if t in weights:
+            weights[t] = min(weights[t], 0.1)
     # Singular/plural bridging for strong tokens: entity names are usually
     # plural ("PineTrees") while catalog keywords are singular ("tree").
     for t, w in list(weights.items()):
