@@ -178,6 +178,63 @@ class TestRacetrackStartGrid:
             assert [list(p) for p in e.instance_positions] == name_snapshot[2]
 
 
+class TestPathCorridors:
+    """Path routes seed the packer as corridors of occupied circles — packed
+    groups must never land ON a route ribbon (the "props pile up on the
+    track" bug: the spiral slot search started at the world origin, the
+    middle of the track infield, with no idea the ribbon existed)."""
+
+    @staticmethod
+    def _dist_to_polyline(px, pz, pts):
+        best = float("inf")
+        for a, b in zip(pts, pts[1:]):
+            ax, az, bx, bz = a[0], a[2], b[0], b[2]
+            dx, dz = bx - ax, bz - az
+            L2 = dx * dx + dz * dz
+            t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (pz - az) * dz) / L2))
+            best = min(best, math.hypot(px - (ax + t * dx), pz - (az + t * dz)))
+        return best
+
+    def test_packed_groups_stay_off_the_ribbon(self):
+        schema = _schema([], game_type="3D")
+        schema.meta["genre"] = "racing"
+        compose_racetrack(schema)
+        props = EntitySpec(name="Crates", count=12, placement="scatter",
+                           radius=6, spacing=2.0, scale=1.5)
+        schema.entities.append(props)
+        msgs = compute_layout(schema)
+        assert any("corridor" in m for m in msgs)
+
+        track = next(e for e in schema.entities if e.name == "TrackSurface")
+        half_w = track.path_width / 2.0
+        for x, _y, z in props.instance_positions:
+            # Group-circle avoidance guarantees the group CENTER clears the
+            # corridor by group_radius; individual instances must at minimum
+            # clear the physical ribbon itself.
+            assert self._dist_to_polyline(x, z, track.path_points) > half_w, (
+                f"Crates instance ({x}, {z}) sits on the track ribbon")
+
+    def test_corridor_seeding_is_deterministic(self):
+        def build():
+            schema = _schema([], game_type="3D")
+            schema.meta["genre"] = "racing"
+            compose_racetrack(schema)
+            schema.entities.append(
+                EntitySpec(name="Crates", count=12, placement="scatter",
+                           radius=6, spacing=2.0, scale=1.5))
+            compute_layout(schema)
+            return schema
+        s1, s2 = build(), build()
+        assert ([e.model_dump() for e in s1.entities]
+                == [e.model_dump() for e in s2.entities])
+
+    def test_no_path_groups_no_corridor_message(self):
+        e = EntitySpec(name="Trees", count=5, placement="scatter", radius=10)
+        schema = _schema([e])
+        msgs = compute_layout(schema)
+        assert not any("corridor" in m for m in msgs)
+
+
 class TestTerrainBounds:
     def test_empty_entities_falls_back_to_fixed_footprint(self):
         xmin, zmin, xmax, zmax = terrain_bounds([])

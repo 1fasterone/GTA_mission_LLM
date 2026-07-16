@@ -330,11 +330,13 @@ class TestUnityPipelineRacingScaffold:
             assert f'"{name}"' in cs, f"{name} missing from generated EntitySpawner.cs"
         # PlayerKart is NOT spawned as a static prop: with a player script in
         # the schema it merges into the playable Player object, which takes
-        # the pole position (36, 42) + race-direction facing in the scene.
+        # the pole position + race-direction facing. After P1 normalization
+        # (src/unity_pathnorm.py) the start line IS the world origin heading
+        # +Z, so the pole position is exactly (0, 0) at capsule height.
         assert 'SpawnGroup("PlayerKart"' not in cs
         scene_yaml = (project_root / "Assets" / "Scenes" / "Main.unity").read_text(
             encoding="utf-8")
-        assert "m_LocalPosition: {x: 36.0, y: 1.0, z: 42.0}" in scene_yaml
+        assert "m_LocalPosition: {x: 0.0, y: 1.0, z: 0.0}" in scene_yaml
 
     def test_existing_grandstands_entity_preserved(
         self, unity_pipeline_config, racing_schema_json_degenerate
@@ -354,6 +356,29 @@ class TestUnityPipelineRacingScaffold:
         project_root = self._run_racing(
             unity_pipeline_config, "concept text", racing_schema_json_degenerate)
         assert project_root.exists()
+
+    def test_explicit_route_overrides_parametric_oval(
+        self, unity_pipeline_config, racing_schema_json_degenerate
+    ):
+        # unity-create --route: the circuit is composed around the authored
+        # course (already P1-normalized by unity-path) instead of the oval,
+        # and the playable Player still merges to the start line = origin.
+        from src.unity_pathinput import build_route
+        route = build_route(
+            [[0, 0, 0], [0, 0, 90], [70, 0, 110], [110, 0, 60],
+             [60, 0, -10], [0, 0, -4]], width=12.0)
+        pipeline = _make_pipeline(unity_pipeline_config)
+        pipeline.llm.chat = MagicMock(
+            side_effect=["concept text", racing_schema_json_degenerate])
+        project_root = pipeline.run(
+            "DriftArcade: a neon drift racing arcade game", route=route)
+        cs = (project_root / "Assets" / "Scripts" / "EntitySpawner.cs").read_text(
+            encoding="utf-8")
+        assert '"TrackSurface"' in cs
+        assert "12f" in cs or "12.0f" in cs   # custom path_width reached codegen
+        scene_yaml = (project_root / "Assets" / "Scenes" / "Main.unity").read_text(
+            encoding="utf-8")
+        assert "m_LocalPosition: {x: 0.0, y: 1.0, z: 0.0}" in scene_yaml
 
 
 # ══════════════════════════════════════════════════════════════════════════════

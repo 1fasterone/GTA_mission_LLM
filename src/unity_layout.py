@@ -37,6 +37,9 @@ _SCATTER_JITTER = 0.3
 # MainMenu), and the margin added around every scene's measured content.
 _DEFAULT_GROUND_HALF = 10.0
 _GROUND_MARGIN = 8.0
+# Extra radius added to a path route's cross-track half-width when building
+# the corridor of seed circles the packer must keep other groups out of.
+_PATH_CLEARANCE = 2.0
 
 _LAYOUT_PLACEMENTS = frozenset({"single", "line", "ring", "grid", "scatter"})
 
@@ -111,6 +114,39 @@ def _pack_groups(entities: list[EntitySpec],
     return result
 
 
+def _corridor_circles(entity: EntitySpec) -> list[tuple[float, float, float]]:
+    """Chain of occupied circles tracing a path group's polyline — the seed
+    geometry that keeps packed groups OFF the route itself (the "everything
+    piles up on the track ribbon" bug: path groups never told the packer
+    which ground they occupied, so the spiral search happily dropped scatter
+    groups onto the road). Circle radius is the route's cross-track
+    half-width (`path_width / 2` for tiled ribbons, the instance footprint
+    for waypoint-spread groups) plus `_PATH_CLEARANCE`; centers are spaced by
+    the chord at which consecutive circles still cover the full corridor
+    width, so there are no gaps a group could slip through. Infield and
+    outside space stays free. Deterministic pure geometry."""
+    pts = entity.path_points
+    half_w = (entity.path_width / 2.0 if entity.path_width > 0.0
+              else max(0.5, entity.scale * 0.6))
+    rc = half_w + _PATH_CLEARANCE
+    step = 2.0 * math.sqrt(rc * rc - half_w * half_w)
+    circles = [(pts[0][0], pts[0][2], rc)]
+    since = 0.0  # arc distance walked since the last circle
+    for a, b in zip(pts, pts[1:]):
+        seg = math.hypot(b[0] - a[0], b[2] - a[2])
+        if seg < 1e-9:
+            continue
+        pos = 0.0
+        while since + (seg - pos) >= step:
+            pos += step - since
+            t = pos / seg
+            circles.append((round(a[0] + (b[0] - a[0]) * t, 3),
+                            round(a[2] + (b[2] - a[2]) * t, 3), rc))
+            since = 0.0
+        since += seg - pos
+    return circles
+
+
 def _measure_baked(entity: EntitySpec) -> tuple[float, float, float]:
     """Centroid + bounding radius of an entity's own pre-baked
     `instance_positions` (e.g. unity_racetrack.py's start-grid karts) — used
@@ -177,11 +213,13 @@ def compute_layout(schema: UnitySchema) -> list[str]:
     non-overlapping world-space region and bake exact instance positions onto
     each EntitySpec (`origin_offset`, `group_radius`, `instance_positions`).
 
-    Two categories are left untouched, only MEASURED (origin_offset/
-    group_radius derived from their existing positions, so packing/terrain
-    sizing still accounts for them):
+    Two categories are left untouched, only treated as ALREADY-OCCUPIED space
+    the packer must avoid (and terrain sizing must cover):
       - "path"-placement groups (explicit authored geometry, e.g. a racetrack
         loop from src/unity_racetrack.py) — fully determined by `path_points`.
+        Their polylines seed the packer as corridors of occupied circles
+        (`_corridor_circles`), so packed groups can no longer land ON the
+        route ribbon — the "props pile up on the track" bug.
       - Any {single,line,ring,grid,scatter} group that ALREADY carries
         `instance_positions` — an earlier deterministic scaffold (e.g. the
         racetrack's start-grid karts, anchored to the track's actual
@@ -207,6 +245,10 @@ def compute_layout(schema: UnitySchema) -> list[str]:
     packable = [e for e in layoutable if not e.instance_positions]
 
     seed_circles: list[tuple[float, float, float]] = []
+    path_groups = [e for e in schema.entities
+                   if e.placement == "path" and e.path_points]
+    for e in path_groups:
+        seed_circles.extend(_corridor_circles(e))
     for e in preplaced:
         # group_radius <= 0.0 (the schema default) means these positions were
         # authored by something other than this function — e.g.
@@ -239,6 +281,11 @@ def compute_layout(schema: UnitySchema) -> list[str]:
             f"Layout pass packed {len(packable)} entity group(s) into "
             f"non-overlapping regions ({', '.join(moved)} offset from the "
             "scene origin to avoid stacking on other groups)"
+        )
+    if path_groups and packable:
+        msgs.append(
+            f"Seeded {len(path_groups)} path route(s) as occupied corridors "
+            "so packed groups stay off the route ribbons"
         )
     if any(e.placement == "scatter" for e in packable):
         msgs.append(

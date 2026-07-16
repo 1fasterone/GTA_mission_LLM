@@ -66,14 +66,52 @@ def _unit_xz(a: list[float], b: list[float]) -> tuple[float, float]:
     return dx / length, dz / length
 
 
+def _is_closed(points: list[list[float]]) -> bool:
+    """True when the polyline's last point duplicates its first (the closed-
+    loop convention _rounded_rect_loop uses)."""
+    return len(points) > 2 and points[0][:3] == points[-1][:3]
+
+
 def _race_direction(centerline: list[list[float]]) -> tuple[float, float]:
-    """Unit race direction AT the start/finish line (centerline[0]): the
-    tangent of the segment ARRIVING at it — i.e. the final straight of the
-    closed loop. The outgoing segment (centerline[0] -> [1]) already curves
-    into turn 1, which used to skew the start grid a few degrees off the
-    straight it actually sits on."""
-    prev = centerline[-2] if len(centerline) > 2 else centerline[0]
-    return _unit_xz(prev, centerline[0])
+    """Unit race direction AT the start/finish line (centerline[0]): for a
+    closed loop, the tangent of the segment ARRIVING at it — i.e. the final
+    straight (the outgoing segment already curves into turn 1, which used to
+    skew the start grid a few degrees off the straight it actually sits on);
+    for an open route (a custom point-to-point course from `unity-create
+    --route`), the outgoing centerline[0] -> [1] tangent."""
+    if _is_closed(centerline):
+        return _unit_xz(centerline[-2], centerline[0])
+    if len(centerline) > 1:
+        return _unit_xz(centerline[0], centerline[1])
+    return 0.0, 1.0
+
+
+def _offset_polyline(points: list[list[float]], dist: float) -> list[list[float]]:
+    """Polyline offset by `dist` meters perpendicular to the local direction
+    of travel (positive = right-hand side in the XZ plane, matching
+    _start_grid's perpendicular). Elevation rides along; a closed input
+    stays closed. Used to derive barrier rails from a CUSTOM centerline —
+    the default rounded-rect circuit keeps its exact parametric rails."""
+    closed = _is_closed(points)
+    core = points[:-1] if closed else points
+    n = len(core)
+    out: list[list[float]] = []
+    for i, p in enumerate(core):
+        a = core[(i - 1) % n] if closed else core[max(0, i - 1)]
+        b = core[(i + 1) % n] if closed else core[min(n - 1, i + 1)]
+        fx, fz = _unit_xz(a, b)
+        rx, rz = -fz, fx
+        out.append([round(p[0] + rx * dist, 3), p[1],
+                    round(p[2] + rz * dist, 3)])
+    if closed:
+        out.append(list(out[0]))
+    return out
+
+
+def _xz_bbox_area(points: list[list[float]]) -> float:
+    xs = [p[0] for p in points]
+    zs = [p[2] for p in points]
+    return (max(xs) - min(xs)) * (max(zs) - min(zs))
 
 
 def _start_yaw(centerline: list[list[float]]) -> float:
@@ -124,26 +162,52 @@ def is_racing_degenerate(schema) -> bool:
                    for e in schema.entities)
 
 
-def compose_racetrack(schema) -> list[str]:
+def compose_racetrack(schema, centerline: list[list[float]] | None = None,
+                      track_width: float | None = None) -> list[str]:
     """Inject a closed circuit (road ribbon, inner/outer barriers, apex cones,
     checkpoint banners, a start-grid of karts) into schema.entities.
 
-    Only called when genre == 'racing'; caller (unity_pipeline.run) is
-    expected to gate on is_racing_degenerate first, mirroring GTA5's
-    apply_scaffold "trust non-degenerate LLM output" contract. Idempotent
-    against re-running is NOT guaranteed (by design — it should only ever
-    run once, on a degenerate schema); always append, never mutate existing
-    entities. Returns log messages in the same style as other schema fixers.
+    Two entry modes:
+      - Default (centerline=None): the parametric rounded-rectangle oval —
+        called when genre == 'racing' and the caller (unity_pipeline.run)
+        gated on is_racing_degenerate, mirroring GTA5's apply_scaffold
+        "trust non-degenerate LLM output" contract. Byte-identical to the
+        historical scaffold.
+      - Custom route (centerline=..., from `unity-create --route` — a text
+        point spec or a traced image, see src/unity_pathinput.py): the same
+        circuit furniture built around the AUTHORED centerline; barrier
+        rails are derived by perpendicular polyline offset, and open
+        (point-to-point) routes are supported — the grid still forms behind
+        P1 in the direction of travel.
+
+    Idempotent against re-running is NOT guaranteed (by design — it should
+    only ever run once); always append, never mutate existing entities.
+    Returns log messages in the same style as other schema fixers.
     """
     msgs: list[str] = []
 
-    centerline = _rounded_rect_loop(_HALF_WIDTH, _HALF_LENGTH, _CORNER_RADIUS)
-    outer = _rounded_rect_loop(_HALF_WIDTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN,
-                               _HALF_LENGTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN,
-                               _CORNER_RADIUS + _TRACK_WIDTH / 2 + _BARRIER_MARGIN)
-    inner = _rounded_rect_loop(max(4.0, _HALF_WIDTH - _TRACK_WIDTH / 2 - _BARRIER_MARGIN),
-                               max(4.0, _HALF_LENGTH - _TRACK_WIDTH / 2 - _BARRIER_MARGIN),
-                               max(1.0, _CORNER_RADIUS - _TRACK_WIDTH / 2 - _BARRIER_MARGIN))
+    custom = centerline is not None
+    width = (track_width if track_width and track_width > 0 else _TRACK_WIDTH)
+    if not custom:
+        width = _TRACK_WIDTH
+        centerline = _rounded_rect_loop(_HALF_WIDTH, _HALF_LENGTH, _CORNER_RADIUS)
+        outer = _rounded_rect_loop(_HALF_WIDTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN,
+                                   _HALF_LENGTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN,
+                                   _CORNER_RADIUS + _TRACK_WIDTH / 2 + _BARRIER_MARGIN)
+        inner = _rounded_rect_loop(max(4.0, _HALF_WIDTH - _TRACK_WIDTH / 2 - _BARRIER_MARGIN),
+                                   max(4.0, _HALF_LENGTH - _TRACK_WIDTH / 2 - _BARRIER_MARGIN),
+                                   max(1.0, _CORNER_RADIUS - _TRACK_WIDTH / 2 - _BARRIER_MARGIN))
+    else:
+        centerline = [list(p) for p in centerline]
+        rail = width / 2 + _BARRIER_MARGIN
+        side_a = _offset_polyline(centerline, rail)
+        side_b = _offset_polyline(centerline, -rail)
+        # Closed loops: the larger-footprint side is the outer rail. Open
+        # routes have no enclosing side — the labels are arbitrary but the
+        # pick is stable (bbox area, then the +offset side).
+        outer, inner = ((side_a, side_b)
+                        if _xz_bbox_area(side_a) >= _xz_bbox_area(side_b)
+                        else (side_b, side_a))
     apex_cones = _every_nth(inner, 3)
     checkpoints = [centerline[0], centerline[len(centerline) // 4],
                   centerline[len(centerline) // 2], centerline[3 * len(centerline) // 4]]
@@ -153,8 +217,8 @@ def compose_racetrack(schema) -> list[str]:
         # only the fallback when the resolved model has no measurable bounds.
         EntitySpec(name="TrackSurface", kind="road", count=len(centerline),
                    shape="cube", placement="path", color_role="secondary",
-                   scale=_TRACK_WIDTH * 0.4, model_hint="road straight racing track",
-                   path_points=centerline, path_width=_TRACK_WIDTH),
+                   scale=width * 0.4, model_hint="road straight racing track",
+                   path_points=centerline, path_width=width),
         EntitySpec(name="TrackBarriersOuter", kind="wall", count=len(outer),
                    shape="cube", placement="path", color_role="trim",
                    scale=1.5, model_hint="barrier fence guardrail",
@@ -185,27 +249,42 @@ def compose_racetrack(schema) -> list[str]:
                    shape="cube", placement="grid", spacing=4.0, radius=6.0,
                    color_role="accent", scale=1.0,
                    model_hint="kart racer opponent vehicle", tag="Enemy",
-                   instance_positions=_start_grid(centerline, 3, _TRACK_WIDTH),
+                   instance_positions=_start_grid(centerline, 3, width),
                    instance_yaws=[_start_yaw(centerline)] * 3),
     ]
     schema.entities = list(schema.entities) + new_entities
-    msgs.append(
-        "Racing genre with no vehicle/track content — injected a deterministic "
-        "closed-circuit scaffold (TrackSurface, inner/outer barriers, apex "
-        "cones, 4 checkpoint banners, a player kart, 3 opponent karts)"
-    )
+    if custom:
+        msgs.append(
+            f"Composed circuit from an authored route ({len(centerline)} "
+            f"points, {'closed loop' if _is_closed(centerline) else 'open course'}, "
+            f"{width:g} m wide) — track surface, offset barrier rails, apex "
+            "cones, 4 checkpoint banners, a player kart, 3 opponent karts"
+        )
+    else:
+        msgs.append(
+            "Racing genre with no vehicle/track content — injected a deterministic "
+            "closed-circuit scaffold (TrackSurface, inner/outer barriers, apex "
+            "cones, 4 checkpoint banners, a player kart, 3 opponent karts)"
+        )
 
     # WorldRegion is a real schema modality (world_spec.regions, bounds
     # [xmin,zmin,xmax,zmax]) that nothing else in the pipeline populates yet —
     # this scaffold is its first real consumer, describing the circuit's
     # world-space footprint for any future region-aware tooling.
+    if custom:
+        _oxs = [p[0] for p in outer]
+        _ozs = [p[2] for p in outer]
+        _bounds = [round(min(_oxs), 3), round(min(_ozs), 3),
+                   round(max(_oxs), 3), round(max(_ozs), 3)]
+    else:
+        _bounds = [-(_HALF_WIDTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN),
+                   -(_HALF_LENGTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN),
+                   _HALF_WIDTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN,
+                   _HALF_LENGTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN]
     region = WorldRegion(
         name="Racetrack", biome="track",
         entities=[e.name for e in new_entities],
-        bounds=[-(_HALF_WIDTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN),
-               -(_HALF_LENGTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN),
-               _HALF_WIDTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN,
-               _HALF_LENGTH + _TRACK_WIDTH / 2 + _BARRIER_MARGIN],
+        bounds=_bounds,
     )
     if schema.world_spec is None:
         schema.world_spec = WorldSpec(regions=[region])
