@@ -1403,6 +1403,211 @@ def test_auto_fetched_style_only_match_is_rejected_post_fetch(env, tmp_path,
     assert paths["Barriers"] == "Models/Kenney/Prop/barrier-block"
 
 
+# ── contextual marketplace tags are never identity ────────────────────────────
+# Live regression (SpringCreekMotocrossRacing, regenerated post-PR#63): the
+# signage embargo protects surface kinds from SIGNS and the style-token cap
+# kills adjective-only matches, but CONTEXTUAL tags still qualified as strong
+# hits. TrackSegments (kind="track") tiled a Sketchfab TRAFFIC CONE — the
+# cone's tags ("race", "road", "street") describe where a cone lives, not what
+# it is, and Tier S wins before the Kenney tiers ever score a real track tile.
+# "Debris" (kind="obstacle") got a survivors' TENT via its "debris"/"crash"
+# tags. Both entries are honestly stamped (category prop/obstacle) — the fix
+# is (1) a positive surface gate (strong road_track/terrain_ground membership
+# required for surface kinds) and (2) identity evidence (a strong query token
+# in the uploader's own model name, or ≥2 strong tag hits).
+
+_TRACK_TILE = {
+    "filename": "track-straight.fbx", "relpath": "track-straight.fbx",
+    "category": "track", "keywords": ["track", "straight", "road", "segment"],
+    "kind_hints": ["track", "road"], "generic_score": 0, "scale": 1.0,
+}
+
+# The cone's tags as frozen in the live failure (uid 48a50313…): category and
+# kind_hints honestly say prop — the poison is purely the contextual tag soup.
+_CONE_KW = ("barrel", "barrier", "cartoon", "city", "cone", "construction",
+            "drive", "element", "exterior", "object", "obstacle", "orange",
+            "parking", "race", "road", "street", "traffic", "urban")
+
+# The tent's tags as frozen live (uid 844bef28…): "debris" and "crash" are
+# scene context ("built near crashed aircraft debris"), the model is a tent.
+_TENT_KW = ("aircraft", "awning", "base", "camp", "canopy", "crash", "debris",
+            "environment", "outpost", "survival", "survivors", "tent",
+            "zombies")
+
+# Mirrors the shape of lookups/unity/concept_layers.json for the layers this
+# guard consults: road_track's strong categories are the real file's, so the
+# gate is exercised exactly as in production.
+_SURFACE_GUARD_LAYERS = {
+    "layers": {
+        "road_track": {
+            "vocabulary": ["road", "track", "street", "lane", "segment"],
+            "kinds": ["road", "track"], "categories": ["track", "rail"]},
+        "debris_wreckage": {
+            "vocabulary": ["debris", "wreckage", "rubble", "scrap"],
+            "kinds": ["obstacle"], "categories": []},
+    },
+}
+
+
+def _contextual_env(env):
+    _append_assets(env, [_TRACK_TILE])
+    (env / "unity" / "concept_layers.json").write_text(
+        json.dumps(_SURFACE_GUARD_LAYERS), encoding="utf-8")
+    return env
+
+
+def _track_segments_entity():
+    return EntitySpec(name="TrackSegments", kind="track", count=12,
+                      model_hint="race track segments",
+                      sketchfab_query="realistic race track road segment")
+
+
+def _cone_sketchfab_entry(env, tmp_path):
+    return _add_sketchfab_entry(env, tmp_path, uid="48a50313",
+                                filename="traffic-cone-48a50313.fbx",
+                                keywords=_CONE_KW, kind_hints=("prop",),
+                                category="prop")
+
+
+def test_contextual_tags_never_tile_a_track_entity(env, tmp_path):
+    # The exact live failure: the cone's "race"/"road" tags are strong hits
+    # (2 of them — identity evidence alone can't refuse it), but it is not a
+    # strong road_track member (category=prop), so the surface gate must
+    # block it and let the Kenney tiers pick the real tile.
+    _contextual_env(env)
+    _cone_sketchfab_entry(env, tmp_path)
+    paths = resolve_entity_assets(
+        _schema([_track_segments_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["TrackSegments"] == "Models/Kenney/Track/track-straight"
+
+
+def test_auto_fetched_contextual_cone_is_rejected_post_fetch(env, tmp_path,
+                                                             monkeypatch):
+    # Live-fetch path: fetch_and_freeze hands back a cone for the track query
+    # — the post-fetch acceptance must apply the same surface gate.
+    _contextual_env(env)
+
+    def _fake_fetch(query, **kw):
+        return _cone_sketchfab_entry(Path(kw["lookups_dir"]), tmp_path)
+
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    paths = resolve_entity_assets(
+        _schema([_track_segments_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})
+    assert paths["TrackSegments"] == "Models/Kenney/Track/track-straight"
+
+
+def test_real_sketchfab_track_section_still_passes_surface_gate(env, tmp_path):
+    # Positive control: an entry the taxonomy places strongly in road_track
+    # (category="track", exactly how a real frozen dirt-track model is
+    # stamped) must still win Tier S for the same entity — the gate rejects
+    # contextual imposters, not surface content.
+    _contextual_env(env)
+    entry = _add_sketchfab_entry(env, tmp_path, uid="sk9",
+                                 filename="dirt-track-section-sk9.fbx",
+                                 keywords=("dirt", "track", "race", "section"),
+                                 kind_hints=("track",), category="track")
+    paths = resolve_entity_assets(
+        _schema([_track_segments_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["TrackSegments"] == "Models/Sketchfab/Track/dirt-track-section-sk9"
+    assert entry["filename"].startswith("dirt-track-section")
+
+
+def _obstacle_model(tmp_path):
+    src = tmp_path / "Obstacle.fbx"
+    src.write_bytes(b"FBX")
+    return ResolvedModel(kind="obstacle", src=str(src),
+                         dest_rel="Models/Default/Obstacle/Obstacle.fbx",
+                         resource_path="Models/Default/Obstacle/Obstacle",
+                         rig="generic")
+
+
+def test_contextual_tent_never_wins_a_debris_entity(env, tmp_path):
+    # The Debris half of the live failure: the tent's kind_hints=["obstacle"]
+    # (stamped at freeze time for a DIFFERENT entity) match Debris's kind, so
+    # the kind guard endorses it and "debris" is a strong tag hit — but it is
+    # ONE contextual tag, and the uploader's own name ("survivors-tent") says
+    # nothing about debris. Identity evidence must refuse it.
+    _contextual_env(env)
+    _add_sketchfab_entry(env, tmp_path, uid="844bef28",
+                         filename="survivors-tent-844bef28.fbx",
+                         keywords=_TENT_KW, kind_hints=("obstacle",),
+                         category="obstacle")
+    obstacle = _obstacle_model(tmp_path)
+    all_models = {**_default_models(tmp_path), "obstacle": obstacle}
+    used = {"obstacle": obstacle}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Debris", kind="obstacle", count=6,
+                            model_hint="debris obstacle",
+                            sketchfab_query="realistic dirt track debris")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert "survivors-tent" not in paths["Debris"]
+    assert paths["Debris"] == "Models/Default/Obstacle/Obstacle"
+
+
+def test_entity_that_asks_for_a_tent_still_gets_the_tent(env, tmp_path):
+    # Positive control: when the entity NAMES the object ("survivor camp
+    # tent"), the filename identity check passes and the same frozen entry is
+    # a perfectly good pick — the guard is per-query, not a blocklist.
+    _contextual_env(env)
+    _add_sketchfab_entry(env, tmp_path, uid="844bef28",
+                         filename="survivors-tent-844bef28.fbx",
+                         keywords=_TENT_KW, kind_hints=("obstacle",),
+                         category="obstacle")
+    obstacle = _obstacle_model(tmp_path)
+    all_models = {**_default_models(tmp_path), "obstacle": obstacle}
+    used = {"obstacle": obstacle}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="SurvivorTents", kind="obstacle", count=2,
+                            model_hint="survivor camp tent")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["SurvivorTents"] == "Models/Sketchfab/Obstacle/survivors-tent-844bef28"
+
+
+def test_apex_cones_still_resolve_to_the_cone(env, tmp_path):
+    # Positive control for the cone: ApexCones (the entity the cone was
+    # actually frozen for, uid e4c3efc3… stamps: category/kind_hints
+    # "obstacle") keeps matching — "cone" hits the uploader's model name.
+    _contextual_env(env)
+    _add_sketchfab_entry(env, tmp_path, uid="e4c3efc3",
+                         filename="traffic-cone-e4c3efc3.fbx",
+                         keywords=("cone", "traffic", "traffic-cone"),
+                         kind_hints=("obstacle",), category="obstacle")
+    obstacle = _obstacle_model(tmp_path)
+    all_models = {**_default_models(tmp_path), "obstacle": obstacle}
+    used = {"obstacle": obstacle}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="ApexCones", kind="obstacle", count=8,
+                            model_hint="traffic cone",
+                            sketchfab_query="realistic apex marker cone")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["ApexCones"] == "Models/Sketchfab/Obstacle/traffic-cone-e4c3efc3"
+
+
+def test_surface_gate_inactive_without_concept_layers(env, tmp_path):
+    # Without concept_layers.json the taxonomy can't judge membership, so the
+    # surface gate must stand down — identity evidence is then the only
+    # contextual check. The cone still loses here (its 2 strong tag hits pass
+    # identity evidence, but the guard's job is done by _passes_kind_guard /
+    # scoring elsewhere) — this test pins that the gate itself never turns a
+    # missing optional file into a hard embargo.
+    _append_assets(env, [_TRACK_TILE])   # note: NO concept_layers.json
+    entry = _add_sketchfab_entry(env, tmp_path, uid="sk9",
+                                 filename="dirt-track-section-sk9.fbx",
+                                 keywords=("dirt", "track", "race", "section"),
+                                 kind_hints=("track",), category="track")
+    paths = resolve_entity_assets(
+        _schema([_track_segments_entity()]), {}, {}, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False})
+    assert paths["TrackSegments"] == "Models/Sketchfab/Track/dirt-track-section-sk9"
+    assert entry["filename"].startswith("dirt-track-section")
+
+
 def test_style_pipeline_query_vocabulary_is_fully_capped():
     # Every query token the style pipeline can prefix onto a sketchfab_query
     # (sketchfab_style._STYLE) must be neutralized by _query_weights — via

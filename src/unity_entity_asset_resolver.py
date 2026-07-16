@@ -115,6 +115,20 @@ _STOPWORDS = frozenset({
 _SURFACE_KINDS = frozenset({"road", "track", "street", "path", "ground",
                             "floor", "terrain"})
 
+# Concept layers whose STRONG members (category / kind_hints place them there)
+# are legitimate surface content — the positive counterpart of the signage
+# embargo's negative list. A Sketchfab entry may only fill a _SURFACE_KINDS
+# entity when it belongs strongly to one of these; contextual keywords grant
+# broad membership at most. Hit live (SpringCreekMotocrossRacing, regenerated
+# post-PR#63): TrackSegments (kind="track") tiled a TRAFFIC CONE whose
+# marketplace tags ("race", "road", "street") describe where a cone LIVES, not
+# what it is — and Tier S wins outright before the Kenney tiers ever score a
+# real road tile. The cone is honestly stamped category="prop", so this gate
+# (unlike the signage embargo) needs no per-token list: not being surface
+# content is already in its stamps. See _sk_contextual_guard in
+# resolve_entity_assets.
+_SURFACE_LAYERS = frozenset({"road_track", "terrain_ground"})
+
 # Tokens that mark an asset as signage / roadside furniture rather than a
 # surface piece. Deliberately an explicit list, not suffix matching —
 # "design" also ends in "sign".
@@ -560,6 +574,37 @@ def resolve_entity_assets(schema,
                 return kind in fname_tokens
             return True
 
+        def _sk_contextual_guard(a: dict) -> bool:
+            """Marketplace tags describe an upload's CONTEXT as often as its
+            identity — a traffic cone is tagged "race"/"road"/"street" because
+            it lives near roads; a survivors' tent is tagged "debris"/"crash"
+            because it was modeled beside a crash site. Both stamps are honest
+            (category prop/obstacle — not self-certification, not style
+            adjectives), yet both won Tier S live: TrackSegments (kind="track")
+            tiled the cone, "Debris" got the tent. Two checks, Sketchfab-only
+            (Kenney tags are curated, and its tiers are concept-layer-
+            constrained already):
+
+            1. Surface gate — a _SURFACE_KINDS entity only takes an entry the
+               taxonomy places STRONGLY (category/kind_hints) in a surface
+               layer (_SURFACE_LAYERS); contextual keywords are broad
+               membership at most. Skipped when concept_layers.json is absent.
+            2. Identity evidence — a strong query token must appear in the
+               uploader's own model NAME (filename stem — the one field that
+               is neither tag soup nor a freeze-time stamp), or at least TWO
+               strong tokens must hit the tag list. One stray tag in a 20-tag
+               soup is context, not identity.
+            """
+            if (kind in _SURFACE_KINDS and layers is not None
+                    and not (layers.membership(a)[1] & _SURFACE_LAYERS)):
+                return False
+            strong_q = {t for t, w in qw.items() if w >= _STRONG_HIT}
+            fname_tokens = {t for t in tokenize(Path(a.get("filename", "")).stem)
+                            if len(t) > 1}
+            if strong_q & fname_tokens:
+                return True
+            return len(strong_q & _entry_tokens(a)) >= 2
+
         # ── Tier S: Sketchfab-first (config-gated; runs before Kenney tiers) ──
         # Gated the same as the FX/skip kinds below and 2D games — Sketchfab
         # only ever yields 3D FBX, which a 2D orthographic game has no use for.
@@ -584,7 +629,8 @@ def resolve_entity_assets(schema,
             sk_scored = [(s, a) for a in sk_catalog_assets
                         if (s := _sk_score(a)) >= sk_min
                         and _entry_source(a, asset_root) is not None
-                        and _passes_kind_guard(a)]
+                        and _passes_kind_guard(a)
+                        and _sk_contextual_guard(a)]
             if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
                 from .sketchfab_freeze import fetch_and_freeze
                 # sketchfab_query (src/unity_sketchfab_translator.py's concept +
@@ -608,7 +654,8 @@ def resolve_entity_assets(schema,
                                                           # entities this same
                                                           # call can reuse it
                     s = _sk_score(new_entry)
-                    if s >= sk_min and _passes_kind_guard(new_entry):
+                    if (s >= sk_min and _passes_kind_guard(new_entry)
+                            and _sk_contextual_guard(new_entry)):
                         sk_scored = [(s, new_entry)]
             if sk_scored:
                 sk_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
