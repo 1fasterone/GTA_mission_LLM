@@ -590,3 +590,285 @@ def test_gamecontext_attached_in_scene():
         schema, {}, composed_units=units)["CtxScene/Assets/Scenes/Main.unity"]
     ctx = next(u for u in units if u.kind == "context")
     assert ctx.guid in scene   # GameContext coexists in the scene with everything else
+
+
+# ── Phase 1: Multimodal-IR field wiring ─────────────────────────────────────
+# schema.audio_specs / schema.vfx / schema.animations / CharacterSpec.animation_set /
+# CharacterSpec.dialog_graph used to be orphaned — Step 3 (LLM) could fill them but
+# Steps 4-6 never read them. These tests prove real authored content (not the
+# micro's own defaults) actually reaches the rendered output.
+
+from src.unity_schema import AudioSpec, VfxSpec, AnimationSpec, CharacterSpec, DialogGraph, DialogNode, DialogChoice
+
+
+def test_audio_specs_flow_into_composed_cues():
+    specs = [AudioSpec(id="engine_hum", type="sfx", description="deep engine hum",
+                       generation_method="sfxr", loop=True)]
+    audio = next(s for s in subsystems_for("3D", [], audio_specs=specs) if s.kind == "audio")
+    cues = audio.options["cues"]
+    assert len(cues) == 1
+    assert cues[0]["id"] == "engine_hum"
+    assert cues[0]["kind"] == "synth"          # sfxr -> synth
+    assert cues[0]["descriptor"] == "deep engine hum"
+    assert cues[0]["loop"] is True
+
+
+def test_audio_specs_alone_activate_the_audio_subsystem():
+    # No "audio" feature flag — audio_specs content alone must be enough to compose it.
+    specs = [AudioSpec(id="cue1", type="music", generation_method="stable_audio")]
+    kinds = {s.kind for s in subsystems_for("3D", [], audio_specs=specs)}
+    assert "audio" in kinds
+
+
+def test_vfx_single_spec_flows_into_particle_system_options():
+    specs = [VfxSpec(id="v1", name="MuzzleFlash", type="particle",
+                     parameters={"duration": 0.5, "loop": False})]
+    vfx = next(s for s in subsystems_for("3D", [], vfx_specs=specs) if s.kind == "vfx")
+    assert vfx.variant == "particle_system"
+    assert vfx.options["effect_id"] == "MuzzleFlash"
+    assert vfx.options["duration"] == 0.5
+
+
+def test_vfx_multiple_specs_flow_into_vfx_sequence_cues():
+    specs = [VfxSpec(id="v1", name="Spark", type="particle"),
+             VfxSpec(id="v2", name="Smoke", type="particle")]
+    vfx = next(s for s in subsystems_for("3D", [], vfx_specs=specs) if s.kind == "vfx")
+    assert vfx.variant == "vfx_sequence"
+    ids = [c["effect_id"] for c in vfx.options["cues"]]
+    assert ids == ["Spark", "Smoke"]
+
+
+def test_animator_clips_from_animations_and_character_animation_set():
+    animations = [AnimationSpec(id="a1", name="Run", clip="Run_Clip")]
+    characters = [CharacterSpec(id="c1", name="Hero", animation_set=["Idle"])]
+    animator = next(s for s in subsystems_for("3D", [], animations=animations,
+                                              characters=characters) if s.kind == "animator")
+    assert animator.options["clips"]["Run"] == "Run_Clip"
+    assert animator.options["clips"]["Idle"] == "Idle"
+
+
+def test_animator_core_signature_unaffected_when_no_ir_data():
+    # Byte-identical to today when the new fields are absent — additive-only change.
+    subs = subsystems_for("3D", [])
+    animator = next(s for s in subs if s.kind == "animator")
+    assert animator.options == {}
+
+
+def test_character_dialog_graph_becomes_its_own_dialogue_subsystem():
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Guard", text="Halt! Who goes there?",
+                  choices=[DialogChoice(text="A friend", next_node="n2")]),
+    ])
+    characters = [CharacterSpec(id="c1", name="Guard", dialog_graph=graph)]
+    subs = subsystems_for("3D", [], characters=characters)
+    dlg = next(s for s in subs if s.kind == "dialogue")
+    assert dlg.name == "GuardDialogue"
+    assert dlg.options["start_node"] == "n1"
+    node = dlg.options["nodes"][0]
+    assert node["text"] == "Halt! Who goes there?"
+    assert node["choices"][0] == {"text": "A friend", "next": "n2"}
+    # No redundant generic fallback alongside the real per-character one.
+    assert not any(s.kind == "dialogue" and s.name == "DialogueSystem" for s in subs)
+
+
+def test_generic_dialogue_fallback_still_fires_without_character_dialogue():
+    subs = subsystems_for("3D", ["dialogue"])
+    assert any(s.kind == "dialogue" and s.name == "DialogueSystem" for s in subs)
+
+
+def test_character_dialogue_renders_authored_text_end_to_end(tmp_path):
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Guard", text="Halt! Who goes there?",
+                  choices=[DialogChoice(text="A friend", next_node="")]),
+    ])
+    characters = [CharacterSpec(id="c1", name="Guard", dialog_graph=graph)]
+    subs = [s for s in subsystems_for("3D", [], characters=characters) if s.kind == "dialogue"]
+    assets = Path(tmp_path) / "Assets"
+    units = MicroComposer("DialogueProof").compose(subs, assets)
+    u = units[0]
+    cs = (assets / "Micros" / "dialogue" / "Scripts" / f"{u.class_name}.cs").read_text(encoding="utf-8")
+    assert "Halt! Who goes there?" in cs
+
+
+# ── Track 2: voiced-dialogue routing to NpcDialogPipeline ───────────────────
+# DialogNode.audio_ref ("AudioSpec id — empty = no voiced line") decides whether a
+# character's dialog_graph routes to plain-text DialoguePipeline or voiced
+# NpcDialogPipeline (real Kokoro TTS clips).
+
+def test_character_with_audio_ref_routes_to_npc_dialog():
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Vendor", text="Welcome, traveler.",
+                  emotion="happy", audio_ref="vendor_greeting"),
+    ])
+    characters = [CharacterSpec(id="c1", name="Vendor", dialog_graph=graph)]
+    subs = subsystems_for("3D", [], characters=characters)
+    kinds = [s.kind for s in subs if s.name.startswith("Vendor")]
+    assert kinds == ["npc_dialog"]
+    npc = next(s for s in subs if s.kind == "npc_dialog" and s.name == "VendorNpcDialog")
+    assert npc.options["speaker_name"] == "Vendor"
+    lines = npc.options["lines"]
+    assert lines[0]["line_id"] == "n1"
+    assert lines[0]["text"] == "Welcome, traveler."
+    assert lines[0]["emotion"] == "happy"
+    # No "skip_audio" meta — real authored voiced lines should render TTS clips,
+    # not stay silent like the generic has_npcs fallback.
+    assert "meta" not in npc.options or not npc.options["meta"].get("skip_audio")
+
+
+def test_character_without_audio_ref_still_routes_to_dialogue():
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Guard", text="State your business.",
+                  choices=[DialogChoice(text="Trading", next_node="")]),
+    ])
+    characters = [CharacterSpec(id="c1", name="Guard", dialog_graph=graph)]
+    subs = subsystems_for("3D", [], characters=characters)
+    kinds = [s.kind for s in subs if s.name.startswith("Guard")]
+    assert kinds == ["dialogue"]
+
+
+def test_voiced_character_dialogue_renders_authored_text_end_to_end(tmp_path):
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Vendor", text="Fresh potions, half price today!",
+                  emotion="happy", audio_ref="vendor_greeting"),
+    ])
+    characters = [CharacterSpec(id="c1", name="Vendor", dialog_graph=graph)]
+    subs = [s for s in subsystems_for("3D", [], characters=characters) if s.kind == "npc_dialog"]
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("NpcDialogProof").compose(subs, assets)
+    candidates = list((assets / "Micros" / "npc_dialog").rglob("*Data.json"))
+    assert candidates, "no DialogData.json written for the npc_dialog unit"
+    assert "Fresh potions, half price today!" in candidates[0].read_text(encoding="utf-8")
+
+
+# ── Track 4: missions -> objective-tracker micro ─────────────────────────────
+
+from src.unity_schema import MissionSpec, MissionObjective
+
+
+def test_mission_with_objectives_gets_a_tracker_subsystem():
+    mission = MissionSpec(id="m1", title="Vault Raid", objectives=[
+        MissionObjective(id="crack_vault", description="Crack the vault door",
+                         type="interact", count=1),
+        MissionObjective(id="grab_cash", description="Grab bags of cash",
+                         type="collect", count=5),
+    ], rewards={"cash": 50000})
+    subs = subsystems_for("3D", [], missions=[mission])
+    obj = next(s for s in subs if s.kind == "objectives")
+    assert obj.name == "VaultRaidObjectives"
+    ids = [o["id"] for o in obj.options["objectives"]]
+    assert ids == ["crack_vault", "grab_cash"]
+    assert obj.options["rewards"] == {"cash": 50000}
+
+
+def test_mission_without_objectives_produces_no_tracker():
+    mission = MissionSpec(id="m1", title="Empty Mission")
+    subs = subsystems_for("3D", [], missions=[mission])
+    assert not any(s.kind == "objectives" for s in subs)
+
+
+def test_mission_objectives_render_authored_content_end_to_end(tmp_path):
+    mission = MissionSpec(id="m1", title="Vault Raid", objectives=[
+        MissionObjective(id="crack_vault", description="Crack the vault door",
+                         type="interact", count=1),
+    ])
+    subs = [s for s in subsystems_for("3D", [], missions=[mission]) if s.kind == "objectives"]
+    assets = Path(tmp_path) / "Assets"
+    units = MicroComposer("MissionProof").compose(subs, assets)
+    u = units[0]
+    cs = (assets / "Micros" / "objectives" / "Scripts" / f"{u.class_name}.cs").read_text(encoding="utf-8")
+    assert "crack_vault" in cs
+    assert "Crack the vault door" in cs
+    assert "OnMissionComplete" in cs and "ReportProgress" in cs
+
+
+# ── Track 6: behavior_trees -> minimal BT interpreter ────────────────────────
+
+from src.unity_schema import AIBehaviorTree, BehaviorTree, BTNode
+
+
+def _guard_bt_entry():
+    return AIBehaviorTree(id="bt1", name="GuardBrain", tree=BehaviorTree(
+        root="root", nodes=[
+            BTNode(id="root", type="selector", children=["chase", "idle"]),
+            BTNode(id="chase", type="action", action="ChasePlayer"),
+            BTNode(id="idle", type="action", action="Idle"),
+        ]))
+
+
+def test_behavior_tree_entry_gets_a_subsystem():
+    subs = subsystems_for("3D", [], behavior_trees=[_guard_bt_entry()])
+    bt = next(s for s in subs if s.kind == "behavior_tree")
+    assert bt.name == "GuardBrainBT"
+    assert bt.options["root"] == "root"
+    ids = [n["id"] for n in bt.options["nodes"]]
+    assert ids == ["root", "chase", "idle"]
+
+
+def test_behavior_tree_entry_without_nodes_produces_no_subsystem():
+    empty = AIBehaviorTree(id="bt1", name="Empty", tree=BehaviorTree(root="", nodes=[]))
+    subs = subsystems_for("3D", [], behavior_trees=[empty])
+    assert not any(s.kind == "behavior_tree" for s in subs)
+
+
+def test_behavior_tree_renders_authored_structure_end_to_end(tmp_path):
+    subs = [s for s in subsystems_for("3D", [], behavior_trees=[_guard_bt_entry()])
+            if s.kind == "behavior_tree"]
+    assets = Path(tmp_path) / "Assets"
+    units = MicroComposer("BTProof").compose(subs, assets)
+    u = units[0]
+    cs = (assets / "Micros" / "behavior_tree" / "Scripts" / f"{u.class_name}.cs").read_text(encoding="utf-8")
+    assert 'id = "root", type = "selector"' in cs
+    assert "ChasePlayer" in cs and "Idle" in cs
+    assert "RegisterCondition" in cs and "BTStatus Evaluate" in cs
+
+
+# ── Track 8: wiring map -> additive custom seams (not a SEAM rewrite) ────────
+
+from src.unity_schema import WiringMap, WiringDependency
+
+
+def test_novel_wiring_dependency_produces_a_custom_seam_comment(tmp_path):
+    subs = subsystems_for("3D", ["ai", "audio"])
+    wm = WiringMap(dependencies=[
+        WiringDependency(source="audio", target="hud", type="references"),
+    ])
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("WiringNovel").compose(subs, assets, wiring=wm)
+    gw = (assets / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "wiring: audio --references--> hud" in gw
+
+
+def test_wiring_dependency_matching_named_seam_is_not_duplicated(tmp_path):
+    subs = subsystems_for("3D", ["ai", "audio"])
+    wm = WiringMap(dependencies=[
+        WiringDependency(source="health", target="hud", type="references"),
+    ])
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("WiringNamed").compose(subs, assets, wiring=wm)
+    gw = (assets / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "wiring: health --references--> hud" not in gw
+    assert gw.count("SEAM 1: Health") == 1   # the named seam, unaffected — no duplicate
+
+
+def test_wiring_dependency_with_missing_kind_is_silently_skipped(tmp_path):
+    subs = subsystems_for("3D", [])
+    wm = WiringMap(dependencies=[
+        WiringDependency(source="audio", target="nonexistent_kind", type="uses"),
+    ])
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("WiringMissing").compose(subs, assets, wiring=wm)
+    gw = (assets / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "nonexistent_kind" not in gw
+
+
+def test_no_wiring_map_leaves_gamewiring_unchanged(tmp_path):
+    """wiring=None (the default) must behave byte-identically to before this track."""
+    subs = subsystems_for("3D", ["ai", "audio"])
+    a1 = Path(tmp_path) / "a" / "Assets"
+    a2 = Path(tmp_path) / "b" / "Assets"
+    MicroComposer("WiringNone").compose(subs, a1)
+    MicroComposer("WiringNone").compose(subs, a2, wiring=None)
+    gw1 = (a1 / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
+    gw2 = (a2 / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
+    assert gw1 == gw2
+    assert "schema.wiring" not in gw1   # no custom-seam markers when wiring is absent

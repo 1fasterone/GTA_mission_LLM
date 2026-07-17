@@ -2200,3 +2200,155 @@ def test_programmatic_fix_renames_engine_type_script_names():
     sch = _programmatic_fix(sch)
     assert sch.scripts[0].name == "WheelColliderBehaviour"
     assert sch.scripts[1].name == "VehicleRig"
+
+
+# ── Track 3: schema.materials -> real .mat assets, schema.shaders -> README ──
+
+def test_material_spec_emits_real_mat_asset():
+    from src.unity_schema import UnitySchema, MaterialSpec
+    from src.unity_generator import UnityProjectGenerator
+    schema = UnitySchema(project_name="MatProof", game_type="3D", platform="PC",
+                         render_pipeline="URP",
+                         materials=[MaterialSpec(id="m1", name="RustyMetal",
+                                                 shader_model="Standard",
+                                                 parameters={"color": "#8B4513"})])
+    files = UnityProjectGenerator().generate(schema, {})
+    mat_path = "MatProof/Assets/Materials/RustyMetal.mat"
+    assert mat_path in files
+    assert "Material:" in files[mat_path]
+    assert "m_Name: RustyMetal" in files[mat_path]
+    assert "8b4513" not in files[mat_path].lower()  # hex is converted to float RGB, not kept literal
+    assert "guid:" in files[f"{mat_path}.meta"]
+
+
+def test_material_spec_without_color_falls_back_to_neutral_gray():
+    from src.unity_schema import UnitySchema, MaterialSpec
+    from src.unity_generator import UnityProjectGenerator, _hex_to_rgb
+    schema = UnitySchema(project_name="MatProof2", game_type="3D", platform="PC",
+                         render_pipeline="builtin",
+                         materials=[MaterialSpec(id="m1", name="Unspecified")])
+    files = UnityProjectGenerator().generate(schema, {})
+    mat = files["MatProof2/Assets/Materials/Unspecified.mat"]
+    r, g, b = _hex_to_rgb("#B0B0B0")
+    assert f"r: {round(r, 8)}" in mat
+
+
+def test_material_guids_are_deterministic():
+    from src.unity_schema import UnitySchema, MaterialSpec
+    from src.unity_generator import UnityProjectGenerator
+    def _build():
+        schema = UnitySchema(project_name="MatDet", game_type="3D", platform="PC",
+                             render_pipeline="URP",
+                             materials=[MaterialSpec(id="m1", name="Foo")])
+        return UnityProjectGenerator().generate(schema, {})
+    f1, f2 = _build(), _build()
+    key = "MatDet/Assets/Materials/Foo.mat.meta"
+    assert f1[key] == f2[key]
+
+
+def test_shader_specs_surface_in_readme_not_as_files():
+    from src.unity_schema import UnitySchema, ShaderSpec
+    from src.unity_generator import UnityProjectGenerator
+    schema = UnitySchema(project_name="ShaderProof", game_type="3D", platform="PC",
+                         render_pipeline="URP",
+                         shaders=[ShaderSpec(id="s1", name="Dissolve", language="hlsl",
+                                             parameters={"description": "dissolve on death"})])
+    files = UnityProjectGenerator().generate(schema, {})
+    readme = files["ShaderProof/README.md"]
+    assert "Dissolve" in readme and "hlsl" in readme and "dissolve on death" in readme
+    # No fabricated shader source files — deliberately not code-generated.
+    assert not any("Dissolve" in p and p.endswith((".shader", ".shadergraph")) for p in files)
+
+
+# ── Track 5: world_spec feeds environment/atmosphere context ─────────────────
+
+import re
+
+
+def _fog_and_intensity(scene: str) -> tuple:
+    fog = re.search(r"m_Fog: (\d)", scene)
+    intensity = re.search(r"m_Intensity: ([\d.]+)", scene)
+    return (fog.group(1) if fog else None, intensity.group(1) if intensity else None)
+
+
+def test_world_spec_weather_drives_fog_when_no_environment():
+    from src.unity_schema import UnitySchema, WorldSpec
+    from src.unity_generator import UnityProjectGenerator
+    no_env = UnitySchema(project_name="NoEnv", game_type="3D", platform="PC",
+                         render_pipeline="URP", scenes=["Main"])
+    rain = UnitySchema(project_name="Rain", game_type="3D", platform="PC",
+                       render_pipeline="URP", scenes=["Main"],
+                       world_spec=WorldSpec(weather="rain"))
+    clear = UnitySchema(project_name="Clear", game_type="3D", platform="PC",
+                        render_pipeline="URP", scenes=["Main"],
+                        world_spec=WorldSpec(weather="clear"))
+    gen = UnityProjectGenerator()
+    fog_none, _ = _fog_and_intensity(gen.generate(no_env, {})["NoEnv/Assets/Scenes/Main.unity"])
+    fog_rain, _ = _fog_and_intensity(gen.generate(rain, {})["Rain/Assets/Scenes/Main.unity"])
+    fog_clear, _ = _fog_and_intensity(gen.generate(clear, {})["Clear/Assets/Scenes/Main.unity"])
+    assert fog_none == "0"
+    assert fog_rain == "1"
+    assert fog_clear == "0"
+
+
+def test_world_spec_time_of_day_drives_sun_when_no_environment():
+    from src.unity_schema import UnitySchema, WorldSpec
+    from src.unity_generator import UnityProjectGenerator
+    night = UnitySchema(project_name="NightProof", game_type="3D", platform="PC",
+                        render_pipeline="URP", scenes=["Main"],
+                        world_spec=WorldSpec(time_of_day="night"))
+    _, intensity = _fog_and_intensity(
+        UnityProjectGenerator().generate(night, {})["NightProof/Assets/Scenes/Main.unity"])
+    assert intensity == "0.25"   # night preset intensity, unity_generator.py _TIME_OF_DAY_PRESETS
+
+
+def test_explicit_environment_wins_over_world_spec():
+    from src.unity_schema import UnitySchema, WorldSpec, EnvironmentSpec
+    from src.unity_generator import UnityProjectGenerator
+    schema = UnitySchema(project_name="EnvWins", game_type="3D", platform="PC",
+                         render_pipeline="URP", scenes=["Main"],
+                         environment=EnvironmentSpec(time_of_day="dawn"),
+                         world_spec=WorldSpec(time_of_day="night", weather="storm"))
+    _, intensity = _fog_and_intensity(
+        UnityProjectGenerator().generate(schema, {})["EnvWins/Assets/Scenes/Main.unity"])
+    assert intensity == "0.9"   # dawn preset, not night — environment takes priority
+
+
+# ── Track 7: microgens -> folded into schema.atoms ────────────────────────────
+
+def test_resolve_microgens_prepends_atoms():
+    from src.unity_schema import UnitySchema, MicrogensSpec, AtomInvocation
+    from src.capability_resolver import resolve_microgens
+    schema = UnitySchema(project_name="MgProof", game_type="3D", platform="PC",
+                         render_pipeline="URP",
+                         atoms=[AtomInvocation(atom="Existing", args={})],
+                         microgens=[MicrogensSpec(kind="cutscene", input={},
+                                                  atoms=[AtomInvocation(atom="Wait", args={"seconds": 1.0})])])
+    schema, msgs = resolve_microgens(schema)
+    assert [a.atom for a in schema.atoms] == ["Wait", "Existing"]
+    assert msgs and "1 atoms injected" in msgs[0]
+
+
+def test_resolve_microgens_noop_when_empty():
+    from src.unity_schema import UnitySchema
+    from src.capability_resolver import resolve_microgens
+    schema = UnitySchema(project_name="MgEmpty", game_type="3D", platform="PC",
+                         render_pipeline="URP")
+    schema2, msgs = resolve_microgens(schema)
+    assert schema2 is schema
+    assert msgs == []
+
+
+def test_microgen_atoms_render_in_game_sequencer_end_to_end():
+    from src.unity_schema import UnitySchema, MicrogensSpec, AtomInvocation
+    from src.capability_resolver import resolve_microgens
+    from src.unity_generator import UnityProjectGenerator
+    schema = UnitySchema(project_name="MgRender", game_type="3D", platform="PC",
+                         render_pipeline="URP",
+                         microgens=[MicrogensSpec(kind="cutscene", input={},
+                                                  atoms=[AtomInvocation(atom="Wait", args={"seconds": 1.0})])])
+    schema, _ = resolve_microgens(schema)
+    files = UnityProjectGenerator().generate(schema, {})
+    seq_files = [v for k, v in files.items() if "GameSequencer" in k and k.endswith(".cs")]
+    assert seq_files, "no GameSequencer.cs rendered"
+    assert "Wait" in seq_files[0]

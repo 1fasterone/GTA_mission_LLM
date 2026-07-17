@@ -1,0 +1,61 @@
+TITLE
+Scrapyard Standoff
+
+GENRE
+A third-person action survival game set in a junkyard. Genre is shooter — the
+player fends off waves of scavenger enemies while scrounging for supplies.
+
+STYLE
+Gritty, rust-and-dust industrial junkyard. Stacked scrap-metal husks, chain-link
+fences, oil-drum barricades, sodium-lamp orange lighting at dusk. Desaturated
+palette with warning-tape yellow accents.
+
+CORE PREMISE
+The player is trapped in a fenced scrapyard as scavenger raiders close in at
+night. Scrounge scattered parts, hold the barricaded gate, and survive until dawn.
+A wounded mechanic trapped in the workshop radios in tips and pleads for backup
+between waves.
+
+PLAYER
+A survivor with a scrap-built weapon. Third-person controller (move, sprint,
+jump, aim, fire). Rigidbody physics, health system, ammo-limited weapon.
+
+ENTITIES
+- Scavenger: an aggressive raider enemy that rushes the barricade (kind: npc).
+- Mechanic: a wounded NPC quest giver sheltering in the workshop (kind: npc).
+- ScrapPile: a collectible pile of salvage parts (kind: collectible).
+- BarricadeGate: the chain-link gate the player defends (kind: prop).
+- OilDrum: an explosive barrel that can be shot to damage nearby enemies (kind: prop).
+
+NPCS
+- Mechanic: a voiced NPC sheltering in the workshop. He greets the player, warns
+  about the next wave, and offers a choice of repairing the gate or scavenging for
+  ammo first. Branching dialogue with a typewriter reveal.
+
+AI
+Scavengers use navmesh_patrol AI that shifts to a direct rush once they spot the
+player, converging on the barricade gate.
+
+SCENES
+- Main Menu: play, settings, quit.
+- Scrapyard: the single survival arena — workshop, barricade gate, wreck piles.
+Scene transitions use a fade between menu and the scrapyard.
+
+HUD
+Health bar, ammo counter, wave counter (wave 1 / survived), and an objective
+prompt near the Mechanic ("Repair the gate" / "Scavenge for parts").
+
+AUDIO
+Clanking scrap and rattling chain-link as enemies climb the fence, a scrap-metal
+weapon's dry mechanical fire, a booming oil-drum explosion, a low tense ambient
+wind drone, and a pulsing synth combat music loop that intensifies each
+wave. Spatial audio so approaching scavengers can be heard before they're seen.
+
+FEATURES
+Save/load high wave count (json_file). Pause menu (resume, restart, quit to menu).
+Wave spawner for scavengers. Impact/muzzle-flash effects on hits and the oil-drum
+explosion.
+
+VISUAL STYLE
+Realistic-leaning stylized, URP with volumetric dust and flickering sodium-lamp
+pools of light. Grimy metal textures, warning-tape yellow highlights.

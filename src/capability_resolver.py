@@ -205,6 +205,40 @@ def resolve_capabilities(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     return schema, msgs
 
 
+def resolve_microgens(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
+    """
+    Step 5 hook: fold schema.microgens[].atoms into schema.atoms.
+
+    MicrogensSpec.atoms (unity_schema.py:777-781) is structurally identical to
+    what resolve_capabilities() produces above — a list[AtomInvocation] meant
+    for the same global atom-coroutine consumer (unity_generator.py's
+    "Global atom sequencer" / GameSequencer.cs.j2). Building a second dispatch
+    mechanism for MicrogensSpec.kind/.input (invoking micro.REGISTRY pipelines
+    programmatically) would duplicate what Subsystem/subsystems_for() already
+    does, with no consumer asking for that today — kind/input/output_files
+    remain unconsumed metadata (documented, not silently dropped).
+
+    Prepended alongside capability atoms (both fire before entity-level atom
+    sequences); existing schema.atoms are preserved as a suffix.
+
+    Returns (updated_schema, list_of_fix_messages).
+    """
+    if not schema.microgens:
+        return schema, []
+
+    msgs: list[str] = []
+    mg_atoms = [a for m in schema.microgens for a in m.atoms]
+    if mg_atoms:
+        schema.atoms = mg_atoms + list(schema.atoms)
+        msgs.append(
+            f"Microgens resolved: {len(mg_atoms)} atoms injected "
+            f"from {len(schema.microgens)} microgen entr"
+            f"{'y' if len(schema.microgens) == 1 else 'ies'}"
+        )
+
+    return schema, msgs
+
+
 # ── Migration: v1 (data-first) → v2 (capability-aware) ──────────────────────
 
 # Default binding sets by locomotion style

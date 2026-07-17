@@ -13,21 +13,11 @@ import json
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
-sys.argv = ["x"]
 from unity_cli import _find_editor
 
-EDITOR = _find_editor(None)
-if EDITOR is None:
-    raise SystemExit("no Unity editor found")
-EDITOR = Path(EDITOR)
-EDITOR_VER = EDITOR.parent.parent.name   # .../Hub/Editor/<ver>/Editor/Unity.exe
-
-PROJ = Path("output/unity/_import_check").resolve()
 VERIFY = Path("output/blender/_verify").resolve()
-REPORT = PROJ / "import_report.json"
 
 # FBX → whether we expect a skinned (rigged) import.
 FBX = {
@@ -97,7 +87,16 @@ public static class AssetImportCheck
 '''
 
 
-def main():
+def main() -> int:
+    editor = _find_editor(None)
+    if editor is None:
+        print("no Unity editor found")
+        return 1
+    EDITOR = Path(editor)
+    EDITOR_VER = EDITOR.parent.parent.name   # .../Hub/Editor/<ver>/Editor/Unity.exe
+    PROJ = Path("output/unity/_import_check").resolve()
+    REPORT = PROJ / "import_report.json"
+
     print(f"Unity editor: {EDITOR}  (project version pinned {EDITOR_VER})")
     if PROJ.exists():
         shutil.rmtree(PROJ, ignore_errors=True)

@@ -102,6 +102,20 @@ the scattering. Tune via the `_Atmosphere` object spawned at Play, or edit
 {% endfor %}
 {% endif %}
 
+{% if materials %}
+### Materials (`Assets/Materials/`)
+{% for m in materials %}
+- **{{ m.name }}.mat** ({{ m.shader_model }}) — generated as a solid-tint material; assign real PBR textures (albedo/normal/roughness/metallic/ao) manually if `pbr_maps` paths weren't provided.
+{% endfor %}
+{% endif %}
+
+{% if shaders %}
+### Shaders (authored, not yet code-generated)
+{% for sh in shaders %}
+- **{{ sh.name }}** (`{{ sh.language }}`) — {{ sh.parameters.get("description", "no description") }}. Author this shader manually in Unity; the compiler does not generate {{ sh.language }} source.
+{% endfor %}
+{% endif %}
+
 ### Scripts (`Assets/Scripts/`)
 {% for script in scripts %}
 - **{{ script.name }}.cs** (`{{ script.type }}`) — {{ script.description }}

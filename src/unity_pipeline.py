@@ -17,7 +17,7 @@ from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
 from .unity_schema       import UnityPackage, UnitySchema, UnityScript
-from .capability_resolver import resolve_capabilities
+from .capability_resolver import resolve_capabilities, resolve_microgens
 from .unity_asset_catalog import asset_vocabulary
 from .unity_resolver     import UnityResolver
 from .unity_generator    import UnityProjectGenerator
@@ -832,6 +832,11 @@ class UnityPipeline:
         if not cap_msgs and schema.capabilities:
             self._ok("Capabilities present but produced no atoms (all sub-models None)")
 
+        # Microgens: schema.microgens[].atoms → atoms (Step 5b)
+        schema, mg_msgs = resolve_microgens(schema)
+        for msg in mg_msgs:
+            self._fix(msg)
+
         # Re-resolve anything that consistency check added
         schema = self.resolver.resolve_schema(schema)
         manifest_deps = self.resolver.build_manifest_deps(
@@ -895,7 +900,13 @@ class UnityPipeline:
                                         scenes=schema.scenes,
                                         entities=schema.entities,
                                         scripts=schema.scripts,
-                                        genre=schema.meta.get("genre", "universal"))
+                                        genre=schema.meta.get("genre", "universal"),
+                                        audio_specs=schema.audio_specs,
+                                        vfx_specs=schema.vfx,
+                                        animations=schema.animations,
+                                        characters=schema.characters,
+                                        missions=schema.missions,
+                                        behavior_trees=schema.behavior_trees)
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep
@@ -1035,7 +1046,7 @@ class UnityPipeline:
             # concept script survived so GameContext can wire micro↔concept seams.
             has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
             composer.emit(subsystems, project_root / "Assets",
-                          has_game_manager=has_game_manager)
+                          has_game_manager=has_game_manager, wiring=schema.wiring)
             self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes "
                      "(GameContext bridges micros ↔ prompt-authored scripts)")
             # Overlay audio clips:
