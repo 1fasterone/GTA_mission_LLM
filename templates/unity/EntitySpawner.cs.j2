@@ -7,8 +7,18 @@ using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 {% endif %}
 
+// [ExecuteAlways] + the _baked guard below let this run once in the Editor
+// (outside Play) so the prototype's layout is visible and hand-editable in
+// the Scene view immediately, instead of only existing while playing. Once
+// baked, Start() no-ops on every later domain reload or Play session, so
+// moved/replaced objects (dragged transforms, swapped-in imported assets)
+// persist as ordinary saved scene state instead of being respawned over.
+[ExecuteAlways]
 public class EntitySpawner : MonoBehaviour
 {
+    [Tooltip("Set once this spawner has generated its objects (edit-time bake or first Play). Prevents re-spawning on domain reload / later Play sessions so Scene-view edits survive.")]
+    [SerializeField, HideInInspector] private bool _baked = false;
+
 {% if scene_entity_map %}
     // Per-scene entity filter (schema scene_specs). Scenes absent from this
     // map host every group; listed scenes host only their named groups.
@@ -69,8 +79,17 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
 
 {% set ns = namespace(first_path=true) %}
+    // Destroy() throws outside Play mode ("may not be called from edit
+    // mode") — the edit-time bake path needs DestroyImmediate instead.
+    private static void SafeDestroy(Object o)
+    {
+        if (Application.isPlaying) Destroy(o); else DestroyImmediate(o);
+    }
+
     private void Start()
     {
+        if (_baked) return;
+        _baked = true;
         var sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
 {% if scene_entity_map %}
         var _scene = SceneManager.GetActiveScene().name;
@@ -103,6 +122,10 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
 {% endfor %}
 {% endif %}
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+            UnityEditor.EditorUtility.SetDirty(this);
+#endif
     }
 
     private void SpawnGroup(string groupName, int count, PrimitiveType shape, string placement,
@@ -247,7 +270,7 @@ public class EntitySpawner : MonoBehaviour
 {% if game_type == "2D" %}
             // 2D: strip imported/primitive 3D colliders, ensure one 2D collider so
             // the Rigidbody2D player can stand on / collide with this entity.
-            foreach (var c3d in go.GetComponentsInChildren<Collider>()) Destroy(c3d);
+            foreach (var c3d in go.GetComponentsInChildren<Collider>()) SafeDestroy(c3d);
             if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
 {% endif %}
             Vector3 pos;
@@ -577,7 +600,7 @@ public class EntitySpawner : MonoBehaviour
         var col = ground.AddComponent<BoxCollider2D>();
         col.size = new Vector2(length + 28f, 2f);
         var vis = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        var c3 = vis.GetComponent<Collider>(); if (c3 != null) Destroy(c3);
+        var c3 = vis.GetComponent<Collider>(); if (c3 != null) SafeDestroy(c3);
         vis.transform.SetParent(ground.transform, false);
         vis.transform.localScale = new Vector3(length + 28f, 2f, 1f);
         Apply2DColor(vis, sh, new Color(0.20f, 0.20f, 0.23f));
@@ -624,7 +647,7 @@ public class EntitySpawner : MonoBehaviour
             go.transform.position = new Vector3((i + 1) * (courseLen / (n + 1)),
                                                 backdrop ? 3.5f : scale * 0.5f,
                                                 backdrop ? 8f : 0f);
-            foreach (var cc in go.GetComponentsInChildren<Collider>()) Destroy(cc);
+            foreach (var cc in go.GetComponentsInChildren<Collider>()) SafeDestroy(cc);
             if (!backdrop && go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
             if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
             if (!backdrop && !string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
@@ -692,7 +715,7 @@ public class EntitySpawner : MonoBehaviour
             go.transform.SetParent(parent);
             go.transform.localScale = Vector3.one * scale;
             go.transform.position = PlaceAt2DTopDown(placement, i, n, spacing, radius);
-            foreach (var cc in go.GetComponentsInChildren<Collider>()) Destroy(cc);
+            foreach (var cc in go.GetComponentsInChildren<Collider>()) SafeDestroy(cc);
             if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
             if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
             if (!string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
