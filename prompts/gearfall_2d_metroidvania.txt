@@ -1,0 +1,11 @@
+GENRE: metroidvania platformer
+STYLE: hand-painted clockwork citadel, warm brass-and-verdigris palette
+CORE PREMISE: a small clockwork automaton platforms up through a collapsing gear-driven citadel to rewind the great mainspring before the whole structure grinds itself to dust
+
+GEARFALL is a 2D side-scrolling platformer metroidvania for PC. A newly-wound clockwork automaton awakens in the lowest vault of a vast citadel whose great mainspring is failing — and must climb, run, and jump its way up through jammed gear-halls to rewind the mainspring before the citadel tears itself apart. Backtracking through locked gear-gates with newly-won abilities steadily opens the way forward.
+
+A side-on camera follows the automaton as it runs left and right along solid ground and platforms, with gravity pulling it down; a responsive jump, a mid-air double jump, and a short wall-cling let it scale broken gantries and leap across crushing piston gaps. There is no free roaming in every direction — movement is the classic run-and-jump left-to-right line of play, and the automaton walks on foot the whole way.
+
+Key systems this citadel needs: a health system tracking damage from steam-jets and swinging pendulum blades; an inventory of wind-up keys and salvaged gear-cogs that unlock gated gear-gates and grant new traversal abilities; a wandering tinker-ghost NPC with voiced hint dialogue at each save-cog shrine; patrolling rust-mite enemy AI that skitters along platforms and lunges when the automaton draws near; particle VFX for steam bursts, brass-spark showers when a gear seizes, and glowing mainspring-energy motes; a dissolve-and-glow shader for gear-gates powering down as they unlock; a Timeline-driven collapsing-gantry sequence when a section gives way; and fade scene transitions between the flooded undervault, the grinding gear-halls, and the mainspring chamber at the summit.
+
+Render pipeline: URP with soft bloom for the mainspring glow and dappled brass light, on Unity 6000.0. Visual style is a warm hand-painted clockwork palette — brass and verdigris against deep coal-shadow. Recommended packages: Cinemachine, Input System, Timeline, Animation Rigging, and Addressables for the three-hall load.

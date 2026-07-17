@@ -1,0 +1,11 @@
+GENRE: zelda-like dungeon adventure
+STYLE: overgrown temple ruin, warm mossy palette
+CORE PREMISE: a lone warden fights thorn-wraith swarms and solves puzzles to lift a bloom-curse from an overgrown temple
+
+MOSSWARD is a 2D zelda-like adventure for PC. A lone warden ventures into an overgrown temple ruin to lift a bloom-curse before it swallows the last free village — free-roaming room to room, dodging thorn-wraith swarms in twin-stick ranged magic duels, solving lever-and-gate puzzles, and collecting relics that unlock the temple's inner sanctum.
+
+A fixed camera looks straight down over the whole room, and the warden moves freely in every direction — north, south, east, west, and every angle between — with no gravity and no jump; twin-stick aiming lets the warden move one way while flinging bramble-bolts another. Health, a short dash, and a close-range parry keep swarm fights readable even when a dozen thorn-wraiths close in at once.
+
+Key systems this ruin needs: a health system tracking thorn damage and healing at moss shrines; an inventory of relics and dungeon keys that unlock gated rooms; a hermit NPC with voiced dialogue hints at each shrine; swarm AI that chases in packs and scatters when the warden dashes through; particle VFX for bramble-bolt impacts, vine bursts when a wraith falls, and shrine healing sparkles; and fade scene transitions between the outer grove, the flooded cloister, and the inner sanctum.
+
+Render pipeline: URP with soft bloom for the moss shrines and dappled canopy light, on Unity 6000.0. Visual style is a warm overgrown-ruin palette — mossy green and temple gold against cool stone shadow. Recommended packages: Input System, Timeline, Animation Rigging, and Addressables for the three-room load.
