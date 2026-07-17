@@ -40,6 +40,9 @@
       <button class="nav" data-section="library">
         <span class="ico">📚</span><span>Library</span>
       </button>
+      <button class="nav" data-section="cli">
+        <span class="ico">🧩</span><span>Pipeline Builder</span>
+      </button>
       <button class="nav" data-section="tutorial">
         <span class="ico">🎓</span><span>Tutorial</span>
       </button>
@@ -301,6 +304,56 @@
             <button class="seg" data-lib="gta">GTA5 (Showcase)</button>
           </div>
           <div class="lib-list" id="libList"></div>
+        </div>
+      </section>
+
+      <!-- =========== PIPELINE BUILDER (full CLI explorer) =========== -->
+      <section class="panel" data-section="cli">
+        <div class="card pb-toolbar">
+          <div class="segmented" role="tablist" aria-label="Command backend">
+            <button class="seg is-active" data-cat="unity">Unity</button>
+            <button class="seg" data-cat="gta">GTA5</button>
+            <button class="seg" data-cat="shared">Shared</button>
+          </div>
+          <input class="search pb-search" id="cliSearch" type="search" placeholder="Search commands…" />
+        </div>
+
+        <div class="pb-shell">
+          <!-- Left: command list, grouped -->
+          <div class="pb-list card" id="cliCommandList"></div>
+
+          <!-- Middle: selected command's args form -->
+          <div class="pb-main card">
+            <div class="pb-head">
+              <h2 id="cliCmdName">Pick a command</h2>
+              <p class="help" id="cliCmdHelp">Select a command from the list to configure and run it.</p>
+            </div>
+            <div class="pb-form" id="cliForm"></div>
+            <div class="row generate-row">
+              <button class="btn btn--primary" id="btnCliRun" disabled>Run</button>
+              <button class="btn" id="btnCliStop" hidden>Stop</button>
+              <span class="test-result" id="cliStatus"></span>
+            </div>
+          </div>
+
+          <!-- Right: live command preview + option docs -->
+          <div class="pb-side">
+            <div class="card">
+              <h3 class="pb-side-title">Command preview</h3>
+              <pre class="cli-preview" id="cliPreview">python main.py …</pre>
+              <button class="btn btn--tiny" id="btnCliCopy">Copy command</button>
+            </div>
+            <div class="card">
+              <h3 class="pb-side-title">About this command</h3>
+              <p class="help" id="cliAbout">—</p>
+              <div id="cliOptionsRef" class="pb-opts-ref"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Live output</h2>
+          <pre class="console" id="cliConsole" aria-live="polite"></pre>
         </div>
       </section>
 
