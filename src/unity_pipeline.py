@@ -575,7 +575,8 @@ class UnityPipeline:
             seed:        int | None = None,
             compose:     bool = False,
             blender_models: bool = False,
-            route:       dict | None = None) -> Path:
+            route:       dict | None = None,
+            no_think:    bool = False) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -633,11 +634,14 @@ class UnityPipeline:
 
         # STEP 2 — concept ────────────────────────────────────────────────────
         self._step(2, "LLM generates project concept")
+        if no_think:
+            self._ok("--no-think: reasoning disabled for the whole run "
+                     "(concept quality/creativity trades for speed)")
         concept = self.llm.chat(
             system      = UNITY_CONCEPT_SYSTEM,
             user        = UNITY_CONCEPT_USER.format(user_prompt=user_prompt, theme_block=theme_block),
             temperature = self.concept_temp,
-            thinking    = True,
+            thinking    = not no_think,
         )
         self._ok(f"{len(concept)} chars of project concept generated")
         if self.show_prompts:
