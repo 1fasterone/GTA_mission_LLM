@@ -18,7 +18,6 @@ import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from .unity_asset_catalog import SKETCHFAB_RELPATH, tokenize, write_sketchfab_entry
 
@@ -165,6 +164,7 @@ def find_promotable_sketchfab_models(project: str, cfg: dict) -> list[Path]:
     deduped: list[Path] = []
     for path in hits:
         m = _SKETCHFAB_NAME_RE.match(path.stem)
+        assert m is not None   # path was only added to `hits` after this same match
         uid = m.group("uid").lower()
         if uid in seen_uids:
             continue
@@ -205,6 +205,7 @@ def promote_sketchfab_models(project: str, cfg: dict,
 
     for path in find_promotable_sketchfab_models(project, cfg):
         m = _SKETCHFAB_NAME_RE.match(path.stem)
+        assert m is not None   # find_promotable_sketchfab_models only returns matches
         slug, uid = m.group("slug"), m.group("uid").lower()
 
         if uid in existing_uids:
