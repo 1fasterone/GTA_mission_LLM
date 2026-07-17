@@ -79,6 +79,27 @@ def test_lint_repairs_value_type_property_member_assign():
         == "bool b = Physics.gravity.x == 0f;"
 
 
+def test_lint_rejects_prose_fragment():
+    # The exact live regression: the LLM wrote an English sentence describing
+    # behavior straight into update_extra instead of C# statements ->
+    # DirtPhysicsController.cs / RaceLogicManager.cs, 29 repeated
+    # CS1002/CS1003 errors (the prose landed verbatim inside a method body).
+    assert lint_code_fragment(
+        "Apply suspension forces based on terrain displacement and wheel "
+        "collider contact points.", what="x") == ""
+    assert lint_code_fragment(
+        "Check if player position crosses checkpoint zones to increment "
+        "lap count and trigger UI updates.", what="x") == ""
+
+
+def test_lint_accepts_terse_real_code_not_mistaken_for_prose():
+    # Real one-line C# always carries a `;`/`{`/`}` — must never be rejected.
+    assert lint_code_fragment("transform.Rotate(0, 1, 0);", what="x") \
+        == "transform.Rotate(0, 1, 0);"
+    assert lint_code_fragment("if (x) { y(); }", what="x") \
+        == "if (x) { y(); }"
+
+
 def test_lint_hash_references_comments_out_invalid_native():
     """The exact real-world regression: an LLM invents SET_MISSION_FAILED /
     SET_MISSION_PASSED (neither exists in GTA.Native.Hash) -> CS0117 at
@@ -602,6 +623,13 @@ def test_codefield_coerces_nonstring_default():
 
 def test_lint_method_drops_python_body():
     m = CodeMethod(signature="void F()", body="self.x = 1")
+    assert lint_method(m, taken_names=set()) is None
+
+
+def test_lint_method_drops_prose_body():
+    m = CodeMethod(signature="void ApplySuspension()",
+                   body="Apply suspension forces based on terrain "
+                        "displacement and wheel collider contact points.")
     assert lint_method(m, taken_names=set()) is None
 
 

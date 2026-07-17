@@ -234,6 +234,60 @@ class TestPathCorridors:
         msgs = compute_layout(schema)
         assert not any("corridor" in m for m in msgs)
 
+    def _big_circuit_schema(self, group_names):
+        # a long diagonal route (the shape that exiled groups to islands)
+        route = [[0, 0, 0], [0, 0, 120], [80, 0, 200], [200, 0, 200],
+                 [260, 0, 120], [200, 0, 40], [80, 0, 20], [0, 0, 0]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        props = [EntitySpec(name=n, count=6, placement="scatter",
+                            radius=5, spacing=2.0, scale=1.0)
+                 for n in group_names]
+        return _schema([track] + props), track, props
+
+    def test_groups_hug_the_corridor_not_distant_islands(self):
+        schema, track, props = self._big_circuit_schema(
+            ["Grandstands", "DirtMounds", "Spectators", "Banners"])
+        msgs = compute_layout(schema)
+        assert any("route corridor" in m for m in msgs)
+        half_w = track.path_width / 2.0
+        for e in props:
+            cx, cz = e.origin_offset
+            d = self._dist_to_polyline(cx, cz, track.path_points)
+            # hugging: outside the ribbon, within a tight band beside it —
+            # never flung hundreds of metres away into a packed island
+            assert d > half_w
+            assert d < half_w + 60.0, f"{e.name} at dist {d:.1f} is not hugging"
+
+    def test_groups_are_distributed_around_the_loop(self):
+        schema, track, props = self._big_circuit_schema(
+            ["A", "B", "C", "D", "E", "F"])
+        compute_layout(schema)
+        centers = [tuple(e.origin_offset) for e in props]
+        # not all clustered: the spread of anchor centers should span a large
+        # fraction of the route's own extent
+        xs = [c[0] for c in centers]
+        zs = [c[1] for c in centers]
+        assert (max(xs) - min(xs)) > 120.0
+        assert (max(zs) - min(zs)) > 120.0
+
+    def test_corridor_ground_bounds_track_the_route_not_islands(self):
+        schema, track, _ = self._big_circuit_schema(
+            ["Grandstands", "DirtMounds", "Spectators"])
+        compute_layout(schema)
+        xmin, zmin, xmax, zmax = terrain_bounds(schema.entities)
+        # route spans ~260 x 200; a corridor-hugged layout keeps ground within
+        # a sane margin of that, not the 1600x700 sprawl islands produced
+        assert (xmax - xmin) < 260 + 200
+        assert (zmax - zmin) < 200 + 200
+
+    def test_corridor_placement_is_deterministic(self):
+        def build():
+            schema, _t, _p = self._big_circuit_schema(["A", "B", "C", "D"])
+            compute_layout(schema)
+            return [e.model_dump() for e in schema.entities]
+        assert build() == build()
+
 
 class TestTerrainBounds:
     def test_empty_entities_falls_back_to_fixed_footprint(self):
