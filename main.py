@@ -676,6 +676,61 @@ def unity_catalog(
     console.print(f"[green]Written[/] → {out_path}")
 
 
+@app.command("unity-salvage")
+def unity_salvage(
+    project: str = typer.Argument(..., help="Project name (under unity_pipeline.unity_output_dir) "
+                                              "or a direct path to a generated Unity project"),
+    dest: Path = typer.Option(Path("salvage"), "--dest", "-d",
+                              help="Root folder to collect salvaged files into"),
+    config: str = typer.Option("config.yaml", "--config", "-c"),
+    promote_sketchfab: bool = typer.Option(True, "--promote-sketchfab/--no-promote-sketchfab",
+                                           help="Also copy any Sketchfab-sourced FBX the project "
+                                                "downloaded into Models/Sketchfab/ + freeze a "
+                                                "catalog entry, so they survive deleting the project"),
+) -> None:
+    """Copy the keeper files out of a generated Unity project before you delete it.
+
+    Sorts schema/concept/scripts/scenes/prefabs/materials/models/textures/audio/
+    logs into dest/<project>/<kind>/, plus a MANIFEST.json — nothing is deleted.
+    Also rescues any Sketchfab FBX the project downloaded that never made it
+    into the shared Models/Sketchfab/ cache (attribution can't be reconstructed
+    from the file alone, so promoted catalog entries are flagged for manual
+    license verification instead of guessing).
+
+    \b
+    Examples:
+      python main.py unity-salvage DirtRacerPro
+      python main.py unity-salvage DirtRacerPro --dest salvage --no-promote-sketchfab
+      python main.py unity-salvage C:/u/DirtRacerPro
+    """
+    from src.unity_salvage import promote_sketchfab_models, salvage_generation
+
+    cfg = _cfg(config)
+    try:
+        result = salvage_generation(project, dest, cfg)
+    except FileNotFoundError as exc:
+        console.print(f"[red]Error:[/] {exc}")
+        raise typer.Exit(1)
+
+    console.print(f"[cyan]Salvaged[/] {result['total_files']} files "
+                  f"({result['total_bytes'] / 1024:.0f} KB) from {result['project_dir']}")
+    for bucket, n in sorted(result["counts"].items()):
+        console.print(f"  {bucket:<10} {n}")
+    console.print(f"[green]→[/] {result['dest_dir']}")
+
+    if promote_sketchfab:
+        promo = promote_sketchfab_models(project, cfg)
+        if promo["promoted"]:
+            console.print(f"\n[cyan]Promoted[/] {len(promo['promoted'])} Sketchfab model(s) "
+                          f"into {promo['cache_dir']} + {promo['catalog_path']}:")
+            for e in promo["promoted"]:
+                console.print(f"  {e['relpath']}  [yellow](needs attribution check)[/]")
+        if promo["skipped"]:
+            console.print(f"[dim]Skipped {len(promo['skipped'])} already-cataloged model(s)[/]")
+        if not promo["promoted"] and not promo["skipped"]:
+            console.print("[dim]No Sketchfab-sourced FBX found in this project[/]")
+
+
 @app.command("sketchfab-fetch")
 def sketchfab_fetch(
     query:      str  = typer.Argument(..., help="Concept to search, e.g. 'red high heel shoe'"),

@@ -24,6 +24,10 @@ rag/index/
 Models/Sketchfab/
 lookups/unity/sketchfab_catalog.json
 
+# ── Salvaged generation exports (personal dev artifacts pulled out of a
+# throwaway project via `unity-salvage` before deleting it — not repo content)
+salvage/
+
 # ── Scratch / redirected logs ───────────────────────────────────────
 err.txt
 out.txt
