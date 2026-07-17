@@ -1,0 +1,11 @@
+GENRE: industrial survival escape action
+STYLE: gritty industrial realism, 2.5D
+CORE PREMISE: an engineer escapes a melting-down automated foundry along fixed catwalk lanes
+
+IRONVEIN is a 2.5D game for PC, real 3D models with 2D gameplay. An engineer is trapped in an automated foundry whose reactor core is melting down, and must reach the sealing valve before the whole structure collapses — dashing and jumping across conveyor catwalks while gears grind, steam hisses, molten metal glows, and an alarm klaxon counts down the meltdown.
+
+The camera holds an elevated, tilted follow view over layered parallax foundry backdrops while the engineer's own movement stays locked to a single lateral catwalk lane — jump, double jump, and a sprint dash carry the engineer across gaps and past swinging pistons; there is no free roaming, every catwalk is a fixed lane.
+
+Key systems this foundry needs: a health system tracking damage from molten splashes and crushing machinery; a meltdown countdown timer that escalates hazards the longer the engineer takes; an old foreman NPC with voiced warning dialogue at each checkpoint valve; an inventory of salvaged gear components needed to seal the final valve; particle VFX for steam bursts, shower sparks off grinding gears, and molten splashes; a Timeline-driven collapsing-catwalk sequence when a section gives way; and fade scene transitions across the foundry's boiler room, gear works, and reactor core.
+
+Render pipeline: URP with heavy bloom for the molten-metal glow and volumetric steam, on Unity 6000.0. Visual style is gritty industrial realism — real 3D foundry machinery lit by furnace orange against cold iron blue. Recommended packages: Cinemachine, Input System, Timeline, Animation Rigging, and Addressables for the three-section load.

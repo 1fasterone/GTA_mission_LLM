@@ -375,6 +375,8 @@ def unity_create(
                                               help="Build real models from the story in Blender (headless) and wire them into the scene via the Model Pack (replaces placeholders)"),
     route: Optional[Path]      = typer.Option(None, "--route",
                                               help="Route file from `unity-path` (routes.json) — compose the circuit around this authored/traced course instead of the parametric oval"),
+    no_think:    bool          = typer.Option(False, "--no-think",
+                                              help="Disable LLM reasoning for every step (including the concept step, which normally reasons). Faster, but trades away concept creativity/quality — useful for timing/plumbing runs."),
 ) -> None:
     """Generate a complete Unity project folder from a plain-English prompt.
 
@@ -414,7 +416,7 @@ def unity_create(
                           "generate it with: python main.py unity-path ...")
             raise typer.Exit(1)
 
-    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data)
+    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, no_think=no_think)
 
 
 @app.command("unity-path")

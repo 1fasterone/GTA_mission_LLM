@@ -1,0 +1,91 @@
+TITLE
+Millville Thunderbolt
+
+GENRE
+A fully 3D arcade motorcycle racing game. Genre is racing — a technical road-course
+circuit race on a single reproduced track layout, ridden against rival racers.
+
+STYLE
+Grounded modern motorsport realism: sunlit asphalt, painted curbing, chain-link
+paddock fencing, canvas team tents, low-poly leaning toward photoreal.
+
+CORE PREMISE
+The player rides a sport motorcycle around the Millville circuit, a technical road
+course reproduced from a reference track map: a long front straight past the
+start/finish gantry into a tightening infield esses/chicane complex, a hairpin
+loop-back section that doubles the circuit over itself, and a sweeping outer run
+that carries riders past the trackside paddock before funneling back onto the front
+straight. Three AI rival riders share the grid. First bike across the start/finish
+line after three laps wins.
+
+TRACK LAYOUT (reproduced from reference map)
+- Front straight: wide, start/finish gantry at the midpoint, leads into turn 1.
+- Infield esses (turns 1-5): a tightening S-shaped chicane complex requiring
+  quick left-right-left lean transitions.
+- Hairpin loop-back (turns 6-9): a switchback that folds the circuit back on
+  itself, tightest corners on the course, apex markers at each hairpin.
+- Sweeping back section (turns 10-11): high-speed sweepers that run past the
+  paddock fence line and merge back onto the front straight.
+- Full perimeter boundary: continuous curbing and barrier fencing tracing the
+  entire outside and inside edge of the ribbon, matching the reference map's
+  outline exactly — no gaps in the boundary.
+
+PLAYER
+A rider on a sport motorcycle. Uses a vehicle_bike controller (throttle, brake,
+lean/steer, countersteer balance). Rigidbody wheel-collider physics, base=bike
+model (motorcycle, engine=1, tank=1, pedals=0). Third-person chase camera that
+banks with lean angle through corners.
+
+ENTITIES
+- PlayerBike: the player's sport motorcycle (kind: vehicle, model_hint "sport
+  motorcycle"), grid slot 1 on the front straight facing turn 1.
+- RivalStormrider: an aggressive AI rival motorcycle that brakes late into the
+  hairpins (kind: vehicle, model_hint "sport motorcycle"), grid slot 2.
+- RivalIronclad: a steady AI rival motorcycle that carries corner speed through
+  the esses (kind: vehicle, model_hint "sport motorcycle"), grid slot 3.
+- RivalNightfall: a fast-on-straights AI rival motorcycle that draws even on the
+  back sweepers (kind: vehicle, model_hint "sport motorcycle"), grid slot 4.
+- CircuitTrack: the Millville circuit road surface (kind: track, model_hint
+  "race track technical circuit"), laid out per the TRACK LAYOUT section above.
+- BoundaryWall: curbing and barrier fencing ringing the full circuit perimeter,
+  inside and outside edge, with no gaps (kind: wall, model_hint "barrier").
+- StartFinishBanner: the start/finish gantry banner spanning the front straight
+  (kind: decoration, model_hint "banner checkpoint").
+- PaddockTent: three team support tents/canopies clustered in the paddock area
+  off the back sweepers, behind the boundary fence (kind: prop, model_hint
+  "paddock tent"), count 3.
+- PaddockFence: chain-link fencing separating the paddock area from the racing
+  surface (kind: wall, model_hint "chain-link fence").
+All four motorcycles should resolve to real sport-motorcycle models and be spawned
+on their correct grid slots on the front straight, facing turn 1, not overlapping.
+
+AI
+Rival motorcycles use waypoint_follow racing-line AI around the circuit, following
+the TRACK LAYOUT's corner sequence with rubber-band catch-up so no rival falls out
+of contention.
+
+SCENES
+- Main Menu: play, best times, settings, quit.
+- Millville Circuit: the single reproduced track — grid start, three-lap race,
+  paddock visible off the back section.
+Fade transition between menu and circuit.
+
+HUD
+Speedometer, lap counter (lap 1/3), race position (1st/4), and a minimap tracing
+the full circuit outline including the hairpin loop-back. Countdown "3-2-1-GO!"
+banner at the start/finish line when the race begins.
+
+AUDIO
+Revving four-stroke engine loop per bike (louder for the player, spatial for
+rivals), tire squeal on hard lean through the hairpins, a trackside crowd murmur
+near the paddock, and an upbeat racing music loop. 3D positional engine audio so
+rivals are audible before they're seen.
+
+FEATURES
+Save/load best lap time (json_file). Pause menu (resume, restart, quit to menu).
+Results screen showing final finishing position after three laps.
+
+VISUAL STYLE
+URP with bloom and strong midday directional sunlight. Sunbaked asphalt with
+faded racing line, painted curbing in alternating red/white, chain-link paddock
+fencing, canvas tents in muted team colors.

@@ -1,0 +1,130 @@
+2.5D Ring Toss Game Prompt (Deterministic, Asset‑Resolvable)
+Title: Sky Piercer: 2.5D Ring Toss Challenge
+
+Core Concept:  
+A stylized 2.5D ring‑toss skill game where players throw rings toward pegs at varying distances, elevations, and motion patterns. The camera is fixed in a shallow side‑angle perspective (2.5D), giving depth without full 3D freedom. The gameplay loop emphasizes precision, timing, and environmental mastery.
+
+Gameplay Specification
+Player Actions
+Tap/hold/drag to set throw angle, force, and spin.
+
+Release to throw a ring along a physics‑driven arc.
+
+Optional “perfect toss” slow‑motion window on high‑accuracy throws.
+
+Rings
+Lightweight metal or bamboo rings with subtle spin physics.
+
+Rings can bounce, roll, or hook onto pegs depending on angle and force.
+
+Variants:
+
+Standard Ring – balanced physics
+
+Heavy Ring – slower arc, more stable
+
+Feather Ring – floaty, high drag
+
+Mag‑Ring – slight attraction to metallic pegs (rare power-up)
+
+Targets (Pegs)
+Static pegs at different depths (foreground, midground, background).
+
+Moving pegs sliding horizontally or vertically.
+
+Rotating pegs with timing windows.
+
+Special pegs:
+
+Glow Peg – bonus points
+
+Shift Peg – teleports to a new depth after each hit
+
+Wind Peg – emits gusts that alter ring trajectory
+
+Environment & Visual Style
+2.5D layered environment with parallax backgrounds.
+
+Soft stylized lighting; warm sunset palette.
+
+Dynamic depth-of-field to emphasize target layers.
+
+Background elements: floating lanterns, drifting clouds, gentle wind particles.
+
+Level Structure
+Tiered lanes: near, mid, far.
+
+Each lane has unique physics modifiers (e.g., wind strength, gravity tweak).
+
+Increasing difficulty:
+
+More moving pegs
+
+Narrower peg tops
+
+Environmental hazards (gusts, bouncing obstacles)
+
+Boss challenge: multi‑peg sequence requiring perfect timing.
+
+Scoring
+Ring lands fully on peg: Full Score
+
+Ring hooks partially: Half Score
+
+Perfect center alignment: Combo Multiplier
+
+Consecutive perfects unlock Super Toss Mode (slow‑motion + spark effects)
+
+Audio
+Soft wooden clacks, metallic pings, wind ambience.
+
+Subtle rising tone when player aims accurately.
+
+Reward chimes for combos and perfects.
+
+UI / UX
+Minimalist HUD:
+
+Remaining rings
+
+Score
+
+Combo meter
+
+Throw indicator arc preview (toggleable for difficulty modes).
+
+Depth markers showing peg distance.
+
+Technical Notes for Deterministic Generation
+Camera: fixed 2.5D angle, slight tilt, no player rotation.
+
+Physics: simplified projectile motion with adjustable drag and spin torque.
+
+Assets:
+
+Rings: 3–5 variants with consistent naming (ring_standard, ring_heavy, etc.)
+
+Pegs: static/moving/rotating (peg_static, peg_rotator, etc.)
+
+Background layers: bg_near, bg_mid, bg_far
+
+Avoid fallback collisions: ensure unique semantic tags for each asset class.
+
+Scene graph:
+
+Lane_Near
+
+Lane_Mid
+
+Lane_Far
+
+FX_Wind
+
+UI_HUD
+
+Optional Add‑Ons
+Daily challenges with unique peg patterns.
+
+Ring customization (colors, trails).
+
+Multiplayer “accuracy duel” mode.

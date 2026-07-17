@@ -1,0 +1,111 @@
+Title: The Hollow Path
+
+High‑Level Concept:  
+Create a minimalist, atmospheric 2D side‑scroller inspired by Limbo. The world is monochrome, with soft volumetric fog, high‑contrast silhouettes, and simple environmental hazards. The player travels from left to right through a forest filled with physics‑based obstacles and timing challenges.
+
+Core Requirements
+Art & Visual Style
+Entire game uses black‑and‑white silhouettes
+
+Background uses parallax layers:
+
+Layer 1: foreground grass silhouettes
+
+Layer 2: mid‑trees
+
+Layer 3: distant foggy forest
+
+Soft vignette around screen edges
+
+Occasional particle fog drifting horizontally
+
+Player
+2D character silhouette with:
+
+Run
+
+Jump
+
+Hang from ledges
+
+Push/pull physics objects
+
+Movement is weighty, slightly delayed acceleration/deceleration
+
+Environment
+Include at least five interactive elements:
+
+Falling log trap triggered when player walks underneath
+
+Breakable platform that collapses after 1 second
+
+Pushable crate used to reach a high ledge
+
+Swinging rope the player can jump and grab
+
+Spike pit requiring precise jump timing
+
+Physics
+All obstacles use 2D rigidbody physics
+
+Rope uses hinge joints
+
+Crate uses dynamic rigidbody with friction
+
+Log trap uses kinematic → dynamic switch on trigger
+
+Audio
+Ambient wind loop
+
+Footstep sounds
+
+Impact sound when log trap hits ground
+
+Subtle low‑frequency hum in background
+
+Level Layout
+Single continuous level, ~40 seconds long
+
+Start: quiet forest clearing
+
+Middle: crate puzzle + rope swing
+
+End: collapsing platform leading to a safe zone
+
+No enemies; focus on environment hazards
+
+Camera
+Smooth horizontal follow
+
+Slight vertical lag
+
+Never rotates or zooms
+
+UI
+Minimal:
+
+Fade‑in title “The Hollow Path”
+
+Fade‑out at end
+
+No HUD
+
+Win Condition
+Reaching the final safe zone triggers:
+
+Fade to black
+
+Display “You escaped the Hollow”
+
+Technical Constraints (for pipeline testing)
+All assets must be referenced deterministically
+
+Scene graph must be stable and reproducible
+
+No missing scripts or prefabs
+
+Physics objects must behave consistently across runs
+
+Input: left/right, jump, interact
+
+No random number generators without fixed seeds
