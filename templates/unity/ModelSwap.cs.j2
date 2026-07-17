@@ -4,6 +4,12 @@
 // states play. Missing model → primitive stays. (Model Pack v1)
 using UnityEngine;
 
+// [ExecuteAlways] + the _baked guard swap the real model in immediately in
+// the Editor (outside Play), matching EntitySpawner, so the prototype's
+// actual asset — not a primitive stand-in — is what you see and edit in the
+// Scene view. Once baked, Start() no-ops on later domain reloads / Play
+// sessions so a manually replaced/moved "Model" child persists.
+[ExecuteAlways]
 public class ModelSwap : MonoBehaviour
 {
     [Tooltip("Resources path of the model prefab, no extension (e.g. Models/Default/Player/Player).")]
@@ -15,14 +21,18 @@ public class ModelSwap : MonoBehaviour
     [SerializeField] private float modelScale = 1f;
     [Tooltip("Bounds-fit (same semantics as EntitySpawner): > 0 scales the model so its longest side spans this many meters; < 0 is a shrink-only ceiling; 0 = keep modelScale as-is.")]
     [SerializeField] private float modelFitSize = 0f;
+    [Tooltip("Set once this swap has run (edit-time bake or first Play). Prevents re-swapping on domain reload / later Play sessions so a hand-replaced Model child survives.")]
+    [SerializeField, HideInInspector] private bool _baked = false;
 
     private Animator _anim;
     private Vector3 _lastPos;
 
     private void Start()
     {
+        if (_baked) return;
         var prefab = string.IsNullOrEmpty(modelPath) ? null : Resources.Load<GameObject>(modelPath);
         if (prefab == null) return;   // pack not installed — keep the primitive
+        _baked = true;
 
         var mr = GetComponent<MeshRenderer>();
         if (mr != null) mr.enabled = false;
@@ -71,10 +81,15 @@ public class ModelSwap : MonoBehaviour
             vis.AddComponent<VehicleBoneDriver>();
 
         _lastPos = transform.position;
+#if UNITY_EDITOR
+        if (!Application.isPlaying)
+            UnityEditor.EditorUtility.SetDirty(this);
+#endif
     }
 
     private void Update()
     {
+        if (!Application.isPlaying) return;   // Animator speed-blend is a Play-only concern
         if (_anim == null || _anim.runtimeAnimatorController == null) return;
         Vector3 d = transform.position - _lastPos;
         _lastPos = transform.position;
