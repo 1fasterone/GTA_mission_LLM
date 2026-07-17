@@ -679,6 +679,255 @@ async function loadErrors() {
   ERRORS = await api("/api/errors"); renderErrors("");
 }
 
+// ── Pipeline Builder (full CLI explorer) ─────────────────────────────────────
+let CLI_CATEGORIES = { unity: [], gta: [], shared: [] };
+let CLI_CAT = "unity";
+let CLI_CMD = null;      // currently selected command object
+let CLI_RUN_ES = null;   // active EventSource, if a run is streaming
+
+async function loadCliCommands() {
+  const res = await api("/api/cli/commands");
+  CLI_CATEGORIES = res.categories;
+  renderCliList();
+}
+
+$$(".pb-toolbar .seg[data-cat]").forEach((seg) => {
+  seg.addEventListener("click", () => {
+    $$(".pb-toolbar .seg[data-cat]").forEach((s) => s.classList.remove("is-active"));
+    seg.classList.add("is-active");
+    CLI_CAT = seg.dataset.cat;
+    renderCliList();
+  });
+});
+$("#cliSearch").addEventListener("input", renderCliList);
+
+function renderCliList() {
+  const list = $("#cliCommandList");
+  const q = $("#cliSearch").value.trim().toLowerCase();
+  const cmds = (CLI_CATEGORIES[CLI_CAT] || []).filter((c) =>
+    !q || c.name.includes(q) || (c.help || "").toLowerCase().includes(q));
+
+  list.innerHTML = "";
+  if (!cmds.length) {
+    list.innerHTML = '<div class="pb-empty">No commands match.</div>';
+    return;
+  }
+  let lastGroup = null;
+  cmds.forEach((c) => {
+    if (c.group !== lastGroup) {
+      lastGroup = c.group;
+      const label = document.createElement("div");
+      label.className = "pb-group-label";
+      label.textContent = c.group;
+      list.appendChild(label);
+    }
+    const btn = document.createElement("button");
+    btn.className = "pb-cmd-item" + (CLI_CMD && CLI_CMD.name === c.name ? " is-active" : "");
+    btn.innerHTML = `<span class="pb-cmd-name">${c.name}${c.slow ? '<span class="pb-slow-tag">slow</span>' : ""}</span>` +
+      `<span class="pb-cmd-blurb">${escapeText(c.help || "")}</span>`;
+    btn.addEventListener("click", () => selectCliCommand(c));
+    list.appendChild(btn);
+  });
+}
+
+function selectCliCommand(cmd) {
+  CLI_CMD = cmd;
+  renderCliList();
+  $("#cliCmdName").textContent = "python main.py " + cmd.name;
+  $("#cliCmdHelp").textContent = cmd.help || "";
+  $("#cliAbout").textContent = cmd.help || "";
+  $("#btnCliRun").disabled = false;
+  renderCliForm(cmd);
+  renderCliOptionsRef(cmd);
+  updateCliPreview();
+}
+
+function cliFieldId(opt) { return "cliOpt_" + opt.name; }
+
+function renderCliForm(cmd) {
+  const form = $("#cliForm");
+  form.innerHTML = "";
+  if (!cmd.options.length) {
+    form.innerHTML = '<div class="pb-empty">This command takes no arguments.</div>';
+    return;
+  }
+  cmd.options.forEach((opt) => {
+    const wrap = document.createElement("label");
+    wrap.className = "field" + (opt.kind === "bool" ? " field--bool" : "");
+    const label = opt.positional ? `${opt.name} (positional)` : (opt.flag || opt.name);
+    let control = "";
+    const id = cliFieldId(opt);
+    if (opt.kind === "bool") {
+      const checked = opt.default ? "checked" : "";
+      control = `<input id="${id}" type="checkbox" ${checked} />`;
+      wrap.innerHTML = control + `<span>${escapeText(label)}${opt.help ? ` <i class="tip" data-tip="${escapeAttr(opt.help)}">?</i>` : ""}</span>`;
+    } else if (opt.kind === "choice") {
+      const choices = opt.choices || [];
+      const optsHtml = ['<option value="">(auto)</option>']
+        .concat(choices.map((c) => `<option value="${escapeAttr(c)}" ${opt.default === c ? "selected" : ""}>${escapeText(c)}</option>`))
+        .join("");
+      wrap.innerHTML = `<span>${escapeText(label)}${opt.help ? ` <i class="tip" data-tip="${escapeAttr(opt.help)}">?</i>` : ""}</span>` +
+        `<select id="${id}">${optsHtml}</select>`;
+    } else if (opt.kind === "multi") {
+      wrap.innerHTML = `<span>${escapeText(label)} (one per line)${opt.help ? ` <i class="tip" data-tip="${escapeAttr(opt.help)}">?</i>` : ""}</span>` +
+        `<textarea id="${id}" class="pb-multi" placeholder="key=value"></textarea>`;
+    } else {
+      const type = opt.kind === "int" || opt.kind === "float" ? "number" : "text";
+      const step = opt.kind === "float" ? ' step="any"' : "";
+      const val = (opt.default !== null && opt.default !== undefined) ? ` value="${escapeAttr(opt.default)}"` : "";
+      wrap.innerHTML = `<span>${escapeText(label)}${opt.help ? ` <i class="tip" data-tip="${escapeAttr(opt.help)}">?</i>` : ""}</span>` +
+        `<input id="${id}" type="${type}"${step}${val} placeholder="${opt.positional ? "" : escapeAttr(opt.help || "")}" />`;
+    }
+    form.appendChild(wrap);
+    form.querySelectorAll(`#${CSS.escape(id)}`).forEach((el) =>
+      el.addEventListener("input", updateCliPreview));
+    form.querySelectorAll(`#${CSS.escape(id)}`).forEach((el) =>
+      el.addEventListener("change", updateCliPreview));
+  });
+}
+
+function renderCliOptionsRef(cmd) {
+  const el = $("#cliOptionsRef");
+  el.innerHTML = cmd.options.filter((o) => o.help).map((o) => `
+    <div class="pb-opt-ref-item">
+      <span class="flag">${escapeText(o.positional ? o.name : (o.flag + (o.short ? ", " + o.short : "")))}</span>
+      <div class="desc">${escapeText(o.help)}</div>
+    </div>`).join("");
+}
+
+// Read current form values into {optName: value} keyed exactly like the
+// server's Opt.name — sent verbatim to /api/cli/run.
+function readCliArgs(cmd) {
+  const args = {};
+  cmd.options.forEach((opt) => {
+    const el = document.getElementById(cliFieldId(opt));
+    if (!el) return;
+    if (opt.kind === "bool") {
+      args[opt.name] = el.checked;
+    } else if (opt.kind === "multi") {
+      args[opt.name] = el.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    } else if (opt.kind === "int") {
+      args[opt.name] = el.value === "" ? null : parseInt(el.value, 10);
+    } else if (opt.kind === "float") {
+      args[opt.name] = el.value === "" ? null : parseFloat(el.value);
+    } else {
+      args[opt.name] = el.value === "" ? null : el.value;
+    }
+  });
+  return args;
+}
+
+// Mirrors server _build_argv() so the preview matches exactly what runs.
+function buildArgvPreview(cmd, args) {
+  const positionals = [];
+  const flags = [];
+  cmd.options.forEach((opt) => {
+    const raw = args[opt.name];
+    if (opt.positional) {
+      if (raw === null || raw === undefined || raw === "") return;
+      if (opt.name === "targets") positionals.push(...String(raw).split(/\s+/).filter(Boolean));
+      else positionals.push(String(raw));
+      return;
+    }
+    const kind = opt.kind;
+    if (kind === "bool") {
+      if (raw === null || raw === undefined) return;
+      if (opt.flag.includes("/")) {
+        const [onFlag, offFlag] = opt.flag.split("/");
+        if (opt.default !== null && opt.default !== undefined && !!raw === !!opt.default) return;
+        flags.push(raw ? onFlag : offFlag);
+      } else if (raw) {
+        flags.push(opt.flag);
+      }
+      return;
+    }
+    if (kind === "multi") {
+      (raw || []).forEach((item) => { if (item) flags.push(opt.flag, item); });
+      return;
+    }
+    if (raw === null || raw === undefined || raw === "") return;
+    if (opt.default !== null && opt.default !== undefined && String(raw) === String(opt.default)) return;
+    flags.push(opt.flag, String(raw));
+  });
+  return [cmd.name, ...positionals, ...flags];
+}
+
+function shellQuote(tok) {
+  return /[\s"']/.test(tok) ? `"${tok.replace(/"/g, '\\"')}"` : tok;
+}
+
+function updateCliPreview() {
+  if (!CLI_CMD) return;
+  const args = readCliArgs(CLI_CMD);
+  const argv = buildArgvPreview(CLI_CMD, args);
+  $("#cliPreview").textContent = "python main.py " + argv.map(shellQuote).join(" ");
+}
+
+$("#btnCliCopy").addEventListener("click", () => {
+  navigator.clipboard.writeText($("#cliPreview").textContent);
+  const btn = $("#btnCliCopy");
+  const orig = btn.textContent;
+  btn.textContent = "Copied ✓";
+  setTimeout(() => (btn.textContent = orig), 1500);
+});
+
+$("#btnCliRun").addEventListener("click", async () => {
+  if (!CLI_CMD) return;
+  const args = readCliArgs(CLI_CMD);
+  const status = $("#cliStatus"), consoleEl = $("#cliConsole");
+  consoleEl.textContent = "";
+  status.className = "test-result busy"; status.textContent = "Running…";
+  $("#btnCliRun").disabled = true;
+  $("#btnCliStop").hidden = false;
+
+  let run_id;
+  try {
+    ({ run_id } = await api("/api/cli/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: CLI_CMD.name, args }),
+    }));
+  } catch (e) {
+    status.className = "test-result err"; status.textContent = "Failed to start: " + e;
+    $("#btnCliRun").disabled = false; $("#btnCliStop").hidden = true;
+    return;
+  }
+
+  const es = new EventSource(`/api/cli/run/${run_id}/stream`);
+  CLI_RUN_ES = es;
+  es.onmessage = (ev) => {
+    const { line } = JSON.parse(ev.data);
+    consoleEl.textContent += line + "\n";
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  };
+  es.addEventListener("done", (ev) => {
+    es.close(); CLI_RUN_ES = null;
+    $("#btnCliRun").disabled = false; $("#btnCliStop").hidden = true;
+    const res = JSON.parse(ev.data);
+    if (res.ok) {
+      status.className = "test-result ok"; status.textContent = "Done ✓";
+    } else {
+      status.className = "test-result err";
+      status.textContent = res.error?.title || `Exited with code ${res.returncode ?? "?"}`;
+    }
+  });
+  es.onerror = () => {
+    es.close(); CLI_RUN_ES = null;
+    $("#btnCliRun").disabled = false; $("#btnCliStop").hidden = true;
+    if (status.classList.contains("busy")) {
+      status.className = "test-result err"; status.textContent = "Stream interrupted.";
+    }
+  };
+});
+
+$("#btnCliStop").addEventListener("click", async () => {
+  if (CLI_RUN_ES) {
+    // The run_id isn't tracked separately from the ES URL, so pull it back out.
+    const m = /\/api\/cli\/run\/([a-f0-9]+)\/stream/.exec(CLI_RUN_ES.url);
+    if (m) await api(`/api/cli/run/${m[1]}/stop`, { method: "POST" });
+  }
+});
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 async function loadMeta() {
   try {
@@ -698,6 +947,7 @@ async function loadMeta() {
   await loadThemes();
   await loadErrors();
   await loadTutorial();
+  await loadCliCommands();
   // Set body[data-pipeline] to match the segmented control's default (Unity)
   // so CSS-scoped .gta-only/.unity-only rules take effect on first paint.
   updatePromptVisibility();

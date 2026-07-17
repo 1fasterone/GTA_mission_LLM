@@ -45,6 +45,7 @@ from src.themes import list_themes
 from src.micro import REGISTRY as MICRO_REGISTRY
 
 import setup_anythingllm
+from webui.command_manifest import COMMANDS, SLOW_COMMANDS, commands_by_category, find_command
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -226,6 +227,153 @@ def _run_pipeline(run_id: str, req: GenerateRequest) -> None:
                 root_logger.setLevel(prev_level)
             _runs[run_id]["done"] = True
             q.put(None)  # sentinel
+
+
+# ── CLI Pipeline Builder — generic `python main.py <command> ...` runner ──────
+#
+# Unlike /api/generate (direct in-process pipeline calls, restricted to
+# unity/gta/micro modes), this runs ANY command from command_manifest.py as a
+# real subprocess — so validate/resolve/rag-*/unity-catalog/unity-model/etc.
+# all become reachable from the UI without duplicating their logic here.
+
+_cli_runs: dict[str, dict[str, Any]] = {}
+
+
+def _build_argv(cmd_name: str, args: dict[str, Any]) -> list[str]:
+    command = find_command(cmd_name)
+    if command is None:
+        raise ValueError(f"Unknown command: {cmd_name}")
+
+    positionals: list[str] = []
+    flags: list[str] = []
+    for opt in command["options"]:
+        raw = args.get(opt["name"])
+        if opt.get("positional"):
+            if raw is None or raw == "":
+                continue
+            if opt["name"] == "targets":  # rag-build: space-separated list of scraper names
+                positionals.extend(str(raw).split())
+            else:
+                positionals.append(str(raw))
+            continue
+
+        kind = opt["kind"]
+        flag = opt["flag"]
+        if kind == "bool":
+            if raw is None:
+                continue
+            if "/" in flag:  # e.g. "--clips/--no-clips" or "--closed/--open"
+                on_flag, off_flag = flag.split("/", 1)
+                default = opt.get("default")
+                if default is not None and bool(raw) == bool(default):
+                    continue  # matches default — omit for a cleaner command line
+                flags.append(on_flag if raw else off_flag)
+            elif raw:
+                flags.append(flag)
+            continue
+
+        if kind == "multi":
+            for item in (raw or []):
+                item = str(item).strip()
+                if item:
+                    flags.extend([flag, item])
+            continue
+
+        if raw is None or raw == "":
+            continue
+        default = opt.get("default")
+        if default is not None and str(raw) == str(default):
+            continue  # matches default — omit
+        flags.extend([flag, str(raw)])
+
+    return [cmd_name, *positionals, *flags]
+
+
+class CliRunRequest(BaseModel):
+    command: str
+    args: dict[str, Any] = {}
+
+
+def _run_cli_subprocess(run_id: str, argv: list[str]) -> None:
+    entry = _cli_runs[run_id]
+    q: "queue.Queue[Optional[str]]" = entry["queue"]
+    full_cmd = [sys.executable, str(ROOT / "main.py"), *argv]
+    q.put(f"$ {' '.join(full_cmd)}")
+    try:
+        proc = subprocess.Popen(
+            full_cmd, cwd=str(ROOT),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, encoding="utf-8", errors="replace",
+        )
+        entry["proc"] = proc
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            q.put(line.rstrip("\n"))
+        code = proc.wait()
+        entry["result"] = {"ok": code == 0, "returncode": code}
+    except Exception as exc:  # noqa: BLE001
+        entry["result"] = {"ok": False, "error": {"title": str(exc)}}
+    finally:
+        entry["done"] = True
+        q.put(None)
+
+
+@app.get("/api/cli/commands")
+def get_cli_commands() -> dict:
+    grouped = commands_by_category()
+    return {
+        "categories": {
+            cat: [
+                {**c, "slow": c["name"] in SLOW_COMMANDS}
+                for c in cmds
+            ]
+            for cat, cmds in grouped.items()
+        },
+        "total": len(COMMANDS),
+    }
+
+
+@app.post("/api/cli/run")
+def start_cli_run(req: CliRunRequest) -> dict:
+    try:
+        argv = _build_argv(req.command, req.args)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    run_id = uuid.uuid4().hex
+    _cli_runs[run_id] = {"queue": queue.Queue(), "result": None, "done": False, "proc": None}
+    threading.Thread(target=_run_cli_subprocess, args=(run_id, argv), daemon=True).start()
+    return {"run_id": run_id}
+
+
+@app.get("/api/cli/run/{run_id}/stream")
+def stream_cli_run(run_id: str) -> StreamingResponse:
+    if run_id not in _cli_runs:
+        raise HTTPException(status_code=404, detail="Unknown run")
+
+    def event_stream():
+        import json as _json
+        q: "queue.Queue[Optional[str]]" = _cli_runs[run_id]["queue"]
+        while True:
+            line = q.get()
+            if line is None:
+                result = _cli_runs[run_id]["result"] or {"ok": False}
+                yield f"event: done\ndata: {_json.dumps(result)}\n\n"
+                break
+            yield f"data: {_json.dumps({'line': line})}\n\n"
+        _cli_runs.pop(run_id, None)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post("/api/cli/run/{run_id}/stop")
+def stop_cli_run(run_id: str) -> dict:
+    entry = _cli_runs.get(run_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Unknown run")
+    proc = entry.get("proc")
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+    return {"ok": True}
 
 
 # ── API ─────────────────────────────────────────────────────────────────────
