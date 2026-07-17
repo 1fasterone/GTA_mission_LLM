@@ -142,6 +142,19 @@ def _looks_pythonic(text: str) -> bool:
     return any(tok in text for tok in _PY_TOKENS)
 
 
+def _looks_like_prose(text: str) -> bool:
+    """True when a fragment is an English sentence describing behavior
+    instead of C# statements — the LLM writes "Apply suspension forces
+    based on terrain displacement..." straight into `update_extra` instead
+    of code (hit live: DirtPhysicsController.cs / RaceLogicManager.cs,
+    29 repeated CS1002/CS1003 errors — the prose landed verbatim inside
+    Update()/FixedUpdate()). Every valid C# statement or statement list
+    ends at least one statement in `;` or a block in `{`/`}` — a fragment
+    with NONE of those three characters anywhere cannot possibly compile
+    as statements, so this can never reject genuine code, only prose."""
+    return not any(c in text for c in (";", "{", "}"))
+
+
 def _balance_braces(text: str) -> str:
     """Auto-close unbalanced { } with appended close-braces. Never reduces."""
     open_n  = text.count("{")
@@ -225,6 +238,9 @@ def lint_code_fragment(text: str, *, what: str) -> str:
         return ""
     if _looks_pythonic(text):
         console.print(f"  [yellow]FIX[/]  rejected Python-shaped {what}")
+        return ""
+    if _looks_like_prose(text):
+        console.print(f"  [yellow]FIX[/]  rejected prose (not C#) {what}: {text[:60]!r}")
         return ""
     # Strip `using X;` lines — these belong in `extra_usings`, not the body.
     text = _USING_RE.sub("", text)
