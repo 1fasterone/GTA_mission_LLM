@@ -252,7 +252,35 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
                    instance_positions=_start_grid(centerline, 3, width),
                    instance_yaws=[_start_yaw(centerline)] * 3),
     ]
+    prior_entities = {e.name: e for e in schema.entities}
     schema.entities = list(schema.entities) + new_entities
+
+    # Register the circuit in per-scene entity subsets. SceneSpec semantics
+    # (unity_schema.SceneSpec.entities): None = every group spawns there;
+    # an explicit list gates spawning. The circuit is injected AFTER the LLM
+    # authored those lists, so without this step a subset-gated schema shows
+    # the circuit in ZERO scenes (EntitySpawner._sceneGroups drops it all).
+    # A scene qualifies when its subset already names track content — an
+    # entity with path_points or a road/track kind (i.e. a driving scene).
+    # If none qualifies, the first gated scene gets it so an authored route
+    # is never silently invisible.
+    def _is_track_content(name: str) -> bool:
+        e = prior_entities.get(name)
+        return e is not None and (
+            bool(getattr(e, "path_points", None))
+            or getattr(e, "kind", "") in ("road", "track"))
+
+    gated = [s for s in schema.scene_specs if s.entities is not None]
+    if gated:
+        targets = [s for s in gated if any(_is_track_content(n) for n in s.entities)]
+        if not targets:
+            targets = gated[:1]
+        new_names = [e.name for e in new_entities]
+        for s in targets:
+            s.entities = list(s.entities) + [n for n in new_names
+                                             if n not in s.entities]
+        msgs.append("Registered circuit entities in scene subset(s): "
+                    + ", ".join(s.name for s in targets))
     if custom:
         msgs.append(
             f"Composed circuit from an authored route ({len(centerline)} "

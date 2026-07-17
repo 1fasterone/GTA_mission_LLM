@@ -201,3 +201,64 @@ class TestComposeRacetrack:
         compose_racetrack(s1)
         compose_racetrack(s2)
         assert [e.model_dump() for e in s1.entities] == [e.model_dump() for e in s2.entities]
+
+
+class TestSceneSubsetRegistration:
+    """The circuit is injected AFTER the LLM wrote per-scene entity subsets —
+    compose_racetrack must register its entities there or a subset-gated
+    schema shows the circuit in zero scenes (the Spring Creek bug)."""
+
+    @staticmethod
+    def _scene(name, entities):
+        from src.unity_schema import SceneSpec
+        return SceneSpec(name=name, entities=entities)
+
+    def _gated_schema(self):
+        track = EntitySpec(name="TrackSegments", kind="road", count=8,
+                           path_points=[[0, 0, 0], [10, 0, 0], [10, 0, 10]])
+        menu_prop = EntitySpec(name="GarageElements", kind="prop", count=3)
+        return _schema([track, menu_prop], scene_specs=[
+            self._scene("Main", ["TrackSegments"]),
+            self._scene("MainMenu", ["GarageElements"]),
+        ])
+
+    def test_circuit_registered_in_track_scenes_only(self):
+        schema = self._gated_schema()
+        compose_racetrack(schema)
+        main = next(s for s in schema.scene_specs if s.name == "Main")
+        menu = next(s for s in schema.scene_specs if s.name == "MainMenu")
+        assert "TrackSurface" in main.entities
+        assert "PlayerKart" in main.entities
+        assert "TrackSurface" not in menu.entities
+
+    def test_fallback_to_first_gated_scene_when_none_track(self):
+        prop = EntitySpec(name="GarageElements", kind="prop", count=3)
+        schema = _schema([prop], scene_specs=[
+            self._scene("Garage", ["GarageElements"]),
+            self._scene("Menu", ["GarageElements"]),
+        ])
+        compose_racetrack(schema)
+        garage = next(s for s in schema.scene_specs if s.name == "Garage")
+        menu = next(s for s in schema.scene_specs if s.name == "Menu")
+        assert "TrackSurface" in garage.entities
+        assert "TrackSurface" not in menu.entities
+
+    def test_ungated_scenes_stay_none(self):
+        schema = _schema([], scene_specs=[self._scene("Main", None)])
+        compose_racetrack(schema)
+        assert schema.scene_specs[0].entities is None
+
+    def test_custom_route_mode_also_registers(self):
+        schema = self._gated_schema()
+        route = [[0.0, 0.0, 0.0], [30.0, 0.0, 0.0], [30.0, 0.0, 30.0],
+                 [0.0, 0.0, 30.0], [0.0, 0.0, 0.0]]
+        compose_racetrack(schema, centerline=route, track_width=8.0)
+        main = next(s for s in schema.scene_specs if s.name == "Main")
+        assert "TrackSurface" in main.entities
+        assert "OpponentKarts" in main.entities
+
+    def test_no_duplicate_names_on_registration(self):
+        schema = self._gated_schema()
+        compose_racetrack(schema)
+        main = next(s for s in schema.scene_specs if s.name == "Main")
+        assert len(main.entities) == len(set(main.entities))

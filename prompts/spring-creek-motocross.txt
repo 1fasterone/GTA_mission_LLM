@@ -1,0 +1,16 @@
+GENRE: racing
+STYLE: third-person, fully 3d
+CORE PREMISE: Outdoor motocross circuit racing on a pro national dirt track.
+
+A fully 3d motocross racing game set on the Spring Creek national circuit, a
+1.3-mile outdoor dirt track traced from the official 2025 track map. The player
+rides a motocross bike from a gated start straight into the holeshot first
+corner, then attacks a hillside course of sweeping berms, whooped straights,
+tight switchback hairpins and a high double-loop section before crossing the
+checkered finish line. Rival riders launch from pole positions on the same
+start gate and fight for the racing line every lap.
+
+Dusty summer daylight over packed brown dirt, trackside grandstands, sponsor
+banners, safety flags and a creek winding past the far side of the valley.
+Roaring engines, spectators cheering at the fence line. Lap timing, race
+position tracking and a finish-line checkpoint decide the race.
