@@ -246,6 +246,36 @@ GTA5_MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
 }
 
 
+# ── GTA5 microgen → atom composition map ─────────────────────────────────────
+# The GTA micro layer's canonical sequences. Uses ONLY gta5-capable atoms
+# (the 7 engine-agnostic core categories) — never controller/hud/input/model
+# atoms, which are Unity-scoped. Kinds whose baseline is pure template C#
+# (menu drawing, saveload ini I/O) are deliberately absent.
+
+GTA5_MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
+    # ── Spawner: announce + place an enemy near the action ────────────────────
+    "spawner": [
+        {"atom": "SpawnEntity", "args": {"entity_type": "g_m_y_lost_01", "x": 0, "y": 5, "z": 0},
+         "label": "spawn hostile"},
+        {"atom": "PlaySFX",     "args": {"sound": "CHECKPOINT_NORMAL",
+                                          "sfx_set": "HUD_MINI_GAME_SOUNDSET"},
+         "label": "spawn cue"},
+    ],
+    # ── Waves: escalation heartbeat — flag the wave, breathe, signal ──────────
+    "waves": [
+        {"atom": "SetFlag",      "args": {"flag": "wave_active", "value": True}, "label": "arm wave"},
+        {"atom": "TriggerEvent", "args": {"event": "OnWaveStart"},               "label": "signal start"},
+        {"atom": "Wait",         "args": {"seconds": 1.0},                       "label": "settle"},
+    ],
+    # ── HUD: an audible tick when the display comes alive ────────────────────
+    "hud": [
+        {"atom": "PlaySFX", "args": {"sound": "TIMER_STOP",
+                                      "sfx_set": "HUD_MINI_GAME_SOUNDSET"},
+         "label": "hud ready cue"},
+    ],
+}
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def expand_behavior(behavior: str) -> list[AtomInvocation]:
