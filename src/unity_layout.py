@@ -114,6 +114,67 @@ def _pack_groups(entities: list[EntitySpec],
     return result
 
 
+def _sample_polyline(pts: list, n: int) -> list[tuple[float, float, float, float]]:
+    """`n` anchors evenly spaced by XZ arc length along the polyline, each as
+    (px, pz, nx, nz) where (nx, nz) is the unit LEFT normal to the travel
+    tangent. Anchors are centered in their arc-length bucket ((k+0.5)/n) so a
+    closed loop's first and last don't coincide. Deterministic."""
+    seglens = [math.hypot(b[0] - a[0], b[2] - a[2]) for a, b in zip(pts, pts[1:])]
+    total = sum(seglens)
+    if total < 1e-9 or n <= 0:
+        return [(pts[0][0], pts[0][2], -0.0, 1.0)] * max(0, n)
+    out: list[tuple[float, float, float, float]] = []
+    for k in range(n):
+        target = total * (k + 0.5) / n
+        acc = 0.0
+        for (a, b), L in zip(zip(pts, pts[1:]), seglens):
+            if L < 1e-9:
+                continue
+            if acc + L >= target:
+                t = (target - acc) / L
+                px, pz = a[0] + (b[0] - a[0]) * t, a[2] + (b[2] - a[2]) * t
+                tx, tz = (b[0] - a[0]) / L, (b[2] - a[2]) / L
+                out.append((px, pz, -tz, tx))   # left normal = tangent +90° in XZ
+                break
+            acc += L
+        else:
+            a = pts[-1]
+            out.append((a[0], a[2], -0.0, 1.0))
+    return out
+
+
+def _corridor_pack(packable: list[EntitySpec], primary: EntitySpec,
+                   seed_circles: list[tuple[float, float, float]]
+                   ) -> dict[str, tuple[float, float, float]]:
+    """Place groups in bands hugging the primary route corridor — the path is
+    the GUIDE for where props go (the user's ask: props line the track, they
+    aren't dumped in packed islands off in the distance). Groups are spread
+    evenly by arc length around the route and offset perpendicular to the
+    OUTSIDE of the track, alternating sides; each is then pushed further out
+    only as far as needed to clear the corridor and already-placed groups.
+    Deterministic; same (cx, cz, r) contract as `_pack_groups`."""
+    order = sorted(packable, key=lambda e: (-e.group_radius, e.name))
+    anchors = _sample_polyline(primary.path_points, len(order))
+    half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
+    edge = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
+    placed = list(seed_circles)
+    result: dict[str, tuple[float, float, float]] = {}
+    for i, e in enumerate(order):
+        px, pz, nx, nz = anchors[i]
+        side = 1.0 if i % 2 == 0 else -1.0
+        d = edge + e.group_radius
+        cx = cz = 0.0
+        for _ in range(400):
+            cx, cz = px + nx * side * d, pz + nz * side * d
+            if all(math.hypot(cx - ox, cz - oz) >= e.group_radius + orad + _GROUP_MARGIN
+                   for ox, oz, orad in placed):
+                break
+            d += max(1.0, e.group_radius * 0.5)
+        placed.append((cx, cz, e.group_radius))
+        result[e.name] = (round(cx, 3), round(cz, 3), e.group_radius)
+    return result
+
+
 def _corridor_circles(entity: EntitySpec) -> list[tuple[float, float, float]]:
     """Chain of occupied circles tracing a path group's polyline — the seed
     geometry that keeps packed groups OFF the route itself (the "everything
@@ -265,7 +326,17 @@ def compute_layout(schema: UnitySchema) -> list[str]:
     for e in packable:
         e.group_radius = _footprint_radius(e, _effective_spacing(e))
 
-    slots = _pack_groups(packable, seed_circles)
+    # When the scene has an authored route, the route is the placement GUIDE:
+    # prop groups line the corridor (offset outside the barriers, spread by arc
+    # length) instead of spiral-packing from the origin — which, with a long
+    # diagonal corridor blocking the center, exiled them to distant islands and
+    # ballooned the ground plane (`terrain_bounds` covers whatever they hit).
+    from .unity_pathnorm import _primary_route
+    primary = _primary_route(schema.entities) if path_groups else None
+    if primary is not None and packable:
+        slots = _corridor_pack(packable, primary, seed_circles)
+    else:
+        slots = _pack_groups(packable, seed_circles)
 
     moved: list[str] = []
     for e in packable:
@@ -276,13 +347,19 @@ def compute_layout(schema: UnitySchema) -> list[str]:
             moved.append(e.name)
 
     msgs: list[str] = []
-    if moved:
+    if moved and primary is not None:
+        msgs.append(
+            f"Layout pass placed {len(packable)} entity group(s) along the "
+            f"'{primary.name}' route corridor ({', '.join(moved)} spread by "
+            "arc length and offset outside the track, alternating sides)"
+        )
+    elif moved:
         msgs.append(
             f"Layout pass packed {len(packable)} entity group(s) into "
             f"non-overlapping regions ({', '.join(moved)} offset from the "
             "scene origin to avoid stacking on other groups)"
         )
-    if path_groups and packable:
+    if path_groups and packable and primary is None:
         msgs.append(
             f"Seeded {len(path_groups)} path route(s) as occupied corridors "
             "so packed groups stay off the route ribbons"

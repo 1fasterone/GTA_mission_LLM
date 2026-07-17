@@ -262,8 +262,6 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
     # the circuit in ZERO scenes (EntitySpawner._sceneGroups drops it all).
     # A scene qualifies when its subset already names track content — an
     # entity with path_points or a road/track kind (i.e. a driving scene).
-    # If none qualifies, the first gated scene gets it so an authored route
-    # is never silently invisible.
     def _is_track_content(name: str) -> bool:
         e = prior_entities.get(name)
         return e is not None and (
@@ -274,13 +272,30 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
     if gated:
         targets = [s for s in gated if any(_is_track_content(n) for n in s.entities)]
         if not targets:
-            targets = gated[:1]
+            # No gated scene already names track content. Forcing it into an
+            # arbitrary gated scene (e.g. "the first one") is only safe when
+            # NO scene shows every entity by default — otherwise that
+            # unrestricted scene already renders the circuit correctly, and
+            # forcing a semantically wrong scene (hit live: an unnamed
+            # "RaceTrack" scene had an explicit entities=None spec, so it
+            # already hosted the circuit; the old code still force-added it
+            # to "MainMenu", the only OTHER, gated scene, putting a race
+            # track in the main menu) does actual harm instead of preventing
+            # invisibility. A scene counts as unrestricted whether that's an
+            # explicit entities=None SceneSpec or no SceneSpec entry at all.
+            covered = {s.name for s in schema.scene_specs}
+            unrestricted = ({s.name for s in schema.scene_specs
+                             if s.entities is None}
+                            | (set(schema.scenes) - covered))
+            if not unrestricted:
+                targets = gated[:1]
         new_names = [e.name for e in new_entities]
         for s in targets:
             s.entities = list(s.entities) + [n for n in new_names
                                              if n not in s.entities]
-        msgs.append("Registered circuit entities in scene subset(s): "
-                    + ", ".join(s.name for s in targets))
+        if targets:
+            msgs.append("Registered circuit entities in scene subset(s): "
+                        + ", ".join(s.name for s in targets))
     if custom:
         msgs.append(
             f"Composed circuit from an authored route ({len(centerline)} "

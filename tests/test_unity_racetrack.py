@@ -231,9 +231,12 @@ class TestSceneSubsetRegistration:
         assert "PlayerKart" in main.entities
         assert "TrackSurface" not in menu.entities
 
-    def test_fallback_to_first_gated_scene_when_none_track(self):
+    def test_fallback_to_first_gated_scene_when_none_track_and_all_gated(self):
+        # Every real scene is gated (no scene shows everything by default) —
+        # this is the true invisibility risk, so the fallback must force it
+        # into the first gated scene.
         prop = EntitySpec(name="GarageElements", kind="prop", count=3)
-        schema = _schema([prop], scene_specs=[
+        schema = _schema([prop], scenes=["Garage", "Menu"], scene_specs=[
             self._scene("Garage", ["GarageElements"]),
             self._scene("Menu", ["GarageElements"]),
         ])
@@ -241,6 +244,37 @@ class TestSceneSubsetRegistration:
         garage = next(s for s in schema.scene_specs if s.name == "Garage")
         menu = next(s for s in schema.scene_specs if s.name == "Menu")
         assert "TrackSurface" in garage.entities
+        assert "TrackSurface" not in menu.entities
+
+    def test_no_fallback_when_an_unrestricted_scene_already_shows_it(self):
+        # Live bug: "RaceTrack" has an explicit entities=None SceneSpec (shows
+        # every group by default — it already hosts the circuit correctly).
+        # "MainMenu" is the only GATED scene, unrelated to driving. The old
+        # fallback forced the circuit into MainMenu ("the first gated scene")
+        # even though nothing was actually invisible — putting a race track
+        # in the main menu. RaceTrack already covers it; MainMenu must stay
+        # untouched.
+        prop = EntitySpec(name="GarageElements", kind="prop", count=3)
+        schema = _schema([prop], scenes=["MainMenu", "RaceTrack"], scene_specs=[
+            self._scene("MainMenu", ["GarageElements"]),
+            self._scene("RaceTrack", None),
+        ])
+        compose_racetrack(schema)
+        menu = next(s for s in schema.scene_specs if s.name == "MainMenu")
+        race = next(s for s in schema.scene_specs if s.name == "RaceTrack")
+        assert "TrackSurface" not in menu.entities
+        assert race.entities is None
+
+    def test_no_fallback_when_a_scene_has_no_scene_spec_at_all(self):
+        # Same as above but the unrestricted scene has NO SceneSpec entry
+        # whatsoever (also defaults to spawn-everything) rather than an
+        # explicit entities=None one.
+        prop = EntitySpec(name="GarageElements", kind="prop", count=3)
+        schema = _schema([prop], scenes=["MainMenu", "Main"], scene_specs=[
+            self._scene("MainMenu", ["GarageElements"]),
+        ])
+        compose_racetrack(schema)
+        menu = next(s for s in schema.scene_specs if s.name == "MainMenu")
         assert "TrackSurface" not in menu.entities
 
     def test_ungated_scenes_stay_none(self):
