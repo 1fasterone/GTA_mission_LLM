@@ -175,7 +175,8 @@ def test_unity_no_unresolved_or_jinja_leak(project_dir: Path) -> None:
             continue
         if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tga", ".psd",
                                    ".wav", ".mp3", ".ogg", ".fbx", ".obj",
-                                   ".blend", ".dll", ".pdb", ".exr", ".bin"}:
+                                   ".blend", ".dll", ".pdb", ".exr", ".bin",
+                                   ".ttf", ".otf"}:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -576,7 +577,8 @@ def test_no_api_key_leak() -> None:
                 continue
             if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tga", ".psd",
                                        ".wav", ".mp3", ".ogg", ".fbx", ".obj",
-                                       ".blend", ".dll", ".pdb", ".exr", ".bin"}:
+                                       ".blend", ".dll", ".pdb", ".exr", ".bin",
+                                       ".ttf", ".otf"}:
                 continue
             try:
                 if key in path.read_text(encoding="utf-8", errors="ignore"):
