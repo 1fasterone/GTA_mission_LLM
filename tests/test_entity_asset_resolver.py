@@ -1621,3 +1621,110 @@ def test_style_pipeline_query_vocabulary_is_fully_capped():
                 assert t in _STYLE_TOKENS or t in _STOPWORDS, (
                     f"style query token {t!r} ({tok!r}) can become a strong "
                     "query weight — add it to _STYLE_TOKENS")
+
+
+# ── structural path roles: road/wall tiles need role evidence ────────────────
+
+STRUCTURAL_ASSETS = [
+    # a "road-tagged" sign — the exact live failure: kind_hints claim road,
+    # keywords include road, but the filename shows it's a sign
+    {"filename": "stopsign.fbx", "relpath": "stopsign.fbx",
+     "category": "road", "keywords": ["road", "sign", "stop", "traffic"],
+     "kind_hints": ["road"], "generic_score": 5, "scale": 1.0},
+    {"filename": "straight.fbx", "relpath": "straight.fbx",
+     "category": "track", "keywords": ["straight", "track", "lane", "segment"],
+     "kind_hints": ["road"], "generic_score": 0, "scale": 1.0},
+    {"filename": "fence.fbx", "relpath": "fence.fbx",
+     "category": "structure", "keywords": ["fence", "barrier", "wall"],
+     "kind_hints": ["wall"], "generic_score": 0, "scale": 1.0},
+]
+
+
+def _structural_env(tmp_path, assets):
+    lib = tmp_path / "slib"
+    lib.mkdir()
+    for a in assets:
+        (lib / a["relpath"]).write_bytes(b"FBX")
+    catalog = {
+        "version": 1,
+        "vocabulary": {"categories": [], "tags": []},
+        "assets": [{**a, "root": lib.as_posix(), "game_contexts": ["any"],
+                    "format": "fbx", "pack": "test", "curated": False}
+                   for a in assets],
+    }
+    lookups = tmp_path / "slookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps(catalog), encoding="utf-8")
+    return lookups
+
+
+def _track_surface():
+    return EntitySpec(name="TrackSurface", kind="road", count=8,
+                      placement="path", model_hint="road straight racing track",
+                      path_points=[[0, 0, 0], [10, 0, 0], [20, 0, 10]],
+                      path_width=8.0)
+
+
+def _barrier_rail():
+    return EntitySpec(name="TrackBarriersOuter", kind="wall", count=8,
+                      placement="path", model_hint="barrier fence guardrail",
+                      path_points=[[0, 0, 5], [10, 0, 5], [20, 0, 15]],
+                      path_width=1.0)
+
+
+def test_road_ribbon_picks_road_evidenced_model_over_sign(tmp_path):
+    lookups = _structural_env(tmp_path, STRUCTURAL_ASSETS)
+    paths = resolve_entity_assets(_schema([_track_surface()]), {}, {},
+                                  lookups_dir=str(lookups))
+    assert "straight" in paths["TrackSurface"].lower()
+    assert "stopsign" not in paths["TrackSurface"].lower()
+
+
+def test_barrier_rail_picks_fence_not_sign(tmp_path):
+    lookups = _structural_env(tmp_path, STRUCTURAL_ASSETS)
+    paths = resolve_entity_assets(_schema([_barrier_rail()]), {}, {},
+                                  lookups_dir=str(lookups))
+    assert "fence" in paths["TrackBarriersOuter"].lower()
+
+
+def test_road_ribbon_with_only_sign_available_goes_primitive(tmp_path):
+    # No role-evidenced asset in the library: the ribbon must spawn as
+    # primitive tiles (no model path at all), never as a chain of stop signs
+    # and never as the generic prop fallback.
+    lookups = _structural_env(tmp_path, [STRUCTURAL_ASSETS[0]])
+    paths = resolve_entity_assets(_schema([_track_surface()]), {}, {},
+                                  lookups_dir=str(lookups))
+    assert "TrackSurface" not in paths
+
+
+def test_road_ribbon_never_takes_prop_fallback(tmp_path):
+    src = tmp_path / "Prop.fbx"
+    src.write_bytes(b"FBX")
+    prop = ResolvedModel(kind="prop", src=str(src),
+                         dest_rel="Models/Default/Prop/Prop.fbx",
+                         resource_path="Models/Default/Prop/Prop", rig="generic")
+    lookups = _structural_env(tmp_path, [STRUCTURAL_ASSETS[0]])
+    paths = resolve_entity_assets(_schema([_track_surface()]),
+                                  {"prop": prop}, {"prop": prop},
+                                  lookups_dir=str(lookups))
+    assert paths.get("TrackSurface") != "Models/Default/Prop/Prop"
+    assert "TrackSurface" not in paths
+
+
+def test_strict_mode_does_not_fail_on_modelless_ribbon(tmp_path):
+    lookups = _structural_env(tmp_path, [STRUCTURAL_ASSETS[0]])
+    paths = resolve_entity_assets(_schema([_track_surface()]), {}, {},
+                                  lookups_dir=str(lookups), strict=True)
+    assert "TrackSurface" not in paths
+
+
+def test_non_path_road_entity_unaffected_by_structural_guard(tmp_path):
+    # A road-kind entity WITHOUT path_points isn't structural geometry —
+    # the guard must not reject its candidates.
+    lookups = _structural_env(tmp_path, STRUCTURAL_ASSETS)
+    e = EntitySpec(name="RoadSigns", kind="road", count=3,
+                   model_hint="stop sign traffic road")
+    paths = resolve_entity_assets(_schema([e]), {}, {},
+                                  lookups_dir=str(lookups))
+    assert "stopsign" in paths.get("RoadSigns", "").lower()

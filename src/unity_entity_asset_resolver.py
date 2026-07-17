@@ -101,6 +101,30 @@ _LAYER_ALIGN_BONUS = 1.0
 # scatter. Better to hard-fail with an actionable message than ship it.
 _RACING_CORE_LAYERS = frozenset({"vehicle_ground", "road_track"})
 
+# Structural path roles: entities that ARE the track geometry (a tiled road
+# ribbon, a barrier rail along it). A wrong model here doesn't just look
+# off-theme — it becomes the road (hit live: TrackSurface AND both barrier
+# rails all resolved to a Sketchfab stop sign whose frozen entry carried
+# kind_hints=["road"], so the kind guard waved it through every tier and the
+# whole circuit rendered as a chain of stretched stop signs). For these roles
+# a candidate must show ROLE EVIDENCE IN ITS FILENAME — the same
+# identity-evidence rule the contextual-tag guard uses — not merely a kind
+# tag or a coincidental keyword. No evidence -> no model -> the spawner's
+# primitive tile ribbon, which at least reads as a road.
+_STRUCTURAL_ROLE_TOKENS: dict[str, frozenset] = {
+    "road":  frozenset({"road", "street", "track", "path", "lane", "straight",
+                        "bend", "curve", "corner", "asphalt", "tarmac",
+                        "highway", "circuit", "raceway", "driveway"}),
+    "track": frozenset({"road", "street", "track", "path", "lane", "straight",
+                        "bend", "curve", "corner", "asphalt", "tarmac",
+                        "highway", "circuit", "raceway", "driveway"}),
+    "wall":  frozenset({"wall", "fence", "barrier", "guard", "rail", "railing",
+                        "guardrail", "barricade", "hedge", "divider"}),
+    "barrier": frozenset({"wall", "fence", "barrier", "guard", "rail",
+                          "railing", "guardrail", "barricade", "hedge",
+                          "divider"}),
+}
+
 # Generic query words that appear in almost any scene description — they carry
 # no signal about which MODEL fits, so they never count as keyword hits.
 _STOPWORDS = frozenset({
@@ -555,6 +579,15 @@ def resolve_entity_assets(schema,
             default (hit live: 5 unrelated entity kinds all resolved to the
             same collected Sketchfab prop).
             """
+            role_tokens = _STRUCTURAL_ROLE_TOKENS.get(kind)
+            if role_tokens is not None and getattr(e, "path_points", None):
+                # Structural path role (see _STRUCTURAL_ROLE_TOKENS): the
+                # filename itself must carry role evidence, whatever tier the
+                # candidate came from and whatever its kind_hints claim.
+                fname = {t for t in tokenize(Path(a.get("filename", "")).stem)
+                         if len(t) > 1}
+                if not (fname & role_tokens):
+                    return False
             hints = {h.lower() for h in a.get("kind_hints", [])}
             if kind in hints:
                 return True
@@ -802,6 +835,18 @@ def resolve_entity_assets(schema,
             entity_model_paths[e.name] = f"skip:{kind}"
             _log.info("[assets] entity '%s' (kind=%s) → no 3D spawn (owned by "
                       "SceneSetup / sky pipeline)", e.name, kind)
+            continue
+
+        # ── Structural path roles never take a wrong-shape fallback ──────────
+        # A road ribbon / barrier rail with no role-evidenced model (see
+        # _STRUCTURAL_ROLE_TOKENS) spawns as the primitive tile ribbon —
+        # colored cubes laid along the path READ as a road; a chain of generic
+        # props (or a strict hard-fail over geometry the spawner can build
+        # itself) does not.
+        if (_STRUCTURAL_ROLE_TOKENS.get(kind) is not None
+                and getattr(e, "path_points", None)):
+            _log.info("[assets] entity '%s' (kind=%s) has no role-evidenced "
+                      "model — spawning as primitive tile ribbon", e.name, kind)
             continue
 
         # ── Tier 4: fallback policy ───────────────────────────────────────────
