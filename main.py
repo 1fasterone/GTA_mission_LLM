@@ -78,6 +78,14 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
 ━━━ Enumerate tools ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   python main.py unity-tools list                     # list every micro + variants
 
+━━━ Verification / batch (manual, slow — real Blender/Unity/LLM calls) ━━━
+  python main.py blender-verify-phase3                 # emit Phase-3 script matrix
+  python main.py blender-verify-run                    # run matrix against headless Blender
+  python main.py blender-verify-manager                # verify BlenderJobManager reuse tiering
+  python main.py unity-verify-import                   # verify Phase-3 FBX imports into Unity
+  python main.py batch prompts.txt                     # batch-generate GTA5 missions
+  python main.py blender-llm-test generate              # LLM-authored bpy test scripts (manual review)
+
 ━━━ Global flags (work with any command) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   --verbose / -v   Show pipeline step summaries
   --debug   / -d   Show raw LLM requests and responses
@@ -991,6 +999,15 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
         "simple|regenerating|shielded|armor|lives",
         "Generate a Unity health system (simple/regenerating/shielded/armor/lives).",
     ),
+    "objectives": (
+        "tracker",
+        "Generate a Unity mission objective tracker (progress + completion events).",
+    ),
+    "behavior_tree": (
+        "tree",
+        "Generate a minimal Unity behavior-tree interpreter (Sequence/Selector; "
+        "Action/Condition leaves are SendMessage/RegisterCondition hooks, not autonomous AI).",
+    ),
     "statemachine": (
         "player_fsm|enemy_fsm|game_fsm|object_fsm",
         """Generate a Unity FSM (player_fsm/enemy_fsm/game_fsm/object_fsm).
@@ -1312,6 +1329,93 @@ def atom_list(
         console.print(tbl)
 
     console.print(f"\n[dim]Total: {len(atoms)} atoms | tip: --params for details, --snippet <Name> for C#[/]")
+
+
+# ── Verification / batch tools ──────────────────────────────────────────────────
+# Manual, slow harnesses (real Blender/Unity subprocess calls, or LLM calls) — not
+# part of the fast generation pipeline. Kept as thin wrappers around the original
+# scripts so their logic lives in one place.
+
+@app.command("blender-verify-phase3")
+def blender_verify_phase3() -> None:
+    """Emit the Phase-3 Blender reuse/rig verification script matrix (no Blender call)."""
+    from verify_phase3 import main as _main
+    _main()
+    console.print("[green]OK[/]  scripts + index.json written -> output/blender/_verify/_scripts")
+
+
+@app.command("blender-verify-run")
+def blender_verify_run() -> None:
+    """Run the Phase-3 verification matrix against headless Blender and report PASS/FAIL.
+
+    Requires `blender-verify-phase3` to have been run first (reads its index.json)
+    and a locatable Blender install. Slow — several minutes.
+    """
+    from run_verify_headless import main as _main
+    rc = _main()
+    if rc != 0:
+        raise typer.Exit(rc)
+    console.print("[green]OK[/]  all Phase-3 checks passed")
+
+
+@app.command("blender-verify-manager")
+def blender_verify_manager() -> None:
+    """Verify BlenderJobManager's cold-build / geo-reuse tiering against real Blender."""
+    from run_verify_manager import main as _main
+    rc = _main()
+    if rc != 0:
+        raise typer.Exit(rc)
+    console.print("[green]OK[/]  manager reuse verification passed")
+
+
+@app.command("unity-verify-import")
+def unity_verify_import() -> None:
+    """Import the Phase-3 verified FBX assets into a throwaway Unity project and assert correctness.
+
+    Requires `blender-verify-phase3` + `blender-verify-run` to have produced the
+    FBX files, and a locatable Unity Editor. Slow — batchmode first-run package
+    resolution can take minutes.
+    """
+    from run_verify_unity import main as _main
+    rc = _main()
+    if rc != 0:
+        raise typer.Exit(rc)
+    console.print("[green]OK[/]  Unity import verification passed")
+
+
+@app.command("batch")
+def batch(
+    prompts_file: str = typer.Argument(..., help="Text file, one GTA5 mission prompt per line"),
+    config: str = typer.Option("config.yaml", "--config", "-c"),
+) -> None:
+    """Generate multiple GTA5 missions from a text file of prompts (one per line, '#' comments ignored)."""
+    from batch_generate import batch as _batch
+    _batch(prompts_file, config)
+
+
+@app.command("blender-llm-test")
+def blender_llm_test(
+    action: str = typer.Argument("generate", help="generate | repair"),
+    name:    Optional[str] = typer.Argument(None, help="test case name (repair only): airplane | jeep | humanoid"),
+    errfile: Optional[str] = typer.Argument(None, help="path to an error/traceback file (repair only)"),
+) -> None:
+    """Prompt the local LLM to author bpy scripts for airplane/jeep/humanoid test cases.
+
+    Output is written for manual review + execution via the connected Blender MCP —
+    this command does not touch Blender itself, and generated code MUST be reviewed
+    before running it in a live scene.
+    """
+    from live_llm_blender_test import generate as _generate, repair as _repair
+    if action == "repair":
+        if not name or not errfile:
+            console.print("[red]Error:[/] repair requires <name> <errfile>")
+            raise typer.Exit(1)
+        _repair(name, errfile)
+    elif action == "generate":
+        _generate()
+    else:
+        console.print(f"[red]Unknown action:[/] {action} (expected generate | repair)")
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,8 @@ from .animator      import AnimatorPipeline,      AnimatorSchema
 from .npc_dialog    import NpcDialogPipeline,     NpcDialogSchema,   DialogLine
 from .vfx           import VfxPipeline,           VfxSchema
 from .shader        import ShaderPipeline,        ShaderSchema
+from .objectives    import ObjectivesPipeline,    ObjectivesSchema
+from .behavior_tree  import BehaviorTreePipeline,  BehaviorTreeSchema
 
 __all__ = [
     "ModelPipeline",
@@ -46,6 +48,8 @@ __all__ = [
     "NpcDialogPipeline",    "NpcDialogSchema",    "DialogLine",
     "VfxPipeline",          "VfxSchema",
     "ShaderPipeline",       "ShaderSchema",
+    "ObjectivesPipeline",   "ObjectivesSchema",
+    "BehaviorTreePipeline", "BehaviorTreeSchema",
 ]
 
 
@@ -73,6 +77,8 @@ REGISTRY = {
     "npc_dialog":   NpcDialogPipeline,
     "vfx":          VfxPipeline,
     "shader":       ShaderPipeline,
+    "objectives":   ObjectivesPipeline,
+    "behavior_tree": BehaviorTreePipeline,
 }
 
 

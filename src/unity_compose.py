@@ -20,6 +20,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from .micro import REGISTRY
+from .micro_pipeline import to_pascal
 from .unity_generator import _make_guid, _meta_file, _default_meta
 
 
@@ -169,7 +170,7 @@ class MicroComposer:
         return Path(self._cfg["unity_pipeline"]["unity_template_dir"]) / "compose"
 
     def compose(self, subsystems: list[Subsystem], assets_root: Path,
-                has_game_manager: bool = False) -> list[ComposedUnit]:
+                has_game_manager: bool = False, wiring=None) -> list[ComposedUnit]:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
@@ -199,12 +200,12 @@ class MicroComposer:
             by_kind[sub.kind].scripts = rel_scripts
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
-        self._emit_wiring(units, micros_root)
+        self._emit_wiring(units, micros_root, wiring)
         # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
         self._emit_context(units, micros_root, has_game_manager)
         return units
 
-    def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path) -> None:
+    def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None) -> None:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
         from .atoms.backends.unity import unity_atom_snippet
 
@@ -415,6 +416,43 @@ class MicroComposer:
                 }),
             })
 
+        # ── schema.wiring (WiringMap/WiringDependency) — additive only ─────────
+        # Every composed unit already gets its own auto-found scene ref (the
+        # `units` loop above — a private field + FindFirstObjectByType in
+        # Awake), so a generic (source, target, type) triple has nothing new
+        # to ADD there; what it CAN honestly contribute is making the
+        # author's declared intent visible in the generated file instead of
+        # silently dropping it. Skipped entirely for pairs the named SEAMs
+        # above already cover (avoids a duplicate/conflicting comment) — real
+        # behavior wiring for a genuinely novel pair still needs a named SEAM,
+        # same as today. NOT a rewrite of the SEAM system: this never touches
+        # awake_seams/update_seams content for the 7 named pairs above.
+        _NAMED_SEAM_PAIRS = {
+            frozenset({"health", "hud"}), frozenset({"health", "statemachine"}),
+            frozenset({"health", "audio"}), frozenset({"statemachine", "animator"}),
+            frozenset({"input", "controller"}), frozenset({"input", "statemachine"}),
+            frozenset({"trigger", "saveload"}),
+        }
+        if wiring_map is not None:
+            for dep in wiring_map.dependencies:
+                pair = frozenset({dep.source, dep.target})
+                if pair in _NAMED_SEAM_PAIRS:
+                    continue
+                src_unit = next((u for u in real_units if u.kind == dep.source), None)
+                tgt_unit = next((u for u in real_units if u.kind == dep.target), None)
+                if src_unit is None or tgt_unit is None:
+                    continue
+                awake_seams.append({
+                    "label": f"wiring: {dep.source} --{dep.type}--> {dep.target} (schema.wiring)",
+                    "snippet": (
+                        f"// {_fv(src_unit)} ({src_unit.class_name}) --{dep.type}--> "
+                        f"{_fv(tgt_unit)} ({tgt_unit.class_name})\n"
+                        f"// Both are already available above as auto-found scene refs —\n"
+                        f"// wire the specific method call yourself; a generic (source, target,\n"
+                        f"// type) triple can't infer which one to call."
+                    ),
+                })
+
         # ── Render template ───────────────────────────────────────────────────
         content = env.get_template("GameWiring.cs.j2").render(
             units=real_units,
@@ -608,6 +646,152 @@ GOLDEN_2D_TOPDOWN_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
 )
 
 
+# ── Multimodal-IR field mappers (Phase 1) ──────────────────────────────────────
+# Pure schema-field → Subsystem.options mappers. No I/O, no LLM — deterministic
+# passthrough of LLM-authored content (Step 3) into the micro that already knows
+# how to render it (Step 6), instead of that micro falling back to its defaults.
+
+# AudioSpec.generation_method (unity_schema.py) → AudioCueSpec.kind (micro/audio.py)
+_AUDIO_GEN_TO_CUE_KIND = {
+    "sfxr":         "synth",
+    "procedural":   "synth",
+    "stable_audio": "gen",
+    "elevenlabs":   "tts",
+    "recorded":     "library",
+}
+
+
+def _audio_cues_from_specs(specs) -> list[dict]:
+    """schema.audio_specs (list[AudioSpec]) -> AudioCueSpec kwargs (micro/audio.py:31-43)."""
+    cues: list[dict] = []
+    for spec in specs or []:
+        params = spec.parameters or {}
+        cues.append({
+            "id":         spec.id,
+            "category":   spec.type,   # same Literal domain — direct passthrough
+            "kind":       _AUDIO_GEN_TO_CUE_KIND.get(spec.generation_method, "auto"),
+            "descriptor": spec.description,
+            "loop":       spec.loop,
+            "archetype":  params.get("archetype", ""),
+            "gen_prompt": params.get("gen_prompt", spec.description),
+            "text":       params.get("text", ""),
+            "voice":      params.get("voice", "default"),
+            "spatial":    bool(params.get("spatial", False)),
+        })
+    return cues
+
+
+def _vfx_options_from_specs(specs) -> dict:
+    """schema.vfx (list[VfxSpec]) -> VfxSchema options (micro/vfx.py:24-63)."""
+    if not specs:
+        return {}
+    if len(specs) == 1:
+        spec = specs[0]
+        params = spec.parameters or {}
+        return {
+            "variant":       "particle_system",
+            "effect_id":     spec.name,
+            "loop":          bool(params.get("loop", False)),
+            "duration":      float(params.get("duration", 2.0)),
+            "play_on_start": bool(params.get("play_on_start", True)),
+            "auto_destroy":  bool(params.get("auto_destroy", True)),
+        }
+    cues = [{
+        "effect_id": spec.name,
+        "x": 0.0, "y": 0.0, "z": 0.0,
+        "scale": float((spec.parameters or {}).get("scale", 1.0)),
+        "delay": i * 0.1,
+    } for i, spec in enumerate(specs)]
+    return {"variant": "vfx_sequence", "cues": cues}
+
+
+def _animator_clips_from_specs(animations, characters) -> dict:
+    """schema.animations + CharacterSpec.animation_set -> AnimatorSchema.clips
+    (state_name -> clip_name, micro/animator.py:36). animations is authoritative;
+    character animation_set names fill any gaps."""
+    clips: dict[str, str] = {}
+    for spec in animations or []:
+        clip_name = spec.clip or spec.id
+        if clip_name:
+            clips[spec.name or spec.id] = clip_name
+    for char in characters or []:
+        for clip_name in (char.animation_set or []):
+            clips.setdefault(clip_name, clip_name)
+    return clips
+
+
+def _dialogue_options_for_character(char) -> dict:
+    """CharacterSpec.dialog_graph (DialogGraph/DialogNode, unity_schema.py:558-561)
+    -> DialogueSchema options (DialogueNode/DialogueChoice, micro/dialogue.py:27-58).
+    Lossy by design: DialogNode.emotion/audio_ref have no DialogueNode equivalent."""
+    graph = char.dialog_graph
+    nodes = [{
+        "id":      n.id,
+        "speaker": n.speaker,
+        "text":    n.text,
+        "choices": [{"text": c.text, "next": c.next_node} for c in n.choices],
+    } for n in graph.nodes]
+    return {"start_node": graph.start_node or (nodes[0]["id"] if nodes else ""),
+            "nodes": nodes}
+
+
+def _has_voiced_lines(char) -> bool:
+    """DialogNode.audio_ref is documented as "AudioSpec id — empty = no voiced
+    line" (unity_schema.py:554) — that's the DialoguePipeline vs NpcDialogPipeline
+    routing signal."""
+    return any(n.audio_ref for n in char.dialog_graph.nodes)
+
+
+def _npc_dialog_lines_for_character(char) -> list[dict]:
+    """CharacterSpec.dialog_graph (DialogNode) -> NpcDialogSchema.lines
+    (DialogLine, micro/npc_dialog.py:67-118). Pydantic coerces these dicts into
+    DialogLine directly — no meta._pre_lines indirection needed since we're
+    building the Subsystem's options at construction time, not patching them in
+    after the fact (unlike unity_pipeline.py's concept-extraction path)."""
+    return [{
+        "line_id": n.id,
+        "text":    n.text,
+        "emotion": n.emotion,
+    } for n in char.dialog_graph.nodes]
+
+
+def _objectives_options_for_mission(mission) -> dict:
+    """schema.missions (MissionSpec/MissionObjective, unity_schema.py:734-764) ->
+    ObjectivesSchema options (ObjectiveEntry, micro/objectives.py). `triggers`/
+    `story_beat_ref` have no trigger-execution engine to hook into in this
+    codebase — passed through as inert metadata (documented in the rendered
+    README), not silently dropped."""
+    return {
+        "title": mission.title,
+        "objectives": [{
+            "id":          o.id,
+            "description": o.description,
+            "type":        o.type,
+            "target_ref":  o.target_ref,
+            "count":       o.count,
+            "optional":    o.optional,
+        } for o in mission.objectives],
+        "rewards": mission.rewards,
+    }
+
+
+def _bt_options_for_entry(entry) -> dict:
+    """schema.behavior_trees (AIBehaviorTree/BehaviorTree/BTNode,
+    unity_schema.py:563-581,769-772) -> BehaviorTreeSchema options
+    (BTNodeEntry, micro/behavior_tree.py). Direct field-for-field mapping —
+    both sides share the same node shape (id/type/children/action)."""
+    tree = entry.tree
+    return {
+        "root": tree.root,
+        "nodes": [{
+            "id":       n.id,
+            "type":     n.type,
+            "children": list(n.children),
+            "action":   n.action,
+        } for n in tree.nodes],
+    }
+
+
 def subsystems_for(
     game_type:    str,
     features:     list[str] | None = None,
@@ -619,6 +803,12 @@ def subsystems_for(
     entities      = None,            # list of schema entities (have .kind)
     scripts       = None,            # list of schema scripts  (have .type/.name)
     genre:        str               = "universal",   # schema.meta["genre"] — see unity_archetypes.py
+    audio_specs   = None,            # schema.audio_specs: list[AudioSpec]
+    vfx_specs     = None,            # schema.vfx: list[VfxSpec]
+    animations    = None,            # schema.animations: list[AnimationSpec]
+    characters    = None,            # schema.characters: list[CharacterSpec]
+    missions      = None,            # schema.missions: list[MissionSpec]
+    behavior_trees = None,           # schema.behavior_trees: list[AIBehaviorTree]
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
@@ -721,6 +911,13 @@ def subsystems_for(
     # the 3D Physics API — a Collider2D never raises OnTriggerEnter(Collider).
     dim_meta = {"meta": {"game_type": game_type or "3D"}}
 
+    # schema.animations + CharacterSpec.animation_set -> AnimatorSchema.clips.
+    # Additive: empty dict when neither field is populated, so the always-on
+    # "animator" core subsystem stays byte-identical to today's output and the
+    # GOLDEN_*_CORE_SIGNATURE (kind, variant) checks are unaffected.
+    anim_clips = _animator_clips_from_specs(animations, characters)
+    anim_opts: dict = {"clips": anim_clips} if anim_clips else {}
+
     subs: list[Subsystem] = [
         # Core (always)
         Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
@@ -733,7 +930,7 @@ def subsystems_for(
         Subsystem(kind="physics",     variant=phys_variant,   target="player",  name="PhysicsBody"),
         Subsystem(kind="input",       variant=input_variant,  target="systems", name="InputReader"),
         Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable", options=dim_meta),
-        Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator"),
+        Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator", options=anim_opts),
         Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
         Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger", options=dim_meta),
     ]
@@ -745,26 +942,57 @@ def subsystems_for(
         subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=dim_meta))
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
-    if "audio" in feats:
+    if "audio" in feats or audio_specs:
         # Pass user_prompt via meta so AudioPipeline.default_fix can derive the game
         # type from the original request (e.g. "horror maze" → horror required cues
         # with ambient+music that route to the generative backend, not DSP).
         audio_opts: dict = {}
         if user_prompt:
             audio_opts["meta"] = {"user_prompt": user_prompt}
+        if audio_specs:
+            # Real, LLM-authored cues. default_fix only fills GAPS in schema.cues
+            # (src/micro/audio.py:264-284) so these are never overwritten.
+            audio_opts["cues"] = _audio_cues_from_specs(audio_specs)
         subs.append(Subsystem(kind="audio", variant="categorical_mixer", target="systems",
                               name="AudioDirector", options=audio_opts))
     if "inventory" in feats or "inventory" in prompt_low \
             or any("inventory" in t for t in script_types):
         subs.append(Subsystem(kind="inventory",    variant="slot_based",    target="systems", name="PlayerInventory"))
-    # Dialogue (linear text) — requested, VR, an authored dialogue_manager, or NPCs exist.
-    if "dialogue" in feats or gt in ("vr",) or "dialogue_manager" in script_types or has_npcs:
+    # Dialogue — one subsystem per character with real authored dialogue
+    # (CharacterSpec.dialog_graph), following the same per-role duplication
+    # pattern as EnemyAI/PlayerFSM above. Voiced lines (any DialogNode.audio_ref
+    # set) route to NpcDialogPipeline for real Kokoro TTS clips instead of the
+    # plain-text DialoguePipeline tree. Falls back to a single generic
+    # DialogueSystem (requested, VR, an authored dialogue_manager, or NPCs
+    # exist) only when no character supplies real dialogue — avoids a
+    # redundant empty-default tree alongside real per-character ones.
+    characters_with_dialogue = [
+        c for c in (characters or []) if c.dialog_graph and c.dialog_graph.nodes
+    ]
+    for char in characters_with_dialogue:
+        char_label = to_pascal(char.name, "Character")
+        if _has_voiced_lines(char):
+            subs.append(Subsystem(kind="npc_dialog", variant="quest_giver", target="world",
+                                  name=f"{char_label}NpcDialog",
+                                  options={"speaker_name": char.name,
+                                           "lines": _npc_dialog_lines_for_character(char)}))
+        else:
+            subs.append(Subsystem(kind="dialogue", variant="linear", target="systems",
+                                  name=f"{char_label}Dialogue",
+                                  options=_dialogue_options_for_character(char)))
+    if not characters_with_dialogue and (
+            "dialogue" in feats or gt in ("vr",) or "dialogue_manager" in script_types or has_npcs):
         subs.append(Subsystem(kind="dialogue",     variant="linear",        target="systems", name="DialogueSystem"))
     # Decorative impact effects — object-pooled, event-driven (OnTrigger/OnCollision),
     # self-contained (no GameWiring seam). impact_fx null-guards an unassigned prefab.
-    # Reachable whenever there's combat (enemies), since impacts need effects.
-    if {"vfx", "effects", "particles"} & feats or has_enemies:
-        subs.append(Subsystem(kind="vfx",          variant="impact_fx",     target="world",   name="ImpactVFX"))
+    # Reachable whenever there's combat (enemies), effects are requested, or the
+    # schema authored real vfx.VfxSpec entries — those drive the variant/options
+    # instead of the bare impact_fx default.
+    if {"vfx", "effects", "particles"} & feats or has_enemies or vfx_specs:
+        vfx_opts = _vfx_options_from_specs(vfx_specs) if vfx_specs else {"variant": "impact_fx"}
+        vfx_variant = vfx_opts.pop("variant", "impact_fx")
+        subs.append(Subsystem(kind="vfx", variant=vfx_variant, target="world",
+                              name="ImpactVFX", options=vfx_opts))
     # Spoken NPCs (Kokoro TTS). skip_audio is the DEFAULT (a bare MicroComposer.emit
     # stays TTS-free — no generic preset clips), but the main pipeline LIFTS it:
     # unity_pipeline.run pre-extracts concept-specific lines while LM Studio is
@@ -783,4 +1011,23 @@ def subsystems_for(
     # Scene transitions — meaningful for any multi-scene project (deterministic: > 1 scene).
     if {"levels", "multi_scene", "scene_transition"} & feats or scene_count > 1:
         subs.append(Subsystem(kind="transition",   variant="fade",          target="systems", name="SceneTransition"))
+    # Mission objectives — one tracker subsystem per authored MissionSpec with
+    # real objectives (schema.missions). No feature-flag gate: presence of
+    # authored objectives is itself the signal, same as audio_specs/vfx above.
+    for mission in (missions or []):
+        if not mission.objectives:
+            continue
+        subs.append(Subsystem(kind="objectives", variant="tracker", target="systems",
+                              name=f"{to_pascal(mission.title, 'Mission')}Objectives",
+                              options=_objectives_options_for_mission(mission)))
+    # Behavior trees — one interpreter subsystem per authored AIBehaviorTree
+    # entry (schema.behavior_trees). CharacterSpec.npc_brain.behavior_tree (a
+    # second, per-character embedding of the same BehaviorTree type) is left
+    # unwired for now — a small, separate follow-up.
+    for bt_entry in (behavior_trees or []):
+        if not bt_entry.tree or not bt_entry.tree.nodes:
+            continue
+        subs.append(Subsystem(kind="behavior_tree", variant="tree", target="world",
+                              name=f"{to_pascal(bt_entry.name, 'BehaviorTree')}BT",
+                              options=_bt_options_for_entry(bt_entry)))
     return subs

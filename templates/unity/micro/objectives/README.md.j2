@@ -1,0 +1,40 @@
+# {{ s.name }} — Unity Mission Objectives
+
+**Mission:** {{ s.title }}
+**Variant:** `{{ variant }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to a systems GameObject.
+3. Call `ReportProgress(objectiveId, amount)` from gameplay code (or via
+   `SendMessage("ReportProgress", objectiveId)`) as the player makes progress.
+4. Subscribe to the events:
+
+```csharp
+var tracker = GetComponent<{{ s.name }}>();
+tracker.OnObjectiveProgress += (id, cur, req) => Debug.Log($"{id}: {cur}/{req}");
+tracker.OnObjectiveComplete += id => Debug.Log($"Objective complete: {id}");
+tracker.OnMissionComplete   += () => Debug.Log("Mission complete!");
+```
+
+## Objectives
+
+{% for o in s.objectives %}
+- **{{ o.id }}** ({{ o.type }}{% if o.optional %}, optional{% endif %}) — {{ o.description }} (×{{ o.count }})
+{% endfor %}
+
+{% if s.rewards %}
+## Rewards
+
+{% for k, v in s.rewards.items() %}
+- {{ k }}: {{ v }}
+{% endfor %}
+{% endif %}
+
+Mission completes when every non-optional objective reaches its required count.
+`triggers`/`story_beat_ref` from the authored `MissionSpec` are not wired to any
+trigger-execution engine yet — hook `OnObjectiveComplete`/`OnMissionComplete` up
+to your own trigger/cutscene logic manually.

@@ -1,0 +1,44 @@
+# {{ s.name }} — Unity Behavior Tree
+
+**Variant:** `{{ variant }}`
+**Root node:** `{{ s.root }}`
+**Tick interval:** {{ "%.2f"|format(s.tick_interval) }}s
+
+{{ s.description }}
+
+## Scope — read this before wiring it up
+
+The tree **structure** and **Sequence/Selector evaluation** are real and
+deterministic — this walks your authored node graph exactly as specified.
+The **leaves are extension hooks, not autonomous AI**:
+
+- **Action** nodes call `SendMessage(action, SendMessageOptions.DontRequireReceiver)`
+  on this GameObject. `SendMessage` has no return value, so an Action node
+  always reports `Success` to its parent — attach a script with a method
+  matching the action name to actually do something.
+- **Condition** nodes look up a `Func<bool>` registered via
+  `RegisterCondition(name, fn)`. An unregistered condition logs a warning and
+  defaults to `true` (deterministic, doesn't crash the tree, but visibly flags
+  the gap) — call `RegisterCondition` from `Start()` on another script to wire
+  real decision logic.
+- **Decorator** nodes are a minimal pass-through to their first child —
+  invert/repeat/cooldown semantics aren't modeled generically.
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to the AI GameObject.
+3. Wire real behavior from another script:
+
+```csharp
+var bt = GetComponent<{{ s.name }}>();
+bt.RegisterCondition("PlayerInRange", () => Vector3.Distance(transform.position, player.position) < 10f);
+// Action nodes fire SendMessage — add methods matching each action name:
+void ChasePlayer() { /* your movement logic */ }
+```
+
+## Nodes
+
+{% for n in s.nodes %}
+- **{{ n.id }}** (`{{ n.type }}`){% if n.action %} — action: `{{ n.action }}`{% endif %}{% if n.children %} → children: {{ n.children | join(", ") }}{% endif %}
+{% endfor %}

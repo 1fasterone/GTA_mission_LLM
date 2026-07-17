@@ -58,6 +58,10 @@ def test_registry_has_all_known():
         "vfx",
         # Shader — runtime material-property controllers (MaterialPropertyBlock)
         "shader",
+        # Mission objective tracker (schema.missions)
+        "objectives",
+        # Minimal behavior-tree interpreter (schema.behavior_trees)
+        "behavior_tree",
     }
 
 

@@ -148,6 +148,23 @@ def _environment_ctx(time_of_day: str, fog, fog_color, sun_intensity,
     }
 
 
+# WorldSpec.weather -> fog on/off. WorldSpec has no direct sun_intensity/fog_color
+# equivalent to EnvironmentSpec's — those stay None (the preset/lighting default
+# applies), only time_of_day and the derived fog flag are populated.
+_WEATHER_FOG_ON = frozenset({"rain", "storm", "snow", "fog"})
+
+
+def _world_spec_env_fallback(world_spec) -> tuple:
+    """Derive (time_of_day, fog, fog_color, sun_intensity) from schema.world_spec
+    for _environment_ctx() when schema.environment is absent. Additive fallback
+    only — schema.environment always wins when present (no behavior change for
+    existing projects). WorldSpec.biome/scale/procedural_rules have no natural
+    consumer here and are deliberately left unmapped."""
+    if world_spec is None:
+        return "", None, None, None
+    return world_spec.time_of_day, world_spec.weather in _WEATHER_FOG_ON, None, None
+
+
 # ── GUID generation ────────────────────────────────────────────────────────────
 # Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
 
@@ -1330,6 +1347,29 @@ def _generate_material(mat_name: str, hex_color: str,
         )
 
 
+def _material_hex_and_smoothness(spec) -> tuple[str, float]:
+    """MaterialSpec has no direct color field (pbr_maps are texture PATHS, not
+    generated texture data — no real texture-generation backend exists). Reuse
+    an author-supplied hex color from `parameters` when present; otherwise fall
+    back to a neutral mid-gray so the material is a valid, honest placeholder
+    rather than a fabricated color standing in for missing data."""
+    params = spec.parameters or {}
+    hexval = str(params.get("color", "")).strip()
+    if hexval.startswith("#") and len(hexval) in (4, 7):
+        try:
+            _hex_to_rgb(hexval)   # validates it actually parses
+            color = hexval
+        except ValueError:
+            color = "#B0B0B0"
+    else:
+        color = "#B0B0B0"
+    try:
+        smoothness = max(0.0, min(1.0, float(params.get("smoothness", 0.3))))
+    except (TypeError, ValueError):
+        smoothness = 0.3
+    return color, smoothness
+
+
 # ── Built-in UGUI script GUIDs (com.unity.ugui, verified on Unity 6000.0) ───────
 # NOTE: currently unused — the scene authors these GUIDs inline in scene.unity.j2.
 # Kept as the single source of truth; GraphicRaycaster/EventSystem GUIDs changed
@@ -1923,13 +1963,17 @@ class UnityProjectGenerator:
         # byte-for-byte; other times of day swing the sun + tint it. Scene specs
         # recompute this per scene so StormShelf can be fogged night while
         # FinalApproach is a clear dawn.
-        env     = schema.environment
-        env_ctx = _environment_ctx(
-            env.time_of_day if env else "",
-            env.fog if env else None,
-            env.fog_color if env else None,
-            env.sun_intensity if env else None,
-            lighting, bg)
+        env = schema.environment
+        if env is not None:
+            _tod, _fog, _fog_color, _sun_i = (
+                env.time_of_day, env.fog, env.fog_color, env.sun_intensity)
+        else:
+            # No explicit environment block — fall back to schema.world_spec's
+            # time_of_day/weather (previously orphaned: WorldSpec had zero
+            # consumers outside .regions). Additive only, no behavior change
+            # when neither block is present.
+            _tod, _fog, _fog_color, _sun_i = _world_spec_env_fallback(schema.world_spec)
+        env_ctx = _environment_ctx(_tod, _fog, _fog_color, _sun_i, lighting, bg)
         sun_rotation  = env_ctx["sun_rotation"]
         sun_euler     = env_ctx["sun_euler"]
         sun_color     = env_ctx["sun_color"]
@@ -1997,6 +2041,8 @@ class UnityProjectGenerator:
                                   for sp in schema.scene_specs
                                   if sp.entities is not None},
             "kenney_assets":     kenney_assets,
+            "materials":         schema.materials,
+            "shaders":           schema.shaders,
         }
 
         _ev, _er = _VERSION_MAP.get(schema.unity_version, ("6000.0.66f2", "0000000000000"))
@@ -2160,6 +2206,23 @@ class UnityProjectGenerator:
                 mat_label, mat_hex, schema.render_pipeline, mat_smooth
             )
             files[f"{mat_path}.meta"]  = _default_meta(mat_guids[mat_label.lower()])
+
+        # ── schema.materials (LLM-authored MaterialSpec entries) ──────────────
+        # No real PBR-texture generation backend exists (pbr_maps are author-
+        # supplied paths, not generated data), so each MaterialSpec becomes a
+        # real, valid solid-tint .mat asset — same _generate_material() as the
+        # palette materials above, keyed off render_pipeline so the shader
+        # always matches the active pipeline. Additive: doesn't touch the
+        # palette materials or any existing wiring.
+        for mspec in schema.materials:
+            mcolor, msmooth = _material_hex_and_smoothness(mspec)
+            mat_path = f"{pn}/Assets/Materials/{mspec.name}.mat"
+            files[mat_path]           = _generate_material(
+                mspec.name, mcolor, schema.render_pipeline, msmooth
+            )
+            files[f"{mat_path}.meta"] = _default_meta(
+                _make_guid(f"{pn}/Materials/{mspec.id}")
+            )
 
         # ── UI Toolkit HUD assets (UIDocument host for ui_manager, non-VR) ────
         # The scene template authors a HUD_Root → UIDocument that references these
