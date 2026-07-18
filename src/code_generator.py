@@ -335,7 +335,11 @@ def _build_template_context(schema: MissionSchema) -> dict:
             "weapon_name": _WEAPON_NAME.get(p.weapon),
             # A ped on a patrol path patrols the path instead of going hostile —
             # otherwise Task.Combat overrides the walk and it never patrols.
-            "is_hostile":  p.role in ("guard", "patrol", "target") and patrol_slot is None,
+            # "guard" and "patrol" get their own passive stance branches below
+            # (GuardCurrentPosition / WanderAround) so they react like normal
+            # game AI instead of forced instant-combat at spawn; only "target"
+            # is scripted hostile immediately.
+            "is_hostile":  p.role == "target" and patrol_slot is None,
             "patrol_path_idx": patrol_slot,
             # Absolute placement from the editor (None → synthetic offset fallback).
             "abs_x":   float(epos[0]) if epos else None,

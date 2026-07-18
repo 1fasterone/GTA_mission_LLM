@@ -193,9 +193,18 @@ class TestBuildTemplateContext:
         ctx = _build_template_context(schema)
         assert ctx["peds"][0]["weapon_name"] == "weapon_assaultrifle"
 
-    def test_ped_is_hostile_for_guard_role(self):
+    def test_ped_is_not_hostile_for_guard_role(self):
+        # Guards get their own passive GuardCurrentPosition() branch in the
+        # template instead of instant Task.Combat at spawn.
         schema = self._schema(peds=[
             MissionPed(description="cop", model="s_m_y_cop_01", role="guard"),
+        ])
+        ctx = _build_template_context(schema)
+        assert ctx["peds"][0]["is_hostile"] is False
+
+    def test_ped_is_hostile_for_target_role(self):
+        schema = self._schema(peds=[
+            MissionPed(description="rival gang leader", model="g_m_y_lost_01", role="target"),
         ])
         ctx = _build_template_context(schema)
         assert ctx["peds"][0]["is_hostile"] is True
