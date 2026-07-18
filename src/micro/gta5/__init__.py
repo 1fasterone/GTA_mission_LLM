@@ -8,13 +8,15 @@ subclass, concept/schema prompts, and a GTA5MicroPipeline subclass whose
 write_files renders templates/gta5/micro/<kind>/.
 """
 
+from typing import Any
+
 from .menu     import GtaMenuPipeline
 from .hud      import GtaHudPipeline
 from .spawner  import GtaSpawnerPipeline
 from .waves    import GtaWavesPipeline
 from .saveload import GtaSaveLoadPipeline
 
-GTA_REGISTRY = {
+GTA_REGISTRY: dict[str, type[Any]] = {
     "menu":     GtaMenuPipeline,
     "hud":      GtaHudPipeline,
     "spawner":  GtaSpawnerPipeline,

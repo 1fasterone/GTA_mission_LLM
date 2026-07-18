@@ -330,8 +330,9 @@ class NpcDialogPipeline(UnityMicroPipeline):
         )
 
         # CLI --audio-style override takes precedence over everything else
-        if getattr(self, "_audio_style", None):
-            schema.audio_style = clamp_enum(self._audio_style, AUDIO_STYLES, "natural")
+        _audio_style = getattr(self, "_audio_style", None)
+        if _audio_style:
+            schema.audio_style = clamp_enum(_audio_style, AUDIO_STYLES, "natural")
 
         schema.name     = to_pascal(schema.name, "NpcDialog")
         schema.variant  = variant

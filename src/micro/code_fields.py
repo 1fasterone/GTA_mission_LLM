@@ -21,7 +21,7 @@ raises, it cleans what it can, drops what it can't, and logs every fix.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Optional, Protocol
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from rich.console import Console
@@ -311,7 +311,7 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
 
 
 def lint_usings(usings: list[str], *, already_in_template: set[str],
-                allowed: set[str] | None = None) -> list[str]:
+                allowed: set[str] | frozenset[str] | None = None) -> list[str]:
     """Dedupe, drop template-emitted entries, keep stable order.
 
     `allowed` (e.g. _KNOWN_NAMESPACES for Unity) additionally drops anything
@@ -1216,9 +1216,22 @@ class CodeExtensibleSchema(BaseModel):
     extra_methods:      list[CodeMethod] = Field(default_factory=list)
 
 
-def lint_extensible(schema: CodeExtensibleSchema, *,
+class _ExtensibleLike(Protocol):
+    """Structural shape lint_extensible needs. CodeExtensibleSchema satisfies
+    this nominally; UnityScript (unity_schema.py) satisfies it structurally
+    without a shared base class (importing it here would be circular — it
+    imports CodeField/CodeMethod from this module)."""
+    extra_usings:       list[str]
+    extra_fields:       list[CodeField]
+    awake_extra:        str
+    update_extra:       str
+    fixed_update_extra: str
+    extra_methods:      list[CodeMethod]
+
+
+def lint_extensible(schema: _ExtensibleLike, *,
                     reserved_fields: set[str],
-                    template_usings: set[str]) -> CodeExtensibleSchema:
+                    template_usings: set[str]) -> _ExtensibleLike:
     """
     Run the full defensive lint over every `extra_*` field of an extensible
     schema, in place. Mirrors the controller's hand-written pass so every

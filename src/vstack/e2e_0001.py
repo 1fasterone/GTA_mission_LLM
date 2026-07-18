@@ -188,7 +188,7 @@ def _condense(trace, head=4, tail=4):
 
 def main(argv=None) -> int:
     try:
-        sys.stdout.reconfigure(encoding="utf-8")      # Windows console is cp1252
+        sys.stdout.reconfigure(encoding="utf-8")      # type: ignore[union-attr]  # Windows console is cp1252
     except Exception:
         pass
     argv = list(sys.argv[1:] if argv is None else argv)

@@ -16,7 +16,7 @@ Usage:
 """
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 INDEX_DIR   = Path(__file__).parent / "index"
 EMBED_MODEL = "BAAI/bge-small-en-v1.5"
@@ -43,8 +43,8 @@ class RagClient:
         self._idx_path   = index_dir or str(INDEX_DIR)
         self._model_name = model_name
         self._threshold  = threshold
-        self._model      = None
-        self._client     = None
+        self._model:  Optional[Any] = None
+        self._client: Optional[Any] = None
         self._collections: dict[str, object] = {}
 
     # ── lazy init ─────────────────────────────────────────────────────────────
@@ -70,6 +70,7 @@ class RagClient:
     def _search(self, text: str, domain: str, kind: str | None = None, n: int = 3) -> list[dict]:
         """Return top-n matches from the given domain collection."""
         collection = self._ensure_domain(domain)
+        assert self._model is not None, "_ensure_domain lazily initializes _model"
         vec   = next(iter(self._model.embed([text]))).tolist()
         where = {"kind": kind} if kind else None
 

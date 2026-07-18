@@ -71,7 +71,7 @@ def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> 
         src_abs = str(Path(src).resolve())
         rig = "humanoid" if kind in ("player", "enemy") else "generic"
         if kind in resolved:
-            update = {"src": src_abs, "rig": rig}
+            update: dict[str, object] = {"src": src_abs, "rig": rig}
             # Generic models can't use humanoid retarget clips — drop them so the
             # importer doesn't choke on mismatched animation files.
             if rig != "humanoid":
@@ -966,8 +966,8 @@ def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
         if m.group(2):
             declared.add(m.group(2))
     declared.update(m.group(1) for m in _LAMBDA_PARAM_RE.finditer(combined))
-    for m in script.extra_methods:
-        declared.update(_method_param_names(m.signature))
+    for method in script.extra_methods:
+        declared.update(_method_param_names(method.signature))
 
     seen: set[str] = set()
     for m in _ASSIGN_TARGET_RE.finditer(combined):
@@ -1954,6 +1954,7 @@ class UnityProjectGenerator:
                 description="Singleton procedural mesh factory"))
 
         palette   = schema.color_palette  # always non-None after model_validator
+        assert palette is not None
         lighting  = _LIGHTING_BY_STYLE.get(schema.visual_style,
                                            _LIGHTING_BY_STYLE["stylized"])
         bg        = _unity_color(palette.background)

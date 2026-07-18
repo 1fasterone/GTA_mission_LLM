@@ -112,7 +112,7 @@ from rich.table import Table
 # Windows cp1252 pipe — same guard as blender_cli.py.
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr,attr-defined]
     except Exception:  # noqa: BLE001
         pass
 
@@ -473,6 +473,7 @@ def unity_path(
         else:
             spec = points if points is not None else None
             if spec is None:
+                assert file is not None, "exactly one of --points/--file/--image is guaranteed above"
                 if not file.exists():
                     console.print(f"[red]Error:[/] file not found: {file}")
                     raise typer.Exit(1)

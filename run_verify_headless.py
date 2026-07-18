@@ -23,7 +23,10 @@ from src.blender.locator import find_blender
 
 ROOT = Path("output/blender/_verify").resolve()
 SCRIPTS = ROOT / "_scripts"
-BL = str(find_blender(None).path)
+_blender = find_blender(None)
+if _blender is None:
+    raise SystemExit("No Blender install found — cannot run headless verification.")
+BL = str(_blender.path)
 INDEX = json.loads((ROOT / "index.json").read_text(encoding="utf-8"))
 
 

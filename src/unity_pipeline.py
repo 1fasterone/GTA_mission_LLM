@@ -868,8 +868,8 @@ class UnityPipeline:
         if schema.entities:
             try:
                 from .unity_sketchfab_translator import translate_concept
-                _seed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
-                        else (seed or 0))
+                _llm_seed = getattr(self.llm, "seed", None)
+                _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
                 n = translate_concept(concept, schema.entities, self.llm, _seed)
                 if n:
                     self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
@@ -947,8 +947,8 @@ class UnityPipeline:
                           "follower": "follower", "cutscene": "quest"}
                 try:
                     from .audio.dialog_resolver import extract_dialog_lines
-                    _dseed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
-                              else (seed or 0))
+                    _llm_seed = getattr(self.llm, "seed", None)
+                    _dseed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
                     _dialog_count = int(self.config.get("audio", {}).get("dialog_lines", 12))
                     for _sub in _npc_subs:
                         _spk = _sub.options.get("speaker_name", "NPC")
@@ -984,8 +984,8 @@ class UnityPipeline:
                 try:
                     from .unity_sketchfab_collection import collect_models
                     from .sketchfab_client import SketchfabClient
-                    _cseed = (int(self.llm.seed) if getattr(self.llm, "seed", None) is not None
-                              else (seed or 0))
+                    _llm_seed = getattr(self.llm, "seed", None)
+                    _cseed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
                     self._sketchfab_collection = collect_models(
                         concept, self.llm, client=SketchfabClient(_coll_cfg),
                         sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
@@ -1023,7 +1023,8 @@ class UnityPipeline:
                 #    without needing a live LLM (it's unloaded a few lines below).
                 try:
                     from .audio.resolver import extract_cues as _extract_audio_cues
-                    _seed = int(self.llm.seed) if getattr(self.llm, "seed", None) is not None else (seed or 0)
+                    _llm_seed = getattr(self.llm, "seed", None)
+                    _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
                     _pre_cues = _extract_audio_cues(concept, self.llm, n=10, seed=_seed)
                     if _pre_cues:
                         self._ok(f"Pre-extracted {len(_pre_cues)} diegetic audio cues from concept")

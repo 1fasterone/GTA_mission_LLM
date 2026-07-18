@@ -21,10 +21,6 @@ jobs:
   typecheck:
     name: Type check (mypy)
     runs-on: ubuntu-latest
-    # Advisory only: the codebase predates mypy and has a backlog of pre-existing
-    # errors. This job reports them without blocking merge until the backlog is
-    # cleared; flip continue-on-error to false once `mypy src main.py` is clean.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

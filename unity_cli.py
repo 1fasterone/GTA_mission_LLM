@@ -49,7 +49,7 @@ import yaml
 # (default console code page is cp1252). Harmless if already UTF-8.
 for _stream in (sys.stdout, sys.stderr):
     try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr,attr-defined]
     except Exception:  # noqa: BLE001 — older Python / non-reconfigurable stream
         pass
 

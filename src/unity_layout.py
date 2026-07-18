@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 import random
+from typing import Sequence
 
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
 
@@ -96,7 +97,7 @@ def _find_slot(r: float, placed: list[tuple[float, float, float]]) -> tuple[floa
 
 
 def _pack_groups(entities: list[EntitySpec],
-                  seed_circles: list[tuple[float, float, float]] = ()
+                  seed_circles: Sequence[tuple[float, float, float]] = ()
                   ) -> dict[str, tuple[float, float, float]]:
     """Deterministic non-overlapping circle packing over each group's
     `group_radius`. Biggest footprints are placed first (stable tie-break by

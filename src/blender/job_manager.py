@@ -342,6 +342,7 @@ class BlenderJobManager:
                         rig_strategy_id: str = ""):
         """Run Blender headless on one job via the SAME recipe-emitted script the
         live MCP backend uses (backend parity). Returns (rc, log_path, manifest|None)."""
+        assert self.blender is not None, "_invoke_blender requires a resolved Blender install"
         out_dir.mkdir(parents=True, exist_ok=True)
         # Identical to the live path, plus a tail that writes the manifest to disk.
         code = build_job_code(job, str(out_dir),
