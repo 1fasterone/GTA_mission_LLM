@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .job_schema import BlenderJob, TextureSpec, OutputSpec
+from .job_schema import BlenderJob, TextureSpec, OutputSpec, TextureSource
 
 
 # Geometry-nodes generators we ship recipes for (see scripts/run_job.py). An
@@ -71,7 +71,7 @@ def route_for(asset_type: str, style: str) -> str:
     return "blender"
 
 
-def _texture_source_for(route: str) -> str:
+def _texture_source_for(route: str) -> TextureSource:
     return "diffusion" if route == "diffusion" else "procedural"
 
 
@@ -96,8 +96,10 @@ def build_job(
     `rig`/`animations` default from the asset type: characters & creatures get
     rigged with a basic locomotion set unless the caller says otherwise.
     """
-    # Validate type/style first so routing sees the clamped values.
-    probe = BlenderJob(name=name, asset_type=asset_type, style=style)
+    # Validate type/style first so routing sees the clamped values. Passing a
+    # plain str here is intentional — the model's mode="before" validators
+    # clamp any unrecognized value down to a valid Literal at runtime.
+    probe = BlenderJob(name=name, asset_type=asset_type, style=style)  # type: ignore[arg-type]
     atype, astyle = probe.asset_type, probe.style
 
     route = route_for(atype, astyle)

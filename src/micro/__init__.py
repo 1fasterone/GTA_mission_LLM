@@ -1,5 +1,7 @@
 """Unity micro-generators — focused single-purpose tools on the shared pipeline."""
 
+from typing import Any
+
 from .controller    import ControllerPipeline,    ControllerSchema
 from .camera        import CameraRigPipeline,     CameraRigSchema
 from .physics       import PhysicsPipeline,       PhysicsSchema
@@ -53,8 +55,13 @@ __all__ = [
 ]
 
 
-# Registry used by the CLI to enumerate / spawn micro-generators.
-REGISTRY = {
+# Registry used by the CLI to enumerate / spawn micro-generators. Values are a
+# mix of MicroPipeline subclasses and the structurally-similar-but-unrelated
+# ModelPipeline (Blender-backed, no schema_cls/default_fix) — annotate loosely
+# so mypy doesn't widen the common type to `type[object]` (and flag every
+# attribute access on it) or misread heterogeneous subclasses as instantiating
+# an abstract base.
+REGISTRY: dict[str, type[Any]] = {
     "controller": ControllerPipeline,
     "camera":     CameraRigPipeline,
     "physics":    PhysicsPipeline,

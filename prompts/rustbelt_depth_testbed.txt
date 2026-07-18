@@ -1,0 +1,50 @@
+Rustbelt Depth Testbed — a third-person survival-scavenging game for PC, built to
+stress-test every micro-generator's prompt-specific behavior in one compose run.
+
+The player is a scrap runner surviving in an abandoned industrial rustbelt overrun by
+rusted sentry drones. Get in, loot the yard, get out before the drones swarm.
+
+SYSTEMS — each one below has a concrete, testable prompt-specific behavior. A
+generator that emits an empty shell instead of wiring this behavior in has failed:
+
+- Health: player has a rechargeable SHIELD layer on top of base HP — shield absorbs
+  damage first and regenerates after 4 seconds without taking a hit, base HP does not
+  regenerate and death only occurs once both are zero.
+- Inventory: scrap items stack up to 20 per slot and the player cannot pick up a new
+  item type once all 8 slots are full — picking up scrap while full should refuse the
+  pickup and fire an "inventory full" event instead of silently dropping it.
+- Objectives: track three parallel scavenging contracts at once, each with its own
+  progress counter (0 of N items found); completing any single contract should trigger
+  a distinct completion event carrying that contract's id, not a single generic
+  "objective complete" signal.
+- Interactable (pickup): scrap piles have a 1.5 second interact-hold duration before
+  the item is granted, and holding near an active sentry drone should cancel the
+  interact early.
+- Menu (pause): pausing should freeze the drone alert timers, not just Time.timeScale
+  — resuming must resync those timers so drones don't "catch up" during the pause.
+- HUD: a radial shield/health meter plus a per-contract mini progress bar for each of
+  the three active contracts, updating independently as each contract advances.
+- Camera: a vehicle-chase rig for the player's scrap cart with speed-based FOV kick —
+  FOV widens toward fov_sprint as the cart's current speed approaches its max speed.
+- Transition: a loading-bar transition between the yard and the extraction tunnel that
+  blocks input until the destination scene reports ready, not a fixed-duration fade.
+- Spawner: sentry drones spawn in escalating waves — each wave spawns more drones than
+  the last and waits for the previous wave's drones to drop below a threshold count
+  before starting the next wave.
+- Dialogue: the player's handler radios in three barks tied to game state — one when
+  a contract completes, one when shield breaks, one when the extraction door opens.
+- Behavior tree: sentry drones patrol between two points, but switch to chasing the
+  player only when a distance-based condition trips, and return to patrol once the
+  player leaves detection range for 3 seconds.
+- AI: drones use NavMesh patrol/chase behavior with an alert state shared between
+  nearby drones — one drone spotting the player should raise the alert state of
+  drones within a fixed radius.
+- Save/load: checkpoint on entering the extraction tunnel, storing which of the three
+  contracts were completed so a reload doesn't re-offer a finished contract.
+- Physics: scrap crates are destructible rigidbodies that fracture into smaller debris
+  pieces above an impact-force threshold, not a static collider.
+
+VISUAL STYLE: gritty realistic — rust, dust, sodium-vapor orange sky.
+RENDER PIPELINE: URP
+UNITY VERSION: 6000.0
+PLATFORM: PC

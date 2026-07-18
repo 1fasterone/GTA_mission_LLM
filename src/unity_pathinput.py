@@ -262,7 +262,7 @@ def trace_image(image_path: str, world_size: float = 160.0) -> list[list[float]]
         scale = _MAX_IMAGE_SIDE / max(img.size)
         img = img.resize((max(1, round(img.size[0] * scale)),
                           max(1, round(img.size[1] * scale))),
-                         Image.NEAREST)
+                         Image.Resampling.NEAREST)
     pixels = _threshold_pixels(img)
     if len(pixels) < 8:
         raise ValueError(f"no drawn line found in {image_path}")

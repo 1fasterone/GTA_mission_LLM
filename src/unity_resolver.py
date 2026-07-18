@@ -111,6 +111,7 @@ class UnityResolver:
 
     def _rag_resolve(self, description: str, unity_version: str) -> Optional[str]:
         """RAG attempt — returns a validated package id or None."""
+        assert self.rag is not None, "_rag_resolve requires use_rag (implies rag is set)"
         try:
             result = self.rag.resolve_package(description, unity_version)
         except Exception as exc:

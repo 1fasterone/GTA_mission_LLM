@@ -24,7 +24,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .mission_schema import MissionSchema, MissionStep, MissionVehicle, MissionObject
+from .mission_schema import MissionSchema, MissionStep, MissionVehicle, MissionObject, VehicleRole
 
 
 # ── Track selection ───────────────────────────────────────────────────────────
@@ -382,7 +382,7 @@ def apply_scaffold(schema: MissionSchema, arch: Archetype) -> list[str]:
     return msgs
 
 
-def _ensure_vehicle(schema: MissionSchema, *, description: str, role: str,
+def _ensure_vehicle(schema: MissionSchema, *, description: str, role: VehicleRole,
                     model: str, count: int = 1) -> None:
     if any(v.role == role for v in schema.vehicles):
         return

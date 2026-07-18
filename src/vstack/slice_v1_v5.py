@@ -17,6 +17,7 @@ See docs/specs/E2E_0001_SpawnWalkComplete.md and docs/specs/V1..V5.
 from __future__ import annotations
 
 import copy
+from typing import Any
 
 from src.vstack.canon import Q_ROT, chash, q
 
@@ -79,7 +80,7 @@ def build_slice(seed: int = 0x00000001, degrade: dict | None = None) -> dict:
     deform_hash = chash("v2.deform", deform)
 
     # ── Retarget: clip set + foot-plant event tracks ──────────────────────────
-    anim = {
+    anim: dict[str, Any] = {
         "clips": [
             {"role": "idle", "name": "Idle", "events": []},
             {"role": "walk", "name": "Walk_Forward",
@@ -119,7 +120,7 @@ def build_slice(seed: int = 0x00000001, degrade: dict | None = None) -> dict:
 
     # ── V3-P3: scene (1 cell, 1 spawn, 1 target volume) ───────────────────────
     spawn = {"id": "P_spawn", "pos_q": [0, 0, 0]}
-    target = {"id": "T_target", "center_q": [0, 0, q(5.0)], "radius_q": q(0.5)}
+    target: dict[str, Any] = {"id": "T_target", "center_q": [0, 0, q(5.0)], "radius_q": q(0.5)}
     scene = {
         "partition": {"type": "grid", "cell_q": q(64.0), "origin_q": [0, 0, 0]},
         "instances": [{"entity": entity_hash, "instance_id": "guard_0",
@@ -186,7 +187,7 @@ def build_slice(seed: int = 0x00000001, degrade: dict | None = None) -> dict:
     })
 
     # ── V5: simulation spec ───────────────────────────────────────────────────
-    sim_spec = {
+    sim_spec: dict[str, Any] = {
         "clock": {"hz": 30, "calendar": ["hour", "day"]},
         "tick_barrier": "double_buffer_read_Nminus1_write_N",
         "systems": [],   # no factions/ecology/economy/weather in the minimal slice

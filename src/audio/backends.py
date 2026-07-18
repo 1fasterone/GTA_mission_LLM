@@ -228,6 +228,7 @@ def make_audio_client(config: dict) -> CachingClient:
     """
     cfg = (config or {}).get("audio", {})
     backend = str(cfg.get("backend", "dsp")).strip().lower()
+    adapter_cls: type[_NoneAdapter]
     if backend == "stable3":
         from .stable3_backend import Stable3AudioAdapter  # lazy — avoids torch at startup
         adapter_cls = Stable3AudioAdapter
@@ -261,6 +262,7 @@ def make_tts_client(config: dict) -> CachingClient:
     """
     cfg     = (config or {}).get("audio", {})
     backend = str(cfg.get("tts_backend", "kokoro")).strip().lower()
+    adapter: TtsOnly
     if backend == "higgs":
         from .higgs import HiggsAdapter    # lazy — avoids torch at startup
         adapter = HiggsAdapter(config)

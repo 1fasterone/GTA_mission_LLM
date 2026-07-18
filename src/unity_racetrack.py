@@ -198,6 +198,7 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
                                    max(4.0, _HALF_LENGTH - _TRACK_WIDTH / 2 - _BARRIER_MARGIN),
                                    max(1.0, _CORNER_RADIUS - _TRACK_WIDTH / 2 - _BARRIER_MARGIN))
     else:
+        assert centerline is not None, "custom is only True when centerline was provided"
         centerline = [list(p) for p in centerline]
         rail = width / 2 + _BARRIER_MARGIN
         side_a = _offset_polyline(centerline, rail)

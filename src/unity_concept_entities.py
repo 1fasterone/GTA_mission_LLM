@@ -22,10 +22,20 @@ prose, which already paraphrases specific names away.
 from __future__ import annotations
 
 import re
+from typing import TypedDict
 
 from .unity_asset_catalog import tokenize
 from .unity_entity_asset_resolver import _STOPWORDS
 from .unity_schema import EntitySpec
+
+
+class _KindDefaults(TypedDict):
+    shape: str
+    placement: str
+    count: int
+    scale: float
+    tag: str
+    color_role: str
 
 # A line that is ALL-CAPS (allowing digits/spaces/&/'/- ) marks the next
 # section header in the structured-brief format (see unity_pipeline.py's
@@ -37,7 +47,7 @@ _KIND_PAREN_RE = re.compile(r"\(kind:\s*([^)]+)\)", re.IGNORECASE)
 # Deterministic per-kind defaults for a rescued entity. Anything not listed
 # falls back to _DEFAULT_KIND — a single centered placeholder, the same
 # conservative default EntitySpec itself uses.
-_KIND_DEFAULTS = {
+_KIND_DEFAULTS: dict[str, _KindDefaults] = {
     "collectible": dict(shape="sphere", placement="scatter", count=12,
                         scale=0.5, tag="Collectible", color_role="accent"),
     "prop":        dict(shape="cube",   placement="scatter", count=6,
@@ -47,7 +57,7 @@ _KIND_DEFAULTS = {
     "obstacle":    dict(shape="cylinder", placement="scatter", count=8,
                         scale=0.6, tag="Untagged", color_role="accent"),
 }
-_DEFAULT_KIND = dict(shape="cube", placement="single", count=1,
+_DEFAULT_KIND: _KindDefaults = dict(shape="cube", placement="single", count=1,
                      scale=1.0, tag="Untagged", color_role="secondary")
 
 _RIVAL_WORDS_RE = re.compile(r"\b(rival|enemy|opponent|ai)\b", re.IGNORECASE)

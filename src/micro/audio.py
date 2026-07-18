@@ -20,6 +20,7 @@ AudioVariant = Literal[
 VARIANTS = list(AudioVariant.__args__)   # type: ignore[attr-defined]
 
 AudioCategory = Literal["music", "sfx", "ambient", "voice"]
+_ALL_CATEGORIES: tuple[AudioCategory, ...] = ("music", "sfx", "ambient", "voice")
 CUE_KINDS = ("auto", "synth", "gen", "tts", "library")
 
 
@@ -77,7 +78,7 @@ class AudioSchema(CodeExtensibleSchema):
     name:                 str  = "AudioBank"
     variant:              str  = "categorical_mixer"
     categories:           list[AudioCategory] = Field(
-        default_factory=lambda: ["music", "sfx", "ambient", "voice"])
+        default_factory=lambda: list(_ALL_CATEGORIES))
     bank_clip_count_hint: int  = 16
     pool_size:            int  = 8
     mixer_groups:         list[str] = Field(default_factory=lambda: ["Master", "Music", "SFX"])

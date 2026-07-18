@@ -385,7 +385,7 @@ class ControllerPipeline(UnityMicroPipeline):
 
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.InputSystem", "System.Collections"}
 
-    def default_fix(self, schema: ControllerSchema, variant: str) -> ControllerSchema:
+    def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "MovementController")
 
         # Variant-specific ability pruning
@@ -489,7 +489,7 @@ class ControllerPipeline(UnityMicroPipeline):
 
         return schema
 
-    def write_files(self, schema: ControllerSchema, variant: str, out_dir: Path) -> int:
+    def write_files(self, schema, variant, out_dir: Path) -> int:
         env = self.jinja()
         scripts_dir = out_dir / "Scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)

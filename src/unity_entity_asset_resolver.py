@@ -301,12 +301,12 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
             weights[t] = min(weights[t], 0.1)
     # Singular/plural bridging for strong tokens: entity names are usually
     # plural ("PineTrees") while catalog keywords are singular ("tree").
-    for t, w in list(weights.items()):
-        if w >= _STRONG_HIT:
-            if t.endswith("s") and len(t) > 3:
-                weights.setdefault(t[:-1], w)
+    for tok, weight in list(weights.items()):
+        if weight >= _STRONG_HIT:
+            if tok.endswith("s") and len(tok) > 3:
+                weights.setdefault(tok[:-1], weight)
             else:
-                weights.setdefault(t + "s", w)
+                weights.setdefault(tok + "s", weight)
     return weights
 
 
@@ -487,6 +487,10 @@ def resolve_entity_assets(schema,
             racing_core_seen = True
 
         src = _entry_source(pick, asset_root)
+        if src is None:
+            # Catalog entry points at a file that no longer exists on disk —
+            # treat as unresolved rather than crash on src.resolve() below.
+            return None
         category = (pick.get("category") or "prop").capitalize()
         is_sprite = pick.get("format") == "png"
         if pick.get("source") == "sketchfab":
