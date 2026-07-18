@@ -16,11 +16,13 @@ function refreshNavActive() {
   $$(".nav").forEach((n) => {
     let on = n.dataset.section === active;
     if (on && n.dataset.pipeline) on = n.dataset.pipeline === PIPELINE;
+    if (on && n.dataset.cat) on = n.dataset.cat === CLI_CAT;
     n.classList.toggle("is-active", on);
   });
 }
 $$(".nav").forEach((n) => n.addEventListener("click", () => {
   if (n.dataset.pipeline) setPipeline(n.dataset.pipeline);
+  if (n.dataset.cat) setCliCategory(n.dataset.cat);
   if (n.dataset.section) showSection(n.dataset.section);
 }));
 
@@ -691,13 +693,13 @@ async function loadCliCommands() {
   renderCliList();
 }
 
+function setCliCategory(cat) {
+  CLI_CAT = cat;
+  $$(".pb-toolbar .seg[data-cat]").forEach((s) => s.classList.toggle("is-active", s.dataset.cat === cat));
+  renderCliList();
+}
 $$(".pb-toolbar .seg[data-cat]").forEach((seg) => {
-  seg.addEventListener("click", () => {
-    $$(".pb-toolbar .seg[data-cat]").forEach((s) => s.classList.remove("is-active"));
-    seg.classList.add("is-active");
-    CLI_CAT = seg.dataset.cat;
-    renderCliList();
-  });
+  seg.addEventListener("click", () => setCliCategory(seg.dataset.cat));
 });
 $("#cliSearch").addEventListener("input", renderCliList);
 
