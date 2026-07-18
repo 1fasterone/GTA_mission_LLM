@@ -1275,11 +1275,25 @@ C# RULES:
 - Pure C#, never Python. No "using" lines inside bodies — put them in extra_usings.
 - No braces around extra_methods bodies — the template adds them.
 - Reference your own extra_fields by name; they become private members.
-- If the prompt has no special behavior, leave every extra_* empty.
+- Every prompt has SOME prompt-specific behavior — the brief you were given
+  describes it. Author at least one extra_field and one extra_method (or
+  awake_extra/update_extra statements) that implement it; do not fall back to
+  an empty shell. Only leave an extra_* empty when that specific piece truly
+  does not apply (e.g. no per-frame behavior needed → update_extra stays "").
 
-Add these keys to your JSON output (alongside the structural keys):
-  "extra_usings": [], "extra_fields": [], "awake_extra": "",
-  "update_extra": "", "fixed_update_extra": "", "extra_methods": []
+Add these keys to your JSON output (alongside the structural keys), authored
+to reflect THIS prompt — the following is only a shape example, not a value
+to copy verbatim:
+  "extra_usings": ["UnityEngine.Events"],
+  "extra_fields": [
+    {{"name": "_cooldown", "type": "float", "default": "0f", "header": "Runtime"}}
+  ],
+  "awake_extra": "",
+  "update_extra": "if (_cooldown > 0f) _cooldown -= Time.deltaTime;",
+  "fixed_update_extra": "",
+  "extra_methods": [
+    {{"signature": "private bool IsReady()", "body": "return _cooldown <= 0f;"}}
+  ]
 """
 
 
@@ -1381,9 +1395,24 @@ SHVDN RULES:
 - No braces around extra_methods bodies — the template adds them.
 - OnTick fires many times per SECOND — accumulate Game.LastFrameTime for any
   per-second meter/countdown instead of decrementing every tick.
-- If the prompt has no special behavior, leave every extra_* empty.
+- Every prompt has SOME prompt-specific behavior — the brief you were given
+  describes it. Author at least one extra_field and one extra_method (or
+  on_start_extra/on_tick_extra statements) that implement it; do not fall
+  back to an empty shell. Only leave an extra_* empty when that specific
+  piece truly does not apply (e.g. nothing to do at unload → on_abort_extra
+  stays "").
 
-Add these keys to your JSON output (alongside the structural keys):
-  "extra_usings": [], "extra_fields": [], "on_start_extra": "",
-  "on_tick_extra": "", "on_abort_extra": "", "extra_methods": []
+Add these keys to your JSON output (alongside the structural keys), authored
+to reflect THIS prompt — the following is only a shape example, not a value
+to copy verbatim:
+  "extra_usings": ["System.Linq"],
+  "extra_fields": [
+    {{"name": "_cooldown", "type": "int", "default": "0", "tooltip": "ticks remaining"}}
+  ],
+  "on_start_extra": "",
+  "on_tick_extra": "if (_cooldown > 0) _cooldown--;",
+  "on_abort_extra": "",
+  "extra_methods": [
+    {{"signature": "private bool IsReady()", "body": "return _cooldown <= 0;"}}
+  ]
 """
