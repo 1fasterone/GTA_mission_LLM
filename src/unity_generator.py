@@ -1842,6 +1842,18 @@ class UnityProjectGenerator:
             for e in schema.entities:
                 if e.behavior and e.behavior not in known:
                     e.behavior = ai_fallback if e.kind == "enemy" else ""
+                # LLM schema-fill routinely leaves `behavior` blank entirely
+                # (copies the prompt's own empty-string example verbatim —
+                # same failure mode as PR#75's extra_* fields) even for
+                # kind="enemy" entities whose concept explicitly describes
+                # patrol/chase AI. Live-caught on RustbeltDepthTestbed: six
+                # "SentryDrones" with kind="enemy" and behavior="" never got
+                # EnemyAI attached at spawn — inert props, not enemies.
+                # Backfill from the same composed AI class the line above
+                # already resolves, so an enemy entity is never silently
+                # left with no AI just because the LLM left the field empty.
+                elif not e.behavior and e.kind == "enemy" and ai_fallback:
+                    e.behavior = ai_fallback
 
         # ── Kenney asset resolution ───────────────────────────────────────────
         kenney_assets = resolve_assets(schema, lookups_dir=lookups_dir,
@@ -2159,7 +2171,8 @@ class UnityProjectGenerator:
             # Ground plane sized to THIS scene's hosted entity groups (a
             # scene-filtered subset per SceneSpec.entities) rather than a
             # fixed constant — see src/unity_layout.py:terrain_bounds.
-            _gxmin, _gzmin, _gxmax, _gzmax = terrain_bounds(ctx["entities"])
+            _gxmin, _gzmin, _gxmax, _gzmax = terrain_bounds(
+                ctx["entities"], getattr(schema, "locomotion", "walk"))
             ctx["ground_center_x"] = round((_gxmin + _gxmax) / 2.0, 3)
             ctx["ground_center_z"] = round((_gzmin + _gzmax) / 2.0, 3)
             ctx["ground_scale_x"]  = round(max(1.0, _gxmax - _gxmin), 3)

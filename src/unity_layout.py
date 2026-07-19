@@ -38,6 +38,15 @@ _SCATTER_JITTER = 0.3
 # MainMenu), and the margin added around every scene's measured content.
 _DEFAULT_GROUND_HALF = 10.0
 _GROUND_MARGIN = 8.0
+# Live-caught on RustbeltDepthTestbed (locomotion="drive"): an 8-unit margin
+# is sized for a walking player wandering near the props it was measured
+# from, not a vehicle. A WheelCollider car reaches highway speeds within
+# seconds of any throttle (observed 137 km/h after 6s of sustained torque)
+# and crossed the entire 8-unit margin, and kept going into the void past
+# the ground plane's edge, well within normal play. "fly" locomotion covers
+# ground faster still. Both get a much larger margin; "walk"/"swim" keep the
+# original value byte-identical.
+_GROUND_MARGIN_BY_LOCOMOTION = {"drive": 60.0, "fly": 100.0}
 # Extra radius added to a path route's cross-track half-width when building
 # the corridor of seed circles the packer must keep other groups out of.
 _PATH_CLEARANCE = 2.0
@@ -394,12 +403,19 @@ def compute_layout(schema: UnitySchema) -> list[str]:
     return msgs
 
 
-def terrain_bounds(entities: list[EntitySpec]) -> tuple[float, float, float, float]:
+def terrain_bounds(entities: list[EntitySpec],
+                   locomotion: str = "walk") -> tuple[float, float, float, float]:
     """Axis-aligned world-space bounds (xmin, zmin, xmax, zmax) a scene's
     ground plane must cover to contain every entity group actually hosted by
-    that scene, plus a fixed margin. Falls back to a modest fixed footprint
-    when there's nothing to measure (e.g. MainMenu, which hosts no gameplay
-    entities) — replaces the previous unconditional 20x20 plane."""
+    that scene, plus a margin. Falls back to a modest fixed footprint when
+    there's nothing to measure (e.g. MainMenu, which hosts no gameplay
+    entities) — replaces the previous unconditional 20x20 plane.
+
+    `locomotion` widens the margin for vehicle/aircraft-speed players (see
+    _GROUND_MARGIN_BY_LOCOMOTION) — a fixed pedestrian-scale margin left a
+    drivable car able to cross it and drive off the ground plane within
+    normal play. Defaults to "walk" so existing callers are unaffected."""
+    margin = _GROUND_MARGIN_BY_LOCOMOTION.get(locomotion, _GROUND_MARGIN)
     pts: list[tuple[float, float]] = []
     for e in entities:
         if e.placement == "path" and e.path_points:
@@ -410,9 +426,9 @@ def terrain_bounds(entities: list[EntitySpec]) -> tuple[float, float, float, flo
             pts.append((cx - r, cz - r))
             pts.append((cx + r, cz + r))
     if not pts:
-        return (-_DEFAULT_GROUND_HALF, -_DEFAULT_GROUND_HALF,
-                _DEFAULT_GROUND_HALF, _DEFAULT_GROUND_HALF)
+        half = max(_DEFAULT_GROUND_HALF, margin)
+        return (-half, -half, half, half)
     xs = [p[0] for p in pts]
     zs = [p[1] for p in pts]
-    return (min(xs) - _GROUND_MARGIN, min(zs) - _GROUND_MARGIN,
-            max(xs) + _GROUND_MARGIN, max(zs) + _GROUND_MARGIN)
+    return (min(xs) - margin, min(zs) - margin,
+            max(xs) + margin, max(zs) + margin)

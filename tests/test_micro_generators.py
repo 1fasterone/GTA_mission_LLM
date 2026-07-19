@@ -1158,11 +1158,27 @@ class TestBehaviorReconciliation:
         assert "MadeUpThing" not in cs      # non-enemy unknown behavior cleared
 
 
-def test_subsystems_for_drive_uses_waypoint_ai():
+def test_subsystems_for_racing_genre_uses_waypoint_ai():
+    # waypoint_follow needs a "Waypoints" container, which only a path-placed
+    # racing scaffold ever emits — gated on genre=="racing" (the actual
+    # racing-game signal from unity_archetypes.py), not locomotion=="drive"
+    # alone. locomotion=="drive" only means the PLAYER uses a car to get
+    # around; it says nothing about whether ENEMIES should race a line.
+    # RustbeltDepthTestbed (drive locomotion, genre="universal", sentry-drone
+    # enemies with no waypoints at all) was live-caught getting
+    # "waypoint_follow" under the old locomotion-only gate — its drones had
+    # no Waypoints container to follow and never moved.
     from src.unity_compose import subsystems_for
-    subs = subsystems_for("3D", ["ai"], locomotion="drive")
+    subs = subsystems_for("3D", ["ai"], locomotion="drive", genre="racing")
     ai = next(s for s in subs if s.kind == "ai")
     assert ai.variant == "waypoint_follow"
+
+    # Same locomotion, non-racing genre -> patrol/chase AI, not waypoint-follow.
+    non_racing_drive_ai = next(
+        s for s in subsystems_for("3D", ["ai"], locomotion="drive", genre="universal")
+        if s.kind == "ai")
+    assert non_racing_drive_ai.variant == "navmesh_patrol"
+
     walk_ai = next(s for s in subsystems_for("3D", ["ai"], locomotion="walk")
                    if s.kind == "ai")
     assert walk_ai.variant == "navmesh_patrol"
