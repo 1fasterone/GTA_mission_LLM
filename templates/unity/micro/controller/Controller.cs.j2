@@ -265,6 +265,14 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
     // ═══ PUBLIC PROPERTIES ═══════════════════════════════════════════════════
+    /// <summary>Current speed in m/s — the one property every variant exposes,
+    /// for systems (e.g. engine audio) that read player speed via
+    /// GameContext.Instance.Get&lt;{{ s.name }}&gt;() regardless of controller kind.</summary>
+{% if variant.startswith("2d_") or variant.startswith("vehicle_") or variant == "aircraft" %}
+    public float CurrentSpeed => _rb != null ? _rb.linearVelocity.magnitude : 0f;
+{% else %}
+    public float CurrentSpeed => _velocity.magnitude;
+{% endif %}
 {% if not variant.startswith("vehicle_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
     /// <summary>Read by GameWiring each frame to push grounded state to FSM + Animator.</summary>
     public bool IsGrounded => _grounded;
