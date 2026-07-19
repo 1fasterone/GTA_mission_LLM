@@ -155,6 +155,8 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
     color_role: primary | secondary | accent | trim | background  (picks a palette color)
     count:      how many (e.g. 6 rivals → 6); tag: e.g. "Enemy" so AI/health find them
     behavior:   OPTIONAL — the PascalCase name of one of your `scripts` to attach to each
+      (leave "" for kind="enemy" and the compiler auto-attaches the composed AI script;
+      for any other kind, "" means no behavior script is attached)
     model_hint: 2-5 plain words naming the PHYSICAL OBJECT ("pine tree", "wooden ramp",
       "hanging banner") — matches the group to a real 3D model from the asset library,
       so choose words a model file would be named after. Set it on EVERY entity group.

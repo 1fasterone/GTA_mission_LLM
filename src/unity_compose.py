@@ -899,6 +899,17 @@ def subsystems_for(
     # two flat-2D controllers use Rigidbody2D.
     phys_variant = "rigidbody_2d" if gt in ("2d", "2d_topdown") else "rigidbody_3d"
 
+    # Physics body mass must match a vehicle controller's own mass, or the
+    # two Awake()s race for the same Rigidbody.mass and whichever runs last
+    # wins nondeterministically. Live-caught on RustbeltDepthTestbed: the
+    # physics micro's generic mass=1.0 default sometimes won over the
+    # vehicle_car controller's own 1200f, leaving a 1200kg-tuned suspension
+    # (35000 N/m springs) acting on a 1kg body — the car launched itself off
+    # the map on the very first ground contact. Matches Controller.cs.j2's
+    # own `variant.startswith("vehicle_")` mass (1200f); not a general
+    # cross-micro mass resolver, just this one already-known collision.
+    phys_opts: dict = {"mass": 1200.0} if ctrl.startswith("vehicle_") else {}
+
     # 2.5D's tilted/elevated follow camera needs a non-default offset (matches
     # the static camera preset already used for non-composed 2.5D projects —
     # see _CAMERA_PRESETS["2.5D"] in unity_generator.py: y=3, z=-8, ~21 deg
@@ -927,7 +938,7 @@ def subsystems_for(
         Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),
         Subsystem(kind="saveload",    variant="json_file",    target="systems", name="SaveSystem"),
         # Always-on: physics body, input reader, interactables, animator, triggers
-        Subsystem(kind="physics",     variant=phys_variant,   target="player",  name="PhysicsBody"),
+        Subsystem(kind="physics",     variant=phys_variant,   target="player",  name="PhysicsBody", options=phys_opts),
         Subsystem(kind="input",       variant=input_variant,  target="systems", name="InputReader"),
         Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable", options=dim_meta),
         Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator", options=anim_opts),
@@ -937,8 +948,18 @@ def subsystems_for(
 
     # Feature- AND content-driven additions
     if has_enemies:
-        ai_var = "waypoint_follow" if locomotion == "drive" else "navmesh_patrol"
-        ai_tgt = "asset"           if locomotion == "drive" else "world"
+        # locomotion=="drive" alone is not "this is a racing game" — it only
+        # means the PLAYER gets around by car. RustbeltDepthTestbed drives a
+        # scrap cart in a survival-scavenging game (genre="universal") whose
+        # concept explicitly wants sentry drones that patrol between two
+        # points and chase within a detection radius; locomotion=="drive"
+        # routed them to "waypoint_follow" (a race-rival AI that follows a
+        # "Waypoints" container only path-placement entities ever emit) —
+        # the drones had no waypoints to follow and just sat inert. Gate on
+        # the actual racing-game signal (genre, from the keyword classifier
+        # in unity_archetypes.py) instead.
+        ai_var = "waypoint_follow" if genre == "racing" else "navmesh_patrol"
+        ai_tgt = "asset"           if genre == "racing" else "world"
         subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=dim_meta))
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
