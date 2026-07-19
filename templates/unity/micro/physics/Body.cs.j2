@@ -56,7 +56,15 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 {% endif %}
         gameObject.layer = LayerMask.NameToLayer("{{ s.layer }}");
+{% if s.tag and s.tag != "Untagged" %}
         gameObject.tag   = "{{ s.tag }}";
+{% endif %}
+        // "Untagged" is this micro's own generic default, not necessarily
+        // this entity's real tag — a specialized sibling component (e.g. a
+        // vehicle_car controller assigning tag "Player") may already have
+        // set a meaningful tag before/after this Awake() runs; never
+        // downgrade it back to none just because this micro didn't ask for
+        // anything specific.
 {{ inject.lifecycle(s.awake_extra) }}
     }
 {% if s.update_extra %}
