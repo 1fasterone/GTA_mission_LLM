@@ -1996,6 +1996,29 @@ class TestComposedClassApiCoverage:
         _sanitize_composed_component_calls(s, [self._unit("PlayerAnimator")])
         assert "ForceIdlePose" not in s.update_extra
 
+    def test_var_bound_property_read_to_invented_member_stripped(self):
+        # Live bug (SkyRace2D): EngineSound.cs did
+        #   var pc = GameContext.Instance.Get<PlayerController>();
+        #   if (pc != null) { float speed = pc.currentSpeed; ... }
+        # currentSpeed is a bare PROPERTY READ (no trailing parens) through a
+        # bound variable — the var-bound regex used to require a trailing `(`
+        # so it only ever caught var-bound METHOD calls, never property reads,
+        # and this line reached Unity untouched (CS1061: no such member).
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            "var pc = GameContext.Instance.Get<PlayerController>(); "
+            "if (pc != null) { float speed = pc.currentSpeed; }")
+        _sanitize_composed_component_calls(s, [self._unit("PlayerController")])
+        assert "currentSpeed" not in s.update_extra
+
+    def test_var_bound_property_read_to_real_member_survives(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            "var pc = GameContext.Instance.Get<PlayerController>(); "
+            "if (pc != null) { float speed = pc.CurrentSpeed; }")
+        _sanitize_composed_component_calls(s, [self._unit("PlayerController")])
+        assert "pc.CurrentSpeed" in s.update_extra
+
 
 # ── Undeclared self-reference: bare field/method the script never declared ────
 

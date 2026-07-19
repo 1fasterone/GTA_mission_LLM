@@ -436,6 +436,7 @@ _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
         "IsGrounded", "SpeedKmh", "ForwardSpeed", "SteerNormalized",
         "ThrottleNormalized", "WheelRadius", "ThrottleLevel", "AirSpeedKmh",
         "IsBlocking", "IsInvincible", "IsAiming", "CurrentAmmo", "IsReloading",
+        "CurrentSpeed",
     }),
     # Health.cs.j2 public surface — Die() is `private void Die()`, only reachable
     # indirectly via TakeDamage driving _current to 0 (hit live: OxygenManager.cs
@@ -514,6 +515,15 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
       - InventoryManager.cs: `var interact = GameContext.Instance.Get<
         WorldInteractable>(); ... interact.CanPickup(); ... interact.ItemName` —
         neither exists on WorldInteractable (CS1061 x2).
+      - EngineSound.cs (SkyRace2D): `var pc = GameContext.Instance.Get<
+        PlayerController>(); ... pc.currentSpeed` — a bare PROPERTY READ (no
+        trailing parens) through a bound variable. The var-bound regex below
+        used to require a trailing `(`, so it only ever caught var-bound
+        METHOD calls (`pc.GetSpeed()`), never property reads — this line
+        reached Unity untouched and was CS1061 (no such member; the real
+        template exposes CurrentSpeed). The direct chained-getter regex above
+        never had this gap (no trailing-paren requirement), so the two paths
+        must stay symmetric.
     Only checked for classes with a verified entry in _COMPOSED_CLASS_API;
     anything else is left alone rather than risk a false strip."""
     if not composed_units:
@@ -539,7 +549,10 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
         var_call_re = None
         if var_types:
             var_alt = "|".join(re.escape(v) for v in var_types)
-            var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)\s*\(")
+            # No trailing `(` requirement — must catch property/field READS
+            # (`pc.currentSpeed`) as well as method CALLS (`pc.GetSpeed()`),
+            # same shape as chained_call_re above.
+            var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)")
         out = []
         for line in body.splitlines(keepends=True):
             bad = any(not _composed_member_ok(m.group(1), m.group(2))

@@ -980,19 +980,34 @@ class UnityPipeline:
             self._sketchfab_collection = None
             _coll_cfg = self.config.get("sketchfab", {}) or {}
             if _coll_cfg.get("enabled") and _coll_cfg.get("collect", True) and concept:
-                try:
-                    from .unity_sketchfab_collection import collect_models
-                    from .sketchfab_client import SketchfabClient
-                    _llm_seed = getattr(self.llm, "seed", None)
-                    _cseed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                    self._sketchfab_collection = collect_models(
-                        concept, self.llm, client=SketchfabClient(_coll_cfg),
-                        sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
-                        count=int(_coll_cfg.get("collection_count", 12)),
-                        seed=_cseed, log_ok=self._ok, log_warn=self._warn)
-                except Exception as _exc:  # noqa: BLE001
-                    self._warn(f"Sketchfab collection failed "
-                               f"({type(_exc).__name__}: {_exc})")
+                if schema.game_type == "2D":
+                    # Sketchfab is a 3D-model marketplace — fetch_and_freeze only
+                    # ever writes FBX. The per-entity Tier S resolver already
+                    # skips itself for 2D (unity_entity_asset_resolver.py: `not
+                    # is_2d`) so those FBX never get matched to an entity; this
+                    # batch step was the one place that gate was missing, and it
+                    # unconditionally downloaded + Blender-converted 10-15 FBX
+                    # models into Assets/Models/Sketchfab/ for a 2D game that
+                    # can only use PNG sprites (Kenney catalog) or its own kind
+                    # default models — wasted network/Blender time and orphaned
+                    # files. Skip the whole step for 2D instead.
+                    self._warn("Sketchfab collection skipped — 2D game "
+                               "(Sketchfab only yields 3D FBX; 2D sprites come "
+                               "from the Kenney PNG catalog instead)")
+                else:
+                    try:
+                        from .unity_sketchfab_collection import collect_models
+                        from .sketchfab_client import SketchfabClient
+                        _llm_seed = getattr(self.llm, "seed", None)
+                        _cseed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
+                        self._sketchfab_collection = collect_models(
+                            concept, self.llm, client=SketchfabClient(_coll_cfg),
+                            sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
+                            count=int(_coll_cfg.get("collection_count", 12)),
+                            seed=_cseed, log_ok=self._ok, log_warn=self._warn)
+                    except Exception as _exc:  # noqa: BLE001
+                        self._warn(f"Sketchfab collection failed "
+                                   f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
         try:
