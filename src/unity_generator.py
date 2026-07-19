@@ -103,15 +103,26 @@ _ATMOSPHERE_WORDS = frozenset({
 
 
 def wants_atmosphere(schema) -> bool:
-    """Deterministic gate: 3D URP project whose concept implies a real sky."""
+    """Deterministic gate: 3D URP project whose concept implies a real sky.
+
+    Scans the compressed schema fields AND the original Step-2 inputs
+    (schema.meta["user_prompt"]/["concept"]) — the Step-2 LLM elaboration
+    routinely compresses a rich brief down to a terse schema.description
+    that drops style/atmosphere words the user actually wrote (e.g. "sky"),
+    which silently starved this gate even when the user's own prompt asked
+    for one. The raw prompt is the ground truth for what the user wants.
+    """
     if schema.render_pipeline != "URP" or schema.game_type not in ("3D", "VR"):
         return False
     if getattr(schema, "locomotion", "walk") == "fly":
         return True
+    meta = getattr(schema, "meta", None) or {}
     text = " ".join([
         schema.description or "",
         " ".join(schema.scenes or []),
         " ".join(sp.description or "" for sp in getattr(schema, "scene_specs", []) or []),
+        str(meta.get("user_prompt") or ""),
+        str(meta.get("concept") or ""),
     ]).lower()
     words = set(re.split(r"[^a-z]+", text))
     return bool(words & _ATMOSPHERE_WORDS)
@@ -2379,7 +2390,16 @@ class UnityProjectGenerator:
         if schema.render_pipeline in ("URP", "HDRP"):
             editor_tpl = "editor/SetupRenderPipeline.cs.j2"
             script_path = f"{pn}/Assets/Editor/SetupRenderPipeline.cs"
-            files[script_path] = self._render(editor_tpl, base_ctx)
+            # Projects that don't qualify for the full atmosphere feature
+            # (see wants_atmosphere()) still need SOMETHING better than the
+            # Built-in-RP "Default-Skybox" material, which URP renders flat/
+            # wrong and which feeds RenderSettings.ambientMode=Skybox with
+            # near-black GI — the scene looks lightless even with a normal
+            # directional light. When atmosphere IS shipping, its own runtime
+            # bootstrap owns sky/ambient, so this fallback stays off.
+            files[script_path] = self._render(editor_tpl, {
+                **base_ctx, "has_atmosphere": wants_atmosphere(schema),
+            })
             files[f"{script_path}.meta"] = _meta_file(
                 _make_guid(f"{pn}/Editor/SetupRenderPipeline")
             )

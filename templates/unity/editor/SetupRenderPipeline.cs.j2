@@ -65,6 +65,33 @@ public static class SetupRenderPipeline
         GraphicsSettings.defaultRenderPipeline = pipelineAsset;
         QualitySettings.renderPipeline       = pipelineAsset;
 
+{% if render_pipeline == "URP" and not has_atmosphere %}
+        // Scene starts with Unity's default "Default-Skybox" material, which
+        // is a Built-in-RP shader — URP renders it flat/incorrectly, and
+        // RenderSettings.ambientMode=Skybox then samples near-black GI from
+        // it, so the scene looks lightless even with a normal directional
+        // light. This project didn't opt into the full atmosphere feature
+        // (see wants_atmosphere()), so give it a neutral, URP-safe baseline
+        // instead of silently shipping a broken sky: try a URP procedural
+        // skybox shader if the project has one, else fall back to flat
+        // ambient so lighting is at least visible.
+        var proceduralShader = Shader.Find("Skybox/Procedural");
+        if (proceduralShader != null)
+        {
+            var skyMat = new Material(proceduralShader);
+            const string skyPath = "Assets/Settings/DefaultSkybox.mat";
+            AssetDatabase.CreateAsset(skyMat, skyPath);
+            RenderSettings.skybox = skyMat;
+            DynamicGI.UpdateEnvironment();
+        }
+        else
+        {
+            RenderSettings.skybox = null;
+            RenderSettings.ambientMode = AmbientMode.Flat;
+            RenderSettings.ambientLight = new Color(0.35f, 0.38f, 0.45f);
+        }
+{% endif %}
+
         // Models imported BEFORE this switch generated their materials against
         // the built-in pipeline (Standard shader — magenta/black under {{ render_pipeline }}).
         // Reimport them so material generation reruns under the now-active
