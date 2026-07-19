@@ -233,7 +233,7 @@ def _llm_pick_model(llm: LMStudioClient, description: str,
 class MissionPipeline:
     def __init__(self, config: dict):
         lm_cfg   = config["lm_studio"]
-        llm_cfg  = config["anythingllm"]
+        rag_cfg  = config.get("rag", {})
         pipe_cfg = config["pipeline"]
 
         self.llm = make_chat_client(config)
@@ -242,7 +242,7 @@ class MissionPipeline:
         self.resolver = ModelResolver(
             rag         = self.rag,
             lookups_dir = lookups_dir,
-            fallback    = llm_cfg.get("fallback_to_local", True),
+            fallback    = rag_cfg.get("fallback_to_local", True),
             use_rag     = not config.get("basic_mode", False) and self.rag is not None,
         )
         self.lookups = _load_lookups(lookups_dir)

@@ -7,7 +7,7 @@ Strategy
   Call 1 → concept story text
   Call 2 → schema JSON string
 
-• AnythingLLMClient.resolve_model is mocked to return None, forcing the
+• RagClient.resolve_model is mocked to return None, forcing the
   local lookup fallback.  All schema descriptions use synonyms present in
   the local lookup tables so every model resolves without a real RAG server.
 

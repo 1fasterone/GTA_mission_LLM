@@ -124,7 +124,7 @@ Each file has two sections:
 The flow at generation time (`src/resolver.py`):
 
 1. LLM produces a plain-English description: *"a biker thug in leather"*.
-2. RAG (if enabled) asks the AnythingLLM `llm_gta` workspace.
+2. RAG (if enabled) queries the local ChromaDB `gta5` domain.
 3. Falls back to the local `synonyms` table, then to a word-overlap search.
 4. The chosen model is **validated against `valid_models`** — if it's not
    in the stock list, the script falls back to `UNRESOLVED`.

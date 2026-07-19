@@ -100,46 +100,20 @@ CATALOG: list[ErrorEntry] = [
                "json parse error"],
     ),
     ErrorEntry(
-        id="rag_unauthorized",
-        title="AnythingLLM rejected the API key",
-        symptom="RAG calls fail with 401/403 Unauthorized.",
-        likely_cause="The AnythingLLM API key is missing or incorrect.",
+        id="rag_index_missing",
+        title="RAG index isn't built",
+        symptom="RAG status is red, or resolution silently falls back to plain "
+                "local lookups with no matches.",
+        likely_cause="The local ChromaDB index hasn't been built yet for this "
+                     "domain (gta5/unity), or the corpus was updated since the "
+                     "last build.",
         fix_steps=[
-            "In AnythingLLM: Settings → API Keys → generate a key.",
-            "Paste it into the AnythingLLM API key field in Settings and save.",
-            "Click Test Connection on RAG to confirm.",
+            "Run: python main.py rag-build            (gta5 corpus)",
+            "Run: python main.py rag-build --unity     (unity corpus)",
             "Or enable Basic Mode to skip RAG entirely and use local lookups.",
         ],
-        match=["401", "403", "unauthorized", "forbidden", "invalid api key"],
-    ),
-    ErrorEntry(
-        id="rag_workspace_missing",
-        title="AnythingLLM workspace not found",
-        symptom="RAG calls fail with 404, or the workspace light stays red even "
-                "though the server is up.",
-        likely_cause="The configured workspace slug doesn't exist yet.",
-        fix_steps=[
-            "Click 'Create pre-built workspace' in Settings to bootstrap the "
-            "'llm_gta' workspace and upload the asset documents.",
-            "Or create the workspace manually in AnythingLLM and set its slug "
-            "in Settings.",
-            "Or enable Basic Mode to skip RAG entirely.",
-        ],
-        match=["404", "not found", "workspace", "no workspace"],
-    ),
-    ErrorEntry(
-        id="rag_connection_refused",
-        title="AnythingLLM isn't running",
-        symptom="RAG status is red with a connection error.",
-        likely_cause="The AnythingLLM server isn't started, or its base URL is "
-                     "wrong.",
-        fix_steps=[
-            "Start AnythingLLM (default http://localhost:3001).",
-            "Confirm the AnythingLLM base URL in Settings.",
-            "RAG is optional — enable Basic Mode to generate using local lookup "
-            "tables only.",
-        ],
-        match=["anythingllm", "3001"],
+        match=["rag index", "index not built", "empty or not built",
+               "collection", "no such collection"],
     ),
 ]
 
@@ -150,7 +124,7 @@ _FALLBACK = ErrorEntry(
     symptom="Something failed that isn't in the known-issues catalog.",
     likely_cause="See the raw error detail for specifics.",
     fix_steps=[
-        "Check that both the chat backend and (if used) AnythingLLM are running.",
+        "Check that the chat backend (LM Studio/Ollama) is running.",
         "Re-run with the CLI `--debug` flag for full request/response logs.",
         "If RAG is the problem, enable Basic Mode to isolate the chat backend.",
     ],

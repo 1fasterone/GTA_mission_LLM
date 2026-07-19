@@ -41,7 +41,7 @@ python main.py serve
 The UI's sidebar has six pages:
 - **Prompt** — GTA / Unity toggle, theme, seed, prompt textarea, Custom Args (full flag list in Advanced), live progress, output panel with Copy-path / Open / ScriptHookV install reminder.
 - **LLM Settings** — Creativity / Detail / Complexity sliders that write to the real config keys.
-- **Backends** — pick **LM Studio** or **Ollama** (both OpenAI-compatible). AnythingLLM is **optional**; turn **Basic Mode** on to skip it and resolve assets from the bundled local lookups. Two workspace rows (GTA + Unity), each with its own light and Create button.
+- **Backends** — pick **LM Studio** or **Ollama** (both OpenAI-compatible). RAG (local ChromaDB index) is **optional**; turn **Basic Mode** on to skip it and resolve assets from the bundled local lookups. Two index rows (GTA + Unity), each with its own status light.
 - **Library** — every saved output, with star ratings, "Share" (copy path), "Open" (reveal in Explorer), and the captured LLM concept story under each row.
 - **Tutorial** — first-run walkthrough.
 - **Errors & Fixes** — searchable catalog mapping real failure signatures to actionable steps.
@@ -52,10 +52,10 @@ The UI's sidebar has six pages:
 
 - **Web UI** at `python main.py serve` (FastAPI + dark sidebar SPA).
 - **Ollama** supported alongside LM Studio (`lm_studio.backend: "ollama"` in `config.yaml`, or pick it in the UI).
-- **Basic Mode** — toggle in Backends; skips RAG and uses local lookups. AnythingLLM is no longer required for either pipeline.
-- **Unity RAG** — new `unity_workspace_slug` (default `llm_unity`) with bootstrap from `rag_docs/unity/*.txt`; `UnityResolver` now does RAG-first / local-fallback.
+- **Basic Mode** — toggle in Backends; skips RAG and uses local lookups.
+- **Unity RAG** — local ChromaDB `unity` domain built from `rag/corpus/unity/*.jsonl`; `UnityResolver` does RAG-first / local-fallback.
 - **Library** captures the LLM's Step-2 concept story alongside every saved output (GTA: in `schema.meta.concept`; Unity: in a `.concept.txt` sidecar inside the project).
-- **`python main.py rag-status`** — prints per-workspace doc count and embedding state.
+- **`python main.py rag-status`** — prints per-domain index status (gta5 + unity).
 - **Smoke gate** — `pytest -m smoke` runs a real-output structural check on everything under `output/` (see `docs/TESTING.md`).
 
 ---
@@ -97,7 +97,7 @@ The LLM never touches Step 4-6. The same schema can be recompiled instantly with
 |---|---|---|
 | Python 3.11+ | Runtime | [python.org](https://python.org) |
 | [LM Studio](https://lmstudio.ai) **or** [Ollama](https://ollama.com) | Local LLM inference | Required for both pipelines (pick one) |
-| [AnythingLLM](https://anythingllm.com) | RAG for sharper GTA + Unity asset resolution | **Optional** — turn on Basic Mode in the UI to skip it |
+| Local RAG index (`python main.py rag-build`) | ChromaDB index for sharper GTA + Unity asset resolution | **Optional** — turn on Basic Mode in the UI to skip it |
 
 **Recommended model:** Qwen3 8B or similar instruction-tuned model loaded in LM Studio.
 
@@ -129,21 +129,13 @@ Open LM Studio, load a model, and start the local server on port `1234` (the def
 lm_studio:
   base_url: "http://localhost:1234/v1"
   model: "your-loaded-model-name"   # must match exactly what LM Studio shows
-
-anythingllm:
-  base_url: "http://localhost:3001"
-  api_key: "your-api-key"           # Settings → API Keys in AnythingLLM
-  workspace_slug: "your-workspace"  # the slug from the workspace URL
 ```
 
-> ⚠️ **Keep your API key out of version control.** Copy `config.yaml` to `config.local.yaml` and add it to `.gitignore`, or set the values via environment variables (see `.env.example`).
-
-### 3 — Upload GTA RAG documents (GTA pipeline only)
-
-AnythingLLM needs the asset lookup documents loaded into your workspace once:
+### 3 — Build the local RAG index (optional, sharper asset resolution)
 
 ```bash
-python main.py setup-rag
+python main.py rag-build            # gta5 corpus
+python main.py rag-build --unity    # unity corpus
 ```
 
 ---
@@ -495,11 +487,9 @@ lm_studio:
   concept_temperature: 0.85              # higher creativity for story step
   schema_temperature:  0.2               # lower for JSON accuracy
 
-anythingllm:
-  base_url:         "http://localhost:3001"
-  api_key:          "your-key"
-  workspace_slug:   "your-workspace"
-  fallback_to_local: true               # use local lookups if RAG is unavailable
+rag:
+  fallback_to_local: true               # use local lookups if RAG index is unavailable
+  # index_dir: rag/index                # optional override for the ChromaDB path
 
 pipeline:
   output_dir:    "output"               # where .3.cs files are written
@@ -523,11 +513,11 @@ logging:
 
 The GTA pipeline resolves plain-English descriptions to GTA5 model IDs in two passes:
 
-1. **RAG (AnythingLLM)** — queries the uploaded lookup documents for an exact model name
+1. **RAG (local ChromaDB index)** — vector search over `rag/corpus/gta5/*.jsonl` for an exact model name
 2. **Local lookup tables** — `lookups/peds.json`, `lookups/vehicles.json`, `lookups/objects.json` with synonym maps
 3. **LLM fallback** — if both fail, asks the LLM to pick the closest model from the valid list
 
-`fallback_to_local: true` means the pipeline always produces output even when AnythingLLM is down.
+`fallback_to_local: true` means the pipeline always produces output even when the RAG index isn't built.
 
 ### Unity
 
@@ -609,7 +599,7 @@ GTA_mission_LLM/
 │   ├── unity_resolver.py      # Unity package resolver (local)
 │   ├── unity_asset_resolver.py
 │   ├── lm_studio_client.py    # OpenAI-compatible local LLM client
-│   ├── anythingllm_client.py  # RAG workspace client
+│   ├── backends.py            # Chat + RAG backend selection, health checks
 │   ├── prompts.py             # GTA5 LLM prompt templates
 │   └── unity_prompts.py       # Unity LLM prompt templates
 │
@@ -625,7 +615,10 @@ GTA_mission_LLM/
 │   └── unity/
 │       └── packages.json      # Unity Package Manager lookup table
 │
-├── rag_docs/                  # Documents uploaded to AnythingLLM
+├── rag/
+│   ├── corpus/                # gta5/ + unity/ RAG source corpora (.jsonl)
+│   ├── index/                 # local ChromaDB index (rag-build output)
+│   └── query.py                # RagClient — local vector search
 ├── prompts/                   # Reusable prompt files for --file flag
 │   └── neon_fugitive.txt      # Example: detailed Unity project brief
 │
@@ -642,8 +635,8 @@ GTA_mission_LLM/
 **LM Studio returns an empty response**  
 Check that a model is actually loaded and the server is running (`http://localhost:1234/v1`). Also check `temperature` in `config.yaml` — some models produce empty output at exactly `0.0`. The pipeline clamps to `0.05` minimum, but verify your config isn't overriding that.
 
-**AnythingLLM connection refused**  
-Make sure AnythingLLM is running on port `3001` and you've run `python main.py setup-rag` to upload the lookup documents. If RAG is down but `fallback_to_local: true` is set, the GTA pipeline will still work using the local lookup tables — just with less accurate model resolution.
+**RAG index not built / empty**  
+Run `python main.py rag-build` (gta5) and `python main.py rag-build --unity` (unity) to build the local ChromaDB index, then check with `python main.py rag-status`. If the index isn't built but `fallback_to_local: true` is set, the GTA pipeline will still work using the local lookup tables — just with less accurate model resolution.
 
 **"UNRESOLVED" models in the generated C# output**  
 The description didn't match anything in RAG or the local synonyms. Add your own synonym to the relevant lookup file (`lookups/peds.json`, `vehicles.json`, or `objects.json`) and regenerate. See [Extending → Add GTA5 asset synonyms](#add-gta5-asset-synonyms).

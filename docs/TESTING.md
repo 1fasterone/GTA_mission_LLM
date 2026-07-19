@@ -33,7 +33,6 @@ The smoke suite (`tests/test_outputs_smoke.py`) gates:
 | Unity: `ProjectVersion.txt` declares an editor    | Hub won't know which editor to use               |
 | Unity: 3D project scripts don't reference 2D physics types (`Collider2D`/`Rigidbody2D`/`Physics2D`), and vice-versa | URP CS1069 "type has been forwarded to assembly Physics2DModule." Silently breaks the entire scripts assembly; cascades into "duplicate fileID" + "prefab parser failure" errors on first open. Real-world catch from private beta. |
 | Unity: no manifest dep with version `"1.0.0"` (for `com.unity.*` packages) | Old generator fallback when no version was known; no current Unity official package ships at exactly 1.0.0, so it 404s on the registry and Unity refuses the entire manifest. Real-world catch from private beta. |
-| No leaked AnythingLLM API key in any output       | Distribution safety                              |
 
 If anything fails, **do not ship** until either the broken output is
 regenerated or removed from `output/`. Stale outputs from old template

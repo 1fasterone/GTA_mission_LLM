@@ -20,7 +20,7 @@ python -m venv .venv && . .venv/Scripts/activate    # (.venv/bin/activate on mac
 pip install -r requirements.lock
 cp config.example.yaml config.yaml                  # then set lm_studio.model (see step 3)
 ```
-AnythingLLM (RAG) is **optional** — leave it unconfigured to run in local-lookup mode.
+RAG (local ChromaDB index) is **optional** — skip `rag-build` to run in local-lookup mode.
 
 ## 3. Pick your model
 

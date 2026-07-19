@@ -19,7 +19,7 @@
       <span class="status-pill" id="pillChat" title="Chat backend connection">
         <span class="light light--unknown"></span><span class="pill-label">Chat</span>
       </span>
-      <span class="status-pill" id="pillRag" title="RAG / AnythingLLM connection">
+      <span class="status-pill" id="pillRag" title="RAG / local index connection">
         <span class="light light--unknown"></span><span class="pill-label">RAG</span>
       </span>
     </div>
@@ -134,7 +134,7 @@
             <button class="btn btn--primary" id="btnGenerate">Generate</button>
             <div class="inline-status" title="Backend readiness">
               <span class="inline-light"><span class="light light--unknown" id="lightInlineChat" title="Chat backend connection"></span>LLM</span>
-              <span class="inline-light"><span class="light light--unknown" id="lightInlineRag" title="RAG / AnythingLLM connection"></span>RAG</span>
+              <span class="inline-light"><span class="light light--unknown" id="lightInlineRag" title="RAG / local index connection"></span>RAG</span>
             </div>
             <span class="test-result" id="genStatus"></span>
           </div>
@@ -241,46 +241,27 @@
 
         <div class="card">
           <div class="card-head">
-            <h2>RAG — AnythingLLM</h2>
+            <h2>RAG — local index</h2>
             <span class="light light--unknown" id="lightRag" title="Live status"></span>
           </div>
-          <p class="help">Two workspaces: <code>llm_gta</code> for mission asset IDs,
-            <code>llm_unity</code> for Unity package IDs. Turn Basic Mode on to skip RAG.</p>
+          <p class="help">Local ChromaDB index over the gta5 + unity corpora
+            (<code>rag/corpus/</code>). Run <code>python main.py rag-build</code>
+            (and <code>--unity</code>) to build or refresh it. Turn Basic Mode on
+            to skip RAG entirely.</p>
 
           <label class="field field--toggle">
             <span>Basic Mode (RAG off)</span>
             <input id="cfgBasicMode" type="checkbox" />
           </label>
 
-          <label class="field">
-            <span>AnythingLLM base URL</span>
-            <input id="cfgRagUrl" type="text" placeholder="http://localhost:3001" />
-          </label>
-          <div class="grid2">
-            <label class="field">
-              <span>GTA workspace slug</span>
-              <input id="cfgRagSlug" type="text" placeholder="llm_gta" />
-            </label>
-            <label class="field">
-              <span>Unity workspace slug</span>
-              <input id="cfgRagSlugUnity" type="text" placeholder="llm_unity" />
-            </label>
-          </div>
-          <label class="field">
-            <span>API key <i class="tip" data-tip="AnythingLLM → Settings → API Keys. Leave blank to keep the stored key.">?</i></span>
-            <input id="cfgRagKey" type="password" placeholder="leave blank to keep stored key" />
-          </label>
-
           <div class="workspace-rows">
             <div class="workspace-row gta-only" data-ws="gta">
               <span class="light light--unknown" id="lightWsGta"></span>
-              <span class="ws-label">GTA workspace</span>
-              <button class="btn btn--ghost" data-setup="gta">Create</button>
+              <span class="ws-label">gta5 index</span>
             </div>
             <div class="workspace-row unity-only" data-ws="unity">
               <span class="light light--unknown" id="lightWsUnity"></span>
-              <span class="ws-label">Unity workspace</span>
-              <button class="btn btn--ghost" data-setup="unity">Create</button>
+              <span class="ws-label">unity index</span>
             </div>
           </div>
 

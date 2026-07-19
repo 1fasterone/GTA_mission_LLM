@@ -8,8 +8,8 @@
       "cta": { "label": "Open Backends", "section": "backends" }
     },
     {
-      "title": "2. (Optional) Create the RAG workspaces",
-      "body": "Asset resolution is sharper with AnythingLLM. With AnythingLLM running at :3001, click 'Create pre-built workspace' twice — once for the GTA5 workspace (llm_gta) and once for the Unity workspace (llm_unity). The RAG light turns green when both exist. If you don't want RAG, flip Basic Mode on and the project uses bundled local lookup tables instead.",
+      "title": "2. (Optional) Build the local RAG index",
+      "body": "Asset resolution is sharper with RAG. Run `python main.py rag-build` (gta5 corpus) and `python main.py rag-build --unity` (Unity corpus) to build the local ChromaDB index — no server or API key needed. The RAG light turns green once both domains are indexed. If you don't want RAG, flip Basic Mode on and the project uses bundled local lookup tables instead.",
       "cta": { "label": "Open Backends", "section": "backends" }
     },
     {

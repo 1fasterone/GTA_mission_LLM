@@ -1,6 +1,6 @@
 """
 Model name resolver — Step 4.
-Tries AnythingLLM RAG first; falls back to local lookup tables.
+Tries the local RAG index first; falls back to local lookup tables.
 """
 
 import json

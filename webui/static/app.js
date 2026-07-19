@@ -62,20 +62,19 @@ function applyStatus(status) {
   $("#pillRag").querySelector(".pill-label").textContent =
     rag.basic_mode ? "Basic" : "RAG";
 
-  // Per-workspace lights + doc counts
+  // Per-domain index lights
   const wsRow = (kind) => document.querySelector(`.workspace-row[data-ws="${kind}"]`);
   const setWsLabel = (kind, sub, basic) => {
     const row = wsRow(kind);
     if (!row) return;
     const labelEl = row.querySelector(".ws-label");
-    const base = kind === "gta" ? "GTA workspace" : "Unity workspace";
+    const base = kind === "gta" ? "gta5 index" : "unity index";
     if (basic) {
       labelEl.textContent = `${base} (Basic Mode)`;
     } else if (!sub?.present) {
-      labelEl.textContent = `${base} — missing`;
+      labelEl.textContent = `${base} — not built`;
     } else {
-      const n = sub.doc_count ?? 0;
-      labelEl.textContent = `${base} (${n} doc${n === 1 ? "" : "s"})`;
+      labelEl.textContent = `${base} — ready`;
     }
   };
 
@@ -85,10 +84,8 @@ function applyStatus(status) {
     setWsLabel("gta",   null, true);
     setWsLabel("unity", null, true);
   } else {
-    setLight($("#lightWsGta"),
-      rag.gta?.present ? (rag.gta?.doc_count ? "ok" : "warn") : "err");
-    setLight($("#lightWsUnity"),
-      rag.unity?.present ? (rag.unity?.doc_count ? "ok" : "warn") : "err");
+    setLight($("#lightWsGta"),   rag.gta?.present   ? "ok" : "err");
+    setLight($("#lightWsUnity"), rag.unity?.present ? "ok" : "err");
     setWsLabel("gta",   rag.gta,   false);
     setWsLabel("unity", rag.unity, false);
   }
@@ -110,7 +107,6 @@ async function loadConfig() {
   CURRENT_CFG = cfg;
   const lm = cfg.lm_studio || {};
   const ol = cfg.ollama || {};
-  const rag = cfg.anythingllm || {};
 
   // Backends page
   $("#cfgBackend").value = lm.backend || "lm_studio";
@@ -118,12 +114,6 @@ async function loadConfig() {
   $("#cfgLmModel").value = lm.model || "";
   $("#cfgOlUrl").value = ol.base_url || "";
   $("#cfgOlModel").value = ol.model || "";
-  $("#cfgRagUrl").value = rag.base_url || "";
-  $("#cfgRagSlug").value = rag.workspace_slug || "";
-  $("#cfgRagSlugUnity").value = rag.unity_workspace_slug || "";
-  $("#cfgRagKey").placeholder = rag.api_key_set
-    ? "•••• stored — leave blank to keep"
-    : "no key set";
   $("#cfgBasicMode").checked = !!cfg.basic_mode;
 
   // LLM Settings page — map ranges to real config values
@@ -166,17 +156,9 @@ $("#btnSaveBackends").addEventListener("click", async () => {
       base_url: $("#cfgOlUrl").value.trim(),
       model:    $("#cfgOlModel").value.trim(),
     },
-    anythingllm: {
-      base_url:             $("#cfgRagUrl").value.trim(),
-      workspace_slug:       $("#cfgRagSlug").value.trim(),
-      unity_workspace_slug: $("#cfgRagSlugUnity").value.trim(),
-    },
     basic_mode: $("#cfgBasicMode").checked,
   };
-  const key = $("#cfgRagKey").value.trim();
-  if (key) patch.anythingllm.api_key = key;
   await saveConfigPatch(patch, $("#saveBackendsNote"));
-  $("#cfgRagKey").value = "";
 });
 
 // Save LLM Settings page — slider values back-mapped to config keys
@@ -224,7 +206,7 @@ function renderTestResult(el, res, kind) {
       el.textContent = `Connected (${res.latency_ms}ms) — ${n} model(s)` +
         (n ? `: ${res.models.slice(0, 3).join(", ")}` : "");
     } else {
-      el.textContent = `Workspaces ready (${res.workspaces.join(", ")}).`;
+      el.textContent = "RAG index ready (gta5 + unity).";
     }
     return;
   }
@@ -252,25 +234,6 @@ async function testConn(target, btn, resultEl, kind) {
 }
 $("#btnTestChat").addEventListener("click", () => testConn("chat", $("#btnTestChat"), $("#resultChat"), "chat"));
 $("#btnTestRag").addEventListener("click", () => testConn("rag", $("#btnTestRag"), $("#resultRag"), "rag"));
-
-// Per-workspace bootstrap
-$$("[data-setup]").forEach((btn) => {
-  btn.addEventListener("click", async () => {
-    const target = btn.dataset.setup;
-    const el = $("#resultRag");
-    btn.disabled = true;
-    el.className = "test-result busy"; el.textContent = `Creating ${target} workspace…`;
-    try {
-      const res = await api(`/api/setup-workspace?target=${target}`, { method: "POST" });
-      el.className = res.ok ? "test-result ok" : "test-result err";
-      el.textContent = res.ok
-        ? `${target} workspace ready ✓`
-        : `Failed: ${JSON.stringify(res.results[target] || res, null, 0)}`;
-    } finally {
-      btn.disabled = false; refreshStatus();
-    }
-  });
-});
 
 // ── Prompt page: nested GTA / Unity / Micro toggle ────────────────────────────
 let MODES = { core: [], micro: {} };

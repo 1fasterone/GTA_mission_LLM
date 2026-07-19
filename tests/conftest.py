@@ -79,10 +79,7 @@ def gta_pipeline_config(tmp_path) -> dict:
             "concept_temperature":  0.85,
             "schema_temperature":   0.2,
         },
-        "anythingllm": {
-            "base_url":        "http://localhost:3001",
-            "api_key":         "test-key",
-            "workspace_slug":  "test-workspace",
+        "rag": {
             "fallback_to_local": True,
         },
         "pipeline": {
