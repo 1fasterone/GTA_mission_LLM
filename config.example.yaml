@@ -13,15 +13,8 @@ ollama:                            # used when lm_studio.backend == "ollama"
   base_url: http://localhost:11434/v1
   model: qwen2.5:7b               # must match a pulled tag (ollama pull <model>)
 
-anythingllm:
-  base_url: http://localhost:3001
-  api_key: ''                     # AnythingLLM → Settings → API Keys
-  workspace_slug: llm_gta         # GTA RAG workspace
-  unity_workspace_slug: llm_unity # Unity RAG workspace
-  fallback_to_local: true         # use bundled local lookups when RAG misses
-
 rag:
-  backend: local                   # "local" (ChromaDB/fastembed, no API) | "anythingllm" (legacy)
+  fallback_to_local: true         # use bundled local lookups when RAG misses
   # index_dir: rag/index           # optional override for ChromaDB path (default: rag/index/)
 
 basic_mode: false                  # true => skip RAG entirely; local lookups only
@@ -29,13 +22,11 @@ basic_mode: false                  # true => skip RAG entirely; local lookups on
 pipeline:
   output_dir: output
   lookups_dir: lookups
-  rag_docs_dir: rag_docs
   template_file: templates/mission.cs.j2
   minigame_template_file: templates/minigame.cs.j2
 
 unity_pipeline:
   lookups_dir: lookups
-  rag_docs_dir: rag_docs/unity
   unity_template_dir: templates/unity
   unity_output_dir: output/unity
   # Inject the MCP-for-Unity editor bridge (com.coplaydev.unity-mcp) into every

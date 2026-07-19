@@ -15,9 +15,9 @@ telemetry — everything runs locally on your machine.
 | ~6 GB free disk                                              | Python deps + a small LLM model                       |
 
 **Optional:**
-- [AnythingLLM](https://anythingllm.com) for sharper asset resolution. The
-  app works without it — turn on **Basic Mode** in the UI and you'll use the
-  bundled local lookup tables instead.
+- A local RAG index (`python main.py rag-build`) for sharper asset
+  resolution. The app works without it — turn on **Basic Mode** in the UI
+  and you'll use the bundled local lookup tables instead.
 
 For GTA testing, additionally:
 - [ScriptHookV](https://www.dev-c.com/gtav/scripthookv/)
@@ -51,8 +51,8 @@ The Tutorial tab will guide you, but in short:
 
 1. **Backends** page → pick LM Studio or Ollama, point at the right URL,
    click **Test Connection**. The LLM light up top turns green.
-2. **(Optional)** Hook up AnythingLLM the same way, then click **Create**
-   next to each workspace row to bootstrap the GTA + Unity RAG workspaces.
+2. **(Optional)** Run `python main.py rag-build` and `rag-build --unity` in
+   a terminal to build the local RAG index for both domains.
    If you skip this, turn **Basic Mode** on instead.
 3. **Prompt** page → pick GTA or Unity, type one sentence, hit **Generate**.
 4. Watch the live progress. When it's done, the panel shows the absolute
@@ -87,10 +87,9 @@ the structured place to check what failed.
 - No telemetry. The app never phones home.
 - The web UI is bound to `127.0.0.1` only — nothing exposes a port to your
   network unless you change the `--host` flag yourself.
-- The only outbound traffic is to your locally running LM Studio / Ollama /
-  AnythingLLM servers.
-- Your AnythingLLM API key lives in `config.yaml` and is masked in the
-  Backends page.
+- The only outbound traffic is to your locally running LM Studio / Ollama
+  server. RAG runs against a local ChromaDB index — no external server or
+  API key involved.
 
 ---
 

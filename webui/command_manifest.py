@@ -161,11 +161,6 @@ COMMANDS: list[Command] = [
         _opt("prompts_file", kind="path", positional=True, help="Text file, one GTA5 mission prompt per line"),
         _opt("config", "--config", "-c", "string", default="config.yaml"),
     ]),
-    _cmd("setup-rag", "gta", "GTA5 — Legacy / AnythingLLM",
-         "Upload GTA5 RAG documents to the AnythingLLM workspace.", [
-        _opt("config", "--config", "-c", "string", default="config.yaml"),
-    ]),
-
     # ── Unity — project ─────────────────────────────────────────────────────
     _cmd("unity-create", "unity", "Unity — Project",
          "Generate a complete Unity project folder from a plain-English prompt.", [
@@ -325,12 +320,8 @@ COMMANDS += [
         _opt("domain", "--domain", "-d", "choice", default="gta5", choices=["gta5", "unity", "shared"]),
         _opt("n", "--n", "-n", "int", default=5, help="Number of results"),
     ]),
-    _cmd("rag-status", "shared", "Shared — RAG / Legacy",
-         "Print doc count + status for the AnythingLLM workspaces (gta + unity).", [
-        _opt("config", "--config", "-c", "string", default="config.yaml"),
-    ]),
-    _cmd("setup-workspace", "shared", "Shared — RAG / Legacy",
-         "Bootstrap an AnythingLLM workspace.", [
+    _cmd("rag-status", "shared", "Shared — RAG",
+         "Print index status for the local RAG domains (gta5 + unity).", [
         _opt("config", "--config", "-c", "string", default="config.yaml"),
     ]),
     _cmd("atom-list", "shared", "Shared — Atoms",

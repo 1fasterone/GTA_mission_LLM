@@ -269,7 +269,7 @@ STEP 3: LLM fills MissionSchema JSON
 
 STEP 4: ModelResolver.resolve_schema()
   For peds, vehicles, objects, audio:
-    RAG (AnythingLLM) → local JSON lookup → "UNRESOLVED"
+    RAG (local ChromaDB index) → local JSON lookup → "UNRESOLVED"
   _dedup_models(): same description → same model;
                    different description + same model → find unused alternate
 
@@ -297,7 +297,7 @@ STEP 6: CodeGenerator renders mission.cs.j2 → output/<Name>.3.cs
 | Python | 3.10+ | Check: `python --version` |
 | LM Studio | Latest | Provides local LLM inference |
 | Ollama | Optional | Alternative LLM backend |
-| AnythingLLM | Optional | Enables RAG; pipeline works without it |
+| Local RAG index | Optional | Built via `rag-build`; pipeline works without it |
 | Unity Hub + Editor | 6.x+ recommended | For opening Unity output |
 | SHVDN3 | Latest | GTA5 output only |
 
@@ -358,20 +358,13 @@ python main.py unity-create "A racing game" --model mistral-7b
 
 ### RAG Setup (GTA5 recommended, Unity optional)
 
-RAG (Retrieval-Augmented Generation) improves asset name resolution by letting the system search your reference documents semantically.
+RAG (Retrieval-Augmented Generation) improves asset name resolution by letting the system search a local vector index built from `rag/corpus/`.
 
-**One-time workspace bootstrap:**
-
-```bash
-python main.py setup-workspace
-```
-
-This creates the AnythingLLM workspaces, sets query mode, and uploads your `rag_docs/` documents automatically.
-
-**Manual RAG document upload:**
+**One-time index build:**
 
 ```bash
-python main.py setup-rag
+python main.py rag-build            # gta5 corpus
+python main.py rag-build --unity    # unity corpus
 ```
 
 **Check RAG status:**
@@ -380,20 +373,17 @@ python main.py setup-rag
 python main.py rag-status
 ```
 
-Prints per-workspace document count and embedding status for both GTA5 and Unity workspaces.
+Prints per-domain index status for both GTA5 and Unity.
 
 **`config.yaml` RAG settings:**
 
 ```yaml
-anythingllm:
-  base_url: http://localhost:3001
-  api_key: YOUR_API_KEY
-  workspace_slug: llm_gta           # GTA5 workspace
-  unity_workspace_slug: unity        # Unity workspace
+rag:
   fallback_to_local: true            # Always produce output even without RAG
+  # index_dir: rag/index             # optional override for the ChromaDB path
 ```
 
-> **Tech Tip:** `fallback_to_local: true` means the pipeline never hard-fails due to a missing RAG connection. If AnythingLLM is unreachable or returns no match, resolution degrades to local JSON lookup tables. GTA5 has a final LLM fallback after that.
+> **Tech Tip:** `fallback_to_local: true` means the pipeline never hard-fails due to a missing RAG index. If the local index isn't built or returns no match, resolution degrades to local JSON lookup tables. GTA5 has a final LLM fallback after that.
 
 **Basic mode (no RAG at all):**
 
@@ -530,7 +520,7 @@ If `show_prompts: true` is set in `config.yaml`, the full concept text is printe
 For each package, resolution tries in order:
 
 1. If `package_id` is already a valid known ID → accept directly
-2. RAG search in the AnythingLLM Unity workspace (semantic similarity)
+2. RAG search in the local ChromaDB unity domain (semantic similarity)
 3. Local JSON lookup in `lookups/unity_packages.json` (exact → substring → fuzzy word-overlap)
 4. Skip with a `WARNING` log — the package is omitted but does not block output
 
@@ -738,7 +728,7 @@ The LLM fills a `MissionSchema` JSON at temperature `0.2`. Pydantic validates an
 
 **Resolution order for each entry:**
 
-1. RAG search in the AnythingLLM GTA5 workspace
+1. RAG search in the local ChromaDB gta5 domain
 2. Local JSON lookup: exact match → substring match → fuzzy word-overlap scoring
 3. `"UNRESOLVED"` (handled in Step 5)
 
@@ -1210,13 +1200,10 @@ ollama:
   base_url: http://localhost:11434/v1
   model: qwen2.5:7b
 
-# ── AnythingLLM / RAG ────────────────────────────────────────────────────
-anythingllm:
-  base_url: http://localhost:3001
-  api_key: YOUR_API_KEY
-  workspace_slug: llm_gta             # GTA5 workspace slug
-  unity_workspace_slug: unity         # Unity workspace slug
+# ── RAG (local ChromaDB index) ────────────────────────────────────────────
+rag:
   fallback_to_local: true             # Never hard-fail; degrade gracefully
+  # index_dir: rag/index              # optional override for the ChromaDB path
 
 # ── Global mode ──────────────────────────────────────────────────────────
 basic_mode: false             # true = local lookups only, skip RAG entirely
@@ -1360,17 +1347,14 @@ Fix: Enable `show_prompts: true` and `logging.level: DEBUG` to inspect the raw r
 
 ---
 
-### RAG / AnythingLLM Issues
+### RAG Issues
 
-**`rag-status` shows 0 documents**  
-Fix: Run `python main.py setup-workspace` to bootstrap the workspace and upload documents. Or manually upload your reference files in the AnythingLLM UI.
+**`rag-status` shows the index as not built**  
+Fix: Run `python main.py rag-build` (gta5) and `python main.py rag-build --unity` (unity) to build the local index.
 
 **RAG returns hallucinated / wrong model names**  
-Cause: Reference documents in the workspace don't contain the relevant entries.  
-Fix: Add authoritative reference documents to your workspace. Or switch to `basic_mode: true` and extend the local lookup tables.
-
-**AnythingLLM workspace not found**  
-Fix: Run `python main.py setup-workspace` which creates the workspace automatically. Or create it manually in the AnythingLLM UI and verify `workspace_slug` in `config.yaml` matches exactly.
+Cause: The corpus (`rag/corpus/`) doesn't contain the relevant entries.  
+Fix: Extend the relevant `rag/corpus/*/*.jsonl` file and re-run `rag-build --force`. Or switch to `basic_mode: true` and extend the local lookup tables.
 
 ---
 
@@ -1448,7 +1432,7 @@ A named genre pattern for GTA5 missions (race, heist, dive, fly, assault, chase)
 ---
 
 ### Basic Mode
-A pipeline mode (`basic_mode: true`) that skips AnythingLLM entirely. Asset resolution uses only local JSON lookup tables. Useful when AnythingLLM is not running.
+A pipeline mode (`basic_mode: true`) that skips RAG entirely. Asset resolution uses only local JSON lookup tables. Useful when the RAG index is not built.
 
 ---
 
@@ -1550,7 +1534,7 @@ See *Fixer*.
 ---
 
 ### RAG (Retrieval-Augmented Generation)
-A technique where relevant documents are retrieved from a knowledge base and included in an LLM prompt. This system uses AnythingLLM as the RAG server. Used in Step 4 to find accurate asset/package IDs from uploaded reference documents.
+A technique where relevant documents are retrieved from a knowledge base and included in an LLM prompt. This system uses a local ChromaDB vector index (rag/) as the RAG store. Used in Step 4 to find accurate asset/package IDs from the gta5/unity corpora.
 
 ---
 

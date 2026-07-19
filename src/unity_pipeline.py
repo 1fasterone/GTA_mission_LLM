@@ -532,8 +532,7 @@ class UnityPipeline:
 
         self.llm = make_chat_client(config)
 
-        # Unity RAG: uses the same backend selection as GTA5 (local ChromaDB or
-        # AnythingLLM), driven by config.rag.backend.  Skipped in Basic Mode.
+        # Unity RAG: same local ChromaDB client as GTA5. Skipped in Basic Mode.
         use_rag = not config.get("basic_mode", False)
         unity_rag = make_rag_client(config) if use_rag else None
 

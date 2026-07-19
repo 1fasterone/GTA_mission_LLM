@@ -2,7 +2,7 @@
 #
 # Produces dist\GTA_mission_LLM_<yyyymmdd>.zip ready to send to a tester.
 # Excludes: output/, Models/, __pycache__/, .venv/, .git/, .ratings.json, config.yaml
-# Includes: src + webui + templates + lookups + rag_docs + docs + scripts + main.py +
+# Includes: src + webui + templates + lookups + docs + scripts + main.py +
 #           README.md, requirements.{txt,lock}, config.example.yaml, README_FIRST.txt
 
 $ErrorActionPreference = "Stop"
@@ -22,13 +22,12 @@ New-Item -ItemType Directory -Path $stageDir -Force | Out-Null
 
 # Folders to include verbatim
 $includeDirs = @(
-    "src", "webui", "templates", "lookups", "rag_docs",
+    "src", "webui", "templates", "lookups",
     "docs", "scripts", "themes", "prompts"
 )
 # Top-level files to include
 $includeFiles = @(
     "main.py", "unity_cli.py", "batch_generate.py",
-    "setup_rag.py", "setup_anythingllm.py",
     "requirements.txt", "pytest.ini",
     "README.md", "UNITY_CLI.md", "README_FIRST.txt", "QUICKSTART.md",
     "config.example.yaml"

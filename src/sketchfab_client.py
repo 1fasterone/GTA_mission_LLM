@@ -15,8 +15,8 @@ session-reputation check. Playwright's `BrowserContext.request` (not
 response directly — no HTML-viewer wrapping to scrape, unlike a real page
 navigation to a JSON endpoint.
 
-Same shape as src/anythingllm_client.py and src/blender/diffusion.py::
-DiffusionClient otherwise. Never raises on a network/browser failure — every
+Same shape as src/blender/diffusion.py::DiffusionClient otherwise — never
+raises on a network/browser failure — every
 method returns []/None/{} so the resolver's Sketchfab tier degrades to a
 clean miss (falls through to the Kenney catalog) instead of blowing up
 generation. Missing `playwright` or its Chromium binary degrades the same

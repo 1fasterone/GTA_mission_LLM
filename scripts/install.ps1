@@ -52,7 +52,7 @@ if (-not (Test-Path "config.yaml")) {
 Write-Host ""
 Write-Host "Install complete." -ForegroundColor Green
 Write-Host "Next steps:"
-Write-Host "  1. Edit config.yaml (set api_key if you're using AnythingLLM)"
+Write-Host "  1. Edit config.yaml (lm_studio.model, and rag: if you want a local RAG index)"
 Write-Host "  2. .\.venv\Scripts\Activate.ps1"
 Write-Host "  3. python main.py serve"
 Write-Host "     -> open the printed http://127.0.0.1:8000 URL"

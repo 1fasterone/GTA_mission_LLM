@@ -16,8 +16,6 @@ Gates:
   - Unity project structure: Assets/, Packages/manifest.json, ProjectSettings/,
     valid manifest dependencies, at least one .unity scene, ProjectVersion.txt
     matches Unity major version, no UNRESOLVED / unrendered Jinja braces.
-  - No-secret leak: the AnythingLLM API key from config.yaml is not present
-    in any output file.
 """
 
 from __future__ import annotations
@@ -547,42 +545,3 @@ def test_controller_outputs_well_formed() -> None:
                 "prompt fidelity broken"
             )
 
-
-# ── Cross-cutting: no API key leak ────────────────────────────────────────────
-
-@pytest.mark.smoke
-def test_no_api_key_leak() -> None:
-    """The AnythingLLM API key must not appear in any output file."""
-    cfg = _load_cfg()
-    key = (cfg.get("anythingllm") or {}).get("api_key") or ""
-    if not key or len(key) < 12:
-        pytest.skip("No AnythingLLM API key configured — nothing to check.")
-
-    roots = [r for r in (GTA_OUT, UNITY_OUT) if r.exists()]
-    if not roots:
-        pytest.skip("No outputs on disk yet.")
-
-    hits: list[str] = []
-    for root in roots:
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            # Skip Unity editor-managed dirs (Library/Temp/Logs/…). They are not
-            # generator output and a populated Library/ cache holds tens of
-            # thousands of files — scanning them makes this test hang.
-            if any(part in _EDITOR_MANAGED_DIRS for part in path.relative_to(root).parts):
-                continue
-            # Don't re-scan our own ratings sidecar, which the UI writes here.
-            if path.name == ".ratings.json":
-                continue
-            if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tga", ".psd",
-                                       ".wav", ".mp3", ".ogg", ".fbx", ".obj",
-                                       ".blend", ".dll", ".pdb", ".exr", ".bin",
-                                       ".ttf", ".otf"}:
-                continue
-            try:
-                if key in path.read_text(encoding="utf-8", errors="ignore"):
-                    hits.append(str(path))
-            except Exception:
-                continue
-    assert not hits, "AnythingLLM API key leaked into outputs:\n  " + "\n  ".join(hits)

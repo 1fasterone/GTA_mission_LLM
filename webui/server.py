@@ -44,7 +44,6 @@ from src.errors import classify, catalog_as_dicts
 from src.themes import list_themes
 from src.micro import REGISTRY as MICRO_REGISTRY
 
-import setup_anythingllm
 from webui.command_manifest import COMMANDS, SLOW_COMMANDS, commands_by_category, find_command
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -64,17 +63,6 @@ def load_config() -> dict:
 def save_config(cfg: dict) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
-
-
-def _mask(cfg: dict) -> dict:
-    """Return a copy with the AnythingLLM API key masked for display."""
-    import copy
-    masked = copy.deepcopy(cfg)
-    key = masked.get("anythingllm", {}).get("api_key", "")
-    if key:
-        masked["anythingllm"]["api_key"] = "••••••" + key[-4:] if len(key) > 4 else "••••••"
-    masked["anythingllm"]["api_key_set"] = bool(key)
-    return masked
 
 
 # ── Live-progress capture ──────────────────────────────────────────────────────
@@ -380,24 +368,21 @@ def stop_cli_run(run_id: str) -> dict:
 
 @app.get("/api/config")
 def get_config() -> dict:
-    return _mask(load_config())
+    return load_config()
 
 
 @app.post("/api/config")
 def post_config(patch: dict) -> dict:
-    """Shallow-merge a config patch and persist. An empty/placeholder api_key is ignored."""
+    """Shallow-merge a config patch and persist."""
     cfg = load_config()
     for section, value in patch.items():
         if isinstance(value, dict) and isinstance(cfg.get(section), dict):
             for k, v in value.items():
-                # Don't overwrite a stored key with the masked placeholder.
-                if section == "anythingllm" and k == "api_key" and (v is None or "••" in str(v)):
-                    continue
                 cfg[section][k] = v
         else:
             cfg[section] = value
     save_config(cfg)
-    return _mask(cfg)
+    return cfg
 
 
 @app.get("/api/status")
@@ -414,14 +399,6 @@ def test_connection(target: str) -> dict:
     if target == "rag":
         return check_rag(cfg)
     raise HTTPException(status_code=404, detail=f"Unknown target: {target}")
-
-
-@app.post("/api/setup-workspace")
-def setup_workspace(target: str = "both") -> dict:
-    """target ∈ {'both', 'gta', 'unity'} — controls which workspace(s) to bootstrap."""
-    if target not in ("both", "gta", "unity"):
-        raise HTTPException(status_code=400, detail=f"Unknown target: {target}")
-    return setup_anythingllm.bootstrap(load_config(), target=target)
 
 
 # ── Library / Ratings / Open / Tutorial ───────────────────────────────────────

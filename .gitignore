@@ -1,5 +1,5 @@
 # ── Secrets & local config (NEVER commit) ───────────────────────────
-# config.yaml holds the live AnythingLLM API key — keep ignored.
+# config.yaml holds local machine-specific settings — keep ignored.
 .env
 config.yaml
 .ratings.json

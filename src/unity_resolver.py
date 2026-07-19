@@ -7,11 +7,10 @@ Mirrors GTA5 resolver architecture: local lookup first, RAG fallback.
 import json
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from rich.console import Console
 
-from .anythingllm_client import AnythingLLMClient
 from .unity_schema import UnitySchema, UnityPackage
 
 console = Console()
@@ -102,7 +101,7 @@ def _get_version(pkg_id: str, unity_version: str, db: dict) -> Optional[str]:
 
 class UnityResolver:
     def __init__(self, lookups_dir: str = "lookups",
-                 rag: Optional[AnythingLLMClient] = None,
+                 rag: Optional[Any] = None,
                  use_rag: bool = True):
         self.db = _load_package_db(lookups_dir)
         self.lookups_dir = lookups_dir

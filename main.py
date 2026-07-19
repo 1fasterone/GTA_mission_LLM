@@ -14,11 +14,7 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
   python main.py rag-build weapons scenarios --force  # rebuild specific scrapers
   python main.py rag-query "cult member" --kind ped  # search the local index
   python main.py rag-build --unity                    # rebuild the Unity corpus only
-
-━━━ AnythingLLM (legacy — only needed if you run an AnythingLLM server) ━━━━
-  python main.py setup-rag                            # upload GTA5 docs to workspace
-  python main.py setup-workspace                      # bootstrap the workspace
-  python main.py rag-status                           # check workspace doc counts
+  python main.py rag-status                           # check index status (gta5 + unity)
 
 ━━━ Web UI ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   python main.py serve                                # http://127.0.0.1:8000
@@ -117,7 +113,6 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 # ── GTA5 pipeline ─────────────────────────────────────────────────────────────
-from src.anythingllm_client import AnythingLLMClient
 from src.code_generator     import CodeGenerator
 from src.mission_schema     import MissionSchema
 from src.pipeline           import MissionPipeline
@@ -231,12 +226,9 @@ def resolve(
     config:      str = typer.Option("config.yaml", "--config", "-c"),
 ) -> None:
     """Resolve one GTA5 asset description to a model ID (RAG + local fallback)."""
+    from src.backends import make_rag_client
     cfg      = _cfg(config)
-    rag      = AnythingLLMClient(
-        base_url       = cfg["anythingllm"]["base_url"],
-        api_key        = cfg["anythingllm"]["api_key"],
-        workspace_slug = cfg["anythingllm"]["workspace_slug"],
-    )
+    rag      = make_rag_client(cfg)
     resolver = ModelResolver(rag=rag, lookups_dir=cfg["pipeline"]["lookups_dir"])
     result   = resolver.resolve(description, category)
     console.print(f"[cyan]{description}[/] -> [bold]{result}[/]")
@@ -288,66 +280,28 @@ def rag_query(
             console.print(f"       [dim]tags: {h['tags']}[/]")
 
 
-@app.command("setup-rag")
-def setup_rag(
-    config: str = typer.Option("config.yaml", "--config", "-c"),
-) -> None:
-    """Upload GTA5 RAG documents to AnythingLLM workspace (legacy — AnythingLLM only).
-
-    For the local ChromaDB RAG pipeline, use: python main.py rag-build"""
-    import setup_rag as sr          # top-level script, kept lazy to avoid startup cost
-    sr.upload_all(_cfg(config))
-
-
 @app.command("rag-status")
 def rag_status(
     config: str = typer.Option("config.yaml", "--config", "-c"),
 ) -> None:
-    """Print doc count + status for AnythingLLM workspaces (legacy — AnythingLLM only).
-
-    For the local ChromaDB index, use: python main.py rag-query <term>"""
+    """Print index status for the local RAG domains (gta5 + unity)."""
     from src.backends import check_rag
     result = check_rag(_cfg(config))
     if result.get("basic_mode"):
         console.print("[yellow]Basic Mode is on[/] — RAG is skipped, local lookups only.")
         raise typer.Exit(0)
-    if result.get("error"):
-        console.print(f"[red]AnythingLLM unreachable:[/] {result['error'].get('title')}")
-        raise typer.Exit(1)
     for kind in ("gta", "unity"):
         sub = result.get(kind, {})
-        slug = sub.get("slug")
+        domain = sub.get("domain")
         present = sub.get("present")
-        docs = sub.get("doc_count", 0)
         if present:
-            color = "green" if docs > 0 else "yellow"
-            console.print(
-                f"  [{color}]{kind:<5}[/] workspace [cyan]{slug}[/] — "
-                f"{docs} doc(s)" + ("  [yellow](no docs — run setup-workspace)[/]" if not docs else "")
-            )
+            console.print(f"  [green]{kind:<5}[/] domain [cyan]{domain}[/] — index ready")
         else:
             console.print(
-                f"  [red]{kind:<5}[/] workspace [cyan]{slug}[/] — NOT FOUND "
-                "[dim](click Create in the UI, or run setup-workspace)[/]"
+                f"  [red]{kind:<5}[/] domain [cyan]{domain}[/] — NOT BUILT "
+                "[dim](run: python main.py rag-build"
+                + ("" if kind == "gta" else " --unity") + ")[/]"
             )
-
-
-@app.command("setup-workspace")
-def setup_workspace(
-    config: str = typer.Option("config.yaml", "--config", "-c"),
-) -> None:
-    """Bootstrap AnythingLLM workspace (legacy — AnythingLLM server only).
-
-    For the local ChromaDB RAG pipeline, use: python main.py rag-build"""
-    import setup_anythingllm
-    result = setup_anythingllm.bootstrap(_cfg(config))
-    if result.get("log"):
-        console.print(result["log"])
-    if result.get("ok"):
-        console.print("[green]OK[/]  Workspace bootstrapped")
-    else:
-        console.print(f"[red]Error:[/] {result.get('detail', result)}")
-        raise typer.Exit(1)
 
 
 @app.command()

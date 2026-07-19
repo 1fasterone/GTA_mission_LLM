@@ -1,7 +1,7 @@
 """
 Tests for ModelResolver: local lookup fallback, RAG integration (mocked),
 resolve_schema population, and audio resolution.
-No real network calls — AnythingLLMClient.query is always mocked.
+No real network calls — RagClient.resolve_model/resolve_audio are always mocked.
 """
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +9,7 @@ import pytest
 
 from src.resolver import ModelResolver, _local_resolve, _load_lookups
 from src.mission_schema import MissionAudio, MissionObject, MissionPed, MissionSchema, MissionStep, MissionVehicle
-from src.anythingllm_client import AnythingLLMClient
+from rag.query import RagClient
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────
@@ -24,10 +24,11 @@ def lookups() -> dict:
 
 @pytest.fixture
 def mock_rag() -> MagicMock:
-    """AnythingLLMClient with query mocked to return empty (triggers local fallback)."""
-    rag = MagicMock(spec=AnythingLLMClient)
+    """RagClient with resolve_model mocked to return empty (triggers local fallback)."""
+    rag = MagicMock(spec=RagClient)
     rag.resolve_model.return_value = None   # forces local fallback
     rag.resolve_audio.return_value = None
+    rag.is_corpus_backed = False   # default: exercise the valid_models guard like most callers
     return rag
 
 

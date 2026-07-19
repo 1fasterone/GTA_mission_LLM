@@ -21,7 +21,6 @@ from typing import Any
 
 import httpx
 
-from .anythingllm_client import AnythingLLMClient
 from .lm_studio_client import LMStudioClient
 from .errors import classify
 
@@ -80,39 +79,27 @@ def make_chat_client(config: dict) -> LMStudioClient:
 
 def make_rag_client(config: dict):
     """
-    Build the resolver RAG client.
+    Build the resolver RAG client (local ChromaDB index, no API key).
 
-    rag:
-      backend: local        -> RagClient  (local ChromaDB, no API key)
-      backend: anythingllm  -> AnythingLLMClient (legacy / remote)
-      (absent or basic_mode)-> None  (resolver falls back to local lookups only)
+    (absent or basic_mode) -> None  (resolver falls back to local lookups only)
     """
     if config.get("basic_mode", False):
         return None
 
     rag_cfg = config.get("rag", {})
-    backend = (rag_cfg.get("backend") or "anythingllm").lower()
-
-    if backend == "local":
-        from rag.query import RagClient  # lazy: only paid when local backend chosen
-        idx_dir = rag_cfg.get("index_dir")   # optional override
-        return RagClient(index_dir=idx_dir)
-
-    # anythingllm (default, backward-compatible)
-    llm_cfg = config.get("anythingllm", {})
-    base_url = llm_cfg.get("base_url", "")
-    if not base_url:
-        return None   # not configured — resolver uses local lookups
-    return AnythingLLMClient(
-        base_url       = base_url,
-        api_key        = llm_cfg.get("api_key", ""),
-        workspace_slug = llm_cfg.get("workspace_slug", ""),
-    )
+    from rag.query import RagClient  # lazy: only paid when RAG is actually used
+    idx_dir = rag_cfg.get("index_dir")   # optional override
+    return RagClient(index_dir=idx_dir)
 
 
 def rag_enabled(config: dict) -> bool:
     """RAG is on unless Basic Mode is explicitly set."""
     return not bool(config.get("basic_mode", False))
+
+
+def _default_index_dir() -> str:
+    from rag.query import INDEX_DIR  # lazy: avoid importing chromadb/fastembed eagerly
+    return str(INDEX_DIR)
 
 
 # ── Health checks ─────────────────────────────────────────────────────────────
@@ -158,106 +145,66 @@ def check_chat(config: dict) -> dict[str, Any]:
         }
 
 
-def _extract_documents(workspace_payload: dict) -> list:
-    """
-    AnythingLLM's GET /api/v1/workspace/{slug} response shape varies by
-    version. We've seen both:
-        {"workspace": [{"documents": [...]}]}
-        {"workspace": {"documents": [...]}}
-    Walk both safely and return the documents list (or []).
-    """
-    ws = workspace_payload.get("workspace", workspace_payload)
-    if isinstance(ws, list):
-        ws = ws[0] if ws else {}
-    if isinstance(ws, dict):
-        docs = ws.get("documents") or []
-        if isinstance(docs, list):
-            return docs
-    return []
-
-
 def check_rag(config: dict) -> dict[str, Any]:
     """
-    Check the AnythingLLM server and both workspaces (gta + unity).
+    Check the local ChromaDB RAG index (gta5 + unity domains).
     Returns:
         {
-          ok:          bool,                # server reachable AND every required workspace exists
+          ok:          bool,                # index built AND both domains populated
           basic_mode:  bool,                # when True, RAG is skipped (always ok)
-          base_url:    str,
-          workspaces:  ["llm_gta", ...],    # all slugs returned by the server
-          gta:   {slug, present, [error]},
-          unity: {slug, present, [error]},
-          [error]:     {...catalog entry, server-level error},
+          index_dir:   str,
+          gta:   {domain, present, [doc_count]},
+          unity: {domain, present, [doc_count]},
+          [error]:     {...catalog entry, index-level error},
         }
     Designed so the UI can show one combined RAG light (overall ok) plus two
     sub-lights (gta + unity).
     """
-    llm_cfg = config.get("anythingllm", {})
-    base = llm_cfg.get("base_url", "http://localhost:3001").rstrip("/")
-    gta_slug = llm_cfg.get("workspace_slug", "llm_gta")
-    unity_slug = llm_cfg.get("unity_workspace_slug", "llm_unity")
-    key = llm_cfg.get("api_key", "")
+    rag_cfg = config.get("rag", {})
+    idx_dir = rag_cfg.get("index_dir") or _default_index_dir()
 
     if not rag_enabled(config):
         return {
             "ok": True,
             "basic_mode": True,
-            "base_url": base,
-            "workspaces": [],
-            "gta":   {"slug": gta_slug,   "present": False},
-            "unity": {"slug": unity_slug, "present": False},
+            "index_dir": idx_dir,
+            "gta":   {"domain": "gta5",  "present": False},
+            "unity": {"domain": "unity", "present": False},
             "detail": "Basic Mode is on — RAG is skipped; local lookups are used.",
         }
 
-    url = f"{base}/api/v1/workspaces"
     started = time.perf_counter()
     try:
-        with httpx.Client(timeout=5.0) as client:
-            r = client.get(url, headers={"Authorization": f"Bearer {key}"})
-            r.raise_for_status()
-        data = r.json()
-        workspaces = data.get("workspaces", data) if isinstance(data, dict) else data
-        slugs = []
-        if isinstance(workspaces, list):
-            slugs = [w.get("slug") for w in workspaces if isinstance(w, dict)]
-        gta_present = gta_slug in slugs
-        unity_present = unity_slug in slugs
+        from rag.query import RagClient
+        rag = RagClient(index_dir=rag_cfg.get("index_dir"))
 
-        def _sub(slug: str, present: bool) -> dict:
-            d: dict[str, Any] = {"slug": slug, "present": present}
-            if present:
-                # Best-effort document count; never fails the health check.
-                try:
-                    client = AnythingLLMClient(base_url=base, api_key=key, workspace_slug=slug)
-                    details = client.workspace_details(slug)
-                    docs = _extract_documents(details)
-                    d["doc_count"] = len(docs)
-                except Exception:  # noqa: BLE001
-                    d["doc_count"] = 0
-            else:
+        def _sub(domain: str) -> dict:
+            ready = rag.is_ready(domain=domain)
+            d: dict[str, Any] = {"domain": domain, "present": ready}
+            if not ready:
                 d["error"] = classify(
-                    f"workspace '{slug}' not found in AnythingLLM (404)",
+                    f"RAG index for domain '{domain}' is empty or not built",
                     target="rag",
                 )
             return d
 
+        gta_sub = _sub("gta5")
+        unity_sub = _sub("unity")
         return {
-            "ok": gta_present and unity_present,
+            "ok": gta_sub["present"] and unity_sub["present"],
             "basic_mode": False,
             "latency_ms": round((time.perf_counter() - started) * 1000),
-            "base_url": base,
-            "workspaces": slugs,
-            "gta":   _sub(gta_slug, gta_present),
-            "unity": _sub(unity_slug, unity_present),
+            "index_dir": idx_dir,
+            "gta":   gta_sub,
+            "unity": unity_sub,
         }
     except Exception as exc:  # noqa: BLE001
-        err = classify(f"anythingllm: {exc}", target="rag")
+        err = classify(f"rag index: {exc}", target="rag")
         return {
             "ok": False,
             "basic_mode": False,
-            "base_url": base,
-            "workspaces": [],
-            "gta":   {"slug": gta_slug,   "present": False, "error": err},
-            "unity": {"slug": unity_slug, "present": False, "error": err},
+            "index_dir": idx_dir,
+            "gta":   {"domain": "gta5",  "present": False, "error": err},
+            "unity": {"domain": "unity", "present": False, "error": err},
             "error": err,
         }
