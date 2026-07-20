@@ -35,6 +35,8 @@ def _valid_models(category: str) -> set[str]:
 @pytest.mark.parametrize("prompt,expected", [
     ("make a race mod",                 "race"),
     ("a street race through vinewood",  "race"),
+    ("a drift score arcade challenge through the canyon", "drift"),
+    ("chain drifts for combo points",   "drift"),
     ("pull off a casino heist",         "heist"),
     ("rob the bank vault",              "heist"),
     ("deep sea dive for sunken treasure", "dive"),
@@ -43,6 +45,10 @@ def _valid_models(category: str) -> set[str]:
     ("fly a helicopter through the city", "fly"),
     ("raid the gang compound",          "assault"),
     ("chase down the getaway driver",   "chase"),
+    ("a mutant uprising minigame with a hero to pick", "xmen"),
+    ("play as magneto against soldiers", "xmen"),
+    ("a gangster thief car theft spree minigame", "gangster_thief"),
+    ("chop shop rush against the clock",   "gangster_thief"),
     ("a quiet afternoon feeding ducks", None),
 ])
 def test_detect_archetype(prompt, expected):
@@ -51,9 +57,65 @@ def test_detect_archetype(prompt, expected):
 
 
 def test_prompt_outweighs_concept():
-    # A race keyword in the prompt beats heist keywords buried in the concept.
-    a = detect_archetype("a drift race", concept="they rob a vault and steal the loot")
+    # Two race keywords in the prompt beat heist keywords buried in the concept.
+    a = detect_archetype("a street race", concept="they rob a vault and steal the loot")
     assert a is not None and a.name == "race"
+
+
+def test_bare_drift_does_not_collide_with_race():
+    # "drift" alone (no race words) must resolve to the drift minigame, not race —
+    # regression guard for the race/drift keyword split.
+    a = detect_archetype("a drift score minigame")
+    assert a is not None and a.name == "drift"
+    # But "drift race" phrasing (an actual lap race with drift flavour) still
+    # ties on keyword score and race wins the tie (defined first in ARCHETYPES).
+    b = detect_archetype("a drift race with checkpoints and rival racers")
+    assert b is not None and b.name == "race"
+
+
+def test_gangster_thief_does_not_steal_heist_keywords():
+    # gangster_thief's keywords are deliberately compound phrases ("car theft
+    # spree", "chop shop rush") — bare theft words like "steal"/"rob"/"loot"
+    # stay owned by the narrative heist archetype, not this arcade minigame.
+    a = detect_archetype("rob the vault and steal the loot")
+    assert a is not None and a.name == "heist"
+    b = detect_archetype("a gangster thief car theft spree minigame")
+    assert b is not None and b.name == "gangster_thief"
+
+
+def test_xmen_scaffold_enforces_canonical_hero_row():
+    # The round loop indexes the hero row by position (0=Magneto/1=Wolverine/
+    # 2=Mystique) — if the LLM emits the row with different wording/order,
+    # the scaffold must overwrite it back to the canonical roster, not trust it.
+    from src.mission_schema import MinigameSetting, MinigameSpec
+
+    arch = detect_archetype("a mutant uprising minigame")
+    schema = _degenerate("downtown")
+    schema.minigame = MinigameSpec(settings=[
+        MinigameSetting(key="hero", label="Character", kind="cycle",
+                        options=["Mystique", "Wolverine", "Magneto"], default="Mystique"),
+        MinigameSetting(key="hardcore", label="Hardcore", kind="toggle", default="false"),
+    ])
+    apply_scaffold(schema, arch)
+
+    hero_row = schema.minigame.settings[0]
+    assert hero_row.key == "hero"
+    assert hero_row.options == ["Magneto", "Wolverine", "Mystique"]
+    assert hero_row.default == "Mystique"          # LLM's chosen default is preserved
+    assert schema.minigame.round_type == "survive_waves"
+    # The extra non-hero row survives the enforcement pass.
+    assert any(s.key == "hardcore" for s in schema.minigame.settings)
+
+
+def test_xmen_scaffold_defaults_hero_row_when_absent():
+    arch = detect_archetype("a mutant uprising minigame")
+    schema = _degenerate("downtown")
+    apply_scaffold(schema, arch)
+
+    hero_row = schema.minigame.settings[0]
+    assert hero_row.key == "hero"
+    assert hero_row.options == ["Magneto", "Wolverine", "Mystique"]
+    assert hero_row.default == "Magneto"
 
 
 # ── Scaffold (anti-repetition guard) ──────────────────────────────────────────

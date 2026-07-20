@@ -58,6 +58,12 @@ _GTA_RESERVED_FIELDS = {
     "_spawned", "_spawnedvehicles", "_spawnedprops",
     "_wave", "_intermissionuntil", "_waveendsat", "_prevalive",
     "_nextescalation", "_helispawned",
+    # Minigame round type (drift_score)
+    "_combomultiplier", "_isdrifting", "_lastdriftat",
+    # Minigame hero ability layer (survive_waves + xmen hero selector)
+    "_abilitycooldown", "_mysticmark", "_mysticmarkset",
+    # Minigame round type (theft_streak)
+    "_stolenvehicle", "_securedhandles", "_garagepos", "_garageblip",
 }
 _GTA_TEMPLATE_USINGS = {
     "System", "System.Collections.Generic", "System.Windows.Forms",
