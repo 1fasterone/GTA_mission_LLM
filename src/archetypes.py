@@ -96,7 +96,7 @@ class Archetype(BaseModel):
 ARCHETYPES: list[Archetype] = [
     Archetype(
         name="race", display="Race",
-        keywords=["race", "racing", "lap", "circuit", "track", "drift", "rally",
+        keywords=["race", "racing", "lap", "circuit", "track", "rally",
                   "grand prix", "time trial", "checkpoint race", "street race", "sprint"],
         signature_steps=["race_lap", "checkpoint"],
         concept_hint=(
@@ -122,6 +122,35 @@ ARCHETYPES: list[Archetype] = [
             "city\" is hard.\n"
             "  - Set \"config_menu\": true only if the concept explicitly wants the player to be\n"
             "    able to open a pre-race settings menu (adjust weather / rival difficulty)."
+        ),
+    ),
+    Archetype(
+        name="drift", display="Drift Score",
+        keywords=["drift", "drifting", "power slide", "powerslide", "sideways",
+                  "drift score", "drift challenge", "drift attack", "touge",
+                  "canyon run", "tandem drift", "drift king", "drift combo"],
+        signature_steps=[],
+        wants_skeleton="minigame",
+        concept_hint=(
+            "This is a DRIFT SCORE MINIGAME — a replayable arcade round, not a "
+            "story mission. Frame it as chaining drifts through a canyon/street "
+            "course for points against the clock; no plot, no combat, just the "
+            "loop of sliding, combo, repeat."
+        ),
+        structure_hint=(
+            "MISSION ARCHETYPE: DRIFT SCORE MINIGAME.\n"
+            "Set \"skeleton\": \"minigame\" and fill the \"minigame\" block:\n"
+            "  \"score_metric\": \"points\", \"score_label\": \"DRIFT SCORE\",\n"
+            "  \"round_type\": \"drift_score\",\n"
+            "  \"round_params\": {\"time_limit_s\": 30-300, \"min_drift_angle\": 5-60,\n"
+            "                     \"min_drift_speed\": 3-25, \"combo_decay_s\": 0.3-5}\n"
+            "  \"settings\": 0-4 config-menu rows the player can tune before a round\n"
+            "    (e.g. a cycle row for time limit).\n"
+            "REQUIREMENTS:\n"
+            "  - Leave \"steps\" and \"peds\" as [] — the round loop replaces the step machine\n"
+            "    and drift state comes from whatever vehicle the player is already driving.\n"
+            "  - Use a canyon/street location (vinewood works well) for flavour only —\n"
+            "    it has no effect on scoring."
         ),
     ),
     Archetype(
@@ -237,6 +266,71 @@ ARCHETYPES: list[Archetype] = [
             "    weapon) — the compiler resolves them to models and spawns them per wave.\n"
             "  - Leave \"steps\" as [] — the minigame loop replaces the step machine.\n"
             "  - No go_to/deliver/story steps."
+        ),
+    ),
+    Archetype(
+        name="xmen", display="Mutant Uprising",
+        keywords=["x-men", "xmen", "mutant", "mutants", "superhero showdown",
+                  "super powers", "danger room", "brotherhood of mutants",
+                  "mutant uprising", "magneto", "wolverine", "mystique"],
+        signature_steps=[],
+        wants_skeleton="minigame",
+        concept_hint=(
+            "This is a MUTANT UPRISING MINIGAME — a survive_waves arena round "
+            "where the player picks a hero before each attempt from an in-game "
+            "menu, and that choice changes what the E/Q keys do all round: "
+            "Magneto (E push / Q pull nearby vehicles with magnetism), "
+            "Wolverine (passive super jump + E claw swipe on nearby enemies), "
+            "Mystique (E drop a warp mark / Q teleport back to it)."
+        ),
+        structure_hint=(
+            "MISSION ARCHETYPE: MUTANT UPRISING MINIGAME.\n"
+            "Set \"skeleton\": \"minigame\" and fill the \"minigame\" block:\n"
+            "  \"score_metric\": \"kills\", \"score_label\": \"KILLS\",\n"
+            "  \"round_type\": \"survive_waves\",\n"
+            "  \"round_params\": {\"wave_count\": 3-10, \"enemies_per_wave\": 2-8,\n"
+            "                     \"wave_growth\": 1.0-3.0, \"arena_radius\": 20-100,\n"
+            "                     \"intermission_seconds\": 3-30}\n"
+            "  \"settings\" MUST include exactly this cycle row first (the compiler\n"
+            "    indexes it by position to pick the live ability, so keep the exact\n"
+            "    key/options — do not rename, reorder, or translate them):\n"
+            "      {\"key\": \"hero\", \"label\": \"Hero\", \"kind\": \"cycle\",\n"
+            "       \"options\": [\"Magneto\", \"Wolverine\", \"Mystique\"], \"default\": \"Magneto\"}\n"
+            "  You may add up to 3 more settings rows after it (e.g. wave count, hardcore).\n"
+            "REQUIREMENTS:\n"
+            "  - Add 1-2 ped entries describing the enemy type (role \"target\", a real\n"
+            "    weapon) — human soldiers/agents hunting mutants read best.\n"
+            "  - Leave \"steps\" as [] — the minigame loop replaces the step machine."
+        ),
+    ),
+    Archetype(
+        name="gangster_thief", display="Theft Streak",
+        keywords=["gangster thief", "grand theft spree", "car theft spree",
+                  "boosting cars", "chop shop rush", "joyride streak",
+                  "car boosting spree", "theft streak"],
+        signature_steps=[],
+        wants_skeleton="minigame",
+        concept_hint=(
+            "This is a THEFT STREAK MINIGAME — a replayable arcade round, not "
+            "a story mission. The player jacks any vehicle they can find and "
+            "drives it to their personal garage to secure it; score is cars "
+            "secured. No narrative target, no vault, no plot — just steal, "
+            "deliver, repeat against the clock."
+        ),
+        structure_hint=(
+            "MISSION ARCHETYPE: THEFT STREAK MINIGAME.\n"
+            "Set \"skeleton\": \"minigame\" and fill the \"minigame\" block:\n"
+            "  \"score_metric\": \"points\", \"score_label\": \"CARS SECURED\",\n"
+            "  \"round_type\": \"theft_streak\",\n"
+            "  \"round_params\": {\"time_limit_s\": 60-300, \"garage_radius\": 4-20}\n"
+            "  \"settings\": 0-4 config-menu rows the player can tune before a round\n"
+            "    (e.g. a cycle row for time limit).\n"
+            "REQUIREMENTS:\n"
+            "  - Leave \"steps\" and \"peds\"/\"vehicles\" as [] — the round loop replaces\n"
+            "    the step machine, the garage is a fixed compiler-placed point, and the\n"
+            "    stolen vehicle is always whatever the player is currently driving.\n"
+            "  - Do NOT frame this as a heist (no vault/guards/getaway) — it's an\n"
+            "    endless arcade loop, not a one-shot narrative job."
         ),
     ),
     Archetype(
@@ -510,6 +604,45 @@ def _scaffold_survival_waves(schema: MissionSchema, msgs: list[str]) -> None:
     msgs.append("  survival scaffold: skeleton=minigame, round_type=survive_waves")
 
 
+# Canonical hero roster + order — the round loop indexes the "hero" settings
+# row by position (0=Magneto/1=Wolverine/2=Mystique) to pick the live E/Q
+# ability, so this exact list must never drift from the template's switch.
+_XMEN_HERO_OPTIONS = ["Magneto", "Wolverine", "Mystique"]
+
+
+def _scaffold_xmen(schema: MissionSchema, msgs: list[str]) -> None:
+    from .mission_schema import MinigameSetting, MinigameSpec, MissionPed, WaveRoundParams
+    schema.skeleton = "minigame"
+    schema.steps = []
+    if schema.minigame is None:
+        schema.minigame = MinigameSpec()
+    mg = schema.minigame
+    mg.round_type = "survive_waves"
+    mg.round_params = WaveRoundParams.model_validate(mg.round_params or {}).model_dump()
+    if mg.score_metric == "points":
+        mg.score_metric = "kills"
+        mg.score_label = "KILLS"
+    # The hero row is enforced (not just added-if-missing): its options are
+    # read by position at runtime, so an LLM-authored row with the wrong
+    # wording or order would silently scramble which ability each hero gets.
+    hero_default = "Magneto"
+    for s in mg.settings:
+        if s.key == "hero" and s.default in _XMEN_HERO_OPTIONS:
+            hero_default = s.default
+            break
+    other_settings = [s for s in mg.settings if s.key != "hero"][:3]
+    mg.settings = [
+        MinigameSetting(key="hero", label="Hero", kind="cycle",
+                        options=list(_XMEN_HERO_OPTIONS), default=hero_default),
+    ] + other_settings
+    if not schema.peds:
+        schema.peds.append(MissionPed(
+            description="mutant-hunting soldier", role="target", count=1, weapon="rifle"))
+        msgs.append("  xmen scaffold: added a default wave enemy ped")
+    msgs.append("  xmen scaffold: skeleton=minigame, round_type=survive_waves, "
+                "hero selector enforced (Magneto/Wolverine/Mystique)")
+
+
 def _scaffold_pursuit_escape(schema: MissionSchema, msgs: list[str]) -> None:
     from .mission_schema import MinigameSetting, MinigameSpec, PursuitRoundParams
     schema.skeleton = "minigame"
@@ -533,6 +666,50 @@ def _scaffold_pursuit_escape(schema: MissionSchema, msgs: list[str]) -> None:
     msgs.append("  pursuit scaffold: skeleton=minigame, round_type=pursuit_survive")
 
 
+def _scaffold_drift(schema: MissionSchema, msgs: list[str]) -> None:
+    from .mission_schema import MinigameSetting, MinigameSpec, DriftRoundParams
+    schema.skeleton = "minigame"
+    schema.steps = []
+    if schema.minigame is None:
+        schema.minigame = MinigameSpec()
+    mg = schema.minigame
+    mg.round_type = "drift_score"
+    mg.round_params = DriftRoundParams.model_validate(mg.round_params or {}).model_dump()
+    if mg.score_label in ("", "SCORE"):
+        mg.score_label = "DRIFT SCORE"
+    if not mg.settings:
+        mg.settings = [
+            MinigameSetting(key="time_limit", label="Time Limit", kind="cycle",
+                            options=["60", "90", "120"],
+                            default=str(mg.round_params["time_limit_s"])
+                                    if str(mg.round_params["time_limit_s"]) in ("60", "90", "120")
+                                    else "90"),
+        ]
+    msgs.append("  drift scaffold: skeleton=minigame, round_type=drift_score")
+
+
+def _scaffold_gangster_thief(schema: MissionSchema, msgs: list[str]) -> None:
+    from .mission_schema import MinigameSetting, MinigameSpec, TheftRoundParams
+    schema.skeleton = "minigame"
+    schema.steps = []
+    if schema.minigame is None:
+        schema.minigame = MinigameSpec()
+    mg = schema.minigame
+    mg.round_type = "theft_streak"
+    mg.round_params = TheftRoundParams.model_validate(mg.round_params or {}).model_dump()
+    if mg.score_label in ("", "SCORE"):
+        mg.score_label = "CARS SECURED"
+    if not mg.settings:
+        mg.settings = [
+            MinigameSetting(key="time_limit", label="Time Limit", kind="cycle",
+                            options=["60", "120", "180"],
+                            default=str(mg.round_params["time_limit_s"])
+                                    if str(mg.round_params["time_limit_s"]) in ("60", "120", "180")
+                                    else "120"),
+        ]
+    msgs.append("  gangster thief scaffold: skeleton=minigame, round_type=theft_streak")
+
+
 _SCAFFOLDS = {
     "race":    _scaffold_race,
     "heist":   _scaffold_heist,
@@ -542,4 +719,7 @@ _SCAFFOLDS = {
     "chase":   _scaffold_chase,
     "survival_waves": _scaffold_survival_waves,
     "pursuit_escape": _scaffold_pursuit_escape,
+    "drift":          _scaffold_drift,
+    "xmen":           _scaffold_xmen,
+    "gangster_thief": _scaffold_gangster_thief,
 }

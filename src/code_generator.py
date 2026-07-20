@@ -478,6 +478,11 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "default_raw": s.default,
             })
 
+    # A settings row keyed "hero" is looked up by position at runtime (the
+    # survive_waves round reads _cfgValues[hero_row_index] to pick the active
+    # character ability) — -1 means no hero selector, abilities stay off.
+    hero_row_index = next((i for i, r in enumerate(minigame_rows) if r["key"] == "hero"), -1)
+
     # ── Editor-authored shapes: triggers + patrol paths ──────────────────────
     # Pulled from meta.editor.* (Day-2 of the GTA5 Mission Editor). Triggers wire
     # into the OnTick loop; paths are emitted as Vector3 arrays for future use.
@@ -564,6 +569,11 @@ def _build_template_context(schema: MissionSchema) -> dict:
         # Minigame skeleton (always present — StrictUndefined — empty for missions)
         "skeleton":       schema.skeleton,
         "minigame_rows":  minigame_rows,
+        "hero_row_index": hero_row_index,
+        # theft_streak's personal garage — a fixed point near the mission
+        # location's real spawn coordinates (same anchor peds/vehicles/props
+        # already offset from), not an invented/unvalidated position.
+        "theft_garage": {"x": location["x"] + 25.0, "y": location["y"] + 25.0, "z": location["z"]},
         "score_metric":   mg.score_metric if mg else "points",
         "score_label":    _escape_cs_string(mg.score_label) if mg else "SCORE",
         "round_type":     mg.round_type if mg else "timed",

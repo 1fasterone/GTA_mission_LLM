@@ -68,11 +68,33 @@ public class {{ class_name }} : Script
 {{ spawner.fields(wave_spawner_cfg) }}
 {{ waves.fields(waves_cfg) }}
     private int _prevAlive = 0;
+{% if hero_row_index >= 0 %}
+
+    // -- Hero ability state (E/Q; settings row {{ hero_row_index }} picks Magneto=push/pull,
+    //    Wolverine=jump/claws, Mystique=mark/warp) --
+    private DateTime _abilityCooldown = DateTime.MinValue;
+    private Vector3  _mysticMark;
+    private bool     _mysticMarkSet   = false;
+{% endif %}
 {% elif round_type == "pursuit_survive" %}
 
     // -- Pursuit state ({{ round_params.start_wanted }}★ start, +1 every {{ round_params.escalation_interval_s }}s, cap {{ round_params.max_wanted }}★) --
     private DateTime _nextEscalation = DateTime.MinValue;
     private bool     _heliSpawned    = false;
+{% elif round_type == "drift_score" %}
+
+    // -- Drift state (angle >= {{ round_params.min_drift_angle }}°, speed >= {{ round_params.min_drift_speed }} m/s; combo decays after {{ round_params.combo_decay_s }}s idle) --
+    private float    _comboMultiplier = 1f;
+    private bool     _isDrifting      = false;
+    private DateTime _lastDriftAt     = DateTime.MinValue;
+{% elif round_type == "theft_streak" %}
+
+    // -- Theft state: steal any vehicle, drive it within {{ round_params.garage_radius }}m of the
+    //    garage to secure it (+1 score, can't be re-scored). --
+    private readonly Vector3      _garagePos      = new Vector3({{ theft_garage.x }}f, {{ theft_garage.y }}f, {{ theft_garage.z }}f);
+    private Vehicle               _stolenVehicle  = null;
+    private readonly HashSet<int> _securedHandles = new HashSet<int>();
+    private Blip                  _garageBlip;
 {% endif %}
 {% if extra_fields %}
 
@@ -121,6 +143,15 @@ public class {{ class_name }} : Script
                 _menuSelection = 0;
             }
         }
+{% if round_type == "survive_waves" and hero_row_index >= 0 %}
+        else if (_state == State.Playing
+            && (e.KeyCode == Keys.E || e.KeyCode == Keys.Q)
+            && DateTime.UtcNow >= _abilityCooldown)
+        {
+            RunHeroAbility(e.KeyCode == Keys.E);
+            _abilityCooldown = DateTime.UtcNow.AddSeconds(1.0);
+        }
+{% endif %}
     }
 
     // -- Main loop ---------------------------------------------------------------
@@ -263,11 +294,31 @@ public class {{ class_name }} : Script
         CleanupWave();
         ResetWaves();
         _prevAlive = 0;
+{% if hero_row_index >= 0 %}
+        _mysticMarkSet   = false;
+        _abilityCooldown = DateTime.MinValue;
+{% endif %}
 {% elif round_type == "pursuit_survive" %}
         Function.Call(Hash.SET_PLAYER_WANTED_LEVEL, Game.Player, {{ round_params.start_wanted }}, false);
         Function.Call(Hash.SET_PLAYER_WANTED_LEVEL_NOW, Game.Player, false);
         _nextEscalation = DateTime.UtcNow.AddSeconds({{ round_params.escalation_interval_s }});
         _heliSpawned    = false;
+{% elif round_type == "drift_score" %}
+        _comboMultiplier = 1f;
+        _isDrifting       = false;
+        _lastDriftAt      = DateTime.MinValue;
+{% elif round_type == "theft_streak" %}
+        _stolenVehicle = null;
+        _securedHandles.Clear();
+        if (_garageBlip == null)
+        {
+            _garageBlip             = World.CreateBlip(_garagePos);
+            _garageBlip.Sprite      = BlipSprite.Standard;
+            _garageBlip.Color       = BlipColor.Yellow;
+            _garageBlip.Scale       = 1.1f;
+            _garageBlip.IsShortRange = false;
+            _garageBlip.Name        = "Garage";
+        }
 {% endif %}
 {% if extra_init %}
         // ── prompt-specific round setup (runs at the start of every round) ──
@@ -283,6 +334,9 @@ public class {{ class_name }} : Script
             return;
         }
 {% if round_type == "survive_waves" %}
+{% if hero_row_index >= 0 %}
+        if (_cfgValues[{{ hero_row_index }}] == 1) Game.Player.SetSuperJumpThisFrame();   // Wolverine — passive
+{% endif %}
         // Arena horde: clear all {{ waves_cfg.max_waves }} waves; score = kills (+ wave bonus).
         if (_wave == 0 || (_intermissionUntil != DateTime.MinValue && !InIntermission()))
         {
@@ -363,6 +417,81 @@ public class {{ class_name }} : Script
             }
         }
 {% endif %}
+{% elif round_type == "drift_score" %}
+        // Chain drifts for points; combo decays after {{ round_params.combo_decay_s }}s out of a slide.
+        double _driftElapsed = (DateTime.UtcNow - _roundStart).TotalSeconds;
+        if (_driftElapsed >= {{ round_params.time_limit_s }})
+        {
+            EndRound();
+            return;
+        }
+        Vehicle _veh = Game.Player.Character.CurrentVehicle;
+        if (_veh != null)
+        {
+            float _speed = _veh.Speed;
+            Vector3 _fwd = _veh.ForwardVector; _fwd.Z = 0f;
+            Vector3 _vel = _veh.Velocity;      _vel.Z = 0f;
+            float _fwdLen = _fwd.Length();
+            float _velLen = _vel.Length();
+            float _driftAngle = 0f;
+            if (_fwdLen > 0.01f && _velLen > 0.01f)
+            {
+                float _dot = (_fwd.X * _vel.X + _fwd.Y * _vel.Y) / (_fwdLen * _velLen);
+                _dot = Math.Max(-1f, Math.Min(1f, _dot));
+                _driftAngle = (float)(Math.Acos(_dot) * 180.0 / Math.PI);
+            }
+            bool _drifting = _speed >= {{ round_params.min_drift_speed }}f
+                && _driftAngle >= {{ round_params.min_drift_angle }}f
+                && _driftAngle <= 85f;
+            if (_drifting)
+            {
+                if (!_isDrifting) _comboMultiplier = 1f;
+                _comboMultiplier = Math.Min(5f, _comboMultiplier + 0.01f);
+                _score += (int)(_driftAngle * 0.1f * _comboMultiplier);
+                _lastDriftAt = DateTime.UtcNow;
+                _isDrifting  = true;
+            }
+            else if (_isDrifting
+                && (DateTime.UtcNow - _lastDriftAt).TotalSeconds > {{ round_params.combo_decay_s }})
+            {
+                _isDrifting      = false;
+                _comboMultiplier = 1f;
+            }
+        }
+        else if (_isDrifting)
+        {
+            _isDrifting      = false;
+            _comboMultiplier = 1f;
+        }
+{% elif round_type == "theft_streak" %}
+        // Steal any vehicle, drive it to the garage blip to secure it (+1). A
+        // secured vehicle's handle is remembered so it can't be re-scored.
+        double _theftElapsed = (DateTime.UtcNow - _roundStart).TotalSeconds;
+        if (_theftElapsed >= {{ round_params.time_limit_s }})
+        {
+            EndRound();
+            return;
+        }
+        Vehicle _cur = Game.Player.Character.CurrentVehicle;
+        if (_cur != null && _cur.Exists() && !_securedHandles.Contains(_cur.Handle))
+        {
+            if (_stolenVehicle == null || _stolenVehicle.Handle != _cur.Handle)
+            {
+                _stolenVehicle = _cur;
+                GTA.UI.Screen.ShowSubtitle("~y~Vehicle stolen! ~s~Bring it to the garage blip.", 2500);
+            }
+            Vector3 _diff = _cur.Position - _garagePos;
+            float _gdist = (float)Math.Sqrt(_diff.X * _diff.X + _diff.Y * _diff.Y + _diff.Z * _diff.Z);
+            if (_gdist <= {{ round_params.garage_radius }}f)
+            {
+                _securedHandles.Add(_cur.Handle);
+                _stolenVehicle = null;
+                _score++;
+                GTA.UI.Notification.PostTicker("~g~Car secured! ~w~+1 (" + _score + ")", false);
+                Function.Call(Hash.PLAY_SOUND_FRONTEND, -1,
+                    "CHECKPOINT_PERFECT", "HUD_MINI_GAME_SOUNDSET", true);
+            }
+        }
 {% else %}
         // Timed round: survive {{ round_params.get("seconds", 60) }}s; score = seconds lasted.
         double _elapsed = (DateTime.UtcNow - _roundStart).TotalSeconds;
@@ -373,6 +502,53 @@ public class {{ class_name }} : Script
         }
 {% endif %}
     }
+{% if round_type == "survive_waves" and hero_row_index >= 0 %}
+
+    // -- Hero ability: E = primary, Q = secondary. Row {{ hero_row_index }} picks the hero:
+    //    0 Magneto (push/pull), 1 Wolverine (claws; jump is passive in RunRound), 2 Mystique (mark/warp).
+    private void RunHeroAbility(bool primary)
+    {
+        Ped _self = Game.Player.Character;
+        switch (_cfgValues[{{ hero_row_index }}])
+        {
+            case 0:
+                foreach (Vehicle _v in World.GetNearbyVehicles(_self.Position, 15f))
+                {
+                    Vector3 _diff = _v.Position - _self.Position;
+                    float _dist = (float)Math.Sqrt(_diff.X * _diff.X + _diff.Y * _diff.Y + _diff.Z * _diff.Z);
+                    if (_dist < 0.5f) continue;
+                    Vector3 _dir = new Vector3(_diff.X / _dist, _diff.Y / _dist, _diff.Z / _dist);
+                    _v.ApplyForce(primary ? _dir * 12f : _dir * -12f);
+                }
+                GTA.UI.Notification.PostTicker(primary ? "~b~Magnetic push!" : "~b~Magnetic pull!", false);
+                break;
+            case 1:
+                if (primary)
+                {
+                    foreach (Ped _p in World.GetNearbyPeds(_self.Position, 2.5f))
+                    {
+                        if (_p == _self) continue;
+                        _p.ApplyDamage(200);
+                    }
+                    GTA.UI.Notification.PostTicker("~r~Claws!", false);
+                }
+                break;
+            case 2:
+                if (primary)
+                {
+                    _mysticMark    = _self.Position;
+                    _mysticMarkSet = true;
+                    GTA.UI.Notification.PostTicker("~p~Mark set.", false);
+                }
+                else if (_mysticMarkSet)
+                {
+                    _self.Position = _mysticMark;
+                    GTA.UI.Notification.PostTicker("~p~Warped.", false);
+                }
+                break;
+        }
+    }
+{% endif %}
 
     private void DrawRoundHud()
     {
@@ -385,10 +561,27 @@ public class {{ class_name }} : Script
 {% if round_type == "survive_waves" %}
         DrawPanelText("~r~WAVE ~w~" + _wave + " ~s~/ {{ waves_cfg.max_waves }}   ~r~Enemies: ~w~" + AliveCount(),
             0.90f, 0.092f, 0.34f, 255, 255, 255, 255, true);
+{% if hero_row_index >= 0 %}
+        string _heroHint = _cfgValues[{{ hero_row_index }}] == 0 ? "E push / Q pull"
+            : _cfgValues[{{ hero_row_index }}] == 1 ? "E claws" : "E mark / Q warp";
+        DrawPanelText("~p~" + _cfgRows[{{ hero_row_index }}].Options[_cfgValues[{{ hero_row_index }}]]
+            + ": ~w~" + _heroHint, 0.90f, 0.122f, 0.28f, 255, 255, 255, 255, true);
+{% endif %}
 {% elif round_type == "pursuit_survive" %}
         DrawPanelText("~r~HEAT: ~w~" + Function.Call<int>(Hash.GET_PLAYER_WANTED_LEVEL, Game.Player)
             + " ~s~/ {{ round_params.max_wanted }} stars",
             0.90f, 0.092f, 0.34f, 255, 255, 255, 255, true);
+{% elif round_type == "drift_score" %}
+        int _driftTimeLeft = Math.Max(0, {{ round_params.time_limit_s }} - (int)_rt.TotalSeconds);
+        DrawPanelText("~b~TIME: ~w~" + _driftTimeLeft + "s   ~o~COMBO x" + _comboMultiplier.ToString("0.0")
+            + (_isDrifting ? " ~g~DRIFTING" : ""),
+            0.90f, 0.092f, 0.30f, 255, 255, 255, 255, true);
+{% elif round_type == "theft_streak" %}
+        int _theftTimeLeft = Math.Max(0, {{ round_params.time_limit_s }} - (int)_rt.TotalSeconds);
+        DrawPanelText("~b~TIME: ~w~" + _theftTimeLeft + "s   ~g~CARS SECURED: ~w~" + _score,
+            0.90f, 0.092f, 0.30f, 255, 255, 255, 255, true);
+        DrawPanelText(_stolenVehicle != null ? "~y~Carrying a stolen car — get it to the garage!"
+            : "~s~Steal a car to begin.", 0.90f, 0.122f, 0.28f, 255, 255, 255, 255, true);
 {% endif %}
     }
 
@@ -426,6 +619,12 @@ public class {{ class_name }} : Script
 {% elif round_type == "pursuit_survive" %}
         Function.Call(Hash.SET_PLAYER_WANTED_LEVEL, Game.Player, 0, false);
         Function.Call(Hash.SET_PLAYER_WANTED_LEVEL_NOW, Game.Player, false);
+{% elif round_type == "drift_score" %}
+        _isDrifting      = false;
+        _comboMultiplier = 1f;
+{% elif round_type == "theft_streak" %}
+        _stolenVehicle = null;
+        if (_garageBlip != null) { _garageBlip.Delete(); _garageBlip = null; }
 {% endif %}
     }
 

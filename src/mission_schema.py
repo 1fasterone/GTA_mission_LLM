@@ -29,7 +29,7 @@ EventType   = Literal["thunderstorm", "police_pursuit"]
 SkeletonKind = Literal["mission", "minigame"]
 SettingKind  = Literal["cycle", "toggle", "int"]
 ScoreMetric  = Literal["points", "kills", "seconds"]
-RoundType    = Literal["timed", "survive_waves", "pursuit_survive"]
+RoundType    = Literal["timed", "survive_waves", "pursuit_survive", "drift_score", "theft_streak"]
 PedRole     = Literal["guard", "patrol", "target", "civilian", "ally"]
 VehicleRole = Literal["patrol", "escape", "delivery", "parked", "chase", "race_opponent"]
 ObjectRole  = Literal["pickup", "obstacle", "decoration"]
@@ -174,6 +174,55 @@ class PursuitRoundParams(BaseModel):
         return self
 
 
+class DriftRoundParams(BaseModel):
+    """drift_score round: chain drifts for points against the clock. Drift
+    state (angle/speed check, combo decay) is computed live from the player's
+    current vehicle — no extra peds/vehicles required."""
+    time_limit_s:    int   = 90
+    min_drift_angle: float = 15.0   # degrees between heading and velocity
+    min_drift_speed: float = 8.0    # m/s
+    combo_decay_s:   float = 1.5    # grace window before a combo resets
+
+    @field_validator("time_limit_s", mode="before")
+    @classmethod
+    def _clamp_time(cls, v):
+        return _clamp_int(v, 30, 300, 90)
+
+    @field_validator("min_drift_angle", mode="before")
+    @classmethod
+    def _clamp_angle(cls, v):
+        return _clamp_float(v, 5.0, 60.0, 15.0)
+
+    @field_validator("min_drift_speed", mode="before")
+    @classmethod
+    def _clamp_speed(cls, v):
+        return _clamp_float(v, 3.0, 25.0, 8.0)
+
+    @field_validator("combo_decay_s", mode="before")
+    @classmethod
+    def _clamp_decay(cls, v):
+        return _clamp_float(v, 0.3, 5.0, 1.5)
+
+
+class TheftRoundParams(BaseModel):
+    """theft_streak round: jack any vehicle and drive it to the personal
+    garage (a fixed point near the mission location) to secure it. One point
+    per car secured; a secured vehicle can't be re-scored. No peds/vehicles
+    required — the target is always whatever the player is currently driving."""
+    time_limit_s:   int   = 120
+    garage_radius:  float = 8.0     # metres from the garage point to count as delivered
+
+    @field_validator("time_limit_s", mode="before")
+    @classmethod
+    def _clamp_time(cls, v):
+        return _clamp_int(v, 60, 300, 120)
+
+    @field_validator("garage_radius", mode="before")
+    @classmethod
+    def _clamp_radius(cls, v):
+        return _clamp_float(v, 4.0, 20.0, 8.0)
+
+
 class MinigameSpec(BaseModel):
     """Replayable-arcade configuration: menu rows, scoring, and the round body."""
     settings:     list[MinigameSetting] = Field(default_factory=list, max_length=8)
@@ -210,6 +259,12 @@ class MinigameSpec(BaseModel):
                 self.round_params or {}).model_dump()
         elif self.round_type == "pursuit_survive":
             self.round_params = PursuitRoundParams.model_validate(
+                self.round_params or {}).model_dump()
+        elif self.round_type == "drift_score":
+            self.round_params = DriftRoundParams.model_validate(
+                self.round_params or {}).model_dump()
+        elif self.round_type == "theft_streak":
+            self.round_params = TheftRoundParams.model_validate(
                 self.round_params or {}).model_dump()
         return self
 

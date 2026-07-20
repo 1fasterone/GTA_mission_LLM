@@ -208,6 +208,141 @@ class TestMinigameCodegen:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# survive_waves hero ability layer (xmen archetype) — gated on a settings row
+# keyed "hero", looked up by position at runtime
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _xmen_schema(**kwargs) -> MissionSchema:
+    defaults = dict(
+        mission_name="Mutant Uprising",
+        location_name="downtown",
+        skeleton="minigame",
+        minigame={
+            "settings": [
+                {"key": "hero", "label": "Hero", "kind": "cycle",
+                 "options": ["Magneto", "Wolverine", "Mystique"], "default": "Magneto"},
+            ],
+            "score_metric": "kills",
+            "score_label": "KILLS",
+            "round_type": "survive_waves",
+        },
+    )
+    defaults.update(kwargs)
+    return MissionSchema(**defaults)
+
+
+class TestHeroAbilityLayer:
+    def test_hero_row_wires_ability_code(self, gen):
+        cs = gen.generate(_xmen_schema())
+        assert "RunHeroAbility" in cs
+        assert "_cfgValues[0]" in cs           # hero is the only/first settings row
+        assert "SetSuperJumpThisFrame" in cs   # Wolverine passive
+        assert "GetNearbyVehicles" in cs       # Magneto push/pull
+        assert "_mysticMark" in cs             # Mystique mark/warp
+
+    def test_no_hero_row_omits_ability_code(self, gen):
+        # A plain survival_waves schema (no "hero" settings key) must not emit
+        # any of the hero-ability scaffolding — it's purely additive.
+        cs = gen.generate(_minigame_schema(
+            skeleton="minigame",
+            minigame={
+                "settings": [{"key": "wave_count", "label": "Waves", "kind": "int",
+                             "min_value": 3, "max_value": 10, "default": "5"}],
+                "score_metric": "kills", "score_label": "KILLS",
+                "round_type": "survive_waves",
+            },
+        ))
+        assert "RunHeroAbility" not in cs
+        assert "_mysticMark" not in cs
+        assert "SetSuperJumpThisFrame" not in cs
+
+    def test_hero_row_index_follows_position(self, gen):
+        # "hero" isn't required to be the first row — the index must track
+        # wherever it actually lands in settings.
+        cs = gen.generate(_xmen_schema(minigame={
+            "settings": [
+                {"key": "wave_count", "label": "Waves", "kind": "int",
+                 "min_value": 3, "max_value": 10, "default": "5"},
+                {"key": "hero", "label": "Hero", "kind": "cycle",
+                 "options": ["Magneto", "Wolverine", "Mystique"], "default": "Magneto"},
+            ],
+            "score_metric": "kills", "score_label": "KILLS",
+            "round_type": "survive_waves",
+        }))
+        assert "_cfgValues[1]" in cs
+
+    def test_braces_and_parens_balanced(self, gen):
+        cs = gen.generate(_xmen_schema())
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# theft_streak round type — jack a vehicle, deliver to the compiler-placed
+# garage, secure it (+1); garage sits at a real offset from the location anchor
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _theft_schema(**kwargs) -> MissionSchema:
+    defaults = dict(
+        mission_name="Chop Shop Rush",
+        location_name="downtown",
+        skeleton="minigame",
+        minigame={
+            "settings": [
+                {"key": "time_limit", "label": "Time Limit", "kind": "cycle",
+                 "options": ["60", "120", "180"], "default": "120"},
+            ],
+            "score_metric": "points",
+            "score_label": "CARS SECURED",
+            "round_type": "theft_streak",
+            "round_params": {"time_limit_s": 120, "garage_radius": 8.0},
+        },
+    )
+    defaults.update(kwargs)
+    return MissionSchema(**defaults)
+
+
+class TestTheftStreakRoundType:
+    def test_garage_positioned_from_real_location_anchor(self, gen):
+        # downtown's real spawn anchor is (250.0, -850.0, 29.7) — the garage
+        # must be a fixed offset from it, not an invented/arbitrary point.
+        cs = gen.generate(_theft_schema())
+        assert "new Vector3(275.0f, -825.0f, 29.7f)" in cs
+
+    def test_theft_loop_and_garage_blip_present(self, gen):
+        cs = gen.generate(_theft_schema())
+        assert "_stolenVehicle" in cs
+        assert "_securedHandles" in cs
+        assert "World.CreateBlip(_garagePos)" in cs
+        assert "_garageBlip.Delete()" in cs
+
+    def test_scoring_gated_on_garage_radius(self, gen):
+        cs = gen.generate(_theft_schema())
+        assert "_gdist <= 8.0f" in cs
+        assert "_securedHandles.Add(_cur.Handle)" in cs
+        assert "_score++" in cs
+
+    def test_time_limit_reaches_round_and_hud(self, gen):
+        cs = gen.generate(_theft_schema())
+        assert "_theftElapsed >= 120" in cs
+        assert "120 - (int)_rt.TotalSeconds" in cs
+
+    def test_secured_vehicle_cannot_be_rescored(self, gen):
+        cs = gen.generate(_theft_schema())
+        assert "!_securedHandles.Contains(_cur.Handle)" in cs
+
+    def test_other_round_types_omit_theft_state(self, gen):
+        cs = gen.generate(_minigame_schema())   # timed round from earlier fixture
+        assert "_stolenVehicle" not in cs
+        assert "_garageBlip" not in cs
+
+    def test_braces_and_parens_balanced(self, gen):
+        cs = gen.generate(_theft_schema())
+        assert cs.count("{") == cs.count("}")
+        assert cs.count("(") == cs.count(")")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # write() — multi-file emission (.3.cs + schema + .ini + services hub)
 # ══════════════════════════════════════════════════════════════════════════════
 

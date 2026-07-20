@@ -39,7 +39,7 @@
 
 import os
 import json
-from math import radians
+from math import pi, radians
 from random import random, seed, uniform, randint
 from colorsys import hls_to_rgb
 from enum import IntEnum
@@ -571,13 +571,23 @@ def generate_vehicle(random_seed="", params=None, name="Vehicle",
     return _finalize(bm, p, name, assign_materials, apply_bevel)
 
 
-def _finalize(bm, params, name, assign_materials, apply_bevel):
+def _finalize(bm, params, name, assign_materials, apply_bevel, smooth_angle=40.0):
     """Shared tail for the detailed builders: write the bmesh to a mesh, assign the
     material set, drop the object on the ground (lowest point -> z=0), bevel the
     edges and smooth-shade. Returns the new object."""
     if not assign_materials:
         for f in bm.faces:
             f.material_index = 0
+
+    # Sharp creases are baked into the edge data itself: Blender 4.1 removed
+    # mesh.use_auto_smooth, so an angle threshold applied at shading time no
+    # longer exists there — edges above the angle must carry smooth=False for
+    # every supported version to split normals identically.
+    bm.normal_update()
+    sharp = radians(smooth_angle)
+    for e in bm.edges:
+        if e.calc_face_angle(0.0) > sharp:
+            e.smooth = False
 
     me = bpy.data.meshes.new(name + "_mesh")
     bm.to_mesh(me)
@@ -604,9 +614,10 @@ def _finalize(bm, params, name, assign_materials, apply_bevel):
 
     for poly in me.polygons:
         poly.use_smooth = True
-    if hasattr(me, "use_auto_smooth"):       # removed in Blender 4.1+
-        me.use_auto_smooth = True
-        me.auto_smooth_angle = radians(40)
+    if hasattr(me, "use_auto_smooth"):  # pre-4.1: flag must be on for edge splits;
+        me.use_auto_smooth = True       # angle=pi defers entirely to the explicit
+        me.auto_smooth_angle = pi       # smooth=False edges marked above
+
 
     return obj
 
