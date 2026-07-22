@@ -21,8 +21,11 @@ Deterministic: pure lookup + arithmetic, stable tie-breaks, no RNG, no LLM.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import math
+import random
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -86,6 +89,19 @@ _SPRITE_2D_BONUS = 0.75
 _DEFAULT_MIN_SCORE = 0.15
 _DEFAULT_TOP_K = 5
 _VARIETY_BAND = 0.85          # candidates within 85% of the best score rotate
+
+# Distribution-sampling mode (opt-in via assets.sample_temperature > 0). Instead
+# of "pick the best (then round-robin a narrow band)", score all candidates,
+# turn the top _SAMPLE_POOL scores into a softmax probability distribution, and
+# SAMPLE from it — so the same catalog can surface hundreds of distinct models
+# across a scene instead of the same ~20. Kept reproducible by a SEEDED RNG
+# (assets.sample_seed), honoring the compiler's determinism contract: same
+# schema + same seed → byte-identical output, just drawn from the whole field.
+# temperature → 0 concentrates on the top score (today's best-match behavior);
+# larger temperature flattens toward uniform (more variety). The pool cap is the
+# top-k analog: without it, the long tail of thousands of marginal matches would
+# collectively outweigh the few good ones and pull a race car toward a fern.
+_DEFAULT_SAMPLE_POOL = 40
 
 # Bonus added to a candidate that is a STRONG member of the entity's concept
 # layer (its category / kind_hint places it there, not a stray keyword). Large
@@ -194,6 +210,36 @@ _STYLE_TOKENS = frozenset({
 def _slug(name: str) -> str:
     parts = re.sub(r"[^a-zA-Z0-9]+", " ", name or "").split()
     return "".join(p.capitalize() for p in parts) or "Entity"
+
+
+def _stable_seed(base_seed: int, draw: int, filenames: tuple[str, ...]) -> int:
+    """Deterministic 64-bit RNG seed from the run seed, the per-candidate-set
+    draw index, and the candidate identities.
+
+    Uses hashlib, NOT the builtin hash(): Python salts str hashing per process
+    (PYTHONHASHSEED), so a hash()-derived seed would pick different models on
+    every interpreter start — silently breaking the reproducible-build contract
+    this module exists to uphold. sha1 here is a stable digest, not a security
+    primitive.
+    """
+    payload = f"{base_seed}|{draw}|{'|'.join(filenames)}".encode("utf-8")
+    return int.from_bytes(hashlib.sha1(payload).digest()[:8], "big")
+
+
+def _softmax_weights(scores: list[float], temperature: float) -> list[float]:
+    """Normalize match scores into a probability distribution:
+    p_i ∝ exp((s_i - max) / T).
+
+    Subtracting the max keeps exp() numerically stable for any score range.
+    T → 0 concentrates all mass on the best match (the historical
+    "pick the best" behavior); larger T flattens toward uniform, so lower-
+    scored-but-still-valid models get real probability mass and the catalog's
+    long tail actually gets used.
+    """
+    top = max(scores)
+    exps = [math.exp((s - top) / temperature) for s in scores]
+    total = sum(exps) or 1.0
+    return [e / total for e in exps]
 
 
 def _entry_source(entry: dict, asset_root: Optional[str]) -> Optional[Path]:
@@ -386,6 +432,11 @@ def resolve_entity_assets(schema,
     min_score = float(cfg.get("min_match_score", _DEFAULT_MIN_SCORE))
     top_k = max(1, int(cfg.get("variety_top_k", _DEFAULT_TOP_K)))
     asset_root = cfg.get("asset_root")  # optional override for entry roots
+    # Distribution sampling (see _DEFAULT_SAMPLE_POOL). 0.0 = disabled = the
+    # historical best-match + round-robin path, byte-for-byte.
+    sample_temp = max(0.0, float(cfg.get("sample_temperature", 0.0) or 0.0))
+    sample_pool = max(1, int(cfg.get("sample_pool", _DEFAULT_SAMPLE_POOL)))
+    sample_seed = int(cfg.get("sample_seed", 0) or 0)
 
     sk_cfg = sketchfab_cfg or {}
     sk_enabled = bool(sk_cfg.get("enabled"))
@@ -467,19 +518,40 @@ def resolve_entity_assets(schema,
         """Variety-pick from a sorted (score, asset) list, register the pick in
         used_models, and return its Resources.Load path (None if empty).
 
-        Deterministic: candidates within _VARIETY_BAND of the best rotate by a
-        per-candidate-set counter, so same-query groups get distinct models and
-        repeat runs match exactly. Shared across the concept-layer and global
-        match paths so every pick flows through one copy/.meta registration.
+        Two selection modes, both deterministic and both rotating by a
+        per-candidate-set counter so same-query groups get DISTINCT models:
+
+        - sample_temperature == 0 (default): candidates within _VARIETY_BAND of
+          the best score round-robin. Narrow and safe, but only ever surfaces
+          the handful of top-scored models — the reason a 2941-asset catalog
+          kept showing the same ~20 files.
+        - sample_temperature  > 0: the top `sample_pool` scores are normalized
+          into a softmax distribution and SAMPLED with a seeded RNG. Reaches
+          the whole field while staying reproducible (same schema + same
+          assets.sample_seed → identical picks). The draw index feeds the seed,
+          so consecutive groups sharing a candidate set draw DIFFERENT models
+          rather than re-drawing the same one.
+
+        Shared across the concept-layer and global match paths so every pick
+        flows through one copy/.meta registration.
         """
         if not scored:
             return None
-        best = scored[0][0]
-        band = [a for s, a in scored[:top_k] if s >= best * _VARIETY_BAND]
-        key = tuple(a["filename"] for a in band)
-        idx = rotation.get(key, 0)
-        rotation[key] = idx + 1
-        pick = band[idx % len(band)]
+        if sample_temp > 0.0:
+            pool = scored[:sample_pool]
+            key = tuple(a["filename"] for _, a in pool)
+            idx = rotation.get(key, 0)
+            rotation[key] = idx + 1
+            weights = _softmax_weights([s for s, _ in pool], sample_temp)
+            rng = random.Random(_stable_seed(sample_seed, idx, key))
+            pick = rng.choices([a for _, a in pool], weights=weights, k=1)[0]
+        else:
+            best = scored[0][0]
+            band = [a for s, a in scored[:top_k] if s >= best * _VARIETY_BAND]
+            key = tuple(a["filename"] for a in band)
+            idx = rotation.get(key, 0)
+            rotation[key] = idx + 1
+            pick = band[idx % len(band)]
 
         nonlocal racing_core_seen
         if (not racing_core_seen and layers
