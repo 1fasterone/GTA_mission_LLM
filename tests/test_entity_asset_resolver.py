@@ -1728,3 +1728,126 @@ def test_non_path_road_entity_unaffected_by_structural_guard(tmp_path):
     paths = resolve_entity_assets(_schema([e]), {}, {},
                                   lookups_dir=str(lookups))
     assert "stopsign" in paths.get("RoadSigns", "").lower()
+
+
+# ── distribution sampling (assets.sample_temperature) ─────────────────────────
+
+from src.unity_entity_asset_resolver import _softmax_weights, _stable_seed  # noqa: E402
+
+
+class TestSoftmaxWeights:
+    def test_sums_to_one(self):
+        w = _softmax_weights([1.0, 0.6, 0.3], 0.5)
+        assert sum(w) == pytest.approx(1.0)
+
+    def test_higher_score_gets_more_mass(self):
+        w = _softmax_weights([1.0, 0.6, 0.3], 0.5)
+        assert w[0] > w[1] > w[2]
+
+    def test_low_temperature_concentrates_on_the_best(self):
+        assert _softmax_weights([1.0, 0.5], 0.01)[0] > 0.99
+
+    def test_high_temperature_flattens_toward_uniform(self):
+        w = _softmax_weights([1.0, 0.5], 50.0)
+        assert abs(w[0] - w[1]) < 0.02
+
+    def test_stable_for_large_scores(self):
+        # max-subtraction must keep exp() from overflowing
+        w = _softmax_weights([900.0, 899.0], 0.5)
+        assert sum(w) == pytest.approx(1.0)
+
+
+class TestStableSeed:
+    def test_deterministic(self):
+        assert _stable_seed(1, 0, ("a.fbx",)) == _stable_seed(1, 0, ("a.fbx",))
+
+    def test_varies_by_seed_draw_and_candidates(self):
+        base = _stable_seed(1, 0, ("a.fbx",))
+        assert _stable_seed(2, 0, ("a.fbx",)) != base
+        assert _stable_seed(1, 1, ("a.fbx",)) != base
+        assert _stable_seed(1, 0, ("b.fbx",)) != base
+
+    def test_not_derived_from_salted_builtin_hash(self):
+        # A hash()-derived seed would change per interpreter run; this digest
+        # is pinned, so a regression to hash() fails here.
+        assert _stable_seed(0, 0, ("tree.fbx",)) == _stable_seed(0, 0, ("tree.fbx",))
+        assert isinstance(_stable_seed(0, 0, ("tree.fbx",)), int)
+
+
+@pytest.fixture
+def many_trees(tmp_path):
+    """A catalog with 20 near-equal tree variants — enough that 'best match'
+    and 'sample the distribution' give visibly different answers."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    assets = []
+    for i in range(20):
+        fn = f"tree-{i:02d}.fbx"
+        (lib / fn).write_bytes(b"FBX")
+        assets.append({"filename": fn, "relpath": fn, "category": "nature",
+                       "keywords": ["tree", "forest"], "kind_hints": ["tree"],
+                       "generic_score": 20 - i, "scale": 1.0,
+                       "root": lib.as_posix(), "game_contexts": ["any"],
+                       "format": "fbx", "pack": "test", "curated": False})
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps({"version": 1, "vocabulary": {"categories": [], "tags": []},
+                    "assets": assets}), encoding="utf-8")
+    return lookups
+
+
+def _tree_groups(n=8):
+    return [EntitySpec(name=f"Trees{i}", kind="tree", count=3,
+                       model_hint="tree forest") for i in range(n)]
+
+
+def _distinct(lookups, cfg):
+    paths = resolve_entity_assets(_schema(_tree_groups()), {}, {},
+                                  lookups_dir=str(lookups), asset_cfg=cfg)
+    return set(paths.values())
+
+
+class TestDistributionSampling:
+    def test_default_is_unchanged_best_match_rotation(self, many_trees):
+        # temperature absent → the historical narrow band (variety_top_k=5).
+        assert len(_distinct(many_trees, {})) <= 5
+
+    def test_sampling_reaches_beyond_the_variety_band(self, many_trees):
+        hot = _distinct(many_trees, {"sample_temperature": 0.6, "sample_seed": 1})
+        cold = _distinct(many_trees, {})
+        assert len(hot) > len(cold)
+
+    def test_sampling_is_reproducible(self, many_trees):
+        cfg = {"sample_temperature": 0.6, "sample_seed": 3}
+        assert _distinct(many_trees, cfg) == _distinct(many_trees, cfg)
+
+    def test_different_seed_gives_a_different_cast(self, many_trees):
+        a = _distinct(many_trees, {"sample_temperature": 0.6, "sample_seed": 1})
+        b = _distinct(many_trees, {"sample_temperature": 0.6, "sample_seed": 99})
+        assert a != b
+
+    def test_zero_temperature_matches_disabled(self, many_trees):
+        assert _distinct(many_trees, {"sample_temperature": 0.0}) == \
+               _distinct(many_trees, {})
+
+    def test_pool_caps_the_distribution(self, many_trees):
+        # A pool of 2 can never surface more than 2 distinct models.
+        picks = _distinct(many_trees, {"sample_temperature": 5.0,
+                                       "sample_pool": 2, "sample_seed": 1})
+        assert len(picks) <= 2
+
+    def test_sampling_never_picks_below_min_score(self, many_trees):
+        # Candidates are score-filtered before _register; sampling must not
+        # resurrect anything the threshold already rejected.
+        picks = _distinct(many_trees, {"sample_temperature": 5.0,
+                                       "min_match_score": 99.0})
+        assert not picks
+
+    def test_uses_no_global_rng(self, many_trees):
+        import random as _r
+        _r.seed(0)
+        first = _r.random()
+        _distinct(many_trees, {"sample_temperature": 0.6, "sample_seed": 1})
+        _r.seed(0)
+        assert _r.random() == first

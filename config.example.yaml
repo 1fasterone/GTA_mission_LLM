@@ -53,7 +53,23 @@ assets:
   min_match_score: 0.15
   # Same-kind entity groups rotate among the top-K near-equal matches so a
   # forest isn't 5 copies of the same tree. Deterministic (schema order).
+  # Only consulted when sample_temperature is 0 (see below).
   variety_top_k: 5
+  # ── Distribution sampling ────────────────────────────────────────────────
+  # "Pick the best match" (above) only ever surfaces the handful of top-scored
+  # models, which is why a multi-thousand-asset catalog keeps showing the same
+  # ~20 files. Set sample_temperature > 0 to instead score every candidate,
+  # normalize the top `sample_pool` scores into a softmax distribution, and
+  # SAMPLE from it.
+  #   0.0        → disabled: the historical best-match + rotation, byte-for-byte
+  #   0.25-0.5   → recommended: real variety, still strongly on-concept
+  #   >= 1.0     → very flat; off-concept matches start winning slots
+  # Reproducible, not random: picks are drawn from a SEEDED RNG, so the same
+  # schema + same sample_seed always produces the same project. Change
+  # sample_seed to get a different — but equally repeatable — cast of models.
+  sample_temperature: 0.0
+  sample_pool: 40          # how many top-scored candidates enter the distribution
+  sample_seed: 0           # change for a different reproducible draw
 
 sketchfab:
   # Live Sketchfab model search — a Tier S the resolver tries BEFORE the
