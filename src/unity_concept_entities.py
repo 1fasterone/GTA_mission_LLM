@@ -17,6 +17,10 @@ concept-named entity, and only APPENDS the ones that went missing — it never
 mutates or removes what the LLM wrote. Deterministic regex parse of the
 ORIGINAL user_prompt (schema.meta['user_prompt']), not the Step-2 LLM concept
 prose, which already paraphrases specific names away.
+
+A bullet is read as its whole logical line — the brief's own wrap at ~80 cols
+is folded back together first — so the "(kind: ...)", "model_hint" and
+"count N" it states all survive the parse and reach the rescued EntitySpec.
 """
 
 from __future__ import annotations
@@ -42,7 +46,20 @@ class _KindDefaults(TypedDict):
 # _BRIEF_MARKER_RE) — used to know where the ENTITIES bullet list ends.
 _SECTION_HEADER_RE = re.compile(r"^[A-Z][A-Z0-9 /&'-]{1,40}$")
 _BULLET_RE = re.compile(r"^([A-Za-z][\w'-]*)\s*:\s*(.+)$")
-_KIND_PAREN_RE = re.compile(r"\(kind:\s*([^)]+)\)", re.IGNORECASE)
+_KIND_PAREN_RE = re.compile(r"\(kind:\s*([^)]*)\)", re.IGNORECASE)
+# The kind token ends at the first "," or "/" — the documented brief format is
+# `(kind: character, model_hint "diver in wetsuit")`, so splitting on "/" alone
+# captured the whole model_hint clause as part of the kind.
+_KIND_END_RE = re.compile(r"[,/]|\bmodel_hint\b", re.IGNORECASE)
+# The brief states its own model_hint; carry it through rather than
+# re-deriving one from the entity name (see _model_hint).
+_MODEL_HINT_RE = re.compile(
+    r"model_hint\s*[:=]?\s*[\"'“‘]([^\"'”’]+)[\"'”’]",
+    re.IGNORECASE)
+# Per-bullet instance count ("count 3." / "count: 12") — overrides the
+# per-kind default below. Bounded so a typo can't spawn a scene-killing swarm.
+_COUNT_RE = re.compile(r"[,;]?\s*\bcount\s*[:=]?\s*(\d{1,4})\b", re.IGNORECASE)
+_MAX_COUNT = 500
 
 # Deterministic per-kind defaults for a rescued entity. Anything not listed
 # falls back to _DEFAULT_KIND — a single centered placeholder, the same
@@ -63,11 +80,51 @@ _DEFAULT_KIND: _KindDefaults = dict(shape="cube", placement="single", count=1,
 _RIVAL_WORDS_RE = re.compile(r"\b(rival|enemy|opponent|ai)\b", re.IGNORECASE)
 
 
+def _fold_bullets(lines: list[str]) -> list[str]:
+    """Fold the ENTITIES bullet list into one logical string per bullet.
+
+    Structured briefs wrap at ~80 cols, so a bullet's "(kind: ...)" clause
+    routinely straddles a line break — parsing line-by-line loses it. A
+    non-bullet line continues the bullet above it when it is INDENTED (the
+    documented wrap style) or when the bullet so far has an unclosed "(";
+    anything else (an unindented trailing paragraph, a blank line, the next
+    section header) closes the bullet instead of being absorbed into it.
+    """
+    bullets: list[str] = []
+    pending: list[str] = []
+
+    def close() -> None:
+        if pending:
+            bullets.append(" ".join(pending))
+            pending.clear()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            close()
+            continue
+        if stripped.startswith("-"):
+            close()
+            pending.append(stripped.lstrip("-").strip())
+        elif _SECTION_HEADER_RE.match(stripped):
+            break  # next section header — the ENTITIES list is over
+        elif pending and (line[:1].isspace()
+                          or "".join(pending).count("(")
+                          > "".join(pending).count(")")):
+            pending.append(stripped)  # wrapped continuation of the bullet above
+        else:
+            close()  # free-form prose under the list — not part of a bullet
+    close()
+    return bullets
+
+
 def extract_named_entities(user_prompt: str) -> list[dict]:
     """Parse the brief's own "ENTITIES" section: bullets of the form
-    "- Name: description (kind: x / y)." Returns
-    [{"name", "description", "kind"}, ...] in source order; [] if the brief
-    has no recognizable ENTITIES section (e.g. a one-line vibe prompt).
+    "- Name: description (kind: x, model_hint "y"), count N." Returns
+    [{"name", "description", "kind", "model_hint", "count"}, ...] in source
+    order ("model_hint" "" and "count" None when the bullet omits them); []
+    if the brief has no recognizable ENTITIES section (e.g. a one-line vibe
+    prompt).
     """
     lines = (user_prompt or "").splitlines()
     start = None
@@ -79,24 +136,35 @@ def extract_named_entities(user_prompt: str) -> list[dict]:
         return []
 
     out: list[dict] = []
-    for line in lines[start:]:
-        stripped = line.strip()
-        if not stripped:
+    for bullet in _fold_bullets(lines[start:]):
+        m = _BULLET_RE.match(bullet)
+        if not m:
             continue
-        if stripped.startswith("-"):
-            m = _BULLET_RE.match(stripped.lstrip("-").strip())
-            if not m:
-                continue
-            name, desc = m.group(1), m.group(2)
-            kind = ""
-            kind_m = _KIND_PAREN_RE.search(desc)
-            if kind_m:
-                kind = kind_m.group(1).split("/")[0].strip().lower()
-                desc = _KIND_PAREN_RE.sub("", desc).strip().rstrip(".").strip()
-            out.append({"name": name, "description": desc, "kind": kind})
-        elif _SECTION_HEADER_RE.match(stripped):
-            break  # next section header — the ENTITIES list is over
-        # else: a wrapped continuation sentence under the last bullet — skip.
+        name, desc = m.group(1), m.group(2)
+
+        kind = ""
+        kind_m = _KIND_PAREN_RE.search(desc)
+        if kind_m:
+            kind = _KIND_END_RE.split(kind_m.group(1))[0].strip().lower()
+            desc = _KIND_PAREN_RE.sub("", desc)
+
+        model_hint = ""
+        hint_m = _MODEL_HINT_RE.search(bullet)
+        if hint_m:
+            model_hint = " ".join(hint_m.group(1).split())
+
+        count = None
+        count_m = _COUNT_RE.search(bullet)
+        if count_m and 1 <= int(count_m.group(1)) <= _MAX_COUNT:
+            count = int(count_m.group(1))
+        desc = _COUNT_RE.sub("", desc)
+
+        # Excising the "(kind: ...)" / "count N" clauses leaves orphaned
+        # whitespace before the punctuation that followed them.
+        desc = re.sub(r"\s+([,.;:])", r"\1", " ".join(desc.split()))
+        desc = desc.strip().rstrip(".").strip().rstrip(",")
+        out.append({"name": name, "description": desc, "kind": kind,
+                    "model_hint": model_hint, "count": count})
     return out
 
 
@@ -131,11 +199,20 @@ def inject_missing_concept_entities(schema) -> list[str]:
         if kind == "vehicle" and _RIVAL_WORDS_RE.search(
                 f"{ent['name']} {ent['description']}"):
             tag = "Enemy"
+        # The brief's own "count N" wins over the per-kind default; "single"
+        # placement bakes exactly one position (see unity_layout._bake_positions),
+        # so a group the brief wants repeated has to scatter instead.
+        count = ent.get("count") or defaults["count"]
+        placement = defaults["placement"]
+        if count > 1 and placement == "single":
+            placement = "scatter"
         added.append(EntitySpec(
-            name=ent["name"], kind=kind, count=defaults["count"],
-            shape=defaults["shape"], placement=defaults["placement"],
+            name=ent["name"], kind=kind, count=count,
+            shape=defaults["shape"], placement=placement,
             color_role=defaults["color_role"], scale=defaults["scale"],
-            tag=tag, model_hint=_model_hint(ent["name"], kind, ent["description"]),
+            tag=tag,
+            model_hint=(ent.get("model_hint")
+                        or _model_hint(ent["name"], kind, ent["description"])),
         ))
         existing.add(key)
 
