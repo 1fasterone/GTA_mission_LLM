@@ -37,6 +37,25 @@ _ARC_POINTS_PER_CORNER = 8          # smoothness; 4*(n+1)+1 <= 64 (n<=14 room)
 _TRACK_WIDTH = 10.0
 _BARRIER_MARGIN = 1.5               # gap between track edge and barrier ring
 
+# Trackside dressing rings — models placed LOGICALLY around the OUTSIDE of the
+# circuit (spectator grandstands trackside, then a tree backdrop further out),
+# offset outward from the outer barrier and hung on the existing path-placement
+# machinery (placement="path", no path_width = even waypoint spread). No new
+# spawner code: these are ordinary path groups the resolver + EntitySpawner
+# already handle; the outward offset just decides WHERE their waypoints sit.
+_STAND_MARGIN = 6.0                 # grandstands: metres beyond the outer barrier
+_BACKDROP_MARGIN = 12.0             # trees: metres beyond the grandstands
+_STAND_EVERY = 4                    # subsample stride around the loop (fewer stands)
+_TREE_EVERY = 3                     # subsample stride for the tree backdrop
+
+# How many DISTINCT models each dressing ring uses. One entity group resolves
+# to exactly one model and tiles it at every waypoint, so a single 22-point
+# tree ring is 22 copies of the same tree. Splitting the ring into N interleaved
+# sub-groups makes the resolver pick N times — independently — so the ring is
+# built from N different models instead of one. See _variant_groups.
+_STAND_VARIANTS = 3
+_TREE_VARIANTS = 6
+
 _RACING_CORE_KINDS = frozenset({"vehicle", "road", "track"})
 
 
@@ -114,6 +133,61 @@ def _xz_bbox_area(points: list[list[float]]) -> float:
     return (max(xs) - min(xs)) * (max(zs) - min(zs))
 
 
+def _outward_offset(loop: list[list[float]], margin: float) -> list[list[float]]:
+    """Offset a loop OUTWARD by `margin` metres. `_offset_polyline`'s sign is
+    winding-dependent (right-hand perpendicular is inward for a CCW loop,
+    outward for a CW one), so — like the custom-route rail split above — offset
+    both ways and keep the larger-footprint result. Winding-agnostic."""
+    plus = _offset_polyline(loop, margin)
+    minus = _offset_polyline(loop, -margin)
+    return plus if _xz_bbox_area(plus) >= _xz_bbox_area(minus) else minus
+
+
+def _variant_groups(base_name: str, points: list[list[float]], variants: int,
+                    **spec) -> list["EntitySpec"]:
+    """Split one dressing ring into `variants` INTERLEAVED path groups.
+
+    The reason this exists: an entity group resolves to a single model and the
+    spawner tiles that one model at every waypoint — so a 22-waypoint tree ring
+    authored as one group renders 22 identical trees. Each sub-group here goes
+    through the normal per-entity catalog match independently, and the resolver
+    deliberately hands same-query groups DIFFERENT models (round-robin within
+    the variety band, or a softmax draw from the whole field when
+    assets.sample_temperature > 0). N sub-groups therefore = N distinct models.
+
+    Interleaved (`pts[i::k]`) rather than contiguous, so the variants alternate
+    around the loop — a mixed treeline — instead of forming N solid blocks of
+    one model each. A closed ring drops its closing duplicate first so the
+    start waypoint is not spawned twice.
+    """
+    pts = points[:-1] if _is_closed(points) else list(points)
+    k = max(1, min(variants, len(pts)))
+    out: list[EntitySpec] = []
+    for i in range(k):
+        slice_pts = pts[i::k]
+        if not slice_pts:
+            continue
+        out.append(EntitySpec(name=f"{base_name}{i + 1}" if k > 1 else base_name,
+                              count=len(slice_pts), path_points=slice_pts,
+                              **spec))
+    return out
+
+
+def _scatter_ring(loop: list[list[float]], margin: float,
+                  stride: int) -> list[list[float]]:
+    """Outward-offset a loop, then keep every `stride`-th point as a scatter
+    waypoint. A closed loop stays closed (the closing duplicate is re-appended
+    so downstream P1-normalization still recognises it); an open course stays
+    open (no phantom point looped back to the start)."""
+    ring = _outward_offset(loop, margin)
+    closed = _is_closed(ring)
+    core = ring[:-1] if closed else ring
+    pts = [list(p) for i, p in enumerate(core) if i % max(1, stride) == 0]
+    if closed and pts:
+        pts.append(list(pts[0]))
+    return pts
+
+
 def _start_yaw(centerline: list[list[float]]) -> float:
     """Race direction at the start line as a Unity yaw (degrees about world
     Y; 0 = +Z, clockwise positive) — baked onto the start-grid karts as
@@ -163,9 +237,12 @@ def is_racing_degenerate(schema) -> bool:
 
 
 def compose_racetrack(schema, centerline: list[list[float]] | None = None,
-                      track_width: float | None = None) -> list[str]:
+                      track_width: float | None = None,
+                      scatter: bool = True) -> list[str]:
     """Inject a closed circuit (road ribbon, inner/outer barriers, apex cones,
-    checkpoint banners, a start-grid of karts) into schema.entities.
+    checkpoint banners, a start-grid of karts) into schema.entities, plus —
+    unless scatter=False — trackside dressing arranged around the OUTSIDE of
+    the loop (spectator grandstands, then a tree backdrop further out).
 
     Two entry modes:
       - Default (centerline=None): the parametric rounded-rectangle oval —
@@ -253,6 +330,31 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
                    instance_positions=_start_grid(centerline, 3, width),
                    instance_yaws=[_start_yaw(centerline)] * 3),
     ]
+
+    # Trackside dressing: models arranged LOGICALLY around the OUTSIDE of the
+    # circuit — grandstands trackside (just beyond the outer barrier), a tree
+    # backdrop further out. Ordinary path groups (placement="path", no
+    # path_width → even waypoint spread), so they flow through the SAME
+    # genre-aware catalog match + EntitySpawner path placement as everything
+    # else; only their outward-offset waypoints are new. Both hints resolve
+    # offline in the bundled Kenney library (grandStand.fbx / tree*.fbx), so
+    # they are safe under assets.strict; disable with scatter=False.
+    if scatter:
+        stands = _scatter_ring(outer, _STAND_MARGIN, _STAND_EVERY)
+        trees = _scatter_ring(outer, _STAND_MARGIN + _BACKDROP_MARGIN, _TREE_EVERY)
+        if stands:
+            new_entities.extend(_variant_groups(
+                "TracksideStands", stands, _STAND_VARIANTS,
+                kind="structure", shape="cube", placement="path",
+                color_role="secondary", scale=2.0,
+                model_hint="grandstand spectator stand bleachers"))
+        if trees:
+            new_entities.extend(_variant_groups(
+                "TracksideTrees", trees, _TREE_VARIANTS,
+                kind="tree", shape="cylinder", placement="path",
+                color_role="trim", scale=1.0,
+                model_hint="tree pine foliage"))
+
     prior_entities = {e.name: e for e in schema.entities}
     schema.entities = list(schema.entities) + new_entities
 
@@ -297,18 +399,19 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
         if targets:
             msgs.append("Registered circuit entities in scene subset(s): "
                         + ", ".join(s.name for s in targets))
+    _dress = ", grandstands + tree backdrop around the outside" if scatter else ""
     if custom:
         msgs.append(
             f"Composed circuit from an authored route ({len(centerline)} "
             f"points, {'closed loop' if _is_closed(centerline) else 'open course'}, "
             f"{width:g} m wide) — track surface, offset barrier rails, apex "
-            "cones, 4 checkpoint banners, a player kart, 3 opponent karts"
+            f"cones, 4 checkpoint banners, a player kart, 3 opponent karts{_dress}"
         )
     else:
         msgs.append(
             "Racing genre with no vehicle/track content — injected a deterministic "
             "closed-circuit scaffold (TrackSurface, inner/outer barriers, apex "
-            "cones, 4 checkpoint banners, a player kart, 3 opponent karts)"
+            f"cones, 4 checkpoint banners, a player kart, 3 opponent karts{_dress})"
         )
 
     # WorldRegion is a real schema modality (world_spec.regions, bounds

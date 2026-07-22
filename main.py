@@ -389,6 +389,10 @@ def unity_path(
                                           help="Text file containing the same point spec (';' or newline separated)"),
     image:  Optional[Path] = typer.Option(None, "--image", "-i",
                                           help="Top-down drawing of the course (dark line on light background, or inverted)"),
+    track:  Optional[str]  = typer.Option(None, "--track",
+                                          help="Generate a procedural race circuit instead of authoring points. Style: flowing | technical | high_speed | kart | random"),
+    seed:   int            = typer.Option(42, "--seed",
+                                          help="--track only: seed for the procedural circuit (reproducible)"),
     width:  float          = typer.Option(10.0, "--width", "-w",
                                           help="Track ribbon width in meters (path_width)"),
     world_size: float      = typer.Option(160.0, "--world-size",
@@ -408,42 +412,56 @@ def unity_path(
       python main.py unity-path --points "0,0; 60,0; 80,40; 40,80; 0,60" --closed
       python main.py unity-path --file mytrack.txt --width 12 -o routes.json
       python main.py unity-path --image sketch.png --world-size 200 -o routes.json
+      python main.py unity-path --track flowing --seed 7 -o routes.json
       python main.py unity-create "desert rally at dusk" --route routes.json
     """
     from src.unity_pathinput import build_route, parse_points_text, trace_image
+    from src.unity_trackgen import STYLES, generate_track_route
 
-    sources = [s for s in (points, file, image) if s is not None]
+    sources = [s for s in (points, file, image, track) if s is not None]
     if len(sources) != 1:
-        console.print("[red]Error:[/] provide exactly one of --points / --file / --image")
+        console.print("[red]Error:[/] provide exactly one of --points / --file / --image / --track")
         raise typer.Exit(1)
 
-    try:
-        if image is not None:
-            if not image.exists():
-                console.print(f"[red]Error:[/] image not found: {image}")
-                raise typer.Exit(1)
-            pts = trace_image(str(image), world_size=world_size)
-            source = f"image:{image.name}"
-        else:
-            spec = points if points is not None else None
-            if spec is None:
-                assert file is not None, "exactly one of --points/--file/--image is guaranteed above"
-                if not file.exists():
-                    console.print(f"[red]Error:[/] file not found: {file}")
+    if track is not None:
+        # Procedural circuit: the generator emits the SAME canonical route dict
+        # (build_route → normalize) as authored/traced input, so it flows into
+        # `unity-create --route` unchanged.
+        if track not in STYLES:
+            console.print(f"[red]Error:[/] unknown --track style {track!r}; "
+                          f"choose one of {', '.join(STYLES)}")
+            raise typer.Exit(1)
+        route = generate_track_route(style=track, seed=seed, width=width)
+        source = route["source"]
+    else:
+        try:
+            if image is not None:
+                if not image.exists():
+                    console.print(f"[red]Error:[/] image not found: {image}")
                     raise typer.Exit(1)
-                spec = file.read_text(encoding="utf-8")
-                source = f"text:{file.name}"
+                pts = trace_image(str(image), world_size=world_size)
+                source = f"image:{image.name}"
             else:
-                source = "text:inline"
-            pts = parse_points_text(spec)
-    except ImportError:
-        console.print("[red]Error:[/] --image needs Pillow: pip install pillow")
-        raise typer.Exit(1)
-    except ValueError as exc:
-        console.print(f"[red]Error:[/] {exc}")
-        raise typer.Exit(1)
+                spec = points if points is not None else None
+                if spec is None:
+                    assert file is not None, "exactly one of --points/--file/--image/--track is guaranteed above"
+                    if not file.exists():
+                        console.print(f"[red]Error:[/] file not found: {file}")
+                        raise typer.Exit(1)
+                    spec = file.read_text(encoding="utf-8")
+                    source = f"text:{file.name}"
+                else:
+                    source = "text:inline"
+                pts = parse_points_text(spec)
+        except ImportError:
+            console.print("[red]Error:[/] --image needs Pillow: pip install pillow")
+            raise typer.Exit(1)
+        except ValueError as exc:
+            console.print(f"[red]Error:[/] {exc}")
+            raise typer.Exit(1)
 
-    route = build_route(pts, width=width, close=closed, source=source)
+        route = build_route(pts, width=width, close=closed, source=source)
+
     out.write_text(json.dumps(route, indent=2), encoding="utf-8")
     n = len(route["path_points"])
     kind = "closed loop" if route["closed"] else "open course"
