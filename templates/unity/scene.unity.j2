@@ -20,11 +20,15 @@ RenderSettings:
   m_FogDensity: 0.01
   m_LinearFogStart: 0
   m_LinearFogEnd: 300
-  m_AmbientSkyColor: {r: {{ palette_rgb.background.r }}, g: {{ palette_rgb.background.g }}, b: {{ palette_rgb.background.b }}, a: 1}
-  m_AmbientEquatorColor: {r: {{ (palette_rgb.background.r * 0.6) | round(8) }}, g: {{ (palette_rgb.background.g * 0.6) | round(8) }}, b: {{ (palette_rgb.background.b * 0.6) | round(8) }}, a: 1}
-  m_AmbientGroundColor: {r: {{ (palette_rgb.secondary.r * 0.3) | round(8) }}, g: {{ (palette_rgb.secondary.g * 0.3) | round(8) }}, b: {{ (palette_rgb.secondary.b * 0.3) | round(8) }}, a: 1}
-  m_AmbientIntensity: 1
-  m_AmbientMode: {{ "3" if game_type in ("2D", "2d_topdown") else "0" }}
+{# Ambient is resolved by src/micro/lighting.py:resolve_ambient — the SAME
+   function the composed LightingDirector bakes into its own RenderSettings
+   pass, so the scene at rest matches the scene at Play. Do not re-derive the
+   gradient here; it carries a luminance floor the raw palette does not. #}
+  m_AmbientSkyColor: {r: {{ ambient_sky.r }}, g: {{ ambient_sky.g }}, b: {{ ambient_sky.b }}, a: 1}
+  m_AmbientEquatorColor: {r: {{ ambient_equator.r }}, g: {{ ambient_equator.g }}, b: {{ ambient_equator.b }}, a: 1}
+  m_AmbientGroundColor: {r: {{ ambient_ground.r }}, g: {{ ambient_ground.g }}, b: {{ ambient_ground.b }}, a: 1}
+  m_AmbientIntensity: {{ ambient_intensity }}
+  m_AmbientMode: {{ ambient_mode }}
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
   m_SkyboxMaterial: {% if game_type in ("2D", "2d_topdown") %}{fileID: 0}{% else %}{fileID: 10304, guid: 0000000000000000f000000000000000, type: 0}{% endif %}
   m_HaloStrength: 0.5

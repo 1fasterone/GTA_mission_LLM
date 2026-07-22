@@ -209,6 +209,12 @@ MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
         {"atom": "SpawnParticle", "args": {"effect": "Explosion", "x": 0.0, "y": 0.0, "z": 0.0, "scale": 1.0}, "label": "spawn burst"},
         {"atom": "LightFlash",    "args": {"intensity": 5.0, "duration": 0.05},                                "label": "impact flash"},
     ],
+    # ── Lighting: the rig itself is built in Awake (not an atom sequence); the
+    #    only atom-expressible behavior is pulsing the key light. ─────────────
+    "lighting": [
+        {"atom": "LightFlash", "args": {"intensity": 2.0, "duration": 0.1},
+         "label": "key light pulse"},
+    ],
     # ── Shader: assign the default material slot ──────────────────────────────
     "shader": [
         {"atom": "SetMaterial", "args": {"material_name": "Materials/Default", "slot": 0}, "label": "assign material"},

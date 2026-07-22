@@ -37,6 +37,22 @@ from .unity_pathnorm      import normalize_paths
 
 console = Console()
 
+
+def _compose_palette_rgb(schema) -> dict:
+    """schema.color_palette -> {slot: {r,g,b}} for the composed lighting micro.
+
+    Same shape and same conversion the generator bakes into the scene template's
+    `palette_rgb` context, so the runtime lighting guard and the scene YAML's
+    m_Ambient*Color agree instead of fighting each other.
+    """
+    from .unity_generator import _unity_color
+    pal = getattr(schema, "color_palette", None)
+    if pal is None:
+        return {}
+    return {slot: _unity_color(getattr(pal, slot))
+            for slot in ("primary", "secondary", "accent", "background", "trim")}
+
+
 # ── Programmatic fixer ────────────────────────────────────────────────────────
 
 _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*$")
@@ -905,7 +921,10 @@ class UnityPipeline:
                                         animations=schema.animations,
                                         characters=schema.characters,
                                         missions=schema.missions,
-                                        behavior_trees=schema.behavior_trees)
+                                        behavior_trees=schema.behavior_trees,
+                                        environment=schema.environment,
+                                        visual_style=schema.visual_style,
+                                        palette_rgb=_compose_palette_rgb(schema))
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep

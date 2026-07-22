@@ -596,6 +596,7 @@ GOLDEN_3D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("physics", "rigidbody_3d"), ("input", "keyboard_mouse"),
     ("interactable", "pickup"), ("animator", "humanoid"),
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+    ("lighting", "three_point"),
 )
 
 # The 2D golden archetype — same always-on kinds as 3D, dimension-appropriate
@@ -609,6 +610,7 @@ GOLDEN_2D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("physics", "rigidbody_2d"), ("input", "keyboard_mouse"),
     ("interactable", "pickup"), ("animator", "humanoid"),
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+    ("lighting", "flat_2d"),
 )
 
 # The 2.5D golden archetype — DISTINCT from 2D. 2.5D means real 3D models/world
@@ -629,6 +631,7 @@ GOLDEN_2_5D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("physics", "rigidbody_3d"), ("input", "keyboard_mouse"),
     ("interactable", "pickup"), ("animator", "humanoid"),
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+    ("lighting", "three_point"),
 )
 
 # The 2D top-down golden archetype — DISTINCT from both 2D side-scroller and the
@@ -643,6 +646,7 @@ GOLDEN_2D_TOPDOWN_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
     ("physics", "rigidbody_2d"), ("input", "keyboard_mouse"),
     ("interactable", "pickup"), ("animator", "humanoid"),
     ("statemachine", "player_fsm"), ("trigger", "zone_enter"),
+    ("lighting", "flat_2d"),
 )
 
 
@@ -792,6 +796,16 @@ def _bt_options_for_entry(entry) -> dict:
     }
 
 
+# ── Lighting variant selection ────────────────────────────────────────────────
+# The lighting micro owns its own variant selection (src/micro/lighting.py) so
+# that unity_generator can pick the SAME variant when baking scene.unity.j2's
+# RenderSettings — including for non-composed projects, where this module never
+# runs. Re-exported here under the old private name so compose-side callers and
+# tests keep a stable import site.
+
+from .micro.lighting import select_variant as _lighting_variant  # noqa: E402
+
+
 def subsystems_for(
     game_type:    str,
     features:     list[str] | None = None,
@@ -809,6 +823,9 @@ def subsystems_for(
     characters    = None,            # schema.characters: list[CharacterSpec]
     missions      = None,            # schema.missions: list[MissionSpec]
     behavior_trees = None,           # schema.behavior_trees: list[AIBehaviorTree]
+    environment    = None,           # schema.environment: Optional[EnvironmentSpec]
+    visual_style:  str              = "stylized",   # schema.visual_style
+    palette_rgb:   dict | None      = None,         # {slot: {r,g,b}} — see unity_generator
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
@@ -929,6 +946,18 @@ def subsystems_for(
     anim_clips = _animator_clips_from_specs(animations, characters)
     anim_opts: dict = {"clips": anim_clips} if anim_clips else {}
 
+    # Lighting: variant from the project's own interior/exterior + time-of-day
+    # signals; palette passed through so the fill/rim lights and the ambient
+    # gradient are the project's real colors, not a generic grey (the fixer
+    # refuses to invent a look — see LightingPipeline._enforce_lit).
+    _tod = str(getattr(environment, "time_of_day", "") or "")
+    light_variant = _lighting_variant(
+        gt, visual_style=visual_style, time_of_day=_tod,
+        explicit_env=environment is not None, user_prompt=prompt_low, scenes=scenes)
+    light_opts: dict = {"meta": {"game_type": game_type or "3D"}}
+    if palette_rgb:
+        light_opts["meta"]["palette_rgb"] = palette_rgb
+
     subs: list[Subsystem] = [
         # Core (always)
         Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
@@ -944,6 +973,16 @@ def subsystems_for(
         Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator", options=anim_opts),
         Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
         Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger", options=dim_meta),
+        # Always-on: the light rig AND the environment-lighting guard. Not a
+        # "nice to have" — scene.unity.j2 ships one directional light and an
+        # AmbientMode.Skybox pointing at the built-in Default-Skybox, and the
+        # only existing repair for that is gated behind an editor-only
+        # EditorPrefs one-shot in SetupRenderPipeline.cs.j2. Runtime-built
+        # materials (EntitySpawner, MaterialPalette) have no GI contribution,
+        # so with ambient at zero they render black on Play. This micro is what
+        # makes "the scene is lit" an invariant instead of an accident.
+        Subsystem(kind="lighting",    variant=light_variant,  target="world",   name="LightingDirector",
+                  options=light_opts),
     ]
 
     # Feature- AND content-driven additions
