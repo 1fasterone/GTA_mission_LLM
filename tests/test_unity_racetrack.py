@@ -296,3 +296,89 @@ class TestSceneSubsetRegistration:
         compose_racetrack(schema)
         main = next(s for s in schema.scene_specs if s.name == "Main")
         assert len(main.entities) == len(set(main.entities))
+
+
+# ── trackside scatter (models around the OUTSIDE of the loop) ─────────────────
+
+class TestTracksideScatter:
+    def _outer(self, schema):
+        return next(e for e in schema.entities if e.name == "TrackBarriersOuter")
+
+    def _group(self, schema, prefix):
+        return [e for e in schema.entities if e.name.startswith(prefix)]
+
+    def test_scatter_on_by_default(self):
+        schema = _schema([])
+        compose_racetrack(schema)
+        assert self._group(schema, "TracksideStands")
+        assert self._group(schema, "TracksideTrees")
+
+    def test_scatter_false_omits_dressing(self):
+        schema = _schema([])
+        compose_racetrack(schema, scatter=False)
+        assert not self._group(schema, "Trackside")
+
+    def test_rings_split_into_multiple_variant_groups(self):
+        # The anti-tiling property: one group resolves to ONE model, so the
+        # ring must be several groups to end up built from several models.
+        schema = _schema([])
+        compose_racetrack(schema)
+        assert len(self._group(schema, "TracksideTrees")) > 1
+        assert len(self._group(schema, "TracksideStands")) > 1
+
+    def test_variant_groups_do_not_share_waypoints(self):
+        schema = _schema([])
+        compose_racetrack(schema)
+        seen: list[tuple] = []
+        for e in self._group(schema, "TracksideTrees"):
+            seen.extend(tuple(p[:3]) for p in e.path_points)
+        assert len(seen) == len(set(seen)), "variants must partition the ring"
+
+    def test_stands_are_path_groups_without_path_width(self):
+        # placement="path" + no path_width = even waypoint spread (reuses the
+        # existing path machinery; no new spawner code).
+        schema = _schema([])
+        compose_racetrack(schema)
+        for stands in self._group(schema, "TracksideStands"):
+            assert stands.placement == "path"
+            assert stands.path_width == 0.0
+            assert stands.path_points and stands.count == len(stands.path_points)
+
+    def test_stands_sit_outside_the_outer_barrier(self):
+        # Every grandstand waypoint must be farther from the track centre than
+        # the outer barrier ring — i.e. genuinely "around the outside".
+        schema = _schema([])
+        compose_racetrack(schema)
+        def _reach(entities):
+            return max((p[0] ** 2 + p[2] ** 2) ** 0.5
+                       for e in entities for p in e.path_points)
+        stands = _reach(self._group(schema, "TracksideStands"))
+        trees = _reach(self._group(schema, "TracksideTrees"))
+        assert stands > _reach([self._outer(schema)])
+        assert trees > stands   # trees ring the stands from even further out
+
+    def test_scatter_kinds(self):
+        schema = _schema([])
+        compose_racetrack(schema)
+        assert all(e.kind == "tree" for e in self._group(schema, "TracksideTrees"))
+        assert all(e.kind == "structure"
+                   for e in self._group(schema, "TracksideStands"))
+
+    def test_scatter_registered_in_gated_scene(self):
+        schema = _schema([EntitySpec(name="RoadA", kind="road", placement="path",
+                                     path_points=[[0.0, 0.0, 0.0], [10.0, 0.0, 0.0]])])
+        # a gated scene naming existing track content should also gain scatter
+        from src.unity_schema import SceneSpec
+        schema.scene_specs = [SceneSpec(name="Main", entities=["RoadA"])]
+        compose_racetrack(schema)
+        main = next(s for s in schema.scene_specs if s.name == "Main")
+        assert any(n.startswith("TracksideStands") for n in main.entities)
+        assert any(n.startswith("TracksideTrees") for n in main.entities)
+
+    def test_custom_route_also_gets_scatter(self):
+        schema = _schema([])
+        route = [[0.0, 0.0, 0.0], [40.0, 0.0, 0.0], [40.0, 0.0, 40.0],
+                 [0.0, 0.0, 40.0], [0.0, 0.0, 0.0]]
+        compose_racetrack(schema, centerline=route, track_width=8.0)
+        assert self._group(schema, "TracksideStands")
+        assert self._group(schema, "TracksideTrees")
