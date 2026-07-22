@@ -1,0 +1,68 @@
+# {{ s.name }} — Lighting
+
+**Variant:** {{ variant }}
+
+{{ s.description }}
+
+## What it does
+
+`{{ s.name }}` runs at `[DefaultExecutionOrder(-500)]` — before every other
+composed system — and does three things in `Awake()`:
+
+1. **Environment** — writes the ambient gradient, intensity, and reflection
+   source into `RenderSettings`, ensures a usable skybox, then measures the
+   resulting ambient probe. If the probe resolves to black it falls back to the
+   baked gradient, which cannot be zero.
+2. **Rig** — builds the light objects listed below under a single `__LightRig`
+   child. Idempotent: re-calling `Apply()` never duplicates lights.
+3. **Repair** — rebinds any renderer whose material shader failed to resolve at
+   runtime (`Hidden/InternalErrorShader` or a null shader).
+
+## Environment
+
+| Setting | Value |
+|---|---|
+| Ambient mode | `{{ s.ambient_mode }}` |
+| Ambient sky | ({{ "%.3f"|format(s.ambient_sky_r) }}, {{ "%.3f"|format(s.ambient_sky_g) }}, {{ "%.3f"|format(s.ambient_sky_b) }}) |
+| Ambient equator | ({{ "%.3f"|format(s.ambient_equator_r) }}, {{ "%.3f"|format(s.ambient_equator_g) }}, {{ "%.3f"|format(s.ambient_equator_b) }}) |
+| Ambient ground | ({{ "%.3f"|format(s.ambient_ground_r) }}, {{ "%.3f"|format(s.ambient_ground_g) }}, {{ "%.3f"|format(s.ambient_ground_b) }}) |
+| Ambient intensity | {{ "%.3f"|format(s.ambient_intensity) }} |
+| Reflections | `{{ s.reflection_mode }}` @ {{ "%.3f"|format(s.reflection_intensity) }} |
+
+## Rig ({{ s.lights | length }} light(s))
+
+{% if s.lights %}
+| Role | Type | Intensity | Color | Shadows | Placement |
+|---|---|---|---|---|---|
+{% for l in s.lights %}
+| {{ l.role }} | {{ l.type }} | {{ "%.2f"|format(l.intensity) }} | ({{ "%.2f"|format(l.color_r) }}, {{ "%.2f"|format(l.color_g) }}, {{ "%.2f"|format(l.color_b) }}) | {{ l.shadows }} | {% if l.type == "directional" %}pitch {{ "%.0f"|format(l.pitch) }}° / yaw {{ "%.0f"|format(l.yaw) }}°{% else %}({{ "%.1f"|format(l.x) }}, {{ "%.1f"|format(l.y) }}, {{ "%.1f"|format(l.z) }}) range {{ "%.1f"|format(l.range) }}{% endif %} |
+{% endfor %}
+{% else %}
+No light objects — this variant lights the scene from flat ambient alone.
+{% endif %}
+
+## Setup
+
+1. Attach `{{ s.name }}` to a persistent systems GameObject (`--compose` puts it
+   on `_Systems` automatically).
+{% if s.adopt_scene_sun %}
+2. Leave **Adopt Scene Sun** on. The rig adopts the scene's existing Directional
+   Light as its key and only raises its intensity if it falls below the floor —
+   so a time-of-day sun baked into the scene stays authoritative.
+{% else %}
+2. **Adopt Scene Sun** is off: the rig creates its own key light regardless of
+   what the scene already has.
+{% endif %}
+{% if s.respect_atmosphere %}
+3. **Respect Atmosphere** is on: if the project ships `AtmosphereBootstrap`, the
+   environment pass is skipped so the two don't fight over the skybox.
+{% endif %}
+
+## API
+
+```csharp
+var lighting = GameContext.Instance.Get<{{ s.name }}>();
+lighting.ApplyEnvironment();   // re-push RenderSettings (e.g. after a scene load)
+lighting.RepairMaterials();    // re-scan for unresolved shaders after spawning
+Light key = lighting.KeyLight; // the adopted or created key light
+```

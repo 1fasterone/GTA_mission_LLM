@@ -56,6 +56,8 @@ def test_registry_has_all_known():
         "npc_dialog",
         # VFX — particle systems, sequences, screen effects, impact bursts
         "vfx",
+        # Lighting — light rig + the RenderSettings environment guard
+        "lighting",
         # Shader — runtime material-property controllers (MaterialPropertyBlock)
         "shader",
         # Mission objective tracker (schema.missions)
