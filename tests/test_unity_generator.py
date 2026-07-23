@@ -2375,3 +2375,90 @@ def test_microgen_atoms_render_in_game_sequencer_end_to_end():
     seq_files = [v for k, v in files.items() if "GameSequencer" in k and k.endswith(".cs")]
     assert seq_files, "no GameSequencer.cs rendered"
     assert "Wait" in seq_files[0]
+
+
+# ── EntitySpawner instance colliders ────────────────────────────────────────
+
+class TestEntityInstanceColliders:
+    """Every model instance with a behavior or a real tag used to get the same
+    hardcoded CapsuleCollider (height 2, center (0,1,0)) regardless of what the
+    model was. Live symptom (TurboToyRacer): a path-laid road segment became a
+    2.4-unit vertical pill standing on the origin, the player spawned inside it,
+    and the car could never drive away."""
+
+    @staticmethod
+    def _schema(entities, name="ColT", game_type="3D"):
+        from src.unity_schema import UnitySchema
+        return UnitySchema(
+            project_name=name, company_name="C", description="",
+            game_type=game_type, platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(name="PlayerController", type="player", description="m")],
+            entities=entities,
+        )
+
+    @pytest.fixture
+    def road_and_props(self, gen):
+        from src.unity_schema import EntitySpec
+        schema = self._schema([
+            EntitySpec(name="RoadSegments", kind="road", count=20, shape="plane",
+                       placement="path", tag="Track", scale=1.2,
+                       path_points=[[0, 0, 0], [0, 0, 40], [20, 2, 80]]),
+            EntitySpec(name="Trees", kind="prop", count=10, shape="cylinder",
+                       placement="scatter", tag="Scenery"),
+        ])
+        return gen.generate(schema, {})["ColT/Assets/Scripts/EntitySpawner.cs"]
+
+    def test_fixed_capsule_collider_is_gone(self, road_and_props):
+        assert "CapsuleCollider" not in road_and_props
+        assert "cc.height = 2f" not in road_and_props
+
+    def test_instances_collide_as_their_measured_box(self, road_and_props):
+        assert "AddComponent<BoxCollider>()" in road_and_props
+        assert "bc.size   = colSize;" in road_and_props
+        assert "colSize   = _mb.size;" in road_and_props
+
+    def test_surface_kinds_collide_as_a_base_slab(self, road_and_props):
+        assert "IsSurfaceKind(kind)" in road_and_props
+        assert "Mathf.Min(_mb.size.y, 0.5f)" in road_and_props
+        for kind in ("road", "track", "bridge", "ramp", "platform", "runway"):
+            assert f'case "{kind}":' in road_and_props
+
+    def test_entity_kind_is_passed_to_the_spawner(self, road_and_props):
+        assert 'SpawnGroup("RoadSegments", "road",' in road_and_props
+        assert 'SpawnGroup("Trees", "prop",' in road_and_props
+
+    def test_tiled_path_group_forwards_its_kind(self, gen):
+        from src.unity_schema import EntitySpec
+        schema = self._schema([
+            EntitySpec(name="Track", kind="track", count=30, shape="cube",
+                       placement="path", tag="Track", path_width=12.0,
+                       path_points=[[0, 0, 0], [0, 0, 60], [40, 0, 90]]),
+        ], name="TileKind")
+        cs = gen.generate(schema, {})["TileKind/Assets/Scripts/EntitySpawner.cs"]
+        assert 'SpawnTiledGroup("Track", "track",' in cs
+        assert "SpawnGroup(groupName, kind, count," in cs   # measure-fail fallback
+        assert cs.count("{") == cs.count("}")
+
+    def test_2d_topdown_still_compiles_without_measured_bounds(self, gen):
+        """2d_topdown skips the bounds-measuring block entirely — the collider
+        vars have to be declared on that branch too or the C# won't build."""
+        from src.unity_schema import EntitySpec
+        schema = self._schema([
+            EntitySpec(name="Foes", kind="enemy", count=6, shape="capsule",
+                       placement="scatter", tag="Enemy"),
+        ], name="TopDownCol", game_type="2d_topdown")
+        cs = gen.generate(schema, {})["TopDownCol/Assets/Scripts/EntitySpawner.cs"]
+        assert cs.count("Vector3 colSize") == 1
+        assert cs.count("{") == cs.count("}")
+
+    def test_deterministic(self, gen):
+        from src.unity_schema import EntitySpec
+        def _build():
+            schema = self._schema([
+                EntitySpec(name="RoadSegments", kind="road", count=8, shape="plane",
+                           placement="path", tag="Track",
+                           path_points=[[0, 0, 0], [0, 0, 40]])])
+            return gen.generate(schema, {})["ColT/Assets/Scripts/EntitySpawner.cs"]
+        assert _build() == _build()

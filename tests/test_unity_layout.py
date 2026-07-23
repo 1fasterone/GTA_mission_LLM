@@ -311,3 +311,78 @@ class TestTerrainBounds:
         r = ring.group_radius
         assert xmin <= cx - r
         assert xmax >= cx + r
+
+
+class TestPlayerSpawnReservation:
+    """The scene templates put the player at world XZ (0, 0). Nothing reserved
+    that cell, so the packer's first slot — `_find_slot` returns the origin
+    while nothing is placed — was the player's own spawn point. Live symptom
+    (TurboToyRacer): the player spawned inside a spawned group's collider and
+    could not move at all."""
+
+    @staticmethod
+    def _dist_from_spawn(entity):
+        return math.hypot(entity.origin_offset[0], entity.origin_offset[1])
+
+    def test_first_packed_group_no_longer_claims_the_origin(self):
+        big = EntitySpec(name="Big", count=9, placement="grid", scale=3.0)
+        schema = _schema([big])
+        compute_layout(schema)
+        assert big.origin_offset != [0.0, 0.0]
+
+    def test_every_packed_group_clears_the_spawn_radius(self):
+        entities = [
+            EntitySpec(name="Buildings", count=12, placement="ring", radius=8),
+            EntitySpec(name="Crowd", count=30, placement="scatter", scale=0.6),
+            EntitySpec(name="Pickups", count=6, placement="grid"),
+            EntitySpec(name="Statue", count=1, placement="single", scale=2.0),
+        ]
+        schema = _schema(entities)
+        compute_layout(schema)
+        for e in entities:
+            assert self._dist_from_spawn(e) >= e.group_radius, \
+                f"{e.name} overlaps the player spawn"
+
+    def test_no_baked_instance_lands_on_the_spawn_point(self):
+        entities = [
+            EntitySpec(name="Crowd", count=40, placement="scatter", scale=0.6),
+            EntitySpec(name="Crates", count=9, placement="grid", scale=1.0),
+        ]
+        schema = _schema(entities)
+        compute_layout(schema)
+        for e in entities:
+            for x, _y, z in e.instance_positions:
+                assert math.hypot(x, z) > 1.0, f"{e.name} instance sits on the player"
+
+    @pytest.mark.parametrize("locomotion,clearance", [
+        ("walk", 3.0), ("swim", 6.0), ("drive", 6.0), ("fly", 8.0),
+    ])
+    def test_clearance_scales_with_locomotion(self, locomotion, clearance):
+        """A vehicle_car's runtime BoxCollider is 1.7 x 4.0 — a walker's
+        clearance would still leave the car's nose inside a neighbour. The
+        spiral quantizes slots, so assert the honored clearance, not the
+        distance the search happens to settle on."""
+        e = EntitySpec(name="Props", count=9, placement="grid", scale=1.0)
+        schema = _schema([e])
+        schema.locomotion = locomotion
+        compute_layout(schema)
+        assert self._dist_from_spawn(e) >= e.group_radius + clearance
+
+    def test_path_groups_are_not_displaced_by_the_reservation(self):
+        """A race start line runs THROUGH the spawn by design — the road is a
+        surface the player rests on, not an obstacle to route around."""
+        road = EntitySpec(name="Road", kind="road", count=8, placement="path",
+                          path_points=[[0, 0, 0], [0, 0, 40], [0, 0, 80]])
+        schema = _schema([road])
+        compute_layout(schema)
+        assert road.path_points[0][:3] == [0.0, 0.0, 0.0]
+
+    def test_layout_is_still_idempotent(self):
+        entities = [EntitySpec(name="A", count=9, placement="grid"),
+                    EntitySpec(name="B", count=12, placement="ring", radius=6)]
+        schema = _schema(entities)
+        compute_layout(schema)
+        first = [(e.origin_offset, e.group_radius, e.instance_positions) for e in entities]
+        compute_layout(schema)
+        assert [(e.origin_offset, e.group_radius, e.instance_positions)
+                for e in entities] == first

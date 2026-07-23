@@ -51,6 +51,21 @@ _GROUND_MARGIN_BY_LOCOMOTION = {"drive": 60.0, "fly": 100.0}
 # the corridor of seed circles the packer must keep other groups out of.
 _PATH_CLEARANCE = 2.0
 
+# The scene templates put the player at world XZ (0, 0) — see scene.unity.j2's
+# Player GameObject. Nothing was reserving that cell, so the packer's very
+# first slot (_find_slot returns the origin when nothing is placed yet) was
+# the player's own spawn: whichever group had the largest footprint spawned
+# on top of the player, and its collider trapped the player at t=0.
+# Reserved as a seed circle, so the packer routes around it and never moves it.
+_PLAYER_SPAWN_XZ = (0.0, 0.0)
+# Radius of that reservation, by locomotion — clearance has to cover the body
+# the controller builds at runtime plus room to pull away from a standing
+# start. A vehicle_car's runtime BoxCollider alone is 1.7 x 4.0
+# (micro/controller vehicle_car BuildCar), so a walker's 3 units would still
+# leave a car's nose inside a neighbouring group.
+_SPAWN_CLEARANCE_BY_LOCOMOTION = {"drive": 6.0, "fly": 8.0, "swim": 6.0}
+_SPAWN_CLEARANCE_DEFAULT = 3.0
+
 _LAYOUT_PLACEMENTS = frozenset({"single", "line", "ring", "grid", "scatter"})
 
 
@@ -315,7 +330,16 @@ def compute_layout(schema: UnitySchema) -> list[str]:
     preplaced = [e for e in layoutable if e.instance_positions]
     packable = [e for e in layoutable if not e.instance_positions]
 
-    seed_circles: list[tuple[float, float, float]] = []
+    # The player's own spawn cell is occupied space, reserved before anything
+    # else so no packed group can claim it. "path" groups are deliberately NOT
+    # displaced by it — a race start line runs THROUGH the spawn by design, and
+    # a road is a surface the player rests on rather than an obstacle (see
+    # EntitySpawner.cs.j2's IsSurfaceKind slab collider).
+    spawn_r = _SPAWN_CLEARANCE_BY_LOCOMOTION.get(
+        schema.locomotion, _SPAWN_CLEARANCE_DEFAULT)
+    seed_circles: list[tuple[float, float, float]] = [
+        (_PLAYER_SPAWN_XZ[0], _PLAYER_SPAWN_XZ[1], spawn_r)
+    ]
     path_groups = [e for e in schema.entities
                    if e.placement == "path" and e.path_points]
     for e in path_groups:

@@ -3,6 +3,12 @@ LLM prompt templates for the Unity Project Creator pipeline.
 Same philosophy as GTA5: LLM = storyteller/specifier, pipeline = deterministic compiler.
 """
 
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from functools import lru_cache
+
 # ── STEP 2: Project concept ───────────────────────────────────────────────────
 
 UNITY_CONCEPT_SYSTEM = """\
@@ -32,7 +38,11 @@ Do NOT write any code, JSON, or package IDs."""
 UNITY_SCHEMA_FILL_SYSTEM = """\
 You are a Unity project schema designer.
 Output ONLY valid JSON — no explanation, no markdown fences.
-Use plain English for all description fields; the pipeline resolves them to package IDs."""
+Use plain English for all description fields; the pipeline resolves them to package IDs.
+The schema is the project's FULL design, not just its settings: alongside the
+scenes/scripts/entities you also author the game's characters, objectives, sound,
+surfaces and effects. Every field you fill is compiled into a real asset or
+subsystem; every field you leave empty falls back to a generic default."""
 
 UNITY_SCHEMA_FILL_USER = """\
 {schema_hints}
@@ -274,8 +284,316 @@ OUTPUT this exact JSON structure, fully populated:
     }}
   ]
 }}
-
+{multimodal_block}
 Output ONLY the JSON. No other text."""
+
+
+# ── STEP 3b: multimodal IR block ──────────────────────────────────────────────
+# UnitySchema is a full multimodal IR (characters/missions/audio_specs/materials/
+# models/animations/vfx/shaders/behavior_trees/microgens/atoms/capabilities), and
+# every one of those fields already has a deterministic consumer downstream. They
+# stayed empty on every generated project for one reason: the Step-3 prompt never
+# asked for them.
+#
+# Asking for all of them in one call is not an option — local models run at 8k-16k
+# context and the schema prompt is already ~3.5k tokens. So the block is split:
+#
+#   CORE      — always emitted. capabilities/characters/missions/audio_specs apply
+#               to every game and drive the composed subsystems directly.
+#   OPTIONAL  — gated on CONTENT (the concept + user prompt text), same convention
+#               unity_compose.subsystems_for uses to gate optional micros. At most
+#               `max_optional` sections ship, ranked by how many distinct signals
+#               the brief hit, so the prompt's size stays bounded no matter how
+#               much the concept describes.
+#   wiring    — compose-only, so it lives in GAMECONTEXT_SCHEMA_GUIDANCE below
+#               (its source/target vocabulary is the micro kinds, which only
+#               exist in --compose mode).
+#
+# world_spec is deliberately absent: unity_layout / unity_racetrack author it
+# deterministically in Step 5, so asking the LLM for it would only cost tokens.
+
+_MULTIMODAL_HEADER = """
+MULTIMODAL DESIGN LAYER — ADDITIONAL top-level keys in the SAME JSON object
+(siblings of "entities", not nested inside it). The keys above configure the
+PROJECT; these author the GAME, and each one is compiled into a real asset or
+subsystem. Fill what the concept actually calls for and leave a key out when the
+concept never implies it — padding these with filler is worse than omitting them.
+"""
+
+# ── Core sections (always emitted) ────────────────────────────────────────────
+
+_MM_CAPABILITIES = """
+  "capabilities": TYPED subsystem parameters. Each sub-object you include is built
+    into a real subsystem using THESE numbers instead of generic defaults — set
+    them to the concept's feel (a heavy tank and a twitchy hoverbike are the same
+    fields with different values). Include only the sub-objects the concept needs:
+      "controller": {"movement":true,"jump":true,"sprint":false,"crouch":false,"speed":6.0,"sprint_multiplier":1.7,"jump_force":8.0,"look_sensitivity":2.0}
+      "physics":    {"gravity":true,"collision":"dynamic","mass":80.0,"drag":0.0}   collision: none|static|kinematic|dynamic
+      "hud":        {"show_health":true,"show_ammo":false,"show_objective":true,"show_minimap":false}
+      "input":      {"bindings":[{"action":"Fire","key":"Mouse0"},{"action":"Interact","key":"E"}]}
+      "ai":         {"pathfinding":true,"detection_range":15.0,"behavior":"patrol"}  behavior: idle|patrol|guard|chase|flee|attack|custom
+      "animation":  {"rig_type":"humanoid","clips":{"Idle":"Idle","Run":"Run"}}      rig_type: generic|humanoid
+      "dialog":     {"system":"simple","bark_on_sight":false}                        system: simple|branching|voiced
+      "vfx":        {"particles":true,"post_processing":false}
+      "model":      {"lod":"auto","animations":{"Idle":"Idle"}}
+"""
+
+_MM_CHARACTERS = """
+  "characters": max 6 — every named person/creature/pilot in the game, the player
+    included. Names and roles, not crowd filler (crowds stay in "entities"):
+      {"id":"snake_case_id","name":"Display Name","role":"player|npc|enemy|boss|companion",
+       "model_ref":"<an entity group name or models[] id>","animation_set":["Idle","Run"]}
+"""
+
+_MM_MISSIONS = """
+  "missions": max 3 — what the player is actually asked to DO. Each becomes a real
+    on-screen objective tracker, so write objectives the scene can satisfy:
+      {"id":"snake_case_id","title":"Short Title","description":"one line",
+       "objectives":[{"id":"obj_1","description":"one line","type":"reach|collect|defeat|survive|escort|timer",
+                      "target_ref":"<entity group name or character id>","count":1,"optional":false}],
+       "rewards":{"score":100},"story_beat_ref":"<a story_beats id, or \\"\\">"}
+    max 5 objectives per mission, and a mission with an EMPTY "objectives" list is
+    dropped — the objectives are the whole point.
+"""
+
+_MM_AUDIO_SPECS = """
+  "audio_specs": max 8 — every distinct SOUND the concept implies (engine note,
+    footstep, pickup chime, menu theme, wind bed). Each one is really generated:
+      {"id":"snake_case_id","type":"music|sfx|ambient|voice","description":"what it sounds like",
+       "generation_method":"sfxr|stable_audio|elevenlabs|procedural|recorded","loop":false,
+       "parameters":{"gen_prompt":"detailed prompt for the generator","spatial":false}}
+    sfxr/procedural = short synthesised blips (hit, jump, pickup); stable_audio =
+    music and ambient beds (set "loop":true); elevenlabs = spoken lines (put the
+    words in parameters.text). This is a SOUND DESIGN list — "audio_tracks" above
+    is only the music playlist.
+"""
+
+_CORE_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("capabilities", _MM_CAPABILITIES),
+    ("characters",   _MM_CHARACTERS),
+    ("missions",     _MM_MISSIONS),
+    ("audio_specs",  _MM_AUDIO_SPECS),
+)
+
+# ── Optional sections (content-gated) ─────────────────────────────────────────
+
+_ATOM_VOCAB_SLOT = "<<ATOM_VOCABULARY>>"
+
+_MM_DIALOG = """
+  DIALOG — the concept has people who talk, so extend the characters that speak:
+    add "dialog_graph" to that character:
+      {"start_node":"n1","nodes":[{"id":"n1","speaker":"Display Name","text":"the spoken line",
+        "emotion":"neutral","audio_ref":"<an audio_specs id — set it ONLY for a voiced line>",
+        "choices":[{"text":"player reply","next_node":"n2","condition":""}]}]}
+    add "npc_brain" to a character with real intent:
+      {"traits":["gruff","loyal"],"goals":["guard the gate"],"memory":[]}
+    Every "next_node" MUST be another node's id in the same graph. A character
+    with any audio_ref set gets a voiced dialog system; leave audio_ref "" for text.
+"""
+
+_MM_ANIMATIONS = """
+  "animations": max 8 — the named clips the characters actually play:
+      {"id":"snake_case_id","name":"Run","clip":"Run","loop":true,"events":["Footstep"]}
+    "name" is the animator STATE, "clip" is the clip asset name (usually equal).
+    "events" are Unity Animation Event names fired from the clip. Every name you
+    list here should also appear in the matching character's "animation_set".
+"""
+
+_MM_BEHAVIOR_TREES = """
+  "behavior_trees": max 3 — one per distinct enemy/NPC mind the concept describes:
+      {"id":"snake_case_id","name":"GuardBrain","tree":{"root":"n1","nodes":[
+        {"id":"n1","type":"selector","children":["n2","n4"]},
+        {"id":"n2","type":"sequence","children":["n3"]},
+        {"id":"n3","type":"condition","action":"PlayerInRange","params":{"range":12}},
+        {"id":"n4","type":"action","action":"Patrol","params":{"speed":2.0}}]}}
+    type: sequence|selector|action|condition|decorator. "root" and every id in
+    "children" MUST be another node's id in the same tree; only sequence/selector/
+    decorator nodes take children. The same tree may also be inlined on a
+    character as npc_brain.behavior_tree.
+"""
+
+_MM_VFX = """
+  "vfx": max 4 — the particle/impact effects the concept names:
+      {"id":"snake_case_id","name":"PascalCaseName","type":"particle|volumetric|shader_fx",
+       "parameters":{"loop":false,"duration":2.0,"play_on_start":true,"auto_destroy":true,"scale":1.0}}
+    One entry = one effect; a looping ambient effect sets "loop":true and
+    "auto_destroy":false.
+"""
+
+_MM_SURFACES = """
+  "materials": max 6 — the named surfaces the concept describes. Each becomes a
+    real .mat asset tinted from parameters.color, so give every one a color:
+      {"id":"snake_case_id","name":"PascalCaseName","shader_model":"Standard",
+       "generation_method":"procedural|substance|sdxl|imported",
+       "parameters":{"color":"#RRGGBB","smoothness":0.3}}
+  "shaders": max 3 — ONLY for a look no plain material gives (toon ramp, water,
+    hologram, scanline):
+      {"id":"snake_case_id","name":"PascalCaseName","language":"shadergraph|hlsl|glsl",
+       "parameters":{"note":"what the shader does"}}
+  "models": max 6 — the 3D assets the concept names, and the materials dressing them:
+      {"id":"snake_case_id","name":"PascalCaseName","category":"vehicle|character|prop|environment",
+       "generation_method":"blender_microgen|parametric_base|imported",
+       "parameters":{},"materials":["<a materials id>"]}
+"""
+
+_MM_SEQUENCE = """
+  "atoms": max 12 — a scripted beat sequence (intro/cutscene) played once at start,
+    in order. Use ONLY these atom names — anything else compiles to a TODO comment
+    (args in parentheses; omit an arg to take its default):
+""" + _ATOM_VOCAB_SLOT + """
+      [{"atom":"ScreenFade","args":{"alpha":0.0,"duration":1.5},"label":"fade in"},
+       {"atom":"CameraShake","args":{"intensity":0.4,"duration":1.0},"label":"impact"}]
+  "microgens": max 4 — a named bundle of those same atoms for one subsystem:
+      {"kind":"intro_sequence","input":{},"output_files":[],
+       "atoms":[{"atom":"Wait","args":{"seconds":1.0},"label":"beat"}]}
+    The compiler prepends every microgens[].atoms entry to "atoms".
+"""
+
+# Section id → (keywords, body). Declaration order breaks score ties, so the
+# earlier a section sits the more it is favoured at equal signal strength.
+_OPTIONAL_SECTIONS: tuple[tuple[str, tuple[str, ...], str], ...] = (
+    ("dialog", (
+        "dialog", "dialogue", "conversation", "talk", "talks", "speak", "speaks",
+        "spoken", "voiced", "voice", "npc", "npcs", "quest", "quest giver",
+        "banter", "narrator", "story beat", "branching",
+    ), _MM_DIALOG),
+    ("behavior_trees", (
+        "enemy", "enemies", "ai", "patrol", "patrols", "guard", "guards", "chase",
+        "chases", "hunt", "hunts", "boss", "aggro", "pursue", "flee", "hostile",
+        "wave", "waves", "spawner", "swarm", "stealth", "detection",
+    ), _MM_BEHAVIOR_TREES),
+    ("animations", (
+        "animation", "animations", "animated", "animator", "rig", "rigged",
+        "humanoid", "walk cycle", "idle", "mocap", "motion capture", "gesture",
+        "dance", "climb", "vault", "ragdoll",
+    ), _MM_ANIMATIONS),
+    ("vfx", (
+        "vfx", "particle", "particles", "explosion", "explosions", "explode",
+        "smoke", "spark", "sparks", "trail", "trails", "muzzle", "dust", "flame",
+        "flames", "magic", "glow", "impact", "debris", "splash", "sparkle",
+    ), _MM_VFX),
+    ("surfaces", (
+        "material", "materials", "shader", "shaders", "texture", "textures",
+        "pbr", "metallic", "roughness", "glossy", "toon", "cel shaded", "outline",
+        "neon", "hologram", "reflective", "mesh", "meshes", "geometry", "fbx",
+        "blender", "procedural",
+    ), _MM_SURFACES),
+    ("sequence", (
+        "cutscene", "cutscenes", "cinematic", "cinematics", "intro", "opening",
+        "scripted", "sequence", "timeline", "camera pan", "fade in", "fade out",
+        "set piece", "choreograph", "montage", "prologue",
+    ), _MM_SEQUENCE),
+)
+
+_SEQUENCE_ATOM_CATEGORIES = (
+    "movement", "camera", "animation", "audio", "fx", "logic", "entity",
+)
+
+
+@lru_cache(maxsize=None)
+def atom_vocabulary(categories: tuple[str, ...] = _SEQUENCE_ATOM_CATEGORIES,
+                    per_line: int = 3) -> str:
+    """Compact `Name(arg, arg)` listing of the real atom registry.
+
+    Generated from src.atoms so the prompt can never drift from the atoms that
+    actually have a Unity backend snippet — an atom name the registry doesn't
+    know compiles to a `// TODO` comment, so the vocabulary has to be exact.
+    Subsystem-level categories (controller/hud/physics/input/model/wiring) are
+    left out: those are driven by "capabilities", not by a beat sequence.
+    """
+    from .atoms import list_atoms
+
+    entries = [
+        f"{a.name}({', '.join(p.name for p in a.params)})"
+        for cat in categories for a in list_atoms(cat)
+    ]
+    return "\n".join(
+        "      " + "  ".join(entries[i:i + per_line])
+        for i in range(0, len(entries), per_line)
+    )
+
+
+@dataclass(frozen=True)
+class MultimodalBlock:
+    """Rendered Step-3 multimodal block + why each optional section shipped."""
+    text:     str
+    sections: tuple[str, ...]          # core ids first, then the chosen optional ids
+    scores:   dict[str, int]           # optional id → distinct keywords matched
+
+
+def _signal_score(text: str, keywords: tuple[str, ...]) -> int:
+    """Count DISTINCT keywords present in `text` (already lowercased).
+
+    Word-boundary matched, so "ai" doesn't fire on "chair" and "rig" doesn't fire
+    on "rigid" — the same class of false positive that silently mis-triggered the
+    audio keyword table before it was boundary-matched.
+    """
+    return sum(1 for kw in keywords
+               if re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", text))
+
+
+def render_multimodal_block(concept: str,
+                            user_prompt: str = "",
+                            *,
+                            max_optional: int = 3) -> MultimodalBlock:
+    """Render the Step-3 multimodal ask for one project.
+
+    Core sections always ship. Optional sections are scored against the concept +
+    user prompt and the top `max_optional` are appended, which bounds the prompt
+    growth at roughly +900 tokens no matter how much the brief describes.
+    Deterministic: same text in → same block out, no LLM, no RNG.
+    """
+    haystack = f"{concept}\n{user_prompt}".lower()
+
+    scores = {sid: _signal_score(haystack, kws)
+              for sid, kws, _body in _OPTIONAL_SECTIONS}
+    order  = {sid: i for i, (sid, _kws, _body) in enumerate(_OPTIONAL_SECTIONS)}
+    ranked = sorted((sid for sid, score in scores.items() if score > 0),
+                    key=lambda sid: (-scores[sid], order[sid]))[:max(0, max_optional)]
+    # Selection is by score; rendering + reporting stay in declaration order so
+    # the block reads the same way every time.
+    chosen = tuple(sid for sid, _kws, _body in _OPTIONAL_SECTIONS if sid in ranked)
+
+    bodies = [_MULTIMODAL_HEADER]
+    bodies += [body for _sid, body in _CORE_SECTIONS]
+    bodies += [body for sid, _kws, body in _OPTIONAL_SECTIONS if sid in chosen]
+
+    text = "".join(bodies).replace(_ATOM_VOCAB_SLOT, atom_vocabulary())
+    return MultimodalBlock(
+        text     = text,
+        sections = tuple(sid for sid, _b in _CORE_SECTIONS) + chosen,
+        scores   = scores,
+    )
+
+
+# Micro kinds unity_compose.subsystems_for can emit — the ONLY valid
+# wiring.dependencies source/target values (a dep naming anything else is
+# silently dropped by MicroComposer). Kept in sync by test_unity_prompts.py,
+# which diffs this against the kinds subsystems_for actually produces.
+WIRING_MICRO_KINDS: tuple[str, ...] = (
+    "controller", "camera", "health", "hud", "menu", "saveload", "physics",
+    "input", "interactable", "animator", "statemachine", "trigger", "audio",
+    "ai", "spawner", "inventory", "dialogue", "npc_dialog", "vfx",
+    "transition", "objectives", "behavior_tree", "lighting",
+)
+
+# Pairs unity_compose already wires with a named seam — declaring them again
+# just produces a duplicate comment, so the prompt tells the LLM to skip them.
+_WIRED_PAIRS = (
+    "health↔hud, health↔statemachine, health↔audio, statemachine↔animator, "
+    "input↔controller, input↔statemachine, trigger↔saveload"
+)
+
+WIRING_SCHEMA_GUIDANCE = """
+
+  "wiring": a top-level key declaring seams BETWEEN composed subsystems:
+      {"dependencies":[{"source":"trigger","target":"objectives","type":"triggers"}]}
+    type: uses | triggers | references | contains. "source"/"target" must both be
+    micro kinds from this list — any other name is dropped:
+      """ + ", ".join(WIRING_MICRO_KINDS) + """
+    These pairs are already wired for you — do NOT declare them:
+      """ + _WIRED_PAIRS + """
+    Declare only seams the concept genuinely implies (max 6)."""
 
 
 # Appended to the schema-fill prompt ONLY in --compose mode, where the micro
@@ -295,12 +613,12 @@ GAMECONTEXT_SCHEMA_GUIDANCE = """
       GameContext.Instance.Get<GameManager>()?.AddScore(100);
   Composed subsystem types you may Get<T>(): PlayerController, PlayerCamera,
   PlayerHealth, PlayerAnimator, PlayerFSM, GameHud, PauseMenu, SaveSystem,
-  PhysicsBody, WorldInteractable, SceneTrigger (plus GameManager).
+  PhysicsBody, WorldInteractable, SceneTrigger, LightingDirector (plus GameManager).
   A PLAYER STATE MACHINE ALREADY EXISTS (PlayerFSM) — never author your own custom
   FSM/state-object script for player state. Drive its state via
   GameContext.Instance.Get<PlayerFSM>() instead of inventing a ClimbState/EnemyState-
   style type with its own Update()/NextState() methods (those methods don't exist
-  anywhere and fail compilation — see extra_fields rule above)."""
+  anywhere and fail compilation — see extra_fields rule above).""" + WIRING_SCHEMA_GUIDANCE
 
 # ── STEP 5: Schema validation ─────────────────────────────────────────────────
 

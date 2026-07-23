@@ -15,6 +15,8 @@ This is deterministic (no LLM) and runs inside Step 5 of the Unity pipeline.
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from .unity_schema import (
     UnitySchema, ProjectCapabilities,
     ControllerCapability, PhysicsCapability,
@@ -148,18 +150,60 @@ def _model_atoms(m: ModelCapability) -> list[AtomInvocation]:
 
 # ── Public API ─────────────────────────────────────────────────────────────────
 
-def capabilities_to_atoms(caps: ProjectCapabilities) -> list[AtomInvocation]:
-    """Build an ordered atom sequence from declared capability parameters."""
+# Capability → atom builder, in the order the atoms fire at scene start.
+_CAP_ATOM_BUILDERS: tuple[tuple[str, Callable[[Any], list[AtomInvocation]]], ...] = (
+    ("controller", _controller_atoms),
+    ("physics",    _physics_atoms),
+    ("hud",        _hud_atoms),
+    ("input",      _input_atoms),
+    ("model",      _model_atoms),
+    ("animation",  _animation_atoms),
+    ("dialog",     _dialog_atoms),
+    ("ai",         _ai_atoms),
+    ("vfx",        _vfx_atoms),
+)
+
+# Capabilities whose atoms must NOT be folded into schema.atoms.
+#
+# schema.atoms is a ONE-SHOT sequence (unity_generator's "Global atom sequencer"
+# → GameSequencer.cs, a single Start() coroutine). That is the right shape for
+# scene-init actions — ShowHUD, BindAction, EnableNavMesh, SetModel — but the
+# wrong shape for controller and physics:
+#
+#   controller → Look/Move/Sprint/Jump/Crouch are PER-FRAME, input-driven
+#     behaviours. Fired once at Start they translate their host by a single
+#     frame's delta and then never run again.
+#   physics    → SetGravity/ToggleCollision mutate the host's Rigidbody. A
+#     capability declaring gravity:false or collision:"none" would disable
+#     gravity/collision on whatever object carries the sequencer.
+#
+# Both are already the composed subsystems' job: subsystems_for(capabilities=…)
+# in unity_compose.py feeds ControllerCapability into the controller micro's
+# options (move_speed/sprint_speed/jump_force/abilities) and picks the physics
+# body variant, and those micros implement the behaviour continuously in
+# Update/FixedUpdate. Folding them a second time as one-shot atoms produces a
+# sequence that reads like it defines player movement but cannot.
+SUBSYSTEM_OWNED_CAPABILITIES: frozenset[str] = frozenset({"controller", "physics"})
+
+
+def capabilities_to_atoms(
+    caps: ProjectCapabilities,
+    *,
+    exclude: frozenset[str] = SUBSYSTEM_OWNED_CAPABILITIES,
+) -> list[AtomInvocation]:
+    """Build an ordered atom sequence from declared capability parameters.
+
+    `exclude` defaults to the capabilities the composed subsystems own outright
+    (see SUBSYSTEM_OWNED_CAPABILITIES). Pass `exclude=frozenset()` for the raw
+    full mapping — every capability's atoms, whatever their shape.
+    """
     atoms: list[AtomInvocation] = []
-    if caps.controller: atoms.extend(_controller_atoms(caps.controller))
-    if caps.physics:    atoms.extend(_physics_atoms(caps.physics))
-    if caps.hud:        atoms.extend(_hud_atoms(caps.hud))
-    if caps.input:      atoms.extend(_input_atoms(caps.input))
-    if caps.model:      atoms.extend(_model_atoms(caps.model))
-    if caps.animation:  atoms.extend(_animation_atoms(caps.animation))
-    if caps.dialog:     atoms.extend(_dialog_atoms(caps.dialog))
-    if caps.ai:         atoms.extend(_ai_atoms(caps.ai))
-    if caps.vfx:        atoms.extend(_vfx_atoms(caps.vfx))
+    for name, builder in _CAP_ATOM_BUILDERS:
+        if name in exclude:
+            continue
+        sub = getattr(caps, name)
+        if sub:
+            atoms.extend(builder(sub))
     return atoms
 
 
@@ -182,9 +226,12 @@ def resolve_capabilities(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     """
     Step 5 hook: derive atoms from schema.capabilities and merge into schema.atoms.
 
-    Capability-derived atoms are prepended so they run at scene start (GameSequencer
-    fires them before any entity-level atom sequences). Existing schema.atoms are
-    preserved as a suffix.
+    Only SCENE-INIT capabilities are folded. controller/physics are skipped —
+    schema.atoms is a one-shot Start() sequence and those two describe continuous
+    behaviour the composed subsystems already implement from the same typed
+    params (see SUBSYSTEM_OWNED_CAPABILITIES). Capability-derived atoms are
+    prepended so they run at scene start (GameSequencer fires them before any
+    entity-level atom sequences). Existing schema.atoms are preserved as a suffix.
 
     Returns (updated_schema, list_of_fix_messages).
     """
@@ -196,10 +243,22 @@ def resolve_capabilities(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     if cap_atoms:
         # Prepend: capability atoms fire first (engine init order)
         schema.atoms = cap_atoms + list(schema.atoms)
-        kinds = capabilities_to_active_microgens(schema.capabilities)
+        # capabilities_to_active_microgens still reports controller/physics —
+        # they ARE activated, just by subsystems_for, not by an atom fold.
+        kinds = [k for k in capabilities_to_active_microgens(schema.capabilities)
+                 if k not in SUBSYSTEM_OWNED_CAPABILITIES]
         msgs.append(
-            f"Capabilities resolved: {len(cap_atoms)} atoms injected "
+            f"Capabilities resolved: {len(cap_atoms)} scene-init atoms injected "
             f"({', '.join(kinds)})"
+        )
+
+    owned = sorted(name for name in SUBSYSTEM_OWNED_CAPABILITIES
+                   if getattr(schema.capabilities, name))
+    if owned:
+        msgs.append(
+            f"Capabilities: {'/'.join(owned)} left out of schema.atoms — the "
+            f"composed subsystems own that behaviour continuously; a one-shot "
+            f"Start() sequence cannot drive it"
         )
 
     return schema, msgs
