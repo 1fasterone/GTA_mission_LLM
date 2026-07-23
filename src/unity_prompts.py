@@ -574,7 +574,7 @@ WIRING_MICRO_KINDS: tuple[str, ...] = (
     "controller", "camera", "health", "hud", "menu", "saveload", "physics",
     "input", "interactable", "animator", "statemachine", "trigger", "audio",
     "ai", "spawner", "inventory", "dialogue", "npc_dialog", "vfx",
-    "transition", "objectives", "behavior_tree",
+    "transition", "objectives", "behavior_tree", "lighting",
 )
 
 # Pairs unity_compose already wires with a named seam — declaring them again
@@ -613,7 +613,7 @@ GAMECONTEXT_SCHEMA_GUIDANCE = """
       GameContext.Instance.Get<GameManager>()?.AddScore(100);
   Composed subsystem types you may Get<T>(): PlayerController, PlayerCamera,
   PlayerHealth, PlayerAnimator, PlayerFSM, GameHud, PauseMenu, SaveSystem,
-  PhysicsBody, WorldInteractable, SceneTrigger (plus GameManager).
+  PhysicsBody, WorldInteractable, SceneTrigger, LightingDirector (plus GameManager).
   A PLAYER STATE MACHINE ALREADY EXISTS (PlayerFSM) — never author your own custom
   FSM/state-object script for player state. Drive its state via
   GameContext.Instance.Get<PlayerFSM>() instead of inventing a ClimbState/EnemyState-
