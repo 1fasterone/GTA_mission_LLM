@@ -109,8 +109,8 @@ public class EntitySpawner : MonoBehaviour
 {% set has_path = e.placement == "path" and e.path_points %}
 {% set guard = 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' %}
         {{ guard }}{% if scene_entity_map and has_path %}{
-        {% endif %}{% if has_path and e.path_width > 0 %}SpawnTiledGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", _path_{{ loop.index0 }}, sh, {{ "%.2f"|format(e.path_width) }}f{% if has_banked_paths %}, {{ "_bank_" ~ loop.index0 if entity_path_banks.get(e.name) else "null" }}{% endif %});
-{% else %}SpawnGroup("{{ e.name }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }}{% if has_baked_yaws %}, {{ "_yaw_" ~ loop.index0 if (e.instance_yaws and e.instance_positions) else "null" }}{% endif %});
+        {% endif %}{% if has_path and e.path_width > 0 %}SpawnTiledGroup("{{ e.name }}", "{{ e.kind }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", _path_{{ loop.index0 }}, sh, {{ "%.2f"|format(e.path_width) }}f{% if has_banked_paths %}, {{ "_bank_" ~ loop.index0 if entity_path_banks.get(e.name) else "null" }}{% endif %});
+{% else %}SpawnGroup("{{ e.name }}", "{{ e.kind }}", {{ e.count }}, PrimitiveType.{{ e.shape | capitalize }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", "{{ e.behavior }}", "{{ entity_model_paths.get(e.name, "") }}", {{ "_path_" ~ loop.index0 if has_path else "null" }}, sh, {{ "%.4f"|format(entity_fit_sizes.get(e.name, 0.0)) }}f, {{ "_pos_" ~ loop.index0 if e.instance_positions else "null" }}{% if has_baked_yaws %}, {{ "_yaw_" ~ loop.index0 if (e.instance_yaws and e.instance_positions) else "null" }}{% endif %});
 {% endif %}
 {% if has_path %}
         EmitWaypoints({{ '"Waypoints"' if ns.first_path else '"' ~ e.name ~ '_Waypoints"' }}, _path_{{ loop.index0 }});
@@ -128,7 +128,23 @@ public class EntitySpawner : MonoBehaviour
 #endif
     }
 
-    private void SpawnGroup(string groupName, int count, PrimitiveType shape, string placement,
+    // A group whose instances are a SURFACE the player stands on or drives
+    // along, rather than an obstacle standing in the world. These collide as a
+    // flat slab at the model's base; everything else collides as its own
+    // measured box (see the collider block below).
+    private static bool IsSurfaceKind(string kind)
+    {
+        switch (kind)
+        {
+            case "road": case "track": case "path": case "bridge": case "ramp":
+            case "platform": case "floor": case "ground": case "runway":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void SpawnGroup(string groupName, string kind, int count, PrimitiveType shape, string placement,
                             float spacing, float radius, float scale, Color color, string tag,
                             string behavior, string modelPath, Vector3[] path, Shader sh,
                             float fitSize = 0f, Vector3[] bakedPositions = null{% if has_baked_yaws %}, float[] bakedYaws = null{% endif %})
@@ -174,6 +190,10 @@ public class EntitySpawner : MonoBehaviour
         // imported FBX pivots vary; a primitive's default center pivot keeps
         // today's `scale * 0.5f` heuristic exactly).
         float fitFactor = 1f, footprintXZ = 1f, pivotOffsetY = 0.5f;
+        // Collider box in UNSCALED model units (the transform's localScale
+        // scales it) — measured below, defaulted to a person-sized box for the
+        // primitive fallback.
+        Vector3 colSize = Vector3.one, colCenter = new Vector3(0f, 0.5f, 0f);
 {% if has_baked_yaws %}
         bool modelForwardIsX = false;
 {% endif %}
@@ -190,6 +210,19 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
             footprintXZ = Mathf.Max(_mb.size.x, _mb.size.z);
             pivotOffsetY = -_mb.min.y;
+            colSize   = _mb.size;
+            colCenter = _mb.center;
+            if (IsSurfaceKind(kind))
+            {
+                // A road/track/bridge is something you travel ON. Colliding
+                // with its whole bounding volume puts everything spawned above
+                // it — the player included — INSIDE the collider, so collide
+                // with a thin slab at its base instead: wheels and feet rest
+                // on the surface and the space above it stays clear.
+                float slab = Mathf.Min(_mb.size.y, 0.5f);
+                colSize   = new Vector3(_mb.size.x, slab, _mb.size.z);
+                colCenter = new Vector3(_mb.center.x, _mb.min.y + slab * 0.5f, _mb.center.z);
+            }
 {% if has_baked_yaws %}
             // Same forward-axis heuristic as SpawnTiledGroup: a model
             // clearly longer on X than Z (beyond the 0.9 bias toward Z)
@@ -210,6 +243,8 @@ public class EntitySpawner : MonoBehaviour
 {% else %}
         float finalScale = scale;
         float effectiveSpacing = spacing, effectiveRadius = radius, pivotOffsetY = 0.5f;
+        // 2d_topdown never measures model bounds — keep the person-sized default.
+        Vector3 colSize = Vector3.one, colCenter = new Vector3(0f, 0.5f, 0f);
 {% endif %}
         for (int i = 0; i < count; i++)
         {
@@ -252,11 +287,15 @@ public class EntitySpawner : MonoBehaviour
                 go = Instantiate(modelPrefab);
 {% if game_type != "2D" %}
                 // Models import without colliders — behaviors/tags need one.
+                // Sized from the model's own measured bounds: the old fixed
+                // 2m-tall capsule was a vertical pill regardless of what the
+                // model actually was, so a path-laid road segment became a post
+                // the player spawned INSIDE and could never drive out of.
                 if (behaviorType != null || (tag != "Untagged" && tag.Length > 0))
                 {
-                    var cc = go.AddComponent<CapsuleCollider>();
-                    cc.height = 2f;
-                    cc.center = new Vector3(0f, 1f, 0f);
+                    var bc  = go.AddComponent<BoxCollider>();
+                    bc.size   = colSize;
+                    bc.center = colCenter;
                 }
 {% endif %}
             }
@@ -344,7 +383,7 @@ public class EntitySpawner : MonoBehaviour
     // degradation fallback), and every segment is yawed to the local path
     // tangent — a continuous road ribbon / guardrail instead of scattered
     // pieces. Deterministic: same model bounds + same path → same transforms.
-    private void SpawnTiledGroup(string groupName, int count, PrimitiveType shape,
+    private void SpawnTiledGroup(string groupName, string kind, int count, PrimitiveType shape,
                                  float spacing, float radius, float scale, Color color,
                                  string tag, string behavior, string modelPath,
                                  Vector3[] path, Shader sh, float pathWidth{% if has_banked_paths %}, float[] banks = null{% endif %})
@@ -374,7 +413,7 @@ public class EntitySpawner : MonoBehaviour
         {
             // Model exists but can't be measured — degrade to the legacy
             // even-spread placement rather than guessing tile geometry.
-            SpawnGroup(groupName, count, shape, "path", spacing, radius, scale,
+            SpawnGroup(groupName, kind, count, shape, "path", spacing, radius, scale,
                        color, tag, behavior, modelPath, path, sh, 0f, null);
             return;
         }
