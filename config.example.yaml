@@ -33,6 +33,11 @@ unity_pipeline:
   # generated full project so an agent can fix the first-open compile errors.
   # Dev-only; set false for distribution/build outputs.
   inject_mcp_bridge: true
+  # Step-3 multimodal IR ask (src/unity_prompts.py). The core sections
+  # (capabilities/characters/missions/audio_specs) always ship; this caps how
+  # many CONTENT-gated extras (dialog/behavior_trees/animations/vfx/surfaces/
+  # sequence) ride along, ~150 tokens each. Lower it on a tight context window.
+  multimodal_max_sections: 3
 
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve

@@ -24,7 +24,7 @@ from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
     UNITY_CONCEPT_SYSTEM, UNITY_CONCEPT_USER,
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
-    GAMECONTEXT_SCHEMA_GUIDANCE,
+    GAMECONTEXT_SCHEMA_GUIDANCE, render_multimodal_block,
 )
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
@@ -549,6 +549,11 @@ class UnityPipeline:
         self.show_prompts = config.get("logging", {}).get("show_prompts", False)
         self.concept_temp = lm_cfg.get("concept_temperature", 0.85)
         self.schema_temp  = lm_cfg.get("schema_temperature", 0.2)
+        # How many content-gated multimodal IR sections the Step-3 prompt may
+        # carry beyond the always-on core. Each section costs ~150 tokens; drop
+        # it to 1 or 0 on a model with a tight context window.
+        self.multimodal_max_sections = int(
+            pipe_cfg.get("multimodal_max_sections", 3))
 
     # ── console helpers ───────────────────────────────────────────────────────
 
@@ -721,7 +726,15 @@ class UnityPipeline:
 
         # STEP 3 — fill schema ────────────────────────────────────────────────
         self._step(3, "LLM fills project schema")
-        schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept, schema_hints=schema_hints)
+        # Multimodal IR ask: core sections always, optional ones gated on the
+        # concept's own content so the prompt stays inside a local model's
+        # context window (src/unity_prompts.py).
+        mm = render_multimodal_block(concept, user_prompt,
+                                     max_optional=self.multimodal_max_sections)
+        self._ok("Multimodal IR sections requested: " + ", ".join(mm.sections))
+        schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept,
+                                                    schema_hints=schema_hints,
+                                                    multimodal_block=mm.text)
         # In --compose mode the micros + GameContext locator exist, so steer the
         # LLM to reach subsystems via GameContext.Instance.Get<T>() instead of
         # inventing singletons (which the fixer strips).
@@ -829,7 +842,8 @@ class UnityPipeline:
         for msg in cap_msgs:
             self._fix(msg)
         if not cap_msgs and schema.capabilities:
-            self._ok("Capabilities present but produced no atoms (all sub-models None)")
+            self._ok("Capabilities present but produced no scene-init atoms "
+                     "(all sub-models None)")
 
         # Microgens: schema.microgens[].atoms → atoms (Step 5b)
         schema, mg_msgs = resolve_microgens(schema)
