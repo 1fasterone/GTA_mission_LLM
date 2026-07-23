@@ -1003,6 +1003,49 @@ def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
         script.extra_fields.append(CodeField(name=tok, type="float"))
 
 
+# ── Environment lighting: scene YAML ↔ runtime guard agreement ────────────────
+# The lighting micro (src/micro/lighting.py) writes RenderSettings at Play; the
+# scene template bakes RenderSettings at rest. Both read the SAME resolver so
+# they cannot drift — before this, the scene shipped AmbientMode.Skybox over the
+# built-in Default-Skybox and only the runtime guard corrected it, which meant
+# the Editor showed a black scene until you pressed Play.
+
+def _lighting_variant_for(schema, composed_units=None) -> str:
+    """The lighting variant this project's scene is lit by.
+
+    In --compose mode the composed unit is authoritative (it's the variant the
+    emitted LightingDirector was actually built from). Without compose there is
+    no unit, so re-run the same selector on the same inputs.
+    """
+    for u in (composed_units or []):
+        if u.kind == "lighting":
+            return u.variant
+    from .micro.lighting import select_variant
+    env = getattr(schema, "environment", None)
+    return select_variant(
+        schema.game_type,
+        visual_style=schema.visual_style,
+        time_of_day=str(getattr(env, "time_of_day", "") or ""),
+        explicit_env=env is not None,
+        user_prompt=str((getattr(schema, "meta", None) or {}).get("user_prompt") or ""),
+        scenes=schema.scenes,
+    )
+
+
+def _ambient_ctx(palette_rgb: dict, variant: str) -> dict:
+    """Scene-template context for RenderSettings' ambient block."""
+    from .micro.lighting import resolve_ambient
+    res = resolve_ambient(palette_rgb, variant)
+    as_color = lambda t: {"r": round(t[0], 8), "g": round(t[1], 8), "b": round(t[2], 8)}
+    return {
+        "ambient_mode":      res.unity_mode,
+        "ambient_sky":       as_color(res.sky),
+        "ambient_equator":   as_color(res.equator),
+        "ambient_ground":    as_color(res.ground),
+        "ambient_intensity": res.intensity,
+    }
+
+
 # ── Visual style -> lighting config ───────────────────────────────────────────
 
 _LIGHTING_BY_STYLE: dict[str, dict] = {
@@ -1994,6 +2037,13 @@ class UnityProjectGenerator:
         lighting  = _LIGHTING_BY_STYLE.get(schema.visual_style,
                                            _LIGHTING_BY_STYLE["stylized"])
         bg        = _unity_color(palette.background)
+        _palette_rgb = {
+            "primary":    _unity_color(palette.primary),
+            "secondary":  _unity_color(palette.secondary),
+            "accent":     _unity_color(palette.accent),
+            "background": bg,
+            "trim":       _unity_color(palette.trim),
+        }
 
         # ── Environment mood (time of day / fog) ──────────────────────────────
         # "day" (or no environment block) keeps the historical style lighting
@@ -2041,13 +2091,8 @@ class UnityProjectGenerator:
             "color_space":       schema.color_space,
             "visual_style":      schema.visual_style,
             "color_palette":     palette,
-            "palette_rgb": {
-                "primary":    _unity_color(palette.primary),
-                "secondary":  _unity_color(palette.secondary),
-                "accent":     _unity_color(palette.accent),
-                "background": bg,
-                "trim":       _unity_color(palette.trim),
-            },
+            "palette_rgb": _palette_rgb,
+            **_ambient_ctx(_palette_rgb, _lighting_variant_for(schema, composed_units)),
             "mat_guids":         mat_guids,
             "lighting":          lighting,
             "sun_rotation":      sun_rotation,

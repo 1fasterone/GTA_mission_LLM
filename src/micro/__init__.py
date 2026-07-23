@@ -23,6 +23,7 @@ from .trigger       import TriggerPipeline,       TriggerSchema
 from .animator      import AnimatorPipeline,      AnimatorSchema
 from .npc_dialog    import NpcDialogPipeline,     NpcDialogSchema,   DialogLine
 from .vfx           import VfxPipeline,           VfxSchema
+from .lighting      import LightingPipeline,      LightingSchema,   LightSpec
 from .shader        import ShaderPipeline,        ShaderSchema
 from .objectives    import ObjectivesPipeline,    ObjectivesSchema
 from .behavior_tree  import BehaviorTreePipeline,  BehaviorTreeSchema
@@ -49,6 +50,7 @@ __all__ = [
     "AnimatorPipeline",     "AnimatorSchema",
     "NpcDialogPipeline",    "NpcDialogSchema",    "DialogLine",
     "VfxPipeline",          "VfxSchema",
+    "LightingPipeline",     "LightingSchema",     "LightSpec",
     "ShaderPipeline",       "ShaderSchema",
     "ObjectivesPipeline",   "ObjectivesSchema",
     "BehaviorTreePipeline", "BehaviorTreeSchema",
@@ -83,6 +85,7 @@ REGISTRY: dict[str, type[Any]] = {
     "animator":     AnimatorPipeline,
     "npc_dialog":   NpcDialogPipeline,
     "vfx":          VfxPipeline,
+    "lighting":     LightingPipeline,
     "shader":       ShaderPipeline,
     "objectives":   ObjectivesPipeline,
     "behavior_tree": BehaviorTreePipeline,

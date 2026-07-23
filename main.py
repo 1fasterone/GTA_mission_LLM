@@ -1086,6 +1086,20 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
           python main.py unity-shader "collectible pulses a glowing outline" --variant outline_pulse
         """,
     ),
+    "lighting": (
+        "three_point|outdoor_sun|interior_practical|flat_2d|stylized_flood",
+        """Generate a Unity lighting rig + environment-lighting guard.
+
+        Owns the light rig (key/fill/rim/practical/flood) AND RenderSettings ambient,
+        skybox and reflections — the runtime guard that stops materials rendering
+        black on Play. Always composed by `unity-create --compose`.
+
+        \b
+        Examples:
+          python main.py unity-lighting "neon-lit rain-slick alley at midnight" --variant interior_practical
+          python main.py unity-lighting "harsh desert noon, long hard shadows" --variant outdoor_sun
+        """,
+    ),
     "vfx": (
         "particle_system|vfx_sequence|screen_fx|impact_fx",
         """Generate a Unity VFX controller (particle system/scripted sequence/screen fx/impact fx).
