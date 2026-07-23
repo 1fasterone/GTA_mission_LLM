@@ -38,6 +38,36 @@ unity_pipeline:
   # many CONTENT-gated extras (dialog/behavior_trees/animations/vfx/surfaces/
   # sequence) ride along, ~150 tokens each. Lower it on a tight context window.
   multimodal_max_sections: 3
+  # Unity package cache (src/unity_package_cache.py). On first open Unity
+  # resolves every registry package in manifest.json against packages.unity.com
+  # and downloads it — a network stall repeated for every generated project even
+  # though the bytes never change. Filling a local cache once and copying it
+  # into Unity's GLOBAL cache (%LOCALAPPDATA%\Unity\cache) makes that a no-op.
+  #
+  # Only registry packages are involved. The 30 com.unity.modules.* built-ins
+  # and the editor-bundled SRP/UI packages (URP, shadergraph, ugui, ui — the
+  # public registry stops at 8.3.1; Unity 6 resolves 17.x from the editor
+  # install) are never downloaded, so they are skipped.
+  package_cache:
+    enabled: true
+    # Local cache. Filled once by `python main.py unity-package-cache fill`,
+    # then reused by every later project. Regenerable and gitignored — safe to
+    # delete any time. Budget ~1.4 GB for the default feature set (measured).
+    dir: cache/unity_packages
+    # Whether a BUILD may download. Default false on purpose: `unity-create`
+    # must never turn into a surprise multi-gigabyte fetch mid-run. The hook
+    # still primes whatever the local cache already holds, so the workflow is
+    # "fill once, benefit on every later project".
+    #   python main.py unity-package-cache status   # what's cached
+    #   python main.py unity-package-cache fill     # download (one time)
+    download: false
+    # Emit Packages/packages-lock.json pinning the resolved graph. The cache
+    # stops the DOWNLOAD; the lock file stops the REGISTRY RESOLUTION that
+    # precedes it. Both are needed for a genuinely offline first open.
+    write_lock: true
+    # Unity's global cache root. Empty = auto-detect, honoring Unity's own
+    # UPM_CACHE_ROOT override when it is set.
+    # global_root: ''
 
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve

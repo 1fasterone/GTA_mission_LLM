@@ -2,6 +2,8 @@
 Shared pytest fixtures for the GTA5 + Unity pipeline test suites.
 """
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -258,3 +260,26 @@ def schema_hdrp() -> UnitySchema:
         ],
         packages=[],
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_live_package_cache(monkeypatch):
+    """No test may reach packages.unity.com or the real global package cache.
+
+    The pipeline's package-cache hook runs inside `UnityPipeline.run()`, so
+    without this every pipeline test would download the dependency closure from
+    the live registry and copy it into the developer's own
+    global Unity package cache. That is slow, needs network in CI, mutates
+    machine-global state from a test run, and — measured — fills a disk.
+
+    tests/test_unity_package_cache.py exercises the real functions directly
+    against a fake registry and tmp_path roots, which is where that behaviour
+    belongs.
+    """
+    def _refuse(url, timeout=60):
+        raise AssertionError(
+            f"test tried to reach the network: {url} — fake the registry instead")
+
+    monkeypatch.setattr("src.unity_package_cache._http_get", _refuse)
+    monkeypatch.setenv("UPM_CACHE_ROOT", str(Path(tempfile.gettempdir()) /
+                                             "pytest-upm-cache-must-not-be-used"))
