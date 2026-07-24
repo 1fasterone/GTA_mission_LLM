@@ -14,7 +14,7 @@ from src.unity_generator import (
     _make_guid,
     _make_uuid,
 )
-from src.unity_schema import UnityScript
+from src.unity_schema import EntitySpec, UnityScript
 
 # Stale UGUI script GUIDs that were wrong on Unity 6 and caused missing-script
 # components on Canvas/EventSystem. Kept here so regressions assert they never return.
@@ -108,6 +108,72 @@ class TestFileSet:
                 checked += 1
                 assert content.endswith("\n"), f"{path} is missing its trailing newline"
         assert checked > 0, "no native asset files were exercised by this fixture"
+
+
+# ── Playable-player merge (single Player tag) ────────────────────────────────
+# The scene template always builds a dedicated Player object (tag Player +
+# CapsuleCollider + Rigidbody + PlayerController). A brief-named entity tagged
+# Player must be MERGED into it, not spawned as a second Player-tagged object —
+# otherwise FindWithTag("Player") picks between them arbitrarily and the
+# interactable/camera/transition gates latch onto the inert one.
+
+class TestPlayerMerge:
+    MANIFEST = {"com.unity.render-pipelines.universal": "14.0.9"}
+
+    def _gameplay_scene(self, files):
+        # "Main" is the gameplay scene in full_3d_schema (Menu is excluded).
+        return files["FullProject/Assets/Scenes/Main.unity"]
+
+    def test_character_player_entity_does_not_create_a_second_player_tag(
+            self, gen, full_3d_schema):
+        full_3d_schema.entities = [
+            EntitySpec(name="PlayerHero", kind="character", count=1,
+                       tag="Player", model_hint="hero in a coat"),
+            EntitySpec(name="Crate", kind="prop", count=3, placement="scatter",
+                       tag="Untagged", model_hint="wooden crate"),
+        ]
+        files = gen.generate(full_3d_schema, self.MANIFEST)
+        scene = self._gameplay_scene(files)
+        # Exactly one object carries the Player tag: the dedicated scene Player.
+        assert scene.count("m_TagString: Player") == 1
+
+    def test_merged_character_player_is_skipped_by_the_spawner(
+            self, gen, full_3d_schema):
+        full_3d_schema.entities = [
+            EntitySpec(name="PlayerHero", kind="character", count=1,
+                       tag="Player", model_hint="hero in a coat"),
+            EntitySpec(name="Crate", kind="prop", count=3, placement="scatter",
+                       tag="Untagged", model_hint="wooden crate"),
+        ]
+        files = gen.generate(full_3d_schema, self.MANIFEST)
+        spawner = files["FullProject/Assets/Scripts/EntitySpawner.cs"]
+        # The player entity is merged into the scene Player — not spawned.
+        assert 'SpawnGroup("PlayerHero"' not in spawner
+        # A normal entity still spawns, proving the spawner itself runs.
+        assert 'SpawnGroup("Crate"' in spawner
+
+    def test_untagged_character_entity_still_spawns_normally(
+            self, gen, full_3d_schema):
+        """Only a Player-tagged entity is merged; a normal NPC is not."""
+        full_3d_schema.entities = [
+            EntitySpec(name="Villager", kind="character", count=1,
+                       tag="Untagged", model_hint="villager"),
+        ]
+        files = gen.generate(full_3d_schema, self.MANIFEST)
+        spawner = files["FullProject/Assets/Scripts/EntitySpawner.cs"]
+        assert 'SpawnGroup("Villager"' in spawner
+        # Still exactly one Player tag (the dedicated scene Player).
+        assert self._gameplay_scene(files).count("m_TagString: Player") == 1
+
+    def test_output_stays_deterministic_with_a_merged_player(
+            self, gen, full_3d_schema):
+        full_3d_schema.entities = [
+            EntitySpec(name="PlayerHero", kind="character", count=1,
+                       tag="Player", model_hint="hero"),
+        ]
+        first  = gen.generate(full_3d_schema, self.MANIFEST)
+        second = gen.generate(full_3d_schema, self.MANIFEST)
+        assert first == second
 
 
 # ── Meta file format ───────────────────────────────────────────────────────────
