@@ -15,6 +15,14 @@
         <engine:Label name="Title" text="Paused" class="hud-title" />
 {% elif variant == "minimap" %}
         <engine:VisualElement name="Map" class="hud-minimap" />
+{% elif variant == "racing_hud" %}
+        <engine:Label name="Speed"    text="0"      class="hud-label hud-speed" />
+        <engine:Label name="Lap"      text="LAP 1/3" class="hud-label" />
+        <engine:Label name="Position" text="1st/4"  class="hud-label" />
+        <engine:Label name="Coins"    text="0"      class="hud-label" />
+        <engine:ProgressBar name="BoostMeter" value="0" low-value="0" high-value="100" title="BOOST" />
+        <engine:VisualElement name="Map" class="hud-minimap" />
+        <engine:Label name="Countdown" text="" class="hud-title hud-countdown" />
 {% elif variant == "crosshair" %}
         <engine:VisualElement name="Crosshair" class="hud-crosshair" />
 {% else %}
