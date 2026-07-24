@@ -11,6 +11,11 @@ config.yaml
 output/
 dist/
 
+# ── Unity package cache (regenerable via `unity-package-cache fill`) ─
+# Verbatim copies of packages.unity.com tarballs, ~1.4 GB for the default
+# feature set. Redistributing them is Unity's business, not this repo's.
+cache/unity_packages/
+
 # ── RAG ontology corpus + index (regenerable, do not commit) ─────────
 # Rebuild with: python -m rag.build
 # Index with:   python -m rag.indexer  (Phase 2)

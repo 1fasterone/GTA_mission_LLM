@@ -570,6 +570,56 @@ class UnityPipeline:
         # it to 1 or 0 on a model with a tight context window.
         self.multimodal_max_sections = int(
             pipe_cfg.get("multimodal_max_sections", 3))
+        # Unity package cache — see src/unity_package_cache.py.
+        self.package_cache_cfg = pipe_cfg.get("package_cache", {}) or {}
+
+    def _prime_package_cache(self, project_root, manifest_deps: dict[str, str]) -> None:
+        """Warm Unity's global package cache and pin the graph in packages-lock.json.
+
+        Without this, first open resolves ~8 registry packages over the network
+        for every generated project even though the bytes never change. Both
+        halves matter: the cache stops the *download*, the lock file stops the
+        *resolution* that precedes it.
+
+        Best-effort by contract. Every failure path here — no network, an
+        unwritable cache, a registry 500 — leaves Unity doing exactly what it
+        does today, so nothing in this method is allowed to fail a build.
+        """
+        cfg = self.package_cache_cfg
+        if not cfg.get("enabled", True):
+            return
+        try:
+            import json as _json
+
+            from .unity_package_cache import (
+                build_lock, ensure_cached, resolve_closure,
+            )
+
+            cache_dir = Path(cfg.get("dir", "cache/unity_packages"))
+            global_root = cfg.get("global_root")
+            report = ensure_cached(
+                manifest_deps, cache_dir,
+                global_root=Path(global_root) if global_root else None,
+                # Default OFF: a build must never turn into a surprise
+                # multi-gigabyte download (the closure measured 1.4 GB). Filling
+                # is an explicit, one-time `unity-package-cache fill`; this hook
+                # only primes what is already local.
+                download_missing=bool(cfg.get("download", False)),
+            )
+            self._ok(f"Package cache: {report.summary()}")
+            for slug, err in report.failed.items():
+                self._warn(f"package cache: {slug} — {err}")
+
+            if cfg.get("write_lock", True):
+                pins = resolve_closure(manifest_deps,
+                                       meta_dir=cache_dir / "_metadata")
+                lock = Path(project_root) / "Packages" / "packages-lock.json"
+                lock.parent.mkdir(parents=True, exist_ok=True)
+                lock.write_text(_json.dumps(build_lock(pins, manifest_deps), indent=2)
+                                + "\n", encoding="utf-8")
+                self._ok(f"packages-lock.json pins {len(pins)} registry package(s)")
+        except Exception as exc:  # noqa: BLE001 — never fail a build over a cache
+            self._warn(f"package cache skipped ({type(exc).__name__}: {exc})")
 
     # ── console helpers ───────────────────────────────────────────────────────
 
@@ -1062,6 +1112,12 @@ class UnityPipeline:
             except OSError:
                 pass
             raise
+
+        # Warm Unity's global package cache so first open resolves locally
+        # instead of stalling on the registry. Best-effort by contract — any
+        # failure just means Unity downloads as it always has.
+        self._prime_package_cache(project_root, manifest_deps)
+
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
             if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):
