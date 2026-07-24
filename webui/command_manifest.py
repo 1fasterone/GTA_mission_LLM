@@ -59,7 +59,7 @@ _SIMPLE_MICRO_VARIANTS: dict[str, list[str]] = {
     "physics": "rigidbody_2d|rigidbody_3d|kinematic_character|ragdoll|vehicle_wheels|soft_body_stub|"
                "trigger_zone|destructible_object|buoyancy".split("|"),
     "hud": "health_bar|ammo_counter|minimap|crosshair|interaction_prompt|score_panel|"
-           "pause_menu|dialogue_box|full_hud_bundle".split("|"),
+           "pause_menu|dialogue_box|full_hud_bundle|racing_hud".split("|"),
     "input": "keyboard_mouse|gamepad|touch|dual_stick|racing_wheel|vr_xr".split("|"),
     "ai": "navmesh_patrol|chase_player|fsm_guard|behaviour_tree_lite|flocking|cover_shooter|"
           "flying_swarm|waypoint_follow".split("|"),

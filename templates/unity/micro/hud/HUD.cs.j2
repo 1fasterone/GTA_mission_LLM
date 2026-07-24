@@ -31,6 +31,16 @@ public class {{ s.name }} : MonoBehaviour
     [SerializeField] private Image crosshairImage;
 {% elif variant == "pause_menu" %}
     [SerializeField] private CanvasGroup group;
+{% elif variant == "racing_hud" %}
+    [SerializeField] private TMP_Text    speedText;
+    [SerializeField] private TMP_Text    lapText;
+    [SerializeField] private TMP_Text    positionText;
+    [SerializeField] private TMP_Text    coinText;
+    [SerializeField] private Slider      boostMeter;
+    [SerializeField] private TMP_Text    countdownText;
+    [SerializeField] private CanvasGroup countdownGroup;
+    [SerializeField] private RawImage    mapImage;
+    [SerializeField] private Camera      mapCamera;
 {% endif %}
 {% else %}
     [Header("UI Toolkit")]
@@ -133,6 +143,83 @@ public class {{ s.name }} : MonoBehaviour
     private void LateUpdate()
     {
         // Minimap camera is expected to be a top-down ortho camera the user assigns.
+    }
+{% elif variant == "racing_hud" %}
+    // Race feedback layer. Publishers (GameManager, BoostManager, a lap tracker)
+    // call these; resolve this component once via GameContext.Get<{{ s.name }}>().
+    public void SetSpeed(float speed)
+    {
+{% if s.backend == "uGUI" %}
+        if (speedText != null) speedText.text = $"{Mathf.RoundToInt(Mathf.Abs(speed))}";
+{% else %}
+        if (_root != null) _root.Q<Label>("Speed").text = $"{Mathf.RoundToInt(Mathf.Abs(speed))}";
+{% endif %}
+    }
+    public void SetLap(int lap, int total)
+    {
+{% if s.backend == "uGUI" %}
+        if (lapText != null) lapText.text = $"LAP {Mathf.Clamp(lap, 1, total)}/{total}";
+{% else %}
+        if (_root != null) _root.Q<Label>("Lap").text = $"LAP {Mathf.Clamp(lap, 1, total)}/{total}";
+{% endif %}
+    }
+    public void SetPosition(int place, int total)
+    {
+        string s = $"{Ordinal(place)}/{total}";
+{% if s.backend == "uGUI" %}
+        if (positionText != null) positionText.text = s;
+{% else %}
+        if (_root != null) _root.Q<Label>("Position").text = s;
+{% endif %}
+    }
+    public void SetCoins(int coins)
+    {
+{% if s.backend == "uGUI" %}
+        if (coinText != null) coinText.text = coins.ToString();
+{% else %}
+        if (_root != null) _root.Q<Label>("Coins").text = coins.ToString();
+{% endif %}
+    }
+    public void SetBoost(float current, float max)
+    {
+        float t = max > 0f ? Mathf.Clamp01(current / max) : 0f;
+{% if s.backend == "uGUI" %}
+        if (boostMeter != null) boostMeter.value = t;
+{% else %}
+        if (_root != null) _root.Q<ProgressBar>("BoostMeter")?.SetValueWithoutNotify(t * 100f);
+{% endif %}
+    }
+    // Countdown banner: ShowCountdown("3"/"2"/"1"/"GO!"), then HideCountdown().
+    public void ShowCountdown(string text)
+    {
+{% if s.backend == "uGUI" %}
+        if (countdownText  != null) countdownText.text = text;
+        if (countdownGroup != null) countdownGroup.alpha = 1f;
+{% else %}
+        if (_root != null) { _root.Q<Label>("Countdown").text = text; _root.style.opacity = 1f; }
+{% endif %}
+    }
+    public void HideCountdown()
+    {
+{% if s.backend == "uGUI" %}
+        if (countdownGroup != null) countdownGroup.alpha = 0f;
+{% else %}
+        if (_root != null) _root.Q<Label>("Countdown").text = string.Empty;
+{% endif %}
+    }
+
+    private static string Ordinal(int n)
+    {
+        if (n <= 0) return n.ToString();
+        int mod100 = n % 100;
+        if (mod100 >= 11 && mod100 <= 13) return $"{n}th";
+        switch (n % 10)
+        {
+            case 1:  return $"{n}st";
+            case 2:  return $"{n}nd";
+            case 3:  return $"{n}rd";
+            default: return $"{n}th";
+        }
     }
 {% elif variant == "crosshair" %}
     // Crosshair is purely visual; no runtime API needed.

@@ -963,7 +963,14 @@ def subsystems_for(
         Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
         Subsystem(kind="camera",      variant=cam,            target="camera",  name="PlayerCamera", options=cam_opts),
         Subsystem(kind="health",      variant="simple",       target="player",  name="PlayerHealth"),
-        Subsystem(kind="hud",         variant="health_bar",   target="ui",      name="GameHud"),
+        # Racing games get the race-feedback HUD (speed/lap/position/coins/boost
+        # meter/minimap + countdown banner) instead of the health-bar default.
+        # Same genre signal the AI/controller/input lines already act on — a
+        # racing prompt classified genre="racing" by unity_archetypes.py. The
+        # health_bar HUD is coupled to the always-on health micro (see SEAM 1
+        # below); racing_hud is event-driven, resolved via GameContext.Get<T>().
+        Subsystem(kind="hud",         variant=("racing_hud" if genre == "racing" else "health_bar"),
+                  target="ui",      name="GameHud"),
         Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),
         Subsystem(kind="saveload",    variant="json_file",    target="systems", name="SaveSystem"),
         # Always-on: physics body, input reader, interactables, animator, triggers

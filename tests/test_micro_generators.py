@@ -318,6 +318,29 @@ def test_hud_renders_every_variant_ugui(tmp_path, dummy_config, variant):
     assert "public class TestHud" in cs
 
 
+def test_hud_racing_variant_emits_race_gauges(tmp_path, dummy_config):
+    p = HUDPipeline(dummy_config)
+    s = HUDSchema(name="GameHud", variant="racing_hud", backend="uGUI")
+    s = p.default_fix(s, "racing_hud")
+    p.write_files(s, "racing_hud", tmp_path)
+    cs = (tmp_path / "Scripts" / "GameHud.cs").read_text(encoding="utf-8")
+    # The six race gauges + countdown banner API the prompt outline asked for.
+    for api in ("SetSpeed", "SetLap", "SetPosition", "SetCoins", "SetBoost",
+                "ShowCountdown", "HideCountdown"):
+        assert f"public void {api}(" in cs, api
+    # Ordinal helper backs SetPosition ("1st/4", "2nd/4", ...).
+    assert "private static string Ordinal(" in cs
+    # No health-bar leftover — this variant replaces it, not augments it.
+    assert "SetHealth(" not in cs
+
+
+def test_hud_racing_variant_not_clamped(tmp_path, dummy_config):
+    # racing_hud must survive the variant validator (unknown variants clamp to
+    # health_bar — this is what makes the unity_compose genre branch reachable).
+    s = HUDSchema(name="GameHud", variant="racing_hud")
+    assert s.variant == "racing_hud"
+
+
 @pytest.mark.parametrize("variant", HUDPipeline.variants)
 def test_hud_uitoolkit_emits_uxml_and_uss(tmp_path, dummy_config, variant):
     p = HUDPipeline(dummy_config)
