@@ -175,6 +175,39 @@ class TestPlayerMerge:
         second = gen.generate(full_3d_schema, self.MANIFEST)
         assert first == second
 
+    def test_compose_mode_still_merges_the_player(self, gen, full_3d_schema):
+        """--compose drops the 'player' script (the controller micro owns it),
+        so the merge must key off a composed player-target unit too — otherwise
+        the avatar spawns as a SECOND Player-tagged object beside the composed
+        one. Regression: the gate checked only schema.scripts."""
+        from src.unity_compose import ComposedUnit
+
+        # Compose drops the schema 'player' script; the controller micro owns it.
+        full_3d_schema.scripts = [
+            s for s in full_3d_schema.scripts if s.type != "player"]
+        full_3d_schema.entities = [
+            EntitySpec(name="PlayerHero", kind="character", count=1,
+                       tag="Player", model_hint="hero in a coat"),
+            EntitySpec(name="Crate", kind="prop", count=3, placement="scatter",
+                       tag="Untagged", model_hint="wooden crate"),
+        ]
+        units = [
+            ComposedUnit(kind="controller", variant="third_person",
+                         class_name="PlayerController", guid=_make_guid("pc"),
+                         target="player", file_id=900000010),
+            ComposedUnit(kind="physics", variant="rigidbody_3d",
+                         class_name="PhysicsBody", guid=_make_guid("pb"),
+                         target="player", file_id=900000030),
+        ]
+        files = gen.generate(full_3d_schema, self.MANIFEST, composed_units=units)
+        scene = self._gameplay_scene(files)
+        spawner = files["FullProject/Assets/Scripts/EntitySpawner.cs"]
+        # Exactly one Player tag (the composed Player object), and the avatar
+        # entity is merged/skipped rather than spawned as a duplicate.
+        assert scene.count("m_TagString: Player") == 1
+        assert 'SpawnGroup("PlayerHero"' not in spawner
+        assert 'SpawnGroup("Crate"' in spawner
+
 
 # ── Meta file format ───────────────────────────────────────────────────────────
 

@@ -1949,8 +1949,19 @@ class UnityProjectGenerator:
         player_spawn = None
         player_vehicle_model = None
         player_avatar_model = None
-        if schema.game_type not in ("2D", "2d_topdown") and any(
-                s.type == "player" for s in schema.scripts):
+        # A dedicated Player object exists when the schema carries a "player"
+        # script (scene.unity.j2's scripts_by_type["player"] path) OR — in
+        # --compose mode, where drop_owned_scripts removes that script because
+        # the controller micro owns it — when a composed unit targets "player"
+        # (scene.unity.j2's player_units block). Gating on the script alone
+        # missed the compose case entirely: the merge never ran, so BOTH the
+        # racing kart and the walking avatar spawned as a second Player-tagged
+        # object alongside the composed one.
+        _has_player_object = (
+            any(s.type == "player" for s in schema.scripts)
+            or any(getattr(u, "target", None) == "player"
+                   for u in (composed_units or [])))
+        if schema.game_type not in ("2D", "2d_topdown") and _has_player_object:
             _pe = next(
                 (e for e in schema.entities
                  if e.tag == "Player" and e.count == 1
