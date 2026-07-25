@@ -1,0 +1,99 @@
+TITLE
+Harbor Light Salvage
+
+GENRE
+A fully 3D third-person stealth action-adventure game. Genre is stealth — the player
+explores a decommissioned harbor on foot, sneaks past patrolling scavenger drones,
+recovers salvage, and completes a chain of objectives to relight the lighthouse.
+
+STYLE
+Weathered industrial coastal realism at dusk: rust-streaked shipping containers, wet
+concrete quays, sodium dock lamps throwing long orange pools, cold blue sea haze
+rolling in off the water. Low-poly leaning toward grounded, not stylized-cartoon.
+
+CORE PREMISE
+The harbor's lighthouse has been dark for a decade and the tide is bringing wrecks in
+onto the rocks. The player is a salvage diver contracted to walk the quays, pull three
+power cells out of the wrecked freighter, the flooded pump house, and the crane yard,
+carry them back to the lighthouse generator room, and bring the beacon back to life
+before the night tide crests. Scavenger drones patrol the container stacks and defend
+the cells. The harbormaster, an old dockhand who never left, radios the player between
+objectives and hands over the tools.
+
+PLAYER
+A salvage diver on foot in a dive suit. Third-person humanoid character controller —
+walk, sprint, jump, crouch through low pipe runs. Rigidbody capsule physics with a
+ground check. Third-person orbit camera that follows behind the shoulder and collides
+with the container stacks instead of clipping through them.
+
+ENTITIES
+- PlayerDiver: the player's salvage diver in a dive suit (kind: character, model_hint
+  "diver in wetsuit"), starting at the lighthouse door on the main quay.
+- Harbormaster: the old dockhand NPC who gives the player objectives and dialogue
+  (kind: character, model_hint "dock worker in a coat"), standing beside the
+  lighthouse generator room.
+- ScavengerDrone: hovering scavenger drones that patrol the container stacks and
+  attack the player on sight (kind: character, model_hint "small quadcopter drone"),
+  count 5.
+- WreckedFreighter: the beached cargo freighter grounded against the outer quay
+  (kind: building, model_hint "cargo ship freighter hull").
+- HarborCrane: a gantry container crane standing over the crane yard (kind: prop,
+  model_hint "gantry container crane").
+- ShippingContainer: stacked steel shipping containers forming the maze of the
+  container yard (kind: prop, model_hint "shipping container"), count 12.
+- PowerCell: the three recoverable power cells, one in the freighter hold, one in the
+  flooded pump house, one on the crane yard deck (kind: prop, model_hint "industrial
+  battery cell canister"), count 3.
+- Lighthouse: the dark lighthouse tower with the generator room at its base
+  (kind: building, model_hint "lighthouse tower").
+- PumpHouse: the flooded concrete pump house off the inner quay (kind: building,
+  model_hint "small industrial concrete building").
+- DockLamp: sodium dock lamps lining the quays (kind: decoration, model_hint
+  "street lamp post"), count 8.
+- QuayBarrier: concrete barriers and railings ringing the quay edge so the player
+  cannot walk off into the water (kind: wall, model_hint "concrete barrier").
+- SalvageCrate: loose salvage crates scattered along the quays that the player can
+  pick up for scrap (kind: prop, model_hint "wooden crate"), count 10.
+
+AI
+Scavenger drones use NavMesh patrol between the container stacks, switch to chase when
+the player enters their detection radius, and return to patrol when the player breaks
+line of sight. Run them from a behavior tree — a Selector over Chase, Investigate, and
+Patrol branches. Waves of extra drones spawn from the crane yard each time a power cell
+is pulled. Staying out of a drone's cone keeps the player undetected.
+
+SCENES
+- Main Menu: play, continue, settings, quit.
+- Harbor Quays: the main playable scene — lighthouse, quays, container yard, crane
+  yard, pump house, beached freighter, drones on patrol.
+Fade transition between the menu and the harbor.
+
+HUD
+Health bar with a shield segment, a power-cell counter (0/3), a scrap counter, an
+objective banner naming the current objective, and an interaction prompt that appears
+when the player is in range of a cell, a crate, or the harbormaster.
+
+FEATURES
+Objective tracker chaining the four objectives (three cells, then relight the beacon)
+with completion events. Inventory as a hotbar holding the cells and collected scrap.
+Health system with a regenerating shield over flat health. Save/load progress to a
+json_file, with a checkpoint written each time a power cell is delivered. Pause menu
+with resume, restart, and quit to menu. Interactables: the power cells and salvage
+crates are pickups, the generator room door is a door, and the beacon switch is a
+lever. Branching dialogue with the harbormaster between objectives, with barks from
+the drones when they spot the player.
+
+AUDIO
+Looping harbor ambience — waves against the quay wall, mooring ropes creaking, a
+distant buoy bell. Spatial drone rotor whine so patrolling drones are audible before
+they are seen. A metallic clunk when a power cell seats into the generator. A low
+tense music bed that swells when drones give chase. The lighthouse beacon spinning up
+with a rising electrical hum at the finale.
+
+DIALOGUE
+The harbormaster speaks his lines aloud — a weary, gravelly old dockhand voice.
+
+VISUAL STYLE
+URP with bloom, fog, and dusk-orange directional light low on the horizon. Rust and
+salt-stained metal, wet reflective concrete, sodium lamp pools, cold blue sea haze.
+Dissolve shader on drones when destroyed, hit-flash on the player when damaged.
