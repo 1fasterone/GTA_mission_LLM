@@ -33,6 +33,14 @@ class PhysicsSchema(CodeExtensibleSchema):
     gravity_scale:   float = 1.0    # used for 2D variant
     collider_shape:  ColliderShape = "box"
     is_trigger:      bool  = False
+    # A kinematic Rigidbody is moved only by its Transform, never the physics
+    # solver — it still fires OnTrigger*/OnCollision* but applies no gravity/forces.
+    # Set true when another component (e.g. a CharacterController-based controller
+    # on the same GameObject) is the sole mover, so the two don't fight. The
+    # compose planner turns this on automatically for CharacterController pairings
+    # (src/unity_compose.py::subsystems_for); ignored by the 2D / kinematic_character
+    # variants, which have no dynamic 3D Rigidbody.
+    is_kinematic:    bool  = False
     layer:           str   = "Default"
     tag:             str   = "Untagged"
     impact_events:   bool  = False
