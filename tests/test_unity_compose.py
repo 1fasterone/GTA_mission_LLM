@@ -553,6 +553,70 @@ def test_2d_selects_2d_physics_and_camera():
     assert next(s.variant for s in subs3d if s.kind == "physics") == "rigidbody_3d"
 
 
+# ── Movement model coherence: CharacterController vs Rigidbody ────────────────
+# A CharacterController-based controller (first/third_person, top_down,
+# platformer_2_5d, flying, swimming, fighting) does its own swept-collision
+# movement, so the always-on rigidbody_3d body on the SAME GameObject must be
+# KINEMATIC — otherwise the physics solver also integrates gravity/forces and the
+# two movers fight (jitter/tunneling/unexpected shove). Vehicle/aircraft
+# controllers DRIVE a shared dynamic Rigidbody, so those stay non-kinematic.
+
+def test_character_controller_physics_body_is_kinematic():
+    subs = subsystems_for("3D", [])
+    ctrl = next(s for s in subs if s.kind == "controller")
+    phys = next(s for s in subs if s.kind == "physics")
+    assert ctrl.variant == "third_person" and phys.variant == "rigidbody_3d"
+    assert phys.options.get("is_kinematic") is True
+
+
+def test_2_5d_character_controller_physics_body_is_kinematic():
+    # 2.5D pairs a CharacterController (platformer_2_5d) with a real-3D
+    # rigidbody_3d body — same conflict, same fix.
+    subs = subsystems_for("2.5d", [])
+    ctrl = next(s for s in subs if s.kind == "controller")
+    phys = next(s for s in subs if s.kind == "physics")
+    assert ctrl.variant == "platformer_2_5d" and phys.variant == "rigidbody_3d"
+    assert phys.options.get("is_kinematic") is True
+
+
+def test_vehicle_physics_body_stays_dynamic():
+    # The vehicle_car controller AddForces/steers a shared Rigidbody, so the
+    # physics body must NOT be made kinematic (that would freeze the car).
+    subs = subsystems_for("3D", [], locomotion="drive")
+    ctrl = next(s for s in subs if s.kind == "controller")
+    phys = next(s for s in subs if s.kind == "physics")
+    assert ctrl.variant == "vehicle_car" and phys.variant == "rigidbody_3d"
+    assert not phys.options.get("is_kinematic")
+
+
+def test_2d_physics_body_not_marked_kinematic():
+    # 2D uses a (dynamic) Rigidbody2D driven by the 2d_platformer controller and
+    # never a CharacterController — the kinematic flag doesn't apply.
+    phys = next(s for s in subsystems_for("2D", []) if s.kind == "physics")
+    assert phys.variant == "rigidbody_2d"
+    assert not phys.options.get("is_kinematic")
+
+
+def test_composed_3d_player_has_no_characcontroller_plus_dynamic_rigidbody(tmp_path):
+    """Regression: the always-on rigidbody_3d body put a NON-kinematic Rigidbody
+    on the same Player GameObject as the third_person controller's
+    CharacterController — two movement/collision systems fighting each other. The
+    controller owns movement, so the composed body sharing that object must be a
+    KINEMATIC Rigidbody: still present (its Rigidbody is what fires OnTriggerEnter)
+    but never integrated by the physics solver."""
+    import re
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("PlayerMoveModel").emit(subsystems_for("3D", []), assets)
+    phys = (assets / "Micros" / "physics" / "Scripts" / "PhysicsBody.cs").read_text(encoding="utf-8")
+    ctrl = (assets / "Micros" / "controller" / "Scripts" / "PlayerController.cs").read_text(encoding="utf-8")
+    # Both the controller and the physics body target the Player GameObject.
+    assert "GetComponent<CharacterController>()" in ctrl      # controller's mover IS a CC
+    assert "[RequireComponent(typeof(Rigidbody))]" in phys    # a Rigidbody is present (trigger detection)
+    assert re.search(r"rb\.isKinematic\s*=\s*isKinematic;", phys)   # ...driven by the flag
+    assert re.search(r"private bool isKinematic\s*=\s*true;", phys), \
+        "the Player's Rigidbody must be kinematic so it can't fight the CharacterController"
+
+
 # ── GameContext: bridging the two islands (micros ↔ prompt-authored scripts) ───
 
 def _gamecontext_cs(tmp_path, project, has_gm):

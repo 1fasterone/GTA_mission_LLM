@@ -25,6 +25,10 @@ public class {{ s.name }} : MonoBehaviour
     [SerializeField] private float gravityScale = {{ "%.3f"|format(s.gravity_scale) }}f;
 {% endif %}
     [SerializeField] private bool isTrigger    = {{ "true" if s.is_trigger else "false" }};
+{% if variant != "rigidbody_2d" and variant != "kinematic_character" %}
+    [Tooltip("Kinematic: fires triggers but is moved only by its Transform — set when a CharacterController (or other mover) owns movement, so physics doesn't fight it.")]
+    [SerializeField] private bool isKinematic  = {{ "true" if s.is_kinematic else "false" }};
+{% endif %}
 
     private void Awake()
     {
@@ -45,6 +49,7 @@ public class {{ s.name }} : MonoBehaviour
         rb.mass = mass;
         rb.linearDamping  = linearDrag;
         rb.angularDamping = angularDrag;
+        rb.isKinematic    = isKinematic;
         var col = GetComponent<Collider>();
         if (col != null) col.isTrigger = isTrigger;
 {% if variant == "destructible_object" %}

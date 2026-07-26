@@ -927,6 +927,23 @@ def subsystems_for(
     # cross-micro mass resolver, just this one already-known collision.
     phys_opts: dict = {"mass": 1200.0} if ctrl.startswith("vehicle_") else {}
 
+    # A CharacterController-based controller does its OWN swept-collision movement
+    # via CharacterController.Move() and adds its own CharacterController in Awake
+    # (Controller.cs.j2's `else` branch: everything that is not 2d_*/vehicle_*/
+    # aircraft). Pairing that with the always-on NON-kinematic rigidbody_3d body
+    # puts a dynamic Rigidbody on the same GameObject, so the physics solver ALSO
+    # integrates gravity/forces every FixedUpdate and the two movers fight
+    # (jitter / tunneling / unexpected shove). Keep the body — it still sets the
+    # player's layer/tag and its Rigidbody is what makes the player fire
+    # OnTriggerEnter — but make it KINEMATIC so the CharacterController is the sole
+    # mover. vehicle_*/aircraft controllers instead DRIVE a shared non-kinematic
+    # Rigidbody (they AddForce/WheelCollider it), so those must stay dynamic; the
+    # 2D controllers use a Rigidbody2D (rigidbody_2d) and never a CharacterController.
+    _ctrl_is_character_controller = not (
+        ctrl.startswith("2d_") or ctrl.startswith("vehicle_") or ctrl == "aircraft")
+    if phys_variant == "rigidbody_3d" and _ctrl_is_character_controller:
+        phys_opts["is_kinematic"] = True
+
     # 2.5D's tilted/elevated follow camera needs a non-default offset (matches
     # the static camera preset already used for non-composed 2.5D projects —
     # see _CAMERA_PRESETS["2.5D"] in unity_generator.py: y=3, z=-8, ~21 deg
