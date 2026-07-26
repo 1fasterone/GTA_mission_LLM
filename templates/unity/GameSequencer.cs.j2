@@ -18,5 +18,6 @@ public class GameSequencer : MonoBehaviour
     private IEnumerator Sequence()
     {
         {{ atom_body | indent(8) }}
+        yield return null;
     }
 }

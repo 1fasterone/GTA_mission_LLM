@@ -2476,6 +2476,27 @@ def test_microgen_atoms_render_in_game_sequencer_end_to_end():
     assert "Wait" in seq_files[0]
 
 
+def test_game_sequencer_always_yields_even_with_non_yielding_atoms():
+    """CS0161 regression: Sequence() is `IEnumerator`, but several atom snippets
+    (Teleport, SetFlag, BindAction, SetModel, ...) emit plain statements with no
+    `yield`. A sequence built entirely from those has no yield anywhere in the
+    method body, so C# compiles it as a non-iterator that must explicitly
+    `return` — which it never did. The template must guarantee at least one
+    yield regardless of which atoms are present."""
+    from src.unity_schema import UnitySchema, AtomInvocation
+    from src.unity_generator import UnityProjectGenerator
+    schema = UnitySchema(project_name="NoYieldProof", game_type="3D", platform="PC",
+                         render_pipeline="URP",
+                         atoms=[AtomInvocation(atom="Teleport", args={"x": 1, "y": 0, "z": 1}),
+                                AtomInvocation(atom="SetFlag", args={"flag": "f", "value": True})])
+    files = UnityProjectGenerator().generate(schema, {})
+    seq_files = [v for k, v in files.items() if "GameSequencer" in k and k.endswith(".cs")]
+    assert seq_files, "no GameSequencer.cs rendered"
+    content = seq_files[0]
+    assert "transform.position" in content and "PlayerPrefs" in content  # both atoms rendered
+    assert "yield" in content.split("private IEnumerator Sequence()", 1)[1]
+
+
 # ── EntitySpawner instance colliders ────────────────────────────────────────
 
 class TestEntityInstanceColliders:
