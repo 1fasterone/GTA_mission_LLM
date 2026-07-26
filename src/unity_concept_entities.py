@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from typing import TypedDict
 
+from .unity_archetypes     import _normalize_for_matching
 from .unity_asset_catalog import tokenize
 from .unity_entity_asset_resolver import _STOPWORDS
 from .unity_schema import EntitySpec
@@ -73,11 +74,94 @@ _KIND_DEFAULTS: dict[str, _KindDefaults] = {
                         scale=1.0, tag="Untagged", color_role="secondary"),
     "obstacle":    dict(shape="cylinder", placement="scatter", count=8,
                         scale=0.6, tag="Untagged", color_role="accent"),
+    # "enemy" is a first-class kind in the schema prompt and separately drives
+    # AI-script auto-attach in unity_generator — it had no entry here, so a
+    # rescued enemy fell through to _DEFAULT_KIND and landed Untagged with no
+    # AI target tag.
+    "enemy":       dict(shape="capsule", placement="line", count=1,
+                        scale=1.0, tag="Enemy", color_role="accent"),
 }
 _DEFAULT_KIND: _KindDefaults = dict(shape="cube", placement="single", count=1,
                      scale=1.0, tag="Untagged", color_role="secondary")
 
-_RIVAL_WORDS_RE = re.compile(r"\b(rival|enemy|opponent|ai)\b", re.IGNORECASE)
+
+# ── hostility detection → tag="Enemy" ────────────────────────────────────────
+# The Enemy tag is runtime-load-bearing, not cosmetic: the composed AI micro
+# acquires its target with GameObject.FindGameObjectWithTag (templates/unity/
+# micro/ai/AI.cs.j2), and EntitySpawner only attaches a collider to a group
+# that carries a tag (templates/unity/EntitySpawner.cs.j2). An untagged hostile
+# is inert scenery — it cannot be seen, hit, or chased. The old rule gated the
+# tag on kind=="vehicle", which covered racing rivals and nothing else (hit
+# live on harbor_light_salvage: ScavengerDrone, a "(kind: character) ... attack
+# the player on sight", came back Untagged).
+
+# Kinds that ARE the hostility — no wording required.
+_ENEMY_KINDS = {"enemy", "hostile"}
+
+# Nouns that mean hostile on their own, whatever the entity's kind.
+_HOSTILE_NOUNS_RE = re.compile(
+    r"\b(?:rival|enem(?:y|ies)|hostile|opponent|adversar(?:y|ies)|foe|attacker)s?\b",
+    re.IGNORECASE)
+
+# Aggression aimed AT the player. Deliberately a verb+object pattern rather
+# than bare verbs: alone those verbs are ambiguous — "hunt for salvage" is not
+# hostility, "attacks the player" is. Matching bare verbs would tag friendly
+# NPCs and scenery.
+_HOSTILE_TOWARD_PLAYER_RE = re.compile(
+    r"\b(?:attack|chase|hunt|ambush|shoot|charge|swarm|stalk)\w*\s+"
+    r"(?:at\s+|after\s+|down\s+)?(?:the\s+)?player\b",
+    re.IGNORECASE)
+
+# "AI" means computer-controlled, not hostile — an AI companion is friendly.
+# It stays a VEHICLE-only signal because "AI car" / "AI rider" is idiomatic for
+# racing opponents; broadening it would tag every friendly AI NPC as an enemy.
+_AI_WORD_RE = re.compile(r"\bai\b", re.IGNORECASE)
+
+# The player is never an enemy, however the bullet is worded — hostile phrasing
+# legitimately appears in the PLAYER's own description ("sneaks past hostile
+# drones"). The name test is a bare prefix rather than \b-anchored because
+# brief entity names are PascalCase ("PlayerDiver"), where \b never fires
+# between "Player" and "Diver".
+_PLAYER_NAME_RE = re.compile(r"^player", re.IGNORECASE)
+_PLAYER_DESC_RE = re.compile(
+    r"\bthe player's\b|\bplayer[- ]controlled\b|\byou play as\b|"
+    r"\bthe player (?:is|starts|begins|spawns)\b",
+    re.IGNORECASE)
+
+# Kinds that can plausibly BE the player's avatar. An allowlist, not a
+# denylist: mis-tagging is strictly worse than not tagging, so an unrecognized
+# kind falls back to Untagged rather than gambling the Player tag.
+_AVATAR_KINDS = {"character", "player", "npc", "creature", "vehicle"}
+
+
+def _is_player(name: str, description: str) -> bool:
+    """Identify the player's own entity. Deliberately narrower than "mentions
+    the player": a hostile bullet almost always names the player as its victim
+    ("attack the player on sight")."""
+    return bool(_PLAYER_NAME_RE.match(name.strip())
+                or _PLAYER_DESC_RE.search(description))
+
+
+def _is_hostile(name: str, kind: str, description: str) -> bool:
+    """True when a rescued entity should carry tag="Enemy"."""
+    if _is_player(name, description):
+        return False
+    if kind in _ENEMY_KINDS:
+        return True
+    # Entity names are PascalCase ("RivalRunner"), where \b never fires between
+    # the words — split the compounds first (same normalization the intent
+    # classifier uses) so a name-only hostility signal is visible.
+    text = _normalize_for_matching(f"{name} {description}")
+    if _HOSTILE_NOUNS_RE.search(text) or _HOSTILE_TOWARD_PLAYER_RE.search(text):
+        return True
+    return kind == "vehicle" and bool(_AI_WORD_RE.search(text))
+
+
+def _is_player_avatar(name: str, kind: str, description: str) -> bool:
+    """The object the camera follows and every CompareTag(playerTag) gate
+    latches onto — not merely something the player owns. "PlayerWetsuit
+    (kind: prop)" is player-associated but is NOT the avatar."""
+    return kind in _AVATAR_KINDS and _is_player(name, description)
 
 
 def _fold_bullets(lines: list[str]) -> list[str]:
@@ -188,6 +272,11 @@ def inject_missing_concept_entities(schema) -> list[str]:
         return []
 
     existing = {e.name.strip().lower() for e in schema.entities}
+    # Exactly one object may carry tag="Player": Unity's FindGameObjectWithTag
+    # returns a single arbitrary match, so a second one makes camera-follow,
+    # interaction, transitions and dialog latch onto a nondeterministic target.
+    # If the schema-fill LLM already tagged a player, it wins.
+    player_tagged = any(e.tag == "Player" for e in schema.entities)
     added: list[EntitySpec] = []
     for ent in named:
         key = ent["name"].strip().lower()
@@ -196,13 +285,23 @@ def inject_missing_concept_entities(schema) -> list[str]:
         kind = ent["kind"] or "prop"
         defaults = _KIND_DEFAULTS.get(kind, _DEFAULT_KIND)
         tag = defaults["tag"]
-        if kind == "vehicle" and _RIVAL_WORDS_RE.search(
-                f"{ent['name']} {ent['description']}"):
+        is_avatar = False
+        if _is_hostile(ent["name"], kind, ent["description"]):
             tag = "Enemy"
+        elif not player_tagged and _is_player_avatar(
+                ent["name"], kind, ent["description"]):
+            # Left Untagged before, so every CompareTag(playerTag) gate in the
+            # interactable / transition / npc_dialog micros silently never fired.
+            tag = "Player"
+            is_avatar = player_tagged = True
         # The brief's own "count N" wins over the per-kind default; "single"
         # placement bakes exactly one position (see unity_layout._bake_positions),
         # so a group the brief wants repeated has to scatter instead.
         count = ent.get("count") or defaults["count"]
+        # The avatar is singular by definition; a group count would spawn N
+        # Player-tagged objects and break the single-match invariant above.
+        if is_avatar:
+            count = 1
         placement = defaults["placement"]
         if count > 1 and placement == "single":
             placement = "scatter"

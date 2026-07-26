@@ -984,7 +984,7 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
     ),
     "hud": (
         "health_bar|ammo_counter|minimap|crosshair|interaction_prompt|score_panel|"
-        "pause_menu|dialogue_box|full_hud_bundle",
+        "pause_menu|dialogue_box|full_hud_bundle|racing_hud",
         "Generate a focused Unity Canvas / UI Toolkit HUD element.",
     ),
     "input": (

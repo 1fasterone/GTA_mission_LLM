@@ -1,0 +1,71 @@
+lm_studio:
+  backend: lm_studio
+  base_url: http://localhost:1234/v1
+  # E2E run config: IBM Granite 4.1 8B loaded at a 12,000-token context window
+  # (`lms load granite-4.1-8b --context-length 12000`). Everything else mirrors
+  # config.yaml — this file exists only so the 12k window is respected.
+  model: granite-4.1-8b
+  temperature: 0.7
+  # 16000 (config.yaml) is LARGER than the whole 12k window — the completion
+  # budget alone would overflow the context. 6000 leaves ~6k for the system +
+  # user prompt on every step, which the schema step (the longest) fits inside.
+  max_tokens: 6000
+  timeout: 600
+  concept_temperature: 0.85
+  schema_temperature: 0.2
+ollama:
+  base_url: http://localhost:11434/v1
+  model: qwythos-9b-claude-mythos-5-1m-mtp
+rag:
+  fallback_to_local: true
+basic_mode: false
+pipeline:
+  output_dir: output
+  lookups_dir: lookups
+  template_file: templates/mission.cs.j2
+unity_pipeline:
+  lookups_dir: lookups
+  unity_template_dir: templates/unity
+  unity_output_dir: "C:/u"
+  inject_mcp_bridge: true
+assets:
+  strict: true
+  sample_temperature: 0.35
+  sample_pool: 40
+  sample_seed: 0
+sketchfab:
+  enabled: true
+  api_token: ''
+  base_url: https://api.sketchfab.com/v3
+  timeout: 30
+  download_timeout: 240
+  accepted_licenses: ['cc0', 'by', 'by-sa', 'by-nd']
+  auto_fetch: true
+  min_match_score: 0.15
+blender:
+  blender_path: 'C:\Program Files\Blender Foundation\Blender 5.1'
+  output_dir: output/blender
+  timeout: 900
+  max_retries: 1
+  normalize_exports: true
+  cache: true
+  cache_dir: ""
+  rig_template_dir: ""
+  diffusion:
+    backend: none
+    base_url: http://127.0.0.1:7860
+    timeout: 180
+audio:
+  backend: stable3
+  stable3_dir: "G:/AI MODELS/stable3audio"
+  steps: 12
+  generate_clips: true
+  sample_rate: 44100
+  device: cuda
+  cache_dir: output/audio_cache
+  tts_backend: kokoro
+  tts:
+    engine: bark
+logging:
+  level: INFO
+  show_prompts: false

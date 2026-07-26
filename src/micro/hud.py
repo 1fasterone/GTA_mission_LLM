@@ -18,6 +18,7 @@ HUDVariant = Literal[
     "health_bar", "ammo_counter", "minimap",
     "crosshair", "interaction_prompt", "score_panel",
     "pause_menu", "dialogue_box", "full_hud_bundle",
+    "racing_hud",
 ]
 VARIANTS = list(HUDVariant.__args__)   # type: ignore[attr-defined]
 
@@ -113,6 +114,9 @@ class HUDPipeline(UnityMicroPipeline):
     _RESERVED_FIELD_NAMES = {
         "bar", "label", "body", "group", "mapimage", "mapcamera",
         "crosshairimage", "document", "_root",
+        # racing_hud template-owned refs
+        "speedtext", "laptext", "positiontext", "cointext", "boostmeter",
+        "countdowntext", "countdowngroup",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.UI", "TMPro", "UnityEngine.UIElements"}
 

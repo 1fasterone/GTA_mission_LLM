@@ -288,6 +288,28 @@ def test_subsystems_for_fps_genre_does_not_override_explicit_game_type():
     assert ctrl_2d.variant == "2d_platformer"
 
 
+def test_racing_genre_selects_racing_hud():
+    # The race-feedback HUD is the racing-genre counterpart to the AI line's
+    # waypoint_follow branch — both key off genre, not locomotion.
+    hud = next(s for s in subsystems_for("3D", [], genre="racing") if s.kind == "hud")
+    assert hud.variant == "racing_hud"
+
+
+def test_non_racing_genres_keep_health_bar_hud():
+    for g in ("universal", "fps", "platformer"):
+        hud = next(s for s in subsystems_for("3D", [], genre=g) if s.kind == "hud")
+        assert hud.variant == "health_bar", g
+
+
+def test_racing_hud_does_not_trigger_health_to_hud_seam():
+    # SEAM 1 (Health -> HUD) is gated on hud.variant == "health_bar"; racing_hud
+    # is event-driven, so a racing project must compose without that seam and
+    # without error. Sanity: the emitted GameHud is racing_hud, not health_bar.
+    subs = subsystems_for("3D", [], genre="racing", locomotion="drive")
+    hud = next(s for s in subs if s.kind == "hud")
+    assert hud.variant == "racing_hud"
+
+
 def test_locomotion_schema_normalises_synonyms():
     from src.unity_schema import UnitySchema
     s = UnitySchema(project_name="L", game_type="3D", platform="pc",

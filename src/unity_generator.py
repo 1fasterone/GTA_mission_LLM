@@ -1927,50 +1927,82 @@ class UnityProjectGenerator:
         # for Sketchfab picks — see unity_entity_asset_resolver._register).
         _by_resource_path = {m.resource_path: m for m in used_models.values()}
 
-        # ── Playable-player merge (racing start grid) ──────────────────────
-        # A count-1 "vehicle" group tagged Player carrying baked start
-        # positions (the racetrack scaffold's PlayerKart) IS the playable
-        # player. Left alone it spawns as a static second Player-tagged
-        # object (GameObject.FindWithTag picks one arbitrarily) while the
-        # real, controllable Player sits at the scene origin — the middle of
-        # the track infield — wearing the default player model at native
-        # scale. Merge them instead: the scene's Player object takes the
-        # group's pole position, race-direction facing, resolved model and
-        # bounds-fit, and the spawner skips the static duplicate.
+        # ── Playable-player merge ──────────────────────────────────────────
+        # The scene template ALWAYS builds a dedicated Player object (tag
+        # Player + CapsuleCollider + Rigidbody + PlayerController) — that is
+        # the object CameraFollow tracks and every CompareTag(playerTag) gate
+        # in the interactable / transition / npc_dialog micros latches onto.
+        # A brief-named entity tagged Player (a count-1 "vehicle" racing kart,
+        # OR now a walking "character"/"npc" avatar after the concept-entity
+        # rescue tags it) would otherwise ALSO spawn — a static second
+        # Player-tagged object with a collider but no Rigidbody and no
+        # controller, while GameObject.FindWithTag("Player") picks between the
+        # two arbitrarily. That splits the player: the pickup trigger may find
+        # the inert model, the camera the real one. Merge instead — the scene
+        # Player takes the entity's resolved model, bounds-fit and baked spawn,
+        # and the spawner skips the duplicate — so exactly one, fully-equipped
+        # Player carries the tag.
+        #
+        # Kinds that can BE the avatar; mirrors unity_concept_entities'
+        # _AVATAR_KINDS (the same set that earns the Player tag), minus none.
+        _PLAYER_MERGE_KINDS = {"vehicle", "character", "player", "npc", "creature"}
         player_spawn = None
         player_vehicle_model = None
-        if schema.game_type not in ("2D", "2d_topdown") and any(
-                s.type == "player" for s in schema.scripts):
-            _pv = next(
+        player_avatar_model = None
+        # A dedicated Player object exists when the schema carries a "player"
+        # script (scene.unity.j2's scripts_by_type["player"] path) OR — in
+        # --compose mode, where drop_owned_scripts removes that script because
+        # the controller micro owns it — when a composed unit targets "player"
+        # (scene.unity.j2's player_units block). Gating on the script alone
+        # missed the compose case entirely: the merge never ran, so BOTH the
+        # racing kart and the walking avatar spawned as a second Player-tagged
+        # object alongside the composed one.
+        _has_player_object = (
+            any(s.type == "player" for s in schema.scripts)
+            or any(getattr(u, "target", None) == "player"
+                   for u in (composed_units or [])))
+        if schema.game_type not in ("2D", "2d_topdown") and _has_player_object:
+            _pe = next(
                 (e for e in schema.entities
                  if e.tag == "Player" and e.count == 1
-                 and (e.kind or "").lower() == "vehicle"
-                 and e.instance_positions), None)
-            if _pv is not None:
-                _px, _py, _pz = (round(v, 3) for v in _pv.instance_positions[0])
-                _yaw = round(_pv.instance_yaws[0], 3) if _pv.instance_yaws else 0.0
-                _half = math.radians(_yaw) / 2.0
-                player_spawn = {
-                    # Capsule pivot is its center — feet 1 m below.
-                    "position": f"{{x: {_px}, y: {round(_py + 1.0, 3)}, z: {_pz}}}",
-                    "rotation": (f"{{x: 0, y: {round(math.sin(_half), 6)}, "
-                                 f"z: 0, w: {round(math.cos(_half), 6)}}}"),
-                    "euler":    f"{{x: 0, y: {_yaw}, z: 0}}",
-                }
-                _pv_path = entity_model_paths.get(_pv.name, "")
-                if _pv_path and not _pv_path.startswith(
+                 and (e.kind or "").lower() in _PLAYER_MERGE_KINDS), None)
+            if _pe is not None:
+                _is_vehicle = (_pe.kind or "").lower() == "vehicle"
+                # Baked spawn: a racing grid pole for a vehicle, or the layout
+                # pass's reserved non-overlapping slot for a walker. Absent
+                # (no layout positions) the dedicated Player keeps its default
+                # origin spawn. Capsule pivot is its center — feet 1 m below.
+                if _pe.instance_positions:
+                    _px, _py, _pz = (round(v, 3) for v in _pe.instance_positions[0])
+                    _yaw = round(_pe.instance_yaws[0], 3) if _pe.instance_yaws else 0.0
+                    _half = math.radians(_yaw) / 2.0
+                    player_spawn = {
+                        "position": f"{{x: {_px}, y: {round(_py + 1.0, 3)}, z: {_pz}}}",
+                        "rotation": (f"{{x: 0, y: {round(math.sin(_half), 6)}, "
+                                     f"z: 0, w: {round(math.cos(_half), 6)}}}"),
+                        "euler":    f"{{x: 0, y: {_yaw}, z: 0}}",
+                    }
+                _pe_path = entity_model_paths.get(_pe.name, "")
+                if _pe_path and not _pe_path.startswith(
                         ("skip:", "procedural:", "fx:")):
-                    _pv_model = _by_resource_path.get(_pv_path)
-                    player_vehicle_model = {
-                        "resource_path": _pv_path,
-                        "scale": _pv.scale,
-                        "fit_size": _pv_model.fit_size if _pv_model else 0.0,
+                    _pe_model = _by_resource_path.get(_pe_path)
+                    _merged = {
+                        "resource_path": _pe_path,
+                        "scale": _pe.scale,
+                        "fit_size": _pe_model.fit_size if _pe_model else 0.0,
+                    }
+                    if _is_vehicle:
                         # A vehicle visual — the humanoid DefaultCharacter
                         # animator controller doesn't apply (VehicleBoneDriver
                         # still drives wheel bones from motion).
-                        "controller": "",
-                    }
-                entity_model_paths[_pv.name] = "skip:merged-into-player"
+                        _merged["controller"] = ""
+                        player_vehicle_model = _merged
+                    else:
+                        # A humanoid visual — leave "controller" unset so the
+                        # scene template falls back to the DefaultCharacter
+                        # animator controller (character_controller_res).
+                        player_avatar_model = _merged
+                entity_model_paths[_pe.name] = "skip:merged-into-player"
 
         entity_fit_sizes = {
             name: (_by_resource_path[path].fit_size
@@ -2195,8 +2227,10 @@ class UnityProjectGenerator:
             "entity_spawner_guid": _make_guid(f"{pn}/Scripts/EntitySpawner"),
             # Model Pack v1 — drive mode keeps the car visual, so no player
             # swap; a merged player-vehicle group (racing start grid) swaps
-            # in the kart regardless of locomotion.
-            "player_model": player_vehicle_model or (
+            # in the kart regardless of locomotion, and a merged walking
+            # avatar (character/npc tagged Player) swaps in its brief model
+            # over the generic default character.
+            "player_model": player_vehicle_model or player_avatar_model or (
                 used_models.get("player") if schema.locomotion != "drive" else None),
             # Start-line transform for the playable Player (racing merge);
             # None keeps the historical origin placement byte-identical.
