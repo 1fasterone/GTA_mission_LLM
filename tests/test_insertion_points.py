@@ -23,7 +23,7 @@ from src.micro.code_fields import (
     lint_function_call_ref_misuse, lint_world_get_out_param_misuse,
     lint_vector3_raw_call_arg, find_vector3_raw_call_args,
     lint_undeclared_catch_exception_var, lint_vector3_entity_prop_misuse,
-    find_vector3_entity_prop_misuse,
+    find_vector3_entity_prop_misuse, _code_brace_depth,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -64,6 +64,52 @@ def test_lint_strips_md_fences():
 def test_lint_balances_braces():
     out = lint_code_fragment("if (x) {", what="x")
     assert out.count("{") == out.count("}")
+
+
+# The live CS0106: the model returned update_extra as a single line ending in a
+# `//` comment that swallowed the closing brace. Brace CHARACTERS balance, so
+# the old text.count() saw nothing to do; Update() never closed, every
+# following member parsed as a local function, and the first `public` one
+# raised CS0106 at SaveSystem.cs(77,5).
+_COMMENT_EATEN_BRACE = ("if (_isDirty) { int currentLoc = _currentLocationIndex;"
+                        " // Validate state before save }")
+
+
+def test_lint_closes_block_whose_brace_is_eaten_by_a_comment():
+    assert _COMMENT_EATEN_BRACE.count("{") == _COMMENT_EATEN_BRACE.count("}")
+    out = lint_code_fragment(_COMMENT_EATEN_BRACE, what="update_extra")
+    # A real closer is appended AFTER the comment line that swallowed the first.
+    assert out.splitlines()[-1].strip() == "}"
+    assert _code_brace_depth(out) == 0
+
+
+@pytest.mark.parametrize("fragment,depth,why", [
+    ("if (x) { y(); }",                        0, "plain balanced"),
+    ("if (x) {",                               1, "genuinely unclosed"),
+    (_COMMENT_EATEN_BRACE,                     1, "closer inside a // comment"),
+    ("if (a) { b(); /* } */ }",                0, "closer inside a /* */ comment"),
+    ('var s = "}"; if (x) {',                  1, "closer inside a string"),
+    ('var s = "{"; y();',                      0, "opener inside a string"),
+    (r'var s = "a\"}"; if (x) {',              1, "escaped quote, then closer in string"),
+    (r'var v = @"C:\x}"; if (x) {',            1, "verbatim string"),
+    ('var v = @"say ""hi}"""; if (x) {',       1, "verbatim escaped quote"),
+    ('var s = $"{name} {x}"; if (a) {',        1, "interpolation holes are not delimiters"),
+    ("char c = '}'; if (x) {",                 1, "char literal"),
+    (r"char c = '\''; if (x) {",               1, "escaped char literal"),
+    ("@class.Foo(); if (x) {",                 1, "verbatim identifier is not a literal"),
+    ("// if (x) {",                            0, "whole line commented out"),
+    ("if (a)\n{\n    b(); // }\n}",            0, "comment brace after the real close"),
+])
+def test_code_brace_depth_ignores_comments_and_literals(fragment, depth, why):
+    assert _code_brace_depth(fragment) == depth, why
+
+
+def test_lint_leaves_surplus_closers_alone():
+    """The never-reduces contract survives: a fragment with MORE closers than
+    openers eats the enclosing method the same way, but dropping a brace can
+    silently merge two blocks, so it is left for the syntax gate to report."""
+    out = lint_code_fragment("foo(); }", what="x")
+    assert out.count("}") == 1 and "{" not in out
 
 
 def test_lint_repairs_value_type_property_member_assign():
