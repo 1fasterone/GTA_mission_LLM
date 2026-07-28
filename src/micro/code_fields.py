@@ -189,12 +189,107 @@ def _looks_like_prose(text: str) -> bool:
     return not any(c in text for c in (";", "{", "}"))
 
 
+def _code_brace_depth(text: str) -> int:
+    """Net brace depth counting only braces that are real CODE delimiters.
+
+    Skips `//` and `/* */` comments and char/string literals, including the
+    verbatim (`@"…"`, where `""` is an escaped quote) and interpolated (`$"…"`)
+    forms. Interpolated strings are skipped WHOLE: the braces of an
+    interpolation hole balance within the literal, so ignoring them keeps the
+    count right without having to parse the hole.
+
+    A single lexical pass, not a regex — the two failure modes this exists for
+    (a `}` inside a comment, a `{` inside a string) are exactly what regexes
+    over untokenized C# get wrong.
+    """
+    depth = 0
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+
+        if ch == "/" and i + 1 < n:
+            if text[i + 1] == "/":                    # line comment
+                j = text.find("\n", i)
+                i = n if j == -1 else j + 1
+                continue
+            if text[i + 1] == "*":                    # block comment
+                j = text.find("*/", i + 2)
+                i = n if j == -1 else j + 2
+                continue
+
+        if ch == "'":                                 # char literal: '{', '\''
+            i += 1
+            while i < n and text[i] != "'":
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            continue
+
+        if ch in "@$\"":                              # string literal
+            start, verbatim = i, False
+            while i < n and text[i] in "@$":          # $@"…" and @$"…" both
+                verbatim = verbatim or text[i] == "@"
+                i += 1
+            if i >= n or text[i] != '"':
+                # A bare `@` (verbatim identifier such as `@class`) or a stray
+                # `$` — not a literal prefix, so consume one char and move on.
+                i = start + 1
+                continue
+            i += 1
+            if verbatim:
+                while i < n:
+                    if text[i] == '"':
+                        if i + 1 < n and text[i + 1] == '"':
+                            i += 2                    # "" — escaped quote
+                            continue
+                        i += 1
+                        break
+                    i += 1
+            else:
+                while i < n and text[i] != '"':
+                    if text[i] == "\\":
+                        i += 2
+                    elif text[i] == "\n":
+                        break                         # unterminated literal
+                    else:
+                        i += 1
+                if i < n and text[i] == '"':
+                    i += 1
+            continue
+
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return depth
+
+
 def _balance_braces(text: str) -> str:
-    """Auto-close unbalanced { } with appended close-braces. Never reduces."""
-    open_n  = text.count("{")
-    close_n = text.count("}")
-    if open_n > close_n:
-        text = text + ("\n" + "}" * (open_n - close_n))
+    """Auto-close unbalanced { } with appended close-braces. Never reduces.
+
+    Counts CODE braces only (`_code_brace_depth`) — a brace inside a comment
+    or a string literal is not a delimiter. Hit live: an `update_extra`
+    fragment arrived from the model as a single line,
+
+        if (_isDirty) { int loc = _idx; // Validate state before save }
+
+    where the closing brace sits inside the trailing `//` comment. Brace
+    CHARACTERS balance, so the old `text.count()` saw nothing to do and the
+    fragment shipped with `Update()` never closed; every following member then
+    parsed as a local function and the first `public` one raised CS0106
+    (SaveSystem.cs(77,5), live). A lexical count sees depth 1 and appends the
+    real closer on its own line, after the comment that swallowed the first.
+
+    Still never reduces: a fragment with MORE closers than openers (which eats
+    the enclosing method the same way) is left alone rather than guessed at —
+    dropping a brace can silently merge two blocks. The syntax gate catches it
+    (src/csharp_syntax_gate.py).
+    """
+    depth = _code_brace_depth(text)
+    if depth > 0:
+        text = text + ("\n" + "}" * depth)
+        console.print(f"  [magenta]FIX[/]  closed {depth} unterminated block(s) "
+                      f"— brace in a comment/string is not a delimiter")
     return text
 
 
