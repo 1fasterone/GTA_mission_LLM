@@ -1,0 +1,177 @@
+{
+  "_provenance": {
+    "captured_utc": "2026-07-28T11:02:37+00:00",
+    "seed": 0,
+    "run_flags": {
+      "compose": false,
+      "blender_models": false,
+      "route": null,
+      "theme": null,
+      "micro_code": "unused (compose=False)"
+    },
+    "unity_output_dir": "C:/u",
+    "note": "Real unity_pipeline.run(); steps 2-3 replayed from captures, steps 4-6 executed verbatim."
+  },
+  "runs": {
+    "ood_stack": {
+      "prompt": "a game about stacking plates without them falling",
+      "ok": false,
+      "error": "ValueError: [assets.strict] no real model matches entity 'BackgroundProps' (kind='prop'). Give the entity a model_hint matching the asset library (run: python main.py unity-catalog --dry-run for the vocabulary), map its kind in lookups/unity/default_models.json, add a procedural_meshes entry sharing a name word with the entity, or set assets.strict: false.",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\tools\\run_steps456.py\", line 123, in main\n    out_path = pipeline.run(user_prompt=prompt, seed=SEED)\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\unity_pipeline.py\", line 1176, in run\n    project_root, file_count = self.generator.write(\n                               ^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\unity_generator.py\", line 2763, in write\n    files = self.generate(schema, manifest_deps,\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\unity_generator.py\", line 1974, in generate\n    used_models, entity_model_paths = self._resolve_all_models(\n                                      ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\unity_generator.py\", line 1841, in _resolve_all_models\n    entity_model_paths = resolve_entity_assets(\n                         ^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\unity_entity_asset_resolver.py\", line 943, in resolve_entity_assets\n    raise ValueError(\nValueError: [assets.strict] no real model matches entity 'BackgroundProps' (kind='prop'). Give the entity a model_hint matching the asset library (run: python main.py unity-catalog --dry-run for the vocabulary), map its kind in lookups/unity/default_models.json, add a procedural_meshes entry sharing a name word with the entity, or set assets.strict: false.\n",
+      "elapsed_s": 251.5
+    },
+    "ood_sort": {
+      "prompt": "sort falling colored blocks into matching bins",
+      "ok": true,
+      "project_dir": "C:\\u\\BlockSorter",
+      "llm_calls": {
+        "concept": 1,
+        "schema": 1,
+        "passthrough": 1
+      },
+      "tree": {
+        "n_files": 136,
+        "total_kb": 1855.1,
+        "by_ext": {
+          ".meta": 63,
+          ".cs": 16,
+          ".fbx": 12,
+          ".md": 10,
+          ".png": 8,
+          ".mat": 6,
+          "<none>": 5,
+          ".asset": 5,
+          ".json": 4,
+          ".txt": 2,
+          ".unity": 2,
+          ".prefab": 1,
+          ".inputactions": 1,
+          ".uxml": 1
+        },
+        "cs_scripts": [
+          "AudioManager.cs",
+          "DialogueManager.cs",
+          "EntitySpawner.cs",
+          "GameManager.cs",
+          "GameSequencer.cs",
+          "IVehicleState.cs",
+          "ModelSwap.cs",
+          "PlayerController.cs",
+          "PuzzleBlock.cs",
+          "ReceptacleBin.cs",
+          "SceneAudio.cs",
+          "SceneSetup.cs",
+          "SetupRenderPipeline.cs",
+          "UIManager.cs",
+          "URPMaterialPostprocessor.cs",
+          "VehicleBoneDriver.cs"
+        ],
+        "scenes": [
+          "Main.unity",
+          "MainMenu.unity"
+        ],
+        "models": [
+          "Building.fbx",
+          "Building.fbx",
+          "Pickup.fbx",
+          "Pickup.fbx",
+          "Player.fbx",
+          "Player.fbx",
+          "Prop.fbx",
+          "Prop.fbx",
+          "building-type-i.fbx",
+          "building-type-i.fbx",
+          "skateboard.fbx",
+          "skateboard.fbx"
+        ]
+      },
+      "elapsed_s": 198.7
+    },
+    "ood_balance": {
+      "prompt": "balance a tray of drinks while walking across a room",
+      "ok": true,
+      "project_dir": "C:\\u\\TrayBalance",
+      "llm_calls": {
+        "concept": 1,
+        "schema": 1,
+        "passthrough": 1
+      },
+      "tree": {
+        "n_files": 161,
+        "total_kb": 4553.3,
+        "by_ext": {
+          ".meta": 76,
+          ".cs": 24,
+          ".fbx": 20,
+          ".md": 10,
+          "<none>": 5,
+          ".asset": 5,
+          ".json": 4,
+          ".mat": 4,
+          ".png": 4,
+          ".txt": 2,
+          ".obj": 2,
+          ".unity": 2,
+          ".prefab": 1,
+          ".inputactions": 1,
+          ".uxml": 1
+        },
+        "cs_scripts": [
+          "AudioManager.cs",
+          "CameraShake.cs",
+          "DialogueManager.cs",
+          "EntitySpawner.cs",
+          "FloorTilesMesh.cs",
+          "GameManager.cs",
+          "GameSequencer.cs",
+          "IVehicleState.cs",
+          "KenneyImporter.cs",
+          "LiquidSloshing.cs",
+          "MaterialPalette.cs",
+          "MeshBuilder.cs",
+          "ModelSwap.cs",
+          "NPCSpawner.cs",
+          "NavMeshAgentBehaviour.cs",
+          "PlayerController.cs",
+          "SceneAudio.cs",
+          "SceneSetup.cs",
+          "SetupRenderPipeline.cs",
+          "TableTopMesh.cs",
+          "TrayPhysics.cs",
+          "UIManager.cs",
+          "URPMaterialPostprocessor.cs",
+          "VehicleBoneDriver.cs"
+        ],
+        "scenes": [
+          "Level1.unity",
+          "Main.unity"
+        ],
+        "models": [
+          "FloorTiles.obj",
+          "Obstacle.fbx",
+          "Obstacle.fbx",
+          "Player.fbx",
+          "Player.fbx",
+          "Prop.fbx",
+          "Prop.fbx",
+          "Spectator.fbx",
+          "Spectator.fbx",
+          "TableTop.obj",
+          "alien.fbx",
+          "alien.fbx",
+          "character-skate-boy.fbx",
+          "character-skate-boy.fbx",
+          "cone.fbx",
+          "cone.fbx",
+          "desk_chairStool.fbx",
+          "desk_chairStool.fbx",
+          "gate-metal-bars.fbx",
+          "gate-metal-bars.fbx",
+          "structure-wood.fbx",
+          "structure-wood.fbx"
+        ]
+      },
+      "elapsed_s": 252.4
+    }
+  }
+}

@@ -1,0 +1,1207 @@
+{
+  "ctrl_empty": {
+    "concept_source": "synthetic",
+    "prompt_only": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "",
+      "prompt": "",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "",
+      "prompt": "",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    }
+  },
+  "ctrl_noise": {
+    "concept_source": "synthetic",
+    "prompt_only": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "xqz frobnicate wumpus telemetry",
+      "prompt": "xqz frobnicate wumpus telemetry",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "The wumpus frobnicates telemetry across an xqz lattice. Frobnication yields wumpus telemetry.",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "the wumpus frobnicates telemetry across an xqz lattice. frobnication yields wumpus telemetry.",
+      "normalized_prompt": "xqz frobnicate wumpus telemetry",
+      "prompt": "xqz frobnicate wumpus telemetry",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    }
+  },
+  "inD_platform": {
+    "concept_source": "synthetic",
+    "prompt_only": {
+      "argmax_axis": "game_type",
+      "argmax_label": "2D",
+      "classify": {
+        "game_type": "2D",
+        "game_type_confidence": 6,
+        "genre": "platformer",
+        "genre_confidence": 3,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "game_type": [
+            "2d platformer",
+            "platformer"
+          ],
+          "genre": [
+            "platformer"
+          ]
+        }
+      },
+      "concept": "",
+      "margin": 3,
+      "matched_keywords": {
+        "game_type": {
+          "2D": [
+            "2d platformer",
+            "platformer"
+          ]
+        },
+        "genre": {
+          "platformer": [
+            "platformer"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 3,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 2,
+      "normalized_concept": "",
+      "normalized_prompt": "a 2d platformer with wall jumps",
+      "prompt": "a 2D platformer with wall jumps",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 6,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 3,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 9,
+      "top1": 6,
+      "top2": 3
+    },
+    "with_concept": {
+      "argmax_axis": "game_type",
+      "argmax_label": "2D",
+      "classify": {
+        "game_type": "2D",
+        "game_type_confidence": 7,
+        "genre": "platformer",
+        "genre_confidence": 4,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "game_type": [
+            "side-scrolling",
+            "2d platformer",
+            "platformer"
+          ],
+          "genre": [
+            "platformer",
+            "platforming"
+          ]
+        }
+      },
+      "concept": "A 2D side-scrolling platformer where the hero chains wall jumps to climb vertical shafts. Precision platforming with tight controls and no combat.",
+      "margin": 3,
+      "matched_keywords": {
+        "game_type": {
+          "2D": [
+            "side-scrolling",
+            "2d platformer",
+            "platformer"
+          ]
+        },
+        "genre": {
+          "platformer": [
+            "platformer",
+            "platforming"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 5,
+      "n_matched_keywords_at_1x": 2,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 2,
+      "normalized_concept": "a 2d side-scrolling platformer where the hero chains wall jumps to climb vertical shafts. precision platforming with tight controls and no combat.",
+      "normalized_prompt": "a 2d platformer with wall jumps",
+      "prompt": "a 2D platformer with wall jumps",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 7,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 4,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 11,
+      "top1": 7,
+      "top2": 4
+    }
+  },
+  "inD_race": {
+    "concept_source": "synthetic",
+    "prompt_only": {
+      "argmax_axis": "locomotion",
+      "argmax_label": "drive",
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "racing",
+        "genre_confidence": 3,
+        "locomotion": "drive",
+        "locomotion_confidence": 3,
+        "matched": {
+          "genre": [
+            "racing"
+          ],
+          "locomotion": [
+            "racing game"
+          ]
+        }
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {
+          "racing": [
+            "racing"
+          ]
+        },
+        "locomotion": {
+          "drive": [
+            "racing game"
+          ]
+        }
+      },
+      "n_matched_keywords": 2,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 2,
+      "normalized_concept": "",
+      "normalized_prompt": "make a racing game",
+      "prompt": "make a racing game",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 3,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 3,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 6,
+      "top1": 3,
+      "top2": 3
+    },
+    "with_concept": {
+      "argmax_axis": "locomotion",
+      "argmax_label": "drive",
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "racing",
+        "genre_confidence": 4,
+        "locomotion": "drive",
+        "locomotion_confidence": 4,
+        "matched": {
+          "genre": [
+            "racing",
+            "circuit racer"
+          ],
+          "locomotion": [
+            "car",
+            "racing game"
+          ]
+        }
+      },
+      "concept": "A street-level circuit racer set in a neon city. The player picks a car, qualifies on a short track, and runs three laps against rivals. Sliding through corners builds boost.",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {
+          "racing": [
+            "racing",
+            "circuit racer"
+          ]
+        },
+        "locomotion": {
+          "drive": [
+            "car",
+            "racing game"
+          ]
+        }
+      },
+      "n_matched_keywords": 4,
+      "n_matched_keywords_at_1x": 2,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 2,
+      "normalized_concept": "a street-level circuit racer set in a neon city. the player picks a car, qualifies on a short track, and runs three laps against rivals. sliding through corners builds boost.",
+      "normalized_prompt": "make a racing game",
+      "prompt": "make a racing game",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 4,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 4,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 8,
+      "top1": 4,
+      "top2": 4
+    }
+  },
+  "inD_shooter": {
+    "concept_source": "synthetic",
+    "prompt_only": {
+      "argmax_axis": "genre",
+      "argmax_label": "fps",
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "fps",
+        "genre_confidence": 3,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "genre": [
+            "first person shooter"
+          ]
+        }
+      },
+      "concept": "",
+      "margin": 3,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {
+          "fps": [
+            "first person shooter"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 1,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 1,
+      "nonzero_label_count": 1,
+      "normalized_concept": "",
+      "normalized_prompt": "a first person shooter in a warehouse",
+      "prompt": "a first person shooter in a warehouse",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 3,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 3,
+      "top1": 3,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": "genre",
+      "argmax_label": "fps",
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "fps",
+        "genre_confidence": 5,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "genre": [
+            "first person shooter",
+            "first-person shooter",
+            "gunplay"
+          ]
+        }
+      },
+      "concept": "A first-person shooter set in an abandoned warehouse. The player clears rooms with a shotgun while enemies flank from cover. Tight corridors, loud gunplay, no regenerating health.",
+      "margin": 5,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {
+          "fps": [
+            "first person shooter",
+            "first-person shooter",
+            "gunplay"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 3,
+      "n_matched_keywords_at_1x": 2,
+      "nonzero_axis_count": 1,
+      "nonzero_label_count": 1,
+      "normalized_concept": "a first-person shooter set in an abandoned warehouse. the player clears rooms with a shotgun while enemies flank from cover. tight corridors, loud gunplay, no regenerating health.",
+      "normalized_prompt": "a first person shooter in a warehouse",
+      "prompt": "a first person shooter in a warehouse",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 5,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 5,
+      "top1": 5,
+      "top2": 0
+    }
+  },
+  "ood_balance": {
+    "concept_source": "real",
+    "prompt_only": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "balance a tray of drinks while walking across a room",
+      "prompt": "balance a tray of drinks while walking across a room",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": "game_type",
+      "argmax_label": "isometric",
+      "classify": {
+        "game_type": "isometric",
+        "game_type_confidence": 1,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "game_type": [
+            "isometric"
+          ]
+        }
+      },
+      "concept": "This is a 3D physical simulation game viewed from an isometric camera perspective, optimized for PC and modern console platforms with potential mobile support in the future. The core gameplay loop revolves around precise locomotion and physics-based object management, where the player controls a character carrying a tray while navigating obstacles and uneven terrain. We will utilize Unity\u2019s Universal Render Pipeline (URP) to maintain high frame rates with stylized lighting that emphasizes spill dynamics and liquid surface reflections without heavy compute costs. Development should proceed on Unity 6 \u2014 6000.0 LTS, as this version provides the latest physics solvers essential for realistic fluid simulation stability while keeping overhead low compared to HDRP. The control scheme will utilize a standard gamepad or keyboard setup mapped through the Input System to ensure responsive character movement and smooth camera tracking via Cinemachine virtual cameras positioned behind the player shoulder to maintain focus on the cargo.\n\nTechnical architecture relies heavily on custom rigidbody controllers for both the player character and the fragile cargo to simulate friction, gravity, and impact forces accurately. The environment requires a robust NavMesh system to handle pathfinding around furniture and floor obstacles that could destabilize the tray during movement. We need specific systems for UI feedback regarding balance stability, audio cues that increase in pitch as drink levels drop, and basic AI for waiters or NPCs that spawn dynamically at destination points. Essential integration tools include PhysicMaterial editor settings for fine-tuning traction on different surfaces, a Shake effect manager for camera reaction to collisions, and Tilemaps for constructing modular room layouts efficiently without heavy polygon counts.",
+      "margin": 1,
+      "matched_keywords": {
+        "game_type": {
+          "isometric": [
+            "isometric"
+          ]
+        },
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 1,
+      "n_matched_keywords_at_1x": 1,
+      "nonzero_axis_count": 1,
+      "nonzero_label_count": 1,
+      "normalized_concept": "this is a 3d physical simulation game viewed from an isometric camera perspective, optimized for pc and modern console platforms with potential mobile support in the future. the core gameplay loop revolves around precise locomotion and physics-based object management, where the player controls a character carrying a tray while navigating obstacles and uneven terrain. we will utilize unity\u2019s universal render pipeline (urp) to maintain high frame rates with stylized lighting that emphasizes spill dynamics and liquid surface reflections without heavy compute costs. development should proceed on unity 6 \u2014 6000.0 lts, as this version provides the latest physics solvers essential for realistic fluid simulation stability while keeping overhead low compared to hdrp. the control scheme will utilize a standard gamepad or keyboard setup mapped through the input system to ensure responsive character movement and smooth camera tracking via cinemachine virtual cameras positioned behind the player shoulder to maintain focus on the cargo.\n\ntechnical architecture relies heavily on custom rigidbody controllers for both the player character and the fragile cargo to simulate friction, gravity, and impact forces accurately. the environment requires a robust nav mesh system to handle pathfinding around furniture and floor obstacles that could destabilize the tray during movement. we need specific systems for ui feedback regarding balance stability, audio cues that increase in pitch as drink levels drop, and basic ai for waiters or npcs that spawn dynamically at destination points. essential integration tools include physic material editor settings for fine-tuning traction on different surfaces, a shake effect manager for camera reaction to collisions, and tilemaps for constructing modular room layouts efficiently without heavy polygon counts.",
+      "normalized_prompt": "balance a tray of drinks while walking across a room",
+      "prompt": "balance a tray of drinks while walking across a room",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 1,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 1,
+      "top1": 1,
+      "top2": 0
+    }
+  },
+  "ood_ring": {
+    "concept_source": "real",
+    "prompt_only": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "make a game where the player throws rings onto a box",
+      "prompt": "make a game where the player throws rings onto a box",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": "genre",
+      "argmax_label": "puzzle",
+      "classify": {
+        "game_type": "3D",
+        "game_type_confidence": 1,
+        "genre": "puzzle",
+        "genre_confidence": 2,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "game_type": [
+            "third-person"
+          ],
+          "genre": [
+            "puzzle",
+            "physics puzzle"
+          ]
+        }
+      },
+      "concept": "This project functions as a third-person 3D arcade physics puzzle intended for PC and mobile platforms with cross-play support. The gameplay loop centers on precision aiming mechanics where players manipulate ring objects to launch them toward designated box targets, requiring spatial judgment rather than reflex-based action. We will utilize Unity Version 6 LTS (6000.0) as the development baseline to access modern features without legacy baggage, paired with the Universal Render Pipeline (URP) for optimal performance-to-visuals ratio across diverse hardware. The camera perspective should be dynamic, utilizing an over-the-shoulder stance that transitions smoothly during throw animations to maintain depth perception regarding trajectory and distance.\n\nTechnical architecture relies heavily on a rigidbody physics system configured with custom collision layers to accurately detect ring landings without jittery triggers. Essential systems include an audio middleware integration for reactive soundscapes based on impact velocity, alongside a scalable UI framework built via the UI Toolkit. To stabilize player experience, we will integrate Cinemachine for automated camera stabilization during high-velocity throws and the Input System package for unified keyboard-mouse and touch-control mapping. Additionally, standard physics material properties must be tuned to ensure rings slide realistically upon contact with box surfaces, enhancing the tactile feel of the game without requiring complex custom scripts for friction management.",
+      "margin": 1,
+      "matched_keywords": {
+        "game_type": {
+          "3D": [
+            "third-person"
+          ]
+        },
+        "genre": {
+          "puzzle": [
+            "puzzle",
+            "physics puzzle"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 3,
+      "n_matched_keywords_at_1x": 3,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 2,
+      "normalized_concept": "this project functions as a third-person 3d arcade physics puzzle intended for pc and mobile platforms with cross-play support. the gameplay loop centers on precision aiming mechanics where players manipulate ring objects to launch them toward designated box targets, requiring spatial judgment rather than reflex-based action. we will utilize unity version 6 lts (6000.0) as the development baseline to access modern features without legacy baggage, paired with the universal render pipeline (urp) for optimal performance-to-visuals ratio across diverse hardware. the camera perspective should be dynamic, utilizing an over-the-shoulder stance that transitions smoothly during throw animations to maintain depth perception regarding trajectory and distance.\n\ntechnical architecture relies heavily on a rigidbody physics system configured with custom collision layers to accurately detect ring landings without jittery triggers. essential systems include an audio middleware integration for reactive soundscapes based on impact velocity, alongside a scalable ui framework built via the ui toolkit. to stabilize player experience, we will integrate cinemachine for automated camera stabilization during high-velocity throws and the input system package for unified keyboard-mouse and touch-control mapping. additionally, standard physics material properties must be tuned to ensure rings slide realistically upon contact with box surfaces, enhancing the tactile feel of the game without requiring complex custom scripts for friction management.",
+      "normalized_prompt": "make a game where the player throws rings onto a box",
+      "prompt": "make a game where the player throws rings onto a box",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 1,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 2,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 3,
+      "top1": 2,
+      "top2": 1
+    }
+  },
+  "ood_sort": {
+    "concept_source": "real",
+    "prompt_only": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "sort falling colored blocks into matching bins",
+      "prompt": "sort falling colored blocks into matching bins",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": "genre",
+      "argmax_label": "puzzle",
+      "classify": {
+        "game_type": "2D",
+        "game_type_confidence": 1,
+        "genre": "puzzle",
+        "genre_confidence": 2,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "game_type": [
+            "side-scrolling"
+          ],
+          "genre": [
+            "puzzle",
+            "physics puzzle"
+          ]
+        }
+      },
+      "concept": "The project is defined as a 2D side-scrolling physics puzzle game targeting cross-platform deployment across PC, consoles, and high-end mobile devices. We will utilize the Universal Render Pipeline (URP) to maintain a vibrant, stylized aesthetic that performs efficiently on varied hardware, anchored by Unity version 6 LTS for long-term stability and feature parity with modern engine standards. The camera perspective will be fixed or cinematic with slight parallax scrolling, managed via Cinemachine to ensure smooth transitions during gameplay phases without breaking the player's immersion. Player input will be handled exclusively through the Input System package to unify mouse-and-keyboard controls on desktop and touch gestures on mobile within a single architecture, ensuring consistent response times across all supported platforms.\n\nGameplay mechanics center around rigidbody physics simulations where blocks fall under gravity into specific receptacles based on color-matching logic implemented via scriptable data definitions rather than hardcoded behaviors. Key systems required include the UI Toolkit for responsive score tracking and level progression, an Audio Mixer to handle frequency-based feedback during block collisions, and a robust physics material setup to manage friction between falling objects and bin interiors. While NavMesh agents are unnecessary for static block movement, we will leverage the built-in Physics2D system for collision resolution, ensuring that the core sorting logic remains deterministic and bug-free across different build targets while maintaining high frame rates through optimized particle effects and rendering batches.",
+      "margin": 1,
+      "matched_keywords": {
+        "game_type": {
+          "2.5D": [
+            "parallax"
+          ],
+          "2D": [
+            "side-scrolling"
+          ]
+        },
+        "genre": {
+          "puzzle": [
+            "puzzle",
+            "physics puzzle"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 4,
+      "n_matched_keywords_at_1x": 4,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 3,
+      "normalized_concept": "the project is defined as a 2d side-scrolling physics puzzle game targeting cross-platform deployment across pc, consoles, and high-end mobile devices. we will utilize the universal render pipeline (urp) to maintain a vibrant, stylized aesthetic that performs efficiently on varied hardware, anchored by unity version 6 lts for long-term stability and feature parity with modern engine standards. the camera perspective will be fixed or cinematic with slight parallax scrolling, managed via cinemachine to ensure smooth transitions during gameplay phases without breaking the player's immersion. player input will be handled exclusively through the input system package to unify mouse-and-keyboard controls on desktop and touch gestures on mobile within a single architecture, ensuring consistent response times across all supported platforms.\n\ngameplay mechanics center around rigidbody physics simulations where blocks fall under gravity into specific receptacles based on color-matching logic implemented via scriptable data definitions rather than hardcoded behaviors. key systems required include the ui toolkit for responsive score tracking and level progression, an audio mixer to handle frequency-based feedback during block collisions, and a robust physics material setup to manage friction between falling objects and bin interiors. while nav mesh agents are unnecessary for static block movement, we will leverage the built-in physics2d system for collision resolution, ensuring that the core sorting logic remains deterministic and bug-free across different build targets while maintaining high frame rates through optimized particle effects and rendering batches.",
+      "normalized_prompt": "sort falling colored blocks into matching bins",
+      "prompt": "sort falling colored blocks into matching bins",
+      "scores": {
+        "game_type": {
+          "2.5D": 1,
+          "2D": 1,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 2,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 4,
+      "top1": 2,
+      "top2": 1
+    }
+  },
+  "ood_stack": {
+    "concept_source": "real",
+    "prompt_only": {
+      "argmax_axis": null,
+      "argmax_label": null,
+      "classify": {
+        "game_type": null,
+        "game_type_confidence": 0,
+        "genre": "universal",
+        "genre_confidence": 0,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {}
+      },
+      "concept": "",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {},
+        "genre": {},
+        "locomotion": {}
+      },
+      "n_matched_keywords": 0,
+      "n_matched_keywords_at_1x": 0,
+      "nonzero_axis_count": 0,
+      "nonzero_label_count": 0,
+      "normalized_concept": "",
+      "normalized_prompt": "a game about stacking plates without them falling",
+      "prompt": "a game about stacking plates without them falling",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 0,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 0,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 0,
+      "top1": 0,
+      "top2": 0
+    },
+    "with_concept": {
+      "argmax_axis": "game_type",
+      "argmax_label": "isometric",
+      "classify": {
+        "game_type": "isometric",
+        "game_type_confidence": 1,
+        "genre": "puzzle",
+        "genre_confidence": 1,
+        "locomotion": null,
+        "locomotion_confidence": 0,
+        "matched": {
+          "game_type": [
+            "isometric"
+          ],
+          "genre": [
+            "puzzle"
+          ]
+        }
+      },
+      "concept": "This project is a 3D physics-based puzzle simulation targeting PC, PlayStation 5, and Xbox Series X architectures, utilizing a dynamic isometric camera perspective that orbits the central play area to maintain spatial awareness of vertical height and lateral balance. The core player mechanics rely on high-precision input methods where users manipulate rigid body plates using mouse drag-and-drop or touch gestures to adjust position, rotation, and velocity without triggering kinetic failure states. Stability management is paramount; players must calculate center of mass against external forces like simulated wind or player-induced momentum, creating a tension between risk and precision in a minimalist aesthetic that emphasizes depth perception over graphical complexity to facilitate rapid iteration on stacking strategies.\n\nTechnically, the build utilizes Unity 6 (Version 6000.0 LTS) configured with the Universal Render Pipeline for optimized lighting baking to ensure clear visibility of contact points on ceramic surfaces while maintaining high frame rates at 60fps. Critical systems include a custom physics layer tuning friction and restitution values within the built-in PhysX engine, alongside an audio system that triggers randomized clatter sounds based on impact velocity and surface material properties. The architecture requires specific packages to handle state management without performance hit: Cinemachine for camera smoothing during stack adjustments, Input System for unified controller support across platforms, and a lightweight UI toolkit that displays real-time stability metrics. We will avoid heavy AI or networking layers initially, focusing entirely on the deterministic physics simulation and local player feedback loops.",
+      "margin": 0,
+      "matched_keywords": {
+        "game_type": {
+          "isometric": [
+            "isometric"
+          ]
+        },
+        "genre": {
+          "puzzle": [
+            "puzzle"
+          ]
+        },
+        "locomotion": {}
+      },
+      "n_matched_keywords": 2,
+      "n_matched_keywords_at_1x": 2,
+      "nonzero_axis_count": 2,
+      "nonzero_label_count": 2,
+      "normalized_concept": "this project is a 3d physics-based puzzle simulation targeting pc, play station 5, and xbox series x architectures, utilizing a dynamic isometric camera perspective that orbits the central play area to maintain spatial awareness of vertical height and lateral balance. the core player mechanics rely on high-precision input methods where users manipulate rigid body plates using mouse drag-and-drop or touch gestures to adjust position, rotation, and velocity without triggering kinetic failure states. stability management is paramount; players must calculate center of mass against external forces like simulated wind or player-induced momentum, creating a tension between risk and precision in a minimalist aesthetic that emphasizes depth perception over graphical complexity to facilitate rapid iteration on stacking strategies.\n\ntechnically, the build utilizes unity 6 (version 6000.0 lts) configured with the universal render pipeline for optimized lighting baking to ensure clear visibility of contact points on ceramic surfaces while maintaining high frame rates at 60fps. critical systems include a custom physics layer tuning friction and restitution values within the built-in physx engine, alongside an audio system that triggers randomized clatter sounds based on impact velocity and surface material properties. the architecture requires specific packages to handle state management without performance hit: cinemachine for camera smoothing during stack adjustments, input system for unified controller support across platforms, and a lightweight ui toolkit that displays real-time stability metrics. we will avoid heavy ai or networking layers initially, focusing entirely on the deterministic physics simulation and local player feedback loops.",
+      "normalized_prompt": "a game about stacking plates without them falling",
+      "prompt": "a game about stacking plates without them falling",
+      "scores": {
+        "game_type": {
+          "2.5D": 0,
+          "2D": 0,
+          "2d_topdown": 0,
+          "3D": 0,
+          "VR": 0,
+          "isometric": 1,
+          "top_down": 0
+        },
+        "genre": {
+          "fps": 0,
+          "horror": 0,
+          "platformer": 0,
+          "puzzle": 1,
+          "racing": 0,
+          "rpg": 0,
+          "stealth": 0,
+          "strategy": 0,
+          "tower_defence": 0
+        },
+        "locomotion": {
+          "drive": 0,
+          "fly": 0,
+          "swim": 0
+        }
+      },
+      "sum_scores": 2,
+      "top1": 1,
+      "top2": 1
+    }
+  }
+}

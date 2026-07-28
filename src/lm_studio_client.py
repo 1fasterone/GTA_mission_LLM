@@ -37,6 +37,14 @@ def _sanitize_json_scalars(text: str) -> str:
     return text
 
 
+def _rebalance(text: str, start: int) -> str:
+    """Last-resort repair: drop surplus closers, close anything still open,
+    then clean up the scalar/comma contaminants the edits can expose."""
+    fixed = _drop_surplus_closers(text, start)
+    fixed = _repair_truncated_json(fixed, 0)
+    return _sanitize_json_scalars(fixed)
+
+
 def _repair_truncated_json(text: str, start: int) -> str:
     """
     Close any unclosed brackets/braces left by a truncated LLM response.
@@ -69,6 +77,66 @@ def _repair_truncated_json(text: str, start: int) -> str:
     # Truncation may leave a dangling open string — close it
     suffix = ('"' if in_string else "") + "".join(reversed(stack))
     return text[start:] + suffix
+
+
+def _drop_surplus_closers(text: str, start: int) -> str:
+    """Drop closing delimiters that have no matching opener.
+
+    The mirror image of _repair_truncated_json: that one appends closers a
+    truncated response never wrote, this one removes closers a response wrote
+    too many of. Local models emit an extra array terminator after a nested
+    object fairly readily — hit live on the "throws rings onto a box" prompt,
+    where every list section came out as
+
+        "vfx": [ { ... "parameters":{...}} ]  ],
+                                             ^ no opener left to match
+
+    The surplus `}` also makes extract_json's outermost-balanced-brace scan
+    bottom out early, so the candidate it slices is short AND malformed; that
+    surfaces as a plain "Expecting ',' delimiter", not as a truncation.
+
+    Walks with the same string/escape handling as the truncation repair and
+    copies every character through except closers that don't match the top of
+    the open stack. Stops at the point the root object closes, so trailing
+    prose after the JSON is dropped too. Well-formed input is returned
+    unchanged (no closer is ever surplus in balanced JSON).
+    """
+    out: list[str] = []
+    stack: list[str] = []
+    in_string = False
+    escape = False
+
+    for ch in text[start:]:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == "\\" and in_string:
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string:
+            out.append(ch)
+            continue
+        if ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in "}]":
+            if not stack or stack[-1] != ch:
+                continue                      # surplus closer — drop it
+            stack.pop()
+            out.append(ch)
+            if not stack:                     # root closed; ignore any tail
+                break
+            continue
+        out.append(ch)
+
+    return "".join(out)
 
 
 class LMStudioClient:
@@ -199,6 +267,10 @@ class LMStudioClient:
             try:
                 return json.loads(repaired)
             except json.JSONDecodeError:
+                pass
+            try:
+                return json.loads(_rebalance(text, start))
+            except json.JSONDecodeError:
                 raise ValueError(
                     f"JSON truncated and could not be repaired.\n"
                     f"Increase max_tokens in config.yaml.\n"
@@ -213,6 +285,13 @@ class LMStudioClient:
             try:
                 return json.loads(_sanitize_json_scalars(candidate))
             except json.JSONDecodeError as exc:
+                # A surplus closer ends the balanced-brace scan early, so
+                # `candidate` is both short and malformed — rebalance the FULL
+                # text rather than the slice.
+                try:
+                    return json.loads(_rebalance(text, start))
+                except json.JSONDecodeError:
+                    pass
                 raise ValueError(
                     f"JSON parse error: {exc}\nRaw:\n{candidate[:400]}"
                 ) from exc
