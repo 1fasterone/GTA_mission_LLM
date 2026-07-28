@@ -2000,3 +2000,132 @@ def test_kind_scope_applies_to_sketchfab_tier_s(tmp_path):
         {}, {}, lookups_dir=str(lookups),
         sketchfab_cfg={"enabled": True, "auto_fetch": False}, strict=False)
     assert paths["ScoreBoards"] == "Models/Kenney/Prop/display-board"
+
+
+# ── neutral-humanoid policy for unmatched characters ─────────────────────────
+#
+# The LLM reaches for kind="character" (also "human"/"person"), which the asset
+# library never uses as a kind_hint — it tags people npc/player/crowd/enemy.
+# Live failure: a "balance a tray of drinks while walking across a room" prompt
+# produced a Waiters entity that resolved to character-skate-boy.fbx, matching
+# on the bare word "character" and nothing else. Nearest-match is the wrong
+# policy for people: a grey capsule reads as "placeholder, replace me", while a
+# skate boy reads as a decision the pipeline made about who works at the
+# restaurant. Confidently wrong is worse than obviously unfinished.
+
+_PEOPLE_ASSETS = [
+    # Both entries are verbatim shapes from lookups/unity/asset_catalog.json.
+    # Note kind_hints: neither says "character" — that is the whole problem.
+    {"filename": "character-skate-boy.fbx", "relpath": "character-skate-boy.fbx",
+     "category": "character",
+     "keywords": ["character", "player", "human", "person", "skater", "boy"],
+     "kind_hints": ["npc", "crowd"], "generic_score": 4, "scale": 1.0},
+    {"filename": "astronautA.fbx", "relpath": "astronautA.fbx",
+     "category": "character",
+     "keywords": ["astronaut", "spaceman", "person", "npc", "character"],
+     "kind_hints": ["player", "npc"], "generic_score": 0, "scale": 1.0},
+]
+
+_PEOPLE_LAYERS = {
+    "_config": {"kind_prior": 1.0, "layer_band": 0.6},
+    "layers": {
+        "character_humanoid": {
+            "vocabulary": ["character", "human", "person", "astronaut"],
+            "kinds": ["character", "npc", "player", "crowd"],
+            "categories": ["character"]},
+    },
+}
+
+
+def _neutral_humanoid(tmp_path):
+    """The anonymous Spectator that lookups/unity/default_models.json maps
+    character / human / person to."""
+    src = tmp_path / "Spectator.fbx"
+    src.write_bytes(b"FBX")
+    return ResolvedModel(kind="character", src=str(src),
+                         dest_rel="Models/Default/Character/Spectator.fbx",
+                         resource_path="Models/Default/Character/Spectator",
+                         rig="generic")
+
+
+def _people_env(tmp_path, name, layers):
+    root = tmp_path / name
+    root.mkdir()
+    return _write_lookups(root, _PEOPLE_ASSETS, layers)
+
+
+def test_unmatched_character_degrades_to_neutral_humanoid(tmp_path):
+    """The live failure, through Tier 2a (concept-layer match). skate-boy is a
+    STRONG character_humanoid member and collects the layer-alignment bonus, so
+    scoring alone hands it the slot — nothing in the library is a waiter. The
+    kind guard, which Tier 2a did not run at all, has to refuse it."""
+    lookups = _people_env(tmp_path, "a", _PEOPLE_LAYERS)
+    spectator = _neutral_humanoid(tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Waiters", kind="character", count=3,
+                            model_hint="waiter")]),
+        {"character": spectator}, {"character": spectator},
+        lookups_dir=str(lookups))
+    assert "skate" not in paths["Waiters"]
+    assert paths["Waiters"] == "Models/Default/Character/Spectator"
+
+
+def test_unmatched_character_degrades_without_concept_layers(tmp_path):
+    """Same entity with no concept_layers.json, so the pick comes from Tier 2b
+    instead. Guard-rail rather than a reproduction — Tier 2b's guard already
+    refused skate-boy whenever a default existed, which is exactly why the bug
+    only ever surfaced through Tier 2a. Pinned so the two tiers cannot drift
+    apart again."""
+    lookups = _people_env(tmp_path, "b", None)
+    spectator = _neutral_humanoid(tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Waiters", kind="character", count=3,
+                            model_hint="waiter")]),
+        {"character": spectator}, {"character": spectator},
+        lookups_dir=str(lookups))
+    assert paths["Waiters"] == "Models/Default/Character/Spectator"
+
+
+def test_generic_person_words_are_not_a_specific_request(tmp_path):
+    """"NPCs"/model_hint "npc character" names a CATEGORY, not a person, so it
+    carries no more information than the kind field already did (see
+    _GENERIC_PERSON_TOKENS). A bare role word must not license the library's
+    nearest themed character — this is the entity the LLM invents when it
+    embellishes a brief, and the neutral default is the honest answer."""
+    lookups = _people_env(tmp_path, "c", _PEOPLE_LAYERS)
+    spectator = _neutral_humanoid(tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="NPCs", kind="character", count=4,
+                            model_hint="npc character")]),
+        {"character": spectator}, {"character": spectator},
+        lookups_dir=str(lookups))
+    assert paths["NPCs"] == "Models/Default/Character/Spectator"
+
+
+def test_named_character_still_gets_its_model(tmp_path):
+    """Positive control — the policy is "degrade when unmatched", not "never
+    match". "Astronauts" names something the library actually has, and
+    "astronaut" appears in the asset's own filename, so it displaces the
+    neutral default. Without this escape the character default would block
+    every catalog pick for the kind, since nothing is tagged kind_hint
+    "character"."""
+    lookups = _people_env(tmp_path, "d", _PEOPLE_LAYERS)
+    spectator = _neutral_humanoid(tmp_path)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Astronauts", kind="character", count=2,
+                            model_hint="astronaut")]),
+        {"character": spectator}, {"character": spectator},
+        lookups_dir=str(lookups))
+    assert paths["Astronauts"] == "Models/Kenney/Character/astronautA"
+
+
+def test_person_kinds_all_map_to_one_neutral_humanoid():
+    """The data half of the policy: default_models.json must give the generic
+    person kinds a real default, otherwise tier1 is None and every weak-match
+    protection that keys off "a known-good default exists" is disabled."""
+    kinds = json.loads(
+        (Path("lookups") / "unity" / "default_models.json").read_text(
+            encoding="utf-8"))["kinds"]
+    people = [kinds[k]["model"] for k in ("character", "human", "person", "npc")]
+    assert people == [people[0]] * len(people)
+    assert "Spectator" in people[0]
