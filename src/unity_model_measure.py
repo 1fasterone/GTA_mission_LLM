@@ -75,7 +75,7 @@ public static class ModelBoundsMeasure
 '''
 
 
-def _find_editor() -> Optional[str]:
+def _find_editor() -> Optional[Path]:
     from run_verify_unity import _find_editor as f  # reuse the existing probe
     return f(None)
 
@@ -95,7 +95,7 @@ def measure_roots(roots: Iterable[str | Path],
     (work_dir / "Packages").mkdir(parents=True, exist_ok=True)
     (work_dir / "ProjectSettings").mkdir(parents=True, exist_ok=True)
 
-    ver = Path(editor).parent.parent.name
+    ver = editor.parent.parent.name
     (work_dir / "Assets" / "Editor" / "ModelBoundsMeasure.cs").write_text(_EDITOR_CS, encoding="utf-8")
     (work_dir / "Packages" / "manifest.json").write_text(
         json.dumps({"dependencies": {}}, indent=2), encoding="utf-8")
@@ -113,7 +113,7 @@ def measure_roots(roots: Iterable[str | Path],
     out_json = work_dir / "bounds.json"
     log      = work_dir / "measure.log"
     env = dict(os.environ, BOUNDS_OUT=str(out_json))
-    subprocess.run([editor, "-batchmode", "-quit", "-nographics",
+    subprocess.run([str(editor), "-batchmode", "-quit", "-nographics",
                     "-projectPath", str(work_dir),
                     "-executeMethod", "ModelBoundsMeasure.Run",
                     "-logFile", str(log)],
