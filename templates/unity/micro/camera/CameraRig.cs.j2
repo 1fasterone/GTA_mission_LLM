@@ -27,6 +27,13 @@ public class {{ s.name }} : MonoBehaviour
     private Transform _target;
     private Vector3   _vel;
     private Camera    _cam;
+{% if variant == "first_person" %}
+
+    [Header("First-person fallback")]
+    [Tooltip("Used only when the player has no \"Eye\" child to mount on.")]
+    [SerializeField] private float fallbackEyeHeight = 1.60f;
+    private bool _eyeMounted;
+{% endif %}
 
     private void Awake()
     {
@@ -44,14 +51,39 @@ public class {{ s.name }} : MonoBehaviour
     {
         if (_target == null)
         {
+{% if variant == "first_person" %}
+            // Several objects can end up sharing the Player tag (a mis-tagged
+            // prop group is enough), and FindWithTag then returns an arbitrary
+            // one — which silently parks the camera on scenery. Prefer whichever
+            // tagged object actually carries the controller's "Eye" child.
+            GameObject go = null;
+            foreach (var cand in GameObject.FindGameObjectsWithTag(followTag))
+            {
+                if (cand == null) continue;
+                if (go == null) go = cand;
+                if (cand.transform.Find("Eye") != null) { go = cand; break; }
+            }
+            if (go == null) return;
+            // The "Eye" sits at head height and carries pitch. Following the
+            // player root instead puts the camera at the feet, facing wherever
+            // the body happens to point — which reads as staring into space.
+            var eye = go.transform.Find("Eye");
+            _eyeMounted = eye != null;
+            _target = _eyeMounted ? eye : go.transform;
+{% else %}
             var go = GameObject.FindWithTag(followTag);
             if (go == null) return;
             _target = go.transform;
+{% endif %}
         }
 
 {% if variant == "first_person" %}
-        // First-person: lock to target head transform
-        transform.position = _target.position;
+        // First-person: lock to the target head transform. When no "Eye" child
+        // was found we are sitting on the player root, so lift by the fallback
+        // eye height rather than filming from ankle level.
+        transform.position = _eyeMounted
+            ? _target.position
+            : _target.position + new Vector3(0f, fallbackEyeHeight, 0f);
         transform.rotation = _target.rotation;
 {% elif variant == "follow_2d" %}
         // 2D side-on follow: track X/Y at a fixed camera depth, no roll / LookAt.

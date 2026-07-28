@@ -24,6 +24,9 @@ ControllerVariant = Literal[
     "platformer_2_5d",
     # Vehicles
     "vehicle_car", "vehicle_bike",
+    # Wheelless ground craft: raycast hover suspension, thrust-driven, no
+    # WheelColliders — hovercars/speeders whose models have no wheel bones.
+    "vehicle_hover",
     # Special locomotion
     "flying", "swimming",
     # New genres
@@ -79,6 +82,18 @@ class ControllerSchema(BaseModel):
     sprint_speed: float = 10.0
     jump_force:   float = 8.0
 
+    # ── Mouse look (first_person variant) ─────────────────────────────────────
+    # Without these the first_person rig emitted movement but no rotation at
+    # all: the player faced its spawn direction forever and the camera — which
+    # copies the player transform — stared into empty space. Yaw turns the body
+    # (so WASD follows the look direction); pitch tilts the eye transform only,
+    # clamped so the view cannot roll over backwards.
+    look_sensitivity: float = 2.0
+    pitch_min:        float = -85.0
+    pitch_max:        float = 85.0
+    eye_height:       float = 1.6
+    lock_cursor:      bool  = True
+
     # ── Aircraft params (aircraft variant only) ────────────────────────────────
     max_thrust:       float = 80.0
     lift_coefficient: float = 30.0
@@ -97,6 +112,22 @@ class ControllerSchema(BaseModel):
     suspension_damper:     float = 4500.0
     drift_slip_multiplier: float = 0.5
     wheel_radius:          float = 0.35
+
+    # ── Hover params (vehicle_hover variant only) ─────────────────────────────
+    # Ride height is held by a 4-point raycast spring-damper, so the craft
+    # floats over the road surface instead of resting on wheel contacts.
+    hover_ride_height:  float = 1.2
+    hover_spring:       float = 220.0
+    hover_damper:       float = 18.0
+    hover_thrust:       float = 4200.0
+    hover_reverse:      float = 1400.0
+    hover_boost_mult:   float = 2.4
+    hover_boost_time:   float = 1.8
+    hover_boost_cooldown: float = 4.0
+    hover_turn_torque:  float = 900.0
+    hover_lateral_grip: float = 6.0     # sideways velocity bleed (lane-keeping)
+    hover_drag:         float = 0.35
+    hover_max_speed:    float = 140.0
 
     # ── Shooter params (shoot ability) ─────────────────────────────────────────
     fire_rate:    float = 0.15

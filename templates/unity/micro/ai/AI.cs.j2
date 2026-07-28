@@ -62,11 +62,31 @@ public class {{ s.name }} : MonoBehaviour
     private static readonly List<{{ s.name }}> _flock = new List<{{ s.name }}>();
     private Vector3 _velocity;
 {% endif %}
+{% if variant == "flying_swarm" %}
+
+    [Header("Hover")]
+    [SerializeField] private float hoverHeight  = {{ "%.2f"|format(s.hover_height) }}f;
+    [SerializeField] private float hoverSpread  = {{ "%.2f"|format(s.hover_spread) }}f;
+    [SerializeField] private float bobAmplitude = {{ "%.2f"|format(s.bob_amplitude) }}f;
+    [SerializeField] private float bobSpeed     = {{ "%.2f"|format(s.bob_speed) }}f;
+    // Per-instance phase so a swarm does not bob in lockstep.
+    private float _bobPhase;
+{% endif %}
 
     private void OnEnable()
     {
 {% if variant in ("flocking", "flying_swarm") %}
         _flock.Add(this);
+{% endif %}
+{% if variant == "flying_swarm" %}
+        _bobPhase = (GetInstanceID() & 1023) * 0.01f;
+        // Take to the air IMMEDIATELY rather than easing up from the floor.
+        // The layout pass bakes every instance at y=0 because it is a
+        // ground-plane packer, so a swarm of "floating" enemies otherwise
+        // spends its first seconds as a row of heads resting on the deck.
+        // Spread over a band so they read as a cloud, not a washing line.
+        float _lift = hoverHeight + ((GetInstanceID() & 7) / 7f - 0.5f) * hoverSpread;
+        transform.position += Vector3.up * Mathf.Max(0.5f, _lift);
 {% endif %}
 {% if s.nav_backend == "navmesh" %}
         _agent = GetComponent<NavMeshAgent>();
@@ -215,7 +235,21 @@ public class {{ s.name }} : MonoBehaviour
             coh = (coh / count) - transform.position;
         }
         Vector3 steer = sep * separationWeight + ali * alignmentWeight + coh * cohesionWeight;
+{% if variant == "flying_swarm" %}
+        // Airborne hunters aim at a point ABOVE the target and bob, so they
+        // hang in the air like the floating things they are. Seeking the raw
+        // target position instead drags the whole swarm down to ankle height
+        // and it reads as ground units sliding around.
+        if (_target != null)
+        {
+            Vector3 aim = _target.position
+                        + Vector3.up * (hoverHeight
+                            + Mathf.Sin((Time.time + _bobPhase) * bobSpeed) * bobAmplitude);
+            steer += (aim - transform.position).normalized * moveSpeed;
+        }
+{% else %}
         if (_target != null) steer += (_target.position - transform.position).normalized * moveSpeed;
+{% endif %}
         _velocity = Vector3.Lerp(_velocity, Vector3.ClampMagnitude(steer, moveSpeed), Time.deltaTime * 2f);
 {% if variant == "flying_swarm" %}
         transform.position += _velocity * Time.deltaTime;
@@ -223,6 +257,11 @@ public class {{ s.name }} : MonoBehaviour
         transform.position += new Vector3(_velocity.x, 0f, _velocity.z) * Time.deltaTime;
 {% endif %}
         if (_velocity.sqrMagnitude > 0.01f) transform.forward = _velocity.normalized;
+        // Converging on the player is only half the behaviour — without this the
+        // swarm drifts into the target and then does nothing to it forever.
+        if (_target != null
+            && Vector3.Distance(transform.position, _target.position) < attackRadius)
+            TryAttack();
 {% endif %}
 {{ inject.lifecycle(s.update_extra) }}
     }

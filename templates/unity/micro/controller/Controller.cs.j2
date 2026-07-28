@@ -21,6 +21,16 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if "jump" in s.abilities or "double_jump" in s.abilities %}
     [SerializeField] private float jumpForce   = {{ "%.2f"|format(s.jump_force) }}f;
 {% endif %}
+{% if variant == "first_person" %}
+
+    // ═══ LOOK ════════════════════════════════════════════════════════════════
+    [Header("Look")]
+    [SerializeField] private float lookSensitivity = {{ "%.2f"|format(s.look_sensitivity) }}f;
+    [SerializeField] private float pitchMin        = {{ "%.2f"|format(s.pitch_min) }}f;
+    [SerializeField] private float pitchMax        = {{ "%.2f"|format(s.pitch_max) }}f;
+    [SerializeField] private float eyeHeight       = {{ "%.2f"|format(s.eye_height) }}f;
+    [SerializeField] private bool  lockCursor      = {{ "true" if s.lock_cursor else "false" }};
+{% endif %}
 {% if "crouch" in s.abilities %}
     [Header("Crouch")]
     [SerializeField] private float crouchHeight = 0.55f;
@@ -59,7 +69,26 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
     // ═══ VEHICLE ═════════════════════════════════════════════════════════════
-{% if variant.startswith("vehicle_") %}
+{% if variant == "vehicle_hover" %}
+    [Header("Hover")]
+    [Tooltip("Ride height held above the road surface, in metres.")]
+    [SerializeField] private float hoverRideHeight = {{ "%.2f"|format(s.hover_ride_height) }}f;
+    [SerializeField] private float hoverSpring     = {{ "%.1f"|format(s.hover_spring) }}f;
+    [SerializeField] private float hoverDamper     = {{ "%.1f"|format(s.hover_damper) }}f;
+    [Header("Thrust")]
+    [SerializeField] private float thrustForce     = {{ "%.1f"|format(s.hover_thrust) }}f;
+    [SerializeField] private float reverseForce    = {{ "%.1f"|format(s.hover_reverse) }}f;
+    [SerializeField] private float turnTorque      = {{ "%.1f"|format(s.hover_turn_torque) }}f;
+    [Tooltip("How hard sideways drift is bled off — high = strict lane-keeping.")]
+    [SerializeField] private float lateralGrip     = {{ "%.2f"|format(s.hover_lateral_grip) }}f;
+    [SerializeField] private float hoverDrag       = {{ "%.2f"|format(s.hover_drag) }}f;
+    [SerializeField] private float maxSpeed        = {{ "%.1f"|format(s.hover_max_speed) }}f;
+    [Header("Boost")]
+    [SerializeField] private float boostMultiplier = {{ "%.2f"|format(s.hover_boost_mult) }}f;
+    [SerializeField] private float boostDuration   = {{ "%.2f"|format(s.hover_boost_time) }}f;
+    [SerializeField] private float boostCooldown   = {{ "%.2f"|format(s.hover_boost_cooldown) }}f;
+    [SerializeField] private LayerMask hoverMask   = ~0;
+{% elif variant.startswith("vehicle_") %}
     [Header("Vehicle")]
     [SerializeField] private float maxMotorTorque      = {{ "%.1f"|format(s.max_motor_torque) }}f;
     [SerializeField] private float maxSteerAngle       = {{ "%.1f"|format(s.max_steer_angle) }}f;
@@ -177,8 +206,38 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
     // ═══ PRIVATE STATE ═══════════════════════════════════════════════════════
+{% if variant == "first_person" %}
+    // The eye is a child transform at head height that owns PITCH only; the
+    // body owns YAW. The camera rig follows this transform, so the view tilts
+    // without tipping the CharacterController over.
+    private Transform _eye;
+    private float     _pitch;
+    private bool      _eyeFitted;
+
+    /// <summary>Head/eye transform the first-person camera rig should follow.</summary>
+    public Transform Eye => _eye;
+{% endif %}
 {% if variant.startswith("2d_") %}
     private Rigidbody2D _rb;
+{% elif variant == "vehicle_hover" %}
+    private Rigidbody _rb;
+    // Four hover probe points (FL, FR, RL, RR) in local space — each casts down
+    // and applies a spring-damper force, holding the craft at hoverRideHeight.
+    private readonly Vector3[] _hoverPoints = new Vector3[4];
+    private readonly System.Collections.Generic.List<Light> _headlights =
+        new System.Collections.Generic.List<Light>();
+    private Light          _brakeLight;
+    private ParticleSystem _thrusterFx;
+    private bool  _lightsOn;
+    private float _steerInput;
+    private float _throttleInput;
+    private bool  _boostActive;
+    private float _boostTimer;
+    private float _boostCooldown;
+    private int   _groundedProbes;
+    // Sampled in Update, consumed in FixedUpdate.
+    private float _driveInput;
+    private bool  _brakeHeld;
 {% elif variant.startswith("vehicle_") %}
     private Rigidbody _rb;
     private readonly WheelCollider[] _wheels      = new WheelCollider[4];
@@ -282,7 +341,13 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     public float ForwardSpeed        => _rb != null ? Vector3.Dot(_rb.linearVelocity, transform.forward) : 0f;
     public float SteerNormalized     => _steerInput;
     public float ThrottleNormalized  => _throttleInput;
+{% if variant == "vehicle_hover" %}
+    // Wheelless craft: 0 tells VehicleBoneDriver there is no wheel radius to
+    // spin against, so it drives only the named thruster/prop bones.
+    public float WheelRadius         => 0f;
+{% else %}
     public float WheelRadius         => wheelRadius;
+{% endif %}
 {% endif %}
 {% if variant == "aircraft" %}
     public float ThrottleLevel => _throttle;
@@ -319,6 +384,21 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if variant == "2d_topdown" %}
         _rb.gravityScale = 0f;
 {% endif %}
+{% elif variant == "vehicle_hover" %}
+        _rb = GetComponent<Rigidbody>();
+        if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();
+        // 1200f matches the physics micro's vehicle mass (unity_compose
+        // phys_opts) — the two Awake()s race for Rigidbody.mass otherwise.
+        // Hover forces all use ForceMode.Acceleration, so feel is unchanged
+        // by the exact value; agreeing with the composer is what matters.
+        _rb.mass = 1200f;
+        // Gravity stays ON — the hover springs are what hold the craft up, so
+        // losing ground contact makes it fall, which is the intended feel.
+        _rb.useGravity     = true;
+        _rb.angularDamping = 4f;
+        _rb.centerOfMass   = new Vector3(0f, -0.2f, 0f);
+        _rb.interpolation  = RigidbodyInterpolation.Interpolate;
+        BuildCar();
 {% elif variant.startswith("vehicle_") %}
         _rb = GetComponent<Rigidbody>();
         if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();
@@ -335,6 +415,24 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% else %}
         _cc = GetComponent<CharacterController>();
         if (_cc == null) _cc = gameObject.AddComponent<CharacterController>();
+{% endif %}
+{% if variant == "first_person" %}
+        // Reuse an authored "Eye" child if the scene already has one, otherwise
+        // build it — the camera rig finds it by name, so it must exist by Awake.
+        _eye = transform.Find("Eye");
+        if (_eye == null)
+        {
+            var _eyeGo = new GameObject("Eye");
+            _eyeGo.transform.SetParent(transform, false);
+            _eye = _eyeGo.transform;
+        }
+        _eye.localPosition = new Vector3(0f, eyeHeight, 0f);
+        _eye.localRotation = Quaternion.identity;
+        if (lockCursor)
+        {
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible   = false;
+        }
 {% endif %}
 {% if "shoot" in s.abilities %}
         _currentAmmo = magazineSize;
@@ -391,6 +489,46 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if s.input_backend == "input_system" %}
         var kb    = Keyboard.current;
         var mouse = Mouse.current;
+{% endif %}
+{% if variant == "first_person" %}
+
+        // ── Eye height fit ────────────────────────────────────────────────────
+        // The player model is swapped in at runtime (ModelSwap), so its real
+        // height is unknown at Awake. Fit the eye to it on the first frame that
+        // has renderers: a Kenney astronaut is ~0.8 m tall, and a fixed 1.6 m
+        // eye would float a head's length above the body it belongs to.
+        if (!_eyeFitted && _eye != null)
+        {
+            var _rends = GetComponentsInChildren<Renderer>();
+            if (_rends.Length > 0)
+            {
+                var _b = _rends[0].bounds;
+                for (int i = 1; i < _rends.Length; i++) _b.Encapsulate(_rends[i].bounds);
+                if (_b.size.y > 0.05f)
+                {
+                    _eye.position = new Vector3(_eye.position.x,
+                                                _b.max.y - _b.size.y * 0.12f,
+                                                _eye.position.z);
+                }
+                _eyeFitted = true;
+            }
+        }
+
+        // ── Mouse look ────────────────────────────────────────────────────────
+        // Yaw on the BODY so movement follows the view; pitch on the eye only.
+{% if s.input_backend == "input_system" %}
+        // Input System reports a raw pixel delta, unlike the legacy axis which
+        // is already frame-normalised — 0.05 brings the two to the same feel.
+        Vector2 _look = mouse != null ? mouse.delta.ReadValue() * 0.05f : Vector2.zero;
+        float _lookX = _look.x;
+        float _lookY = _look.y;
+{% else %}
+        float _lookX = Input.GetAxisRaw("Mouse X");
+        float _lookY = Input.GetAxisRaw("Mouse Y");
+{% endif %}
+        if (_lookX != 0f) transform.Rotate(0f, _lookX * lookSensitivity, 0f);
+        _pitch = Mathf.Clamp(_pitch - _lookY * lookSensitivity, pitchMin, pitchMax);
+        if (_eye != null) _eye.localRotation = Quaternion.Euler(_pitch, 0f, 0f);
 {% endif %}
 
         // ── Base locomotion input ─────────────────────────────────────────────
@@ -578,6 +716,54 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
             if (spd > maxAirSpeed)
                 _rb.linearVelocity = _rb.linearVelocity.normalized * maxAirSpeed;
         }
+{% elif variant == "vehicle_hover" %}
+        // ── Hover craft: raycast spring-damper + thrust ───────────────────
+        // No WheelColliders: four downward probes hold the hull at
+        // hoverRideHeight, thrust drives it along its own forward axis, and
+        // sideways velocity is bled off so it tracks a lane instead of sliding.
+{% if s.input_backend == "input_system" %}
+        float h = kb != null ? (kb.dKey.isPressed ? 1f : 0f) - (kb.aKey.isPressed ? 1f : 0f) : 0f;
+        float v = kb != null ? (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f) : 0f;
+        bool brake        = kb != null && kb.spaceKey.isPressed;
+        bool boostDown    = kb != null && kb.leftShiftKey.wasPressedThisFrame;
+        bool lightsToggle = kb != null && kb.hKey.wasPressedThisFrame;
+{% else %}
+        float h = Input.GetAxisRaw("Horizontal");
+        float v = Input.GetAxisRaw("Vertical");
+        bool brake        = Input.GetKey(KeyCode.Space);
+        bool boostDown    = Input.GetKeyDown(KeyCode.LeftShift);
+        bool lightsToggle = Input.GetKeyDown(KeyCode.H);
+{% endif %}
+        // Input is sampled here; every Rigidbody force is applied in
+        // FixedUpdate below, so the craft's motion is step-rate independent.
+        _steerInput    = h;
+        _throttleInput = Mathf.Clamp01(Mathf.Abs(v));
+        _driveInput    = v;
+        _brakeHeld     = brake;
+        if (boostDown && !_boostActive && _boostCooldown <= 0f)
+        {
+            _boostActive = true;
+            _boostTimer  = boostDuration;
+        }
+
+        if (lightsToggle)
+        {
+            _lightsOn = !_lightsOn;
+            foreach (var l in _headlights) l.intensity = _lightsOn ? 2.5f : 0f;
+        }
+        if (_brakeLight != null)
+            _brakeLight.intensity = (v < -0.1f || brake) ? 3f : 0f;
+        if (_thrusterFx != null)
+        {
+            var em = _thrusterFx.emission;
+            em.rateOverTime = _boostActive ? 120f : (v > 0.1f ? 40f : 0f);
+        }
+        if (_boostActive)
+        {
+            _boostTimer -= Time.deltaTime;
+            if (_boostTimer <= 0f) { _boostActive = false; _boostCooldown = boostCooldown; }
+        }
+        else if (_boostCooldown > 0f) _boostCooldown -= Time.deltaTime;
 {% elif variant.startswith("vehicle_") %}
         // ── Vehicle: WheelCollider rig ────────────────────────────────────
 {% if s.input_backend == "input_system" %}
@@ -823,10 +1009,68 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
     }
 
-{% if s.fixed_update_extra %}
+{% if variant == "vehicle_hover" or s.fixed_update_extra %}
     private void FixedUpdate()
     {
+{% if variant == "vehicle_hover" %}
+        if (_rb == null) return;
+
+        // ── Hover suspension ──────────────────────────────────────────────
+        // One spring-damper per probe, pushing along the SURFACE normal so
+        // banked or sloped road sections lift the craft correctly.
+        _groundedProbes = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            Vector3 worldPoint = transform.TransformPoint(_hoverPoints[i]);
+            if (!Physics.Raycast(worldPoint, -transform.up, out RaycastHit hit,
+                                 hoverRideHeight * 2f, hoverMask,
+                                 QueryTriggerInteraction.Ignore))
+                continue;
+            _groundedProbes++;
+            float   compression = 1f - (hit.distance / hoverRideHeight);
+            Vector3 pointVel    = _rb.GetPointVelocity(worldPoint);
+            float   damping     = Vector3.Dot(pointVel, hit.normal) * hoverDamper;
+            float   force       = (compression * hoverSpring) - damping;
+            _rb.AddForceAtPosition(hit.normal * force, worldPoint, ForceMode.Acceleration);
+        }
+        _grounded = _groundedProbes > 0;
+
+        // ── Thrust ────────────────────────────────────────────────────────
+        // Only bites while at least one probe has a surface to push against,
+        // so leaving the strip means coasting, not steering in mid-air.
+        if (_grounded)
+        {
+            float drive = _driveInput >= 0f ? _driveInput * thrustForce
+                                            : _driveInput * reverseForce;
+            if (_boostActive && _driveInput > 0f) drive *= boostMultiplier;
+            _rb.AddForce(transform.forward * drive, ForceMode.Acceleration);
+            _rb.AddTorque(transform.up * (_steerInput * turnTorque), ForceMode.Acceleration);
+
+            // Lane-keeping: bleed sideways velocity so the hull tracks its
+            // heading instead of sliding wide — a drag craft, not a drifter.
+            Vector3 lateral = Vector3.Project(_rb.linearVelocity, transform.right);
+            _rb.AddForce(-lateral * lateralGrip, ForceMode.Acceleration);
+
+            if (_brakeHeld)
+                _rb.AddForce(-_rb.linearVelocity * 2.5f, ForceMode.Acceleration);
+        }
+
+        // Hold the hull level rather than letting it nose-dive or barrel-roll.
+        Vector3 flatFwd = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+        if (flatFwd.sqrMagnitude > 0.01f)
+        {
+            Quaternion level = Quaternion.LookRotation(flatFwd.normalized, Vector3.up);
+            _rb.MoveRotation(Quaternion.Slerp(_rb.rotation, level,
+                                              Time.fixedDeltaTime * 2.5f));
+        }
+
+        _rb.AddForce(-_rb.linearVelocity * hoverDrag, ForceMode.Acceleration);
+        if (_rb.linearVelocity.magnitude > maxSpeed)
+            _rb.linearVelocity = _rb.linearVelocity.normalized * maxSpeed;
+{% endif %}
+{% if s.fixed_update_extra %}
 {{ s.fixed_update_extra | indent(8, True) }}
+{% endif %}
     }
 {% endif %}
 
@@ -1017,7 +1261,72 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         _nitroCooldown = nitroCooldown;
     }
 {% endif %}
-{% if variant.startswith("vehicle_") %}
+{% if variant == "vehicle_hover" %}
+    private void BuildCar()
+    {
+        // The hull mesh comes from the Model Pack (ModelSwap replaces this at
+        // runtime when a real vehicle model resolved); the primitive is only a
+        // stand-in so the craft is visible if no model shipped.
+        var hoverPrefab = Resources.Load<GameObject>("Models/Default/Vehicle/Car");
+        if (hoverPrefab != null)
+        {
+            var body = Instantiate(hoverPrefab, transform);
+            body.name = "Body";
+            body.transform.localPosition = Vector3.zero;
+        }
+        else
+        {
+            var body = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            body.name = "Body";
+            Destroy(body.GetComponent<BoxCollider>());
+            body.transform.SetParent(transform, false);
+            body.transform.localScale    = new Vector3(2.0f, 0.5f, 5.0f);
+            body.transform.localPosition = new Vector3(0f, 0.25f, 0f);
+        }
+
+        var col    = gameObject.AddComponent<BoxCollider>();
+        col.size   = new Vector3(2.0f, 0.5f, 5.0f);
+        col.center = new Vector3(0f, 0.25f, 0f);
+
+        // Probe layout mirrors the hull footprint, inset slightly so a probe
+        // never hangs off the edge of a road segment mid-corner.
+        _hoverPoints[0] = new Vector3(-0.8f, 0f,  2.0f);
+        _hoverPoints[1] = new Vector3( 0.8f, 0f,  2.0f);
+        _hoverPoints[2] = new Vector3(-0.8f, 0f, -2.0f);
+        _hoverPoints[3] = new Vector3( 0.8f, 0f, -2.0f);
+
+        // A hover craft has no wheel bones, but rigged thruster/petal bones are
+        // still driven by name at Play — same convention as the wheel driver.
+        if (GetComponent<VehicleBoneDriver>() == null)
+            gameObject.AddComponent<VehicleBoneDriver>();
+
+        for (int side = -1; side <= 1; side += 2)
+        {
+            var hgo = new GameObject("Headlight");
+            hgo.transform.SetParent(transform, false);
+            hgo.transform.localPosition = new Vector3(0.7f * side, 0.5f, 2.4f);
+            hgo.transform.localRotation = Quaternion.Euler(10f, 0f, 0f);
+            var hl = hgo.AddComponent<Light>();
+            hl.type = LightType.Spot; hl.range = 35f; hl.spotAngle = 70f; hl.intensity = 0f;
+            _headlights.Add(hl);
+        }
+        var bgo = new GameObject("BrakeLight");
+        bgo.transform.SetParent(transform, false);
+        bgo.transform.localPosition = new Vector3(0f, 0.5f, -2.4f);
+        _brakeLight = bgo.AddComponent<Light>();
+        _brakeLight.type = LightType.Point; _brakeLight.color = Color.red;
+        _brakeLight.range = 5f; _brakeLight.intensity = 0f;
+
+        var tgo = new GameObject("ThrusterFX");
+        tgo.transform.SetParent(transform, false);
+        tgo.transform.localPosition = new Vector3(0f, 0.25f, -2.5f);
+        _thrusterFx = tgo.AddComponent<ParticleSystem>();
+        var main = _thrusterFx.main;
+        main.startSize = 0.6f; main.startLifetime = 0.5f;
+        main.startSpeed = 6f;  main.startColor = new Color(0.2f, 0.85f, 1f, 0.7f);
+        var em = _thrusterFx.emission; em.rateOverTime = 0f;
+    }
+{% elif variant.startswith("vehicle_") %}
     private void BuildCar()
     {
         GameObject body;

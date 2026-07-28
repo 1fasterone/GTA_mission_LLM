@@ -240,11 +240,51 @@ public class EntitySpawner : MonoBehaviour
         float effectiveRadius = radius;
         if (placement == "ring")
             effectiveRadius = Mathf.Max(radius, count * effectiveSpacing / (2f * Mathf.PI));
+
+        // How far the baked layout has to open up to fit the real model. The
+        // baker's own cell size is max(spacing, scale * 1.15) — mirrored here so
+        // the ratio is exact — and it is model-blind by construction, so this is
+        // the only place the true footprint can correct it.
+        //
+        // The expansion is CAPPED to this group's reserved radius. unity_layout
+        // packs every group into a non-overlapping world region sized from that
+        // same naive spacing, so expanding past it would just trade overlapping
+        // instances for overlapping GROUPS. Within the cap the group opens up as
+        // far as it can; a group that still cannot fit its own model is left
+        // tight rather than allowed to spill into its neighbours.
+        Vector3 _bakedCentre = Vector3.zero;
+        float   _bakedExpand = 1f;
+        if (bakedPositions != null && bakedPositions.Length > 0)
+        {
+            for (int b = 0; b < bakedPositions.Length; b++) _bakedCentre += bakedPositions[b];
+            _bakedCentre /= bakedPositions.Length;
+            _bakedCentre.y = 0f;
+            float bakedSpacing = Mathf.Max(spacing, scale * 1.15f);
+            if (bakedSpacing > 0.0001f)
+                _bakedExpand = Mathf.Max(1f, effectiveSpacing / bakedSpacing);
+
+            float spread = 0f;
+            for (int b = 0; b < bakedPositions.Length; b++)
+            {
+                Vector3 d = bakedPositions[b] - _bakedCentre; d.y = 0f;
+                spread = Mathf.Max(spread, d.magnitude);
+            }
+            // Mirrors _footprint_radius() in src/unity_layout.py for "scatter";
+            // other placements keep the authored radius as their reservation.
+            float reserved = placement == "scatter"
+                ? Mathf.Max(radius, bakedSpacing * Mathf.Sqrt(count / Mathf.PI))
+                : radius;
+            if (spread > 0.0001f)
+                _bakedExpand = Mathf.Min(_bakedExpand, Mathf.Max(1f, reserved / spread));
+        }
 {% else %}
         float finalScale = scale;
         float effectiveSpacing = spacing, effectiveRadius = radius, pivotOffsetY = 0.5f;
-        // 2d_topdown never measures model bounds — keep the person-sized default.
+        // 2d_topdown never measures model bounds — keep the person-sized default,
+        // and with no measurement there is nothing to correct the baked layout by.
         Vector3 colSize = Vector3.one, colCenter = new Vector3(0f, 0.5f, 0f);
+        Vector3 _bakedCentre = Vector3.zero;
+        float   _bakedExpand = 1f;
 {% endif %}
         for (int i = 0; i < count; i++)
         {
@@ -320,6 +360,14 @@ public class EntitySpawner : MonoBehaviour
                 // for "scatter", deterministic non-overlapping jitter. Takes
                 // priority over PlaceAt()'s runtime formulas whenever present.
                 pos = bakedPositions[i];
+                // The baker sizes its grid from spacing/scale alone — it never
+                // sees the resolved model, so a big asset (or a big import
+                // globalScale) packs a group into an overlapping clump. We DO
+                // know the real post-scale footprint here, so push the baked
+                // layout outward about its own centre by however much it falls
+                // short. Ratio <= 1 leaves the authored layout untouched.
+                if (_bakedExpand > 1f)
+                    pos = _bakedCentre + (pos - _bakedCentre) * _bakedExpand;
                 pos.y += pivotOffsetY * finalScale;
 {% if has_baked_yaws %}
                 // Baked facing (e.g. a start grid aligned to the race
@@ -368,7 +416,35 @@ public class EntitySpawner : MonoBehaviour
             }
             if (behaviorType != null && typeof(MonoBehaviour).IsAssignableFrom(behaviorType))
                 go.AddComponent(behaviorType);
+            MountIfWeapon(go, kind);
         }
+    }
+
+    // A weapon entity is the player's HELD gun, not scenery. Left in the world
+    // it spawns as an unreachable prop somewhere on the map and the player
+    // appears empty-handed. Parent it to the first-person eye at a viewmodel
+    // offset (down-right of centre) so it reads as held. No-op when there is no
+    // player eye to mount on, so a dropped-weapon pickup stays where it spawned.
+    private void MountIfWeapon(GameObject go, string kind)
+    {
+        if (go == null || kind != "weapon") return;
+        // Pick the Player-tagged object that actually has an eye to mount on —
+        // FindWithTag returns an arbitrary match when a prop shares the tag,
+        // and mounting to scenery leaves the player empty-handed.
+        Transform mount = null;
+        foreach (var cand in GameObject.FindGameObjectsWithTag("Player"))
+        {
+            if (cand == null) continue;
+            var e = cand.transform.Find("Eye");
+            if (e != null) { mount = e; break; }
+        }
+        if (mount == null) return;
+        go.transform.SetParent(mount, false);
+        go.transform.localPosition = new Vector3(0.28f, -0.22f, 0.45f);
+        go.transform.localRotation = Quaternion.identity;
+        // Colliders on a viewmodel sit inside the player's own capsule and
+        // would otherwise absorb the player's own aim raycast.
+        foreach (var c in go.GetComponentsInChildren<Collider>()) c.enabled = false;
     }
 
 {% if has_tiled_paths %}

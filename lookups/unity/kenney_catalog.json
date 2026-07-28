@@ -12,6 +12,18 @@
       "url": "https://kenney.nl/assets/marble-tracks",
       "license": "CC0 1.0 Universal",
       "description": "Modular track pieces: bends, ramps, helices, funnels and decorations"
+    },
+    "molnia_racing": {
+      "name": "Futuristic Racing Car Molnia + Modular Track Roads",
+      "url": "local: F:/Downloads/futuristic-racing-car-molnia",
+      "license": "see source download — user-supplied local asset",
+      "description": "Wheelless hover dragster (rigged, Idle clip) plus modular drag/circuit road segments, start-finish line and barrier fences"
+    },
+    "cromulon": {
+      "name": "Big Head Cromulon",
+      "url": "local: F:/Downloads/big-head-cromulons-from-rick-and-morty",
+      "license": "see source download — user-supplied local asset",
+      "description": "Colossal disembodied floating head with huge lidded eyes — a giant hovering alien face, textured via rick_eyes.png"
     }
   },
   "assets": [
@@ -19,8 +31,20 @@
       "filename": "floor-concrete.fbx",
       "pack": "kenney_skate_kit",
       "category": "floor",
-      "keywords": ["floor", "ground", "surface", "concrete", "hard", "industrial", "tile", "terrain", "base"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "floor",
+        "ground",
+        "surface",
+        "concrete",
+        "hard",
+        "industrial",
+        "tile",
+        "terrain",
+        "base"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Flat concrete floor panel — universal ground tile",
       "generic_score": 10
     },
@@ -28,8 +52,19 @@
       "filename": "floor-wood.fbx",
       "pack": "kenney_skate_kit",
       "category": "floor",
-      "keywords": ["floor", "ground", "wood", "wooden", "plank", "indoor", "surface", "natural"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "floor",
+        "ground",
+        "wood",
+        "wooden",
+        "plank",
+        "indoor",
+        "surface",
+        "natural"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Flat wooden floor panel — indoor ground tile",
       "generic_score": 10
     },
@@ -37,8 +72,22 @@
       "filename": "structure-platform.fbx",
       "pack": "kenney_skate_kit",
       "category": "platform",
-      "keywords": ["platform", "ledge", "walkway", "bridge", "elevated", "jump", "level", "surface"],
-      "game_contexts": ["platformer", "action", "adventure", "any"],
+      "keywords": [
+        "platform",
+        "ledge",
+        "walkway",
+        "bridge",
+        "elevated",
+        "jump",
+        "level",
+        "surface"
+      ],
+      "game_contexts": [
+        "platformer",
+        "action",
+        "adventure",
+        "any"
+      ],
       "description": "Elevated platform piece for multi-level layouts",
       "generic_score": 9
     },
@@ -46,8 +95,21 @@
       "filename": "structure-wood.fbx",
       "pack": "kenney_skate_kit",
       "category": "platform",
-      "keywords": ["platform", "wood", "wooden", "structure", "frame", "support", "level"],
-      "game_contexts": ["platformer", "action", "adventure", "any"],
+      "keywords": [
+        "platform",
+        "wood",
+        "wooden",
+        "structure",
+        "frame",
+        "support",
+        "level"
+      ],
+      "game_contexts": [
+        "platformer",
+        "action",
+        "adventure",
+        "any"
+      ],
       "description": "Wooden structural platform frame",
       "generic_score": 8
     },
@@ -55,8 +117,18 @@
       "filename": "steps.fbx",
       "pack": "kenney_skate_kit",
       "category": "stairs",
-      "keywords": ["stairs", "steps", "staircase", "climb", "elevation", "vertical", "platform"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "stairs",
+        "steps",
+        "staircase",
+        "climb",
+        "elevation",
+        "vertical",
+        "platform"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Multi-step staircase for elevation changes",
       "generic_score": 9
     },
@@ -64,8 +136,19 @@
       "filename": "obstacle-box.fbx",
       "pack": "kenney_skate_kit",
       "category": "obstacle",
-      "keywords": ["box", "crate", "obstacle", "block", "cover", "object", "prop", "container"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "box",
+        "crate",
+        "obstacle",
+        "block",
+        "cover",
+        "object",
+        "prop",
+        "container"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Box obstacle — generic crate/cover prop",
       "generic_score": 10
     },
@@ -73,8 +156,19 @@
       "filename": "obstacle-middle.fbx",
       "pack": "kenney_skate_kit",
       "category": "obstacle",
-      "keywords": ["obstacle", "barrier", "block", "middle", "divider", "prop"],
-      "game_contexts": ["action", "platformer", "racing"],
+      "keywords": [
+        "obstacle",
+        "barrier",
+        "block",
+        "middle",
+        "divider",
+        "prop"
+      ],
+      "game_contexts": [
+        "action",
+        "platformer",
+        "racing"
+      ],
       "description": "Mid-profile obstacle/barrier piece",
       "generic_score": 7
     },
@@ -82,8 +176,19 @@
       "filename": "obstacle-end.fbx",
       "pack": "kenney_skate_kit",
       "category": "obstacle",
-      "keywords": ["obstacle", "barrier", "end", "cap", "edge", "prop"],
-      "game_contexts": ["action", "platformer", "racing"],
+      "keywords": [
+        "obstacle",
+        "barrier",
+        "end",
+        "cap",
+        "edge",
+        "prop"
+      ],
+      "game_contexts": [
+        "action",
+        "platformer",
+        "racing"
+      ],
       "description": "End cap for obstacle/barrier sequences",
       "generic_score": 6
     },
@@ -91,8 +196,19 @@
       "filename": "pallet.fbx",
       "pack": "kenney_skate_kit",
       "category": "prop",
-      "keywords": ["pallet", "crate", "box", "prop", "warehouse", "industrial", "cover", "object"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "pallet",
+        "crate",
+        "box",
+        "prop",
+        "warehouse",
+        "industrial",
+        "cover",
+        "object"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Wooden shipping pallet — generic prop for scene dressing",
       "generic_score": 8
     },
@@ -100,8 +216,21 @@
       "filename": "rail-high.fbx",
       "pack": "kenney_skate_kit",
       "category": "rail",
-      "keywords": ["rail", "railing", "fence", "guard", "barrier", "grind", "high"],
-      "game_contexts": ["platformer", "action", "skateboard", "sports"],
+      "keywords": [
+        "rail",
+        "railing",
+        "fence",
+        "guard",
+        "barrier",
+        "grind",
+        "high"
+      ],
+      "game_contexts": [
+        "platformer",
+        "action",
+        "skateboard",
+        "sports"
+      ],
       "description": "Tall grind rail / safety fence",
       "generic_score": 7
     },
@@ -109,8 +238,21 @@
       "filename": "rail-low.fbx",
       "pack": "kenney_skate_kit",
       "category": "rail",
-      "keywords": ["rail", "railing", "low", "curb", "edge", "grind", "barrier"],
-      "game_contexts": ["platformer", "action", "skateboard", "sports"],
+      "keywords": [
+        "rail",
+        "railing",
+        "low",
+        "curb",
+        "edge",
+        "grind",
+        "barrier"
+      ],
+      "game_contexts": [
+        "platformer",
+        "action",
+        "skateboard",
+        "sports"
+      ],
       "description": "Low grind rail / curb",
       "generic_score": 6
     },
@@ -118,8 +260,19 @@
       "filename": "rail-curve.fbx",
       "pack": "kenney_skate_kit",
       "category": "rail",
-      "keywords": ["rail", "curve", "bend", "curved fence", "arc", "barrier"],
-      "game_contexts": ["platformer", "action", "skateboard"],
+      "keywords": [
+        "rail",
+        "curve",
+        "bend",
+        "curved fence",
+        "arc",
+        "barrier"
+      ],
+      "game_contexts": [
+        "platformer",
+        "action",
+        "skateboard"
+      ],
       "description": "Curved grind rail",
       "generic_score": 5
     },
@@ -127,8 +280,18 @@
       "filename": "rail-slope.fbx",
       "pack": "kenney_skate_kit",
       "category": "rail",
-      "keywords": ["rail", "slope", "angled", "inclined", "ramp rail"],
-      "game_contexts": ["platformer", "skateboard", "sports"],
+      "keywords": [
+        "rail",
+        "slope",
+        "angled",
+        "inclined",
+        "ramp rail"
+      ],
+      "game_contexts": [
+        "platformer",
+        "skateboard",
+        "sports"
+      ],
       "description": "Sloped grind rail for inclined surfaces",
       "generic_score": 5
     },
@@ -136,8 +299,20 @@
       "filename": "half-pipe.fbx",
       "pack": "kenney_skate_kit",
       "category": "ramp",
-      "keywords": ["half pipe", "ramp", "skateboard", "curved wall", "vert", "sports", "extreme"],
-      "game_contexts": ["skateboard", "sports", "action"],
+      "keywords": [
+        "half pipe",
+        "ramp",
+        "skateboard",
+        "curved wall",
+        "vert",
+        "sports",
+        "extreme"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports",
+        "action"
+      ],
       "description": "Classic skateboard half-pipe ramp",
       "generic_score": 4
     },
@@ -145,8 +320,19 @@
       "filename": "bowl-corner-inner.fbx",
       "pack": "kenney_skate_kit",
       "category": "ramp",
-      "keywords": ["bowl", "corner", "curved", "skating", "ramp", "concave", "pool"],
-      "game_contexts": ["skateboard", "sports"],
+      "keywords": [
+        "bowl",
+        "corner",
+        "curved",
+        "skating",
+        "ramp",
+        "concave",
+        "pool"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports"
+      ],
       "description": "Bowl inner corner piece for skatepark bowls",
       "generic_score": 3
     },
@@ -154,8 +340,18 @@
       "filename": "bowl-corner-outer.fbx",
       "pack": "kenney_skate_kit",
       "category": "ramp",
-      "keywords": ["bowl", "corner", "outer", "curved", "ramp", "convex"],
-      "game_contexts": ["skateboard", "sports"],
+      "keywords": [
+        "bowl",
+        "corner",
+        "outer",
+        "curved",
+        "ramp",
+        "convex"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports"
+      ],
       "description": "Bowl outer corner piece",
       "generic_score": 3
     },
@@ -163,8 +359,18 @@
       "filename": "bowl-side.fbx",
       "pack": "kenney_skate_kit",
       "category": "ramp",
-      "keywords": ["bowl", "side", "curved wall", "ramp", "skating", "concave"],
-      "game_contexts": ["skateboard", "sports"],
+      "keywords": [
+        "bowl",
+        "side",
+        "curved wall",
+        "ramp",
+        "skating",
+        "concave"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports"
+      ],
       "description": "Bowl side wall piece",
       "generic_score": 3
     },
@@ -172,8 +378,22 @@
       "filename": "character-skate-boy.fbx",
       "pack": "kenney_skate_kit",
       "category": "character",
-      "keywords": ["character", "player", "human", "person", "skater", "boy", "avatar", "male"],
-      "game_contexts": ["skateboard", "sports", "action", "platformer"],
+      "keywords": [
+        "character",
+        "player",
+        "human",
+        "person",
+        "skater",
+        "boy",
+        "avatar",
+        "male"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports",
+        "action",
+        "platformer"
+      ],
       "description": "Male skater character with skateboard pose",
       "generic_score": 5
     },
@@ -181,8 +401,22 @@
       "filename": "character-skate-girl.fbx",
       "pack": "kenney_skate_kit",
       "category": "character",
-      "keywords": ["character", "player", "human", "person", "skater", "girl", "avatar", "female"],
-      "game_contexts": ["skateboard", "sports", "action", "platformer"],
+      "keywords": [
+        "character",
+        "player",
+        "human",
+        "person",
+        "skater",
+        "girl",
+        "avatar",
+        "female"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports",
+        "action",
+        "platformer"
+      ],
       "description": "Female skater character with skateboard pose",
       "generic_score": 5
     },
@@ -190,8 +424,18 @@
       "filename": "skateboard.fbx",
       "pack": "kenney_skate_kit",
       "category": "vehicle",
-      "keywords": ["skateboard", "board", "vehicle", "sports", "prop", "ride"],
-      "game_contexts": ["skateboard", "sports"],
+      "keywords": [
+        "skateboard",
+        "board",
+        "vehicle",
+        "sports",
+        "prop",
+        "ride"
+      ],
+      "game_contexts": [
+        "skateboard",
+        "sports"
+      ],
       "description": "Skateboard prop",
       "generic_score": 3
     },
@@ -199,8 +443,23 @@
       "filename": "ramp-long-a.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["ramp", "slope", "incline", "track", "path", "long", "slide", "descent"],
-      "game_contexts": ["racing", "puzzle", "platformer", "marble", "any"],
+      "keywords": [
+        "ramp",
+        "slope",
+        "incline",
+        "track",
+        "path",
+        "long",
+        "slide",
+        "descent"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "platformer",
+        "marble",
+        "any"
+      ],
       "description": "Long straight ramp — gentle slope",
       "generic_score": 8
     },
@@ -208,8 +467,20 @@
       "filename": "ramp-long-b.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["ramp", "slope", "incline", "track", "medium slope", "slide"],
-      "game_contexts": ["racing", "puzzle", "platformer", "marble"],
+      "keywords": [
+        "ramp",
+        "slope",
+        "incline",
+        "track",
+        "medium slope",
+        "slide"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "platformer",
+        "marble"
+      ],
       "description": "Long ramp — medium slope",
       "generic_score": 7
     },
@@ -217,8 +488,20 @@
       "filename": "ramp-long-solid-a.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["ramp", "solid", "enclosed", "slope", "track", "tunnel ramp", "safe"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "ramp",
+        "solid",
+        "enclosed",
+        "slope",
+        "track",
+        "tunnel ramp",
+        "safe"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Long solid enclosed ramp — no fall-off",
       "generic_score": 7
     },
@@ -226,8 +509,21 @@
       "filename": "ramp-start-a.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["ramp", "start", "launch", "beginning", "platform", "entry", "track"],
-      "game_contexts": ["racing", "puzzle", "marble", "platformer"],
+      "keywords": [
+        "ramp",
+        "start",
+        "launch",
+        "beginning",
+        "platform",
+        "entry",
+        "track"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "Ramp starting platform",
       "generic_score": 6
     },
@@ -235,8 +531,20 @@
       "filename": "ramp-end-a.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["ramp", "end", "landing", "finish", "exit", "track"],
-      "game_contexts": ["racing", "puzzle", "marble", "platformer"],
+      "keywords": [
+        "ramp",
+        "end",
+        "landing",
+        "finish",
+        "exit",
+        "track"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "Ramp end / landing piece",
       "generic_score": 6
     },
@@ -244,8 +552,21 @@
       "filename": "bend.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["bend", "turn", "curve", "corner", "track", "path", "direction change"],
-      "game_contexts": ["racing", "puzzle", "marble", "platformer"],
+      "keywords": [
+        "bend",
+        "turn",
+        "curve",
+        "corner",
+        "track",
+        "path",
+        "direction change"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "90-degree track bend",
       "generic_score": 8
     },
@@ -253,8 +574,19 @@
       "filename": "bend-large.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["bend", "large", "wide turn", "curve", "track", "path"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "bend",
+        "large",
+        "wide turn",
+        "curve",
+        "track",
+        "path"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Large radius 90-degree track bend",
       "generic_score": 7
     },
@@ -262,8 +594,19 @@
       "filename": "bend-medium.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["bend", "medium", "turn", "curve", "track", "path"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "bend",
+        "medium",
+        "turn",
+        "curve",
+        "track",
+        "path"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Medium radius 90-degree track bend",
       "generic_score": 7
     },
@@ -271,8 +614,19 @@
       "filename": "bend-solid.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["bend", "solid", "enclosed", "turn", "safe", "no fall"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "bend",
+        "solid",
+        "enclosed",
+        "turn",
+        "safe",
+        "no fall"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Solid enclosed 90-degree bend — no fall-off",
       "generic_score": 6
     },
@@ -280,8 +634,20 @@
       "filename": "curve.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["curve", "sweep", "arc", "track", "smooth turn", "path"],
-      "game_contexts": ["racing", "puzzle", "marble", "platformer"],
+      "keywords": [
+        "curve",
+        "sweep",
+        "arc",
+        "track",
+        "smooth turn",
+        "path"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "Gentle curved track piece",
       "generic_score": 8
     },
@@ -289,8 +655,20 @@
       "filename": "curve-wide.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["curve", "wide", "sweep", "arc", "broad turn", "track", "path"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "curve",
+        "wide",
+        "sweep",
+        "arc",
+        "broad turn",
+        "track",
+        "path"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Wide curved track section",
       "generic_score": 7
     },
@@ -298,8 +676,19 @@
       "filename": "curve-large.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["curve", "large", "big arc", "track", "sweeping", "path"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "curve",
+        "large",
+        "big arc",
+        "track",
+        "sweeping",
+        "path"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Large arc curved track",
       "generic_score": 7
     },
@@ -307,8 +696,20 @@
       "filename": "corner.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["corner", "right angle", "turn", "track", "path", "intersection"],
-      "game_contexts": ["racing", "puzzle", "marble", "platformer"],
+      "keywords": [
+        "corner",
+        "right angle",
+        "turn",
+        "track",
+        "path",
+        "intersection"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "Sharp 90-degree corner track piece",
       "generic_score": 8
     },
@@ -316,8 +717,18 @@
       "filename": "corner-solid.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["corner", "solid", "enclosed", "safe", "no fall"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "corner",
+        "solid",
+        "enclosed",
+        "safe",
+        "no fall"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Solid enclosed corner — no fall-off",
       "generic_score": 6
     },
@@ -325,8 +736,20 @@
       "filename": "cross.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["cross", "intersection", "crossing", "junction", "four way", "track", "split"],
-      "game_contexts": ["racing", "puzzle", "marble"],
+      "keywords": [
+        "cross",
+        "intersection",
+        "crossing",
+        "junction",
+        "four way",
+        "track",
+        "split"
+      ],
+      "game_contexts": [
+        "racing",
+        "puzzle",
+        "marble"
+      ],
       "description": "Four-way track intersection",
       "generic_score": 7
     },
@@ -334,8 +757,19 @@
       "filename": "helix-left.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["helix", "spiral", "corkscrew", "spin", "loop", "rotating track"],
-      "game_contexts": ["puzzle", "marble", "racing"],
+      "keywords": [
+        "helix",
+        "spiral",
+        "corkscrew",
+        "spin",
+        "loop",
+        "rotating track"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "racing"
+      ],
       "description": "Full helix / corkscrew track spiral (left)",
       "generic_score": 6
     },
@@ -343,8 +777,19 @@
       "filename": "helix-right.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["helix", "spiral", "corkscrew", "spin", "loop", "rotating track"],
-      "game_contexts": ["puzzle", "marble", "racing"],
+      "keywords": [
+        "helix",
+        "spiral",
+        "corkscrew",
+        "spin",
+        "loop",
+        "rotating track"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "racing"
+      ],
       "description": "Full helix / corkscrew track spiral (right)",
       "generic_score": 6
     },
@@ -352,8 +797,17 @@
       "filename": "helix-large-left.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["helix", "spiral", "large", "wide corkscrew", "open loop"],
-      "game_contexts": ["puzzle", "marble"],
+      "keywords": [
+        "helix",
+        "spiral",
+        "large",
+        "wide corkscrew",
+        "open loop"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble"
+      ],
       "description": "Large helix spiral (left)",
       "generic_score": 5
     },
@@ -361,8 +815,17 @@
       "filename": "helix-large-right.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["helix", "spiral", "large", "wide corkscrew", "open loop"],
-      "game_contexts": ["puzzle", "marble"],
+      "keywords": [
+        "helix",
+        "spiral",
+        "large",
+        "wide corkscrew",
+        "open loop"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble"
+      ],
       "description": "Large helix spiral (right)",
       "generic_score": 5
     },
@@ -370,8 +833,19 @@
       "filename": "funnel.fbx",
       "pack": "kenney_marble_tracks",
       "category": "mechanism",
-      "keywords": ["funnel", "collector", "filter", "narrow", "channel", "convergence"],
-      "game_contexts": ["puzzle", "marble", "abstract"],
+      "keywords": [
+        "funnel",
+        "collector",
+        "filter",
+        "narrow",
+        "channel",
+        "convergence"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "abstract"
+      ],
       "description": "Funnel collector — gathers and channels objects to center",
       "generic_score": 5
     },
@@ -379,8 +853,19 @@
       "filename": "funnel-long.fbx",
       "pack": "kenney_marble_tracks",
       "category": "mechanism",
-      "keywords": ["funnel", "long", "collector", "slide", "channel", "chute"],
-      "game_contexts": ["puzzle", "marble", "abstract"],
+      "keywords": [
+        "funnel",
+        "long",
+        "collector",
+        "slide",
+        "channel",
+        "chute"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "abstract"
+      ],
       "description": "Extended funnel / chute",
       "generic_score": 4
     },
@@ -388,8 +873,20 @@
       "filename": "fan-two.fbx",
       "pack": "kenney_marble_tracks",
       "category": "mechanism",
-      "keywords": ["fan", "spinner", "obstacle", "rotating", "hazard", "mechanism"],
-      "game_contexts": ["puzzle", "marble", "action", "platformer"],
+      "keywords": [
+        "fan",
+        "spinner",
+        "obstacle",
+        "rotating",
+        "hazard",
+        "mechanism"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "action",
+        "platformer"
+      ],
       "description": "Two-blade spinning fan obstacle",
       "generic_score": 6
     },
@@ -397,8 +894,20 @@
       "filename": "fan-four.fbx",
       "pack": "kenney_marble_tracks",
       "category": "mechanism",
-      "keywords": ["fan", "spinner", "four blade", "obstacle", "rotating", "hazard"],
-      "game_contexts": ["puzzle", "marble", "action", "platformer"],
+      "keywords": [
+        "fan",
+        "spinner",
+        "four blade",
+        "obstacle",
+        "rotating",
+        "hazard"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "action",
+        "platformer"
+      ],
       "description": "Four-blade spinning fan obstacle",
       "generic_score": 6
     },
@@ -406,8 +915,19 @@
       "filename": "fan-standing-two.fbx",
       "pack": "kenney_marble_tracks",
       "category": "mechanism",
-      "keywords": ["fan", "standing", "vertical", "spinner", "obstacle", "rotating"],
-      "game_contexts": ["puzzle", "marble", "action"],
+      "keywords": [
+        "fan",
+        "standing",
+        "vertical",
+        "spinner",
+        "obstacle",
+        "rotating"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "action"
+      ],
       "description": "Vertically mounted two-blade fan",
       "generic_score": 5
     },
@@ -415,8 +935,20 @@
       "filename": "fan-standing-four.fbx",
       "pack": "kenney_marble_tracks",
       "category": "mechanism",
-      "keywords": ["fan", "standing", "vertical", "four blade", "obstacle", "rotating", "hazard"],
-      "game_contexts": ["puzzle", "marble", "action"],
+      "keywords": [
+        "fan",
+        "standing",
+        "vertical",
+        "four blade",
+        "obstacle",
+        "rotating",
+        "hazard"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "action"
+      ],
       "description": "Vertically mounted four-blade fan",
       "generic_score": 5
     },
@@ -424,8 +956,20 @@
       "filename": "bump-a.fbx",
       "pack": "kenney_marble_tracks",
       "category": "obstacle",
-      "keywords": ["bump", "obstacle", "hazard", "bounce", "raised", "speed bump"],
-      "game_contexts": ["puzzle", "marble", "racing", "platformer"],
+      "keywords": [
+        "bump",
+        "obstacle",
+        "hazard",
+        "bounce",
+        "raised",
+        "speed bump"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "racing",
+        "platformer"
+      ],
       "description": "Small bump obstacle on track",
       "generic_score": 6
     },
@@ -433,8 +977,19 @@
       "filename": "bump-b.fbx",
       "pack": "kenney_marble_tracks",
       "category": "obstacle",
-      "keywords": ["bump", "obstacle", "medium", "hazard", "bounce"],
-      "game_contexts": ["puzzle", "marble", "racing", "platformer"],
+      "keywords": [
+        "bump",
+        "obstacle",
+        "medium",
+        "hazard",
+        "bounce"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "racing",
+        "platformer"
+      ],
       "description": "Medium bump obstacle on track",
       "generic_score": 6
     },
@@ -442,8 +997,18 @@
       "filename": "bump-solid-a.fbx",
       "pack": "kenney_marble_tracks",
       "category": "obstacle",
-      "keywords": ["bump", "solid", "enclosed", "obstacle", "safe hazard"],
-      "game_contexts": ["puzzle", "marble", "racing"],
+      "keywords": [
+        "bump",
+        "solid",
+        "enclosed",
+        "obstacle",
+        "safe hazard"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "racing"
+      ],
       "description": "Solid bump obstacle (enclosed track version)",
       "generic_score": 5
     },
@@ -451,8 +1016,21 @@
       "filename": "marble-high.fbx",
       "pack": "kenney_marble_tracks",
       "category": "object",
-      "keywords": ["marble", "ball", "sphere", "round", "object", "collectible", "projectile"],
-      "game_contexts": ["puzzle", "marble", "sports", "any"],
+      "keywords": [
+        "marble",
+        "ball",
+        "sphere",
+        "round",
+        "object",
+        "collectible",
+        "projectile"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "sports",
+        "any"
+      ],
       "description": "Marble ball — can be used as collectible or projectile",
       "generic_score": 7
     },
@@ -460,8 +1038,21 @@
       "filename": "marble-low.fbx",
       "pack": "kenney_marble_tracks",
       "category": "object",
-      "keywords": ["marble", "ball", "sphere", "round", "object", "collectible", "low poly"],
-      "game_contexts": ["puzzle", "marble", "sports", "any"],
+      "keywords": [
+        "marble",
+        "ball",
+        "sphere",
+        "round",
+        "object",
+        "collectible",
+        "low poly"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "sports",
+        "any"
+      ],
       "description": "Low-resolution marble ball",
       "generic_score": 6
     },
@@ -469,8 +1060,20 @@
       "filename": "marble-center-high.fbx",
       "pack": "kenney_marble_tracks",
       "category": "object",
-      "keywords": ["marble", "center", "ball", "special", "target", "gem", "collectible"],
-      "game_contexts": ["puzzle", "marble", "any"],
+      "keywords": [
+        "marble",
+        "center",
+        "ball",
+        "special",
+        "target",
+        "gem",
+        "collectible"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "any"
+      ],
       "description": "Special marble with center marking — use as target or collectible",
       "generic_score": 6
     },
@@ -478,8 +1081,18 @@
       "filename": "banner.fbx",
       "pack": "kenney_marble_tracks",
       "category": "decoration",
-      "keywords": ["banner", "flag", "sign", "decoration", "ui prop", "marker", "checkpoint"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "banner",
+        "flag",
+        "sign",
+        "decoration",
+        "ui prop",
+        "marker",
+        "checkpoint"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Single upright banner — use as checkpoint flag or scene decoration",
       "generic_score": 8
     },
@@ -487,8 +1100,18 @@
       "filename": "banner-high.fbx",
       "pack": "kenney_marble_tracks",
       "category": "decoration",
-      "keywords": ["banner", "tall", "flag", "sign", "marker", "checkpoint", "goal"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "banner",
+        "tall",
+        "flag",
+        "sign",
+        "marker",
+        "checkpoint",
+        "goal"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Tall single banner",
       "generic_score": 7
     },
@@ -496,8 +1119,18 @@
       "filename": "banner-double.fbx",
       "pack": "kenney_marble_tracks",
       "category": "decoration",
-      "keywords": ["banner", "double", "gate", "arch", "checkpoint", "finish line", "portal"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "banner",
+        "double",
+        "gate",
+        "arch",
+        "checkpoint",
+        "finish line",
+        "portal"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Double banner gate — perfect for checkpoints or finish lines",
       "generic_score": 9
     },
@@ -505,8 +1138,17 @@
       "filename": "banner-hanging.fbx",
       "pack": "kenney_marble_tracks",
       "category": "decoration",
-      "keywords": ["banner", "hanging", "ceiling", "flag", "indoor decoration", "festive"],
-      "game_contexts": ["any"],
+      "keywords": [
+        "banner",
+        "hanging",
+        "ceiling",
+        "flag",
+        "indoor decoration",
+        "festive"
+      ],
+      "game_contexts": [
+        "any"
+      ],
       "description": "Hanging banner for indoor scenes",
       "generic_score": 7
     },
@@ -514,8 +1156,19 @@
       "filename": "end-rounded.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["end", "cap", "terminus", "finish", "dead end", "platform"],
-      "game_contexts": ["puzzle", "marble", "platformer"],
+      "keywords": [
+        "end",
+        "cap",
+        "terminus",
+        "finish",
+        "dead end",
+        "platform"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "Rounded track end cap",
       "generic_score": 5
     },
@@ -523,10 +1176,257 @@
       "filename": "end-square.fbx",
       "pack": "kenney_marble_tracks",
       "category": "track",
-      "keywords": ["end", "cap", "square", "terminus", "finish", "platform"],
-      "game_contexts": ["puzzle", "marble", "platformer"],
+      "keywords": [
+        "end",
+        "cap",
+        "square",
+        "terminus",
+        "finish",
+        "platform"
+      ],
+      "game_contexts": [
+        "puzzle",
+        "marble",
+        "platformer"
+      ],
       "description": "Square track end cap",
       "generic_score": 5
+    },
+    {
+      "filename": "race-car-molnia.fbx",
+      "pack": "molnia_racing",
+      "category": "vehicle",
+      "keywords": [
+        "molnia",
+        "race",
+        "car",
+        "vehicle"
+      ],
+      "kind_hints": [
+        "vehicle"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Molnia hover dragster — wheelless futuristic race car, rigged with thruster petals and an Idle clip",
+      "generic_score": 0
+    },
+    {
+      "filename": "big-head-cromulon.fbx",
+      "pack": "cromulon",
+      "category": "character",
+      "keywords": [
+        "cromulon",
+        "head",
+        "bighead",
+        "big",
+        "floating",
+        "giant",
+        "colossal",
+        "face",
+        "alien",
+        "monolith",
+        "enemy",
+        "boss",
+        "creature",
+        "character"
+      ],
+      "kind_hints": [
+        "enemy",
+        "npc"
+      ],
+      "game_contexts": [
+        "shooter",
+        "space",
+        "any"
+      ],
+      "description": "Cromulon — colossal disembodied floating head with enormous lidded eyes, a giant hovering alien face",
+      "generic_score": 0,
+      "scale": 3.0
+    },
+    {
+      "filename": "straight-road-track-15m.fbx",
+      "pack": "molnia_racing",
+      "category": "track",
+      "keywords": [
+        "straight",
+        "road",
+        "track"
+      ],
+      "kind_hints": [
+        "road",
+        "track",
+        "ramp",
+        "rail",
+        "obstacle"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Straight modular race road segment, 15 m",
+      "generic_score": 0
+    },
+    {
+      "filename": "straight-road-track-30m.fbx",
+      "pack": "molnia_racing",
+      "category": "track",
+      "keywords": [
+        "straight",
+        "road",
+        "track"
+      ],
+      "kind_hints": [
+        "road",
+        "track",
+        "ramp",
+        "rail",
+        "obstacle"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Straight modular race road segment, 30 m",
+      "generic_score": 0
+    },
+    {
+      "filename": "straight-road-start-finish-line.fbx",
+      "pack": "molnia_racing",
+      "category": "track",
+      "keywords": [
+        "start",
+        "finish",
+        "line",
+        "road"
+      ],
+      "kind_hints": [
+        "road",
+        "track",
+        "ramp",
+        "rail",
+        "obstacle"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Painted start/finish line road segment",
+      "generic_score": 0
+    },
+    {
+      "filename": "corner-road-track-15m.fbx",
+      "pack": "molnia_racing",
+      "category": "track",
+      "keywords": [
+        "corner",
+        "bend",
+        "road",
+        "track"
+      ],
+      "kind_hints": [
+        "road",
+        "track",
+        "ramp",
+        "rail",
+        "obstacle"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "90-degree modular race road corner, 15x15 m",
+      "generic_score": 0
+    },
+    {
+      "filename": "corner-road-track-30m.fbx",
+      "pack": "molnia_racing",
+      "category": "track",
+      "keywords": [
+        "corner",
+        "bend",
+        "road",
+        "track"
+      ],
+      "kind_hints": [
+        "road",
+        "track",
+        "ramp",
+        "rail",
+        "obstacle"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "90-degree modular race road corner, 30x30 m",
+      "generic_score": 0
+    },
+    {
+      "filename": "fence-barrier-track-15m.fbx",
+      "pack": "molnia_racing",
+      "category": "structure",
+      "keywords": [
+        "fence",
+        "barrier",
+        "rail"
+      ],
+      "kind_hints": [
+        "rail",
+        "obstacle",
+        "prop"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Trackside barrier fence run, 15 m — red/white race barrier",
+      "generic_score": 0
+    },
+    {
+      "filename": "fence-barrier-block-red.fbx",
+      "pack": "molnia_racing",
+      "category": "structure",
+      "keywords": [
+        "fence",
+        "barrier",
+        "rail",
+        "red"
+      ],
+      "kind_hints": [
+        "rail",
+        "obstacle",
+        "prop"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Single red barrier block, 1.5 m",
+      "generic_score": 0
+    },
+    {
+      "filename": "fence-barrier-block-white.fbx",
+      "pack": "molnia_racing",
+      "category": "structure",
+      "keywords": [
+        "fence",
+        "barrier",
+        "rail",
+        "white"
+      ],
+      "kind_hints": [
+        "rail",
+        "obstacle",
+        "prop"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Single white barrier block, 1.5 m",
+      "generic_score": 0
     }
   ],
   "_resolver_config": {

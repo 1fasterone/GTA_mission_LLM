@@ -1755,6 +1755,61 @@ class UnityProjectGenerator:
 
     # ── model resolution (single source of truth) ──────────────────────────────
 
+    @staticmethod
+    def _entity_footprints(schema: UnitySchema,
+                           entity_model_paths: dict,
+                           by_resource_path: dict,
+                           lookups_dir: str) -> dict[str, float]:
+        """Entity name -> real ground footprint (metres) of its resolved model.
+
+        Reads the `bounds` recorded on catalog entries by
+        `python main.py unity-catalog --measure` (Unity's own import size — see
+        src/unity_model_measure.py for why nothing else is trustworthy here).
+        Entities with no measured model are simply absent, and the layout pass
+        keeps its primitive approximation for them.
+        """
+        cat_path = Path(lookups_dir) / "unity" / "asset_catalog.json"
+        try:
+            assets = json.loads(cat_path.read_text(encoding="utf-8"))["assets"]
+        except (OSError, ValueError, KeyError):
+            return {}
+
+        # Key on the RESOLVED absolute source path: catalog roots are stored
+        # relative to the repo ("Models/FBX format") while ResolvedModel.src is
+        # absolute, so comparing them raw silently matches nothing and this
+        # whole pass no-ops. Also index the bare relpath as a fallback for
+        # callers whose roots differ from the catalog's.
+        by_src: dict[str, list] = {}
+        for a in assets:
+            b = a.get("bounds")
+            if not b:
+                continue
+            rel = Path(a["root"]) / a["relpath"]
+            try:
+                by_src[rel.resolve().as_posix().lower()] = b
+            except OSError:
+                pass
+            by_src.setdefault(rel.as_posix().lower(), b)
+
+        out: dict[str, float] = {}
+        for e in schema.entities:
+            res_path = entity_model_paths.get(e.name) or ""
+            model = by_resource_path.get(res_path)
+            if model is None or not getattr(model, "src", ""):
+                continue
+            src = Path(model.src)
+            try:
+                key = src.resolve().as_posix().lower()
+            except OSError:
+                key = src.as_posix().lower()
+            b = by_src.get(key) or by_src.get(src.as_posix().lower())
+            if not b:
+                continue
+            footprint = max(float(b[0]), float(b[2]))   # ground plane only
+            if footprint > 0:
+                out[e.name] = footprint
+        return out
+
     def _resolve_all_models(self, schema: UnitySchema, lookups_dir: str,
                             model_source_dir: str | None,
                             model_overrides: dict[str, str] | None,
@@ -1926,6 +1981,29 @@ class UnityProjectGenerator:
         # the ResolvedModel that owns that path to read its fit_size (set only
         # for Sketchfab picks — see unity_entity_asset_resolver._register).
         _by_resource_path = {m.resource_path: m for m in used_models.values()}
+
+        # ── Model-aware re-layout ────────────────────────────────────────────
+        # compute_layout() already ran in Step 5, but the layout pass happens
+        # BEFORE model resolution and so had to size every group as if each
+        # instance were ~1 unit across. Now that we know which model each entity
+        # actually resolved to, redo the packing with real measured footprints
+        # (catalog `bounds`, produced by `unity-catalog --measure`). Without
+        # this, large models bake onto a grid smaller than a single instance and
+        # spawn as one overlapping clump. compute_layout is idempotent, so the
+        # second run simply supersedes the first; with no measured bounds
+        # available it is a no-op and output stays byte-identical.
+        _footprints = self._entity_footprints(schema, entity_model_paths,
+                                              _by_resource_path, lookups_dir)
+        if _footprints:
+            from .unity_layout import compute_layout as _relayout
+            for e in schema.entities:
+                # Drop the model-blind bake so the pass recomputes it; groups
+                # whose positions came from a deterministic scaffold (racetrack
+                # start grids) are left alone — they are anchored to real
+                # geometry, not to this pass's packing.
+                if e.name in _footprints and e.placement in ("scatter", "grid", "ring", "line"):
+                    e.instance_positions = []
+            _relayout(schema, _footprints)
 
         # ── Playable-player merge ──────────────────────────────────────────
         # The scene template ALWAYS builds a dedicated Player object (tag

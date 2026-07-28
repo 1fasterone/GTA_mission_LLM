@@ -1168,9 +1168,12 @@ class TestBoundsFit:
         assert "TryMeasureBounds" in cs
         assert "fitSize" in cs
         # No Sketchfab pick in this schema -> fit_size defaults to 0.0000f.
-        # No layout pass ran (this test calls the generator directly, not the
-        # full pipeline) -> no baked positions -> trailing arg is null.
-        assert "0.0000f, null);" in cs
+        # The positions argument that follows is deliberately NOT asserted here:
+        # the generator now re-runs the layout pass itself once models resolve
+        # (model-aware group spacing, see _entity_footprints), so an entity that
+        # resolves to a measured model gets baked positions even when the caller
+        # skipped the pipeline. This test is about the bounds-fit argument.
+        assert "0.0000f, " in cs
 
     def test_bounds_fit_not_emitted_for_2d(self, gen):
         from src.unity_schema import UnitySchema, EntitySpec

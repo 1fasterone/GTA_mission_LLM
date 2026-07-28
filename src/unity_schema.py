@@ -197,6 +197,17 @@ def _clamp_points(v, cap: int, allow_bank: bool = False) -> list:
     return out
 
 
+# Kinds that can never BE the player, so may never hold the "Player" tag.
+# Deliberately a denylist of scenery/hostile kinds rather than an allowlist:
+# the player is not always kind="player" — a racing scaffold's PlayerKart is
+# kind="vehicle" and must keep the tag (see src/unity_racetrack.py).
+_NEVER_PLAYER_KINDS: frozenset[str] = frozenset({
+    "prop", "obstacle", "pickup", "ground", "road", "rail", "tree", "building",
+    "crowd", "npc", "enemy", "fx", "hazard", "item", "ramp", "platform",
+    "wall", "decor", "weapon",
+})
+
+
 class EntitySpec(BaseModel):
     """A prompt-derived group of scene objects: N primitives placed by a rule.
 
@@ -333,6 +344,42 @@ class EntitySpec(BaseModel):
         """Lowercase, ≤ 6 plain words — a search phrase, not a sentence."""
         words = re.sub(r"[^a-z0-9\s-]", " ", str(v or "").lower()).split()
         return " ".join(words[:6])
+
+    @model_validator(mode="after")
+    def _reserve_player_tag(self) -> "EntitySpec":
+        """"Player" is a SINGLETON tag — only a kind="player" entity may hold it.
+
+        Every player-facing lookup in the generated game is
+        `GameObject.FindWithTag("Player")`: the camera rig mounts to it, the
+        weapon mounts to its eye, and enemy AI chases it. Unity returns an
+        arbitrary match when several objects share a tag, so one mis-tagged prop
+        silently captures all of them. Hit live on AstralArena, where the LLM
+        tagged a "WeaponModels" prop group "Player": the camera locked onto the
+        prop (no first-person view, no follow), the gun never mounted because
+        the prop has no eye transform, and the real player still turned under
+        mouse look — so the swarm chasing it appeared to swing around with the
+        mouse. Every one of those symptoms was this single tag.
+        """
+        if self.tag == "Player" and (self.kind or "").lower() in _NEVER_PLAYER_KINDS:
+            self.tag = "Untagged"
+        return self
+
+    @model_validator(mode="after")
+    def _no_enemy_firing_squad(self) -> "EntitySpec":
+        """A group of enemies is a crowd, not a parade.
+
+        "line" places instances evenly along a single axis, which is right for
+        fence posts and start grids but makes a combat encounter read as a row
+        of models standing shoulder to shoulder facing the player — the exact
+        "still clumped up" look, because a line concentrates every instance in
+        one band. Enemies get scattered instead. Groups that carry authored
+        positions (a racetrack start grid) never reach the layout pass at all,
+        so this cannot disturb them.
+        """
+        if (self.kind or "").lower() == "enemy" and self.placement == "line" \
+                and self.count > 2 and not self.instance_positions:
+            self.placement = "scatter"
+        return self
 
     @field_validator("count", mode="before")
     @classmethod
@@ -797,6 +844,41 @@ class WiringDependency(BaseModel):
 
 class WiringMap(BaseModel):
     dependencies: list[WiringDependency] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_list(cls, v):
+        """Absorb the two list shapes the LLM emits for `wiring`.
+
+        The schema-fill step reliably hands back a LIST here instead of the
+        mapping — either the bare dependency list (`[{source, target, type}]`)
+        or the map wrapped in a list (`[{"dependencies": [...]}]`). Both carry
+        the right data in the wrong container, so flatten them rather than
+        hard-failing an otherwise valid schema.
+        """
+        if isinstance(v, list):
+            deps: list = []
+            for item in v:
+                if isinstance(item, dict) and "dependencies" in item:
+                    inner = item.get("dependencies") or []
+                    if isinstance(inner, list):
+                        deps.extend(inner)
+                elif isinstance(item, dict):
+                    deps.append(item)
+            v = {"dependencies": deps}
+
+        # Drop half-written edges. A dependency is a (source -> target) pair and
+        # the LLM sometimes emits just one end ({"source": "ai"}); a single such
+        # entry failed validation for the ENTIRE schema, throwing away a
+        # 25-minute build over one unusable edge in an advisory wiring hint.
+        if isinstance(v, dict) and isinstance(v.get("dependencies"), list):
+            v = dict(v)
+            v["dependencies"] = [
+                d for d in v["dependencies"]
+                if not isinstance(d, dict)
+                or (str(d.get("source", "")).strip() and str(d.get("target", "")).strip())
+            ]
+        return v
 
 
 # ── Capability models (behavior-first schema layer) ───────────────────────────

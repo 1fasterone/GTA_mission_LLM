@@ -873,11 +873,23 @@ def subsystems_for(
     # walking controller instead of "swimming" (hit live: an underwater VR
     # project never got its swim controller even after game_type/locomotion
     # were both detected correctly).
+    # A wheelless craft still has locomotion "drive" (it is a ground vehicle),
+    # but a WheelCollider rig is wrong for it: there are no wheels to spin and
+    # the model carries no wheel bones, so the car sinks to its axles and the
+    # bone driver has nothing to drive. Content-gated on the project's own
+    # words, same as the optional micros below.
+    _hover_words = ("hover", "hovercar", "hovercraft", "wheelless", "wheel-less",
+                    "speeder", "antigrav", "anti-grav", "repulsor", "maglev",
+                    "levitat", "floats above", "floating above")
+    is_hover = any(w in prompt_low for w in _hover_words)
+
     if gt in ("3d", "top_down", "isometric", "vr"):
         loco_ctrl = {"drive": "vehicle_car", "fly": "flying", "swim": "swimming"}
         loco_cam  = {"drive": "vehicle_chase"}
         if locomotion in loco_ctrl:
             ctrl = loco_ctrl[locomotion]
+            if locomotion == "drive" and is_hover:
+                ctrl = "vehicle_hover"
             cam  = loco_cam.get(locomotion, "follow")
 
     # Controller options — capabilities override defaults when declared
@@ -894,6 +906,18 @@ def subsystems_for(
             "jump_force":   c.jump_force,
             "abilities":    abilities,
         })
+
+    # A shooter needs the shoot ability or the whole weapon half of the
+    # controller (fire, ammo, reload, the aim raycast) is templated out and the
+    # player ends up holding nothing — the gun becomes a loose world prop. The
+    # capability block above only ever speaks jump/sprint/crouch, so nothing
+    # else can turn this on. Content-gated the same way the optional micros are:
+    # the detected genre, or an actual weapon entity in the schema.
+    if genre == "fps" or "weapon" in entity_kinds:
+        _abils = list(ctrl_opts.get("abilities", ["jump", "sprint"]))
+        if "shoot" not in _abils:
+            _abils.append("shoot")
+        ctrl_opts["abilities"] = _abils
 
     # Animator variant from locomotion
     anim_variant = {
@@ -1021,8 +1045,25 @@ def subsystems_for(
         # the drones had no waypoints to follow and just sat inert. Gate on
         # the actual racing-game signal (genre, from the keyword classifier
         # in unity_archetypes.py) instead.
-        ai_var = "waypoint_follow" if genre == "racing" else "navmesh_patrol"
-        ai_tgt = "asset"           if genre == "racing" else "world"
+        # navmesh_patrol drives a NavMeshAgent, which needs a baked NavMesh and
+        # is 3D-ground-only. Enemies the project describes as FLYING — floating
+        # heads adrift in space, drones, hovering wraiths — have no ground to
+        # bake and no NavMesh to follow, so they spawn and sit there inert
+        # (hit live on CromulonSkyfall: eight giant floating heads that never
+        # moved). flying_swarm seeks the player kinematically in full 3D, which
+        # is what "hovers in and rams you" actually needs.
+        _flying_enemy_words = (
+            "floating", "float ", "floats", "hover", "hovering", "drifting",
+            "drifts", "flying", "airborne", "levitat", "adrift", "in space",
+        )
+        enemies_fly = (locomotion == "fly"
+                       or any(w in prompt_low for w in _flying_enemy_words))
+        if genre == "racing":
+            ai_var, ai_tgt = "waypoint_follow", "asset"
+        elif enemies_fly:
+            ai_var, ai_tgt = "flying_swarm", "world"
+        else:
+            ai_var, ai_tgt = "navmesh_patrol", "world"
         subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=dim_meta))
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
