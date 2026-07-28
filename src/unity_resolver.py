@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 from rich.console import Console
 
-from .unity_schema import UnitySchema, UnityPackage
+from .unity_schema import UnitySchema, UnityPackage, UnityVersion
 
 console = Console()
 
@@ -116,7 +116,9 @@ _URP_RENDERGRAPH_MAJOR = 17
 
 # Lowest Unity version whose URP ships RenderGraph — the floor an atmosphere
 # project is raised to. Present in _VERSION_MAP (unity_generator) and packages.json.
-_ATMOSPHERE_MIN_UNITY = "6000.0"
+# Typed as UnityVersion (not bare str) so mypy accepts the assignment into
+# schema.unity_version, which is itself a Literal[...] of the same alias.
+_ATMOSPHERE_MIN_UNITY: UnityVersion = "6000.0"
 
 
 def _urp_has_rendergraph(unity_version: str, db: dict) -> bool:
