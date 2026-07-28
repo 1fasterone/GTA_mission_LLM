@@ -1851,3 +1851,152 @@ class TestDistributionSampling:
         _distinct(many_trees, {"sample_temperature": 0.6, "sample_seed": 1})
         _r.seed(0)
         assert _r.random() == first
+
+
+# ── kind-scoped candidate filtering ───────────────────────────────────────────
+
+# The live ScoreBoard → skateboard regression in miniature
+# (tools/out/resolver_tiers.json, run ood_sort). BOTH assets answer the entity's
+# "board" token; only one of them declares itself a vehicle. Scores are tuned so
+# the wrong one WINS on keyword overlap alone — otherwise the gate would look
+# effective when ordinary scoring was already doing the work.
+_SCOPE_ASSETS = [
+    {"filename": "skateboard.fbx", "relpath": "skateboard.fbx",
+     "category": "vehicle",
+     "keywords": ["skateboard", "board", "vehicle", "sports", "ride"],
+     "kind_hints": ["vehicle"], "generic_score": 4, "scale": 1.0},
+    {"filename": "display-board.fbx", "relpath": "display-board.fbx",
+     "category": "prop",
+     "keywords": ["board", "display", "screen", "panel", "readout"],
+     "kind_hints": ["prop"], "generic_score": 0, "scale": 1.0},
+]
+
+_SCOPE_LAYERS = {
+    "_config": {"kind_prior": 1.0, "layer_band": 0.6},
+    "layers": {
+        "vehicle_ground": {
+            "vocabulary": ["car", "truck", "kart", "racer", "wheel"],
+            "kinds": ["vehicle"], "categories": ["vehicle"]},
+        "character_humanoid": {
+            "vocabulary": ["character", "human", "person"],
+            "kinds": ["character", "npc", "player"], "categories": ["character"]},
+    },
+}
+
+
+def _write_lookups(tmp_path, assets, layers=None):
+    """A lookups dir holding `assets` (files written to disk) and, optionally,
+    a concept_layers.json — the two-arg form is the 'taxonomy absent' case."""
+    lib = tmp_path / "lib"
+    lib.mkdir(exist_ok=True)
+    for a in assets:
+        (lib / a["relpath"]).write_bytes(b"FBX")
+    catalog = {"version": 1, "vocabulary": {"categories": [], "tags": []},
+               "assets": [{**a, "root": lib.as_posix(), "game_contexts": ["any"],
+                           "format": "fbx", "pack": "t", "curated": False}
+                          for a in assets]}
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True, exist_ok=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps(catalog), encoding="utf-8")
+    if layers is not None:
+        (lookups / "unity" / "concept_layers.json").write_text(
+            json.dumps(layers), encoding="utf-8")
+    return lookups
+
+
+def _scoreboard():
+    return EntitySpec(name="ScoreBoard", kind="ui", count=1,
+                      model_hint="score board ui")
+
+
+def test_ui_entity_never_takes_a_vehicle_asset(tmp_path):
+    """The live regression: "ScoreBoard" shares exactly ONE keyword with
+    skateboard.fbx ("board") and that was enough to win Tier 2b outright — no
+    concept layer classifies a "ui" entity, and _passes_kind_guard only rejects
+    a match whose sole strong token is the bare kind word. The asset's own
+    category/kind_hints say "vehicle", which is the signal the gate reads."""
+    lookups = _write_lookups(tmp_path, _SCOPE_ASSETS, _SCOPE_LAYERS)
+    paths = resolve_entity_assets(_schema([_scoreboard()]), {}, {},
+                                  lookups_dir=str(lookups), strict=False)
+    assert paths["ScoreBoard"] == "Models/Kenney/Prop/display-board"
+
+
+def test_kind_scope_is_inert_without_concept_layers(tmp_path):
+    """Same catalog, same entity, no concept_layers.json: the resolver reverts
+    to global literal matching and skateboard.fbx wins on score again. Proves
+    the gate is a pure enhancement on top of the optional taxonomy — and that
+    the fixture really does reproduce the bug rather than testing a case
+    ordinary scoring already got right."""
+    lookups = _write_lookups(tmp_path, _SCOPE_ASSETS)
+    paths = resolve_entity_assets(_schema([_scoreboard()]), {}, {},
+                                  lookups_dir=str(lookups), strict=False)
+    assert paths["ScoreBoard"] == "Models/Kenney/Vehicle/skateboard"
+
+
+def test_entity_that_names_the_skateboard_still_gets_one(tmp_path):
+    """Identity evidence — a strong query token in the asset's OWN filename —
+    is the escape hatch, the same rule _sk_contextual_guard applies to
+    marketplace tag soup. "board" is not "skateboard", but an entity that
+    actually says skateboard reaches straight through the gate."""
+    lookups = _write_lookups(tmp_path, _SCOPE_ASSETS, _SCOPE_LAYERS)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Skateboards", kind="prop", count=1,
+                            model_hint="skateboard")]),
+        {}, {}, lookups_dir=str(lookups), strict=False)
+    assert paths["Skateboards"] == "Models/Kenney/Vehicle/skateboard"
+
+
+def test_in_domain_entity_takes_the_vehicle_without_naming_it(tmp_path):
+    """Scope, not filename evidence, is the primary warrant: a kind="vehicle"
+    entity whose tokens reach vehicle_ground gets the vehicle asset even though
+    it never says "skateboard"."""
+    lookups = _write_lookups(tmp_path, _SCOPE_ASSETS, _SCOPE_LAYERS)
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="RacerRides", kind="vehicle", count=1)]),
+        {}, {}, lookups_dir=str(lookups), strict=False)
+    assert paths["RacerRides"] == "Models/Kenney/Vehicle/skateboard"
+
+
+def test_out_of_domain_asset_cannot_return_via_the_raw_fallback(tmp_path):
+    """Tier 2b relaxes _passes_kind_guard when guarding would empty the field
+    and no tier-1 default exists to fall back on — which is exactly the branch
+    a "ui" entity takes. The scope gate therefore filters `candidates` itself,
+    ahead of that split, so the relaxation can never hand back an out-of-domain
+    asset. The entity ends with no 3D spawn (kind "ui" is owned by SceneSetup),
+    which is the honest answer."""
+    assets = [
+        # Only strong hit IS the bare kind word "ui", and "ui" is not in its
+        # filename, so _passes_kind_guard rejects it and `guarded` empties.
+        {"filename": "hud-panel.fbx", "relpath": "hud-panel.fbx",
+         "category": "vehicle", "keywords": ["ui"],
+         "kind_hints": ["prop"], "generic_score": 0, "scale": 1.0},
+    ]
+    lookups = _write_lookups(tmp_path, assets, _SCOPE_LAYERS)
+    paths = resolve_entity_assets(_schema([_scoreboard()]), {}, {},
+                                  lookups_dir=str(lookups), strict=True)
+    assert paths["ScoreBoard"] == "skip:ui"
+
+
+def test_kind_scope_applies_to_sketchfab_tier_s(tmp_path):
+    """Tier S is not exempt. The frozen entry below clears _passes_kind_guard
+    AND _sk_contextual_guard (two strong tokens hit its tags, so it reads as
+    identity rather than context) and Tier S wins outright over Kenney when it
+    hits — only the domain scope stops it, after which Tier S falls through to
+    the Kenney tiers exactly as a cache miss does.
+
+    kind="decoration" rather than the "ui" of the sibling tests: "ui" is in
+    _SKIP_KINDS, which gates Tier S off entirely, so a ui entity could never
+    exercise this path.
+    """
+    lookups = _write_lookups(tmp_path, _SCOPE_ASSETS, _SCOPE_LAYERS)
+    _add_sketchfab_entry(lookups, tmp_path, uid="sk-deck",
+                         filename="pro-deck-sk1.fbx",
+                         keywords=("board", "score", "deck", "ride"),
+                         kind_hints=("vehicle",), category="vehicle")
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="ScoreBoards", kind="decoration", count=1,
+                            model_hint="score board")]),
+        {}, {}, lookups_dir=str(lookups),
+        sketchfab_cfg={"enabled": True, "auto_fetch": False}, strict=False)
+    assert paths["ScoreBoards"] == "Models/Kenney/Prop/display-board"

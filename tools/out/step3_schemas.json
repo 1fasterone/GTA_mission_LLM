@@ -1,0 +1,2007 @@
+{
+  "_provenance": {
+    "captured_utc": "2026-07-28T10:36:15+00:00",
+    "model": "qwen3.5-9b",
+    "temperature": 0.2,
+    "max_tokens": 16000,
+    "seed": 0,
+    "thinking": false,
+    "multimodal_max_sections": 3,
+    "lookups_dir": "lookups",
+    "asset_vocabulary_chars": 606,
+    "concepts_from": "step2_concepts.json",
+    "note": "Real Step-3 output. Reproduces unity_pipeline.run() Step 3 through apply_intent(); steps 4-6 not run."
+  },
+  "schemas": {
+    "ood_ring": {
+      "prompt": "make a game where the player throws rings onto a box",
+      "multimodal_sections": [
+        "capabilities",
+        "characters",
+        "missions",
+        "audio_specs",
+        "animations",
+        "vfx",
+        "surfaces"
+      ],
+      "schema_hints": "\nASSET LIBRARY \u2014 set each entity's model_hint to 2-5 plain words matching a real model. Vocabulary:\n  categories: background, character, creature, decoration, environment, floor, fx, mechanism, nature, object, obstacle, platform, prop, rail, ramp, ship, stairs, structure, track, ui, vegetation, vehicle, weapon\n  tags: bend, boulder, corner, corridor, creature, dirt, dungeon, edge, end, environment, floor, ground, incline, missiles, nature, ne, nw, parts, pipe, plant, platform, prop, ramp, road, rock, rocket, sand, se, ship, slope, space, stone, structure, sw, terrain, tile, track, turn, vehicle, wood\n",
+      "user_message_chars": 20761,
+      "raw_chars": 10958,
+      "validated": false,
+      "error": "ValueError: JSON parse error: Expecting ',' delimiter: line 326 column 3 (char 10508)\nRaw:\n{\n  \"project_name\": \"RingTargetArcade\",\n  \"company_name\": \"PrecisionPlay Studios\",\n  \"description\": \"A third-person 3D arcade physics puzzle game where players throw ring objects into box targets using spatial judgment and precision aiming.\",\n  \"game_type\": \"3D\",\n  \"platform\": \"all\",\n  \"locomotion\": \"walk\",\n  \"environment\": {\n    \"time_of_day\": \"day\",\n    \"fog\": false,\n    \"fog_color\": null,\n    \"",
+      "traceback": "Traceback (most recent call last):\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\lm_studio_client.py\", line 210, in extract_json\n    return json.loads(candidate)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\json\\__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\json\\decoder.py\", line 337, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\json\\decoder.py\", line 353, in raw_decode\n    obj, end = self.scan_once(s, idx)\n               ^^^^^^^^^^^^^^^^^^^^^^\njson.decoder.JSONDecodeError: Expecting ',' delimiter: line 326 column 3 (char 10509)\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\lm_studio_client.py\", line 214, in extract_json\n    return json.loads(_sanitize_json_scalars(candidate))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\json\\__init__.py\", line 346, in loads\n    return _default_decoder.decode(s)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\json\\decoder.py\", line 337, in decode\n    obj, end = self.raw_decode(s, idx=_w(s, 0).end())\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\json\\decoder.py\", line 353, in raw_decode\n    obj, end = self.scan_once(s, idx)\n               ^^^^^^^^^^^^^^^^^^^^^^\njson.decoder.JSONDecodeError: Expecting ',' delimiter: line 326 column 3 (char 10508)\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\tools\\capture_step3_schemas.py\", line 147, in main\n    schema_dict = llm.extract_json(raw)\n                  ^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\Users\\Owner\\claude projects\\GTA_mission_LLM\\src\\lm_studio_client.py\", line 216, in extract_json\n    raise ValueError(\nValueError: JSON parse error: Expecting ',' delimiter: line 326 column 3 (char 10508)\nRaw:\n{\n  \"project_name\": \"RingTargetArcade\",\n  \"company_name\": \"PrecisionPlay Studios\",\n  \"description\": \"A third-person 3D arcade physics puzzle game where players throw ring objects into box targets using spatial judgment and precision aiming.\",\n  \"game_type\": \"3D\",\n  \"platform\": \"all\",\n  \"locomotion\": \"walk\",\n  \"environment\": {\n    \"time_of_day\": \"day\",\n    \"fog\": false,\n    \"fog_color\": null,\n    \"\n",
+      "raw": "{\n  \"project_name\": \"RingTargetArcade\",\n  \"company_name\": \"PrecisionPlay Studios\",\n  \"description\": \"A third-person 3D arcade physics puzzle game where players throw ring objects into box targets using spatial judgment and precision aiming.\",\n  \"game_type\": \"3D\",\n  \"platform\": \"all\",\n  \"locomotion\": \"walk\",\n  \"environment\": {\n    \"time_of_day\": \"day\",\n    \"fog\": false,\n    \"fog_color\": null,\n    \"sun_intensity\": null\n  },\n  \"render_pipeline\": \"URP\",\n  \"unity_version\": \"6000.0\",\n  \"visual_style\": \"cartoon\",\n  \"color_palette\": {\n    \"name\": \"ArcadeBright\",\n    \"primary\": \"#4A90D9\",\n    \"secondary\": \"#F5A623\",\n    \"accent\": \"#7ED321\",\n    \"background\": \"#E8E8E8\",\n    \"trim\": \"#333333\"\n  },\n  \"scenes\": [\"Main\", \"MainMenu\"],\n  \"scene_specs\": [\n    {\n      \"name\": \"Main\",\n      \"description\": \"The main gameplay area with rings, boxes, and throw zones for precision aiming puzzles.\",\n      \"time_of_day\": \"day\",\n      \"fog\": false,\n      \"entities\": [\"RingGroup\", \"BoxTargets\", \"PlayerCharacter\"]\n    },\n    {\n      \"name\": \"MainMenu\",\n      \"description\": \"The main menu hub with score display and level selection interface.\",\n      \"time_of_day\": \"day\",\n      \"fog\": false,\n      \"entities\": []\n    }\n  ],\n  \"features\": [\"physics\", \"ui_toolkit\", \"input_system\", \"cinemachine\", \"audio\"],\n  \"packages\": [\n    {\n      \"description\": \"Input System package for unified keyboard-mouse and touch-control mapping\"\n    },\n    {\n      \"description\": \"Cinemachine for automated camera stabilization during high-velocity throws\"\n    },\n    {\n      \"description\": \"UI Toolkit framework built via the UI Toolkit\"\n    },\n    {\n      \"description\": \"Audio middleware integration for reactive soundscapes based on impact velocity\"\n    }\n  ],\n  \"scripts\": [\n    {\n      \"name\": \"PlayerController\",\n      \"type\": \"player\",\n      \"description\": \"Handles player movement, aiming input, and ring throwing mechanics with physics-based trajectory calculation.\",\n      \"attach_to\": \"player\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [\n        {\"name\": \"throwSpeed\", \"type\": \"float\", \"default\": \"15.0f\", \"header\": \"Throwing\"},\n        {\"name\": \"aimSensitivity\", \"type\": \"float\", \"default\": \"2.0f\", \"header\": \"Aiming\"}\n      ],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    },\n    {\n      \"name\": \"RingController\",\n      \"type\": \"custom\",\n      \"description\": \"Manages ring physics, rotation during flight, and impact detection with velocity-based audio triggers.\",\n      \"attach_to\": \"systems\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [\n        {\"name\": \"ringMass\", \"type\": \"float\", \"default\": \"2.0f\", \"header\": \"Physics\"},\n        {\"name\": \"dragCoefficient\", \"type\": \"float\", \"default\": \"0.5f\", \"header\": \"Air Resistance\"}\n      ],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    },\n    {\n      \"name\": \"BoxTargetDetector\",\n      \"type\": \"custom\",\n      \"description\": \"Detects ring landings on box targets and calculates impact velocity for scoring.\",\n      \"attach_to\": \"systems\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [\n        {\"name\": \"targetRadius\", \"type\": \"float\", \"default\": \"1.5f\", \"header\": \"Detection\"},\n        {\"name\": \"scoreValue\", \"type\": \"int\", \"default\": \"100\", \"header\": \"Scoring\"}\n      ],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    },\n    {\n      \"name\": \"CameraStabilizer\",\n      \"type\": \"custom\",\n      \"description\": \"Cinemachine virtual camera controller that transitions smoothly during throw animations to maintain depth perception.\",\n      \"attach_to\": \"camera\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [\n        {\"name\": \"overShoulderOffset\", \"type\": \"Vector3\", \"default\": \"new Vector3(0.5f, 1.2f, -0.8f)\", \"header\": \"Camera Position\"},\n        {\"name\": \"throwZoomFactor\", \"type\": \"float\", \"default\": \"0.7f\", \"header\": \"Throw Zoom\"}\n      ],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    },\n    {\n      \"name\": \"AudioManager\",\n      \"type\": \"audio_manager\",\n      \"description\": \"Handles reactive soundscapes based on impact velocity and throw force.\",\n      \"attach_to\": \"systems\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [\n        {\"name\": \"impactThreshold\", \"type\": \"float\", \"default\": \"5.0f\", \"header\": \"Audio Trigger\"}\n      ],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    },\n    {\n      \"name\": \"UIManager\",\n      \"type\": \"ui_manager\",\n      \"description\": \"Manages score display, objective tracker, and level selection interface.\",\n      \"attach_to\": \"systems\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    },\n    {\n      \"name\": \"GameManager\",\n      \"type\": \"game_manager\",\n      \"description\": \"Orchestrates gameplay loop, level transitions, and win/loss conditions.\",\n      \"attach_to\": \"systems\",\n      \"extra_usings\": [\"UnityEngine\"],\n      \"extra_fields\": [],\n      \"awake_extra\": \"\",\n      \"update_extra\": \"\",\n      \"fixed_update_extra\": \"\",\n      \"extra_methods\": []\n    }\n  ],\n  \"story_beats\": [\n    {\n      \"id\": \"intro_tutorial\",\n      \"label\": \"Tutorial Introduction\",\n      \"description\": \"Player learns basic ring throwing mechanics and target detection.\",\n      \"trigger\": \"on_start\"\n    },\n    {\n      \"id\": \"level_progression\",\n      \"label\": \"Level Completion\",\n      \"description\": \"All targets in current level are hit successfully.\",\n      \"trigger\": \"on_timer\"\n    }\n  ],\n  \"audio_tracks\": [\n    {\n      \"name\": \"MainMenuTheme\",\n      \"description\": \"Upbeat arcade-style menu music with playful synth melodies.\",\n      \"loop\": true,\n      \"category\": \"music\"\n    },\n    {\n      \"name\": \"GameplayAmbient\",\n      \"description\": \"Light background ambience for gameplay areas.\",\n      \"loop\": true,\n      \"category\": \"ambient\"\n    }\n  ],\n  \"procedural_meshes\": [],\n  \"entities\": [\n    {\n      \"name\": \"PlayerCharacter\",\n      \"kind\": \"character\",\n      \"count\": 1,\n      \"shape\": \"capsule\",\n      \"placement\": \"single\",\n      \"color_role\": \"primary\",\n      \"scale\": 1.0,\n      \"tag\": \"Player\",\n      \"behavior\": \"\",\n      \"path_points\": []\n    },\n    {\n      \"name\": \"RingGroup\",\n      \"kind\": \"prop\",\n      \"count\": 5,\n      \"shape\": \"cylinder\",\n      \"placement\": \"scatter\",\n      \"color_role\": \"primary\",\n      \"scale\": 1.0,\n      \"tag\": \"Ring\",\n      \"behavior\": \"\",\n      \"path_points\": []\n    },\n    {\n      \"name\": \"BoxTargets\",\n      \"kind\": \"prop\",\n      \"count\": 8,\n      \"shape\": \"cube\",\n      \"placement\": \"grid\",\n      \"color_role\": \"secondary\",\n      \"scale\": 1.5,\n      \"tag\": \"Target\",\n      \"behavior\": \"\",\n      \"path_points\": []\n    },\n    {\n      \"name\": \"ThrowZones\",\n      \"kind\": \"prop\",\n      \"count\": 4,\n      \"shape\": \"plane\",\n      \"placement\": \"ring\",\n      \"color_role\": \"accent\",\n      \"scale\": 2.0,\n      \"tag\": \"Zone\",\n      \"behavior\": \"\",\n      \"path_points\": []\n    },\n    {\n      \"name\": \"FloorTiles\",\n      \"kind\": \"floor\",\n      \"count\": 100,\n      \"shape\": \"plane\",\n      \"placement\": \"grid\",\n      \"color_role\": \"background\",\n      \"scale\": 1.0,\n      \"tag\": \"Floor\",\n      \"behavior\": \"\",\n      \"path_points\": []\n    },\n    {\n      \"name\": \"WallDecorations\",\n      \"kind\": \"decoration\",\n      \"count\": 20,\n      \"shape\": \"cube\",\n      \"placement\": \"scatter\",\n      \"color_role\": \"trim\",\n      \"scale\": 1.5,\n      \"tag\": \"Prop\",\n      \"behavior\": \"\",\n      \"path_points\": []\n    }\n  ],\n  \"capabilities\": {\n    \"controller\": {\"movement\":true,\"jump\":false,\"sprint\":false,\"crouch\":false,\"speed\":6.0,\"sprint_multiplier\":1.7,\"jump_force\":8.0,\"look_sensitivity\":2.0},\n    \"physics\": {\"gravity\":true,\"collision\":\"dynamic\",\"mass\":80.0,\"drag\":0.0},\n    \"hud\": {\"show_health\":false,\"show_ammo\":false,\"show_objective\":true,\"show_minimap\":false},\n    \"input\": {\"bindings\":[{\"action\":\"Fire\",\"key\":\"Mouse0\"},{\"action\":\"Interact\",\"key\":\"E\"},{\"action\":\"Throw\",\"key\":\"Space\"}]},\n    \"ai\": {\"pathfinding\":false,\"detection_range\":15.0,\"behavior\":\"idle\"},\n    \"animation\": {\"rig_type\":\"generic\",\"clips\":{\"Idle\":\"Idle\",\"Run\":\"Run\"}},\n    \"dialog\": {\"system\":\"simple\",\"bark_on_sight\":false},\n    \"vfx\": {\"particles\":true,\"post_processing\":false},\n    \"model\": {\"lod\":\"auto\",\"animations\":{\"Idle\":\"Idle\"}}\n  },\n  \"characters\": [\n    {\n      \"id\": \"player_character\",\n      \"name\": \"Player\",\n      \"role\": \"player\",\n      \"model_ref\": \"PlayerCharacter\",\n      \"animation_set\":[\"Idle\",\"Run\"]\n    }\n  ],\n  \"missions\": [\n    {\n      \"id\": \"intro_level_1\",\n      \"title\": \"First Throw\",\n      \"description\": \"Learn the basics by hitting all targets in this tutorial level.\",\n      \"objectives\":[\n        {\"id\":\"obj_1\",\"description\":\"Hit all 8 box targets with rings\",\"type\":\"collect\",\"target_ref\":\"BoxTargets\",\"count\":8,\"optional\":false}\n      ],\n      \"rewards\":{\"score\":500},\"story_beat_ref\":\"\"\n    },\n    {\n      \"id\": \"precision_challenge\",\n      \"title\": \"Precision Master\",\n      \"description\": \"Complete the level with perfect throws to unlock bonus score.\",\n      \"objectives\":[\n        {\"id\":\"obj_1\",\"description\":\"Hit all targets without missing\",\"type\":\"collect\",\"target_ref\":\"BoxTargets\",\"count\":8,\"optional\":false},\n        {\"id\":\"obj_2\",\"description\":\"Maintain over-the-shoulder camera during throws\",\"type\":\"reach\",\"target_ref\":\"PlayerCharacter\",\"count\":1,\"optional\":true}\n      ],\n      \"rewards\":{\"score\":1000},\"story_beat_ref\":\"\"\n    }\n  ],\n  \"audio_specs\": [\n    {\n      \"id\": \"ring_impact\",\n      \"type\":\"sfx\",\"description\":\"Metallic ring landing sound with velocity-based pitch variation.\",\n      \"generation_method\":\"procedural\",\"loop\":false,\n      \"parameters\":{\"gen_prompt\":\"metallic hollow impact sound, higher pitch for faster impacts, lower pitch for slower impacts\"}}\n    ],\n  \"animations\": [\n    {\n      \"id\": \"idle_clip\",\n      \"name\":\"Idle\",\"clip\":\"Idle\",\"loop\":true,\"events\":[],\n      \"animation_set\":[\"Idle\"]\n    },\n    {\n      \"id\": \"run_clip\",\n      \"name\":\"Run\",\"clip\":\"Run\",\"loop\":false,\"events\":[],\n      \"animation_set\":[\"Run\"]\n    }\n  ],\n  \"vfx\": [\n    {\n      \"id\": \"throw_particles\",\n      \"name\":\"ThrowParticles\",\"type\":\"particle\",\n      \"parameters\":{\"loop\":false,\"duration\":0.5,\"play_on_start\":true,\"auto_destroy\":true,\"scale\":1.0}}\n    ]\n  ],\n  \"materials\": [\n    {\n      \"id\": \"ring_material\",\n      \"name\":\"RingMetal\",\"shader_model\":\"Standard\",\n      \"generation_method\":\"procedural\",\n      \"parameters\":{\"color\":\"#4A90D9\",\"smoothness\":0.6}}\n    ]\n  ],\n  \"shaders\": [],\n  \"models\": [\n    {\n      \"id\": \"player_model\",\n      \"name\":\"PlayerCharacterModel\",\"category\":\"character\",\n      \"generation_method\":\"parametric_base\",\n      \"parameters\":{},\"materials\":[\"ring_material\"]}\n    ]\n  }\n}",
+      "elapsed_s": 153.2
+    },
+    "ood_stack": {
+      "prompt": "a game about stacking plates without them falling",
+      "multimodal_sections": [
+        "capabilities",
+        "characters",
+        "missions",
+        "audio_specs",
+        "behavior_trees",
+        "vfx",
+        "surfaces"
+      ],
+      "schema_hints": "\nASSET LIBRARY \u2014 set each entity's model_hint to 2-5 plain words matching a real model. Vocabulary:\n  categories: background, character, creature, decoration, environment, floor, fx, mechanism, nature, object, obstacle, platform, prop, rail, ramp, ship, stairs, structure, track, ui, vegetation, vehicle, weapon\n  tags: bend, boulder, corner, corridor, creature, dirt, dungeon, edge, end, environment, floor, ground, incline, missiles, nature, ne, nw, parts, pipe, plant, platform, prop, ramp, road, rock, rocket, sand, se, ship, slope, space, stone, structure, sw, terrain, tile, track, turn, vehicle, wood\n",
+      "user_message_chars": 21303,
+      "raw_chars": 10257,
+      "validated": true,
+      "apply_intent_msgs": [],
+      "summary": {
+        "game_type": "isometric",
+        "locomotion": "walk",
+        "meta_genre": "universal",
+        "render_pipeline": "URP",
+        "platform": "all",
+        "unity_version": "6000.0",
+        "n_packages": 4,
+        "n_scripts": 5,
+        "scenes": [
+          "Main",
+          "MainMenu"
+        ],
+        "features": [
+          "physics",
+          "ui_toolkit",
+          "input_system",
+          "cinemachine",
+          "audio"
+        ],
+        "entity_kind_counts": {
+          "prop": 3
+        },
+        "entities": [
+          {
+            "name": "Plates",
+            "kind": "prop",
+            "model_hint": "",
+            "count": 15
+          },
+          {
+            "name": "BasePlate",
+            "kind": "prop",
+            "model_hint": "",
+            "count": 1
+          },
+          {
+            "name": "BackgroundProps",
+            "kind": "prop",
+            "model_hint": "",
+            "count": 5
+          }
+        ]
+      },
+      "schema": {
+        "project_name": "PlateStacker",
+        "company_name": "StableStudio",
+        "description": "Physics-based puzzle simulation where players stack rigid plates using precision input to manage stability and center of mass.",
+        "game_type": "isometric",
+        "platform": "all",
+        "locomotion": "walk",
+        "render_pipeline": "URP",
+        "unity_version": "6000.0",
+        "color_space": "Linear",
+        "visual_style": "low_poly",
+        "scenes": [
+          "Main",
+          "MainMenu"
+        ],
+        "scene_specs": [
+          {
+            "name": "Main",
+            "description": "The central play area where plates are stacked and stability is managed.",
+            "time_of_day": "day",
+            "fog": false,
+            "fog_color": null,
+            "entities": [
+              "Plates",
+              "BasePlate"
+            ]
+          },
+          {
+            "name": "MainMenu",
+            "description": "The hub screen with UI elements and background atmosphere.",
+            "time_of_day": "day",
+            "fog": false,
+            "fog_color": null,
+            "entities": [
+              "BackgroundProps"
+            ]
+          }
+        ],
+        "features": [
+          "physics",
+          "ui_toolkit",
+          "input_system",
+          "cinemachine",
+          "audio"
+        ],
+        "packages": [
+          {
+            "description": "Input System package for unified mouse, keyboard, and touch controls.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "Cinemachine package for smooth camera orbiting logic.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "Universal Render Pipeline (URP) for optimized lighting and performance.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "UI Toolkit for building the real-time stability metrics interface.",
+            "package_id": null,
+            "version": null
+          }
+        ],
+        "scripts": [
+          {
+            "name": "GameManager",
+            "type": "game_manager",
+            "description": "Handles game state, level progression, and win/loss conditions.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "PlayerController",
+            "type": "player",
+            "description": "Manages player movement and input for dragging plates.",
+            "attach_to": "player",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "CameraOrbit",
+            "type": "camera",
+            "description": "Controls the isometric camera orbit around the central play area.",
+            "attach_to": "camera",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "PhysicsTuner",
+            "type": "custom",
+            "description": "Tunes friction and restitution values within the built-in PhysX engine based on impact velocity.",
+            "attach_to": "systems",
+            "extra_usings": [
+              "UnityEngine.Physics"
+            ],
+            "extra_fields": [
+              {
+                "name": "frictionMultiplier",
+                "type": "float",
+                "default": "1.0f",
+                "header": "Physics Tuning",
+                "tooltip": null
+              },
+              {
+                "name": "restitutionMultiplier",
+                "type": "float",
+                "default": "0.5f",
+                "header": "Physics Tuning",
+                "tooltip": null
+              }
+            ],
+            "awake_extra": "",
+            "update_extra": "var impactVelocity = GetComponent<Rigidbody>().velocity.magnitude; if (impactVelocity > 2.0f) { frictionMultiplier = Mathf.Lerp(1.0f, 0.8f, impactVelocity / 5.0f); restitutionMultiplier = Mathf.Lerp(0.5f, 0.3f, impactVelocity / 5.0f); }",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "StabilityHUD",
+            "type": "ui_manager",
+            "description": "Displays real-time stability metrics and center of mass warnings.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          }
+        ],
+        "story_beats": [
+          {
+            "id": "intro_tutorial",
+            "label": "Tutorial Start",
+            "description": "Player learns basic drag and drop mechanics.",
+            "trigger": "on_start"
+          },
+          {
+            "id": "first_stack",
+            "label": "First Stack Complete",
+            "description": "Player successfully stacks three plates without falling.",
+            "trigger": "on_pickup"
+          }
+        ],
+        "audio_tracks": [
+          {
+            "name": "AmbientHum",
+            "description": "Low frequency background hum for the simulation environment.",
+            "loop": true,
+            "category": "ambient"
+          },
+          {
+            "name": "MenuTheme",
+            "description": "Minimalist melody for the main menu screen.",
+            "loop": true,
+            "category": "music"
+          }
+        ],
+        "procedural_meshes": [],
+        "entities": [
+          {
+            "name": "Plates",
+            "kind": "prop",
+            "count": 15,
+            "shape": "cylinder",
+            "placement": "scatter",
+            "color_role": "primary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 0.8,
+            "tag": "Plate",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "BasePlate",
+            "kind": "prop",
+            "count": 1,
+            "shape": "plane",
+            "placement": "single",
+            "color_role": "secondary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 2.0,
+            "tag": "Base",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "BackgroundProps",
+            "kind": "prop",
+            "count": 5,
+            "shape": "cube",
+            "placement": "scatter",
+            "color_role": "background",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 1.0,
+            "tag": "Prop",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          }
+        ],
+        "atoms": [],
+        "capabilities": {
+          "controller": {
+            "movement": true,
+            "jump": false,
+            "sprint": false,
+            "crouch": false,
+            "look_sensitivity": 2.0,
+            "speed": 5.0,
+            "sprint_multiplier": 1.7,
+            "jump_force": 8.0
+          },
+          "physics": {
+            "gravity": true,
+            "collision": "dynamic",
+            "mass": 5.0,
+            "drag": 0.1
+          },
+          "hud": {
+            "show_health": false,
+            "show_ammo": false,
+            "show_objective": true,
+            "show_minimap": false
+          },
+          "input": {
+            "bindings": [
+              {
+                "action": "Drag",
+                "key": "Mouse0",
+                "event": ""
+              },
+              {
+                "action": "Interact",
+                "key": "E",
+                "event": ""
+              }
+            ]
+          },
+          "model": {
+            "lod": "auto",
+            "animations": {
+              "Idle": "Idle"
+            }
+          },
+          "animation": {
+            "rig_type": "generic",
+            "clips": {
+              "Idle": "Idle"
+            }
+          },
+          "dialog": {
+            "system": "simple",
+            "bark_on_sight": false
+          },
+          "ai": {
+            "pathfinding": false,
+            "detection_range": 15.0,
+            "behavior": "idle"
+          },
+          "vfx": {
+            "particles": true,
+            "post_processing": false
+          }
+        },
+        "environment": {
+          "time_of_day": "day",
+          "fog": false,
+          "fog_color": null,
+          "sun_intensity": null
+        },
+        "color_palette": {
+          "name": "CeramicMinimalist",
+          "primary": "#FFFFFF",
+          "secondary": "#E0E0E0",
+          "accent": "#4A90E2",
+          "background": "#1A1A1A",
+          "trim": "#808080"
+        },
+        "meta": {
+          "genre": "universal"
+        },
+        "world_spec": null,
+        "characters": [
+          {
+            "id": "player_01",
+            "name": "Player",
+            "role": "player",
+            "model_ref": "BasePlate",
+            "animation_set": [
+              "Idle"
+            ],
+            "dialog_graph": null,
+            "npc_brain": null
+          }
+        ],
+        "missions": [
+          {
+            "id": "stack_challenge_01",
+            "title": "The Tower",
+            "description": "Stack as many plates as possible without the tower collapsing.",
+            "objectives": [
+              {
+                "id": "obj_stack_count",
+                "description": "Reach a stack height of 5 plates.",
+                "type": "collect",
+                "target_ref": "Plates",
+                "count": 5,
+                "optional": false
+              }
+            ],
+            "triggers": [],
+            "rewards": {
+              "score": 100
+            },
+            "story_beat_ref": ""
+          },
+          {
+            "id": "balance_challenge_01",
+            "title": "The Balance",
+            "description": "Maintain the stack stability for a set duration.",
+            "objectives": [
+              {
+                "id": "obj_stability_time",
+                "description": "Keep the center of mass within bounds for 10 seconds.",
+                "type": "survive",
+                "target_ref": "",
+                "count": 1,
+                "optional": false
+              }
+            ],
+            "triggers": [],
+            "rewards": {
+              "score": 250
+            },
+            "story_beat_ref": ""
+          }
+        ],
+        "audio_specs": [
+          {
+            "id": "plate_clatter",
+            "type": "sfx",
+            "description": "Short synthesized blip for plate impact sound.",
+            "generation_method": "procedural",
+            "parameters": {
+              "gen_prompt": "short ceramic clatter sound varying by velocity"
+            },
+            "file_ref": "",
+            "loop": false
+          },
+          {
+            "id": "wind_hum",
+            "type": "ambient",
+            "description": "Low frequency wind noise for simulated air resistance.",
+            "generation_method": "stable_audio",
+            "parameters": {
+              "gen_prompt": "soft ambient wind sound minimalist"
+            },
+            "file_ref": "",
+            "loop": true
+          },
+          {
+            "id": "ui_click",
+            "type": "sfx",
+            "description": "Click sound for UI interactions.",
+            "generation_method": "procedural",
+            "parameters": {
+              "gen_prompt": "short soft click sound"
+            },
+            "file_ref": "",
+            "loop": false
+          }
+        ],
+        "materials": [
+          {
+            "id": "ceramic_plate",
+            "name": "CeramicPlate",
+            "shader_model": "Standard",
+            "pbr_maps": null,
+            "generation_method": "procedural",
+            "parameters": {
+              "color": "#FFFFFF",
+              "smoothness": 0.9
+            }
+          },
+          {
+            "id": "wooden_base",
+            "name": "WoodenBase",
+            "shader_model": "Standard",
+            "pbr_maps": null,
+            "generation_method": "procedural",
+            "parameters": {
+              "color": "#8B5A2B",
+              "smoothness": 0.3
+            }
+          },
+          {
+            "id": "dark_trim",
+            "name": "DarkTrim",
+            "shader_model": "Standard",
+            "pbr_maps": null,
+            "generation_method": "procedural",
+            "parameters": {
+              "color": "#1A1A1A",
+              "smoothness": 0.5
+            }
+          }
+        ],
+        "models": [
+          {
+            "id": "plate_mesh",
+            "name": "PlateMesh",
+            "category": "prop",
+            "generation_method": "parametric_base",
+            "parameters": {},
+            "file_ref": "",
+            "materials": [
+              "ceramic_plate"
+            ]
+          },
+          {
+            "id": "base_mesh",
+            "name": "BaseMesh",
+            "category": "prop",
+            "generation_method": "parametric_base",
+            "parameters": {},
+            "file_ref": "",
+            "materials": [
+              "wooden_base"
+            ]
+          }
+        ],
+        "animations": [],
+        "vfx": [
+          {
+            "id": "impact_dust",
+            "name": "ImpactDust",
+            "type": "particle",
+            "parameters": {
+              "loop": false,
+              "duration": 1.0,
+              "play_on_start": true,
+              "auto_destroy": true,
+              "scale": 1.0
+            },
+            "file_ref": ""
+          }
+        ],
+        "shaders": [],
+        "behavior_trees": [],
+        "microgens": [],
+        "wiring": null
+      },
+      "elapsed_s": 260.0
+    },
+    "ood_sort": {
+      "prompt": "sort falling colored blocks into matching bins",
+      "multimodal_sections": [
+        "capabilities",
+        "characters",
+        "missions",
+        "audio_specs",
+        "vfx",
+        "surfaces",
+        "sequence"
+      ],
+      "schema_hints": "\nASSET LIBRARY \u2014 set each entity's model_hint to 2-5 plain words matching a real model. Vocabulary:\n  categories: background, character, creature, decoration, environment, floor, fx, mechanism, nature, object, obstacle, platform, prop, rail, ramp, ship, stairs, structure, track, ui, vegetation, vehicle, weapon\n  tags: bend, boulder, corner, corridor, creature, dirt, dungeon, edge, end, environment, floor, ground, incline, missiles, nature, ne, nw, parts, pipe, plant, platform, prop, ramp, road, rock, rocket, sand, se, ship, slope, space, stone, structure, sw, terrain, tile, track, turn, vehicle, wood\n",
+      "user_message_chars": 23170,
+      "raw_chars": 9712,
+      "validated": true,
+      "apply_intent_msgs": [],
+      "summary": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "meta_genre": "universal",
+        "render_pipeline": "URP",
+        "platform": "all",
+        "unity_version": "6000.0",
+        "n_packages": 4,
+        "n_scripts": 6,
+        "scenes": [
+          "Main",
+          "MainMenu"
+        ],
+        "features": [
+          "physics",
+          "ui_toolkit",
+          "input_system",
+          "cinemachine",
+          "audio"
+        ],
+        "entity_kind_counts": {
+          "prop": 2,
+          "building": 1,
+          "pickup": 1,
+          "ui": 1
+        },
+        "entities": [
+          {
+            "name": "SkyBackground",
+            "kind": "prop",
+            "model_hint": "",
+            "count": 1
+          },
+          {
+            "name": "PlatformBlocks",
+            "kind": "prop",
+            "model_hint": "",
+            "count": 12
+          },
+          {
+            "name": "ReceptacleBins",
+            "kind": "building",
+            "model_hint": "",
+            "count": 6
+          },
+          {
+            "name": "PuzzleBlocks",
+            "kind": "pickup",
+            "model_hint": "",
+            "count": 24
+          },
+          {
+            "name": "ScoreBoard",
+            "kind": "ui",
+            "model_hint": "",
+            "count": 1
+          }
+        ]
+      },
+      "schema": {
+        "project_name": "BlockSorter",
+        "company_name": "PuzzleStudio",
+        "description": "A vibrant 2D physics puzzle game where players sort colored blocks into matching receptacles using gravity and timing.",
+        "game_type": "2D",
+        "platform": "all",
+        "locomotion": "walk",
+        "render_pipeline": "URP",
+        "unity_version": "6000.0",
+        "color_space": "Linear",
+        "visual_style": "stylized",
+        "scenes": [
+          "Main",
+          "MainMenu"
+        ],
+        "scene_specs": [
+          {
+            "name": "Main",
+            "description": "The core gameplay area where blocks fall into bins.",
+            "time_of_day": "day",
+            "fog": false,
+            "fog_color": null,
+            "entities": [
+              "SkyBackground",
+              "PlatformBlocks",
+              "ReceptacleBins",
+              "PuzzleBlocks"
+            ]
+          },
+          {
+            "name": "MainMenu",
+            "description": "The hub screen with score tracking and level selection.",
+            "time_of_day": "day",
+            "fog": false,
+            "fog_color": null,
+            "entities": [
+              "ScoreBoard"
+            ]
+          }
+        ],
+        "features": [
+          "physics",
+          "ui_toolkit",
+          "input_system",
+          "cinemachine",
+          "audio"
+        ],
+        "packages": [
+          {
+            "description": "Universal Render Pipeline for vibrant stylized visuals.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "Input System package for unified cross-platform controls.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "UI Toolkit for responsive score and objective tracking.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "Cinemachine for smooth camera transitions during gameplay.",
+            "package_id": null,
+            "version": null
+          }
+        ],
+        "scripts": [
+          {
+            "name": "PlayerController",
+            "type": "player",
+            "description": "Handles player movement and input interactions.",
+            "attach_to": "player",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "GameManager",
+            "type": "game_manager",
+            "description": "Manages level progression, score tracking, and win conditions.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "PuzzleBlock",
+            "type": "custom",
+            "description": "Handles falling physics and color matching logic for blocks.",
+            "attach_to": "systems",
+            "extra_usings": [
+              "UnityEngine"
+            ],
+            "extra_fields": [
+              {
+                "name": "_color",
+                "type": "Color",
+                "default": "new Color(1f, 0.35f, 0.2f)",
+                "header": null,
+                "tooltip": null
+              },
+              {
+                "name": "_targetColorIndex",
+                "type": "int",
+                "default": "-1",
+                "header": null,
+                "tooltip": null
+              }
+            ],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "ReceptacleBin",
+            "type": "custom",
+            "description": "Detects block collisions and validates color matches.",
+            "attach_to": "systems",
+            "extra_usings": [
+              "UnityEngine"
+            ],
+            "extra_fields": [
+              {
+                "name": "_requiredColorIndex",
+                "type": "int",
+                "default": "-1",
+                "header": null,
+                "tooltip": null
+              }
+            ],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "UIManager",
+            "type": "ui_manager",
+            "description": "Updates score and objective UI elements.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "AudioManager",
+            "type": "audio_manager",
+            "description": "Handles SFX playback for block drops and matches.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          }
+        ],
+        "story_beats": [
+          {
+            "id": "intro_level",
+            "label": "First Sort",
+            "description": "Player learns the mechanics of dropping blocks into bins.",
+            "trigger": "on_start"
+          },
+          {
+            "id": "complex_sort",
+            "label": "Color Challenge",
+            "description": "Player must sort multiple colors simultaneously.",
+            "trigger": "on_timer"
+          }
+        ],
+        "audio_tracks": [
+          {
+            "name": "MainTheme",
+            "description": "Upbeat background music for gameplay.",
+            "loop": true,
+            "category": "music"
+          },
+          {
+            "name": "MenuMusic",
+            "description": "Calmer track for the main menu screen.",
+            "loop": true,
+            "category": "music"
+          }
+        ],
+        "procedural_meshes": [],
+        "entities": [
+          {
+            "name": "SkyBackground",
+            "kind": "prop",
+            "count": 1,
+            "shape": "plane",
+            "placement": "single",
+            "color_role": "background",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 5.0,
+            "tag": "Untagged",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "PlatformBlocks",
+            "kind": "prop",
+            "count": 12,
+            "shape": "cube",
+            "placement": "scatter",
+            "color_role": "secondary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 0.5,
+            "tag": "Untagged",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "ReceptacleBins",
+            "kind": "building",
+            "count": 6,
+            "shape": "cylinder",
+            "placement": "ring",
+            "color_role": "secondary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 1.0,
+            "tag": "Untagged",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "PuzzleBlocks",
+            "kind": "pickup",
+            "count": 24,
+            "shape": "cube",
+            "placement": "scatter",
+            "color_role": "primary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 0.3,
+            "tag": "Untagged",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "ScoreBoard",
+            "kind": "ui",
+            "count": 1,
+            "shape": "quad",
+            "placement": "single",
+            "color_role": "accent",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 0.5,
+            "tag": "Untagged",
+            "behavior": "",
+            "model_hint": "",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          }
+        ],
+        "atoms": [],
+        "capabilities": {
+          "controller": {
+            "movement": true,
+            "jump": false,
+            "sprint": false,
+            "crouch": false,
+            "look_sensitivity": 2.0,
+            "speed": 5.0,
+            "sprint_multiplier": 1.7,
+            "jump_force": 8.0
+          },
+          "physics": {
+            "gravity": true,
+            "collision": "dynamic",
+            "mass": 5.0,
+            "drag": 0.1
+          },
+          "hud": {
+            "show_health": false,
+            "show_ammo": false,
+            "show_objective": true,
+            "show_minimap": false
+          },
+          "input": {
+            "bindings": [
+              {
+                "action": "Move",
+                "key": "A",
+                "event": ""
+              },
+              {
+                "action": "Interact",
+                "key": "E",
+                "event": ""
+              }
+            ]
+          },
+          "model": {
+            "lod": "auto",
+            "animations": {
+              "Idle": "Idle"
+            }
+          },
+          "animation": {
+            "rig_type": "generic",
+            "clips": {
+              "Idle": "Idle"
+            }
+          },
+          "dialog": {
+            "system": "simple",
+            "bark_on_sight": false
+          },
+          "ai": {
+            "pathfinding": false,
+            "detection_range": 0.5,
+            "behavior": "idle"
+          },
+          "vfx": {
+            "particles": true,
+            "post_processing": false
+          }
+        },
+        "environment": {
+          "time_of_day": "day",
+          "fog": false,
+          "fog_color": null,
+          "sun_intensity": null
+        },
+        "color_palette": {
+          "name": "VibrantPalette",
+          "primary": "#FF5733",
+          "secondary": "#33FF57",
+          "accent": "#3357FF",
+          "background": "#2C3E50",
+          "trim": "#FFFFFF"
+        },
+        "meta": {
+          "genre": "universal"
+        },
+        "world_spec": null,
+        "characters": [
+          {
+            "id": "player_char",
+            "name": "Player",
+            "role": "player",
+            "model_ref": "PuzzleBlocks",
+            "animation_set": [
+              "Idle"
+            ],
+            "dialog_graph": null,
+            "npc_brain": null
+          }
+        ],
+        "missions": [
+          {
+            "id": "sort_bins",
+            "title": "Sort the Bins",
+            "description": "Drop all blocks into their matching colored receptacles.",
+            "objectives": [
+              {
+                "id": "drop_all_blocks",
+                "description": "Place every block into a bin of the same color.",
+                "type": "collect",
+                "target_ref": "ReceptacleBins",
+                "count": 6,
+                "optional": false
+              }
+            ],
+            "triggers": [],
+            "rewards": {
+              "score": 100
+            },
+            "story_beat_ref": ""
+          }
+        ],
+        "audio_specs": [
+          {
+            "id": "block_drop",
+            "type": "sfx",
+            "description": "Short thud sound when a block hits the ground.",
+            "generation_method": "procedural",
+            "parameters": {
+              "gen_prompt": "short low frequency impact thud"
+            },
+            "file_ref": "",
+            "loop": false
+          },
+          {
+            "id": "match_success",
+            "type": "sfx",
+            "description": "Pleasant chime when a block matches the bin color.",
+            "generation_method": "procedural",
+            "parameters": {
+              "gen_prompt": "high pitched pleasant ascending chime"
+            },
+            "file_ref": "",
+            "loop": false
+          },
+          {
+            "id": "ambient_music",
+            "type": "music",
+            "description": "Lo-fi beat for background atmosphere.",
+            "generation_method": "stable_audio",
+            "parameters": {
+              "gen_prompt": "upbeat lo-fi hip hop instrumental"
+            },
+            "file_ref": "",
+            "loop": true
+          }
+        ],
+        "materials": [
+          {
+            "id": "block_mat",
+            "name": "PuzzleBlockMat",
+            "shader_model": "Standard",
+            "pbr_maps": null,
+            "generation_method": "procedural",
+            "parameters": {
+              "color": "#FF5733",
+              "smoothness": 0.2
+            }
+          },
+          {
+            "id": "bin_mat",
+            "name": "ReceptacleMat",
+            "shader_model": "Standard",
+            "pbr_maps": null,
+            "generation_method": "procedural",
+            "parameters": {
+              "color": "#3357FF",
+              "smoothness": 0.1
+            }
+          }
+        ],
+        "models": [
+          {
+            "id": "block_model",
+            "name": "PuzzleBlockModel",
+            "category": "prop",
+            "generation_method": "parametric_base",
+            "parameters": {},
+            "file_ref": "",
+            "materials": [
+              "block_mat"
+            ]
+          },
+          {
+            "id": "bin_model",
+            "name": "ReceptacleBinModel",
+            "category": "prop",
+            "generation_method": "parametric_base",
+            "parameters": {},
+            "file_ref": "",
+            "materials": [
+              "bin_mat"
+            ]
+          }
+        ],
+        "animations": [],
+        "vfx": [
+          {
+            "id": "block_impact",
+            "name": "BlockImpact",
+            "type": "particle",
+            "parameters": {
+              "loop": false,
+              "duration": 0.5,
+              "play_on_start": true,
+              "auto_destroy": true,
+              "scale": 1.0
+            },
+            "file_ref": ""
+          },
+          {
+            "id": "match_spark",
+            "name": "MatchSpark",
+            "type": "particle",
+            "parameters": {
+              "loop": false,
+              "duration": 0.3,
+              "play_on_start": true,
+              "auto_destroy": true,
+              "scale": 1.5
+            },
+            "file_ref": ""
+          }
+        ],
+        "shaders": [],
+        "behavior_trees": [],
+        "microgens": [],
+        "wiring": null
+      },
+      "elapsed_s": 210.7
+    },
+    "ood_balance": {
+      "prompt": "balance a tray of drinks while walking across a room",
+      "multimodal_sections": [
+        "capabilities",
+        "characters",
+        "missions",
+        "audio_specs",
+        "dialog",
+        "behavior_trees",
+        "vfx"
+      ],
+      "schema_hints": "\nASSET LIBRARY \u2014 set each entity's model_hint to 2-5 plain words matching a real model. Vocabulary:\n  categories: background, character, creature, decoration, environment, floor, fx, mechanism, nature, object, obstacle, platform, prop, rail, ramp, ship, stairs, structure, track, ui, vegetation, vehicle, weapon\n  tags: bend, boulder, corner, corridor, creature, dirt, dungeon, edge, end, environment, floor, ground, incline, missiles, nature, ne, nw, parts, pipe, plant, platform, prop, ramp, road, rock, rocket, sand, se, ship, slope, space, stone, structure, sw, terrain, tile, track, turn, vehicle, wood\n",
+      "user_message_chars": 21157,
+      "raw_chars": 12060,
+      "validated": true,
+      "apply_intent_msgs": [],
+      "summary": {
+        "game_type": "isometric",
+        "locomotion": "walk",
+        "meta_genre": "universal",
+        "render_pipeline": "URP",
+        "platform": "all",
+        "unity_version": "6000.0",
+        "n_packages": 4,
+        "n_scripts": 8,
+        "scenes": [
+          "Main",
+          "Level1"
+        ],
+        "features": [
+          "physics",
+          "ui_toolkit",
+          "input_system",
+          "cinemachine",
+          "navmesh",
+          "audio",
+          "tilemaps"
+        ],
+        "entity_kind_counts": {
+          "character": 1,
+          "prop": 3,
+          "obstacle": 1,
+          "npc": 1
+        },
+        "entities": [
+          {
+            "name": "Player",
+            "kind": "character",
+            "model_hint": "humanoid character",
+            "count": 1
+          },
+          {
+            "name": "Tray",
+            "kind": "prop",
+            "model_hint": "metal tray",
+            "count": 1
+          },
+          {
+            "name": "Tables",
+            "kind": "prop",
+            "model_hint": "wooden table",
+            "count": 8
+          },
+          {
+            "name": "Chairs",
+            "kind": "prop",
+            "model_hint": "dining chair",
+            "count": 20
+          },
+          {
+            "name": "Obstacles",
+            "kind": "obstacle",
+            "model_hint": "furniture prop",
+            "count": 15
+          },
+          {
+            "name": "NPCs",
+            "kind": "npc",
+            "model_hint": "waiter character",
+            "count": 6
+          }
+        ]
+      },
+      "schema": {
+        "project_name": "TrayBalance",
+        "company_name": "FluidDynamics Studio",
+        "description": "A physics-based simulation game where you balance a tray of drinks while navigating complex environments.",
+        "game_type": "isometric",
+        "platform": "all",
+        "locomotion": "walk",
+        "render_pipeline": "URP",
+        "unity_version": "6000.0",
+        "color_space": "Linear",
+        "visual_style": "stylized",
+        "scenes": [
+          "Main",
+          "Level1"
+        ],
+        "scene_specs": [
+          {
+            "name": "Main",
+            "description": "The hub area where players select levels and view stats.",
+            "time_of_day": "day",
+            "fog": false,
+            "fog_color": null,
+            "entities": []
+          },
+          {
+            "name": "Level1",
+            "description": "A busy cafe floor with tables, chairs, and obstacles to navigate.",
+            "time_of_day": "day",
+            "fog": false,
+            "fog_color": null,
+            "entities": [
+              "Player",
+              "Tray",
+              "Tables",
+              "Chairs",
+              "Obstacles",
+              "NPCs"
+            ]
+          }
+        ],
+        "features": [
+          "physics",
+          "ui_toolkit",
+          "input_system",
+          "cinemachine",
+          "navmesh",
+          "audio",
+          "tilemaps"
+        ],
+        "packages": [
+          {
+            "description": "Universal Render Pipeline for optimized lighting and rendering.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "Input System package for gamepad/keyboard mapping.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "NavMeshComponents for AI pathfinding around furniture.",
+            "package_id": null,
+            "version": null
+          },
+          {
+            "description": "Cinemachine for virtual camera tracking behind the player.",
+            "package_id": null,
+            "version": null
+          }
+        ],
+        "scripts": [
+          {
+            "name": "PlayerController",
+            "type": "player",
+            "description": "Handles standard walk movement and input processing.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "TrayPhysics",
+            "type": "custom",
+            "description": "Manages rigidbody physics for the tray and liquid stability.",
+            "attach_to": "player",
+            "extra_usings": [
+              "UnityEngine"
+            ],
+            "extra_fields": [
+              {
+                "name": "_trayRb",
+                "type": "Rigidbody",
+                "default": "",
+                "header": null,
+                "tooltip": null
+              },
+              {
+                "name": "_liquidMass",
+                "type": "float",
+                "default": "5.0f",
+                "header": null,
+                "tooltip": null
+              }
+            ],
+            "awake_extra": "",
+            "update_extra": "if (_trayRb == null) _trayRb = GetComponent<Rigidbody>(); _trayRb.mass = _liquidMass;",
+            "fixed_update_extra": "_trayRb.velocity *= 0.98f; // Apply friction",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "CameraShake",
+            "type": "camera",
+            "description": "Adds camera shake based on tray instability.",
+            "attach_to": "systems",
+            "extra_usings": [
+              "UnityEngine"
+            ],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "UIManager",
+            "type": "ui_manager",
+            "description": "Displays balance stability and liquid levels.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "AudioManager",
+            "type": "audio_manager",
+            "description": "Handles pitch shifting for liquid sloshing sounds.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "NPCSpawner",
+            "type": "custom",
+            "description": "Dynamically spawns waiters at destination points.",
+            "attach_to": "systems",
+            "extra_usings": [
+              "UnityEngine"
+            ],
+            "extra_fields": [
+              {
+                "name": "_npcPrefab",
+                "type": "GameObject",
+                "default": "",
+                "header": null,
+                "tooltip": null
+              }
+            ],
+            "awake_extra": "",
+            "update_extra": "if (Random.value < 0.1f) SpawnNPC();",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "LiquidSloshing",
+            "type": "custom",
+            "description": "Simulates liquid physics and audio pitch changes.",
+            "attach_to": "player",
+            "extra_usings": [
+              "UnityEngine"
+            ],
+            "extra_fields": [
+              {
+                "name": "_pitchOffset",
+                "type": "float",
+                "default": "1.0f",
+                "header": null,
+                "tooltip": null
+              }
+            ],
+            "awake_extra": "",
+            "update_extra": "_pitchOffset = 1.0f + _trayRb.velocity.magnitude * 0.5f;",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          },
+          {
+            "name": "NavMeshAgent",
+            "type": "custom",
+            "description": "Handles pathfinding around furniture obstacles.",
+            "attach_to": "systems",
+            "extra_usings": [],
+            "extra_fields": [],
+            "awake_extra": "",
+            "update_extra": "",
+            "fixed_update_extra": "",
+            "extra_methods": [],
+            "atoms": []
+          }
+        ],
+        "story_beats": [
+          {
+            "id": "start_level",
+            "label": "Level Start",
+            "description": "Player spawns at the entrance of the cafe.",
+            "trigger": "on_start"
+          },
+          {
+            "id": "deliver_drink",
+            "label": "Deliver Drink",
+            "description": "Reach a table to complete the objective.",
+            "trigger": "on_pickup"
+          }
+        ],
+        "audio_tracks": [
+          {
+            "name": "CafeAmbience",
+            "description": "Background cafe noise with chatter and clinking.",
+            "loop": true,
+            "category": "ambient"
+          },
+          {
+            "name": "MenuTheme",
+            "description": "Light upbeat music for the main menu.",
+            "loop": true,
+            "category": "music"
+          }
+        ],
+        "procedural_meshes": [
+          {
+            "name": "FloorTiles",
+            "description": "Modular floor tiles for cafe layout.",
+            "mesh_type": "room",
+            "resolution": 32
+          },
+          {
+            "name": "TableTop",
+            "description": "Circular table tops generated procedurally.",
+            "mesh_type": "custom",
+            "resolution": 16
+          }
+        ],
+        "entities": [
+          {
+            "name": "Player",
+            "kind": "character",
+            "count": 1,
+            "shape": "capsule",
+            "placement": "single",
+            "color_role": "primary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 1.0,
+            "tag": "Player",
+            "behavior": "",
+            "model_hint": "humanoid character",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "Tray",
+            "kind": "prop",
+            "count": 1,
+            "shape": "plane",
+            "placement": "single",
+            "color_role": "secondary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 0.8,
+            "tag": "Tray",
+            "behavior": "",
+            "model_hint": "metal tray",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "Tables",
+            "kind": "prop",
+            "count": 8,
+            "shape": "cube",
+            "placement": "grid",
+            "color_role": "secondary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 2.0,
+            "tag": "Table",
+            "behavior": "",
+            "model_hint": "wooden table",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "Chairs",
+            "kind": "prop",
+            "count": 20,
+            "shape": "cylinder",
+            "placement": "scatter",
+            "color_role": "trim",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 1.5,
+            "tag": "Chair",
+            "behavior": "",
+            "model_hint": "dining chair",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "Obstacles",
+            "kind": "obstacle",
+            "count": 15,
+            "shape": "cube",
+            "placement": "scatter",
+            "color_role": "accent",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 2.0,
+            "tag": "Furniture",
+            "behavior": "",
+            "model_hint": "furniture prop",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          },
+          {
+            "name": "NPCs",
+            "kind": "npc",
+            "count": 6,
+            "shape": "capsule",
+            "placement": "grid",
+            "color_role": "secondary",
+            "spacing": 2.0,
+            "radius": 8.0,
+            "scale": 1.0,
+            "tag": "Waiter",
+            "behavior": "",
+            "model_hint": "waiter character",
+            "sketchfab_query": "",
+            "atoms": [],
+            "path_points": [],
+            "path_width": 0.0,
+            "origin_offset": [
+              0.0,
+              0.0
+            ],
+            "group_radius": 0.0,
+            "instance_positions": [],
+            "instance_yaws": []
+          }
+        ],
+        "atoms": [],
+        "capabilities": {
+          "controller": {
+            "movement": true,
+            "jump": false,
+            "sprint": false,
+            "crouch": false,
+            "look_sensitivity": 2.0,
+            "speed": 6.0,
+            "sprint_multiplier": 1.7,
+            "jump_force": 8.0
+          },
+          "physics": {
+            "gravity": true,
+            "collision": "dynamic",
+            "mass": 80.0,
+            "drag": 0.0
+          },
+          "hud": {
+            "show_health": false,
+            "show_ammo": false,
+            "show_objective": true,
+            "show_minimap": false
+          },
+          "input": {
+            "bindings": [
+              {
+                "action": "Move",
+                "key": "WASD",
+                "event": ""
+              },
+              {
+                "action": "Interact",
+                "key": "E",
+                "event": ""
+              }
+            ]
+          },
+          "model": {
+            "lod": "auto",
+            "animations": {
+              "Idle": "Idle"
+            }
+          },
+          "animation": {
+            "rig_type": "humanoid",
+            "clips": {
+              "Idle": "Idle",
+              "Run": "Run"
+            }
+          },
+          "dialog": {
+            "system": "simple",
+            "bark_on_sight": false
+          },
+          "ai": {
+            "pathfinding": true,
+            "detection_range": 15.0,
+            "behavior": "patrol"
+          },
+          "vfx": {
+            "particles": true,
+            "post_processing": false
+          }
+        },
+        "environment": {
+          "time_of_day": "day",
+          "fog": false,
+          "fog_color": null,
+          "sun_intensity": null
+        },
+        "color_palette": {
+          "name": "CafeWarmth",
+          "primary": "#E8D5B5",
+          "secondary": "#A37F59",
+          "accent": "#FF6B42",
+          "background": "#F0EAD6",
+          "trim": "#5C4033"
+        },
+        "meta": {
+          "genre": "universal"
+        },
+        "world_spec": null,
+        "characters": [
+          {
+            "id": "player_01",
+            "name": "Waiter",
+            "role": "player",
+            "model_ref": "Player",
+            "animation_set": [
+              "Idle",
+              "Run"
+            ],
+            "dialog_graph": null,
+            "npc_brain": null
+          },
+          {
+            "id": "npc_waiter_01",
+            "name": "Senior Waiter",
+            "role": "npc",
+            "model_ref": "NPCs",
+            "animation_set": [
+              "Idle",
+              "Walk"
+            ],
+            "dialog_graph": {
+              "start_node": "n1",
+              "nodes": [
+                {
+                  "id": "n1",
+                  "speaker": "Senior Waiter",
+                  "text": "Watch your step, the floor is uneven.",
+                  "emotion": "neutral",
+                  "audio_ref": "",
+                  "choices": []
+                }
+              ]
+            },
+            "npc_brain": {
+              "traits": [
+                "gruff"
+              ],
+              "goals": [
+                "guard the gate"
+              ],
+              "memory": [],
+              "behavior_tree": null
+            }
+          }
+        ],
+        "missions": [
+          {
+            "id": "deliver_drinks",
+            "title": "Cafe Service",
+            "description": "Deliver drinks to customers without spilling.",
+            "objectives": [
+              {
+                "id": "reach_table_1",
+                "description": "Reach the first table with a full tray.",
+                "type": "reach",
+                "target_ref": "Tables",
+                "count": 1,
+                "optional": false
+              }
+            ],
+            "triggers": [],
+            "rewards": {
+              "score": 100
+            },
+            "story_beat_ref": ""
+          }
+        ],
+        "audio_specs": [
+          {
+            "id": "liquid_slosh",
+            "type": "sfx",
+            "description": "Pitch-shifting sound of liquid moving in the tray.",
+            "generation_method": "procedural",
+            "parameters": {
+              "gen_prompt": "wet liquid sloshing sound, pitch varies with speed"
+            },
+            "file_ref": "",
+            "loop": false
+          },
+          {
+            "id": "footstep_cafe",
+            "type": "sfx",
+            "description": "Footsteps on cafe floor tiles.",
+            "generation_method": "procedural",
+            "parameters": {
+              "gen_prompt": "soft footsteps on hard tile surface"
+            },
+            "file_ref": "",
+            "loop": false
+          },
+          {
+            "id": "cafe_ambient",
+            "type": "ambient",
+            "description": "Background cafe noise.",
+            "generation_method": "stable_audio",
+            "parameters": {
+              "gen_prompt": "distant chatter, clinking cups, soft jazz"
+            },
+            "file_ref": "",
+            "loop": true
+          }
+        ],
+        "materials": [],
+        "models": [],
+        "animations": [],
+        "vfx": [
+          {
+            "id": "tray_shake",
+            "name": "TrayShake",
+            "type": "particle",
+            "parameters": {
+              "loop": false,
+              "duration": 0.5,
+              "play_on_start": true,
+              "auto_destroy": true,
+              "scale": 1.0
+            },
+            "file_ref": ""
+          },
+          {
+            "id": "spill_particles",
+            "name": "SpillParticles",
+            "type": "particle",
+            "parameters": {
+              "loop": false,
+              "duration": 2.0,
+              "play_on_start": true,
+              "auto_destroy": true,
+              "scale": 1.0
+            },
+            "file_ref": ""
+          }
+        ],
+        "shaders": [],
+        "behavior_trees": [
+          {
+            "id": "waiter_patrol",
+            "name": "WaiterBrain",
+            "tree": {
+              "root": "n1",
+              "nodes": [
+                {
+                  "id": "n1",
+                  "type": "selector",
+                  "children": [
+                    "n2",
+                    "n3"
+                  ],
+                  "action": "",
+                  "params": {}
+                },
+                {
+                  "id": "n2",
+                  "type": "action",
+                  "children": [],
+                  "action": "Patrol",
+                  "params": {
+                    "speed": 2.0
+                  }
+                },
+                {
+                  "id": "n3",
+                  "type": "condition",
+                  "children": [],
+                  "action": "PlayerInRange",
+                  "params": {
+                    "range": 12
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "microgens": [],
+        "wiring": null
+      },
+      "elapsed_s": 263.6
+    }
+  }
+}

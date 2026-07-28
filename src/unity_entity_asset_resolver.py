@@ -12,6 +12,12 @@ Tiering per entity (first hit wins):
                       model_hint (+ low-weight scene description) against
                       lookups/unity/asset_catalog.json, with deterministic
                       variety: same-kind groups round-robin the top matches.
+                      Every tier's candidate pool is KIND-SCOPED first (see
+                      _passes_kind_scope): an asset whose own category /
+                      kind_hints place it in a concept domain can only fill an
+                      entity scoped to that domain, so a lone shared keyword
+                      can no longer reach across the library
+                      ("ScoreBoard" → skateboard.fbx via "board").
   3. fallback       — strict mode hard-fails with the query tokens and near
                       misses (FAIL-FAST doctrine); non-strict keeps the old
                       prop fallback + warning.
@@ -630,6 +636,16 @@ def resolve_entity_assets(schema,
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
+        strong_q = {t for t, w in qw.items() if w >= _STRONG_HIT}
+
+        # The entity's concept SCOPE — its kind-constrained concept-layer band
+        # (see ConceptLayers.band). Computed HERE, before Tier S, rather than at
+        # Tier 2a where it used to live, so every scoring tier shares one
+        # definition of "which domain is this entity in" (_passes_kind_scope).
+        layer_band: set[str] = set()
+        layer_top_hits = 0
+        if layers:
+            layer_band, layer_top_hits = layers.band(qw, kind, _STRONG_HIT)
 
         def _kind_only_hit(a: dict) -> bool:
             """True if `kind` is the ONLY strong token this entry matches —
@@ -682,6 +698,56 @@ def resolve_entity_assets(schema,
                                 if len(t) > 1}
                 return kind in fname_tokens
             return True
+
+        def _passes_kind_scope(a: dict) -> bool:
+            """Kind-scoped candidate filtering: an asset that DECLARES a domain
+            may only fill an entity scoped to that same domain.
+
+            The keyword tiers score on token overlap alone, so a single
+            incidental shared word reaches across the entire library. Hit live
+            (tools/out/resolver_tiers.json, ood_sort): "ScoreBoard"
+            (kind="ui", model_hint "score board ui") tokenizes to score/board/
+            ui, and skateboard.fbx carries the curated keyword "board" — one
+            strong hit, enough to win Tier 2b outright and park a skateboard
+            where a scoreboard belongs. Nothing upstream objected: a "ui"
+            entity classifies into no concept layer, so Tier 2a never ran, and
+            _passes_kind_guard only rejects a match whose ONLY strong token is
+            the bare kind word ("board" is not "ui").
+
+            But the asset's own stamps already say what it is — skateboard.fbx
+            is category "vehicle", kind_hints ["vehicle"]: STRONG concept-layer
+            membership in the vehicle family. Three outcomes:
+
+              - no strong membership   → the asset claims no narrow domain, so
+                                         there is nothing to contradict; stays
+                                         eligible (today's behavior, and about
+                                         a third of the catalog).
+              - strong membership that meets the entity's own layer band
+                                       → in scope, eligible.
+              - strong membership elsewhere (or an entity that names no concept
+                at all, band empty)    → only the identity-evidence escape
+                                         hatch, the same rule
+                                         _sk_contextual_guard applies to
+                                         marketplace tag soup: a strong query
+                                         token must appear in the pack's own
+                                         FILENAME. An entity that literally
+                                         says "skateboard" still gets one;
+                                         "board" alone never does.
+
+            Complements rather than replaces _passes_kind_guard: that one asks
+            "is this match more than a coincidental keyword?", this one asks
+            "is this asset even in the entity's domain?". Inert when
+            concept_layers.json is absent (`layers is None`) — like every other
+            layer branch, no taxonomy means no opinion.
+            """
+            if layers is None:
+                return True
+            strong_m = layers.membership(a)[1]
+            if not strong_m or (strong_m & layer_band):
+                return True
+            fname = {t for t in tokenize(Path(a.get("filename", "")).stem)
+                     if len(t) > 1}
+            return bool(strong_q & fname)
 
         def _sk_contextual_guard(a: dict) -> bool:
             """Marketplace tags describe an upload's CONTEXT as often as its
@@ -739,6 +805,7 @@ def resolve_entity_assets(schema,
                         if (s := _sk_score(a)) >= sk_min
                         and _entry_source(a, asset_root) is not None
                         and _passes_kind_guard(a)
+                        and _passes_kind_scope(a)
                         and _sk_contextual_guard(a)]
             if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
                 from .sketchfab_freeze import fetch_and_freeze
@@ -764,6 +831,7 @@ def resolve_entity_assets(schema,
                                                           # call can reuse it
                     s = _sk_score(new_entry)
                     if (s >= sk_min and _passes_kind_guard(new_entry)
+                            and _passes_kind_scope(new_entry)
                             and _sk_contextual_guard(new_entry)):
                         sk_scored = [(s, new_entry)]
             if sk_scored:
@@ -788,14 +856,10 @@ def resolve_entity_assets(schema,
         # so an on-concept asset beats an off-concept one that merely edges
         # ahead on generic_score. This is what stops cross-domain drift before
         # the literal global match can happen.
-        layer_band: set[str] = set()
-        layer_top_hits = 0
-        if layers:
-            layer_band, layer_top_hits = layers.band(qw, kind, _STRONG_HIT)
         if layer_band:
             layer_scored: list[tuple[float, dict]] = []
             for a, (broad, strong_m) in zip(assets, asset_membership):
-                if not (broad & layer_band):
+                if not (broad & layer_band) or not _passes_kind_scope(a):
                     continue
                 is_strong = bool(strong_m & layer_band)
                 # When a real default already covers this kind, only a STRONG
@@ -824,9 +888,16 @@ def resolve_entity_assets(schema,
         # ── Tier 2b: global literal match (fallback / concept-layers absent) ──
         # _kind_only_hit / _passes_kind_guard are defined above (before Tier S)
         # so both Tier S and Tier 2b share the exact same weak-match guard.
+        # _passes_kind_scope is a HARD filter here, applied to `candidates`
+        # rather than alongside _passes_kind_guard below: the guarded/raw
+        # fallback deliberately relaxes the weak-match guard when it would
+        # otherwise empty the field, and that relaxation must never hand back
+        # an out-of-domain asset (ScoreBoard has no tier-1 default, so the raw
+        # fallback is exactly the branch skateboard.fbx came back through).
         candidates = [(s, a) for a in assets
                       if (s := _final_score(a)) >= min_score
-                      and _entry_source(a, asset_root) is not None]
+                      and _entry_source(a, asset_root) is not None
+                      and _passes_kind_scope(a)]
         guarded = [sa for sa in candidates if _passes_kind_guard(sa[1])]
         # Guarding never regresses below today's behavior: with a tier-1
         # default it's a hard filter (empty just falls through to the
@@ -859,7 +930,9 @@ def resolve_entity_assets(schema,
         if layer_band and layer_top_hits >= 1:
             soft: list[tuple[float, dict]] = []
             for a, (broad, strong_m) in zip(assets, asset_membership):
-                if not (broad & layer_band) or _entry_source(a, asset_root) is None:
+                if (not (broad & layer_band)
+                        or _entry_source(a, asset_root) is None
+                        or not _passes_kind_scope(a)):
                     continue
                 # Same signage embargo the _score tiers enforce — this soft
                 # path scores without _score, so it needs its own check.

@@ -1,0 +1,604 @@
+{
+  "_provenance": {
+    "min_match_score": 0.15,
+    "strong_hit": 1.0,
+    "strict": true,
+    "sketchfab_enabled": false,
+    "tier_markers": [
+      "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+      "Tier 2 (catalog semantic match)",
+      "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+      "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+      "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+      "Tier 2 (c: best-in-layer fallback (kill the \"same 15 defaults\"))",
+      "Tier 3 (schema procedural mesh)",
+      "Tier 4 (fallback policy)"
+    ],
+    "note": "Read-only. Resolver run unmodified; tiers traced, scores wrapped. Uses the post-fixer schema each project generated from."
+  },
+  "runs": {
+    "ood_stack": {
+      "prompt": "a game about stacking plates without them falling",
+      "error": "ValueError: [assets.strict] no real model matches entity 'BackgroundProps' (kind='prop'). Give the entity a model_hint matching the asset library (run: python main.py unity-catalog --dry-run for the vocabulary), map its kind in lookups/unity/default_models.json, add a procedural_meshes entry sharing a name word with the entity, or set assets.strict: false.",
+      "entities": {
+        "Plates": {
+          "kind": "prop",
+          "model_hint": "plates",
+          "sketchfab_query": "stylized plates",
+          "strong_tokens": {
+            "plates": 2.0,
+            "plate": 2.0
+          },
+          "resolved_path": null,
+          "chosen_score": null,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "debris-plate-a.fbx",
+              1.1667
+            ],
+            [
+              "debris-plate-b.fbx",
+              1.1667
+            ],
+            [
+              "debris-plate-small-a.fbx",
+              1.1325
+            ],
+            [
+              "debris-plate-small-b.fbx",
+              1.1325
+            ]
+          ],
+          "n_scored_above_zero": 4
+        },
+        "BasePlate": {
+          "kind": "prop",
+          "model_hint": "base plate",
+          "sketchfab_query": "stylized baseplate",
+          "strong_tokens": {
+            "base": 2.0,
+            "plate": 2.0,
+            "baseplate": 2.0,
+            "bases": 2.0,
+            "plates": 2.0,
+            "baseplates": 2.0
+          },
+          "resolved_path": null,
+          "chosen_score": null,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "bed_floor.fbx",
+              1.2071
+            ],
+            [
+              "debris-plate-a.fbx",
+              1.1667
+            ],
+            [
+              "debris-plate-b.fbx",
+              1.1667
+            ],
+            [
+              "debris-plate-small-a.fbx",
+              1.1325
+            ],
+            [
+              "debris-plate-small-b.fbx",
+              1.1325
+            ]
+          ],
+          "n_scored_above_zero": 15
+        },
+        "BackgroundProps": {
+          "kind": "prop",
+          "model_hint": "background",
+          "sketchfab_query": "stylized scenery",
+          "strong_tokens": {
+            "background": 2.0,
+            "scenery": 2.0,
+            "backgrounds": 2.0,
+            "scenerys": 2.0
+          },
+          "resolved_path": null,
+          "chosen_score": null,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+            "Tier 2 (c: best-in-layer fallback (kill the \"same 15 defaults\"))",
+            "Tier 3 (schema procedural mesh)",
+            "Tier 4 (fallback policy)"
+          ],
+          "tier_fired": "Tier 4 (fallback policy)",
+          "top_candidates": [],
+          "n_scored_above_zero": 0
+        }
+      }
+    },
+    "ood_sort": {
+      "prompt": "sort falling colored blocks into matching bins",
+      "error": null,
+      "entities": {
+        "SkyBackground": {
+          "kind": "prop",
+          "model_hint": "sky background",
+          "sketchfab_query": "stylized sky background",
+          "strong_tokens": {
+            "sky": 2.0,
+            "background": 2.0,
+            "skys": 2.0,
+            "backgrounds": 2.0
+          },
+          "resolved_path": "Sprites/Kenney/Background/star3",
+          "chosen_score": 1.9142,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "star1.png",
+              1.9142
+            ],
+            [
+              "star2.png",
+              1.9142
+            ],
+            [
+              "star3.png",
+              1.9142
+            ],
+            [
+              "star_bronze.png",
+              1.6547
+            ],
+            [
+              "star_gold.png",
+              1.6547
+            ]
+          ],
+          "n_scored_above_zero": 22
+        },
+        "PlatformBlocks": {
+          "kind": "prop",
+          "model_hint": "platform blocks",
+          "sketchfab_query": "stylized platform blocks",
+          "strong_tokens": {
+            "platform": 2.0,
+            "blocks": 2.0,
+            "platforms": 2.0,
+            "block": 2.0
+          },
+          "resolved_path": "Sprites/Kenney/Environment/platform_end_SW",
+          "chosen_score": 1.5,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))"
+          ],
+          "tier_fired": "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+          "top_candidates": [
+            [
+              "platform_corner.png",
+              1.6547
+            ],
+            [
+              "platform_end.png",
+              1.6547
+            ],
+            [
+              "platform_high.png",
+              1.6547
+            ],
+            [
+              "platform_large.png",
+              1.6547
+            ],
+            [
+              "platform_long.png",
+              1.6547
+            ]
+          ],
+          "n_scored_above_zero": 109
+        },
+        "ReceptacleBins": {
+          "kind": "building",
+          "model_hint": "receptacle bins building",
+          "sketchfab_query": "stylized bins",
+          "strong_tokens": {
+            "receptacle": 2.0,
+            "bins": 2.0,
+            "building": 2.0,
+            "receptacles": 2.0,
+            "bin": 2.0,
+            "buildings": 2.0
+          },
+          "resolved_path": "Models/Kenney/Structure/building-type-i",
+          "chosen_score": 1.3165,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))"
+          ],
+          "tier_fired": "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+          "top_candidates": [
+            [
+              "structure.fbx",
+              1.3944
+            ],
+            [
+              "building-type-a.fbx",
+              1.3165
+            ],
+            [
+              "building-type-b.fbx",
+              1.3165
+            ],
+            [
+              "building-type-c.fbx",
+              1.3165
+            ],
+            [
+              "building-type-d.fbx",
+              1.3165
+            ]
+          ],
+          "n_scored_above_zero": 25
+        },
+        "PuzzleBlocks": {
+          "kind": "pickup",
+          "model_hint": "puzzle blocks pickup",
+          "sketchfab_query": "stylized puzzle blocks",
+          "strong_tokens": {
+            "puzzle": 2.0,
+            "blocks": 2.0,
+            "pickup": 2.0,
+            "puzzles": 2.0,
+            "block": 2.0,
+            "pickups": 2.0
+          },
+          "resolved_path": "Models/Default/Pickup/Pickup",
+          "chosen_score": null,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "statue_block.fbx",
+              1.1547
+            ],
+            [
+              "obstacle-middle.fbx",
+              0.9565
+            ],
+            [
+              "obstacle-box.fbx",
+              0.9071
+            ],
+            [
+              "fence-barrier-block-red.fbx",
+              0.8944
+            ],
+            [
+              "fence-barrier-block-white.fbx",
+              0.8944
+            ]
+          ],
+          "n_scored_above_zero": 27
+        },
+        "ScoreBoard": {
+          "kind": "ui",
+          "model_hint": "score board ui",
+          "sketchfab_query": "stylized scoreboard",
+          "strong_tokens": {
+            "score": 2.0,
+            "board": 2.0,
+            "ui": 2.0,
+            "scoreboard": 2.0,
+            "scores": 2.0,
+            "boards": 2.0,
+            "uis": 2.0,
+            "scoreboards": 2.0
+          },
+          "resolved_path": "Sprites/Kenney/Ui/hud_number_0",
+          "chosen_score": 0.8944,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "hud_number_0.png",
+              0.8944
+            ],
+            [
+              "hud_number_1.png",
+              0.8944
+            ],
+            [
+              "hud_number_2.png",
+              0.8944
+            ],
+            [
+              "hud_number_3.png",
+              0.8944
+            ],
+            [
+              "hud_number_4.png",
+              0.8944
+            ]
+          ],
+          "n_scored_above_zero": 16
+        }
+      }
+    },
+    "ood_balance": {
+      "prompt": "balance a tray of drinks while walking across a room",
+      "error": null,
+      "entities": {
+        "Player": {
+          "kind": "character",
+          "model_hint": "humanoid character",
+          "sketchfab_query": "stylized humanoid",
+          "strong_tokens": {
+            "character": 2.0,
+            "humanoid": 2.0,
+            "characters": 2.0,
+            "humanoids": 2.0
+          },
+          "resolved_path": "Models/Kenney/Character/alien",
+          "chosen_score": 0.8165,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))"
+          ],
+          "tier_fired": "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+          "top_candidates": [
+            [
+              "alien.fbx",
+              0.8165
+            ],
+            [
+              "astronautA.fbx",
+              0.8165
+            ],
+            [
+              "astronautB.fbx",
+              0.8165
+            ],
+            [
+              "character-skate-boy.fbx",
+              0.7667
+            ],
+            [
+              "character-skate-girl.fbx",
+              0.7667
+            ]
+          ],
+          "n_scored_above_zero": 6
+        },
+        "Tray": {
+          "kind": "prop",
+          "model_hint": "metal tray",
+          "sketchfab_query": "stylized tray",
+          "strong_tokens": {
+            "tray": 2.0,
+            "metal": 2.0,
+            "trays": 2.0,
+            "metals": 2.0
+          },
+          "resolved_path": "Models/Kenney/Structure/gate-metal-bars",
+          "chosen_score": 1.2071,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "gate-metal-bars.fbx",
+              1.2071
+            ]
+          ],
+          "n_scored_above_zero": 1
+        },
+        "Tables": {
+          "kind": "prop",
+          "model_hint": "wooden table",
+          "sketchfab_query": "stylized table",
+          "strong_tokens": {
+            "wooden": 2.0,
+            "table": 2.0,
+            "woodens": 2.0,
+            "tables": 1.0
+          },
+          "resolved_path": "procedural:custom:16",
+          "chosen_score": null,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+            "Tier 2 (c: best-in-layer fallback (kill the \"same 15 defaults\"))",
+            "Tier 3 (schema procedural mesh)"
+          ],
+          "tier_fired": "Tier 3 (schema procedural mesh)",
+          "top_candidates": [
+            [
+              "structure-wood.fbx",
+              1.4159
+            ],
+            [
+              "floor-wood.fbx",
+              0.9071
+            ]
+          ],
+          "n_scored_above_zero": 2
+        },
+        "Chairs": {
+          "kind": "prop",
+          "model_hint": "dining chair",
+          "sketchfab_query": "stylized chair",
+          "strong_tokens": {
+            "dining": 2.0,
+            "chair": 2.0,
+            "dinings": 2.0,
+            "chairs": 1.0
+          },
+          "resolved_path": "Models/Kenney/Prop/desk_chairStool",
+          "chosen_score": 1.5,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+            "Tier 2 (b: global literal match (fallback / concept-layers absent))"
+          ],
+          "tier_fired": "Tier 2 (b: global literal match (fallback / concept-layers absent))",
+          "top_candidates": [
+            [
+              "desk_chair.fbx",
+              1.6547
+            ],
+            [
+              "desk_chairArms.fbx",
+              1.5
+            ],
+            [
+              "desk_chairStool.fbx",
+              1.5
+            ]
+          ],
+          "n_scored_above_zero": 3
+        },
+        "Obstacles": {
+          "kind": "obstacle",
+          "model_hint": "furniture prop",
+          "sketchfab_query": "stylized prop",
+          "strong_tokens": {
+            "furniture": 2.0,
+            "furnitures": 2.0,
+            "obstacles": 1.0,
+            "obstacle": 1.0
+          },
+          "resolved_path": "Models/Kenney/Obstacle/cone",
+          "chosen_score": 0.9472,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))"
+          ],
+          "tier_fired": "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+          "top_candidates": [
+            [
+              "bump-b.fbx",
+              1.0672
+            ],
+            [
+              "obstacle-box.fbx",
+              1.0536
+            ],
+            [
+              "obstacle-middle.fbx",
+              1.0482
+            ],
+            [
+              "bump-solid-a.fbx",
+              1.0472
+            ],
+            [
+              "bump-a.fbx",
+              1.0282
+            ]
+          ],
+          "n_scored_above_zero": 25
+        },
+        "NPCs": {
+          "kind": "npc",
+          "model_hint": "waiter character",
+          "sketchfab_query": "stylized npc",
+          "strong_tokens": {
+            "npc": 2.0,
+            "waiter": 2.0,
+            "character": 2.0,
+            "waiters": 2.0,
+            "characters": 2.0,
+            "npcs": 1.0
+          },
+          "resolved_path": "Models/Kenney/Character/character-skate-boy",
+          "chosen_score": 1.2667,
+          "tier_sequence": [
+            "Tier 1 (explicit kind (schema-default \"prop\" is not explicit))",
+            "Tier 2 (catalog semantic match)",
+            "Tier S (Sketchfab-first (config-gated; runs before Kenney tiers))",
+            "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))"
+          ],
+          "tier_fired": "Tier 2 (a: concept-layer match (find layer \u2192 best asset IN layer))",
+          "top_candidates": [
+            [
+              "alien.fbx",
+              2.133
+            ],
+            [
+              "astronautA.fbx",
+              2.133
+            ],
+            [
+              "astronautB.fbx",
+              2.133
+            ],
+            [
+              "character-skate-boy.fbx",
+              1.2667
+            ],
+            [
+              "character-skate-girl.fbx",
+              1.2667
+            ]
+          ],
+          "n_scored_above_zero": 6
+        }
+      }
+    }
+  }
+}
