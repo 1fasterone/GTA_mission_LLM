@@ -261,6 +261,13 @@ class EntitySpec(BaseModel):
     # tangent — continuous road ribbons and guardrails instead of scattered
     # pieces.
     path_width: float = 0.0
+    # World-space Y this group's instances sit at — the altitude/depth axis a
+    # ground-plane layout has no way to express. 0.0 (default) = let the
+    # spatial primitive decide (src/unity_spatial.py): on a surface game that
+    # means the floor, and in a volume game (fly/swim locomotion) it means the
+    # altitude tier of this group's kind. A non-zero value is an explicit
+    # authored altitude and always wins over the derived tier.
+    elevation:  float = 0.0
     # World-space [x, z] center this group is packed into by src/unity_layout.py
     # (Step 5 of the pipeline) — every group used to spawn centered on the
     # scene origin regardless of `radius`, so distinct groups (e.g. a ring of
@@ -321,6 +328,16 @@ class EntitySpec(BaseModel):
         while len(nums) < 2:
             nums.append(0.0)
         return [max(-2000.0, min(2000.0, n)) for n in nums]
+
+    @field_validator("elevation", mode="before")
+    @classmethod
+    def _clamp_elevation(cls, v) -> float:
+        """Clamped to the same world range origin_offset uses, so an authored
+        altitude can't push a group outside anything that has to contain it."""
+        try:
+            return max(-2000.0, min(2000.0, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
 
     @field_validator("group_radius", mode="before")
     @classmethod

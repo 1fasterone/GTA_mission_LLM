@@ -69,6 +69,20 @@ unity_pipeline:
     # UPM_CACHE_ROOT override when it is set.
     # global_root: ''
 
+playability:
+  # Pipeline Step 7 (src/unity_playability.py) grades every build on whether
+  # it is actually a GAME — the player has an avatar, a controller, an
+  # objective, reachable content, and the entities the brief named explicitly
+  # survived. The scorecard always prints and is written to the project as
+  # playability.txt; these two switches decide whether it can FAIL a build.
+  #
+  # gate: true makes any playability ERROR fatal (FAIL-FAST doctrine). Left
+  # false by default so switching the evaluator on doesn't start failing
+  # existing projects with known findings.
+  gate: false
+  # Also fail below this 0-100 weighted score. 0 disables the threshold.
+  min_score: 0
+
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve
   # to a REAL model — an explicit kind in the default pack

@@ -79,6 +79,11 @@ GTA5 — pipeline.py, mission_schema.py, code_generator.py, resolver.py
 
 Unity — unity_pipeline.py, unity_schema.py, unity_generator.py, unity_resolver.py, templates/unity/
 
+Spatial + QA (Unity)
+unity_spatial.py — spatial primitive per GAME SHAPE (ground_plane / route_corridor / airspace_column / depth_column), selected deterministically from game_type + locomotion + route presence. unity_layout.py packs WITHIN the chosen primitive; it is no longer a bare ground-plane packer.
+
+unity_playability.py — Step 7 evaluator. Deterministic structural checks over the final schema answering "is it a game" (avatar, controller, objective, reachable content, brief-entity coverage). Prints a scorecard, writes playability.txt, gated by `playability.gate` in config.yaml. CLI: `python main.py unity-playability <schema.json> [--strict]`.
+
 Atoms + Microgens
 atoms/ — atomic actions (movement, animation, camera, audio, FX, logic, entity)
 

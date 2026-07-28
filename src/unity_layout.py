@@ -26,6 +26,8 @@ import random
 from typing import Optional, Sequence
 
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
+from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
+                            describe, select_primitive)
 
 # Minimum world-space gap enforced between two packed groups' footprint
 # circles, on top of their own radii.
@@ -271,7 +273,8 @@ def _measure_baked(entity: EntitySpec) -> tuple[float, float, float]:
 
 def _scatter_positions(entity: EntitySpec, eff_spacing: float,
                         cx: float, cz: float,
-                        footprint: float = 0.0) -> list[list[float]]:
+                        footprint: float = 0.0,
+                        y: float = 0.0) -> list[list[float]]:
     """Deterministic jittered-grid scatter: lay a grid of `eff_spacing` cells
     around the group center, take the `count` cells closest to it (keeps the
     footprint round rather than a filled square), and jitter each by up to
@@ -301,32 +304,37 @@ def _scatter_positions(entity: EntitySpec, eff_spacing: float,
     for _, _row, _col, x, z in cells[:n]:
         jx = (rng.random() * 2 - 1) * amp
         jz = (rng.random() * 2 - 1) * amp
-        pts.append([cx + x + jx, 0.0, cz + z + jz])
+        pts.append([cx + x + jx, y, cz + z + jz])
     return pts
 
 
 def _bake_positions(entity: EntitySpec, eff_spacing: float,
                      cx: float, cz: float,
-                     footprint: float = 0.0) -> list[list[float]]:
+                     footprint: float = 0.0,
+                     y: float = 0.0) -> list[list[float]]:
+    """`y` is the group's world-space elevation, chosen by the scene's spatial
+    primitive (src/unity_spatial.py). It is 0.0 for every surface game, which
+    is the only value this baker could produce before volume primitives
+    existed."""
     n = max(1, entity.count)
     if entity.placement == "single":
-        return [[cx, 0.0, cz]]
+        return [[cx, y, cz]]
     if entity.placement == "line":
-        return [[cx + (i - (n - 1) / 2.0) * eff_spacing, 0.0, cz] for i in range(n)]
+        return [[cx + (i - (n - 1) / 2.0) * eff_spacing, y, cz] for i in range(n)]
     if entity.placement == "ring":
         r = entity.group_radius
         return [[cx + r * math.cos(i * 2.0 * math.pi / n),
-                 0.0, cz + r * math.sin(i * 2.0 * math.pi / n)] for i in range(n)]
+                 y, cz + r * math.sin(i * 2.0 * math.pi / n)] for i in range(n)]
     if entity.placement == "grid":
         cols = math.ceil(math.sqrt(n))
         pts = []
         for i in range(n):
             row, col = divmod(i, cols)
             pts.append([cx + (col - (cols - 1) / 2.0) * eff_spacing,
-                        0.0, cz + row * eff_spacing])
+                        y, cz + row * eff_spacing])
         return pts
     if entity.placement == "scatter":
-        return _scatter_positions(entity, eff_spacing, cx, cz, footprint)
+        return _scatter_positions(entity, eff_spacing, cx, cz, footprint, y)
     return []
 
 
@@ -404,22 +412,47 @@ def compute_layout(schema: UnitySchema,
     # ballooned the ground plane (`terrain_bounds` covers whatever they hit).
     from .unity_pathnorm import _primary_route
     primary = _primary_route(schema.entities) if path_groups else None
+
+    # Which SHAPE of space is this game played in (src/unity_spatial.py)?
+    # Surface games (ground_plane / route_corridor) get an empty elevation map
+    # and are laid out exactly as before this selection existed.
+    primitive = select_primitive(schema.game_type, schema.locomotion,
+                                 has_route=primary is not None)
+    elevations = assign_elevations(packable, primitive)
+
     if primary is not None and packable:
         slots = _corridor_pack(packable, primary, seed_circles)
+    elif primitive in VOLUME_PRIMITIVES and packable:
+        # A volume is packed one ALTITUDE BAND at a time: groups in different
+        # bands are already separated in Y, so forcing them apart in XZ too
+        # would spread a vertical game back out across a floor — the exact
+        # failure this primitive exists to fix. Bands are keyed by quantized
+        # elevation, so the partition doesn't depend on entity order.
+        slots = {}
+        for band in sorted({band_key(elevations.get(e.name, 0.0))
+                            for e in packable}):
+            in_band = [e for e in packable
+                       if band_key(elevations.get(e.name, 0.0)) == band]
+            slots.update(_pack_groups(in_band, seed_circles))
     else:
         slots = _pack_groups(packable, seed_circles)
 
     moved: list[str] = []
     for e in packable:
         cx, cz, _r = slots[e.name]
+        y = elevations.get(e.name, 0.0)
+        e.elevation = y
         e.origin_offset = [round(cx, 3), round(cz, 3)]
         e.instance_positions = _bake_positions(
             e, _effective_spacing(e, footprints), cx, cz,
-            (footprints or {}).get(e.name, 0.0) * e.scale)
+            (footprints or {}).get(e.name, 0.0) * e.scale, y)
         if abs(cx) > 0.01 or abs(cz) > 0.01:
             moved.append(e.name)
 
     msgs: list[str] = []
+    _volume_msg = describe(primitive, elevations)
+    if _volume_msg:
+        msgs.append(_volume_msg)
     if moved and primary is not None:
         msgs.append(
             f"Layout pass placed {len(packable)} entity group(s) along the "

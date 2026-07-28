@@ -9,8 +9,21 @@ from __future__ import annotations
 
 from src.unity_concept_entities import (
     extract_named_entities, inject_missing_concept_entities,
+    render_entity_checklist,
 )
 from src.unity_schema import EntitySpec, UnitySchema
+
+# The kind-labeled brief format, as written by DropZone: the bullet LABEL is
+# the entity's kind, the name lives in the description, and "Collectible"
+# appears twice.
+_KIND_LABELED_BRIEF = (
+    "ENTITIES:\n"
+    "- Player:       lead skydiver in jumpsuit and helmet, humanoid rig\n"
+    "- Enemy:        formation AI skydivers (3), humanoid rig, intercept\n"
+    "- NPC:          Cessna Caravan aircraft, slow loop above jump zone\n"
+    "- Collectible:  altitude gate ring (fly through for bonus score)\n"
+    "- Collectible:  formation lock target (diamond marker)\n"
+)
 
 
 def _schema(user_prompt: str, entities: list[EntitySpec] | None = None) -> UnitySchema:
@@ -154,6 +167,117 @@ def test_llm_authored_entities_are_never_touched():
     schema = _schema(brief, [kept])
     assert inject_missing_concept_entities(schema) == []
     assert schema.entities == [kept]
+
+
+# ── kind-labeled bullets (DropZone format) ────────────────────────────────────
+
+def test_kind_label_becomes_the_kind_not_the_name():
+    """Read literally, "- Player: lead skydiver" names an entity "Player" of
+    kind "" -> "prop": no Player tag, no AI on the enemies, no collectibles."""
+    ents = extract_named_entities(_KIND_LABELED_BRIEF)
+    assert [e["kind"] for e in ents] == [
+        "player", "enemy", "npc", "collectible", "collectible"]
+
+
+def test_repeated_kind_label_does_not_collide():
+    """Both "Collectible" bullets survive — keyed on name, the second used to
+    be swallowed by the rescue's own dedup set."""
+    names = [e["name"] for e in extract_named_entities(_KIND_LABELED_BRIEF)]
+    assert len(names) == len(set(names)) == 5
+    assert "AltitudeGateRing" in names and "FormationLockTarget" in names
+
+
+def test_parenthesised_count_is_read_when_there_is_no_count_clause():
+    ents = {e["kind"]: e for e in extract_named_entities(_KIND_LABELED_BRIEF)}
+    assert ents["enemy"]["count"] == 3
+    assert "(3)" not in ents["enemy"]["description"]
+
+
+def test_leading_number_word_is_read_as_a_count():
+    brief = "ENTITIES\n- Prop: three support tents in the paddock\n"
+    assert extract_named_entities(brief)[0]["count"] == 3
+
+
+def test_mid_sentence_number_word_is_prose_not_a_count():
+    brief = "ENTITIES\n- Collectible: lock target, all four divers must reach\n"
+    assert extract_named_entities(brief)[0]["count"] is None
+
+
+def test_explicit_kind_clause_keeps_the_label_as_the_name():
+    """A brief that writes "- Player: ... (kind: player)" is naming the entity
+    "Player" on purpose — the label-as-kind reading must not hijack it."""
+    brief = "ENTITIES\n- Player: the astronaut in a space suit (kind: player).\n"
+    ent = extract_named_entities(brief)[0]
+    assert (ent["name"], ent["kind"]) == ("Player", "player")
+
+
+def test_kind_labeled_player_still_gets_the_player_tag():
+    """The derived name no longer starts with "Player", so the name-prefix test
+    can't see it — kind="player" is the declaration that matters."""
+    schema = _schema(_KIND_LABELED_BRIEF)
+    inject_missing_concept_entities(schema)
+    tagged = [e for e in schema.entities if e.tag == "Player"]
+    assert len(tagged) == 1
+    assert tagged[0].kind == "player" and tagged[0].count == 1
+
+
+def test_kind_labeled_enemy_gets_enemy_tag_and_the_briefs_count():
+    schema = _schema(_KIND_LABELED_BRIEF)
+    inject_missing_concept_entities(schema)
+    enemy = next(e for e in schema.entities if e.kind == "enemy")
+    assert (enemy.tag, enemy.count) == ("Enemy", 3)
+
+
+def test_derived_model_hint_keeps_word_boundaries():
+    """The derived NAME has no separators left ("FormationAISkydivers" ->
+    "formation aiskydivers"), which matches no model — the hint has to come
+    from the brief's own words instead."""
+    schema = _schema(_KIND_LABELED_BRIEF)
+    inject_missing_concept_entities(schema)
+    enemy = next(e for e in schema.entities if e.kind == "enemy")
+    assert enemy.model_hint == "formation ai skydivers"
+
+
+def test_every_kind_labeled_entity_survives_the_rescue():
+    schema = _schema(_KIND_LABELED_BRIEF)
+    inject_missing_concept_entities(schema)
+    assert len(schema.entities) == 5
+
+
+# ── Step-3 checklist (the cause: the brief never reached schema-fill) ──────────
+
+def test_checklist_names_every_brief_entity():
+    block = render_entity_checklist(_KIND_LABELED_BRIEF)
+    for name in ("LeadSkydiverJumpsuit", "FormationAISkydivers",
+                 "CessnaCaravanAircraft", "AltitudeGateRing",
+                 "FormationLockTarget"):
+        assert f'name="{name}"' in block
+    assert "count=3" in block
+
+
+def test_checklist_names_match_what_the_rescue_would_restore():
+    """Cause and containment share one parse, so the LLM honouring the
+    checklist and the fixer repairing it converge on the same entity list
+    instead of two overlapping ones."""
+    block = render_entity_checklist(_KIND_LABELED_BRIEF)
+    schema = _schema(_KIND_LABELED_BRIEF)
+    inject_missing_concept_entities(schema)
+    for e in schema.entities:
+        assert f'name="{e.name}"' in block
+
+
+def test_checklist_is_empty_without_an_entities_section():
+    assert render_entity_checklist("make me a racing game") == ""
+
+
+def test_checklist_entities_are_not_re_added_when_the_llm_obeyed():
+    """The whole point of aligning the names: an LLM that followed the
+    checklist leaves the rescue with nothing to do."""
+    named = extract_named_entities(_KIND_LABELED_BRIEF)
+    obeyed = [EntitySpec(name=e["name"], kind=e["kind"]) for e in named]
+    schema = _schema(_KIND_LABELED_BRIEF, obeyed)
+    assert inject_missing_concept_entities(schema) == []
+    assert len(schema.entities) == 5
 
 
 def test_rival_vehicle_still_gets_the_enemy_tag():
