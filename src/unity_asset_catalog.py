@@ -248,7 +248,10 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     # space kit
     "pipe":       ("tube", "conduit", "duct"),
     "platform":   ("ledge", "walkway", "deck"),
-    "monorail":   ("rail", "train", "transit"),
+    # NOT "rail": a monorail train car is a vehicle, not a railing. The synonym
+    # made every monorail_* carriage a strong candidate for any kind="rail"
+    # entity and a "deck rail" resolved to monorail_trainPassenger.
+    "monorail":   ("train", "transit"),
     "rocket":     ("spaceship", "ship", "missile", "launch"),
     "craft":      ("spaceship", "ship", "shuttle", "spacecraft"),
     "hangar":     ("garage", "bay", "shed"),
@@ -307,6 +310,10 @@ _TOKEN_KIND_HINTS: dict[str, tuple[str, ...]] = {
     "ground":   ("ground", "road"),
     "terrain":  ("ground", "road"),
     "path":     ("road", "ground"),
+    # Monorail pieces are transit track and carriages — never railings. Without
+    # this the category default ("track") hands them kind_hint "rail", and the
+    # +0.5 kind bonus let a train carriage outscore every real rail model.
+    "monorail": ("road", "prop"),
     "alien":    ("enemy", "npc"),
     "astronaut": ("player", "npc"),
     "parachute": ("vehicle", "prop", "pickup"),

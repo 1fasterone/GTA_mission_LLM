@@ -1,0 +1,99 @@
+TITLE
+Cromulon Skyfall
+
+GENRE
+A fully 3d first-person shooter. Genre is fps — an arena shooter with real
+gunplay: the player holds a blaster in view, aims down the centre of the
+screen, and fights waves of enemies that close in from every direction.
+
+STYLE
+Deep-space horror-comedy spectacle. The arena is a lone floating steel platform
+adrift in a starfield with no ground below it — just black space, drifting
+meteors and a distant nebula. The enemies are colossal disembodied heads:
+enormous stone-coloured faces the size of buildings with huge lidded eyes that
+drift silently through the void and stare at the player before they strike.
+Harsh white platform floodlights, deep blue rim light, long hard shadows across
+the deck, weightless dust motes.
+
+CORE PREMISE
+The player is an astronaut in a sealed space suit, stranded on a floating
+platform in deep space, armed with one blaster. Giant floating Cromulon heads
+drift in from the surrounding void in waves. Each head hovers, locks its eyes
+on the player, and lunges to ram them off the deck. The player strafes around
+the platform, shoots the heads in the eye to break them, and survives as long
+as possible. Every cleared wave brings more heads and faster ones. Falling off
+the platform edge, or being rammed once too often, ends the run.
+
+PLAYER
+An astronaut in a full white space suit with a domed helmet — the player
+character model is an astronaut. First-person view: the camera sits at the
+astronaut's head, mouse look drives the aim, WASD strafes across the deck.
+Uses a first_person controller — CharacterController-based walk and strafe with
+a short hop, held to the platform by gravity so walking off the edge drops the
+player into space. The blaster is held in view at the bottom right of the
+screen; left click fires a bolt from the muzzle straight down the crosshair
+with a muzzle flash, a recoil kick and a short cooldown. Limited ammo per clip
+with a reload.
+
+ENTITIES
+This list is EXHAUSTIVE. Use exactly these entities with exactly these names,
+kinds, counts and models. Do not invent extra entity groups, and do not add a
+second enemy group under a different name — every enemy in this game is a
+Cromulon and must use the cromulon big head model. Only the Player entity may
+carry the "Player" tag.
+- Player: the astronaut in a space suit (kind: player, count: 1,
+  model: astronaut).
+- Blaster: the player's held blaster gun, visible in first person and fired at
+  the heads (kind: weapon, count: 1, model: blaster gun).
+- Cromulon: the colossal floating head enemy — a giant hovering stone face that
+  drifts in from the void and rams the player. This is the ONLY enemy in the
+  game (kind: enemy, count: 16, model: cromulon big head).
+- ArenaPlatform: the floating steel deck the whole fight happens on, built from
+  modular space platform panels (kind: ground, model: platform large).
+- DeckRail: safety railings around part of the platform edge (kind: rail,
+  model: rail middle).
+- Meteor: drifting space rocks that float past the arena as set dressing
+  (kind: prop, model: meteor).
+- Generator: a humming machine generator on the deck that the player can take
+  cover behind (kind: prop, model: machine generator).
+- AmmoPickup: a glowing ammo cell that refills the blaster clip (kind: pickup).
+- HealthPickup: a suit-oxygen canister that restores suit integrity
+  (kind: pickup).
+
+AI
+Each Cromulon uses a hovering chase AI: it drifts in from a random point on the
+edge of the void, bobs slowly in place while it acquires the player, then
+accelerates in a straight ram toward the player's position and overshoots past
+the platform before circling back for another pass. Heads take damage anywhere
+but take heavy damage on an eye hit. Elite heads acquire faster, ram harder and
+take more hits. Waves spawn on a timer with a short lull between them; the
+head count and speed step up each wave.
+
+SCENES
+- Main Menu: start run, high scores, settings, quit.
+- The Deck: the arena scene — one floating steel platform in open space,
+  railings along part of the edge, a generator and scattered crates for cover,
+  meteors drifting past, and giant Cromulon heads inbound from the dark.
+
+HUD
+Centre crosshair that flares on a hit, suit integrity bar, oxygen bar, ammo
+counter with clip and reserve, current wave number, kill count, a wave-incoming
+banner, damage vignette at the screen edge when the player is hit, and a
+game-over screen showing waves survived and heads destroyed.
+
+AUDIO
+Muffled in-suit breathing that speeds up as suit integrity drops, a punchy
+blaster fire crack with a whine tail, a reload clack, a deep sub-bass drone
+that swells as a head closes in, a wet crunch on an eye hit, a low chime on
+wave clear, and a slow ominous synth drone bed. Spatial audio on every head so
+the player can hear which direction the next ram is coming from.
+
+FEATURES
+Save/load high scores and best wave (json_file). Pause menu (resume, restart,
+quit to menu). Game-over screen with a restart option.
+
+VISUAL STYLE
+URP in deep space with bloom on the blaster bolts, muzzle flash and platform
+floodlights. Near-black background with a dense starfield, cold blue ambient
+fill, hard white key light from the floodlights, heavy contrast and long
+shadows across the deck.

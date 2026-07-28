@@ -498,6 +498,12 @@ _MOOD_FOG = ("storm", "thunder", "fog", "mist", "cloud", "haze", "smoke",
              "blizzard", "sandstorm")
 
 
+# Scene-name fragments that mark a non-gameplay screen. Used to keep the
+# player/weapon/enemy restore below out of menus and end screens.
+_MENU_SCENE_WORDS = ("menu", "title", "splash", "credits", "options",
+                     "settings", "lobby", "gameover", "game_over", "pause")
+
+
 def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     fixes: list[str] = []
     if not schema.scene_specs:
@@ -516,9 +522,47 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
         if spec.entities is not None:
             unknown = [n for n in spec.entities if n not in entity_names]
             if unknown:
+                had_any = bool(spec.entities)
                 spec.entities = [n for n in spec.entities if n in entity_names]
                 fixes.append(f"Scene '{spec.name}': dropped unknown entity "
                              f"group(s) {unknown}")
+                # An empty subset means "host NOTHING", which is a very
+                # different statement from the one the LLM was making when it
+                # named groups that simply do not exist under those names.
+                # Fall back to None (= host every group) rather than shipping a
+                # scene that silently spawns nothing.
+                if had_any and not spec.entities:
+                    spec.entities = None
+                    fixes.append(f"Scene '{spec.name}': every named group was "
+                                 f"unknown — hosting all groups instead of an "
+                                 f"empty scene")
+            # A GAMEPLAY scene must host the player, the player's weapon and the
+            # enemies. This subset is LLM-authored and routinely drops them: on
+            # VoidArena "Main" listed the player but not the gun (so nothing
+            # could mount a weapon), and on the next roll it listed neither the
+            # player nor the Blaster while keeping three prop groups.
+            #
+            # A scene counts as gameplay when it names ANY group and is not an
+            # explicitly empty one (menus author `entities: []`). Deliberately
+            # NOT gated on the player being listed — that was the earlier
+            # version of this rule and it silently no-opped for exactly the
+            # scenes that needed it most. Matched on kind, not name, so it
+            # survives whatever the LLM calls the groups.
+            _essential = [e.name for e in schema.entities
+                          if (e.kind or "").lower() in ("player", "weapon", "enemy")]
+            # ...but a MENU is not a gameplay scene. Gating purely on "names any
+            # group" pulled the player and every enemy into a main menu that had
+            # only authored a UI overlay group — 76 Cromulons spawning behind the
+            # title screen. Menus are matched by name because that is the only
+            # signal a scene spec carries about its purpose.
+            _is_menu = any(w in (spec.name or "").lower() for w in _MENU_SCENE_WORDS)
+            if spec.entities and _essential and not _is_menu:
+                missing = [n for n in _essential if n not in spec.entities]
+                if missing:
+                    spec.entities = list(spec.entities) + missing
+                    fixes.append(f"Scene '{spec.name}': restored player/weapon/"
+                                 f"enemy group(s) {missing} — a gameplay scene "
+                                 f"cannot omit them")
         desc = (spec.description or "").lower()
         if desc and not spec.time_of_day:
             for words, tod in _MOOD_TOD:
@@ -861,8 +905,21 @@ class UnityPipeline:
         # the schema-fill LLM dropped/replaced with its own invented content
         # before anything downstream (racing scaffold gate, sketchfab query
         # enrichment, asset resolution) runs against schema.entities.
+        _n_entities_before_rescue = len(schema.entities)
         for msg in inject_missing_concept_entities(schema):
             self._fix(msg)
+
+        # Re-reconcile the scene subsets: the rescue above ADDS entities (the
+        # brief's own player/weapon/enemy groups) that did not exist when
+        # _check_consistency ran, so any scene declaring an entity subset still
+        # lists only the LLM's original groups and the restored ones would never
+        # spawn. Live: the brief's Player, Blaster and Cromulon were all rescued
+        # into the schema and then filtered straight back out of the only
+        # gameplay scene. No-op when the rescue added nothing.
+        if len(schema.entities) != _n_entities_before_rescue:
+            schema, _rescue_scene_fixes = _reconcile_scene_specs(schema)
+            for msg in _rescue_scene_fixes:
+                self._fix(msg)
 
         # Racing-genre scaffold: a racing project whose entities carry no real
         # vehicle/track content (the LLM wrote a themed prop scatter instead

@@ -36,6 +36,14 @@ class AISchema(CodeExtensibleSchema):
     attack_radius:      float = 1.5
     patrol_point_count: int   = 4
     move_speed:         float = 3.5
+
+    # ── flying_swarm hover (airborne enemies) ─────────────────────────────────
+    # Seeking the target's raw position parks a "floating" enemy at the
+    # player's feet; these keep it in the air at head height and drifting.
+    hover_height:       float = 4.0
+    hover_spread:       float = 5.0   # vertical band the swarm occupies
+    bob_amplitude:      float = 0.6
+    bob_speed:          float = 1.2
     nav_backend:        NavBackend = "navmesh"
     states:             list[AIState] = Field(default_factory=list)
     target_tag:         str   = "Player"

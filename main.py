@@ -94,6 +94,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -592,6 +593,9 @@ def unity_catalog(
                                  help="Print stats without writing"),
     check:   bool = typer.Option(False, "--check",
                                  help="Exit 1 if the on-disk catalog is stale (CI hook)"),
+    measure: bool = typer.Option(False, "--measure",
+                                 help="Import every model in Unity once and record real "
+                                      "bounds (slow; needed for model-aware group spacing)"),
 ) -> None:
     """Scan the asset library and (re)generate lookups/unity/asset_catalog.json.
 
@@ -623,6 +627,38 @@ def unity_catalog(
 
     catalog = build_catalog(roots, curated_path=curated_path,
                             sprite_roots=sprite_roots)
+
+    # Real imported sizes, measured by Unity. Without them the layout pass sizes
+    # every group as if each model were ~1 unit across, so large assets bake
+    # into an overlapping clump. Slow (one full import of the library), so it is
+    # opt-in; previously-measured bounds are carried forward when not re-run.
+    if measure:
+        from src.unity_model_measure import measure_roots
+        work = Path("output/unity/_measure").resolve()
+        console.print(f"[cyan]Measuring[/] model bounds in Unity → {work} "
+                      "(one-time, slow)…")
+        sizes = measure_roots(roots, work)
+        hit = 0
+        for a in catalog["assets"]:
+            b = sizes.get(a["relpath"])
+            if b:
+                a["bounds"] = [round(float(v), 4) for v in b]
+                hit += 1
+        console.print(f"[green]Measured[/] {hit}/{len(catalog['assets'])} assets")
+        shutil.rmtree(work, ignore_errors=True)
+    else:
+        _prev = {}
+        if out_path.is_file():
+            try:
+                _prev = {a["relpath"]: a.get("bounds")
+                         for a in json.loads(out_path.read_text(encoding="utf-8"))["assets"]}
+            except (OSError, ValueError, KeyError):
+                _prev = {}
+        for a in catalog["assets"]:
+            b = _prev.get(a["relpath"])
+            if b:
+                a["bounds"] = b
+
     n       = len(catalog["assets"])
     n_2d    = sum(1 for a in catalog["assets"] if a["format"] != "fbx")
     by_cat  = {c: sum(1 for a in catalog["assets"] if a["category"] == c)

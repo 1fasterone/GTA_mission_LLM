@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Sequence
+from typing import Optional, Sequence
 
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
 
@@ -34,6 +34,12 @@ _GROUP_MARGIN = 2.0
 # "scattered" look while guaranteeing no instance drifts closer than
 # roughly (1 - 2*_SCATTER_JITTER) * spacing to its grid neighbor.
 _SCATTER_JITTER = 0.3
+# Clearance multiplier applied to a MEASURED model footprint (see
+# _effective_spacing), on top of which the scatter jitter is clamped to the
+# leftover slack so the cell spacing is actually honoured. 1.25 was enough to
+# stop instances interpenetrating but still read as a solid mass of touching
+# models; the gap has to be a real fraction of the model to look deliberate.
+_MODEL_CLEARANCE = 1.9
 # Ground-plane fallback half-extent for scenes with nothing to measure (e.g.
 # MainMenu), and the margin added around every scene's measured content.
 _DEFAULT_GROUND_HALF = 10.0
@@ -69,13 +75,31 @@ _SPAWN_CLEARANCE_DEFAULT = 3.0
 _LAYOUT_PLACEMENTS = frozenset({"single", "line", "ring", "grid", "scatter"})
 
 
-def _effective_spacing(entity: EntitySpec) -> float:
+def _effective_spacing(entity: EntitySpec,
+                       footprints: Optional[dict[str, float]] = None) -> float:
     """A primitive's own footprint is approximated by its authored `scale`
     (Unity's built-in cube/sphere/capsule primitives are ~1 unit before
     scaling — the same approximation EntitySpawner.cs.j2 uses for the
     `modelPrefab == null` fallback case). `spacing` is an authored MINIMUM;
-    the footprint can only widen it, never shrink below what was authored."""
-    return max(entity.spacing, entity.scale * 1.15)
+    the footprint can only widen it, never shrink below what was authored.
+
+    When `footprints` carries this entity's REAL model footprint (metres,
+    measured by Unity and cached in the asset catalog — see
+    src/unity_model_measure.py), that wins over the primitive approximation.
+    Without it a 3 m model and a 0.2 m model are spaced identically, which is
+    what packed fifteen giant heads into a single overlapping clump.
+    """
+    base = max(entity.spacing, entity.scale * 1.15)
+    fp   = (footprints or {}).get(entity.name)
+    if fp and fp > 0:
+        # 1.15 is the clearance used for the primitive approximation, but a
+        # scatter cell is then jittered by up to _SCATTER_JITTER in each axis,
+        # which pulls the closest pair well inside the nominal cell. Measured
+        # against the real layout, a 1.15 margin left neighbours overlapping by
+        # about a quarter of their own width; _MODEL_CLEARANCE is sized so the
+        # tightest pair still clears the model.
+        return max(base, fp * entity.scale * _MODEL_CLEARANCE)
+    return base
 
 
 def _footprint_radius(entity: EntitySpec, eff_spacing: float) -> float:
@@ -246,7 +270,8 @@ def _measure_baked(entity: EntitySpec) -> tuple[float, float, float]:
 
 
 def _scatter_positions(entity: EntitySpec, eff_spacing: float,
-                        cx: float, cz: float) -> list[list[float]]:
+                        cx: float, cz: float,
+                        footprint: float = 0.0) -> list[list[float]]:
     """Deterministic jittered-grid scatter: lay a grid of `eff_spacing` cells
     around the group center, take the `count` cells closest to it (keeps the
     footprint round rather than a filled square), and jitter each by up to
@@ -262,16 +287,27 @@ def _scatter_positions(entity: EntitySpec, eff_spacing: float,
             cells.append((math.hypot(x, z), row, col, x, z))
     cells.sort(key=lambda c: (c[0], c[1], c[2]))  # deterministic tie-break
     rng = random.Random(f"{entity.name}:{n}:{eff_spacing:.3f}")
+    # Jitter is what makes a grid read as "scattered", but two adjacent cells
+    # jittered toward each other close the gap by up to 2x the amplitude. When
+    # we know the model's real footprint, clamp the amplitude to the slack the
+    # cell actually has, so the closest pair still clears the model instead of
+    # interpenetrating. Unknown footprint keeps the original amplitude, so
+    # unmeasured projects stay byte-identical.
+    amp = _SCATTER_JITTER * eff_spacing
+    if footprint > 0.0:
+        slack = max(0.0, eff_spacing - footprint)
+        amp = min(amp, slack * 0.5)
     pts: list[list[float]] = []
     for _, _row, _col, x, z in cells[:n]:
-        jx = (rng.random() * 2 - 1) * _SCATTER_JITTER * eff_spacing
-        jz = (rng.random() * 2 - 1) * _SCATTER_JITTER * eff_spacing
+        jx = (rng.random() * 2 - 1) * amp
+        jz = (rng.random() * 2 - 1) * amp
         pts.append([cx + x + jx, 0.0, cz + z + jz])
     return pts
 
 
 def _bake_positions(entity: EntitySpec, eff_spacing: float,
-                     cx: float, cz: float) -> list[list[float]]:
+                     cx: float, cz: float,
+                     footprint: float = 0.0) -> list[list[float]]:
     n = max(1, entity.count)
     if entity.placement == "single":
         return [[cx, 0.0, cz]]
@@ -290,11 +326,12 @@ def _bake_positions(entity: EntitySpec, eff_spacing: float,
                         0.0, cz + row * eff_spacing])
         return pts
     if entity.placement == "scatter":
-        return _scatter_positions(entity, eff_spacing, cx, cz)
+        return _scatter_positions(entity, eff_spacing, cx, cz, footprint)
     return []
 
 
-def compute_layout(schema: UnitySchema) -> list[str]:
+def compute_layout(schema: UnitySchema,
+                   footprints: Optional[dict[str, float]] = None) -> list[str]:
     """Pack every {single,line,ring,grid,scatter} entity group into a
     non-overlapping world-space region and bake exact instance positions onto
     each EntitySpec (`origin_offset`, `group_radius`, `instance_positions`).
@@ -358,7 +395,7 @@ def compute_layout(schema: UnitySchema) -> list[str]:
         seed_circles.append((e.origin_offset[0], e.origin_offset[1], e.group_radius))
 
     for e in packable:
-        e.group_radius = _footprint_radius(e, _effective_spacing(e))
+        e.group_radius = _footprint_radius(e, _effective_spacing(e, footprints))
 
     # When the scene has an authored route, the route is the placement GUIDE:
     # prop groups line the corridor (offset outside the barriers, spread by arc
@@ -376,7 +413,9 @@ def compute_layout(schema: UnitySchema) -> list[str]:
     for e in packable:
         cx, cz, _r = slots[e.name]
         e.origin_offset = [round(cx, 3), round(cz, 3)]
-        e.instance_positions = _bake_positions(e, _effective_spacing(e), cx, cz)
+        e.instance_positions = _bake_positions(
+            e, _effective_spacing(e, footprints), cx, cz,
+            (footprints or {}).get(e.name, 0.0) * e.scale)
         if abs(cx) > 0.01 or abs(cz) > 0.01:
             moved.append(e.name)
 
