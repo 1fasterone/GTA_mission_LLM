@@ -5,7 +5,7 @@ No network calls — all HTTP is mocked via unittest.mock.
 import json
 import pytest
 
-from src.lm_studio_client import LMStudioClient, _repair_truncated_json
+from src.lm_studio_client import _drop_surplus_closers, LMStudioClient, _repair_truncated_json
 from src.backends import active_chat_cfg, make_chat_client
 
 
@@ -321,3 +321,58 @@ class TestChatReasoningModels:
 
         assert "/no_think" not in captured["user_content"]
         assert "my prompt" in captured["user_content"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# _drop_surplus_closers  (the mirror of _repair_truncated_json)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDropSurplusClosers:
+    def test_balanced_json_unchanged(self):
+        text = '{"a": [1, 2], "b": {"c": 3}}'
+        assert _drop_surplus_closers(text, 0) == text
+
+    def test_drops_surplus_array_terminator(self):
+        # The live shape: element object closes, array closes, then one closer
+        # too many before the next key.
+        text = '{"vfx": [{"p": {"loop": false}}], "shaders": []}'
+        broken = '{"vfx": [{"p": {"loop": false}}]  ], "shaders": []}'
+        assert json.loads(_drop_surplus_closers(broken, 0)) == json.loads(text)
+
+    def test_drops_surplus_brace(self):
+        broken = '{"a": {"b": 1}}, "c": 2}'
+        assert json.loads(_drop_surplus_closers(broken, 0)) == {"a": {"b": 1}}
+
+    def test_ignores_closers_inside_strings(self):
+        text = '{"note": "an ] and a } live here"}'
+        assert _drop_surplus_closers(text, 0) == text
+
+    def test_stops_at_root_close_dropping_trailing_prose(self):
+        text = '{"a": 1}\n\nHope that helps!'
+        assert _drop_surplus_closers(text, 0) == '{"a": 1}'
+
+    def test_respects_start_offset(self):
+        text = 'preamble {"a": [1]]}'
+        assert json.loads(_drop_surplus_closers(text, 9)) == {"a": [1]}
+
+
+class TestExtractJsonSurplusClosers:
+    def test_recovers_object_with_surplus_closers(self, client):
+        """extract_json's balanced-brace scan bottoms out early on a surplus
+        closer, so the slice it takes is short AND malformed. It must still
+        recover every key, including those after the corruption point."""
+        raw = (
+            '{"project_name": "RingTargetArcade",'
+            ' "vfx": [{"id": "throw", "parameters": {"loop": false}}  ],'
+            ' "materials": [{"id": "ring", "parameters": {"color": "#4A90D9"}}  ],'
+            ' "scripts": ["ThrowController"]}'
+        )
+        result = client.extract_json(raw)
+        assert result["project_name"] == "RingTargetArcade"
+        assert result["vfx"][0]["id"] == "throw"
+        assert result["materials"][0]["id"] == "ring"
+        assert result["scripts"] == ["ThrowController"]
+
+    def test_valid_json_still_parses_unchanged(self, client):
+        raw = '{"a": {"b": [1, 2, 3]}, "c": "]}"}'
+        assert client.extract_json(raw) == {"a": {"b": [1, 2, 3]}, "c": "]}"}
