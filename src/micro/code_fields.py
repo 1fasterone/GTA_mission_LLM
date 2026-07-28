@@ -189,78 +189,112 @@ def _looks_like_prose(text: str) -> bool:
     return not any(c in text for c in (";", "{", "}"))
 
 
-def _code_brace_depth(text: str) -> int:
-    """Net brace depth counting only braces that are real CODE delimiters.
+def _code_mask(text: str) -> bytearray:
+    """Per-character mask: 1 where the character is real CODE, 0 inside a
+    comment or a char/string literal.
 
-    Skips `//` and `/* */` comments and char/string literals, including the
-    verbatim (`@"…"`, where `""` is an escaped quote) and interpolated (`$"…"`)
-    forms. Interpolated strings are skipped WHOLE: the braces of an
-    interpolation hole balance within the literal, so ignoring them keeps the
-    count right without having to parse the hole.
+    The single source of truth for "is this position code?", shared by the
+    brace counter and by every lint pass that rewrites source with a regex.
+    Both classes of bug it prevents are the same one — a pattern over
+    untokenized C# cannot tell a `}` in a comment from a real closer, or the
+    word `out` in an English sentence from a real out-parameter:
 
-    A single lexical pass, not a regex — the two failure modes this exists for
-    (a `}` inside a comment, a `{` inside a string) are exactly what regexes
-    over untokenized C# get wrong.
+        if (_isDirty) { int loc = _idx; // Validate state before save }
+            -> the old brace COUNT saw balance; Update() never closed (CS0106)
+        Debug.Log("Good luck out there.");
+            -> the out-param regex rewrote prose to "Good luck out var there."
+
+    Handles `//` and `/* */` comments, char literals, regular strings (with
+    `\\` escapes), verbatim strings (`@"…"`, where `""` is an escaped quote)
+    and interpolated strings (`$"…"`, either prefix order). Interpolated
+    strings are masked WHOLE: an interpolation hole's braces balance within
+    the literal, so ignoring them keeps the brace count right without having
+    to parse the hole.
     """
-    depth = 0
-    i, n = 0, len(text)
+    n = len(text)
+    mask = bytearray(b"\x01" * n)
+    i = 0
     while i < n:
         ch = text[i]
 
         if ch == "/" and i + 1 < n:
             if text[i + 1] == "/":                    # line comment
                 j = text.find("\n", i)
-                i = n if j == -1 else j + 1
+                j = n if j == -1 else j
+                mask[i:j] = b"\x00" * (j - i)
+                i = j
                 continue
             if text[i + 1] == "*":                    # block comment
                 j = text.find("*/", i + 2)
-                i = n if j == -1 else j + 2
+                j = n if j == -1 else j + 2
+                mask[i:j] = b"\x00" * (j - i)
+                i = j
                 continue
 
         if ch == "'":                                 # char literal: '{', '\''
-            i += 1
-            while i < n and text[i] != "'":
-                i += 2 if text[i] == "\\" else 1
-            i += 1
+            start = i + 1
+            while start < n and text[start] != "'":
+                start += 2 if text[start] == "\\" else 1
+            start = min(start + 1, n)
+            mask[i:start] = b"\x00" * (start - i)
+            i = start
             continue
 
         if ch in "@$\"":                              # string literal
-            start, verbatim = i, False
-            while i < n and text[i] in "@$":          # $@"…" and @$"…" both
-                verbatim = verbatim or text[i] == "@"
-                i += 1
-            if i >= n or text[i] != '"':
+            start, j, verbatim = i, i, False
+            while j < n and text[j] in "@$":          # $@"…" and @$"…" both
+                verbatim = verbatim or text[j] == "@"
+                j += 1
+            if j >= n or text[j] != '"':
                 # A bare `@` (verbatim identifier such as `@class`) or a stray
-                # `$` — not a literal prefix, so consume one char and move on.
+                # `$` — not a literal prefix, so it stays code.
                 i = start + 1
                 continue
-            i += 1
+            j += 1
             if verbatim:
-                while i < n:
-                    if text[i] == '"':
-                        if i + 1 < n and text[i + 1] == '"':
-                            i += 2                    # "" — escaped quote
+                while j < n:
+                    if text[j] == '"':
+                        if j + 1 < n and text[j + 1] == '"':
+                            j += 2                    # "" — escaped quote
                             continue
-                        i += 1
+                        j += 1
                         break
-                    i += 1
+                    j += 1
             else:
-                while i < n and text[i] != '"':
-                    if text[i] == "\\":
-                        i += 2
-                    elif text[i] == "\n":
+                while j < n and text[j] != '"':
+                    if text[j] == "\\":
+                        j += 2
+                    elif text[j] == "\n":
                         break                         # unterminated literal
                     else:
-                        i += 1
-                if i < n and text[i] == '"':
-                    i += 1
+                        j += 1
+                if j < n and text[j] == '"':
+                    j += 1
+            j = min(j, n)
+            mask[i:j] = b"\x00" * (j - i)
+            i = j
             continue
 
+        i += 1
+    return mask
+
+
+def _code_brace_depth(text: str) -> int:
+    """Net brace depth counting only braces that are real CODE delimiters.
+
+    A lexical pass (`_code_mask`), not a regex — the two failure modes this
+    exists for (a `}` inside a comment, a `{` inside a string) are exactly
+    what a pattern over untokenized C# gets wrong.
+    """
+    mask = _code_mask(text)
+    depth = 0
+    for i, ch in enumerate(text):
+        if not mask[i]:
+            continue
         if ch == "{":
             depth += 1
         elif ch == "}":
             depth -= 1
-        i += 1
     return depth
 
 
@@ -330,20 +364,37 @@ _OUT_UNDECLARED_RE = re.compile(r'\bout\s+(?!var\b|ref\b)([a-z][A-Za-z0-9_]*)\b'
 
 
 def _declare_inline_out_params(text: str) -> str:
+    # CODE positions only. `out` is an ordinary English word, and this pattern
+    # used to fire on it wherever it appeared — hit live, a dialogue line
+    # `Debug.Log("Good luck out there.");` was rewritten to
+    # `"Good luck out var there."`, corrupting shipped prose. Same defect class
+    # as the brace counter above: a regex cannot see literal boundaries.
+    mask = _code_mask(text)
     seen: set[str] = set()
     changed = False
 
+    def _declared_in_code(ident: str) -> bool:
+        """Already declared explicitly in this fragment (`var hit` /
+        `RaycastHit hit`)? Match `var`, a primitive, or a Capitalized type name
+        before the identifier — deliberately NOT the `out`/`ref` keyword itself
+        (lowercase, non-primitive), which would otherwise look like a
+        declaration. Masked too: a declaration named only inside a comment
+        (`// RaycastHit hit;`) would otherwise suppress a rewrite that is
+        genuinely needed, trading this bug for a CS0103.
+        """
+        pattern = re.compile(
+            rf'\b(?:var|int|float|double|bool|string|byte|long|short|'
+            rf'char|object|[A-Z][\w<>\[\].]*)\s+{re.escape(ident)}\b')
+        return any(mask[d.start()] for d in pattern.finditer(text))
+
     def repl(m: "re.Match") -> str:
         nonlocal changed
+        if not mask[m.start()]:
+            return m.group(0)                       # inside a comment/literal
         ident = m.group(1)
         if ident in seen:
             return m.group(0)                       # reuse the first declaration
-        # Already declared explicitly in this fragment (`var hit` / `RaycastHit
-        # hit`)? Match `var`, a primitive, or a Capitalized type name before the
-        # identifier — deliberately NOT the `out`/`ref` keyword itself (lowercase,
-        # non-primitive), which would otherwise look like a declaration.
-        if re.search(rf'\b(?:var|int|float|double|bool|string|byte|long|short|'
-                     rf'char|object|[A-Z][\w<>\[\].]*)\s+{re.escape(ident)}\b', text):
+        if _declared_in_code(ident):
             return m.group(0)
         seen.add(ident)
         changed = True
