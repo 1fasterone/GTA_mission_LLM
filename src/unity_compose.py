@@ -203,6 +203,18 @@ class MicroComposer:
         self._emit_wiring(units, micros_root, wiring)
         # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
         self._emit_context(units, micros_root, has_game_manager)
+
+        # ── Syntax gate ───────────────────────────────────────────────────────
+        # Every composed script through a real C# parser before the project is
+        # handed back. One invocation for the whole tree rather than one per
+        # micro: the gate costs a process, and a parse failure aborts the build
+        # either way. Raises CSharpSyntaxError, listing file/line/column and the
+        # compiler's own message for each defect (src/csharp_syntax_gate.py).
+        from .csharp_syntax_gate import enforce
+        enforce(sorted(micros_root.rglob("*.cs")),
+                enabled=bool(self._cfg.get("unity_pipeline", {})
+                             .get("syntax_gate", True)),
+                label="composed script(s)")
         return units
 
     def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None) -> None:
