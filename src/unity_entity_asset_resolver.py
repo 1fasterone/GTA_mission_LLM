@@ -268,6 +268,20 @@ _FX_KINDS = frozenset({"fx", "vfx", "effect", "effects", "particles", "weather"}
 _SKIP_KINDS = frozenset({"ui", "hud", "menu", "background", "backdrop",
                          "skybox", "sky"})
 
+# Role words that name a CATEGORY of person rather than a person. A strong hit
+# on one of these says no more than the entity's own `kind` field already did:
+# an entity called "NPCs" tagged npc, "Characters" tagged character. Folded into
+# the kind variants for _PERSON_KINDS entities so the weak-match rules treat the
+# whole family consistently — otherwise "NPCs" (kind="character") counts "npc"
+# as a specific request and any npc-tagged alien satisfies it.
+_GENERIC_PERSON_TOKENS = frozenset({
+    "character", "characters", "human", "humans", "person", "people",
+    "npc", "npcs", "crowd", "crowds", "player", "players",
+    "avatar", "avatars", "figure", "figures",
+})
+_PERSON_KINDS = frozenset({"character", "characters", "human", "person",
+                           "people", "npc", "crowd", "civilian"})
+
 
 def _entry_tokens(entry: dict) -> set[str]:
     """Keyword tags + filename-stem tokens — the searchable identity of a
@@ -637,6 +651,26 @@ def resolve_entity_assets(schema,
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
         strong_q = {t for t, w in qw.items() if w >= _STRONG_HIT}
+        # Strong tokens that say something MORE than the entity's own kind.
+        # "Waiters" (kind="character", model_hint "waiter") carries
+        # waiter/waiters here; a bare "Characters" or "NPCs" carries nothing
+        # (see _GENERIC_PERSON_TOKENS). Drives both weak-match branches of
+        # _passes_kind_guard below.
+        _kind_variants = {kind, kind + "s",
+                          kind[:-1] if kind.endswith("s") else kind}
+        _generic_q = _kind_variants | (_GENERIC_PERSON_TOKENS
+                                       if kind in _PERSON_KINDS else set())
+        # Built from what the entity DECLARES about itself — its name and
+        # model_hint — not from strong_q. sketchfab_query is deliberately
+        # excluded even though _query_weights scores it at 2.0: it is a
+        # marketplace SEARCH string carrying context and style ("realistic
+        # dirt track debris" describes debris lying on a dirt track), which
+        # is a fine ranking signal but not a statement of what the object IS.
+        # Counting it here let a Debris entity claim "track" as its identity
+        # and take track-straight.fbx away from its own obstacle default.
+        specific_q = {t for t in ((_tokens_with_plurals(e.name)
+                                   | _tokens_with_plurals(hint)) - _generic_q)
+                      if len(t) > 1 and t not in _STYLE_TOKENS}
 
         # The entity's concept SCOPE — its kind-constrained concept-layer band
         # (see ConceptLayers.band). Computed HERE, before Tier S, rather than at
@@ -648,13 +682,11 @@ def resolve_entity_assets(schema,
             layer_band, layer_top_hits = layers.band(qw, kind, _STRONG_HIT)
 
         def _kind_only_hit(a: dict) -> bool:
-            """True if `kind` is the ONLY strong token this entry matches —
-            the match carries no signal beyond the bare kind word itself."""
+            """True if this entry matches nothing but the entity's own kind —
+            the match carries no signal beyond the bare category word."""
             akw = _entry_tokens(a)
             strong = {t for t, w in qw.items() if w >= _STRONG_HIT and t in akw}
-            kind_variants = {kind, kind + "s",
-                             kind[:-1] if kind.endswith("s") else kind}
-            return bool(strong) and strong <= kind_variants
+            return bool(strong) and strong <= _generic_q
 
         def _passes_kind_guard(a: dict) -> bool:
             """Block catalog picks whose only tie to the entity is a weak,
@@ -680,20 +712,52 @@ def resolve_entity_assets(schema,
                          if len(t) > 1}
                 if not (fname & role_tokens):
                     return False
+            if specific_q and _kind_only_hit(a):
+                # The entity NAMED something specific and this asset answers
+                # none of it — the bare category word is not evidence, however
+                # the library categorizes the asset and whatever its filename
+                # says. Checked BEFORE the kind_hints short-circuit below,
+                # which would otherwise wave it through. Hit live: "Waiters"
+                # (kind="character", model_hint "waiter") took
+                # character-skate-boy.fbx, which matches "character" and
+                # nothing else — and cleared the old filename-evidence escape
+                # because Kenney names its whole character pack "character-*",
+                # making the kind word a naming prefix rather than an identity.
+                # A grey capsule reads as "placeholder, replace me"; a skate
+                # boy reads as a decision the pipeline made. Confidently wrong
+                # is worse than obviously unfinished.
+                return False
             hints = {h.lower() for h in a.get("kind_hints", [])}
             if kind in hints:
                 return True
             if tier1 is not None:
-                # A real default model already covers this kind — only a
-                # catalog pick the library itself categorizes as this kind
-                # may replace it; a stray overlap isn't enough to gamble away
-                # a known-good fallback (the tier-1 fallback below still
-                # fires if this empties out every candidate).
-                return False
+                # A real default model already covers this kind. Two things may
+                # displace it: the library itself categorizing the asset as
+                # this kind (above), or IDENTITY EVIDENCE — a specific token
+                # the entity named appearing in the asset's own FILENAME, the
+                # same standard _sk_contextual_guard and _passes_kind_scope
+                # apply. The library tags people npc/player/crowd/enemy and
+                # never "character", so without this second escape a neutral
+                # character default would block every catalog pick for that
+                # kind, including "Astronauts" → astronautA.fbx, a match nobody
+                # would call wrong.
+                #
+                # Filename, NOT the keyword list: keywords are where
+                # coincidental overlap lives, and trusting them here reopens
+                # the two regressions this guard exists for — "GroundEnemies"
+                # (model_hint "ground") would take floor-plank.fbx, tagged
+                # "ground", and "Debris" would take survivors-tent, tagged
+                # "debris". Neither name says what the object is. A stray tag
+                # is not enough to gamble away a known-good default (the
+                # tier-1 fallback below fires if this empties the field).
+                fname_tokens = {t for t in tokenize(Path(a.get("filename", "")).stem)
+                                if len(t) > 1}
+                return bool(specific_q & fname_tokens)
             if _kind_only_hit(a):
-                # No default to fall back on, so only trust a bare kind-word
-                # match when the object is actually named after the kind —
-                # not merely tagged with it alongside unrelated keywords.
+                # Nothing specific was asked for and no default to fall back
+                # on, so any member of the kind is a fair answer — but only
+                # when the object is actually named after the kind, not merely
+                # tagged with it alongside unrelated keywords.
                 fname_tokens = {t for t in tokenize(Path(a.get("filename", "")).stem)
                                 if len(t) > 1}
                 return kind in fname_tokens
@@ -859,7 +923,17 @@ def resolve_entity_assets(schema,
         if layer_band:
             layer_scored: list[tuple[float, dict]] = []
             for a, (broad, strong_m) in zip(assets, asset_membership):
-                if not (broad & layer_band) or not _passes_kind_scope(a):
+                # _passes_kind_guard applies HERE too, not just at Tier 2b.
+                # Without it this tier had no weak-match protection at all: an
+                # entity that names a concept layer but whose specific hint
+                # matches nothing got the best-scoring member of that layer,
+                # with the alignment bonus on top. For character_humanoid that
+                # is "the most character-ish humanoid in the library" — the
+                # path a kind="character"/model_hint="waiter" entity took to
+                # character-skate-boy.fbx while Tier 2b's guard sat unused
+                # one tier below.
+                if (not (broad & layer_band) or not _passes_kind_scope(a)
+                        or not _passes_kind_guard(a)):
                     continue
                 is_strong = bool(strong_m & layer_band)
                 # When a real default already covers this kind, only a STRONG

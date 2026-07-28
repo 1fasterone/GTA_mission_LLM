@@ -26,10 +26,17 @@ Write a Unity project concept brief based on this idea:
 Cover in 2-3 paragraphs:
 - Game type (2D, 2.5D, 3D, VR, top-down, isometric) and target platform
 - Core player mechanics (movement style, camera, input)
-- Key systems needed (physics, UI, audio, AI, networking, etc.)
+- Key systems this idea actually needs (physics, UI, audio, AI, networking, etc.) — \
+name only the ones it calls for, and skip the rest rather than filling the list out
 - Recommended render pipeline (URP for most games, HDRP for high-end 3D, builtin for simple 2D)
 - Unity version recommendation (Unity 6 — 6000.0 LTS is the default; 2022.3 only if the project specifically requires it)
 - Specific packages or tools that would be useful (Cinemachine, Input System, NavMesh, Tilemaps, etc.)
+
+STAY INSIDE THE IDEA. Describe how to BUILD what was asked for — do not add
+characters, NPCs, enemies, levels, objectives or any other content the idea did
+not ask for. Downstream steps instantiate every object this brief names, so an
+invented waiter becomes a real entity that needs a real model. If the idea is
+one mechanic, the brief is about that one mechanic.
 
 Do NOT write any code, JSON, or package IDs."""
 

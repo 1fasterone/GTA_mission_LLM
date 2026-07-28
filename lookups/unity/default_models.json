@@ -1,6 +1,6 @@
 {
   "_config": {
-    "comment": "kind -> default model + clips. Paths relative to unity_pipeline.model_source_dir (default Models/Defaults). Only kinds with a real staged model are listed; an entity kind with no entry resolves via the Kenney/Blender path, else (strict mode) fails — it is never silently a primitive. Optional per-kind 'sprite_2d' (a Resources sprite path) may be added later for the true-2D pipeline.",
+    "comment": "kind -> default model + clips. Paths relative to unity_pipeline.model_source_dir (default Models/Defaults). Only kinds with a real staged model are listed; an entity kind with no entry resolves via the Kenney/Blender path, else (strict mode) fails — it is never silently a primitive. The generic person kinds (character/human/person, alongside npc/crowd) all point at the neutral Spectator: an unmatched character MUST degrade to an anonymous humanoid, never to the library's nearest themed character — a skate boy where a waiter belongs reads as a decision the pipeline made, not as unfinished work. Optional per-kind 'sprite_2d' (a Resources sprite path) may be added later for the true-2D pipeline.",
     "resources_root": "Models/Default"
   },
   "kinds": {
@@ -35,6 +35,9 @@
     "powerup":     { "model": "pickup/Pickup.fbx",     "rig": "generic", "scale": 1.0, "clips": {} },
     "tree":        { "model": "tree/Tree.fbx",         "rig": "generic", "scale": 1.0, "clips": {} },
     "hazard":      { "model": "prop/Prop.fbx",         "rig": "generic", "scale": 1.0, "clips": {} },
-    "npc":         { "model": "crowd/Spectator.fbx",   "rig": "generic", "scale": 1.0, "clips": {} }
+    "npc":         { "model": "crowd/Spectator.fbx",   "rig": "generic", "scale": 1.0, "clips": {} },
+    "character":   { "model": "crowd/Spectator.fbx",   "rig": "generic", "scale": 1.0, "clips": {} },
+    "human":       { "model": "crowd/Spectator.fbx",   "rig": "generic", "scale": 1.0, "clips": {} },
+    "person":      { "model": "crowd/Spectator.fbx",   "rig": "generic", "scale": 1.0, "clips": {} }
   }
 }
