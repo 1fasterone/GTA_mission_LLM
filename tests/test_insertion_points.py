@@ -104,6 +104,44 @@ def test_code_brace_depth_ignores_comments_and_literals(fragment, depth, why):
     assert _code_brace_depth(fragment) == depth, why
 
 
+def test_out_param_regex_never_rewrites_prose():
+    """`out` is an ordinary English word. The CS0103 out-parameter pass used to
+    fire on it wherever it appeared, so a dialogue line shipped as
+
+        Debug.Log("Good luck out var there.");
+
+    Same defect class as the brace counter: a regex cannot see literal
+    boundaries. Masking the pass to code positions fixes both.
+    """
+    prose = 'Debug.Log("Good luck out there.");'
+    assert lint_code_fragment(prose, what="x") == prose
+
+
+def test_out_param_still_declared_in_real_code():
+    """Positive control — the pass exists for a reason and must keep working
+    beside the prose it now leaves alone."""
+    out = lint_code_fragment(
+        'Debug.Log("Good luck out there."); Physics.Raycast(ray, out hit, 10f);',
+        what="x")
+    assert '"Good luck out there."' in out          # prose intact
+    assert "out var hit" in out                     # real out-param declared
+
+
+@pytest.mark.parametrize("fragment,expected,why", [
+    ("// try out something\nPhysics.Raycast(r, out hit, 1f);",
+     "out var hit", "prose in a // comment is not code"),
+    ('var s = @"hand out there"; Physics.Raycast(r, out hit, 1f);',
+     "out var hit", "verbatim string is not code"),
+    ("RaycastHit hit; Physics.Raycast(r, out hit, 1f);",
+     "out hit", "already declared — left alone"),
+    ("// RaycastHit hit;\nPhysics.Raycast(r, out hit, 1f);",
+     "out var hit", "a declaration only inside a comment does not count"),
+    ("Foo(out var x);", "out var x", "already an out var"),
+])
+def test_out_param_declaration_respects_code_boundaries(fragment, expected, why):
+    assert expected in lint_code_fragment(fragment, what="x"), why
+
+
 def test_lint_leaves_surplus_closers_alone():
     """The never-reduces contract survives: a fragment with MORE closers than
     openers eats the enclosing method the same way, but dropping a brace can
