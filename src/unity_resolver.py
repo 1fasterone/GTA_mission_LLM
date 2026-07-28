@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 from rich.console import Console
 
-from .unity_schema import UnitySchema, UnityPackage
+from .unity_schema import UnitySchema, UnityPackage, UnityVersion
 
 console = Console()
 
@@ -99,6 +99,48 @@ def _get_version(pkg_id: str, unity_version: str, db: dict) -> Optional[str]:
     return None
 
 
+# ── Atmosphere ⇄ Unity-version reconciliation ──────────────────────────────────
+# The vendored URP-Atmosphere render feature (templates/unity/vendor/URPAtmosphere)
+# is written against URP 17's RenderGraph API (RecordRenderGraph / RenderGraphModule
+# / UniversalRenderer.CreateRenderGraphTexture). Those symbols do not exist in the
+# URP 14 that Unity 2022.3 pins, so an atmosphere project pinned to 2022.3 ships
+# render code that cannot compile. The schema-fill LLM picks unity_version from the
+# brief's *vibe* (a grounded look → 2022.3) — a soft signal — whereas the atmosphere
+# gate keys on concrete concept content, so when they conflict the version yields.
+# See memory note unity-65-compat (PR#7): the feature is deliberately RenderGraph-only.
+
+_URP_PKG_ID = "com.unity.render-pipelines.universal"
+
+# URP major that introduced the RenderGraph render-pass API (URP 17 / Unity 6).
+_URP_RENDERGRAPH_MAJOR = 17
+
+# Lowest Unity version whose URP ships RenderGraph — the floor an atmosphere
+# project is raised to. Present in _VERSION_MAP (unity_generator) and packages.json.
+# Typed as UnityVersion (not bare str) so mypy accepts the assignment into
+# schema.unity_version, which is itself a Literal[...] of the same alias.
+_ATMOSPHERE_MIN_UNITY: UnityVersion = "6000.0"
+
+
+def _urp_has_rendergraph(unity_version: str, db: dict) -> bool:
+    """True when the URP version this Unity pins ships the RenderGraph API.
+
+    Derived from the same packages.json map that pins the manifest, so the
+    compatibility decision and the actual URP pin can never disagree. Falls back
+    to the Unity major (6000+ ⇒ URP 17+) when no URP pin is mapped, which keeps a
+    newer-than-mapped release from being needlessly downgraded.
+    """
+    urp = _get_version(_URP_PKG_ID, unity_version, db)
+    if urp:
+        try:
+            return int(urp.split(".")[0]) >= _URP_RENDERGRAPH_MAJOR
+        except (ValueError, IndexError):
+            pass
+    try:
+        return int(unity_version.split(".")[0]) >= 6000
+    except (ValueError, IndexError):
+        return False
+
+
 class UnityResolver:
     def __init__(self, lookups_dir: str = "lookups",
                  rag: Optional[Any] = None,
@@ -163,6 +205,11 @@ class UnityResolver:
               must NOT let those slip through to build_manifest_deps' broken
               `1.0.0` fallback.)
         """
+        # Reconcile the Unity version with feature requirements BEFORE any
+        # package version is pinned, so every dependency (URP included) resolves
+        # against the final version rather than the LLM's original pick.
+        self._reconcile_atmosphere_version(schema)
+
         for pkg in schema.packages:
             if not pkg.package_id:
                 pkg_id, version = self.resolve_package(pkg.description, schema.unity_version)
@@ -181,6 +228,50 @@ class UnityResolver:
                     )
         self.expand_behaviors(schema)
         return schema
+
+    def _reconcile_atmosphere_version(self, schema: UnitySchema) -> None:
+        """Raise unity_version to a RenderGraph-capable release when the vendored
+        URP-Atmosphere feature will ship (in-place, idempotent).
+
+        The atmosphere render pass uses URP 17's RenderGraph API, which the URP
+        14 that Unity 2022.3 pins does not have — so a 2022.3 atmosphere project
+        cannot compile its own feature. The version pick is soft and the
+        atmosphere gate is concrete, so we bump the version to _ATMOSPHERE_MIN_UNITY.
+        No-op when the project already resolves to URP ≥17, or when the atmosphere
+        feature is not gated on (see wants_atmosphere).
+        """
+        # Local import: wants_atmosphere lives in the generator, which is a much
+        # heavier module — keep it out of the resolver's import surface.
+        from .unity_generator import wants_atmosphere
+
+        if not wants_atmosphere(schema):
+            return
+        if _urp_has_rendergraph(schema.unity_version, self.db):
+            return
+
+        old = schema.unity_version
+        schema.unity_version = _ATMOSPHERE_MIN_UNITY
+
+        # Baked package pins from the OLD Unity (URP 14.0.11, Cinemachine 2.9.7,
+        # … for 2022.3) are wrong for the new engine. Clear the versions of
+        # db-known packages so the second pass below re-pins them against the
+        # bumped version. Only clears pins we can re-derive — an unknown-to-db
+        # baked pin is left as-is rather than dropped. This is also what makes
+        # unity-validate replay consistent: byte-identical replay deliberately
+        # keeps baked pins, but a version we just moved out from under is exactly
+        # the case where the baked pin must NOT survive (see unity-65-compat).
+        versions_db = self.db.get("versions", {})
+        repinned = 0
+        for pkg in schema.packages:
+            if pkg.version and pkg.package_id in versions_db:
+                pkg.version = None
+                repinned += 1
+
+        console.print(
+            f"  [magenta]VER[/]  atmosphere feature needs URP RenderGraph (URP "
+            f"{_URP_RENDERGRAPH_MAJOR}+) — bumped Unity {old} -> {schema.unity_version}"
+            + (f" (re-pinning {repinned} package(s))" if repinned else "")
+        )
 
     # ── Atom behavior expansion ───────────────────────────────────────────────
 

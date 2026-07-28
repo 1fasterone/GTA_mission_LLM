@@ -1895,6 +1895,62 @@ class TestAtmosphere:
         assert (root / "Assets" / "Resources" / "Atmosphere"
                      / "DefaultAtmosphereProfile.asset").is_file()
 
+    # ── Version ⇄ RenderGraph-source invariant ──────────────────────────────────
+    # The vendored render pass uses URP 17's RenderGraph API. A project must never
+    # ship those sources on a URP-14 manifest (Unity 2022.3), which cannot compile
+    # them. Driven through the real resolver → write() seam so the reconciliation
+    # (bump 2022.3 → 6.x when atmosphere is active) is exercised end to end.
+
+    _RG_MARKERS = ("RenderGraphModule", "RecordRenderGraph",
+                   "CreateRenderGraphTexture")
+
+    def _resolve_and_write(self, gen, schema, tmp_path):
+        from src.unity_resolver import UnityResolver
+        r = UnityResolver(lookups_dir="lookups", use_rag=False)
+        r.resolve_schema(schema)                 # may bump unity_version
+        r.inject_required_packages(schema)
+        manifest = r.build_manifest_deps(schema)
+        root, _ = gen.write(schema, manifest, output_dir=str(tmp_path))
+        return root, manifest
+
+    def test_atmosphere_2022_3_brief_is_bumped_and_ships_rendergraph_on_urp17(
+            self, gen, tmp_path):
+        # An atmosphere brief the LLM pinned to 2022.3: the resolver bumps it to
+        # 6.x so the RenderGraph sources it ships land on a URP-17 manifest.
+        schema = self._schema(
+            description="high-altitude freefall above the clouds",
+            unity_version="2022.3")
+        root, manifest = self._resolve_and_write(gen, schema, tmp_path)
+
+        assert schema.unity_version == "6000.0"                 # reconciled
+        urp = manifest["com.unity.render-pipelines.universal"]
+        assert int(urp.split(".")[0]) >= 17                     # RenderGraph-capable
+        assert "6000." in (root / "ProjectSettings"
+                           / "ProjectVersion.txt").read_text()  # editor matches
+
+        pass_cs = (root / "Assets" / "Atmosphere" / "Runtime" / "Scripts"
+                   / "AtmosphereRenderPass.cs").read_text(encoding="utf-8")
+        assert any(m in pass_cs for m in self._RG_MARKERS)      # RenderGraph shipped
+
+    def test_2022_3_project_without_atmosphere_ships_no_rendergraph_sources(
+            self, gen, tmp_path):
+        # Conversely: a grounded 2022.3 brief keeps its pin (URP 14) and must ship
+        # NO RenderGraph-referencing sources — there is no atmosphere feature.
+        schema = self._schema(
+            description="a quiet dungeon crawler underground",
+            unity_version="2022.3")
+        root, manifest = self._resolve_and_write(gen, schema, tmp_path)
+
+        assert schema.unity_version == "2022.3"                 # not bumped
+        assert manifest["com.unity.render-pipelines.universal"].startswith("14.")
+        assert not (root / "Assets" / "Atmosphere").exists()
+
+        offenders = [
+            cs for cs in root.rglob("*.cs")
+            if any(m in cs.read_text(encoding="utf-8") for m in self._RG_MARKERS)
+        ]
+        assert offenders == []
+
 
 # ── Service-locator + undeclared-identifier sanitizers (TerminalHorizon repro) ──
 

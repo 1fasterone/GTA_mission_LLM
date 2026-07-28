@@ -3,7 +3,9 @@ Tests for UnityResolver: local lookup, version resolution, package injection.
 """
 import pytest
 
-from src.unity_resolver import UnityResolver, _local_resolve, _get_version
+from src.unity_resolver import (
+    UnityResolver, _local_resolve, _get_version, _urp_has_rendergraph,
+)
 from src.unity_schema import UnityPackage, UnitySchema, UnityScript
 
 
@@ -172,3 +174,117 @@ class TestBuildManifestDeps:
         deps = resolver.build_manifest_deps(minimal_schema)
         keys = list(deps.keys())
         assert keys == sorted(keys)
+
+
+# ── Atmosphere ⇄ Unity-version reconciliation ──────────────────────────────────
+# The vendored URP-Atmosphere render feature is written against URP 17's
+# RenderGraph API, which the URP 14 that Unity 2022.3 pins does not have. When a
+# sky-implying brief gets pinned to a pre-RenderGraph Unity, the resolver raises
+# the version so the manifest (URP included) resolves against a version that can
+# actually compile the feature.
+
+_URP = "com.unity.render-pipelines.universal"
+
+
+def _atmo_schema(**kw) -> UnitySchema:
+    """A 3D URP schema that trips wants_atmosphere via a sky-implying description."""
+    base = dict(
+        project_name="AT", company_name="C",
+        description="high-altitude freefall above the clouds",
+        game_type="3D", platform="pc", render_pipeline="URP",
+        unity_version="2022.3", color_space="Linear",
+        features=[], scenes=["Main"], packages=[],
+        scripts=[UnityScript(name="PlayerController", type="player", description="p")],
+    )
+    base.update(kw)
+    return UnitySchema(**base)
+
+
+class TestUrpHasRenderGraph:
+    def test_pre_rendergraph_versions(self, db):
+        assert not _urp_has_rendergraph("2021.3", db)   # URP 12
+        assert not _urp_has_rendergraph("2022.3", db)   # URP 14
+
+    def test_rendergraph_versions(self, db):
+        assert _urp_has_rendergraph("6000.0", db)       # URP 17.0.3
+        assert _urp_has_rendergraph("6000.1", db)       # URP 17.1.0
+        assert _urp_has_rendergraph("6000.4", db)       # URP 17.4.0
+
+    def test_unmapped_future_unity_not_downgraded(self, db):
+        # No URP pin mapped, but Unity 6000+ ships URP 17+ — treat as capable so
+        # a newer-than-mapped release is never needlessly bumped down.
+        assert _urp_has_rendergraph("6000.9", db)
+
+
+class TestAtmosphereVersionReconcile:
+    def test_bumps_2022_3_atmosphere_to_6x(self, resolver):
+        s = _atmo_schema(unity_version="2022.3")
+        resolver.resolve_schema(s)
+        assert s.unity_version == "6000.0"
+
+    def test_bumps_2021_3_atmosphere_via_locomotion_fly(self, resolver):
+        # locomotion=fly is the other atmosphere trigger (no sky words needed).
+        s = _atmo_schema(unity_version="2021.3", description="a race across town",
+                         locomotion="fly")
+        resolver.resolve_schema(s)
+        assert s.unity_version == "6000.0"
+
+    def test_leaves_6x_atmosphere_untouched(self, resolver):
+        s = _atmo_schema(unity_version="6000.1")
+        resolver.resolve_schema(s)
+        assert s.unity_version == "6000.1"
+
+    def test_no_atmosphere_2022_3_is_not_bumped(self, resolver):
+        # A grounded brief keeps its 2022.3 pin — the bump is atmosphere-only.
+        s = _atmo_schema(unity_version="2022.3",
+                         description="a quiet dungeon crawler underground")
+        resolver.resolve_schema(s)
+        assert s.unity_version == "2022.3"
+
+    def test_builtin_pipeline_not_bumped(self, resolver):
+        # wants_atmosphere gates on URP; a Built-in project never ships the
+        # RenderGraph feature, so its version is left alone.
+        s = _atmo_schema(unity_version="2022.3", render_pipeline="Built-in")
+        resolver.resolve_schema(s)
+        assert s.unity_version == "2022.3"
+
+    def test_reconcile_is_idempotent(self, resolver):
+        s = _atmo_schema(unity_version="2022.3")
+        resolver.resolve_schema(s)
+        resolver.resolve_schema(s)
+        assert s.unity_version == "6000.0"
+
+    def test_manifest_urp_pin_is_rendergraph_capable_after_bump(self, resolver):
+        # The whole point of bumping BEFORE package resolution: the URP pin that
+        # lands in the manifest must be one whose URP has RenderGraph.
+        s = _atmo_schema(unity_version="2022.3")
+        resolver.resolve_schema(s)
+        resolver.inject_required_packages(s)
+        deps = resolver.build_manifest_deps(s)
+        assert _URP in deps
+        assert int(deps[_URP].split(".")[0]) >= 17   # not the URP 14 that 2022.3 pins
+
+    def test_bump_repins_stale_baked_versions(self, resolver):
+        # unity-validate replay: a saved schema carries baked pins from the old
+        # engine. Bumping the version must re-pin db-known packages, not keep the
+        # incompatible URP 14 / Cinemachine 2.9.7 that 2022.3 baked in.
+        s = _atmo_schema(unity_version="2022.3", packages=[
+            UnityPackage(description="urp", package_id=_URP, version="14.0.11"),
+            UnityPackage(description="cinemachine",
+                         package_id="com.unity.cinemachine", version="2.9.7"),
+        ])
+        resolver.resolve_schema(s)
+        by_id = {p.package_id: p.version for p in s.packages}
+        assert int(by_id[_URP].split(".")[0]) >= 17
+        assert by_id["com.unity.cinemachine"].startswith("3.")   # Unity 6 line
+
+    def test_bump_leaves_unknown_baked_pin_untouched(self, resolver):
+        # A pin we can't re-derive from the version db is left as-is rather than
+        # dropped — clearing it would make build_manifest_deps skip the package.
+        s = _atmo_schema(unity_version="2022.3", packages=[
+            UnityPackage(description="custom", package_id="com.acme.custom",
+                         version="9.9.9"),
+        ])
+        resolver.resolve_schema(s)
+        by_id = {p.package_id: p.version for p in s.packages}
+        assert by_id["com.acme.custom"] == "9.9.9"
