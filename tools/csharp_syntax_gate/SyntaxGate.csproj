@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- RoslynDir and GateTfm are supplied by src/csharp_syntax_gate.py, which
+       discovers the installed SDK and points both at the SAME sdk version: the
+       Roslyn assemblies shipped with SDK N require runtime N, so a mismatch
+       fails with CS1705 (assembly version conflict).
+
+       GateTfm rather than TargetFramework directly: TargetFramework is
+       reserved: passing it as a global property drives the per-TFM inner build
+       only, so restore still writes an assets file for the default and the
+       build then fails NETSDK1005. Assigning it from an ordinary property
+       keeps restore and build in agreement.
+
+       Defaults let the project still build by hand on a net9.0 SDK. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <GateTfm Condition="'$(GateTfm)' == ''">net9.0</GateTfm>
+    <TargetFramework>$(GateTfm)</TargetFramework>
+    <AssemblyName>SyntaxGate</AssemblyName>
+    <RootNamespace>SyntaxGate</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>$(RoslynDir)/Microsoft.CodeAnalysis.dll</HintPath>
+      <!-- Copy local: the built SyntaxGate.dll resolves Roslyn from its own
+           output folder rather than the SDK it was compiled against. -->
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>$(RoslynDir)/Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <!-- Copy local: the built SyntaxGate.dll resolves Roslyn from its own
+           output folder rather than the SDK it was compiled against. -->
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

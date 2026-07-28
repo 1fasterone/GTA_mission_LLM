@@ -1,0 +1,198 @@
+"""Tests for the generated-C# syntax gate (src/csharp_syntax_gate.py) and the
+string-literal escaping that feeds it (src/micro/code_fields.py).
+
+The live defects both came from a DropZone run:
+
+  NpcDialogPlayer.cs(23,75) / NpcDialogTrigger.cs(18,75)  CS1003
+      an unescaped quote inside [Tooltip("…")] ended the literal early
+  SaveSystem.cs(77,5)                                     CS0106
+      a closing brace inside a `//` comment never closed Update()
+
+The escaping tests run everywhere. The parser tests need a .NET SDK and are
+skipped without one — CI has no dotnet (see the toolchain policy in the module
+docstring: a missing SDK is not a defect in the generated project).
+"""
+
+import shutil
+
+import pytest
+from jinja2 import Environment, FileSystemLoader
+
+from src.csharp_syntax_gate import (CSharpSyntaxError, SyntaxDiagnostic,
+                                    check_files, enforce)
+from src.micro.code_fields import CodeField, escape_cs_string
+
+# The exact tooltip from the run, as the model returned it.
+_LIVE_TOOLTIP = 'Current active quest identifier (e.g., "RocBiomeFreefall", ...'
+
+_needs_dotnet = pytest.mark.skipif(
+    shutil.which("dotnet") is None, reason="no .NET SDK on PATH")
+
+
+# ── escaping (Step 2a) ────────────────────────────────────────────────────────
+
+def test_quote_in_tooltip_is_escaped():
+    f = CodeField(name="_questId", type="string", tooltip=_LIVE_TOOLTIP)
+    assert '\\"RocBiomeFreefall\\"' in f.tooltip
+    # No bare quote survives — that is what terminated the literal at column 75.
+    assert '"' not in f.tooltip.replace('\\"', "")
+
+
+def test_backslash_escaped_before_quote():
+    """Order matters: escaping quotes first would then double the backslashes
+    the quote-escape itself introduced."""
+    assert escape_cs_string(r'C:\temp "x"') == r'C:\\temp \"x\"'
+
+
+def test_newlines_and_tabs_become_escapes():
+    # A raw newline inside [Tooltip("…")] is as fatal as a raw quote.
+    assert escape_cs_string("Quest\nState\tB") == "Quest\\nState\\tB"
+    assert escape_cs_string("a\r\nb") == "a\\nb"
+
+
+def test_header_escaped_too():
+    assert CodeField(name="_x", header='Set "up"').header == 'Set \\"up\\"'
+
+
+def test_default_is_not_escaped():
+    """`default` is NOT inside a literal — it IS the literal. saveload's
+    default_fix authors `default='\"\"'` for a string field, which must render
+    as `= \"\"`; escaping it would emit `= \\\"\\\"` and break the declaration."""
+    assert CodeField(name="playerName", type="string", default='""').default == '""'
+
+
+def test_escaped_tooltip_renders_a_parseable_attribute(tmp_path):
+    """The whole point, through the real macro: _inject.j2 interpolates the
+    tooltip raw, so the escaping has to survive to the rendered line."""
+    env = Environment(loader=FileSystemLoader("templates/unity/micro"))
+    tpl = env.from_string(
+        '{% import "_inject.j2" as inject %}\n'
+        "using UnityEngine;\n"
+        "public class T : MonoBehaviour\n{\n{{ inject.fields(s) }}\n}"
+    )
+
+    class S:
+        extra_fields = [CodeField(name="_questId", type="string",
+                                  tooltip=_LIVE_TOOLTIP)]
+        extra_usings: list = []
+        extra_methods: list = []
+
+    out = tpl.render(s=S())
+    assert '[Tooltip("Current active quest identifier (e.g., \\"RocBiomeFreefall\\", ...")]' in out
+
+
+# ── diagnostic parsing (no toolchain needed) ─────────────────────────────────
+
+def test_diagnostic_formats_like_the_compiler():
+    d = SyntaxDiagnostic(file="A.cs", line=23, column=75, code="CS1003",
+                         message="Syntax error, ',' expected")
+    assert str(d) == "A.cs(23,75): CS1003: Syntax error, ',' expected"
+
+
+def test_gate_can_be_disabled(tmp_path):
+    f = tmp_path / "Broken.cs"
+    f.write_text("public class X { ", encoding="utf-8")
+    result = check_files([f], enabled=False)
+    assert result.skipped and result.ok
+
+
+def test_non_cs_files_are_ignored(tmp_path):
+    (tmp_path / "notes.md").write_text("# not code", encoding="utf-8")
+    assert check_files([tmp_path / "notes.md"]).checked == 0
+
+
+# ── the parser itself (Step 3) ───────────────────────────────────────────────
+
+def _write(tmp_path, name, body):
+    p = tmp_path / name
+    p.write_text(body, encoding="utf-8")
+    return p
+
+
+@_needs_dotnet
+def test_unescaped_quote_in_tooltip_is_caught(tmp_path):
+    """The CS1003 half of the live evidence, verbatim."""
+    p = _write(tmp_path, "NpcDialogTrigger.cs",
+               "using UnityEngine;\n"
+               "public class NpcDialogTrigger : MonoBehaviour\n{\n"
+               '    [Tooltip("Current active quest identifier (e.g., "RocBiomeFreefall", ...")]'
+               " [SerializeField] private string _questId;\n"
+               "    private void Update() { }\n}\n")
+    result = check_files([p])
+    assert not result.ok
+    assert any(d.code == "CS1003" and d.line == 4 for d in result.diagnostics)
+
+
+@_needs_dotnet
+def test_brace_inside_a_comment_is_caught(tmp_path):
+    """The CS0106 half. Brace CHARACTERS are balanced here — this is the case
+    that proves a counter cannot work and a real parser is required."""
+    src = ("using UnityEngine;\n"
+           "public class SaveSystem : MonoBehaviour\n{\n"
+           "    private bool _isDirty;\n"
+           "    private int _currentLocationIndex;\n"
+           "    private void Update()\n    {\n"
+           "        if (_isDirty) { int loc = _currentLocationIndex;"
+           " // Validate state before save }\n"
+           "    }\n\n    public void Save() { }\n}\n")
+    assert src.count("{") == src.count("}")      # a counter sees nothing wrong
+    result = check_files([_write(tmp_path, "SaveSystem.cs", src)])
+    assert not result.ok
+
+
+@_needs_dotnet
+def test_clean_unity_script_passes(tmp_path):
+    """No false positives: an ordinary MonoBehaviour must parse clean even
+    though UnityEngine is not referenced — the gate parses, it does not bind."""
+    p = _write(tmp_path, "Clean.cs",
+               "using UnityEngine;\n"
+               "public class Clean : MonoBehaviour\n{\n"
+               '    [Tooltip("Speed in m/s.")] [SerializeField] private float _speed = 1f;\n'
+               "    private void Update() { transform.Translate(Vector3.forward * _speed); }\n"
+               "}\n")
+    result = check_files([p])
+    assert result.ok and result.checked == 1
+
+
+@_needs_dotnet
+def test_escaped_tooltip_parses_clean(tmp_path):
+    """Step 2a and Step 3 together: the same live tooltip, escaped, parses."""
+    f = CodeField(name="_questId", type="string", tooltip=_LIVE_TOOLTIP)
+    p = _write(tmp_path, "Fixed.cs",
+               "using UnityEngine;\n"
+               "public class Fixed : MonoBehaviour\n{\n"
+               f'    [Tooltip("{f.tooltip}")] [SerializeField] private string _questId;\n'
+               "    private void Update() { }\n}\n")
+    assert check_files([p]).ok
+
+
+@_needs_dotnet
+def test_enforce_raises_with_location_and_message(tmp_path):
+    """Fail loudly — same doctrine as [assets.strict]: file, line, column and
+    the compiler's own text, never a silent repair."""
+    p = _write(tmp_path, "Bad.cs", "public class X { void M() { \n")
+    with pytest.raises(CSharpSyntaxError) as exc:
+        enforce([p])
+    assert exc.value.diagnostics
+    d = exc.value.diagnostics[0]
+    assert d.code.startswith("CS") and d.line >= 1 and d.column >= 1
+    assert "Bad.cs" in str(exc.value)
+
+
+@_needs_dotnet
+def test_language_version_violations_are_NOT_caught(tmp_path):
+    """Documented limitation, locked in so nobody assumes otherwise.
+
+    The gate parses as C# 9 (Unity 6000.0), but Roslyn PARSES newer constructs
+    happily and defers "feature is not available in C# 9" to binding, which
+    this gate deliberately does not run. So a C# 12 collection expression
+    (`= [12000f, 4500f, 300f]`, seen live) and a C# 10 file-scoped namespace
+    both pass here and surface in the Unity console instead.
+    """
+    collection_expr = _write(
+        tmp_path, "Collect.cs",
+        "public class C { private float[] _a = [12000f, 4500f, 300f]; }\n")
+    file_scoped_ns = _write(
+        tmp_path, "Ns.cs", "namespace N;\npublic class D { }\n")
+    assert check_files([collection_expr]).ok
+    assert check_files([file_scoped_ns]).ok

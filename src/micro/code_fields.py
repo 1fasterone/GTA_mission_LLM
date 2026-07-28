@@ -38,6 +38,32 @@ _CSHARP_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CSHARP_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.<>,\[\]?\s]*$")
 
 
+def escape_cs_string(text: str) -> str:
+    """Escape LLM prose for a C# regular string literal.
+
+    `header`/`tooltip` are interpolated raw into `[Header("…")]` /
+    `[Tooltip("…")]` by every template that renders extra_fields
+    (templates/unity/micro/_inject.j2 and the seven generators with their own
+    inline copy), so a quote in the model's prose terminates the literal early
+    and the rest of the line parses as garbage. Hit live on a DropZone run:
+
+        [Tooltip("Current active quest identifier (e.g., "RocBiomeFreefall", ...")]
+
+    → CS1003 at column 75 in both NpcDialogPlayer.cs and NpcDialogTrigger.cs.
+    Escaping here rather than in the templates fixes all eight injection sites
+    at once, and keeps the fix on the data that is actually untrusted.
+
+    Backslash first — otherwise the pass would double-escape the backslashes
+    this function itself introduces. Newlines become `\\n` rather than being
+    stripped: a literal newline is equally fatal inside the literal, and the
+    escape preserves the author's text.
+    """
+    out = text.replace("\\", "\\\\").replace('"', '\\"')
+    for raw, esc in (("\r\n", "\\n"), ("\r", "\\n"), ("\n", "\\n"), ("\t", "\\t")):
+        out = out.replace(raw, esc)
+    return out
+
+
 class CodeField(BaseModel):
     """An LLM-authored [SerializeField] declaration."""
     name:    str
@@ -73,6 +99,14 @@ class CodeField(BaseModel):
         if isinstance(v, bool):
             return "true" if v else "false"
         return str(v)
+
+    @field_validator("header", "tooltip", mode="after")
+    @classmethod
+    def _escape_for_literal(cls, v):
+        """Only header/tooltip — `default` is NOT inside a literal, it IS the
+        literal (`default='\"\"'` renders `= \"\"`), so escaping it would emit
+        `= \\\"\\\"` and break the declaration."""
+        return None if v is None else escape_cs_string(v)
 
 
 class CodeMethod(BaseModel):
