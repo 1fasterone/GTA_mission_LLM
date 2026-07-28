@@ -340,6 +340,8 @@ def unity_create(
                                               help="Route file from `unity-path` (routes.json) — compose the circuit around this authored/traced course instead of the parametric oval"),
     no_think:    bool          = typer.Option(False, "--no-think",
                                               help="Disable LLM reasoning for every step (including the concept step, which normally reasons). Faster, but trades away concept creativity/quality — useful for timing/plumbing runs."),
+    micro_code:  bool          = typer.Option(True, "--micro-code/--no-micro-code",
+                                              help="With --compose: let the LLM author prompt-specific C# into each composed micro (one focused call per subsystem). --no-micro-code keeps the deterministic baseline bodies and is faster."),
 ) -> None:
     """Generate a complete Unity project folder from a plain-English prompt.
 
@@ -379,7 +381,7 @@ def unity_create(
                           "generate it with: python main.py unity-path ...")
             raise typer.Exit(1)
 
-    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, no_think=no_think)
+    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, no_think=no_think, micro_code=micro_code)
 
 
 @app.command("unity-path")

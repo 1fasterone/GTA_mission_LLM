@@ -763,7 +763,8 @@ class UnityPipeline:
             compose:     bool = False,
             blender_models: bool = False,
             route:       dict | None = None,
-            no_think:    bool = False) -> Path:
+            no_think:    bool = False,
+            micro_code:  bool = True) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -1046,6 +1047,27 @@ class UnityPipeline:
                                         environment=schema.environment,
                                         visual_style=schema.visual_style,
                                         palette_rgb=_compose_palette_rgb(schema))
+            # STEP 3.5 — LLM authors prompt-specific C# per subsystem. Runs
+            # BEFORE plan(): plan/emit must see identical options or their
+            # class names and GUIDs would disagree. Only the extras vocabulary
+            # is writable (see unity_micro_code.CODE_KEYS), so the scene wiring
+            # stays deterministic while the bodies gain concept-specific
+            # content. Placed here — inside the warm window, ahead of the bulk
+            # Sketchfab/Blender phase below — for the same reason the NPC
+            # dialog pre-extraction is (LM Studio idle-unload would otherwise
+            # turn every call into a swallowed failure).
+            from .unity_micro_code import enrich_subsystems, merge_authored_code
+            if micro_code:
+                for msg in enrich_subsystems(subsystems, llm=self.llm,
+                                             concept=concept,
+                                             user_prompt=user_prompt):
+                    self._fix(msg)
+            # Fallback: schema.microgens[].input is already LLM-authored, so it
+            # costs nothing and covers whatever enrichment left empty (disabled,
+            # failed, or nothing usable returned for that kind).
+            for msg in merge_authored_code(subsystems, schema.microgens):
+                self._fix(msg)
+
             composed_units = composer.plan(subsystems)
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep

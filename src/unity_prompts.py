@@ -443,10 +443,27 @@ _MM_SEQUENCE = """
 """ + _ATOM_VOCAB_SLOT + """
       [{"atom":"ScreenFade","args":{"alpha":0.0,"duration":1.5},"label":"fade in"},
        {"atom":"CameraShake","args":{"intensity":0.4,"duration":1.0},"label":"impact"}]
-  "microgens": max 4 — a named bundle of those same atoms for one subsystem:
+  "microgens": max 8 — a named bundle of those same atoms for one subsystem:
       {"kind":"intro_sequence","input":{},"output_files":[],
        "atoms":[{"atom":"Wait","args":{"seconds":1.0},"label":"beat"}]}
     The compiler prepends every microgens[].atoms entry to "atoms".
+    When "kind" names a real subsystem — controller, camera, health, hud,
+    inventory, ai, spawner, physics, trigger, vfx, objectives, menu, saveload,
+    dialogue, npc_dialog, interactable, statemachine, animator, lighting,
+    shader, transition, behavior_tree, audio — "input" may ALSO carry the C#
+    that makes that subsystem specific to THIS concept. The compiler already
+    generates the baseline for the chosen variant; you author only the
+    difference, as typed fragments it injects at fixed points:
+      {"kind":"health","input":{
+         "extra_fields":[{"name":"_radiation","type":"float","default":"0f"}],
+         "update_extra":"_radiation += Time.deltaTime * 0.5f;",
+         "extra_methods":[{"signature":"private bool IsIrradiated()",
+                           "body":"return _radiation > 50f;"}]}}
+    Keys: extra_usings (namespaces, no "using"/";"), extra_fields
+    ({name,type,default,header,tooltip}), awake_extra / update_extra /
+    fixed_update_extra (C# statements, no braces), extra_methods
+    ({signature,body} — no braces, the template adds them). Pure C#, never
+    Python. Anything outside these keys is ignored.
 """
 
 # Section id → (keywords, body). Declaration order breaks score ties, so the
