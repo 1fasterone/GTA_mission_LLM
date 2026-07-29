@@ -48,6 +48,53 @@ class _KindDefaults(TypedDict):
 _SECTION_HEADER_RE = re.compile(r"^[A-Z][A-Z0-9 /&'-]{1,40}$")
 _BULLET_RE = re.compile(r"^([A-Za-z][\w'-]*)\s*:\s*(.+)$")
 _KIND_PAREN_RE = re.compile(r"\(kind:\s*([^)]*)\)", re.IGNORECASE)
+
+# ── kind-labeled bullets ─────────────────────────────────────────────────────
+# A brief may label each bullet with the entity's KIND instead of naming it:
+#     - Player:      lead skydiver in jumpsuit and helmet
+#     - Enemy:       formation AI skydivers (3)
+#     - Collectible: altitude gate ring
+#     - Collectible: formation lock target
+# rather than the "- PascalCaseName: ... (kind: x)" form. Read literally that
+# format broke the rescue three ways at once (live on DropZone): every bullet
+# came back kind="" and degraded to "prop" (so the player never got its tag and
+# the enemies never got AI), and the two "Collectible" bullets collided in the
+# name-keyed dedup so one was dropped by the rescue itself.
+#
+# Only consulted when the bullet carries NO explicit "(kind: ...)" clause — a
+# brief that writes "- Player: the astronaut (kind: player)" is naming the
+# entity "Player" on purpose and keeps that name.
+_KIND_LABELS: frozenset[str] = frozenset({
+    "player", "enemy", "npc", "boss", "companion", "character", "creature",
+    "collectible", "pickup", "item", "weapon", "vehicle", "prop", "building",
+    "obstacle", "hazard", "crowd", "platform", "ramp", "wall", "road", "rail",
+    "tree", "decor", "ground", "terrain", "fx",
+})
+# A bare parenthesised integer states the group's size in the kind-labeled
+# format ("formation AI skydivers (3)"), where there is no "count N" clause.
+# Bounded like _COUNT_RE so a stray "(2024)" can't spawn a swarm.
+_PAREN_COUNT_RE = re.compile(r"\((\d{1,3})\)")
+# A number word in DETERMINER position ("three team support tents") — only at
+# the head of the description, where it can only be a quantity. Mid-sentence
+# number words are prose ("all four divers must reach") and are left alone.
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+                 "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+                 "eleven": 11, "twelve": 12}
+_LEADING_NUMBER_WORD_RE = re.compile(
+    r"^\s*(?:a\s+set\s+of\s+|a\s+pair\s+of\s+)?"
+    rf"({'|'.join(_NUMBER_WORDS)})\b\s+", re.IGNORECASE)
+# Head noun phrase of a description — everything up to the first clause break.
+# "altitude gate ring (fly through for bonus score)" -> "altitude gate ring".
+_HEAD_CLAUSE_RE = re.compile(r"^[^(,;.]+")
+_WORD_RE = re.compile(r"[A-Za-z0-9]+")
+# Filler that carries no identity in a derived name — dropped so
+# "the player's lead skydiver in a jumpsuit" reads as "LeadSkydiver".
+_NAME_FILLER = frozenset({
+    "a", "an", "the", "of", "in", "on", "at", "for", "with", "and", "or",
+    "to", "from", "this", "that", "its", "his", "her", "their", "player",
+    "players", "game", "scene", "level", "world", "own",
+})
+_NAME_MAX_WORDS = 3
 # The kind token ends at the first "," or "/" — the documented brief format is
 # `(kind: character, model_hint "diver in wetsuit")`, so splitting on "/" alone
 # captured the whole model_hint clause as part of the kind.
@@ -134,17 +181,23 @@ _PLAYER_DESC_RE = re.compile(
 _AVATAR_KINDS = {"character", "player", "npc", "creature", "vehicle"}
 
 
-def _is_player(name: str, description: str) -> bool:
+def _is_player(name: str, description: str, kind: str = "") -> bool:
     """Identify the player's own entity. Deliberately narrower than "mentions
     the player": a hostile bullet almost always names the player as its victim
-    ("attack the player on sight")."""
-    return bool(_PLAYER_NAME_RE.match(name.strip())
+    ("attack the player on sight").
+
+    kind=="player" is the brief declaring it outright — load-bearing for the
+    kind-labeled bullet format, where the name is derived from the description
+    ("- Player: lead skydiver ..." -> LeadSkydiverJumpsuit) and so no longer
+    carries the "Player" prefix the name test looks for."""
+    return bool(kind.strip().lower() == "player"
+                or _PLAYER_NAME_RE.match(name.strip())
                 or _PLAYER_DESC_RE.search(description))
 
 
 def _is_hostile(name: str, kind: str, description: str) -> bool:
     """True when a rescued entity should carry tag="Enemy"."""
-    if _is_player(name, description):
+    if _is_player(name, description, kind):
         return False
     if kind in _ENEMY_KINDS:
         return True
@@ -161,7 +214,7 @@ def _is_player_avatar(name: str, kind: str, description: str) -> bool:
     """The object the camera follows and every CompareTag(playerTag) gate
     latches onto — not merely something the player owns. "PlayerWetsuit
     (kind: prop)" is player-associated but is NOT the avatar."""
-    return kind in _AVATAR_KINDS and _is_player(name, description)
+    return kind in _AVATAR_KINDS and _is_player(name, description, kind)
 
 
 def _fold_bullets(lines: list[str]) -> list[str]:
@@ -202,6 +255,35 @@ def _fold_bullets(lines: list[str]) -> list[str]:
     return bullets
 
 
+def _head_words(description: str) -> list[str]:
+    """Content words of a description's head noun phrase, filler removed —
+    "altitude gate ring (fly through for bonus score)" -> [altitude, gate,
+    ring]. The identity of a kind-labeled bullet lives entirely here, so it
+    feeds both the derived name and the derived model_hint."""
+    head_m = _HEAD_CLAUSE_RE.match(description or "")
+    head = head_m.group(0) if head_m else ""
+    return [w for w in _WORD_RE.findall(head) if w.lower() not in _NAME_FILLER]
+
+
+def _derive_name(words: list[str], kind: str, taken: set[str]) -> str:
+    """PascalCase group name from a kind-labeled bullet's own description.
+
+    The label was the KIND ("- Collectible: altitude gate ring"), so the name
+    has to come from the words the brief actually used — both to keep the two
+    "Collectible" bullets distinct (they used to collide and one was dropped
+    by the rescue's name-keyed dedup) and to give the asset resolver a real
+    noun phrase to match a model on. Falls back to the capitalized kind,
+    uniquified, when the description has no usable words.
+    """
+    name = "".join(w[:1].upper() + w[1:] for w in words[:_NAME_MAX_WORDS])
+    if not name:
+        name = (kind or "entity").capitalize()
+    base, n = name, 2
+    while name.lower() in taken:
+        name, n = f"{base}{n}", n + 1
+    return name
+
+
 def extract_named_entities(user_prompt: str) -> list[dict]:
     """Parse the brief's own "ENTITIES" section: bullets of the form
     "- Name: description (kind: x, model_hint "y"), count N." Returns
@@ -209,6 +291,11 @@ def extract_named_entities(user_prompt: str) -> list[dict]:
     order ("model_hint" "" and "count" None when the bullet omits them); []
     if the brief has no recognizable ENTITIES section (e.g. a one-line vibe
     prompt).
+
+    A bullet whose label is a bare KIND word and which states no "(kind: ...)"
+    clause ("- Collectible: altitude gate ring") is read the other way round:
+    the label becomes the kind and the name is derived from the description
+    (see _derive_name), so repeated labels stay distinct instead of colliding.
     """
     lines = (user_prompt or "").splitlines()
     start = None
@@ -220,6 +307,7 @@ def extract_named_entities(user_prompt: str) -> list[dict]:
         return []
 
     out: list[dict] = []
+    taken: set[str] = set()
     for bullet in _fold_bullets(lines[start:]):
         m = _BULLET_RE.match(bullet)
         if not m:
@@ -243,13 +331,90 @@ def extract_named_entities(user_prompt: str) -> list[dict]:
             count = int(count_m.group(1))
         desc = _COUNT_RE.sub("", desc)
 
+        # Label-as-kind. Deliberately gated on the bullet stating no kind of
+        # its own: "- Player: the astronaut (kind: player)" is naming the
+        # entity "Player" on purpose and must keep that name.
+        label_is_kind = not kind and name.lower() in _KIND_LABELS
+        if label_is_kind:
+            kind = name.lower()
+            # This format carries no "count N" clause, so the group size —
+            # when stated at all — is a bare "(3)" or a leading number word.
+            if count is None:
+                paren_m = _PAREN_COUNT_RE.search(desc)
+                word_m = _LEADING_NUMBER_WORD_RE.match(desc)
+                if paren_m and 1 <= int(paren_m.group(1)) <= _MAX_COUNT:
+                    count = int(paren_m.group(1))
+                elif word_m:
+                    count = _NUMBER_WORDS[word_m.group(1).lower()]
+            desc = _PAREN_COUNT_RE.sub("", desc)
+
         # Excising the "(kind: ...)" / "count N" clauses leaves orphaned
         # whitespace before the punctuation that followed them.
         desc = re.sub(r"\s+([,.;:])", r"\1", " ".join(desc.split()))
         desc = desc.strip().rstrip(".").strip().rstrip(",")
+
+        if label_is_kind:
+            words = _head_words(desc)
+            name = _derive_name(words, kind, taken)
+            # The brief's own noun phrase IS the model_hint the resolver wants
+            # ("2-5 plain words naming the PHYSICAL OBJECT"). Taking it from
+            # here rather than re-tokenizing the derived name matters because
+            # the derived name has no word boundaries left to split on —
+            # "FormationAISkydivers" tokenizes to "formation aiskydivers",
+            # which matches no model in the catalog.
+            if not model_hint and words:
+                model_hint = " ".join(w.lower() for w in words[:4])
+        taken.add(name.lower())
         out.append({"name": name, "description": desc, "kind": kind,
                     "model_hint": model_hint, "count": count})
     return out
+
+
+# Bounds for the Step-3 checklist below — the schema itself caps `entities` at
+# 40 groups, and a description longer than this is prose the LLM does not need
+# repeated back at it.
+_CHECKLIST_MAX_ENTITIES = 40
+_CHECKLIST_MAX_DESC = 160
+
+
+def render_entity_checklist(user_prompt: str) -> str:
+    """Render the brief's own ENTITIES bullets as a mandatory checklist for the
+    Step-3 schema-fill prompt. "" when the brief has no ENTITIES section.
+
+    THE CAUSE this module's rescue was written to contain: Step 3 is handed the
+    Step-2 LLM `concept` and nothing else — the raw brief never reaches it (see
+    unity_pipeline.run's UNITY_SCHEMA_FILL_USER.format call). So a brief that
+    names its entities explicitly has already had those names paraphrased away
+    by the time the schema-fill model runs, and "the LLM dropped four explicit
+    entities" is really "the LLM was never shown them". Hit live on DropZone:
+    of five explicitly named ENTITIES bullets, four never reached the schema.
+
+    Deterministic string assembly over the same deterministic parse the rescue
+    uses, so the names asked for here are byte-identical to the names the
+    rescue would restore — the LLM honouring the checklist and the fixer
+    repairing it converge on one entity list instead of two overlapping ones.
+    """
+    named = extract_named_entities(user_prompt)
+    if not named:
+        return ""
+    lines = [
+        "REQUIRED ENTITIES — the brief names these groups explicitly. Your",
+        '"entities" array MUST contain one group for EACH line below, using',
+        "EXACTLY the name and kind given. These ARE the game's content: a line",
+        "you leave out is a thing the player cannot see, reach or use. Add",
+        "further groups only for scene dressing the brief also implies.",
+    ]
+    for i, ent in enumerate(named[:_CHECKLIST_MAX_ENTITIES], start=1):
+        head = f'  {i}. name="{ent["name"]}"  kind="{ent["kind"] or "prop"}"'
+        if ent.get("count"):
+            head += f'  count={ent["count"]}'
+        if ent.get("model_hint"):
+            head += f'  model_hint="{ent["model_hint"]}"'
+        lines.append(head)
+        desc = " ".join((ent.get("description") or "").split())
+        if desc:
+            lines.append(f"     {desc[:_CHECKLIST_MAX_DESC]}")
+    return "\n".join(lines) + "\n"
 
 
 def _model_hint(name: str, kind: str, description: str) -> str:

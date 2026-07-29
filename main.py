@@ -522,6 +522,36 @@ def unity_resolve(
         console.print(f"[yellow]No match found for[/] [cyan]{description}[/]")
 
 
+@app.command("unity-playability")
+def unity_playability(
+    schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),
+    min_score:   int = typer.Option(0, "--min-score",
+                                    help="Exit non-zero below this 0-100 score"),
+    strict:     bool = typer.Option(False, "--strict",
+                                    help="Exit non-zero on any playability ERROR"),
+) -> None:
+    """Grade a Unity schema on whether it is actually a GAME.
+
+    Deterministic structural checks — no LLM, no Unity, no runtime. Every
+    other command answers "did it compile"; this one answers whether the
+    player has an avatar, an objective, and content they can reach, and
+    whether the entities the brief named explicitly survived the build.
+
+      python main.py unity-playability output/unity/DropZone/DropZone.schema.json
+      python main.py unity-playability MyGame.schema.json --strict
+    """
+    from src.unity_playability import evaluate, gate
+
+    data   = json.loads(Path(schema_file).read_text(encoding="utf-8"))
+    report = evaluate(UnitySchema.model_validate(data))
+    # markup=False: findings carry schema field paths that rich reads as markup.
+    console.print(report.render(), markup=False)
+    reason = gate(report, min_score=min_score, fail_on_error=strict)
+    if reason:
+        console.print(f"[red]FAIL[/] {reason}")
+        raise typer.Exit(1)
+
+
 @app.command("unity-validate")
 def unity_validate(
     schema_file:    str  = typer.Argument(..., help="Path to a Unity schema JSON file"),

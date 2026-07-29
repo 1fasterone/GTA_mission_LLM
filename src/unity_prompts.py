@@ -183,6 +183,11 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
     scale:      a RELATIVE multiplier on the model's own natural size (1 = as authored),
       not an absolute world size — the engine ground-snaps every instance to sit on
       the floor regardless of the model's pivot, so you don't need to hand-tune height.
+    elevation:  OPTIONAL — metres above (or below, negative) the ground this whole
+      group sits at. Leave 0 for anything resting ON the ground: the compiler picks
+      sensible altitudes on its own for games played in a VOLUME rather than on a
+      surface (flying, skydiving, diving). Set it only when the design depends on a
+      specific height — a jump plane at 4000, a reef floor at -30.
     path_points: for placement "path" ONLY — up to 64 [x, y, z] world points. y is
       ELEVATION, so author hills by varying y. An optional 4th number per point is
       BANK: degrees of roll about the direction of travel (max ±45; negative leans

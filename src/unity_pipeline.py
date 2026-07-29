@@ -31,8 +31,13 @@ from .themes              import (
 )
 from .unity_archetypes    import classify as classify_intent, apply_intent
 from .unity_racetrack     import compose_racetrack, is_racing_degenerate
-from .unity_concept_entities import inject_missing_concept_entities
+from .unity_concept_entities import (extract_named_entities,
+                                     inject_missing_concept_entities,
+                                     render_entity_checklist)
 from .unity_layout        import compute_layout
+from .unity_playability   import (PlayabilityGateError,
+                                  evaluate as evaluate_playability,
+                                  gate as playability_gate)
 from .unity_pathnorm      import normalize_paths
 
 console = Console()
@@ -814,6 +819,19 @@ class UnityPipeline:
         _vocab = asset_vocabulary(self.lookups_dir)
         if _vocab:
             schema_hints += "\n" + _vocab + "\n"
+        # The brief's own ENTITIES bullets, verbatim, as a required checklist.
+        # Step 3 is otherwise handed ONLY the Step-2 concept prose, which has
+        # already paraphrased the brief's explicit entity names away — a brief
+        # that spells out its entities had no way to get them in front of the
+        # schema-fill model at all (see render_entity_checklist).
+        _checklist = render_entity_checklist(user_prompt)
+        if _checklist:
+            schema_hints += "\n" + _checklist + "\n"
+            self._ok(
+                f"Brief names {len(extract_named_entities(user_prompt))} "
+                "entities explicitly — passed to schema-fill as a required "
+                "checklist"
+            )
         if intent.matched:
             self._ok(
                 "Intent: "
@@ -1321,6 +1339,36 @@ class UnityPipeline:
         except Exception:  # noqa: BLE001 — sidecar failure shouldn't break the run
             self._warn("Could not write schema.json sidecar")
         self._ok(f"Project written to: {project_root}")
+
+        # STEP 7 — grade the output ───────────────────────────────────────────
+        # Every step above answers "did it compile". This one answers "is it a
+        # game" (src/unity_playability.py): deterministic structural checks
+        # over the final schema, so a build that lost its avatar, its
+        # objectives or the entities the brief named explicitly says so here
+        # instead of waiting to be noticed in the editor.
+        self._step(7, "Playability evaluator grades the build")
+        report = evaluate_playability(schema)
+        # markup=False: findings carry schema field paths, which rich would
+        # otherwise read as console markup and swallow.
+        console.print(report.render(), markup=False,
+                      style="green" if report.playable else "yellow")
+        try:
+            (project_root / "playability.txt").write_text(
+                report.render() + "\n", encoding="utf-8")
+        except Exception:  # noqa: BLE001 — sidecar failure shouldn't break the run
+            self._warn("Could not write playability.txt sidecar")
+        # Advisory by default: an existing project with known warnings must not
+        # start failing its build the day this lands. `playability.gate: true`
+        # in config.yaml makes errors fatal; `python main.py unity-playability
+        # <schema.json> --strict` grades a saved schema the same way.
+        _pcfg = (self.config.get("playability") or {}) if self.config else {}
+        _reason = playability_gate(
+            report,
+            min_score=int(_pcfg.get("min_score", 0) or 0),
+            fail_on_error=bool(_pcfg.get("gate", False)),
+        )
+        if _reason:
+            raise PlayabilityGateError(f"Playability gate failed — {_reason}")
 
         console.print(Panel(
             f"[bold green]Done![/]\n"
