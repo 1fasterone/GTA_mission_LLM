@@ -15,15 +15,23 @@ Collections (one per domain, fully isolated):
 import sys
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from rag.embedder import EMBED_MODEL, load_embedder
 
 if TYPE_CHECKING:  # chromadb is imported lazily inside the functions below
-    from chromadb.api.types import Metadata
+    from chromadb.api.types import Metadata, PyEmbeddings
+
+# Progress output is piped from `main.py rag-build` into a cp1252 console.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001
+        pass
 
 CORPUS_DIR = Path(__file__).parent / "corpus"
 INDEX_DIR  = Path(__file__).parent / "index"
 
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 BATCH_SIZE  = 256
 
 COLLECTION_MAP = {
@@ -108,15 +116,22 @@ def stats() -> None:
 
 def build(reset: bool = False, domains: list[str] | None = None) -> None:
     import chromadb
-    from fastembed import TextEmbedding
 
     INDEX_DIR.mkdir(exist_ok=True)
     client = chromadb.PersistentClient(path=str(INDEX_DIR))
 
     target_domains = domains or list(_CORPUS.keys())
 
-    print(f"[indexer] loading embedding model '{EMBED_MODEL}' ...")
-    model = TextEmbedding(EMBED_MODEL)
+    # Loaded on first batch, not up front: re-running an already-current index
+    # embeds nothing, and should not need the 66 MB ONNX model at all.
+    model: Any = None
+
+    def _embed(texts: list[str]) -> "PyEmbeddings":
+        nonlocal model
+        if model is None:
+            print(f"[indexer] loading embedding model '{EMBED_MODEL}' ...")
+            model = load_embedder(EMBED_MODEL)
+        return [v.tolist() for v in model.embed(texts)]
 
     for domain in target_domains:
         col_name = COLLECTION_MAP[domain]
@@ -153,7 +168,7 @@ def build(reset: bool = False, domains: list[str] | None = None) -> None:
                 ids   = [e["id"]         for e in batch]
                 metas: list["Metadata"] = [_make_metadata(e) for e in batch]
 
-                vecs = [v.tolist() for v in model.embed(texts)]
+                vecs = _embed(texts)
 
                 collection.upsert(
                     ids=ids,

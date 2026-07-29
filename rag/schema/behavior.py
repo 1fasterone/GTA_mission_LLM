@@ -3,7 +3,7 @@ GTA5 ped scenario / behavior ontology entries.
 Scenarios = ambient behaviors: WORLD_HUMAN_COP_IDLES, WORLD_HUMAN_DRINKING, etc.
 """
 from __future__ import annotations
-from .base import RagEntry
+from .base import RagEntry, build_chunk
 
 
 _TYPE_PREFIX: dict[str, str] = {
@@ -89,10 +89,8 @@ def make_scenario_entry(name: str,
     aliases = _aliases(name)
     label   = name.replace("_", " ").title()
     desc    = (
-        f"GTA5 ped scenario {name}. "
-        f"Behavior: {name.replace('_', ' ').lower()}. "
-        f"Tags: {', '.join(tags)}. "
-        f"Use with TaskInvokeScenario NPC scripting."
+        f"Ambient ped behavior: {name.replace('_', ' ').lower()}. "
+        f"Driven with TaskInvokeScenario."
     )
 
     entry = RagEntry(
@@ -102,11 +100,5 @@ def make_scenario_entry(name: str,
         aliases=aliases, description=desc,
         tags=tags, meta={}, source=source,
     )
-    entry.chunk_text = (
-        f"GTA5 scenario {entry.canonical}\n"
-        f"Label: {entry.label}\n"
-        f"Aliases: {', '.join(entry.aliases)}\n"
-        f"Tags: {', '.join(entry.tags)}\n"
-        f"Description: {entry.description}"
-    )
+    entry.chunk_text = build_chunk(entry, f"GTA5 scenario {entry.canonical}")
     return entry

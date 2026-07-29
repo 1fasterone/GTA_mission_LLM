@@ -18,9 +18,35 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from rag.embedder import EMBED_MODEL
+
 INDEX_DIR   = Path(__file__).parent / "index"
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
-_THRESHOLD  = 0.55
+
+# Accept/reject distance, measured — re-derive with `python -m rag._calibrate`
+# after any corpus change.
+#
+# 0.55 flat accepted everything. Against the current index the real queries in
+# the calibration set top out at 0.49 and out-of-domain nonsense starts at 0.38,
+# so one flat number cannot separate them; each kind gets its own, set just
+# above its worst true match (a false reject hard-fails generation, a marginal
+# accept only ranks badly).
+#
+# vehicle/weapon/audio/animation separate cleanly: 0 nonsense accepted and 0
+# real queries rejected across the sample. ped/prop/scenario genuinely OVERLAP
+# — "homeless man" resolves at 0.486 while nonsense reaches 0.418 — so their
+# thresholds only catch the far tail. Separating those needs more than a top-1
+# distance (a top-1 vs top-k margin), which is not built yet.
+_THRESHOLD = 0.45          # kinds with no measurement of their own
+
+_KIND_THRESHOLD: dict[str, float] = {
+    "vehicle":   0.38,     # worst true 0.366 | best false 0.405
+    "weapon":    0.38,     # worst true 0.308 | best false 0.446
+    "audio":     0.37,     # worst true 0.358 | best false 0.381
+    "animation": 0.37,     # worst true 0.363 | best false 0.376  (thin)
+    "prop":      0.40,     # worst true 0.393 | best false 0.380  (overlapping)
+    "scenario":  0.47,     # worst true 0.456 | best false 0.437  (overlapping)
+    "ped":       0.50,     # worst true 0.486 | best false 0.418  (overlapping)
+}
 
 COLLECTION_MAP = {
     "gta5":   "rag_gta5",
@@ -39,7 +65,9 @@ class RagClient:
 
     def __init__(self, index_dir: str | None = None,
                  model_name: str = EMBED_MODEL,
-                 threshold: float = _THRESHOLD):
+                 threshold: float | None = None):
+        """threshold: overrides the per-kind table for every lookup; leave unset
+        to use the measured per-kind values."""
         self._idx_path   = index_dir or str(INDEX_DIR)
         self._model_name = model_name
         self._threshold  = threshold
@@ -50,28 +78,38 @@ class RagClient:
     # ── lazy init ─────────────────────────────────────────────────────────────
 
     def _ensure_domain(self, domain: str):
+        """
+        Collection handle only.
+
+        Deliberately does NOT touch the embedding model: is_ready() answers
+        "is the index built?", and used to answer "no" for a fully populated
+        index whenever the ONNX cache was broken — the two failures need to
+        stay distinguishable.
+        """
         if domain in self._collections:
             return self._collections[domain]
 
         import chromadb
-        from fastembed import TextEmbedding
 
         if self._client is None:
             self._client = chromadb.PersistentClient(path=self._idx_path)
-        if self._model is None:
-            self._model = TextEmbedding(self._model_name)
 
         col_name = COLLECTION_MAP[domain]
         self._collections[domain] = self._client.get_collection(col_name)
         return self._collections[domain]
+
+    def _embedder(self):
+        if self._model is None:
+            from rag.embedder import load_embedder
+            self._model = load_embedder(self._model_name)
+        return self._model
 
     # ── core search ───────────────────────────────────────────────────────────
 
     def _search(self, text: str, domain: str, kind: str | None = None, n: int = 3) -> list[dict]:
         """Return top-n matches from the given domain collection."""
         collection = self._ensure_domain(domain)
-        assert self._model is not None, "_ensure_domain lazily initializes _model"
-        vec   = next(iter(self._model.embed([text]))).tolist()
+        vec   = next(iter(self._embedder().embed([text]))).tolist()
         where = {"kind": kind} if kind else None
 
         result = collection.query(
@@ -85,9 +123,15 @@ class RagClient:
             hits.append({**meta, "distance": dist})
         return hits
 
+    def threshold_for(self, kind: str | None) -> float:
+        """Accept/reject distance for one kind — see _KIND_THRESHOLD."""
+        if self._threshold is not None:
+            return self._threshold
+        return _KIND_THRESHOLD.get(kind or "", _THRESHOLD)
+
     def _best(self, text: str, domain: str, kind: str | None = None) -> Optional[str]:
         hits = self._search(text, domain=domain, kind=kind, n=1)
-        if hits and hits[0]["distance"] < self._threshold:
+        if hits and hits[0]["distance"] < self.threshold_for(kind):
             return hits[0]["canonical"]
         return None
 
@@ -149,6 +193,8 @@ class RagClient:
         return self._search(text, domain=domain, kind=kind, n=n)
 
     def is_ready(self, domain: str = "gta5") -> bool:
+        """Is this domain's collection built and populated? (index only — see
+        rag.embedder.status() for the embedding model's own health.)"""
         try:
             col = self._ensure_domain(domain)
             return col.count() > 0

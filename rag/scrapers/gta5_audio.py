@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 import httpx
 
-from ..schema.audio import make_audio_entry
+from ..schema.base import RagEntry
+from ..schema.audio import make_audio_entry, type_rank
 
 _SOURCES = [
     ("https://raw.githubusercontent.com/DurtyFree/gta-v-data-dumps/master/scriptAudioBankNames.json",
@@ -34,29 +35,44 @@ def run(force: bool = False) -> int:
         return count
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    total = 0
+
+    # name → entry. Names recur across dumps; writing every occurrence left
+    # duplicate ids whose bank_type depended on which file was scraped last.
+    best: dict[str, RagEntry] = {}
+    dupes = 0
+
+    for url, source_file in _SOURCES:
+        print(f"[audio] fetching {source_file} ...")
+        try:
+            with httpx.Client(timeout=60.0, follow_redirects=True) as c:
+                r = c.get(url)
+                r.raise_for_status()
+            items = r.json()
+            count = 0
+            for item in items:
+                name = item if isinstance(item, str) else item.get("Name", "")
+                name = name.strip() if name else ""
+                if not name:
+                    continue
+                entry = make_audio_entry(name, source_file)
+                prev  = best.get(name)
+                if prev is None:
+                    best[name] = entry
+                else:
+                    dupes += 1
+                    if type_rank(entry.meta["bank_type"]) < type_rank(prev.meta["bank_type"]):
+                        best[name] = entry
+                count += 1
+            print(f"[audio]   {count} names from {source_file}")
+        except Exception as e:
+            print(f"[audio] WARN {source_file}: {e}", file=sys.stderr)
 
     with OUT.open("w", encoding="utf-8") as f:
-        for url, source_file in _SOURCES:
-            print(f"[audio] fetching {source_file} ...")
-            try:
-                with httpx.Client(timeout=60.0, follow_redirects=True) as c:
-                    r = c.get(url)
-                    r.raise_for_status()
-                items = r.json()
-                count = 0
-                for item in items:
-                    name = item if isinstance(item, str) else item.get("Name", "")
-                    if name and name.strip():
-                        entry = make_audio_entry(name.strip(), source_file)
-                        f.write(entry.to_jsonl() + "\n")
-                        count += 1
-                print(f"[audio]   {count} names from {source_file}")
-                total += count
-            except Exception as e:
-                print(f"[audio] WARN {source_file}: {e}", file=sys.stderr)
+        for entry in best.values():
+            f.write(entry.to_jsonl() + "\n")
 
-    print(f"[audio] {total} total written → {OUT}")
+    total = len(best)
+    print(f"[audio] {total} unique names written ({dupes} duplicate listings collapsed) -> {OUT}")
     return total
 
 

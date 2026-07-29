@@ -47,3 +47,32 @@ class RagEntry(BaseModel):
 
     def to_jsonl(self) -> str:
         return self.model_dump_json()
+
+
+def build_chunk(entry: "RagEntry", headline: str,
+                facts: dict[str, str] | None = None) -> str:
+    """
+    Assemble one entry's embedding text, stating each fact exactly once.
+
+    Repetition is not free. The embedder averages over the whole chunk, so a
+    sentence carried by every entry of a kind ("Use for: NPC cast, faction
+    encounters, ambient crowd." on all 1,109 peds) adds no ranking signal while
+    pulling that kind's vectors toward a single centroid — which squeezes the
+    distance range `RagClient._best()` thresholds on until nothing is ever
+    rejected. Same for restating the label, aliases and tags inside
+    `description` and then again as their own lines.
+
+    So: headline, distinguishing facts, aliases, tags, and a description that
+    carries only what the other lines do not.
+    """
+    lines = [headline]
+    for key, value in (facts or {}).items():
+        if value:
+            lines.append(f"{key}: {value}")
+    if entry.aliases:
+        lines.append("Also called: " + ", ".join(entry.aliases))
+    if entry.tags:
+        lines.append("Tags: " + ", ".join(entry.tags))
+    if entry.description:
+        lines.append(entry.description)
+    return "\n".join(lines)

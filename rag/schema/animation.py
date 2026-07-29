@@ -4,7 +4,7 @@ Auto-tags from dict name patterns: context, emotion, stance, weapon, gender.
 """
 from __future__ import annotations
 import re
-from .base import RagEntry
+from .base import RagEntry, build_chunk
 
 
 # Order matters — first match wins
@@ -154,11 +154,7 @@ def make_anim_entry(dict_name: str, clips: list[str],
     if len(clips) > 6:
         clip_preview += f" (+{len(clips) - 6} more)"
 
-    desc = (
-        f"GTA5 animation dict {dict_name}. "
-        f"{len(clips)} clip(s): {clip_preview}. "
-        f"Tags: {', '.join(tags)}."
-    )
+    desc = f"Animation dictionary holding {len(clips)} clip(s) for this action."
 
     entry = RagEntry(
         id=f"gta5:animation:{dict_name}",
@@ -170,11 +166,9 @@ def make_anim_entry(dict_name: str, clips: list[str],
         meta={"clips": clips, "clip_count": len(clips)},
         source=source,
     )
-    entry.chunk_text = (
-        f"GTA5 animation dictionary {entry.canonical}\n"
-        f"Label: {entry.label}\n"
-        f"Clips ({len(clips)}): {clip_preview}\n"
-        f"Tags: {', '.join(tags)}\n"
-        f"Description: {entry.description}"
+    entry.chunk_text = build_chunk(
+        entry,
+        f"GTA5 animation dictionary {entry.canonical}",
+        {"Action": entry.label, f"Clips ({len(clips)})": clip_preview},
     )
     return entry
