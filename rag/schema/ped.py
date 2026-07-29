@@ -127,8 +127,8 @@ _THREAT_BY_FACTION: dict[str, str] = {
 
 def _decode(name: str) -> dict[str, Any]:
     parts  = name.lower().split("_")
-    result = dict(prefix=None, gender=None, age=None,
-                  faction=None, role=None, weapon=None)
+    result: dict[str, Any] = dict(prefix=None, gender=None, age=None,
+                                  faction=None, role=None, weapon=None)
 
     # --- prefix ---
     if name.lower().startswith("cs_"):

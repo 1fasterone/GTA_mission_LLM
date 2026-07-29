@@ -87,7 +87,6 @@ def _label(name: str) -> str:
     parts = name.split("_")
     # drop known prefixes and "prop" token
     out = []
-    skip_next = False
     for i, p in enumerate(parts):
         if i == 0 and p in _STRIP_PREFIXES:
             continue

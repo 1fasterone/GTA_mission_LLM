@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check src main.py
+      - run: ruff check src main.py rag
 
   typecheck:
     name: Type check (mypy)
@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt mypy
-      - run: mypy src main.py
+      - run: mypy src main.py rag
 
   test:
     name: Test (pytest)

@@ -1,5 +1,4 @@
 """Scrape DurtyFree weapons.json → rag/corpus/gta5/weapons.jsonl."""
-import json
 from pathlib import Path
 import httpx
 

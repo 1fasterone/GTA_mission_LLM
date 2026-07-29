@@ -15,6 +15,10 @@ Collections (one per domain, fully isolated):
 import sys
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # chromadb is imported lazily inside the functions below
+    from chromadb.api.types import Metadata
 
 CORPUS_DIR = Path(__file__).parent / "corpus"
 INDEX_DIR  = Path(__file__).parent / "index"
@@ -67,7 +71,7 @@ def _load_corpus(rel_path: str) -> list[dict]:
     return list(seen.values())
 
 
-def _make_metadata(e: dict) -> dict:
+def _make_metadata(e: dict) -> dict[str, str]:
     return {
         "domain":    e["domain"],
         "kind":      e["kind"],
@@ -90,7 +94,7 @@ def stats() -> None:
         try:
             col    = client.get_collection(col_name)
             result = col.get(include=["metadatas"])
-            counts = Counter(m["kind"] for m in result["metadatas"])
+            counts = Counter(m["kind"] for m in result["metadatas"] or [])
             print(f"\n[{domain}]  '{col_name}'  ({col.count()} total)")
             for kind, n in sorted(counts.items()):
                 print(f"  {kind:<16} {n:>6}")
@@ -147,7 +151,7 @@ def build(reset: bool = False, domains: list[str] | None = None) -> None:
                 batch = new[i : i + BATCH_SIZE]
                 texts = [e["chunk_text"] for e in batch]
                 ids   = [e["id"]         for e in batch]
-                metas = [_make_metadata(e) for e in batch]
+                metas: list["Metadata"] = [_make_metadata(e) for e in batch]
 
                 vecs = [v.tolist() for v in model.embed(texts)]
 

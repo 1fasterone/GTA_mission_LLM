@@ -77,13 +77,13 @@ def _aliases(raw: dict) -> list[str]:
     # Category-based aliases
     cat = raw.get("category", "")
     if cat == "physics_3d":
-        a.append(f"physics component")
+        a.append("physics component")
     elif cat == "rendering":
-        a.append(f"renderer")
+        a.append("renderer")
     elif cat == "audio":
-        a.append(f"audio component")
+        a.append("audio component")
     elif cat == "animation":
-        a.append(f"animation component")
+        a.append("animation component")
 
     return list(dict.fromkeys(a))
 
