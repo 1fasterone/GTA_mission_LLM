@@ -2,13 +2,21 @@
 GTA5 ped model ontology entries.
 
 Auto-decodes the GTA5 naming convention:
-  s_m_y_cop_01  → service, male, young, cop
+  s_m_y_cop_01   → service, male, young, cop
   a_f_m_beach_01 → ambient, female, middle, beach
   g_m_y_ballas_01 → gang, male, young, ballas
+
+Three families do NOT follow that gender/age grammar and used to fall through
+to "unknown civilian character" with civilian/pedestrian/bystander aliases:
+
+  a_c_*                 animals — a boar is not a bystander
+  ig_* / cs_* / csb_*   the named story cast — Amanda Townley is not "service"
+  player_zero/one/two   Michael, Franklin, Trevor
 """
 from __future__ import annotations
+import re
 from typing import Any
-from .base import RagEntry
+from .base import RagEntry, build_chunk
 
 
 _PREFIX_MAP: dict[str, str] = {
@@ -113,6 +121,60 @@ _WEAPON_KW: dict[str, str] = {
     "dealer":   "pistol",
 }
 
+# a_c_<key> → (display species, aliases). Every a_c_ model in the dumps is here;
+# an unlisted one still resolves as an animal, just without the species words.
+_ANIMALS: dict[str, tuple[str, list[str]]] = {
+    "boar":         ("Boar",              ["boar", "wild boar", "hog"]),
+    "cat":          ("Cat",               ["cat", "house cat", "kitten"]),
+    "chickenhawk":  ("Chicken Hawk",      ["chicken hawk", "hawk", "bird of prey"]),
+    "chimp":        ("Chimpanzee",        ["chimp", "chimpanzee", "monkey", "ape"]),
+    "chop":         ("Chop",              ["chop", "dog", "rottweiler", "franklin's dog"]),
+    "cormorant":    ("Cormorant",         ["cormorant", "seabird", "bird"]),
+    "cow":          ("Cow",               ["cow", "cattle", "livestock"]),
+    "coyote":       ("Coyote",            ["coyote", "wild dog"]),
+    "crow":         ("Crow",              ["crow", "bird"]),
+    "deer":         ("Deer",              ["deer", "stag", "wildlife"]),
+    "dolphin":      ("Dolphin",           ["dolphin", "sea animal"]),
+    "fish":         ("Fish",              ["fish", "sea animal"]),
+    "hen":          ("Hen",               ["hen", "chicken", "bird"]),
+    "humpback":     ("Humpback Whale",    ["humpback whale", "whale", "sea animal"]),
+    "husky":        ("Husky",             ["husky", "dog", "sled dog"]),
+    "killerwhale":  ("Killer Whale",      ["killer whale", "orca", "whale"]),
+    "mtlion":       ("Mountain Lion",     ["mountain lion", "cougar", "puma", "big cat"]),
+    "panther":      ("Panther",           ["panther", "big cat"]),
+    "pig":          ("Pig",               ["pig", "farm animal", "livestock"]),
+    "pigeon":       ("Pigeon",            ["pigeon", "bird"]),
+    "poodle":       ("Poodle",            ["poodle", "dog", "lap dog"]),
+    "pug":          ("Pug",               ["pug", "dog", "lap dog"]),
+    "rabbit":       ("Rabbit",            ["rabbit", "bunny", "wildlife"]),
+    "rat":          ("Rat",               ["rat", "rodent", "vermin"]),
+    "retriever":    ("Retriever",         ["retriever", "dog", "golden retriever"]),
+    "rhesus":       ("Rhesus Monkey",     ["rhesus monkey", "monkey", "macaque"]),
+    "rottweiler":   ("Rottweiler",        ["rottweiler", "dog", "guard dog", "attack dog"]),
+    "seagull":      ("Seagull",           ["seagull", "gull", "bird"]),
+    "sharkhammer":  ("Hammerhead Shark",  ["hammerhead shark", "shark", "sea animal"]),
+    "sharktiger":   ("Tiger Shark",       ["tiger shark", "shark", "sea animal"]),
+    "shepherd":     ("German Shepherd",   ["german shepherd", "dog", "police dog", "guard dog"]),
+    "stingray":     ("Stingray",          ["stingray", "ray", "sea animal"]),
+    "westy":        ("West Highland Terrier", ["westie", "terrier", "dog", "lap dog"]),
+}
+
+# The three protagonists ship under opaque engine names.
+_PLAYERS: dict[str, tuple[str, list[str]]] = {
+    "player_zero": ("Michael De Santa",
+                    ["michael", "michael de santa", "protagonist", "player character"]),
+    "player_one":  ("Franklin Clinton",
+                    ["franklin", "franklin clinton", "protagonist", "player character"]),
+    "player_two":  ("Trevor Philips",
+                    ["trevor", "trevor philips", "protagonist", "player character"]),
+}
+
+_STORY_PREFIX: dict[str, str] = {
+    "ig":  "story",       # in-game story character
+    "cs":  "cutscene",    # cutscene variant of a story character
+    "csb": "cutscene",    # cutscene background character
+}
+
 _THREAT_BY_FACTION: dict[str, str] = {
     "law":      "high",
     "military": "high",
@@ -122,26 +184,65 @@ _THREAT_BY_FACTION: dict[str, str] = {
     "service":  "low",
     "civilian": "low",
     "unique":   "low",
+    "animal":   "low",
+    "story":    "low",
+}
+
+# Faction implied by the name's own prefix letter, used only when no keyword in
+# the body says otherwise. Previously everything non-ambient fell back to
+# "service", which put 769 of 1,109 peds — the whole story cast included — in a
+# faction they have nothing to do with.
+_PREFIX_FACTION: dict[str, str] = {
+    "ambient":     "civilian",
+    "service":     "service",
+    "gang":        "gang",
+    "unique":      "unique",
+    "heist":       "criminal",
+    "multiplayer": "civilian",
 }
 
 
+def _split_camel(text: str) -> str:
+    """AmandaTownley -> Amanda Townley;  cs_ashley -> Ashley;  ChengSr -> Cheng Sr."""
+    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text).replace("_", " ")
+    return " ".join(spaced.split()).title()
+
+
 def _decode(name: str) -> dict[str, Any]:
-    parts  = name.lower().split("_")
-    result = dict(prefix=None, gender=None, age=None,
-                  faction=None, role=None, weapon=None)
+    low    = name.lower()
+    result: dict[str, Any] = dict(prefix=None, gender=None, age=None,
+                                  faction=None, role=None, weapon=None,
+                                  family="generic", species=None, character=None)
+
+    # --- animals: a_c_<species>[_02] ---
+    if low.startswith("a_c_"):
+        result.update(prefix="animal", family="animal", faction="animal",
+                      role="animal", weapon="unarmed",
+                      species=re.sub(r"_\d+$", "", low[4:]))
+        return result
+
+    # --- the three protagonists ---
+    if low in _PLAYERS:
+        result.update(prefix="player", family="story", faction="story",
+                      role="protagonist", weapon="unarmed",
+                      character=_PLAYERS[low][0])
+        return result
+
+    parts = low.split("_")
+    head  = parts[0]
 
     # --- prefix ---
-    if name.lower().startswith("cs_"):
-        result["prefix"] = "cutscene"
+    if head in _STORY_PREFIX:
+        result["prefix"] = _STORY_PREFIX[head]
+        result["family"] = "story"
+        body_raw = name.split("_", 1)[1] if "_" in name else name
+        result["character"] = _split_camel(re.sub(r"_?\d+$", "", body_raw))
         parts = parts[1:]
-    elif name.lower().startswith("mp_"):
+    elif head == "mp":
         result["prefix"] = "multiplayer"
         parts = parts[1:]
-    elif name.lower().startswith("ig_"):
-        result["prefix"] = "story"
-        parts = parts[1:]
-    elif parts[0] in _PREFIX_MAP:
-        result["prefix"] = _PREFIX_MAP[parts[0]]
+    elif head in _PREFIX_MAP:
+        result["prefix"] = _PREFIX_MAP[head]
         parts = parts[1:]
 
     # --- gender ---
@@ -168,18 +269,28 @@ def _decode(name: str) -> dict[str, Any]:
             result["weapon"] = val
             break
 
-    # --- fallbacks ---
+    # --- fallbacks: name evidence only, otherwise leave it unset ---
+    # An unknown ped tagged faction.service is worse than an untagged one — the
+    # tag is wrong, and wrong tags survive into every downstream filter.
     if result["faction"] is None:
-        result["faction"] = "civilian" if result["prefix"] == "ambient" else "service"
-    if result["role"]    is None:
-        result["role"]    = "civilian"
-    if result["weapon"]  is None:
-        result["weapon"]  = "unarmed"
+        result["faction"] = ("story" if result["family"] == "story"
+                             else _PREFIX_FACTION.get(result["prefix"] or ""))
+    if result["role"] is None and result["faction"] == "civilian":
+        result["role"] = "civilian"
+    if result["weapon"] is None:
+        result["weapon"] = "unarmed"
 
     return result
 
 
 def _label(name: str, d: dict) -> str:
+    if d["family"] == "animal":
+        species = d["species"] or ""
+        known   = _ANIMALS.get(species)
+        return known[0] if known else _split_camel(species) or name
+    if d["character"]:
+        return d["character"]
+
     parts = name.split("_")
     skip  = 0
     if parts and parts[0].lower() in ("a", "s", "g", "u"):
@@ -193,10 +304,10 @@ def _label(name: str, d: dict) -> str:
     if body_parts and body_parts[-1].isdigit():
         body_parts = body_parts[:-1]
     body = " ".join(body_parts).title()
-    gender_str  = f" ({d['gender'].title()})" if d["gender"] else ""
-    age_str     = f" {d['age'].title()}"      if d["age"]    else ""
+    gender_str  = f"({d['gender'].title()})" if d["gender"] else ""
+    age_str     = d["age"].title() if d["age"] else ""
     faction_str = d["faction"].title() if d["faction"] and d["faction"] not in ("civilian", "service") else ""
-    pieces = [p for p in (faction_str, body, age_str + gender_str) if p]
+    pieces = [p for p in (faction_str, body, age_str, gender_str) if p]
     return " ".join(pieces) or name
 
 
@@ -208,8 +319,9 @@ def _tags(d: dict) -> list[str]:
     if d["age"]:      t.append(f"age.{d['age']}")
     if d["role"]:     t.append(f"role.{d['role']}")
     if d["weapon"]:   t.append(f"weapon.{d['weapon']}")
-    threat = _THREAT_BY_FACTION.get(d["faction"] or "", "low")
-    t.append(f"threat.{threat}")
+    if d["species"]:  t.append(f"species.{d['species']}")
+    if d["faction"] in _THREAT_BY_FACTION:
+        t.append(f"threat.{_THREAT_BY_FACTION[d['faction']]}")
     return t
 
 
@@ -219,6 +331,24 @@ def _aliases(name: str, d: dict) -> list[str]:
     age     = d["age"]     or ""
     n       = name.lower()
     a: list[str] = []
+
+    # Animals and the named cast never take the human/civilian alias sets:
+    # "civilian, pedestrian, bystander" on a boar is how A_C_Westy — a dog —
+    # came back second for "civilian bystander walking down the street".
+    if d["family"] == "animal":
+        known = _ANIMALS.get(d["species"] or "")
+        a += list(known[1]) if known else [_split_camel(d["species"] or "").lower()]
+        a += ["animal"]
+        return list(dict.fromkeys(x for x in a if x))
+
+    if d["character"]:
+        if n in _PLAYERS:
+            a += _PLAYERS[n][1]
+        else:
+            full = d["character"].lower()
+            a += [full, full.split()[0]] if full else []
+            a += ["story character", "named character"]
+        return list(dict.fromkeys(x for x in a if x))
 
     if faction == "law":
         a += ["cop", "police officer", "law enforcement", "officer"]
@@ -268,27 +398,30 @@ def _aliases(name: str, d: dict) -> list[str]:
 
 
 def _desc(name: str, d: dict, label: str, category: str) -> str:
-    gender  = d["gender"]  or "unknown"
-    age     = (d["age"] + " ") if d["age"] else ""
-    faction = d["faction"] or "civilian"
-    role    = d["role"]    or "civilian"
-    weapon  = d["weapon"]  or "unarmed"
-    cat     = f" Category: {category}." if category else ""
-    return (
-        f"GTA5 ped {name}. {label}. "
-        f"{age}{gender} {faction} character. "
-        f"Role: {role}. Weapon: {weapon}.{cat} "
-        f"Use for: NPC cast, faction encounters, ambient crowd."
-    )
+    """Only what the headline, aliases and tags do not already say."""
+    cat = f" Category: {category}." if category else ""
+
+    if d["family"] == "animal":
+        return f"Animal ped model — {label}, not a human character.{cat}"
+
+    if d["character"]:
+        kind = "playable protagonist" if d["prefix"] == "player" else \
+               "named story character" if d["prefix"] == "story" else \
+               "named cutscene character"
+        return f"{label} — {kind} from the GTA5 cast.{cat}"
+
+    bits = [b for b in (d["age"], d["gender"], d["faction"]) if b]
+    who  = " ".join(bits) + " character" if bits else "character of unrecorded type"
+    role = f" Role: {d['role']}." if d["role"] else ""
+    return f"{who.capitalize()}. Weapon: {d['weapon']}.{role}{cat}"
 
 
-def _chunk(entry: "RagEntry") -> str:
-    return (
-        f"GTA5 ped model {entry.canonical}\n"
-        f"Label: {entry.label}\n"
-        f"Aliases: {', '.join(entry.aliases)}\n"
-        f"Tags: {', '.join(entry.tags)}\n"
-        f"Description: {entry.description}"
+def _chunk(entry: "RagEntry", d: dict) -> str:
+    return build_chunk(
+        entry,
+        f"GTA5 ped model {entry.canonical}",
+        {"Name": entry.label,
+         "Species": _ANIMALS.get(d["species"] or "", ("", []))[0] if d["species"] else ""},
     )
 
 
@@ -311,6 +444,9 @@ def make_ped_entry(raw: dict, source: str = "DurtyFree/peds.json") -> RagEntry:
         "category": category,
         "clip_set": raw.get("ClipSet") or raw.get("ClipSets"),
         "type":     raw.get("Type"),
+        "family":    d["family"],
+        "species":   d["species"],
+        "character": d["character"],
     }.items() if v is not None}
 
     entry = RagEntry(
@@ -320,5 +456,5 @@ def make_ped_entry(raw: dict, source: str = "DurtyFree/peds.json") -> RagEntry:
         aliases=aliases, description=desc,
         tags=tags, meta=meta, source=source,
     )
-    entry.chunk_text = _chunk(entry)
+    entry.chunk_text = _chunk(entry, d)
     return entry

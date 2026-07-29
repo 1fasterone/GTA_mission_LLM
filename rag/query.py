@@ -21,7 +21,32 @@ from typing import Any, Optional
 from rag.embedder import EMBED_MODEL
 
 INDEX_DIR   = Path(__file__).parent / "index"
-_THRESHOLD  = 0.55
+
+# Accept/reject distance, measured — re-derive with `python -m rag._calibrate`
+# after any corpus change.
+#
+# 0.55 flat accepted everything. Against the current index the real queries in
+# the calibration set top out at 0.49 and out-of-domain nonsense starts at 0.38,
+# so one flat number cannot separate them; each kind gets its own, set just
+# above its worst true match (a false reject hard-fails generation, a marginal
+# accept only ranks badly).
+#
+# vehicle/weapon/audio/animation separate cleanly: 0 nonsense accepted and 0
+# real queries rejected across the sample. ped/prop/scenario genuinely OVERLAP
+# — "homeless man" resolves at 0.486 while nonsense reaches 0.418 — so their
+# thresholds only catch the far tail. Separating those needs more than a top-1
+# distance (a top-1 vs top-k margin), which is not built yet.
+_THRESHOLD = 0.45          # kinds with no measurement of their own
+
+_KIND_THRESHOLD: dict[str, float] = {
+    "vehicle":   0.38,     # worst true 0.366 | best false 0.405
+    "weapon":    0.38,     # worst true 0.308 | best false 0.446
+    "audio":     0.37,     # worst true 0.358 | best false 0.381
+    "animation": 0.37,     # worst true 0.363 | best false 0.376  (thin)
+    "prop":      0.40,     # worst true 0.393 | best false 0.380  (overlapping)
+    "scenario":  0.47,     # worst true 0.456 | best false 0.437  (overlapping)
+    "ped":       0.50,     # worst true 0.486 | best false 0.418  (overlapping)
+}
 
 COLLECTION_MAP = {
     "gta5":   "rag_gta5",
@@ -40,7 +65,9 @@ class RagClient:
 
     def __init__(self, index_dir: str | None = None,
                  model_name: str = EMBED_MODEL,
-                 threshold: float = _THRESHOLD):
+                 threshold: float | None = None):
+        """threshold: overrides the per-kind table for every lookup; leave unset
+        to use the measured per-kind values."""
         self._idx_path   = index_dir or str(INDEX_DIR)
         self._model_name = model_name
         self._threshold  = threshold
@@ -96,9 +123,15 @@ class RagClient:
             hits.append({**meta, "distance": dist})
         return hits
 
+    def threshold_for(self, kind: str | None) -> float:
+        """Accept/reject distance for one kind — see _KIND_THRESHOLD."""
+        if self._threshold is not None:
+            return self._threshold
+        return _KIND_THRESHOLD.get(kind or "", _THRESHOLD)
+
     def _best(self, text: str, domain: str, kind: str | None = None) -> Optional[str]:
         hits = self._search(text, domain=domain, kind=kind, n=1)
-        if hits and hits[0]["distance"] < self._threshold:
+        if hits and hits[0]["distance"] < self.threshold_for(kind):
             return hits[0]["canonical"]
         return None
 

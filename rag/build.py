@@ -12,6 +12,16 @@ import sys
 import importlib
 from pathlib import Path
 
+# The scrapers print "→" in their progress lines. Run as a subprocess from
+# `main.py rag-build`, stdout is an inherited cp1252 console handle, and the
+# arrow raises UnicodeEncodeError — which only ever fired with --force, because
+# the early "already present" path prints no arrow. Same guard main.py uses.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001
+        pass
+
 
 CORPUS_DIR = Path(__file__).parent / "corpus"
 

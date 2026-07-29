@@ -19,6 +19,13 @@ from typing import Any
 
 from rag.embedder import EMBED_MODEL, load_embedder
 
+# Progress output is piped from `main.py rag-build` into a cp1252 console.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+    except Exception:  # noqa: BLE001
+        pass
+
 CORPUS_DIR = Path(__file__).parent / "corpus"
 INDEX_DIR  = Path(__file__).parent / "index"
 

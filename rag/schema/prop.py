@@ -4,7 +4,7 @@ Decodes prop names from ObjectList.ini (filtered to mission-relevant items).
 """
 from __future__ import annotations
 import re
-from .base import RagEntry
+from .base import RagEntry, build_chunk
 
 
 # keyword → (category_tag, extra_aliases)
@@ -80,16 +80,22 @@ _PREFIX_TAG: dict[str, str] = {
 }
 
 _STRIP_SUFFIXES = re.compile(r"[_\s]+\d+[a-z]?$")
-_STRIP_PREFIXES = {"prop", "hei", "h4", "bkr", "gr", "ba", "tr", "ch", "xm", "ex", "sf", "vw"}
+# DLC/mission/asset-family prefixes carry no meaning for a searcher. Left in,
+# they were 2,470 of 3,139 labels reading like "Apa Mp Apa Yacht Jacuzzi Cam".
+_STRIP_PREFIXES = {"prop", "hei", "h4", "bkr", "gr", "ba", "tr", "ch", "xm", "ex",
+                   "sf", "vw", "apa", "xm3", "xs", "v", "w", "p", "m23", "m24",
+                   "m25", "des", "imp", "sm", "tw", "lts", "sr", "cs", "mp"}
 
 
 def _label(name: str) -> str:
     parts = name.split("_")
     # drop known prefixes and "prop" token
-    out = []
-    skip_next = False
+    out: list[str] = []
     for i, p in enumerate(parts):
         if i == 0 and p in _STRIP_PREFIXES:
+            continue
+        # a second stacked prefix: apa_mp_apa_yacht_... -> Yacht ...
+        if i == 1 and out == [] and p in _STRIP_PREFIXES:
             continue
         if p == "prop":
             continue
@@ -134,11 +140,7 @@ def make_prop_entry(name: str, source: str = "DurtyFree/ObjectList.ini") -> RagE
     aliases  = [label.lower()] + aliases
     aliases  = list(dict.fromkeys(aliases))
 
-    desc = (
-        f"GTA5 prop/object {name}. {label}. "
-        f"Use for: mission spawnable objects, pickups, scene dressing, "
-        f"collectible targets."
-    )
+    desc = f"{label} — spawnable GTA5 prop/object."
 
     entry = RagEntry(
         id=f"gta5:prop:{name}",
@@ -147,11 +149,5 @@ def make_prop_entry(name: str, source: str = "DurtyFree/ObjectList.ini") -> RagE
         aliases=aliases, description=desc,
         tags=tags, source=source,
     )
-    entry.chunk_text = (
-        f"GTA5 prop model {name}\n"
-        f"Label: {label}\n"
-        f"Aliases: {', '.join(aliases)}\n"
-        f"Tags: {', '.join(tags)}\n"
-        f"Description: {desc}"
-    )
+    entry.chunk_text = build_chunk(entry, f"GTA5 prop model {name}", {"Name": label})
     return entry
