@@ -235,21 +235,40 @@ def resolve(
     console.print(f"[cyan]{description}[/] -> [bold]{result}[/]")
 
 
+def _rag_step(args: list[str], label: str) -> None:
+    """Run one RAG subprocess; surface its exit code instead of a traceback."""
+    import subprocess
+    code = subprocess.run(args).returncode
+    if code:
+        console.print(f"\n[red]RAG {label} failed[/] (exit {code}) — "
+                      f"[dim]{' '.join(args[1:])}[/]")
+        raise typer.Exit(code)
+
+
 @app.command("rag-build")
 def rag_build(
     targets: list[str] = typer.Argument(None, help="Scrapers to run (default: all)"),
+    unity:   bool      = typer.Option(False, "--unity", "-u", help="Unity corpus + unity collection only"),
     force:   bool      = typer.Option(False, "--force", "-f", help="Re-scrape even if corpus exists"),
     limit:   int       = typer.Option(0, "--limit", "-l", help="Cap entries (0=unlimited)"),
 ) -> None:
-    """Scrape GTA5 data → JSONL corpus, then embed → ChromaDB index."""
-    import subprocess, sys
+    """Scrape data → JSONL corpus, then embed → ChromaDB index."""
+    import sys
+    if unity and targets:
+        console.print("[red]--unity runs the whole Unity scraper set[/] — "
+                      "drop the flag or drop the explicit targets.")
+        raise typer.Exit(2)
+
     build_args = [sys.executable, "-m", "rag.build"] + (targets or [])
+    if unity:   build_args.append("--unity")
     if force:   build_args.append("--force")
     if limit:   build_args += [f"--limit={limit}"]
-    subprocess.run(build_args, check=True)
+    _rag_step(build_args, "corpus scrape")
+
     console.print("\n[bold]Embedding corpus into vector index ...[/]")
     idx_args = [sys.executable, "-m", "rag.indexer"]
-    subprocess.run(idx_args, check=True)
+    if unity:   idx_args += ["--domain", "unity"]
+    _rag_step(idx_args, "vector index")
 
 
 @app.command("rag-query")
@@ -303,6 +322,19 @@ def rag_status(
                 "[dim](run: python main.py rag-build"
                 + ("" if kind == "gta" else " --unity") + ")[/]"
             )
+
+    # The index can be complete while the ONNX weights are missing — that state
+    # fails every embed with NO_SUCHFILE, so report it separately.
+    from rag.embedder import status as embed_status
+    emb = embed_status()
+    if emb["complete"]:
+        console.print(f"  [green]embed[/] model [cyan]{emb['model']}[/] — cached")
+    elif emb["cached"]:
+        console.print(f"  [red]embed[/] model [cyan]{emb['model']}[/] — cache INCOMPLETE "
+                      f"[dim]{emb['cache_dir']}[/] (repaired automatically on next build)")
+    else:
+        console.print(f"  [yellow]embed[/] model [cyan]{emb['model']}[/] — not downloaded yet "
+                      f"[dim]{emb['cache_dir']}[/]")
 
 
 @app.command()
