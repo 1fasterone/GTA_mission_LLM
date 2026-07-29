@@ -1,6 +1,6 @@
 """GTA5 weapon ontology entries."""
 from __future__ import annotations
-from .base import RagEntry
+from .base import RagEntry, build_chunk
 
 _CAT_TAG: dict[str, str] = {
     "GROUP_MELEE":          "melee",
@@ -24,7 +24,9 @@ _CAT_TAG: dict[str, str] = {
 }
 
 _CAT_ALIASES: dict[str, list[str]] = {
-    "melee":   ["melee weapon", "close combat weapon", "blade"],
+    # "blade" used to live here, which handed it to every bat, hammer, crowbar
+    # and golf club in the game. It is now earned per weapon, below.
+    "melee":   ["melee weapon", "close combat weapon"],
     "pistol":  ["pistol", "handgun", "sidearm", "gun"],
     "smg":     ["smg", "submachine gun", "uzi", "mac-10"],
     "rifle":   ["rifle", "assault rifle", "ar", "carbine"],
@@ -36,6 +38,28 @@ _CAT_ALIASES: dict[str, list[str]] = {
     "stun":    ["stun gun", "taser", "non-lethal"],
     "tool":    ["tool", "gadget", "equipment"],
     "special": ["special weapon", "gadget", "device"],
+}
+
+# Melee reads as one undifferentiated blob from the category alone, so the
+# individual weapons carry their own words. Keyed on the WEAPON_ name token.
+_WEAPON_ALIASES: dict[str, list[str]] = {
+    "BAT":          ["baseball bat", "bat", "club"],
+    "NIGHTSTICK":   ["nightstick", "baton", "police baton", "billy club"],
+    "CROWBAR":      ["crowbar", "pry bar", "wrecking bar"],
+    "HAMMER":       ["hammer", "claw hammer"],
+    "GOLFCLUB":     ["golf club", "club", "iron"],
+    "POOLCUE":      ["pool cue", "cue", "billiard cue"],
+    "WRENCH":       ["wrench", "pipe wrench", "spanner"],
+    "BOTTLE":       ["broken bottle", "bottle"],
+    "KNUCKLE":      ["brass knuckles", "knuckle duster", "knuckles"],
+    "FLASHLIGHT":   ["flashlight", "torch"],
+    "KNIFE":        ["knife", "blade", "combat knife"],
+    "SWITCHBLADE":  ["switchblade", "blade", "flick knife"],
+    "DAGGER":       ["dagger", "blade", "antique dagger"],
+    "MACHETE":      ["machete", "blade", "cleaver"],
+    "HATCHET":      ["hatchet", "axe", "blade"],
+    "STONE_HATCHET": ["stone hatchet", "axe", "blade"],
+    "BATTLEAXE":    ["battle axe", "axe", "blade"],
 }
 
 _DAMAGE_TAG: dict[str, str] = {
@@ -71,6 +95,11 @@ def make_weapon_entry(raw: dict, source: str = "DurtyFree/weapons.json") -> RagE
         tags.append(f"dlc.{dlc.lower()}")
 
     aliases = [label.lower()] + _CAT_ALIASES.get(cat_tag, [])
+    # per-weapon words first, longest token wins (STONE_HATCHET before HATCHET)
+    for token in sorted(_WEAPON_ALIASES, key=len, reverse=True):
+        if token in name.upper():
+            aliases += _WEAPON_ALIASES[token]
+            break
     # add common shorthand
     if "PISTOL" in name:   aliases += ["pistol", "handgun"]
     if "RIFLE" in name:    aliases += ["rifle", "ar"]
@@ -79,14 +108,11 @@ def make_weapon_entry(raw: dict, source: str = "DurtyFree/weapons.json") -> RagE
     if "GRENADE" in name:  aliases += ["grenade", "frag"]
     if "RPG" in name:      aliases += ["rpg", "rocket launcher", "bazooka"]
     if "MINIGUN" in name:  aliases += ["minigun", "gatling gun"]
-    if "KNIFE" in name:    aliases += ["knife", "blade"]
     aliases = list(dict.fromkeys(aliases))
 
     desc = (
-        f"GTA5 weapon {name}. {label}. "
-        f"Category: {cat_tag}. Damage type: {dmg.lower()}. "
-        f"3D model: {model}. "
-        f"Use for: arming NPCs, weapon pickups, mission collectibles."
+        f"{label} — GTA5 {cat_tag} weapon, {dmg.lower() or 'unspecified'} damage. "
+        f"Spawns as model {model}."
     )
 
     entry = RagEntry(
@@ -98,11 +124,9 @@ def make_weapon_entry(raw: dict, source: str = "DurtyFree/weapons.json") -> RagE
         meta={"weapon_name": name, "category": cat, "damage_type": dmg, "dlc": dlc},
         source=source,
     )
-    entry.chunk_text = (
-        f"GTA5 weapon model {model}\n"
-        f"Label: {label}\n"
-        f"Aliases: {', '.join(aliases)}\n"
-        f"Tags: {', '.join(tags)}\n"
-        f"Description: {desc}"
+    entry.chunk_text = build_chunk(
+        entry,
+        f"GTA5 weapon model {model}",
+        {"Name": label, "Weapon": name},
     )
     return entry

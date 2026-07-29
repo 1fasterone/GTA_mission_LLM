@@ -3,7 +3,7 @@ GTA5 vehicle ontology entries.
 Class, type, speed, seats, weapons, and faction are auto-derived from raw DurtyFree data.
 """
 from __future__ import annotations
-from .base import RagEntry
+from .base import RagEntry, build_chunk
 
 
 _CLASS_TAG: dict[str, str] = {
@@ -190,34 +190,26 @@ def _aliases(raw: dict, display: str) -> list[str]:
     return list(dict.fromkeys(a))
 
 
-def _desc(raw: dict, display: str, tags: list[str]) -> str:
-    cls   = raw.get("Class", "Unknown")
-    mfr   = raw.get("Manufacturer", "Unknown")
+def _desc(raw: dict) -> str:
+    """Only the facts the chunk's own Name/Manufacturer/Class lines omit."""
     seats = raw.get("Seats", 4)
     spd   = raw.get("MaxSpeed", 0) or 0
     arms  = raw.get("Weapons") or []
-    parts = [
-        f"GTA5 vehicle {raw.get('Name')} ({display}).",
-        f"{mfr} {cls.lower()}.",
-        f"{seats} seat(s). Max speed {spd:.1f} m/s.",
-    ]
+    parts = [f"{seats} seat(s). Max speed {spd:.1f} m/s."]
     if arms:
         parts.append(f"Armed: {', '.join(str(w) for w in arms[:3])}.")
     if raw.get("HasSirens"):          parts.append("Has sirens.")
     if raw.get("HasArmoredWindows"):  parts.append("Armored windows.")
-    parts.append("Use in: getaway, patrol, chase, cinematic, set piece.")
     return " ".join(parts)
 
 
 def _chunk(entry: "RagEntry") -> str:
-    return (
-        f"GTA5 vehicle {entry.canonical}\n"
-        f"Label: {entry.label}\n"
-        f"Manufacturer: {entry.meta.get('manufacturer', '')}\n"
-        f"Class: {entry.meta.get('class', '')}\n"
-        f"Aliases: {', '.join(entry.aliases)}\n"
-        f"Tags: {', '.join(entry.tags)}\n"
-        f"Description: {entry.description}"
+    return build_chunk(
+        entry,
+        f"GTA5 vehicle {entry.canonical}",
+        {"Name":         entry.label,
+         "Manufacturer": entry.meta.get("manufacturer", ""),
+         "Class":        entry.meta.get("class", "")},
     )
 
 
@@ -231,7 +223,7 @@ def make_vehicle_entry(raw: dict, source: str = "DurtyFree/vehicles.json") -> Ra
 
     tags    = _tags(raw)
     aliases = _aliases(raw, display)
-    desc    = _desc(raw, display, tags)
+    desc    = _desc(raw)
 
     meta = {k: v for k, v in {
         "hash":         raw.get("Hash"),
