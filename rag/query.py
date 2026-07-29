@@ -18,8 +18,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from rag.embedder import EMBED_MODEL
+
 INDEX_DIR   = Path(__file__).parent / "index"
-EMBED_MODEL = "BAAI/bge-small-en-v1.5"
 _THRESHOLD  = 0.55
 
 COLLECTION_MAP = {
@@ -50,28 +51,38 @@ class RagClient:
     # ── lazy init ─────────────────────────────────────────────────────────────
 
     def _ensure_domain(self, domain: str):
+        """
+        Collection handle only.
+
+        Deliberately does NOT touch the embedding model: is_ready() answers
+        "is the index built?", and used to answer "no" for a fully populated
+        index whenever the ONNX cache was broken — the two failures need to
+        stay distinguishable.
+        """
         if domain in self._collections:
             return self._collections[domain]
 
         import chromadb
-        from fastembed import TextEmbedding
 
         if self._client is None:
             self._client = chromadb.PersistentClient(path=self._idx_path)
-        if self._model is None:
-            self._model = TextEmbedding(self._model_name)
 
         col_name = COLLECTION_MAP[domain]
         self._collections[domain] = self._client.get_collection(col_name)
         return self._collections[domain]
+
+    def _embedder(self):
+        if self._model is None:
+            from rag.embedder import load_embedder
+            self._model = load_embedder(self._model_name)
+        return self._model
 
     # ── core search ───────────────────────────────────────────────────────────
 
     def _search(self, text: str, domain: str, kind: str | None = None, n: int = 3) -> list[dict]:
         """Return top-n matches from the given domain collection."""
         collection = self._ensure_domain(domain)
-        assert self._model is not None, "_ensure_domain lazily initializes _model"
-        vec   = next(iter(self._model.embed([text]))).tolist()
+        vec   = next(iter(self._embedder().embed([text]))).tolist()
         where = {"kind": kind} if kind else None
 
         result = collection.query(
@@ -149,6 +160,8 @@ class RagClient:
         return self._search(text, domain=domain, kind=kind, n=n)
 
     def is_ready(self, domain: str = "gta5") -> bool:
+        """Is this domain's collection built and populated? (index only — see
+        rag.embedder.status() for the embedding model's own health.)"""
         try:
             col = self._ensure_domain(domain)
             return col.count() > 0
