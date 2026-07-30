@@ -17,8 +17,9 @@ VerticalCorridor  VerticalSurface  BoundedVolume  ArenaPlane  [layout.strict]
 
 | file | role |
 | --- | --- |
-| `src/unity_layout_archetype.py` | derives the three axes, maps them to an archetype, abstains when nothing fits |
+| `src/unity_layout_archetype.py` | derives the three axes, maps them to an archetype, abstains when nothing fits; resolves every primitive's height through one tiered rule |
 | `src/unity_layout.py` | `compute_layout()` dispatches; `_layout_arena_plane()`, `_layout_vertical_corridor()`, `_layout_bounded_volume()` and `_layout_vertical_surface()` are the primitives |
+| `src/unity_spatial_facts.py` | extracts the brief's numeric distances before schema-fill and carries them past it in `schema.meta` |
 
 ## The derived axes
 
@@ -31,11 +32,25 @@ VerticalCorridor  VerticalSurface  BoundedVolume  ArenaPlane  [layout.strict]
 
 `goal_topology` is provenance only — the archetype is `(motion_axis, medium)`.
 
-Vertical evidence is deliberately **strong-only**: one unambiguous term
-(`freefall`, `skydive`, `parachute`, `wingsuit`, `altimeter`, …), or two weaker
-descent verbs in a scene already established as air/water, or entity y-data
-above 50 m. A lone "descent into the catacombs" never flips a ground game —
-misclassifying it would hard-fail a project that packs fine today.
+Vertical evidence is deliberately **strong-only**, and **ascent and descent
+clear the same bar**. That is the settled rule: a climb is as much a vertical
+game as a drop is, and holding climbing evidence to a higher standard is what
+produced a flat arena for the living-wall brief. Any one of:
+
+- one unambiguous **descent** term (`freefall`, `skydive`, `parachute`,
+  `wingsuit`, `altimeter`, …);
+- one unambiguous **climbing** term (`handhold`, `belay`, `piton`, `rock face`,
+  `free solo`, …), or a group authored as something you grab (`Holdable` tag,
+  `handhold`/`ledge`/`grip` kind) — structure, so stronger still;
+- two weaker descent verbs in a scene already established as air/water;
+- entity y-data above 50 m.
+
+What clears it in **neither** direction is a single ambiguous verb. A lone
+"descent into the catacombs" never flips a ground game, and neither does "climb
+the leaderboard" or "sales are climbing": the ascent **verbs** choose a
+direction once the axis is already vertical and never establish the axis
+themselves. That noun/verb split is the whole guard against prose-only false
+positives — misclassifying a game that packs fine today would hard-fail it.
 
 `volumetric` is the free-medium axis: `locomotion` of `fly`/`swim` (or
 hover/float vocabulary, which the `locomotion` enum cannot express) **and** a
@@ -44,11 +59,53 @@ so a skydiver — also `locomotion: fly` — still gets a corridor. The medium g
 matters: a *walking* game merely described in sky words is not volumetric, and
 floating it in a box would be the same wrong-primitive failure.
 
+## Height evidence — one rule for every primitive
+
+Three primitives need a vertical extent, and all three resolve it through the
+same tiered rule (`_schema_height` in `src/unity_layout_archetype.py`):
+
+| tier | source | note |
+| --- | --- | --- |
+| 1 | the **schema's own** figure — baked entity altitude, else an altitude/deck reading parsed from its prose | authored intent; unchanged behaviour |
+| 2 | a **spatial fact from the brief** whose referent names this dimension | largest match wins; logged `[layout.facts]` |
+| 3 | the primitive's **named default** | logged as a warning, unchanged |
+
+Tier 2 exists because the LLM is the only transport between the brief and the
+compiler, and it compresses. The living-wall brief says *"The summit is a nerve
+cluster 900m up"*; the schema that came back carried no height at all, so a
+60 m default wall was built for a 900 m climb. Layout behaved correctly with
+what reached it — the number never got there.
+
+So `src/unity_spatial_facts.py` reads the brief itself, **before** schema-fill
+runs, with a deterministic regex pass: a number carrying a length unit (`m`,
+`meter(s)`, `km`, `ft`, `feet`), normalized to metres, plus the few tokens of
+noun phrase around it and the raw sentence as evidence. The unit is the whole
+gate — `3 lives` and `5 enemies` are not distances. The facts ride in
+`schema.meta.spatial_facts`, which is provenance rather than content: no LLM
+step writes it, the entity rescue does not touch it, and it survives into the
+generator's model-aware re-layout so the second pass resolves the same height
+as the first.
+
+A fact is only consulted for a dimension whose **referent vocabulary** it
+matches, so one brief can state a wall height, an approach distance and a fog
+radius without them being interchangeable:
+
+| dimension | referents |
+| --- | --- |
+| `surface_height` | summit, wall, cliff, peak, top |
+| `corridor_height` | altitude, jump, deck, drop |
+| `volume_height` | depth, ceiling |
+
+When tiers 1 and 2 **both** have an answer and they differ by more than 25 %,
+tier 1 still wins and the gap is logged — that is a schema-fill fidelity
+signal, not an error.
+
 ## VerticalCorridor
 
 - Corridor height **H** comes from baked entity altitude, else the highest
-  altitude/deck figure in the schema's prose, else the named default
-  (`_CORRIDOR_HEIGHT_DEFAULT`, 4000 m) **with a warning**.
+  altitude/deck figure in the schema's prose, else a matching brief spatial
+  fact, else the named default (`_CORRIDOR_HEIGHT_DEFAULT`, 4000 m) **with a
+  warning**.
 - The **exit platform** — the thing the player jumps from — takes **y = H**,
   and the player spawn is attached beside it, clear of its footprint. Without
   the role, footprint-size stratification parked the jump ship *below* its own
@@ -76,8 +133,9 @@ Ascent is not descent upside-down: a drop is a **volume** you fall through, a
 climb is a **surface** you move along with everything attached to it. The wall
 is the X–Y plane at z = 0, face normal +Z; the player stands in front of it.
 
-- Height **H** from schema evidence, else `_SURFACE_HEIGHT_DEFAULT` (60 m)
-  **with a warning**.
+- Height **H** from schema evidence, else a brief spatial fact naming the
+  summit/wall/cliff/peak/top, else `_SURFACE_HEIGHT_DEFAULT` (60 m) **with a
+  warning**.
 - **Wall surface entity**: a `structure`/`creature`/`terrain` group tagged
   `Environment`, else the largest wall-like group by footprint. The winning
   signal is logged.
@@ -105,8 +163,9 @@ is the X–Y plane at z = 0, face normal +Z; the player stands in front of it.
 ## BoundedVolume
 
 A play box of height **H** for free movement through a medium — a glider, a
-flight sim, a scuba survey. Sized like the corridor (schema evidence, else
-`_VOLUME_HEIGHT_DEFAULT` = 200 m **with a warning** — a box is not a jump run).
+flight sim, a scuba survey. Sized like the corridor (schema evidence, else a
+brief spatial fact naming a depth/ceiling, else `_VOLUME_HEIGHT_DEFAULT` =
+200 m **with a warning** — a box is not a jump run).
 
 - Interior content is cut into `_VOLUME_LAYERS` (3) altitude layers across
   `[0.2, 0.8] * H`, size-sorted and round-robined so no layer holds all the

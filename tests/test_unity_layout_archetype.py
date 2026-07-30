@@ -267,6 +267,26 @@ class TestArchetypeSelection:
                          "catacombs beneath the depot yard.")
         assert select_archetype(s).name == "ArenaPlane"
 
+    def test_climbing_the_leaderboard_does_not_flip_a_ground_game(self):
+        """The ascent half of the same guard, and the reason ascent NOUNS
+        establish the axis while ascent VERBS only choose a direction.
+
+        Ascent and descent clear the same evidentiary bar — a climb is as much
+        a vertical game as a drop is. What neither clears is one figurative
+        verb: "climb the leaderboard" and "sales are climbing" are ordinary
+        English, and a walking game that says either must stay on the ground
+        plane rather than become a wall.
+        """
+        s = _planar_schema()
+        s.description = ("A scavenger game in a depot yard. Collect scrap to "
+                         "climb the leaderboard — the top scavengers are "
+                         "ranked on a board by the gate, and your score keeps "
+                         "climbing as you scale up the operation.")
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
+            arch.evidence
+        assert arch.direction == "", arch.evidence
+
     def test_provenance_names_the_archetype_and_all_three_axes(self):
         line = select_archetype(_skydive_schema()).provenance()
         assert "VerticalCorridor" in line
