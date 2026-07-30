@@ -76,7 +76,7 @@ from .unity_layout_archetype import (
 )
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
-                            describe, select_primitive)
+                            describe, select_primitive, tier_of)
 
 _log = logging.getLogger(__name__)
 
@@ -158,11 +158,6 @@ _EXIT_PLATFORM_CLEARANCE = 1.5
 # shelves to stack things on.
 _VOLUME_BAND_FLOOR = 0.2
 _VOLUME_BAND_CEIL  = 0.8
-# Altitude layers the interior is cut into. Each layer is packed independently
-# by the existing 2D footprint packer — groups in DIFFERENT layers may share
-# XZ because they are vertically separated, which is the whole point of a
-# volume. Three reads as low/mid/high without spreading a small scene thin.
-_VOLUME_LAYERS = 3
 
 # ── VerticalSurface ──────────────────────────────────────────────────────────
 # The wall is the X-Y plane at z = 0, face normal +Z. The player stands in
@@ -450,6 +445,38 @@ def _bake_positions(entity: EntitySpec, eff_spacing: float,
     return []
 
 
+def _authored_elevation(entity: EntitySpec) -> Optional[float]:
+    """An `elevation` the schema authored explicitly, or None.
+
+    src/unity_spatial.py introduced this field as the intent channel and gave
+    it absolute priority over anything derived; every primitive here honours
+    that, so a deliberately placed group is never re-derived out from under
+    the author.
+    """
+    return entity.elevation if abs(entity.elevation) > 1e-6 else None
+
+
+def _band_order(entities: list[EntitySpec]) -> list[EntitySpec]:
+    """Deterministic high-to-low ordering by what a KIND of thing is, not by
+    how big it is.
+
+    unity_spatial.tier_of encodes the ordering that actually matters in a
+    vertical space — the carrier above what it drops toward, pickups strung
+    on the route between them. Sorting by footprint radius (the first cut
+    here) is arbitrary with respect to altitude: it put a jump plane below
+    its own jumper, and kelp near the surface. Radius only breaks ties.
+    """
+    return sorted(entities, key=lambda e: (-tier_of(e), -e.group_radius, e.name))
+
+
+def _set_elevation(entity: EntitySpec, y: float) -> None:
+    """Record the chosen altitude on the entity as well as in its baked
+    positions. Step 7 (src/unity_playability.py) reads `elevation` to tell a
+    volume game whose avatar was left on the floor from one that was laid out
+    properly, and can only do that if every primitive writes it."""
+    entity.elevation = round(y, 3)
+
+
 def _measure_and_size(layoutable: list[EntitySpec],
                       footprints: Optional[dict[str, float]]
                       ) -> tuple[list[EntitySpec], list[EntitySpec]]:
@@ -580,6 +607,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
                             0.0, 0.0,
                             (footprints or {}).get(platform.name, 0.0) * platform.scale),
             top_y)
+        _set_elevation(platform, top_y)
         # The player stands in its doorway: clear of the platform's own
         # footprint, but attached to it rather than parked somewhere else.
         spawn_x = round(platform.group_radius
@@ -597,6 +625,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
                             spawn_x, 0.0,
                             (footprints or {}).get(player.name, 0.0) * player.scale),
             top_y)
+        _set_elevation(player, top_y)
         where = (f"attached to '{platform.name}' at x={spawn_x:g}"
                  if platform is not None else "on the drop axis")
         msgs.append(
@@ -604,15 +633,19 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
             f"(y={top_y:g}, {where}) instead of standing on the terminal plane")
 
     # ── Corridor content: stratified below the top, never all at y = 0 ───────
-    ordered = sorted(corridor, key=lambda e: (-e.group_radius, e.name))
+    ordered = _band_order(corridor)
     span = _CORRIDOR_BAND_TOP - _CORRIDOR_BAND_FLOOR
     banded: list[str] = []
     for i, e in enumerate(ordered):
         # Evenly spaced band centers, largest group highest. A single group
         # takes the top band — near the player, where it can be reached.
         frac = _CORRIDOR_BAND_TOP - span * (i / max(1, len(ordered) - 1))
+        authored = _authored_elevation(e)
         hint = entity_altitude_hint(e)
-        if hint is not None:
+        if authored is not None:
+            y = round(authored, 3)
+            band_why = f"{e.name}@{y:g}(authored)"
+        elif hint is not None:
             y = round(max(0.0, min(height, hint)), 3)
             band_why = f"{e.name}@{y:g}(schema)"
         elif is_water and is_water_dweller(e):
@@ -634,6 +667,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
             _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
                             (footprints or {}).get(e.name, 0.0) * e.scale),
             y)
+        _set_elevation(e, y)
     if banded:
         msgs.append(
             f"Stratified {len(banded)} group(s) down the corridor "
@@ -650,6 +684,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
             _bake_positions(goal, _effective_spacing(goal, footprints), 0.0, 0.0,
                             (footprints or {}).get(goal.name, 0.0) * goal.scale),
             surface_y)
+        _set_elevation(goal, surface_y)
         seed_circles.append((0.0, 0.0, goal.group_radius))
     elif player is None:
         # No airborne player and no goal: the scene template's own Player still
@@ -669,6 +704,7 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
                 _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
                                 (footprints or {}).get(e.name, 0.0) * e.scale),
                 surface_y)
+            _set_elevation(e, surface_y)
     if terminal:
         plane = "water surface" if is_water else "ground"
         msgs.append(
@@ -848,6 +884,8 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
             e.count = len(mine)         # keep count honest with what was baked
             xs = [p[0] for p in mine]
             e.origin_offset = [round(sum(xs) / len(xs), 3) if xs else 0.0, 0.0]
+            ys = [q[1] for q in mine]
+            _set_elevation(e, sum(ys) / len(ys) if ys else 0.0)
         msgs.append(
             f"Distributed {len(chain)} hold(s) across the wall face from "
             f"y={_HOLD_FIRST_Y:g} to y={top_y:g} "
@@ -876,6 +914,7 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
                 pts.append([round(hx, 3), round(hy, 3), _HAZARD_SURFACE_OFFSET])
             e.instance_positions = pts
             e.origin_offset = [round(sum(p[0] for p in pts) / len(pts), 3), 0.0]
+            _set_elevation(e, sum(q[1] for q in pts) / len(pts))
             placed_haz += len(pts)
         msgs.append(f"Attached {placed_haz} hazard/enemy instance(s) to the "
                     f"face between the hold rows, cleared by "
@@ -893,6 +932,7 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
         player.origin_offset = [0.0, round(_SURFACE_BASE_DEPTH, 3)]
         player.instance_positions = [[0.0, 0.0, round(_SURFACE_BASE_DEPTH, 3)]]
         player.count = 1
+        _set_elevation(player, 0.0)
         msgs.append(f"Player spawns in the base zone at the foot of the wall "
                     f"(y=0, {_SURFACE_BASE_DEPTH:g} m out from the face)")
 
@@ -911,6 +951,8 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
             ]
         wall.origin_offset = [0.0, 0.0]
         wall.group_radius = max(wall.group_radius, half_width)
+        _set_elevation(wall, sum(q[1] for q in wall.instance_positions)
+                       / len(wall.instance_positions))
 
     # ── Summit goal ──────────────────────────────────────────────────────────
     goal = pick_goal_entity(ground)
@@ -919,6 +961,7 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
         goal.origin_offset = [0.0, 0.0]
         goal.instance_positions = [[0.0, top_y, round(_HOLD_SURFACE_OFFSET, 3)]]
         goal.count = 1
+        _set_elevation(goal, top_y)
         msgs.append(f"Summit goal '{goal.name}' placed at the top of the wall "
                     f"(y={top_y:g})")
     else:
@@ -947,16 +990,6 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
 
     _attach_regions(schema, _regions_for(packable, preplaced))
     return msgs
-
-
-def _volume_layer_fractions(n_layers: int) -> list[float]:
-    """Evenly spaced interior altitudes, as fractions of box height. A single
-    layer sits mid-box rather than against a boundary."""
-    if n_layers <= 1:
-        return [(_VOLUME_BAND_FLOOR + _VOLUME_BAND_CEIL) / 2.0]
-    span = _VOLUME_BAND_CEIL - _VOLUME_BAND_FLOOR
-    return [_VOLUME_BAND_FLOOR + span * (i / (n_layers - 1))
-            for i in range(n_layers)]
 
 
 def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
@@ -999,6 +1032,9 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
     floor_y    = 0.0
     ceiling_y  = round(height, 3)
     boundary_y = ceiling_y if is_water else floor_y
+    # Water mirrors the tiers below the surface, so tier 1.0 is always
+    # 'furthest from where the player ends up' in both media.
+    sign = 1.0
 
     player, why_player = pick_player_entity(packable)
     if player is not None:
@@ -1034,36 +1070,48 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
                             0.0, 0.0,
                             (footprints or {}).get(player.name, 0.0) * player.scale),
             player_y)
+        _set_elevation(player, player_y)
         msgs.append(
             f"Player group '{player.name}' spawns inside the volume "
             f"(y={player_y:g})"
             + (f", below the water surface at y={ceiling_y:g}" if is_water
                else ", not on the terrain floor"))
 
-    # ── Interior: altitude layers, each packed by the existing 2D packer ─────
-    ordered = sorted(interior, key=lambda e: (-e.group_radius, e.name))
-    n_layers = min(_VOLUME_LAYERS, max(1, len(ordered)))
-    layers: list[list[EntitySpec]] = [[] for _ in range(n_layers)]
-    for i, e in enumerate(ordered):
-        # Round-robin over size-sorted groups, so each layer gets a mix of
-        # large and small footprints instead of one layer holding all the bulk.
-        layers[i % n_layers].append(e)
+    # ── Interior: altitude by KIND, then pack each band in plan view ─────────
+    # Altitude comes from src/unity_spatial.py's tier table, scaled into this
+    # box: an authored `elevation` wins outright, otherwise the kind decides.
+    # An earlier cut round-robined size-sorted groups across three fixed
+    # layers, which was wrong twice over — it put the carrier at the BOTTOM of
+    # its own volume, and it split two groups of the same kind across
+    # different altitudes for no reason. Tier ordering says a jump plane is
+    # above what it drops, and two gate groups belong at the same height and
+    # apart in PLAN view, which is what band packing then does.
+    span = _VOLUME_BAND_CEIL - _VOLUME_BAND_FLOOR
+    elevations: dict[str, float] = {}
+    for e in interior:
+        authored = _authored_elevation(e)
+        elevations[e.name] = round(
+            authored if authored is not None
+            else height * (_VOLUME_BAND_FLOOR + span * tier_of(e)) * sign, 3)
 
     placed_layers: list[str] = []
-    for li, (layer, frac) in enumerate(zip(layers, _volume_layer_fractions(n_layers))):
-        if not layer:
-            continue
-        y = round(height * frac, 3)
-        slots = _pack_groups(layer, reserved)
-        for e in layer:
+    for band in sorted({band_key(y) for y in elevations.values()}, reverse=True):
+        in_band = [e for e in interior if band_key(elevations[e.name]) == band]
+        # Same band -> must not overlap in XZ. Different bands may share it:
+        # they are already separated vertically, which is the whole point.
+        slots = _pack_groups(in_band, reserved)
+        for e in in_band:
+            y = elevations[e.name]
             cx, cz, _r = slots[e.name]
             e.origin_offset = [round(cx, 3), round(cz, 3)]
             e.instance_positions = _lift(
                 _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
                                 (footprints or {}).get(e.name, 0.0) * e.scale),
                 y)
+            _set_elevation(e, y)
         placed_layers.append(
-            f"layer {li + 1}/{n_layers} @ y={y:g}: {', '.join(e.name for e in layer)}")
+            f"y={elevations[in_band[0].name]:g}: "
+            + ", ".join(e.name for e in in_band))
     if placed_layers:
         msgs.append("Distributed interior content through the volume ("
                     + "; ".join(placed_layers) + ")")
@@ -1078,6 +1126,7 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
                 _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
                                 (footprints or {}).get(e.name, 0.0) * e.scale),
                 boundary_y)
+            _set_elevation(e, boundary_y)
         plane = "water surface" if is_water else "terrain floor"
         msgs.append(
             f"Placed {len(on_boundary)} group(s) on the {plane} "
@@ -1145,6 +1194,14 @@ def compute_layout(schema: UnitySchema,
     # Deliberately NOT caught here: a silent fall-through to ArenaPlane is the
     # failure mode this selection exists to remove.
     arch = select_archetype(schema)
+    # Step 7 (src/unity_playability.py) grades the scene against a spatial
+    # primitive. Stamp the one the layout actually used, so the evaluator
+    # judges what was built rather than re-deriving a second opinion from
+    # locomotion alone.
+    _has_route = any(e.placement == "path" and e.path_points
+                     for e in schema.entities)
+    if isinstance(schema.meta, dict):
+        schema.meta["spatial_primitive"] = arch.spatial_primitive(_has_route)
     msgs: list[str] = [arch.provenance()]
     if arch.name == "VerticalCorridor":
         return msgs + _layout_vertical_corridor(schema, arch, footprints)

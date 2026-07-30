@@ -6,6 +6,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 1,
+        "elevation": 0.0,
         "group_radius": 0.6,
         "instance_positions": [
           [
@@ -37,6 +38,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 14,
+        "elevation": 0.0,
         "group_radius": 8.0,
         "instance_positions": [
           [
@@ -133,6 +135,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 6,
+        "elevation": 0.0,
         "group_radius": 10.0,
         "instance_positions": [
           [
@@ -189,6 +192,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 9,
+        "elevation": 0.0,
         "group_radius": 8.0,
         "instance_positions": [
           [
@@ -260,6 +264,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 5,
+        "elevation": 0.0,
         "group_radius": 12.0,
         "instance_positions": [
           [
@@ -396,6 +401,7 @@
         "behavior": "",
         "color_role": "secondary",
         "count": 37,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -607,6 +613,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 37,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -818,6 +825,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 37,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1029,6 +1037,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 13,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1120,6 +1129,7 @@
         "behavior": "",
         "color_role": "primary",
         "count": 4,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1166,6 +1176,7 @@
         "behavior": "",
         "color_role": "primary",
         "count": 1,
+        "elevation": 0.0,
         "group_radius": 0.6,
         "instance_positions": [
           [
@@ -1199,6 +1210,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 3,
+        "elevation": 0.0,
         "group_radius": 4.564,
         "instance_positions": [
           [
@@ -1244,6 +1256,7 @@
         "behavior": "",
         "color_role": "secondary",
         "count": 3,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1285,6 +1298,7 @@
         "behavior": "",
         "color_role": "secondary",
         "count": 3,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1326,6 +1340,7 @@
         "behavior": "",
         "color_role": "secondary",
         "count": 3,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1367,6 +1382,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 2,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1403,6 +1419,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 2,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1439,6 +1456,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 2,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1475,6 +1493,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 2,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1511,6 +1530,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 2,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1547,6 +1567,7 @@
         "behavior": "",
         "color_role": "trim",
         "count": 2,
+        "elevation": 0.0,
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
@@ -1583,6 +1604,7 @@
         "behavior": "",
         "color_role": "accent",
         "count": 12,
+        "elevation": 0.0,
         "group_radius": 6.0,
         "instance_positions": [
           [

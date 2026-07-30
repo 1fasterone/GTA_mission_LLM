@@ -681,6 +681,66 @@ class TestReachabilityInvariant:
         _verify_hold_chain(chain, reach, "GenWall")
 
 
+class TestSpatialContract:
+    """The seam with src/unity_spatial.py and Step 7.
+
+    The layout pass is the authority on which primitive a scene is, and the
+    playability evaluator grades against it. That only works if every
+    primitive writes `elevation` back and the two modules agree on the name.
+    """
+
+    @pytest.mark.parametrize("builder,primitive", [
+        (_planar_schema,  "ground_plane"),
+        (_racing_schema,  "route_corridor"),
+        (_skydive_schema, "airspace_column"),
+        (_dive_schema,    "depth_column"),
+        (_glider_schema,  "airspace_column"),
+        (_survey_schema,  "depth_column"),
+        (lambda: _load("living_wall_llm.schema.json"), "wall_surface"),
+    ])
+    def test_layout_stamps_the_primitive_it_used(self, builder, primitive):
+        s = builder()
+        compute_layout(s)
+        assert s.meta.get("spatial_primitive") == primitive
+
+    @pytest.mark.parametrize("builder", [
+        _skydive_schema, _dive_schema, _glider_schema, _survey_schema,
+        lambda: _load("living_wall_llm.schema.json"),
+    ])
+    def test_every_group_reports_the_elevation_it_was_baked_at(self, builder):
+        """Step 7 reads `elevation`, not instance_positions. A primitive that
+        bakes altitude without writing it back leaves the evaluator grading a
+        scene that does not exist — the volume_player check in particular."""
+        s = builder()
+        compute_layout(s)
+        for e in s.entities:
+            if not e.instance_positions:
+                continue
+            ys = {round(p[1], 3) for p in e.instance_positions}
+            if len(ys) == 1:                       # a single-altitude group
+                only = next(iter(ys))
+                assert abs(e.elevation - only) < 1e-6, (e.name, e.elevation, only)
+
+    def test_an_authored_elevation_is_never_overridden(self):
+        """src/unity_spatial.py's contract: the field is the intent channel
+        and always wins over anything derived."""
+        s = _glider_schema()
+        _entity(s, "CloudBanks").elevation = 812.0
+        compute_layout(s)
+        cloud = _entity(s, "CloudBanks")
+        assert cloud.elevation == 812.0
+        assert all(p[1] == 812.0 for p in cloud.instance_positions)
+
+    def test_altitude_follows_kind_not_footprint(self):
+        """Ordering by size is arbitrary with respect to altitude — it put a
+        jump plane below its own jumper. unity_spatial.tier_of decides."""
+        s = _glider_schema()
+        compute_layout(s)
+        # collectible (tier .45) sits above prop (tier .25) whatever their
+        # relative footprints are; RingGates is far smaller than the islands.
+        assert _entity(s, "RingGates").elevation > _entity(s, "FloatingIslands").elevation
+
+
 class TestLiveLLMSchemaRoles:
     """Role detection against a REAL schema-fill output, not a fixture written
     to match the predicates. Every one of these assertions failed on the live

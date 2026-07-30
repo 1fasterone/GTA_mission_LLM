@@ -310,6 +310,13 @@ class LayoutArchetype:
     # (VerticalSurface). Empty for every non-vertical axis.
     direction:     str = ""
 
+    def spatial_primitive(self, has_route: bool = False) -> str:
+        """This archetype in src/unity_spatial.py's vocabulary, so the layout
+        pass and the playability evaluator (Step 7) describe the same scene
+        instead of each deriving its own answer."""
+        from .unity_spatial import primitive_for_archetype
+        return primitive_for_archetype(self.name, self.medium, has_route)
+
     def provenance(self) -> str:
         """One line, same shape for every archetype, emitted on EVERY run."""
         axis = self.motion_axis

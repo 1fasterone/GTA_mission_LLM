@@ -45,9 +45,36 @@ GROUND_PLANE = "ground_plane"
 ROUTE_CORRIDOR = "route_corridor"
 AIRSPACE_COLUMN = "airspace_column"
 DEPTH_COLUMN = "depth_column"
+# Ascent along a face rather than movement through open volume — the play
+# space is the SURFACE of a wall and the things attached to it.
+WALL_SURFACE = "wall_surface"
 
 # The two primitives whose content occupies a volume rather than a surface.
 VOLUME_PRIMITIVES = frozenset({AIRSPACE_COLUMN, DEPTH_COLUMN})
+
+# Which archetype (src/unity_layout_archetype.py, the layout pass's own
+# selector) corresponds to which primitive in this vocabulary. The layout pass
+# is authoritative — it reads far more evidence than locomotion alone — and
+# stamps its choice on the schema; `select_primitive` below stays as the
+# fallback for callers running before layout has happened.
+_PRIMITIVE_BY_ARCHETYPE: dict[tuple[str, str], str] = {
+    ("VerticalCorridor", "air"):   AIRSPACE_COLUMN,
+    ("VerticalCorridor", "water"): DEPTH_COLUMN,
+    ("BoundedVolume",    "air"):   AIRSPACE_COLUMN,
+    ("BoundedVolume",    "water"): DEPTH_COLUMN,
+}
+
+
+def primitive_for_archetype(archetype: str, medium: str,
+                            has_route: bool = False) -> str:
+    """Translate a layout archetype into this module's vocabulary, so the
+    playability evaluator and the layout pass describe the same scene."""
+    if archetype == "VerticalSurface":
+        return WALL_SURFACE
+    hit = _PRIMITIVE_BY_ARCHETYPE.get((archetype, (medium or "").lower()))
+    if hit:
+        return hit
+    return ROUTE_CORRIDOR if has_route else GROUND_PLANE
 
 # Locomotion -> primitive, when no authored route overrides it. Locomotion is
 # the schema's own statement about how the player moves through the space, and
@@ -138,6 +165,19 @@ def is_grounded(entity: EntitySpec) -> bool:
 
 def _tier(entity: EntitySpec) -> float:
     return _TIER_BY_KIND.get((entity.kind or "").strip().lower(), _DEFAULT_TIER)
+
+
+def tier_of(entity: EntitySpec) -> float:
+    """Where this KIND of thing lives in a vertical space, 0.0 (floor) ..
+    1.0 (ceiling).
+
+    Public because the layout primitives order their own bands by it: the
+    carrier sits above what it drops toward, pickups sit on the route between
+    them. Before this was shared, VerticalCorridor stratified by footprint
+    SIZE, which is arbitrary with respect to altitude — it put a jump plane
+    below its own jumper and kelp near the surface.
+    """
+    return _tier(entity)
 
 
 def assign_elevations(entities: Iterable[EntitySpec],

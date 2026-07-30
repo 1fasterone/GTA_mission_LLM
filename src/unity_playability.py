@@ -403,14 +403,31 @@ _CHECKS = (
 )
 
 
+def _primitive_of(schema: UnitySchema, has_route: bool) -> str:
+    """The spatial primitive the LAYOUT pass actually used, when it has run.
+
+    src/unity_layout.py stamps its archetype choice on schema.meta. It reads
+    far more evidence than locomotion does — descent vs ascent framing,
+    climbable entities, altitude data — so re-deriving here would let the
+    evaluator grade a scene against a primitive it was never built as. Falls
+    back to the locomotion heuristic for callers that evaluate a schema before
+    layout.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    stamped = meta.get("spatial_primitive")
+    if isinstance(stamped, str) and stamped:
+        return stamped
+    return select_primitive(schema.game_type, schema.locomotion,
+                            has_route=has_route)
+
+
 def evaluate(schema: UnitySchema) -> PlayabilityReport:
     """Grade a final schema. Deterministic, read-only, no LLM."""
     has_route = any(e.placement == "path" and e.path_points
                     for e in schema.entities)
     rep = PlayabilityReport(
         project_name=schema.project_name,
-        primitive=select_primitive(schema.game_type, schema.locomotion,
-                                   has_route=has_route),
+        primitive=_primitive_of(schema, has_route),
     )
     for check in _CHECKS:
         check(schema, rep)
