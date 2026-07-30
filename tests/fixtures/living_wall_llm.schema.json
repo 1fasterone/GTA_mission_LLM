@@ -1,0 +1,483 @@
+{
+  "project_name": "ClimbHorrorAscension",
+  "company_name": "Vertigo Studios",
+  "description": "A vertical climbing horror experience where you must grip, release, and shift weight to survive a waking cliff face.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "walk",
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "realistic",
+  "scenes": [
+    "Main",
+    "MainMenu",
+    "ClimbingZone",
+    "FallRecovery",
+    "SummitView"
+  ],
+  "features": [
+    "cinemachine",
+    "input_system",
+    "animation_rigging",
+    "audio",
+    "timeline",
+    "navmesh"
+  ],
+  "packages": [
+    {
+      "description": "Universal Render Pipeline for optimized lighting and post-processing.",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.0.3"
+    },
+    {
+      "description": "Input System package for gesture-based climbing controls.",
+      "package_id": "com.unity.xr.interaction.toolkit",
+      "version": "3.0.5"
+    },
+    {
+      "description": "Cinemachine for dynamic camera transitions during falls.",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "Animation Rigging for biomechanical motion blending.",
+      "package_id": "com.unity.animation.rigging",
+      "version": "1.3.0"
+    },
+    {
+      "description": "com.unity.shadergraph",
+      "package_id": "com.unity.shadergraph",
+      "version": "17.0.3"
+    },
+    {
+      "description": "com.unity.textmeshpro",
+      "package_id": "com.unity.textmeshpro",
+      "version": "3.0.9"
+    },
+    {
+      "description": "com.unity.inputsystem",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.8.2"
+    },
+    {
+      "description": "com.unity.timeline",
+      "package_id": "com.unity.timeline",
+      "version": "1.8.7"
+    },
+    {
+      "description": "com.unity.ai.navigation",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.4"
+    },
+    {
+      "description": "com.unity.ugui",
+      "package_id": "com.unity.ugui",
+      "version": "2.0.0"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "MaterialPalette",
+      "type": "material_palette",
+      "description": "Runtime Bioluminescent Dark palette manager \u2014 creates and caches materials from palette hex colors",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Oversees the lifecycle across Menu, Climbing, Falling, Summit, and Consumed phases.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "ClimbController",
+      "type": "player",
+      "description": "Manages stamina drain, grip/release mechanics, and fall logic.",
+      "attach_to": "player",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "UIManager",
+      "type": "ui_manager",
+      "description": "Handles the HUD displaying stamina rings, grip indicators, and wake-heat meters.",
+      "attach_to": "camera",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "FogBreathSystem",
+      "type": "custom",
+      "description": "Controls atmospheric tension by adjusting fog density based on player state.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "UnityEngine.Rendering"
+      ],
+      "extra_fields": [
+        {
+          "name": "fogController",
+          "type": "FogController",
+          "default": "null",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "CascadeSystem",
+      "type": "custom",
+      "description": "Propagates wake events between neighboring handholds based on proximity noise thresholds.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "System.Collections.Generic"
+      ],
+      "extra_fields": [
+        {
+          "name": "wakeThreshold",
+          "type": "float",
+          "default": "5.0f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "foreach (var hold in HandholdGroup.GetComponentsInChildren<Handhold>()) { if (Vector3.Distance(transform.position, hold.transform.position) < wakeThreshold) hold.WakeUp(); }",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "WallOrganismAI",
+      "type": "enemy",
+      "description": "Controls the SleeperHold entity transitioning through asleep, stirring, awake, and shrug states.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "HealthSystem",
+      "type": "health",
+      "description": "Health component with damage, heal, and death events",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DialogueManager",
+      "type": "dialogue_manager",
+      "description": "Singleton story-beat and dialogue system",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "MeshBuilder",
+      "type": "mesh_builder",
+      "description": "Singleton procedural mesh factory",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "start_ascent",
+      "label": "The Ascent Begins",
+      "description": "Player starts at the bottom of the cliff, gripping the first hold.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "organism_wake",
+      "label": "The Face Wakes",
+      "description": "Wall organisms begin to stir as the player climbs higher.",
+      "trigger": "on_timer"
+    },
+    {
+      "id": "fall_mechanic",
+      "label": "A Slippery Moment",
+      "description": "Player loses grip and must recover from a fall.",
+      "trigger": "manual"
+    }
+  ],
+  "missions": [
+    {
+      "id": "reach_summit",
+      "title": "Reach the Summit",
+      "description": "Climb to the top of the cliff before the organisms consume you.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Reach the summit platform.",
+          "type": "reach",
+          "target_ref": "SummitView",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 1000
+      },
+      "story_beat_ref": ""
+    }
+  ],
+  "entities": [
+    {
+      "name": "HandholdGroup",
+      "kind": "prop",
+      "count": 50,
+      "shape": "capsule",
+      "placement": "scatter",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.2,
+      "tag": "Holdable",
+      "behavior": "",
+      "model_hint": "rock handhold",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "WallOrganismGroup",
+      "kind": "creature",
+      "count": 8,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Enemy",
+      "behavior": "WallOrganismAI",
+      "model_hint": "bioluminescent organism",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "ObstacleRockGroup",
+      "kind": "obstacle",
+      "count": 10,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.5,
+      "tag": "Hazard",
+      "behavior": "",
+      "model_hint": "sharp rock spike",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "BackgroundCliffGroup",
+      "kind": "structure",
+      "count": 1,
+      "shape": "plane",
+      "placement": "single",
+      "color_role": "background",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 5.0,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "vertical cliff face",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Player",
+      "kind": "character",
+      "count": 1,
+      "shape": "cube",
+      "placement": "single",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Player",
+      "behavior": "",
+      "model_hint": "lone climber harness character",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Enemy",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Enemy",
+      "behavior": "",
+      "model_hint": "enemy",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "NPC",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Untagged",
+      "behavior": "",
+      "model_hint": "npc",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Collectible",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Untagged",
+      "behavior": "",
+      "model_hint": "collectible",
+      "sketchfab_query": "",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "CliffFaceGenerator",
+      "description": "Generates the uneven rock surface with bioluminescent veins.",
+      "mesh_type": "custom",
+      "resolution": 32
+    }
+  ]
+}

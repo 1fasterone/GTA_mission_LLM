@@ -1,0 +1,767 @@
+{
+  "project_name": "DropZoneArcade",
+  "company_name": "AeroSky Studios",
+  "description": "A high-fidelity third-person arcade experience focused on vertical movement, body attitude manipulation, and precise parachute steering within a massive drop zone arena.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "fly",
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "stylized",
+  "scenes": [
+    "Main",
+    "MainMenu",
+    "ExitSequence"
+  ],
+  "features": [
+    "physics",
+    "ui_toolkit",
+    "input_system",
+    "cinemachine",
+    "navmesh",
+    "audio",
+    "timeline"
+  ],
+  "packages": [
+    {
+      "description": "Universal Render Pipeline for high-performance volumetric rendering.",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.0.3"
+    },
+    {
+      "description": "Input System Package for granular control mapping.",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.8.2"
+    },
+    {
+      "description": "Cinemachine for virtual rigging and camera transitions.",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "Addressables for asset streaming between scenes.",
+      "package_id": "com.unity.addressables",
+      "version": "2.3.1"
+    },
+    {
+      "description": "Audio Mixer for blending wind, gates, and event cues.",
+      "package_id": "com.unity.ugui",
+      "version": "2.0.0"
+    },
+    {
+      "description": "NavMesh Components for rival AI pathfinding.",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.4"
+    },
+    {
+      "description": "com.unity.shadergraph",
+      "package_id": "com.unity.shadergraph",
+      "version": "17.0.3"
+    },
+    {
+      "description": "com.unity.textmeshpro",
+      "package_id": "com.unity.textmeshpro",
+      "version": "3.0.9"
+    },
+    {
+      "description": "com.unity.ui",
+      "package_id": "com.unity.ui",
+      "version": "2.0.0"
+    },
+    {
+      "description": "com.unity.timeline",
+      "package_id": "com.unity.timeline",
+      "version": "1.8.7"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "MaterialPalette",
+      "type": "material_palette",
+      "description": "Runtime SkyDivePalette palette manager \u2014 creates and caches materials from palette hex colors",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "PlayerController",
+      "type": "custom",
+      "description": "Handles body attitude manipulation, drag scaling relative to angle, and parachute inflation mechanics.",
+      "attach_to": "player",
+      "extra_usings": [
+        "UnityEngine.InputSystem"
+      ],
+      "extra_fields": [
+        {
+          "name": "dragMultiplier",
+          "type": "float",
+          "default": "1.0f",
+          "header": "Physics",
+          "tooltip": null
+        },
+        {
+          "name": "bodyAngle",
+          "type": "float",
+          "default": "0.0f",
+          "header": "Attitude",
+          "tooltip": null
+        },
+        {
+          "name": "velocity",
+          "type": "float",
+          "default": null,
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "var input = Input.current; if (input != null) { var targetAngle = 0.0f; if (Keyboard.current.aKey.isPressed) targetAngle -= 5.0f; else if (Keyboard.current.dKey.isPressed) targetAngle += 5.0f; bodyAngle = Mathf.Lerp(bodyAngle, targetAngle, Time.deltaTime * 2.0f); var dragFactor = Mathf.Max(0.1f, 1.0f - (bodyAngle / 90.0f)); velocity *= dragFactor; }",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "CameraManager",
+      "type": "custom",
+      "description": "Virtual rigging system to maintain spatial awareness between close-chase and wide-orbit views.",
+      "attach_to": "camera",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "targetOffset",
+          "type": "Vector3",
+          "default": "new Vector3(0.0f, 2.0f, -5.0f)",
+          "header": "Position",
+          "tooltip": null
+        },
+        {
+          "name": "zoomLevel",
+          "type": "float",
+          "default": "1.0f",
+          "header": "Zoom",
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": [
+        {
+          "atom": "Follow",
+          "args": {
+            "target": "Player",
+            "distance": 1.5,
+            "speed": 5.0
+          },
+          "label": "chase player"
+        }
+      ]
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Handles state machine phases from cabin exit to landing pad touchdown.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "RivalAI",
+      "type": "enemy",
+      "description": "Controls rival divers tracking across the corridor.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "UIManager",
+      "type": "ui_manager",
+      "description": "Manages live altimeter tape and chain multiplier scores without cluttering HUD.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "AudioMixerBehaviour",
+      "type": "audio_manager",
+      "description": "Blends ambient wind roar with distinct event cues like gate chimes and canopy snaps.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "InputHandler",
+      "type": "custom",
+      "description": "Granular control mapping for track, delta, sit, and flare poses.",
+      "attach_to": "player",
+      "extra_usings": [
+        "UnityEngine.InputSystem"
+      ],
+      "extra_fields": [
+        {
+          "name": "poseMode",
+          "type": "string",
+          "default": "\"track\"",
+          "header": "Pose",
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (Keyboard.current.aKey.wasPressedThisFrame) poseMode = \"sit\"; else if (Keyboard.current.dKey.wasPressedThisFrame) poseMode = \"flare\"; else if (Keyboard.current.sKey.wasPressedThisFrame) poseMode = \"delta\";",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "ParachuteSystem",
+      "type": "custom",
+      "description": "Handles parachute inflation mechanics and fabric tension.",
+      "attach_to": "player",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "inflationState",
+          "type": "float",
+          "default": "0.0f",
+          "header": "Inflation",
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "PlayerController",
+      "type": "player",
+      "description": "Player movement controller for 3D game",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "HealthSystem",
+      "type": "health",
+      "description": "Health component with damage, heal, and death events",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DialogueManager",
+      "type": "dialogue_manager",
+      "description": "Singleton story-beat and dialogue system",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "MeshBuilder",
+      "type": "mesh_builder",
+      "description": "Singleton procedural mesh factory",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "start_drop",
+      "label": "Cabin Exit",
+      "description": "Player exits the turboprop aircraft and begins freefall.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "gate_pass",
+      "label": "Neon Ring Run",
+      "description": "Thread through neon ring gates to build chain multiplier score.",
+      "trigger": "on_pickup"
+    },
+    {
+      "id": "canopy_deploy",
+      "label": "Canopy Deployment",
+      "description": "Deploy parachute for precision steering towards landing pad.",
+      "trigger": "manual"
+    },
+    {
+      "id": "touchdown",
+      "label": "Landing Pad Touchdown",
+      "description": "Accurate landing within the designated zone to complete mission.",
+      "trigger": "on_timer"
+    }
+  ],
+  "missions": [
+    {
+      "id": "first_drop",
+      "title": "First Drop",
+      "description": "Complete your first successful exit and landing.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Reach the ground safely.",
+          "type": "reach",
+          "target_ref": "LandingPad",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 100
+      },
+      "story_beat_ref": ""
+    },
+    {
+      "id": "neon_ring_run",
+      "title": "Neon Ring Run",
+      "description": "Thread through all neon gates for a perfect score.",
+      "objectives": [
+        {
+          "id": "obj_2",
+          "description": "Pass 10 Neon Gates.",
+          "type": "reach",
+          "target_ref": "NeonGates",
+          "count": 10,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 500
+      },
+      "story_beat_ref": ""
+    },
+    {
+      "id": "precision_landing",
+      "title": "Precision Landing",
+      "description": "Land within the center of the pad.",
+      "objectives": [
+        {
+          "id": "obj_3",
+          "description": "Touchdown on Landing Pad.",
+          "type": "reach",
+          "target_ref": "LandingPad",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 1000
+      },
+      "story_beat_ref": ""
+    }
+  ],
+  "entities": [
+    {
+      "name": "ValleyFloor",
+      "kind": "prop",
+      "count": 50,
+      "shape": "plane",
+      "placement": "grid",
+      "color_role": "background",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Ground",
+      "behavior": "",
+      "model_hint": "valley floor",
+      "sketchfab_query": "stylized valley floor",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Clouds",
+      "kind": "prop",
+      "count": 20,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "background",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "clouds",
+      "sketchfab_query": "stylized clouds",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "NeonGates",
+      "kind": "mechanism",
+      "count": 10,
+      "shape": "cylinder",
+      "placement": "line",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "Gate",
+      "behavior": "",
+      "model_hint": "neon gates mechanism",
+      "sketchfab_query": "stylized neon gate",
+      "atoms": [],
+      "path_points": [
+        [
+          0.0,
+          2000.0,
+          0.0
+        ],
+        [
+          100.0,
+          2000.0,
+          0.0
+        ],
+        [
+          200.0,
+          2000.0,
+          0.0
+        ],
+        [
+          300.0,
+          2000.0,
+          0.0
+        ],
+        [
+          400.0,
+          2000.0,
+          0.0
+        ],
+        [
+          500.0,
+          1500.0,
+          0.0
+        ],
+        [
+          600.0,
+          1000.0,
+          0.0
+        ],
+        [
+          700.0,
+          500.0,
+          0.0
+        ]
+      ],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Rivals",
+      "kind": "enemy",
+      "count": 6,
+      "shape": "capsule",
+      "placement": "path",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Enemy",
+      "behavior": "RivalAI",
+      "model_hint": "rivals enemy",
+      "sketchfab_query": "stylized skydiver rival",
+      "atoms": [],
+      "path_points": [
+        [
+          0.0,
+          2000.0,
+          0.0
+        ],
+        [
+          0.0,
+          2000.0,
+          50.0
+        ],
+        [
+          0.0,
+          2000.0,
+          100.0
+        ],
+        [
+          0.0,
+          2000.0,
+          150.0
+        ],
+        [
+          0.0,
+          2000.0,
+          200.0
+        ],
+        [
+          0.0,
+          2000.0,
+          250.0
+        ]
+      ],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "LandingPad",
+      "kind": "platform",
+      "count": 1,
+      "shape": "cube",
+      "placement": "single",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 5.0,
+      "tag": "Target",
+      "behavior": "",
+      "model_hint": "landing pad platform",
+      "sketchfab_query": "stylized landing pad",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "TurbopropExit",
+      "kind": "structure",
+      "count": 1,
+      "shape": "cube",
+      "placement": "single",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 3.0,
+      "tag": "Structure",
+      "behavior": "",
+      "model_hint": "turboprop exit structure",
+      "sketchfab_query": "stylized turboprop exit",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "ParachuteCanopies",
+      "kind": "prop",
+      "count": 15,
+      "shape": "plane",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.8,
+      "tag": "Prop",
+      "behavior": "",
+      "model_hint": "parachute canopies",
+      "sketchfab_query": "stylized parachute canopy",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Player",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Untagged",
+      "behavior": "",
+      "model_hint": "competition skydiver jumpsuit",
+      "sketchfab_query": "stylized skydiver jumpsuit",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "NPC",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Untagged",
+      "behavior": "",
+      "model_hint": "npc",
+      "sketchfab_query": "stylized npc skydiver",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Collectible",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Untagged",
+      "behavior": "",
+      "model_hint": "collectible",
+      "sketchfab_query": "stylized collectible token",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    },
+    {
+      "name": "Enemy",
+      "kind": "prop",
+      "count": 6,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Enemy",
+      "behavior": "",
+      "model_hint": "enemy",
+      "sketchfab_query": "stylized enemy diver",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.0,
+      "instance_positions": [],
+      "instance_yaws": []
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "ValleyFloor",
+      "description": "Large-scale drop zone valley floor at consistent resolution settings.",
+      "mesh_type": "terrain",
+      "resolution": 32
+    },
+    {
+      "name": "CloudDeck",
+      "description": "Volumetric cloud deck geometry for altitude haze visuals.",
+      "mesh_type": "custom",
+      "resolution": 16
+    }
+  ]
+}

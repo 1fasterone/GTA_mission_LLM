@@ -1,0 +1,79 @@
+{
+  "project_name": "LagoonSurvey",
+  "company_name": "MyCompany",
+  "description": "A calm underwater photography game. The player swims freely around a tropical lagoon cataloguing marine life for a research log. There is no descent objective and no hard bottom to reach — the water column is 60m from seabed to surface, and a survey boat waits on the surface between sessions.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "swim",
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "stylized",
+  "scenes": ["Lagoon", "MainMenu"],
+  "features": ["cinemachine", "input_system"],
+  "packages": [],
+  "scripts": [
+    {
+      "name": "SwimController",
+      "type": "player",
+      "description": "Buoyancy-driven swim movement with fin kicks and a camera housing."
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Tracks catalogued species and survey completion."
+    }
+  ],
+  "entities": [
+    {
+      "name": "Player",
+      "kind": "character",
+      "count": 1,
+      "placement": "single",
+      "tag": "Player",
+      "scale": 1.0,
+      "model_hint": "scuba diver with camera",
+      "behavior": "swims the survey transect"
+    },
+    {
+      "name": "ReefFish",
+      "kind": "enemy",
+      "count": 12,
+      "placement": "scatter",
+      "radius": 10.0,
+      "spacing": 3.0,
+      "scale": 0.4,
+      "model_hint": "tropical fish shoal",
+      "behavior": "schools and scatters when approached"
+    },
+    {
+      "name": "CoralHeads",
+      "kind": "prop",
+      "count": 7,
+      "placement": "ring",
+      "radius": 12.0,
+      "scale": 2.0,
+      "model_hint": "coral outcrop",
+      "behavior": "grows on the reef shelf"
+    },
+    {
+      "name": "KelpStands",
+      "kind": "prop",
+      "count": 9,
+      "placement": "grid",
+      "spacing": 4.0,
+      "scale": 3.0,
+      "model_hint": "kelp frond cluster",
+      "behavior": "sways in the current"
+    },
+    {
+      "name": "SurveyBoat",
+      "kind": "boat",
+      "count": 1,
+      "placement": "single",
+      "scale": 5.0,
+      "model_hint": "research boat hull",
+      "behavior": "waits on the surface between sessions"
+    }
+  ]
+}

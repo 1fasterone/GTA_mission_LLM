@@ -1,0 +1,91 @@
+{
+  "project_name": "SkylineGlider",
+  "company_name": "MyCompany",
+  "description": "A relaxing glider game. The player soars between floating islands in an endless blue sky, riding thermals and collecting ring gates. There is no combat and no landing objective — the ceiling of the flyable airspace is 900m and the islands drift beneath it. Cloud banks and airship wrecks make up the traffic the player weaves through.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "fly",
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "stylized",
+  "scenes": ["Skyline", "MainMenu"],
+  "features": ["cinemachine", "input_system"],
+  "packages": [],
+  "scripts": [
+    {
+      "name": "GliderController",
+      "type": "player",
+      "description": "Lift and drag flight model with pitch/roll/yaw, thermal updraft response and a stall warning."
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Tracks ring gates flown through and total airtime."
+    }
+  ],
+  "entities": [
+    {
+      "name": "Player",
+      "kind": "character",
+      "count": 1,
+      "placement": "single",
+      "tag": "Player",
+      "scale": 1.0,
+      "model_hint": "hang glider pilot",
+      "behavior": "soars on thermals"
+    },
+    {
+      "name": "RingGates",
+      "kind": "collectible",
+      "count": 6,
+      "placement": "line",
+      "spacing": 14.0,
+      "scale": 4.0,
+      "model_hint": "glowing ring gate",
+      "behavior": "fly through for points"
+    },
+    {
+      "name": "FloatingIslands",
+      "kind": "prop",
+      "count": 5,
+      "placement": "scatter",
+      "radius": 20.0,
+      "spacing": 18.0,
+      "scale": 8.0,
+      "model_hint": "drifting rock island",
+      "behavior": "drifts slowly through the airspace"
+    },
+    {
+      "name": "CloudBanks",
+      "kind": "prop",
+      "count": 8,
+      "placement": "scatter",
+      "radius": 24.0,
+      "spacing": 12.0,
+      "scale": 6.0,
+      "model_hint": "volumetric cloud",
+      "behavior": "obscures the route"
+    },
+    {
+      "name": "AirshipWrecks",
+      "kind": "prop",
+      "count": 3,
+      "placement": "ring",
+      "radius": 16.0,
+      "scale": 5.0,
+      "model_hint": "derelict airship hull",
+      "behavior": "hangs in the airspace"
+    },
+    {
+      "name": "MountainRidge",
+      "kind": "terrain",
+      "count": 4,
+      "placement": "line",
+      "spacing": 30.0,
+      "scale": 10.0,
+      "model_hint": "rock ridge",
+      "behavior": "the ground far below the flight box"
+    }
+  ]
+}

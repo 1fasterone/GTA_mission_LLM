@@ -354,19 +354,33 @@ class TestPlayerSpawnReservation:
             for x, _y, z in e.instance_positions:
                 assert math.hypot(x, z) > 1.0, f"{e.name} instance sits on the player"
 
-    @pytest.mark.parametrize("locomotion,clearance", [
-        ("walk", 3.0), ("swim", 6.0), ("drive", 6.0), ("fly", 8.0),
+    @pytest.mark.parametrize("locomotion,clearance,in_volume", [
+        ("walk", 3.0, False), ("drive", 6.0, False),
+        ("swim", 6.0, True),  ("fly",   8.0, True),
     ])
-    def test_clearance_scales_with_locomotion(self, locomotion, clearance):
+    def test_clearance_scales_with_locomotion(self, locomotion, clearance,
+                                              in_volume):
         """A vehicle_car's runtime BoxCollider is 1.7 x 4.0 — a walker's
         clearance would still leave the car's nose inside a neighbour. The
         spiral quantizes slots, so assert the honored clearance, not the
-        distance the search happens to settle on."""
+        distance the search happens to settle on.
+
+        The clearance applies in both primitives this schema can select:
+        walk/drive pack on the ArenaPlane ground, while fly/swim derive
+        medium=air/water with no descent evidence and get a BoundedVolume,
+        whose layers reserve the same spawn column. Placement differs — the
+        volume puts content in the interior, off the floor — so assert that
+        too, or the test would pass on a plane wearing a volume's name."""
         e = EntitySpec(name="Props", count=9, placement="grid", scale=1.0)
         schema = _schema([e])
         schema.locomotion = locomotion
         compute_layout(schema)
         assert self._dist_from_spawn(e) >= e.group_radius + clearance
+        ys = {p[1] for p in e.instance_positions}
+        if in_volume:
+            assert ys and all(y > 0.0 for y in ys), ys
+        else:
+            assert ys == {0.0}
 
     def test_path_groups_are_not_displaced_by_the_reservation(self):
         """A race start line runs THROUGH the spawn by design — the road is a
