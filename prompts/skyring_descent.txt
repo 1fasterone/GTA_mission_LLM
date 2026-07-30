@@ -1,0 +1,77 @@
+TITLE: SkyRing Descent
+GENRE: Third-person 3D game, skydiving freefall arcade, ring-gate score attack, PC
+STYLE: Stylized realism — hard sun above a cloud deck, altitude haze, neon ring gates, streaming wind vapour off the jumpsuit.
+
+CORE PREMISE
+The player is a competition skydiver flying gate runs. Each round begins aboard a
+turboprop jump plane at 4000m; the player exits the open door, freefalls, and threads a
+chain of glowing ring gates suspended down the whole drop corridor. Gates are stacked at
+descending altitudes, so the run is one continuous vertical line rather than a course on
+the ground. Miss a gate and the chain multiplier resets. Below the last gate the player
+deploys the canopy and steers onto a bullseye landing pad in the drop zone. Pull altitude
+is 1200m, the hard deck is 600m, and the reserve fires automatically below 300m.
+
+SCENES (4 total)
+MainMenu — animated title over a slow cloud deck, Start / Career / Quit
+JumpRun — interior of the turboprop, door open, altimeter counting up to exit height
+RingCorridor — the main gameplay drop: gate chain, rival divers, altitude haze
+DropZoneLanding — canopy flight and the bullseye landing pad in the arena
+
+NARRATIVE — four story beats
+Exit Called — the jumpmaster calls the exit and the player leaves the plane (on_start)
+First Chain — three gates threaded back to back without a miss (on_enter_zone)
+Rival Cut — a rival diver tracks across the corridor and steals a gate (on_timer)
+Bullseye — the player plants the canopy dead centre on the pad (on_enter_zone)
+
+SCRIPTS
+- FreefallController (player) body-attitude freefall control: track, delta, sit and flare
+  poses; drag scales with body angle; terminal velocity plateau; altitude readout
+- ParachuteSystem (custom) canopy deployment at the pull altitude, inflation physics,
+  left/right riser steering, flare brake for the bullseye landing
+- AltimeterManager (custom) live altitude from exit to touchdown, pull alarm at 1200m,
+  hard deck warning at 600m, reserve auto-deploy below 300m
+- RingGateChain (custom) tracks which gate is next, scores clean passes, keeps the chain
+  multiplier, resets it on a miss, highlights the next gate in the corridor
+- RivalDiver (enemy) AI divers track across the corridor on intercept lines and contest
+  the gates; break off at pull altitude
+- SkyCamera (camera) Cinemachine: chase mode in freefall, wide orbit under canopy, low
+  cut for the landing
+- GameManager (game_manager) state machine: Menu / JumpRun / Freefall / Canopy / Landed;
+  score is gates chained plus landing accuracy
+- UIManager (ui_manager) HUD: altimeter tape left, airspeed dial right, next-gate arrow,
+  chain multiplier, pull warning flash
+- HealthSystem (health) hard-deck breach and gate-frame collision cost a life
+
+ENTITIES
+- Player: competition skydiver in jumpsuit and helmet, humanoid rig, exits the jump plane
+- NPC: turboprop jump plane, the aircraft the player exits at the top of the corridor
+- Collectible: neon ring gate, a chain of them suspended down the corridor at descending
+  altitudes, flown through for score
+- Enemy: rival skydivers who contest the gates on intercept lines
+- Collectible: bullseye landing pad on the drop zone floor
+
+AUDIO — six cues
+- prop_engine_drone   ambient looping  turboprop engine and cabin rattle at altitude
+- door_open_blast     sfx              jump door slides open, wind roar floods the cabin
+- freefall_wind_rush  ambient looping  full terminal-velocity wind roar over the visor
+- gate_pass_chime     sfx              bright synth chime as a ring gate is threaded
+- canopy_snap         sfx              fabric crack as the canopy inflates, risers snap taut
+- crowd_cheer_landing sfx              drop zone crowd erupts on a bullseye touchdown
+
+PROCEDURAL GEOMETRY
+- Drop zone valley floor with the landing arena  (terrain, resolution 64)
+- Cloud deck slabs the corridor passes through   (room, resolution 32)
+
+VISUAL STYLE: stylized with realism bias — crisp sky gradient, volumetric cloud deck,
+altitude haze.
+COLOR PALETTE name "SkyRing":
+  primary    #4FA8E8  (open sky blue)
+  secondary  #16213E  (deep upper-atmosphere indigo)
+  accent     #FF7A1A  (neon gate rings and altimeter warnings)
+  background #E8D9B0  (sunlit valley floor)
+  trim       #FFFFFF  (canopy fabric and HUD text)
+
+FEATURES: cinemachine, input_system, post_processing, animation_rigging
+RENDER PIPELINE: URP
+UNITY VERSION: 6000.0
+PLATFORM: PC

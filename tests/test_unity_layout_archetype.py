@@ -125,6 +125,15 @@ def _dive_schema() -> UnitySchema:
     )
 
 
+def _llm_authored_schema() -> UnitySchema:
+    """A REAL schema-fill output, captured verbatim from a live unity-create
+    run (prompts/skyring_descent.txt). Its role vocabulary is nothing like the
+    hand-written fixtures — kind='prop' with the meaning in `tag`, generic
+    names, kind='structure' for the jump plane — and every hand-written
+    fixture passed while this shape laid out completely wrong."""
+    return _load("dropzone_arcade_llm.schema.json")
+
+
 def _entity(schema: UnitySchema, name: str) -> EntitySpec:
     return next(e for e in schema.entities if e.name == name)
 
@@ -495,6 +504,163 @@ class TestExitPlatform:
 
 def math_dist_xz(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+
+
+# ── 2b. BoundedVolume ────────────────────────────────────────────────────────
+
+class TestBoundedVolume:
+    def test_volume_height_comes_from_the_schema(self):
+        h, why, defaulted = volume_height(_glider_schema())
+        assert defaulted is False
+        assert h == 900.0            # "the ceiling of the flyable airspace is 900m"
+        assert "900m" in why
+
+    def test_volume_height_falls_back_to_a_named_default_with_a_warning(self, caplog):
+        s = _survey_schema()         # no altitude figure anywhere
+        h, _why, defaulted = volume_height(s)
+        assert defaulted is True
+        assert h == 200.0            # _VOLUME_HEIGHT_DEFAULT
+        with caplog.at_level("WARNING"):
+            compute_layout(s)
+        assert any("named default box height" in r.message
+                   for r in caplog.records), caplog.text
+
+    def test_air_volume_puts_nothing_on_the_floor_but_ground_dwellers(self):
+        s = _glider_schema()
+        compute_layout(s)
+        for e in s.entities:
+            on_floor = all(p[1] == 0.0 for p in e.instance_positions)
+            if on_floor:
+                assert e.kind == "terrain", f"{e.name} defaulted to the floor"
+
+    def test_air_volume_spreads_content_through_the_interior(self):
+        s = _glider_schema()
+        h, _why, _d = volume_height(s)
+        compute_layout(s)
+        interior = {round(e.instance_positions[0][1], 3) for e in s.entities
+                    if e.instance_positions and e.instance_positions[0][1] > 0.0}
+        assert len(interior) >= 3, interior
+        assert all(0.0 < y < h for y in interior), interior
+
+    def test_player_is_inside_the_volume_not_on_a_boundary(self):
+        s = _glider_schema()
+        h, _why, _d = volume_height(s)
+        compute_layout(s)
+        py = _entity(s, "Player").instance_positions[0][1]
+        assert 0.0 < py < h, py
+
+    def test_water_volume_has_a_surface_and_everything_swims_below_it(self):
+        s = _survey_schema()
+        h, _why, _d = volume_height(s)
+        msgs = compute_layout(s)
+        assert any("Water surface plane" in m for m in msgs), msgs
+        for e in s.entities:
+            if e.name == "SurveyBoat":
+                assert [p[1] for p in e.instance_positions] == [h]
+                continue
+            for p in e.instance_positions:
+                assert p[1] < h, f"{e.name} at y={p[1]} is not below the surface"
+                assert p[1] > 0.0, f"{e.name} at y={p[1]} sank to the seabed"
+
+    def test_surface_marked_content_rides_the_surface(self):
+        s = _survey_schema()
+        h, _why, _d = volume_height(s)
+        compute_layout(s)
+        assert _entity(s, "SurveyBoat").instance_positions[0][1] == h
+
+    def test_layers_reuse_the_existing_packer_within_each_altitude(self):
+        """Groups sharing a layer must not overlap in XZ; groups in DIFFERENT
+        layers may, because they are separated vertically."""
+        s = _glider_schema()
+        compute_layout(s)
+        by_layer: dict[float, list[EntitySpec]] = {}
+        for e in s.entities:
+            if not e.instance_positions or e.name == "Player":
+                continue
+            by_layer.setdefault(round(e.instance_positions[0][1], 3), []).append(e)
+        for y, group in by_layer.items():
+            for i, a in enumerate(group):
+                for b in group[i + 1:]:
+                    d = math_dist_xz(a.origin_offset, b.origin_offset)
+                    assert d >= a.group_radius + b.group_radius - 1e-6, \
+                        f"{a.name} and {b.name} overlap at y={y}"
+
+    @pytest.mark.parametrize("builder", [_glider_schema, _survey_schema])
+    def test_volume_layout_is_deterministic_and_idempotent(self, builder):
+        a, b = builder(), builder()
+        compute_layout(a)
+        compute_layout(b)
+        assert [e.model_dump() for e in a.entities] == \
+               [e.model_dump() for e in b.entities]
+        first = [e.model_dump() for e in a.entities]
+        compute_layout(a)
+        assert [e.model_dump() for e in a.entities] == first
+
+    @pytest.mark.parametrize("builder", [_glider_schema, _survey_schema])
+    def test_ground_plane_covers_the_volume_footprint(self, builder):
+        s = builder()
+        compute_layout(s)
+        xmin, zmin, xmax, zmax = terrain_bounds(s.entities, s.locomotion)
+        for e in s.entities:
+            if e.group_radius <= 0.0:
+                continue
+            cx, cz = e.origin_offset
+            assert xmin <= cx - e.group_radius and xmax >= cx + e.group_radius
+            assert zmin <= cz - e.group_radius and zmax >= cz + e.group_radius
+
+class TestLiveLLMSchemaRoles:
+    """Role detection against a REAL schema-fill output, not a fixture written
+    to match the predicates. Every one of these assertions failed on the live
+    run that produced this schema: the role predicates keyed off `kind` and a
+    vocabulary tuned to hand-written fixtures, while the LLM put the meaning in
+    `tag` and reached for generic kinds ('prop', 'structure', 'mechanism')."""
+
+    def test_player_is_found_without_the_player_tag(self):
+        """kind='prop', tag='Untagged', name='Player' — the old gate demanded
+        tag=='Player' AND an avatar kind, found nothing, and stratified the
+        avatar at 475 m in a corridor that promises the top."""
+        s = _llm_authored_schema()
+        h, _why, _d = corridor_height(s)
+        compute_layout(s)
+        assert _entity(s, "Player").instance_positions[0][1] > 0.8 * h
+
+    def test_jump_plane_is_the_exit_platform_despite_kind_structure(self):
+        s = _llm_authored_schema()
+        msgs = compute_layout(s)
+        assert any("Exit platform 'TurbopropExit'" in m for m in msgs), msgs
+        plane = _entity(s, "TurbopropExit").instance_positions[0][1]
+        player = _entity(s, "Player").instance_positions[0][1]
+        assert plane >= player
+
+    def test_terrain_tagged_ground_lands_on_the_terminal_plane(self):
+        """kind='prop', tag='Ground', name='ValleyFloor' — floated at 1466 m."""
+        s = _llm_authored_schema()
+        compute_layout(s)
+        floor = _entity(s, "ValleyFloor")
+        assert floor.instance_positions
+        assert all(p[1] == 0.0 for p in floor.instance_positions), \
+            sorted({p[1] for p in floor.instance_positions})
+
+    def test_environment_tagged_scenery_is_not_dragged_to_the_floor(self):
+        """The fix's own over-reach, caught on the same schema: "Environment"
+        is Unity's catch-all scenery tag, not a claim about the ground — it was
+        carrying the cloud layer of a skydiving game."""
+        s = _llm_authored_schema()
+        compute_layout(s)
+        assert all(p[1] > 0.0 for p in _entity(s, "Clouds").instance_positions)
+
+    def test_the_whole_scene_is_not_flattened(self):
+        s = _llm_authored_schema()
+        compute_layout(s)
+        ys = {round(p[1], 1) for e in s.entities for p in e.instance_positions}
+        assert len(ys) >= 6, ys
+
+    def test_live_schema_layout_is_deterministic(self):
+        a, b = _llm_authored_schema(), _llm_authored_schema()
+        compute_layout(a)
+        compute_layout(b)
+        assert [e.model_dump() for e in a.entities] == \
+               [e.model_dump() for e in b.entities]
 
 
 # ── 2b. BoundedVolume ────────────────────────────────────────────────────────
