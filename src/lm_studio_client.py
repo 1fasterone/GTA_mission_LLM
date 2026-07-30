@@ -139,15 +139,38 @@ def _drop_surplus_closers(text: str, start: int) -> str:
     return "".join(out)
 
 
+# Thinking toggle. Measured against LM Studio + qwen3.5-9b (same prompt, warm
+# model, 4000 max_tokens):
+#
+#   reasoning_effort="none"   3.5s    27 completion tokens,    0 reasoning chars
+#   field omitted             3.3s    27 completion tokens,    0 reasoning chars
+#   reasoning_effort="high"  40.1s   993 completion tokens, 3668 reasoning chars
+#
+# So `reasoning_effort` is the ONLY control the server honours — the
+# `enable_thinking` / `chat_template_kwargs` booleans and the `/no_think`
+# prefix below are all silently IGNORED — and the server's DEFAULT is
+# reasoning off. That default is why `thinking=True` was quietly a no-op: the
+# concept step asked to reason and never did. Send the field explicitly in
+# both directions rather than inheriting a default that can flip with a
+# server, model or config change, in either direction.
+_REASONING_OFF = "none"
+_REASONING_ON  = "high"
+
+
 class LMStudioClient:
     def __init__(self, base_url: str, model: str = "local-model",
                  temperature: float = 0.7, max_tokens: int = 8192,
-                 timeout: float = 600.0, seed: int | None = None):
+                 timeout: float = 600.0, seed: int | None = None,
+                 reasoning_effort: str | None = None):
         self.base_url    = base_url.rstrip("/")
         self.model       = model
         self.temperature = temperature
         self.max_tokens  = max_tokens
         self.timeout     = timeout
+        # Effort used for the steps that DO reason (the concept step). Config
+        # knob `lm_studio.reasoning_effort` — set "none" to run a whole build
+        # without reasoning, or "low"/"minimal" to trade depth for speed.
+        self.reasoning_effort = reasoning_effort or _REASONING_ON
         # Fixed sampler seed for reproducible generations. Both LM Studio and
         # Ollama's OpenAI-compatible endpoints honour "seed"; with it set, the
         # same (prompt, seed) yields the same output — the upstream half of the
@@ -158,7 +181,10 @@ class LMStudioClient:
                        temperature: float | None, thinking: bool,
                        seed: int | None) -> dict:
         """Assemble the chat-completions request body. Split out so the seed/
-        temperature wiring is unit-testable without a live server."""
+        temperature/reasoning wiring is unit-testable without a live server."""
+        # Kept as a fallback for Qwen3 builds served by something that does not
+        # implement `reasoning_effort`; the field below is what actually works
+        # on LM Studio. Harmless where it is ignored.
         user_msg = user if thinking else f"/no_think\n\n{user}"
         payload: dict = {
             "model":       self.model,
@@ -170,6 +196,9 @@ class LMStudioClient:
             # temperature=0.0.  Clamp to 0.05 as the effective greedy minimum.
             "temperature": max(0.05, temperature if temperature is not None else self.temperature),
             "max_tokens":  self.max_tokens,
+            # Always explicit — see _REASONING_OFF/_REASONING_ON above.
+            "reasoning_effort": (self.reasoning_effort if thinking
+                                 else _REASONING_OFF),
         }
         eff_seed = seed if seed is not None else self.seed
         if eff_seed is not None:
@@ -181,8 +210,12 @@ class LMStudioClient:
              thinking: bool = True,
              seed: int | None = None) -> str:
         """
-        thinking=False → prepend /no_think to skip Qwen3 chain-of-thought.
-        thinking=True  → let the model reason freely (story steps).
+        thinking=False → reasoning_effort="none": no chain-of-thought. Use for
+                         every mechanical step (schema fill, cue resolution,
+                         query translation, micro C# bodies) — they gain
+                         nothing from reasoning and pay its full latency.
+        thinking=True  → reasoning_effort=self.reasoning_effort ("high" unless
+                         config says otherwise) — the story/concept steps.
         seed           → per-call override of the client's reproducibility seed.
         """
         payload = self._build_payload(system, user, temperature, thinking, seed)
