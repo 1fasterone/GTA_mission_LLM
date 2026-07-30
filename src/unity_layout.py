@@ -57,16 +57,21 @@ from typing import Optional, Sequence
 
 from .unity_layout_archetype import (
     LayoutArchetype,
+    LayoutStrictError,
     corridor_height,
     entity_altitude_hint,
+    is_climbable_entity,
     is_ground_dweller,
+    is_hazard_entity,
     is_surface_dweller,
     is_terminal_entity,
     is_water_dweller,
     pick_exit_platform,
     pick_goal_entity,
     pick_player_entity,
+    pick_wall_surface,
     select_archetype,
+    surface_height,
     volume_height,
 )
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
@@ -158,6 +163,30 @@ _VOLUME_BAND_CEIL  = 0.8
 # XZ because they are vertically separated, which is the whole point of a
 # volume. Three reads as low/mid/high without spreading a small scene thin.
 _VOLUME_LAYERS = 3
+
+# ── VerticalSurface ──────────────────────────────────────────────────────────
+# The wall is the X-Y plane at z = 0, face normal +Z. The player stands in
+# front of it (z > 0) and climbs in +Y; scenery packs behind and around on the
+# ground plane. One convention, so "on the wall" is a z-coordinate question.
+_SURFACE_BASE_DEPTH   = 4.0    # how far out from the face the base zone sits
+_HOLD_SURFACE_OFFSET  = 0.35   # holds stand just proud of the face
+_HAZARD_SURFACE_OFFSET = 0.6   # hazards sit proud of the holds
+_HOLD_FIRST_Y         = 1.0    # first hold, reachable from standing
+_WALL_HALF_WIDTH_MIN  = 6.0
+# Maximum distance between two successive holds. A climbing wall whose holds
+# are further apart than the player can reach is not a hard level, it is a
+# broken one — so this is an INVARIANT the placement must satisfy, not a
+# warning it may emit. Overridable per project via schema.meta.
+_DEFAULT_REACH_DISTANCE = 2.5
+_REACH_META_KEYS = ("reach_distance", "layout_reach_distance", "hold_reach")
+# Share of the reach budget spent climbing rather than traversing, leaving the
+# rest for the sideways zigzag that stops the chain being a vertical ladder.
+_REACH_VERTICAL_FRACTION = 0.8
+_ZIGZAG_FRACTION = 0.9         # of the leftover horizontal budget, per step
+# Hazards must not sit on top of a hold and make it unusable.
+_HAZARD_HOLD_CLEARANCE = 1.0
+# EntitySpec.instance_positions is validator-clamped to this many points.
+_MAX_BAKED_POSITIONS = 200
 
 
 def _effective_spacing(entity: EntitySpec,
@@ -656,6 +685,270 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
     return msgs
 
 
+def _reach_distance(schema: UnitySchema) -> tuple[float, str]:
+    """Maximum climbable gap between successive holds, and where it came from.
+    Schema override first (`meta.reach_distance`), else the named default."""
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    for key in _REACH_META_KEYS:
+        if key in meta:
+            try:
+                val = float(meta[key])
+            except (TypeError, ValueError):
+                continue
+            if val > 0.0:
+                return val, f"schema.meta[{key!r}]"
+    return _DEFAULT_REACH_DISTANCE, "named default _DEFAULT_REACH_DISTANCE"
+
+
+def _hold_chain(n: int, first_y: float, top_y: float, reach: float,
+                half_width: float) -> list[tuple[float, float]]:
+    """`n` (x, y) hold positions on the wall face, base to summit, such that
+    EVERY successive pair is within `reach` of the other.
+
+    A plain ladder would satisfy reach trivially and read as a ladder, so the
+    chain zigzags: the vertical step spends `_REACH_VERTICAL_FRACTION` of the
+    budget and the sideways swing spends what is left, which is why the
+    3-D gap stays inside `reach` instead of only the vertical component.
+    """
+    if n <= 1:
+        return [(0.0, first_y)]
+    dy = (top_y - first_y) / (n - 1)
+    # Whatever the vertical step actually is, the horizontal swing gets the
+    # remaining budget and no more.
+    dx_budget = math.sqrt(max(0.0, reach * reach - dy * dy))
+    amp = min(half_width, dx_budget * 0.5 * _ZIGZAG_FRACTION)
+    return [((-1.0 if i % 2 else 1.0) * amp, first_y + dy * i) for i in range(n)]
+
+
+def _max_chain_gap(pts: list[tuple[float, float]]) -> float:
+    """Largest distance between successive holds — the number the reachability
+    invariant is checked against, and the one logged in provenance."""
+    return max((math.dist(a, b) for a, b in zip(pts, pts[1:])), default=0.0)
+
+
+def _verify_hold_chain(pts: list[tuple[float, float]], reach: float,
+                       project: str) -> float:
+    """Enforce the reachability invariant; return the max observed gap.
+
+    Separate from the generator on purpose. `_hold_chain` satisfies reach by
+    construction, so a check folded into it would be unreachable code that
+    only *looks* like a guarantee — this one is called on the final geometry,
+    after hazards, and is directly testable with a chain that violates it.
+    """
+    worst = _max_chain_gap(pts)
+    if worst > reach + 1e-6:
+        raise LayoutStrictError(
+            f"[layout.strict] VerticalSurface produced an unclimbable wall "
+            f"for project {project!r}: the largest gap between successive "
+            f"holds is {worst:.3f} m but the reach is {reach:.3f} m. This is "
+            "a placement invariant — the layout refuses to emit a wall the "
+            "player cannot climb."
+        )
+    return worst
+
+
+def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
+                             footprints: Optional[dict[str, float]]
+                             ) -> list[str]:
+    """Lay the scene out as a climbable wall of height H.
+
+    Ascent is not descent upside-down: a drop is a volume the player falls
+    through, a climb is a SURFACE the player moves along with everything
+    attached to it. So:
+
+      - one entity IS the wall (see `pick_wall_surface`), oriented as the X-Y
+        plane at z = 0
+      - the player spawns in a base zone on the ground in front of it
+      - Holdable/Climbable groups are distributed across the FACE — never in
+        free space, never at y = 0 — as a single chain from base to summit
+        that satisfies the reachability invariant (see `_hold_chain`)
+      - Hazard/Enemy groups attach to the face between the hold rows; they
+        never count toward the chain and are kept clear of it
+      - everything else packs on the ground plane around the base
+
+    Deterministic: fixed ordering, fixed zigzag, no RNG beyond the existing
+    seeded scatter jitter (which this primitive does not use).
+    """
+    msgs: list[str] = []
+    height, why_height, defaulted = surface_height(schema)
+    if defaulted:
+        _log.warning(
+            "[layout] %r selected VerticalSurface but carries no height "
+            "figure — falling back to the named default wall height %.0f m. "
+            "Give the brief a summit height to size the climb deliberately.",
+            schema.project_name, height)
+        msgs.append(f"VerticalSurface height defaulted to {height:g} m ({why_height})")
+    else:
+        msgs.append(f"VerticalSurface height H={height:g} m ({why_height})")
+
+    reach, why_reach = _reach_distance(schema)
+    msgs.append(f"Reach distance {reach:g} m ({why_reach}) — maximum gap "
+                "between successive holds")
+
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    preplaced, packable = _measure_and_size(layoutable, footprints)
+
+    # ── Roles ────────────────────────────────────────────────────────────────
+    player, why_player = pick_player_entity(packable)
+    if player is not None:
+        msgs.append(f"Player group resolved to '{player.name}' (signal: {why_player})")
+    rest = [e for e in packable if e is not player]
+
+    wall, why_wall = pick_wall_surface(rest)
+    if wall is not None:
+        rest = [e for e in rest if e is not wall]
+        msgs.append(f"Wall surface is '{wall.name}' (signal: {why_wall})")
+    else:
+        msgs.append("No wall-surface entity in the schema — the face is bare "
+                    "geometry; holds and hazards still define it")
+
+    holds   = [e for e in rest if is_climbable_entity(e)]
+    hazards = [e for e in rest if e not in holds and is_hazard_entity(e)]
+    ground  = [e for e in rest if e not in holds and e not in hazards]
+
+    half_width = max(_WALL_HALF_WIDTH_MIN,
+                     wall.group_radius if wall is not None else 0.0)
+
+    # ── Hold chain: the invariant ────────────────────────────────────────────
+    top_y = round(height, 3)
+    chain: list[tuple[float, float]] = []
+    if holds:
+        step_y = reach * _REACH_VERTICAL_FRACTION
+        span = max(0.0, top_y - _HOLD_FIRST_Y)
+        required = int(math.ceil(span / step_y)) + 1 if span > 0 else 1
+        authored = sum(max(1, e.count) for e in holds)
+        capacity = _MAX_BAKED_POSITIONS * len(holds)
+        n = min(capacity, max(authored, required))
+        if n < required:
+            # More wall than holds can ever chain. A summit the player cannot
+            # reach is a broken level, so the CLIMB is shortened to what the
+            # holds actually connect, loudly, rather than leaving a gap.
+            top_y = round(_HOLD_FIRST_Y + (n - 1) * step_y, 3)
+            _log.warning(
+                "[layout] %r wants a %.0f m wall but %d hold slot(s) at a "
+                "%.2f m reach can only chain %.0f m — climb shortened to the "
+                "reachable summit. Raise the hold count or the reach.",
+                schema.project_name, height, n, reach, top_y)
+            msgs.append(
+                f"Climb shortened to y={top_y:g} — {n} hold slot(s) at reach "
+                f"{reach:g} cannot chain the full {height:g} m")
+        chain = _hold_chain(n, _HOLD_FIRST_Y, top_y, reach, half_width)
+
+        # Round-robin the chain across the hold groups so the reachable path is
+        # built from ALL of them, not one group climbing past the others.
+        ordered_holds = sorted(holds, key=lambda e: e.name)
+        buckets: dict[str, list[list[float]]] = {e.name: [] for e in ordered_holds}
+        for i, (hx, hy) in enumerate(chain):
+            owner = ordered_holds[i % len(ordered_holds)]
+            buckets[owner.name].append(
+                [round(hx, 3), round(hy, 3), _HOLD_SURFACE_OFFSET])
+        for e in ordered_holds:
+            mine = buckets[e.name]
+            e.instance_positions = mine
+            e.count = len(mine)         # keep count honest with what was baked
+            xs = [p[0] for p in mine]
+            e.origin_offset = [round(sum(xs) / len(xs), 3) if xs else 0.0, 0.0]
+        msgs.append(
+            f"Distributed {len(chain)} hold(s) across the wall face from "
+            f"y={_HOLD_FIRST_Y:g} to y={top_y:g} "
+            f"({', '.join(f'{e.name}x{e.count}' for e in ordered_holds)})")
+
+    # ── Hazards: on the face, between the holds, never blocking them ─────────
+    if hazards:
+        placed_haz = 0
+        for hi, e in enumerate(sorted(hazards, key=lambda x: x.name)):
+            n_h = max(1, e.count)
+            pts: list[list[float]] = []
+            for k in range(n_h):
+                # Sit between hold rows, on the opposite swing from the chain.
+                t = (k + 0.5 + hi) / max(1, n_h + hi)
+                hy = _HOLD_FIRST_Y + (top_y - _HOLD_FIRST_Y) * min(1.0, t)
+                hx = (1.0 if (k + hi) % 2 else -1.0) * half_width * 0.55
+                # Push outward until it clears every hold it could smother.
+                for _ in range(24):
+                    if all(math.dist((hx, hy), c) >= _HAZARD_HOLD_CLEARANCE
+                           for c in chain):
+                        break
+                    hx += math.copysign(_HAZARD_HOLD_CLEARANCE, hx or 1.0)
+                    if abs(hx) > half_width:
+                        hx = math.copysign(half_width, hx)
+                        break
+                pts.append([round(hx, 3), round(hy, 3), _HAZARD_SURFACE_OFFSET])
+            e.instance_positions = pts
+            e.origin_offset = [round(sum(p[0] for p in pts) / len(pts), 3), 0.0]
+            placed_haz += len(pts)
+        msgs.append(f"Attached {placed_haz} hazard/enemy instance(s) to the "
+                    f"face between the hold rows, cleared by "
+                    f"{_HAZARD_HOLD_CLEARANCE:g} m from every hold")
+
+    # ── Re-verify the chain AFTER hazards, as an invariant ───────────────────
+    if chain:
+        worst = _verify_hold_chain(chain, reach, schema.project_name)
+        msgs.append(
+            f"Hold chain verified base->summit after hazard placement: "
+            f"{len(chain)} holds, max gap {worst:.3f} m <= reach {reach:g} m")
+
+    # ── Player: base zone, on the ground in front of the face ────────────────
+    if player is not None:
+        player.origin_offset = [0.0, round(_SURFACE_BASE_DEPTH, 3)]
+        player.instance_positions = [[0.0, 0.0, round(_SURFACE_BASE_DEPTH, 3)]]
+        player.count = 1
+        msgs.append(f"Player spawns in the base zone at the foot of the wall "
+                    f"(y=0, {_SURFACE_BASE_DEPTH:g} m out from the face)")
+
+    # ── Wall geometry ────────────────────────────────────────────────────────
+    if wall is not None:
+        n_w = max(1, wall.count)
+        if n_w == 1:
+            wall.instance_positions = [[0.0, round(top_y / 2.0, 3), 0.0]]
+        else:
+            cols = math.ceil(math.sqrt(n_w))
+            rows = math.ceil(n_w / cols)
+            wall.instance_positions = [
+                [round(-half_width + 2 * half_width * ((i % cols) / max(1, cols - 1)), 3),
+                 round(top_y * ((i // cols) / max(1, rows - 1)), 3), 0.0]
+                for i in range(n_w)
+            ]
+        wall.origin_offset = [0.0, 0.0]
+        wall.group_radius = max(wall.group_radius, half_width)
+
+    # ── Summit goal ──────────────────────────────────────────────────────────
+    goal = pick_goal_entity(ground)
+    if goal is not None:
+        ground = [e for e in ground if e is not goal]
+        goal.origin_offset = [0.0, 0.0]
+        goal.instance_positions = [[0.0, top_y, round(_HOLD_SURFACE_OFFSET, 3)]]
+        goal.count = 1
+        msgs.append(f"Summit goal '{goal.name}' placed at the top of the wall "
+                    f"(y={top_y:g})")
+    else:
+        msgs.append(f"No goal entity in the schema — the wall's top edge "
+                    f"(y={top_y:g}) is the summit goal region")
+
+    # ── Everything else: ground plane around the base ────────────────────────
+    if ground:
+        seed_circles: list[tuple[float, float, float]] = [
+            (0.0, _SURFACE_BASE_DEPTH,
+             _SPAWN_CLEARANCE_BY_LOCOMOTION.get(schema.locomotion,
+                                                _SPAWN_CLEARANCE_DEFAULT)),
+            (0.0, 0.0, half_width),      # the wall's own ground footprint
+        ]
+        seed_circles += [(e.origin_offset[0], e.origin_offset[1], e.group_radius)
+                         for e in preplaced]
+        slots = _pack_groups(ground, seed_circles)
+        for e in ground:
+            cx, cz, _r = slots[e.name]
+            e.origin_offset = [round(cx, 3), round(cz, 3)]
+            e.instance_positions = _bake_positions(
+                e, _effective_spacing(e, footprints), cx, cz,
+                (footprints or {}).get(e.name, 0.0) * e.scale)
+        msgs.append(f"Packed {len(ground)} non-wall group(s) on the ground "
+                    f"plane around the base ({', '.join(e.name for e in ground)})")
+
+    _attach_regions(schema, _regions_for(packable, preplaced))
+    return msgs
+
+
 def _volume_layer_fractions(n_layers: int) -> list[float]:
     """Evenly spaced interior altitudes, as fractions of box height. A single
     layer sits mid-box rather than against a boundary."""
@@ -857,6 +1150,8 @@ def compute_layout(schema: UnitySchema,
         return msgs + _layout_vertical_corridor(schema, arch, footprints)
     if arch.name == "BoundedVolume":
         return msgs + _layout_bounded_volume(schema, arch, footprints)
+    if arch.name == "VerticalSurface":
+        return msgs + _layout_vertical_surface(schema, arch, footprints)
     return msgs + _layout_arena_plane(schema, footprints)
 
 

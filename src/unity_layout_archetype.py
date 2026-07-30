@@ -140,6 +140,51 @@ _WATER_STRONG: tuple[str, ...] = (
     "submerged", "seabed", "sea floor", "seafloor", "reef", "kelp",
     "diving bell", "aquatic",
 )
+# ── Ascent ───────────────────────────────────────────────────────────────────
+# Descent moves THROUGH a volume; ascent moves ALONG a surface with things
+# attached to it. Different primitives, so `vertical` carries a direction.
+#
+# Unambiguous physical climbing — strong enough to establish the AXIS, the same
+# bar `_VERTICAL_STRONG` clears for descent. Nothing here has a common
+# figurative reading: you cannot "handhold" your way up a leaderboard.
+_ASCENT_STRONG: tuple[str, ...] = (
+    "handhold", "handholds", "hand hold", "hand holds", "foothold",
+    "footholds", "belay", "belays", "piton", "pitons", "bouldering",
+    "boulderer", "free solo", "freesolo", "free climb", "freeclimb",
+    "rock face", "cliff face", "climbing wall", "climbing route",
+    "climbing game", "crimp", "crimps", "top out", "topping out",
+    "summit push", "via ferrata", "chalk bag",
+)
+# Direction verbs. Deliberately NOT axis-establishing: "climb the leaderboard"
+# and "sales are climbing" are ordinary English, and a walking game that says
+# either must not become a climbing game. These only choose a direction once
+# the axis is already vertical.
+_ASCENT_VERBS: tuple[str, ...] = (
+    "ascend", "ascends", "ascending", "ascent", "scale", "scales", "scaling",
+    "climb", "climbs", "climbing", "climbed", "climber", "climbers",
+    "clamber", "clambers", "summit", "summits", "upward", "upwards",
+    "up the wall", "up the face",
+)
+_DESCENT_VERBS: tuple[str, ...] = (
+    "freefall", "free fall", "descend", "descends", "descending", "descent",
+    "drop", "drops", "dropping", "plummet", "plummets", "dive", "dives",
+    "diving", "fall", "falls", "falling", "downward", "downwards", "sink",
+    "sinks", "sinking", "rappel", "abseil",
+)
+# Structured per-entity climbing evidence — a tag or kind that says this group
+# IS something you grab. Strong: it is authored structure, not prose.
+_CLIMB_TAGS: frozenset[str] = frozenset({
+    "holdable", "climbable", "grabbable", "handhold", "hold",
+})
+_CLIMB_KINDS: frozenset[str] = frozenset({
+    "handhold", "hold", "climbable", "ledge", "grip",
+})
+# Things that hang on the wall to hurt you. They interleave with the holds but
+# never count toward the reachable chain.
+_HAZARD_TAGS: frozenset[str] = frozenset({"enemy", "hazard", "trap", "danger"})
+_HAZARD_KINDS: frozenset[str] = frozenset({
+    "enemy", "hazard", "obstacle", "trap", "creature",
+})
 # Free-medium locomotion the schema's own `locomotion` enum cannot express.
 # UnitySchema.locomotion normalises to walk/drive/fly/swim, so "hover" and
 # "float" arrive as prose or not at all — read them here rather than widen the
@@ -210,6 +255,10 @@ _CORRIDOR_HEIGHT_DEFAULT = 4000.0
 # own power rather than falling through it, so its default is sized for a
 # few tens of seconds of travel, not a jump run.
 _VOLUME_HEIGHT_DEFAULT = 200.0
+# A climbable face. Sized for a big crag rather than a mountain: the wall has
+# to stay climbable with the hold count a schema actually authors (see the
+# reachability invariant in unity_layout._layout_vertical_surface).
+_SURFACE_HEIGHT_DEFAULT = 60.0
 
 _FT_TO_M = 0.3048
 # Longest units first: "metres" must not lose to a bare "m", and the trailing
@@ -256,13 +305,20 @@ class LayoutArchetype:
     medium:        str
     goal_topology: str
     evidence:      dict[str, str] = field(default_factory=dict)
+    # Sub-axis of `vertical` only — "ascent" | "descent" | "". Descent moves
+    # THROUGH a volume (VerticalCorridor); ascent moves ALONG a surface
+    # (VerticalSurface). Empty for every non-vertical axis.
+    direction:     str = ""
 
     def provenance(self) -> str:
         """One line, same shape for every archetype, emitted on EVERY run."""
+        axis = self.motion_axis
+        if self.direction:
+            axis += (f"/{self.direction} [{self.evidence.get('direction_tier', '?')}"
+                     f": {self.evidence.get('direction', 'n/a')}]")
         return (
             f"Layout archetype {self.name} selected — "
-            f"motion_axis={self.motion_axis} "
-            f"({self.evidence.get('motion_axis', 'n/a')}), "
+            f"motion_axis={axis} ({self.evidence.get('motion_axis', 'n/a')}), "
             f"medium={self.medium} ({self.evidence.get('medium', 'n/a')}), "
             f"goal_topology={self.goal_topology} "
             f"({self.evidence.get('goal_topology', 'n/a')})"
@@ -385,6 +441,12 @@ def corridor_height(schema) -> tuple[float, str, bool]:
                           "_CORRIDOR_HEIGHT_DEFAULT")
 
 
+def surface_height(schema) -> tuple[float, str, bool]:
+    """Vertical extent of a VerticalSurface — base to summit of the wall."""
+    return _schema_height(schema, _SURFACE_HEIGHT_DEFAULT,
+                          "_SURFACE_HEIGHT_DEFAULT")
+
+
 def volume_height(schema) -> tuple[float, str, bool]:
     """Vertical extent of a BoundedVolume — floor (or seabed) to ceiling (or
     water surface). Same schema evidence, smaller default: a play box is not a
@@ -476,6 +538,18 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     if strong:
         return "vertical", f"descent vocabulary {strong[:4]}"
 
+    # Ascent clears the same bar descent does, and only that bar: unambiguous
+    # climbing nouns, or an entity authored as something you grab. The ascent
+    # VERBS are deliberately excluded here — "climb the leaderboard" is
+    # ordinary English and must not turn a walking game into a climbing one.
+    climb_words = _hits(text, _ASCENT_STRONG)
+    climbable = [e.name for e in schema.entities if is_climbable_entity(e)]
+    if climb_words or climbable:
+        why = (f"climbing vocabulary {climb_words[:3]}" if climb_words
+               else "")
+        if climbable:
+            why += (" + " if why else "") + f"climbable entities {climbable[:3]}"
+        return "vertical", why
 
     banded = [(n, y) for n, y in entity_altitudes(schema)
               if abs(y) >= _ALTITUDE_EVIDENCE_M]
@@ -548,6 +622,12 @@ _ARCHETYPE_BY_AXES: dict[tuple[str, str], str] = {
     ("volumetric", "water"):  "BoundedVolume",
     ("planar",     "ground"): "ArenaPlane",
 }
+# `vertical` splits on direction before the medium table is consulted at all.
+# Ascent is a surface, whatever it is surrounded by — a sea cliff and a desert
+# tower are the same layout problem — so it does not vary by medium the way
+# descent does. Descent keeps the table above verbatim, which is what holds
+# every already-resolving VerticalCorridor schema in place.
+_ASCENT_ARCHETYPE = "VerticalSurface"
 # What a user can change to land on a row that exists. Keyed by the axis pair
 # that abstained, so the error names a real next step instead of "unsupported".
 # No ("planar", "air") / ("planar", "water") rows: those pairs are unreachable
@@ -592,10 +672,37 @@ def select_archetype(schema) -> LayoutArchetype:
         "goal_topology": why_goal,
     }
 
-    name: Optional[str] = _ARCHETYPE_BY_AXES.get((motion_axis, medium))
+    # `locomotion='climb'` is the one signal allowed to establish the axis AND
+    # the direction at once — it states outright what the player is doing, the
+    # same standing `locomotion='fly'`/'swim' already has for the medium.
+    direction, why_dir, dir_tier = "", "", ""
+    if motion_axis == "vertical" or (schema.locomotion or "").lower() == "climb":
+        _dir, why_dir, dir_tier = _derive_direction(schema, text)
+        evidence["direction"] = why_dir
+        evidence["direction_tier"] = dir_tier
+        if _dir is None:
+            raise LayoutStrictError(
+                f"[layout.strict] motion is vertical but the DIRECTION is "
+                f"undecided for project {schema.project_name!r}: could be "
+                f"'ascent' (VerticalSurface — a wall the player climbs) or "
+                f"'descent' (VerticalCorridor — a drop the player falls "
+                f"through), and the two are different layouts, not different "
+                f"numbers. Evidence: {why_dir}. Derived from: motion_axis <- "
+                f"{why_axis}; medium <- {why_medium}. Fix: say which way the "
+                "player travels (climb/ascend/summit vs fall/dive/descend), "
+                "tag the climbable groups 'Holdable', or name the aircraft/"
+                "platform they jump from."
+            )
+        direction = _dir
+
+    # Ascent bypasses the medium table entirely — a wall is a wall whether it
+    # rises out of a desert or a sea.
+    name: Optional[str] = (_ASCENT_ARCHETYPE if direction == "ascent"
+                           else _ARCHETYPE_BY_AXES.get((motion_axis, medium)))
     if name is None:
         supported = ", ".join(
-            f"{a}+{m} -> {n}" for (a, m), n in _ARCHETYPE_BY_AXES.items())
+            [f"{a}+{m} -> {n}" for (a, m), n in _ARCHETYPE_BY_AXES.items()]
+            + [f"vertical/ascent -> {_ASCENT_ARCHETYPE}"])
         hint = _ABSTAIN_HINTS.get(
             (motion_axis, medium),
             "no Stage-1 primitive covers this combination")
@@ -610,7 +717,8 @@ def select_archetype(schema) -> LayoutArchetype:
             "wrong primitive is worse than one that stops here."
         )
     return LayoutArchetype(name=name, motion_axis=motion_axis, medium=medium,
-                           goal_topology=goal_topology, evidence=evidence)
+                           goal_topology=goal_topology, evidence=evidence,
+                           direction=direction)
 
 
 # ── Corridor role classification ─────────────────────────────────────────────
@@ -897,6 +1005,100 @@ def is_surface_dweller(entity) -> bool:
     return bool(_hits(_entity_words(entity), _SURFACE_WORDS))
 
 
+def is_climbable_entity(entity) -> bool:
+    """This group IS something the player grabs — a handhold, a ledge, a grip.
+    These are the only entities that count toward the reachable chain."""
+    if _tag_of(entity) in _CLIMB_TAGS:
+        return True
+    if (entity.kind or "").lower().strip() in _CLIMB_KINDS:
+        return True
+    return bool(_hits(_entity_words(entity), _ASCENT_STRONG))
+
+
+def is_hazard_entity(entity) -> bool:
+    """Hangs on the wall to hurt you. Interleaves with the holds, never
+    satisfies the reach chain."""
+    return (_tag_of(entity) in _HAZARD_TAGS
+            or (entity.kind or "").lower().strip() in _HAZARD_KINDS)
+
+
+def pick_wall_surface(entities: Sequence[_Entity]) -> tuple[Optional[_Entity], str]:
+    """The entity that IS the climbing surface, and the signal that chose it.
+
+      1. an authored surface: kind structure/creature/terrain carrying the
+         Environment tag — the shape a schema-fill actually produces for
+         "the cliff face"
+      2. otherwise the largest group by footprint, which is what a wall is
+
+    Returns (None, "") when there is nothing wall-like; the caller then builds
+    the face as bare geometry.
+    """
+    wall_kinds = {"structure", "creature", "terrain", "building", "landscape"}
+    for e in entities:
+        if (e.kind or "").lower().strip() in wall_kinds and _tag_of(e) == "environment":
+            return e, f"kind={e.kind!r} + tag='Environment'"
+    surfacey = [e for e in entities
+                if (e.kind or "").lower().strip() in wall_kinds
+                or is_surface_entity(e)]
+    if surfacey:
+        best = max(surfacey, key=lambda e: (e.group_radius, e.scale, e.name))
+        return best, (f"largest wall-like group by footprint "
+                      f"(r={best.group_radius:.2f}, kind={best.kind!r})")
+    return None, ""
+
+
+def _derive_direction(schema, text: str) -> tuple[Optional[str], str, str]:
+    """Which way the vertical axis runs: 'ascent' | 'descent' | None.
+
+    Tiered exactly like the medium rule — structured signal first, unambiguous
+    vocabulary next, entity structure last, and never one unqualified prose
+    hit. Returns (direction, why, tier); None means the caller must abstain
+    rather than guess, because guessing picks the wrong PRIMITIVE, not just
+    the wrong numbers.
+    """
+    # 1. locomotion. The enum is walk/drive/fly/swim today, so "climb" cannot
+    #    arrive through it — handled anyway so widening the enum Just Works,
+    #    and because it is the one signal allowed to establish the axis too.
+    loco = (schema.locomotion or "").lower()
+    if loco == "climb":
+        return "ascent", "locomotion='climb'", "locomotion"
+    if loco in ("fall", "dive", "skydive"):
+        return "descent", f"locomotion={loco!r}", "locomotion"
+
+    # 2. Vocabulary, by weight of evidence.
+    up, down = _hits(text, _ASCENT_VERBS), _hits(text, _DESCENT_VERBS)
+    strong_up = _hits(text, _ASCENT_STRONG)
+    strong_down = _hits(text, _VERTICAL_STRONG)
+    if strong_up and not strong_down:
+        return "ascent", f"climbing vocabulary {strong_up[:4]}", "strong-vocabulary"
+    if strong_down and not strong_up:
+        return "descent", f"descent vocabulary {strong_down[:4]}", "strong-vocabulary"
+    if strong_up and strong_down:
+        # Both named outright — go with the heavier prose, ties to descent so
+        # a schema that already resolved to VerticalCorridor keeps doing so.
+        if len(strong_up) > len(strong_down):
+            return "ascent", (f"climbing vocabulary {strong_up[:3]} outweighs "
+                              f"descent {strong_down[:3]}"), "strong-vocabulary"
+        return "descent", (f"descent vocabulary {strong_down[:3]} outweighs "
+                           f"climbing {strong_up[:3]}"), "strong-vocabulary"
+    if up and len(up) > len(down):
+        return "ascent", f"ascent verbs {up[:4]} outweigh descent {down[:4]}", "vocabulary"
+    if down and len(down) > len(up):
+        return "descent", f"descent verbs {down[:4]} outweigh ascent {up[:4]}", "vocabulary"
+
+    # 3. Entity structure — authored tags/kinds, not prose.
+    climbable = [e.name for e in schema.entities if is_climbable_entity(e)]
+    if climbable:
+        return "ascent", f"climbable entities {climbable[:3]}", "entity"
+    platform, why_platform = pick_exit_platform(schema, None, schema.entities, "air")
+    if platform is not None:
+        return "descent", f"exit platform {platform.name!r} ({why_platform})", "entity"
+
+    # 4. Nothing decides it.
+    return None, (f"ascent evidence {(up or ['none'])[:3]} vs descent evidence "
+                  f"{(down or ['none'])[:3]} — neither decides"), "none"
+
+
 def _relation_targets(schema, player) -> list[str]:
     """Noun phrases the schema says the player jumps/exits/dives FROM.
 
@@ -979,7 +1181,9 @@ def entity_altitude_hint(entity) -> Optional[float]:
 
 __all__ = [
     "LayoutArchetype", "LayoutStrictError", "select_archetype",
-    "corridor_height", "volume_height", "entity_altitudes",
+    "corridor_height", "volume_height", "surface_height",
+    "is_climbable_entity", "is_hazard_entity", "pick_wall_surface",
+    "entity_altitudes",
     "entity_altitude_hint", "is_terminal_entity", "is_goal_entity",
     "goal_rank", "pick_goal_entity", "is_water_dweller", "is_ground_dweller",
     "is_surface_dweller", "is_surface_entity", "pick_exit_platform",

@@ -24,12 +24,21 @@ from pathlib import Path
 
 import pytest
 
-from src.unity_layout import compute_layout, terrain_bounds
+from src.unity_layout import (
+    _hold_chain,
+    _reach_distance,
+    _verify_hold_chain,
+    compute_layout,
+    terrain_bounds,
+)
 from src.unity_layout_archetype import (
     LayoutStrictError,
     corridor_height,
+    is_climbable_entity,
+    is_hazard_entity,
     pick_exit_platform,
     select_archetype,
+    surface_height,
     volume_height,
 )
 from src.unity_racetrack import compose_racetrack
@@ -59,6 +68,15 @@ def _glider_schema() -> UnitySchema:
 def _survey_schema() -> UnitySchema:
     """swim locomotion, no descent framing — the BoundedVolume water fixture."""
     return _load("lagoon_survey.schema.json")
+
+
+def _llm_authored_schema() -> UnitySchema:
+    """A REAL schema-fill output, captured verbatim from a live unity-create
+    run (prompts/skyring_descent.txt). Its role vocabulary is nothing like the
+    hand-written fixtures — kind='prop' with the meaning in `tag`, generic
+    names, kind='structure' for the jump plane — and every hand-written
+    fixture passed while this shape laid out completely wrong."""
+    return _load("dropzone_arcade_llm.schema.json")
 
 
 def _planar_schema() -> UnitySchema:
@@ -125,17 +143,17 @@ def _dive_schema() -> UnitySchema:
     )
 
 
-def _llm_authored_schema() -> UnitySchema:
-    """A REAL schema-fill output, captured verbatim from a live unity-create
-    run (prompts/skyring_descent.txt). Its role vocabulary is nothing like the
-    hand-written fixtures — kind='prop' with the meaning in `tag`, generic
-    names, kind='structure' for the jump plane — and every hand-written
-    fixture passed while this shape laid out completely wrong."""
-    return _load("dropzone_arcade_llm.schema.json")
-
-
 def _entity(schema: UnitySchema, name: str) -> EntitySpec:
     return next(e for e in schema.entities if e.name == name)
+
+
+def _hold_positions(schema: UnitySchema) -> list[list[float]]:
+    """Every baked hold position, laid out and sorted up the wall."""
+    compute_layout(schema)
+    pts = [p for e in schema.entities if is_climbable_entity(e)
+           and e.name != "BackgroundCliffGroup"
+           for p in e.instance_positions]
+    return sorted(pts, key=lambda p: p[1])
 
 
 # ── 1. Selection ─────────────────────────────────────────────────────────────
@@ -191,6 +209,23 @@ class TestArchetypeSelection:
         arch = select_archetype(s)
         assert (arch.name, arch.motion_axis, arch.medium) == (
             "BoundedVolume", "volumetric", "air")
+
+    def test_mood_vocabulary_does_not_carry_the_medium(self):
+        """Live: a CLIMBING game (player on a rock face) derived medium='air'
+        from the single word "atmosphere" in its concept and hard-failed
+        [layout.strict]. Mood and rendering words are not a claim about what
+        the player is moving through."""
+        s = _planar_schema()
+        s.description = ("A third-person climbing game up a cliff face. Wet "
+                         "stone, heavy atmosphere, atmospheric scattering in "
+                         "the fog, a tense mood throughout.")
+        arch = select_archetype(s)
+        # The MEDIUM is the subject here: a rock face is ground, whatever the
+        # mood words say. (The archetype is VerticalSurface rather than
+        # ArenaPlane because "cliff face" is real climbing evidence — that is
+        # the ascent axis working, not the medium leaking.)
+        assert arch.medium == "ground", arch.evidence
+        assert arch.name == "VerticalSurface", arch.evidence
 
     def test_setting_vocabulary_never_lifts_a_walker_off_the_ground(self):
         """A walker described in sky words gets the GROUND plane.
@@ -254,6 +289,7 @@ class TestAbstain:
 
     def test_abstain_message_names_the_derivation_and_a_fix(self):
         s = _planar_schema()
+        s.description += " The player plummets down the collapsing shaft."
         _entity(s, "Drones").instance_positions = [[0.0, 800.0, 0.0]]  # vertical+ground
         with pytest.raises(LayoutStrictError) as exc:
             compute_layout(s)
@@ -272,14 +308,30 @@ class TestAbstain:
             compute_layout(s)
         assert "motion_axis='path'" in str(exc.value)
 
-    def test_vertical_ground_abstains(self):
+    def test_vertical_ground_descent_abstains(self):
         """Altitude-banded content in a scene that never says air or water:
-        descent through solid ground has no primitive."""
+        DESCENT through solid ground still has no primitive (a shaft). Ascent
+        through it is a wall, and now resolves — hence the explicit descent
+        evidence here."""
         s = _planar_schema()
+        s.description += " The player plummets down the collapsing shaft."
         _entity(s, "Drones").instance_positions = [[0.0, 800.0, 0.0]]
         with pytest.raises(LayoutStrictError) as exc:
             compute_layout(s)
         assert "motion_axis='vertical' + medium='ground'" in str(exc.value)
+
+    def test_vertical_with_undecided_direction_abstains(self):
+        """Vertical motion with nothing saying which way: ascent and descent
+        are different PRIMITIVES, not different numbers, so guessing is worse
+        than stopping."""
+        s = _planar_schema()
+        _entity(s, "Drones").instance_positions = [[0.0, 800.0, 0.0]]
+        with pytest.raises(LayoutStrictError) as exc:
+            compute_layout(s)
+        msg = str(exc.value)
+        assert "DIRECTION is undecided" in msg, msg
+        assert "'ascent'" in msg and "'descent'" in msg, msg
+        assert "VerticalSurface" in msg and "VerticalCorridor" in msg, msg
 
     def test_abstain_never_silently_lays_the_scene_out(self):
         s = _planar_schema()
@@ -506,88 +558,93 @@ def math_dist_xz(a, b) -> float:
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
-# ── 2b. BoundedVolume ────────────────────────────────────────────────────────
+class TestVerticalSurface:
+    """Ascent moves ALONG a surface; descent moves THROUGH a volume. The
+    living-wall e2e produced a flat arena before this primitive existed,
+    because vertical evidence was descent-only."""
 
-class TestBoundedVolume:
-    def test_volume_height_comes_from_the_schema(self):
-        h, why, defaulted = volume_height(_glider_schema())
-        assert defaulted is False
-        assert h == 900.0            # "the ceiling of the flyable airspace is 900m"
-        assert "900m" in why
+    @staticmethod
+    def _wall():
+        return _load("living_wall_llm.schema.json")
 
-    def test_volume_height_falls_back_to_a_named_default_with_a_warning(self, caplog):
-        s = _survey_schema()         # no altitude figure anywhere
-        h, _why, defaulted = volume_height(s)
-        assert defaulted is True
-        assert h == 200.0            # _VOLUME_HEIGHT_DEFAULT
-        with caplog.at_level("WARNING"):
-            compute_layout(s)
-        assert any("named default box height" in r.message
-                   for r in caplog.records), caplog.text
+    def test_climbing_schema_selects_vertical_surface(self):
+        arch = select_archetype(self._wall())
+        assert arch.name == "VerticalSurface"
+        assert (arch.motion_axis, arch.direction) == ("vertical", "ascent")
 
-    def test_air_volume_puts_nothing_on_the_floor_but_ground_dwellers(self):
-        s = _glider_schema()
+    def test_player_spawns_at_the_base(self):
+        s = self._wall()
         compute_layout(s)
-        for e in s.entities:
-            on_floor = all(p[1] == 0.0 for p in e.instance_positions)
-            if on_floor:
-                assert e.kind == "terrain", f"{e.name} defaulted to the floor"
+        px, py, _pz = _entity(s, "Player").instance_positions[0]
+        assert py < 5.0, py
 
-    def test_air_volume_spreads_content_through_the_interior(self):
-        s = _glider_schema()
-        h, _why, _d = volume_height(s)
+    def test_holds_span_base_to_summit_on_the_wall_face(self):
+        s = self._wall()
+        h, _why, _d = surface_height(s)
+        holds = _hold_positions(s)
+        assert holds, "no holds were placed"
+        ys = [p[1] for p in holds]
+        assert min(ys) <= 2.0, min(ys)          # reachable from standing
+        assert max(ys) >= h - 0.01, (max(ys), h)  # reaches the summit
+        assert all(abs(p[2]) > 0.0 for p in holds), "holds are not on the face"
+
+    def test_every_successive_hold_is_within_reach(self):
+        """The invariant: a wall whose holds are further apart than the player
+        can reach is not a hard level, it is a broken one."""
+        s = self._wall()
+        reach, _why = _reach_distance(s)
+        chain = sorted(_hold_positions(s), key=lambda p: p[1])
+        gaps = [math.dist((a[0], a[1]), (b[0], b[1]))
+                for a, b in zip(chain, chain[1:])]
+        assert gaps and max(gaps) <= reach + 1e-6, max(gaps)
+
+    def test_wall_creatures_are_on_the_wall_not_on_the_ground(self):
+        s = self._wall()
         compute_layout(s)
-        interior = {round(e.instance_positions[0][1], 3) for e in s.entities
-                    if e.instance_positions and e.instance_positions[0][1] > 0.0}
-        assert len(interior) >= 3, interior
-        assert all(0.0 < y < h for y in interior), interior
+        organism = _entity(s, "WallOrganismGroup")
+        assert all(p[1] > 0.0 for p in organism.instance_positions), \
+            organism.instance_positions
 
-    def test_player_is_inside_the_volume_not_on_a_boundary(self):
-        s = _glider_schema()
-        h, _why, _d = volume_height(s)
+    def test_hazards_never_smother_a_hold(self):
+        s = self._wall()
         compute_layout(s)
-        py = _entity(s, "Player").instance_positions[0][1]
-        assert 0.0 < py < h, py
+        holds = {e.name for e in s.entities if is_climbable_entity(e)}
+        hold_pts = [p for e in s.entities if e.name in holds
+                    for p in e.instance_positions]
+        hazard_pts = [p for e in s.entities
+                      if e.name not in holds and is_hazard_entity(e)
+                      for p in e.instance_positions]
+        assert hold_pts and hazard_pts
+        for hz in hazard_pts:
+            nearest = min(math.dist((hz[0], hz[1]), (h[0], h[1])) for h in hold_pts)
+            assert nearest >= 1.0 - 1e-6, nearest
 
-    def test_water_volume_has_a_surface_and_everything_swims_below_it(self):
-        s = _survey_schema()
-        h, _why, _d = volume_height(s)
+    def test_wall_surface_entity_is_chosen_and_logged(self):
+        s = self._wall()
         msgs = compute_layout(s)
-        assert any("Water surface plane" in m for m in msgs), msgs
-        for e in s.entities:
-            if e.name == "SurveyBoat":
-                assert [p[1] for p in e.instance_positions] == [h]
-                continue
-            for p in e.instance_positions:
-                assert p[1] < h, f"{e.name} at y={p[1]} is not below the surface"
-                assert p[1] > 0.0, f"{e.name} at y={p[1]} sank to the seabed"
+        line = next((m for m in msgs if "Wall surface is" in m), "")
+        assert "BackgroundCliffGroup" in line, msgs
+        assert "signal:" in line, line
 
-    def test_surface_marked_content_rides_the_surface(self):
-        s = _survey_schema()
-        h, _why, _d = volume_height(s)
+    def test_provenance_is_complete(self):
+        s = self._wall()
+        msgs = compute_layout(s)
+        blob = "\n".join(msgs)
+        assert "motion_axis=vertical/ascent" in blob        # direction + tier
+        assert "strong-vocabulary" in blob or "entity" in blob
+        assert "Wall surface is" in blob                    # chosen + signal
+        assert "Reach distance" in blob                     # the value used
+        assert "max gap" in blob                            # chain check result
+
+    def test_ground_scenery_stays_on_the_ground(self):
+        s = self._wall()
         compute_layout(s)
-        assert _entity(s, "SurveyBoat").instance_positions[0][1] == h
+        for name in ("NPC", "Collectible"):
+            e = _entity(s, name)
+            assert all(p[1] == 0.0 for p in e.instance_positions), e.instance_positions
 
-    def test_layers_reuse_the_existing_packer_within_each_altitude(self):
-        """Groups sharing a layer must not overlap in XZ; groups in DIFFERENT
-        layers may, because they are separated vertically."""
-        s = _glider_schema()
-        compute_layout(s)
-        by_layer: dict[float, list[EntitySpec]] = {}
-        for e in s.entities:
-            if not e.instance_positions or e.name == "Player":
-                continue
-            by_layer.setdefault(round(e.instance_positions[0][1], 3), []).append(e)
-        for y, group in by_layer.items():
-            for i, a in enumerate(group):
-                for b in group[i + 1:]:
-                    d = math_dist_xz(a.origin_offset, b.origin_offset)
-                    assert d >= a.group_radius + b.group_radius - 1e-6, \
-                        f"{a.name} and {b.name} overlap at y={y}"
-
-    @pytest.mark.parametrize("builder", [_glider_schema, _survey_schema])
-    def test_volume_layout_is_deterministic_and_idempotent(self, builder):
-        a, b = builder(), builder()
+    def test_surface_layout_is_deterministic_and_idempotent(self):
+        a, b = self._wall(), self._wall()
         compute_layout(a)
         compute_layout(b)
         assert [e.model_dump() for e in a.entities] == \
@@ -596,17 +653,33 @@ class TestBoundedVolume:
         compute_layout(a)
         assert [e.model_dump() for e in a.entities] == first
 
-    @pytest.mark.parametrize("builder", [_glider_schema, _survey_schema])
-    def test_ground_plane_covers_the_volume_footprint(self, builder):
-        s = builder()
-        compute_layout(s)
-        xmin, zmin, xmax, zmax = terrain_bounds(s.entities, s.locomotion)
-        for e in s.entities:
-            if e.group_radius <= 0.0:
-                continue
-            cx, cz = e.origin_offset
-            assert xmin <= cx - e.group_radius and xmax >= cx + e.group_radius
-            assert zmin <= cz - e.group_radius and zmax >= cz + e.group_radius
+
+class TestReachabilityInvariant:
+    """The check must be able to REJECT, not just decorate a chain that was
+    already correct by construction."""
+
+    def test_a_chain_with_an_over_reach_gap_is_rejected(self):
+        bad = [(0.0, 0.0), (0.0, 2.0), (0.0, 9.0)]      # 7 m gap, 2.5 m reach
+        with pytest.raises(LayoutStrictError) as exc:
+            _verify_hold_chain(bad, 2.5, "BadWall")
+        msg = str(exc.value)
+        assert "unclimbable" in msg
+        assert "7.000" in msg and "2.500" in msg, msg
+
+    def test_a_chain_inside_reach_is_accepted_and_returns_the_max_gap(self):
+        ok = [(0.0, 0.0), (0.0, 2.0), (1.0, 3.5)]
+        assert _verify_hold_chain(ok, 2.5, "OkWall") == pytest.approx(2.0)
+
+    @pytest.mark.parametrize("n,height,reach", [
+        (5, 10.0, 2.5), (50, 60.0, 2.5), (12, 40.0, 4.0),
+        (200, 300.0, 2.0), (2, 3.0, 2.5), (30, 12.0, 1.0),
+    ])
+    def test_generated_chains_always_satisfy_their_reach(self, n, height, reach):
+        chain = _hold_chain(n, 1.0, height, reach, half_width=8.0)
+        assert len(chain) == n
+        # Generated chains are the input the invariant is supposed to pass.
+        _verify_hold_chain(chain, reach, "GenWall")
+
 
 class TestLiveLLMSchemaRoles:
     """Role detection against a REAL schema-fill output, not a fixture written

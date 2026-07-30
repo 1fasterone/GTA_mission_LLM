@@ -1,0 +1,70 @@
+TITLE: The Wall That Wakes
+GENRE: Third-person 3D game, vertical climbing, organic-horror puzzle, PC
+STYLE: Wet stone and breathing flesh — bioluminescent veins under rock, fog that inhales,
+muscle fibres where handholds should be.
+
+CORE PREMISE
+The player climbs a cliff that is alive. Every handhold is a sleeping creature, and the
+wall itself is one organism made of thousands of them. Grip a Sleeper and it wakes: it
+tenses, then shrugs you off after a few seconds. So the terrain IS the enemy, the enemy IS
+the terrain, and the only safe route is over the parts still asleep. There is no ground
+combat and no weapon — the player's only verbs are grip, release, and shift weight. Noise
+wakes neighbours, so a panicked scramble cascades the whole face awake behind you. The
+summit is a nerve cluster 900m up; reaching it ends the climb.
+
+SCENES (3 total)
+MainMenu — the face breathing in fog, title over a slow inhale, Start / Quit
+TheFace — the main ascent: sleeping handholds, waking cascades, fog banks
+NerveCluster — the summit organ, final sequence
+
+NARRATIVE — four story beats
+First Grip — the handhold under the player's palm opens an eye (on_start)
+Cascade — a mistimed grab wakes a column of Sleepers below (on_enter_zone)
+The Face Notices — the whole wall shifts once, deliberately (on_timer)
+Nerve Cluster — the player reaches the summit organ (on_enter_zone)
+
+SCRIPTS
+- ClimbController (player) grip / release / weight-shift climbing on arbitrary surfaces;
+  stamina drains while gripping a woken hold; fall recovery onto lower holds
+- SleeperHold (enemy) a single living handhold: asleep, stirring, awake, shrugging states;
+  wakes on grip or on noise from a neighbour; throws the player off when fully awake
+- CascadeSystem (custom) propagates wake events between neighbouring Sleepers by distance,
+  so noise spreads up and across the face
+- WallOrganism (level_generator) the face itself: builds the climbable surface out of the
+  Sleeper population and moves as one body when the whole face is awake
+- FogBreath (custom) fog volumes that expand and contract with the wall's breathing cycle
+- ClimbCamera (camera) Cinemachine: tight over-shoulder on the rock, pulls out on a fall
+- GameManager (game_manager) state machine: Menu / Climbing / Falling / Summit / Consumed
+- UIManager (ui_manager) HUD: stamina ring, grip indicator, wake-heat meter for the face
+
+ENTITIES
+- Player: a lone climber in a harness, humanoid rig, no weapons
+- Enemy: Sleeper handholds — living creatures that ARE the climbable surface, hundreds of
+  them covering the whole face, each one both terrain and hostile
+- NPC: the Wall Organism itself, a single enormous creature that the entire cliff is part of
+- Collectible: piton anchors the player can set into dormant flesh for a rest point
+- Collectible: the nerve cluster at the summit, the goal of the climb
+
+AUDIO — five cues
+- wall_breathing     ambient looping  the face inhaling and exhaling, wet and enormous
+- sleeper_wakes      sfx              a handhold tensing and opening, cartilage popping
+- cascade_ripple     ambient          the wake spreading across the face as a rising murmur
+- grip_slip          sfx              a palm losing purchase on living flesh, a short gasp
+- nerve_cluster_hum  ambient looping  the summit organ's low resonant pulse
+
+PROCEDURAL GEOMETRY
+- The living cliff face with handhold pockets  (rock, resolution 64)
+- Summit nerve cluster organ                   (custom, resolution 48)
+
+VISUAL STYLE: stylized organic horror — wet stone, subsurface glow, fog.
+COLOR PALETTE name "WakingWall":
+  primary    #6E5A4B  (damp stone)
+  secondary  #2A1B22  (deep crevice shadow)
+  accent     #C4F24B  (bioluminescent wake-veins)
+  background #9AA3A0  (breathing fog)
+  trim       #E8DCCB  (bone and cartilage)
+
+FEATURES: cinemachine, input_system, post_processing, animation_rigging
+RENDER PIPELINE: URP
+UNITY VERSION: 6000.0
+PLATFORM: PC
