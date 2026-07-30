@@ -16,23 +16,35 @@ was fine; the *primitive* was wrong.
 The selection is a pure, deterministic read of the schema — no RNG, no LLM, no
 I/O — producing three axes:
 
-  motion_axis   vertical | planar | path   how the player's own motion is
+  motion_axis   vertical | volumetric | planar | path
+                                           how the player's own motion is
                                            constrained
   medium        air | water | ground       what the space is made of
   goal_topology reach_point | survive_area | hit_target | traverse
 
 and then a table lookup:
 
-  (vertical, air)   -> VerticalCorridor
-  (vertical, water) -> VerticalCorridor
-  (planar,  ground) -> ArenaPlane          (the existing packer, unchanged)
-  anything else     -> ABSTAIN, hard-fail
+  (vertical,   air)    -> VerticalCorridor
+  (vertical,   water)  -> VerticalCorridor
+  (volumetric, air)    -> BoundedVolume
+  (volumetric, water)  -> BoundedVolume
+  (planar,     ground) -> ArenaPlane       (the existing packer, unchanged)
+  anything else        -> ABSTAIN, hard-fail
 
-ABSTAIN is deliberate and load-bearing. Two primitives ship here; a level-flight
-air game or a path-axis rail shooter has no honest home yet, and quietly
-dropping it onto ArenaPlane is precisely the failure this module exists to
-stop. It raises `[layout.strict]` naming the unmatched axes — same doctrine,
-same message shape, as `[assets.strict]` in src/unity_entity_asset_resolver.py.
+`volumetric` is the free-medium axis: the player moves in all three axes
+through air or water with no descent framing — a glider, a flight sim, a scuba
+swim. It exists because the first cut derived `planar` for those and abstained,
+which hard-failed projects that used to produce (bad) output. Descent evidence
+still wins: a schema with freefall/dive/altitude-band content is `vertical` and
+gets the corridor, unchanged.
+
+ABSTAIN stays deliberate and load-bearing, and adding BoundedVolume did NOT
+turn it into a default. A walking game whose world happens to be described in
+sky vocabulary (planar + air), a `vertical` descent through solid ground, and
+every path-axis rail game still have no honest home here, and quietly dropping
+them onto ArenaPlane is precisely the failure this module exists to stop. It
+raises `[layout.strict]` naming the unmatched axes — same doctrine, same
+message shape, as `[assets.strict]` in src/unity_entity_asset_resolver.py.
 
 Evidence thresholds
 -------------------
@@ -128,6 +140,16 @@ _WATER_STRONG: tuple[str, ...] = (
     "submerged", "seabed", "sea floor", "seafloor", "reef", "kelp",
     "diving bell", "aquatic",
 )
+# Free-medium locomotion the schema's own `locomotion` enum cannot express.
+# UnitySchema.locomotion normalises to walk/drive/fly/swim, so "hover" and
+# "float" arrive as prose or not at all — read them here rather than widen the
+# enum, which would ripple through controller composition.
+_FREE_MEDIUM_WORDS: tuple[str, ...] = (
+    "hover", "hovers", "hovering", "hovercraft", "float", "floats",
+    "floating", "levitate", "levitates", "levitating", "weightless",
+    "zero gravity", "zero-g", "anti-gravity", "antigravity", "drift",
+    "drifts", "drifting",
+)
 # Only an explicit rail constrains the player to a route. A racing circuit does
 # NOT: the driver moves freely on a surface, which is why racetracks stay an
 # ArenaPlane concern (their corridor packing already lives there) until the
@@ -184,6 +206,10 @@ _CORRIDOR_HEIGHT_MAX = 12_000.0
 # civilian jump-run exit altitude, high enough that stratified bands are real
 # separations rather than a stack of near-identical y values.
 _CORRIDOR_HEIGHT_DEFAULT = 4000.0
+# A BoundedVolume is a play box, not a drop: the player crosses it under their
+# own power rather than falling through it, so its default is sized for a
+# few tens of seconds of travel, not a jump run.
+_VOLUME_HEIGHT_DEFAULT = 200.0
 
 _FT_TO_M = 0.3048
 # Longest units first: "metres" must not lose to a bare "m", and the trailing
@@ -359,6 +385,14 @@ def corridor_height(schema) -> tuple[float, str, bool]:
                           "_CORRIDOR_HEIGHT_DEFAULT")
 
 
+def volume_height(schema) -> tuple[float, str, bool]:
+    """Vertical extent of a BoundedVolume — floor (or seabed) to ceiling (or
+    water surface). Same schema evidence, smaller default: a play box is not a
+    jump run."""
+    return _schema_height(schema, _VOLUME_HEIGHT_DEFAULT,
+                          "_VOLUME_HEIGHT_DEFAULT")
+
+
 # ── Axis derivation ──────────────────────────────────────────────────────────
 
 def _derive_medium(schema, text: str) -> tuple[str, str]:
@@ -378,8 +412,9 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
     `locomotion` was left at the "walk" default: "skydiving" is not scene
     dressing, it is a statement about where the player's body is. So prose
     overrides a surface locomotion only through `_AIR_STRONG`/`_WATER_STRONG`
-    — the same strong-evidence tiering `_derive_motion_axis` uses, and for
-    the same reason: one ambiguous word must never carry an axis.
+    (or by saying outright that the player hovers/floats) — the same
+    strong-evidence tiering `_derive_motion_axis` uses, and for the same
+    reason: one ambiguous word must never carry an axis.
     """
     if schema.locomotion == "swim":
         return "water", "locomotion='swim'"
@@ -388,14 +423,16 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
 
     air, water = _hits(text, _AIR_WORDS), _hits(text, _WATER_WORDS)
     air_strong, water_strong = _hits(text, _AIR_STRONG), _hits(text, _WATER_STRONG)
-    if not (air_strong or water_strong):
+    free = _hits(text, _FREE_MEDIUM_WORDS)
+    if not (free or air_strong or water_strong):
         why = f"locomotion={schema.locomotion!r} is a surface locomotion"
         if air or water:
             why += (f"; setting vocabulary {(air + water)[:4]} describes the "
                     "scene, not what the player moves through")
         return "ground", why
 
-    lead = f"medium-defining vocabulary {(air_strong + water_strong)[:3]}"
+    lead = (f"free-medium prose {free[:3]}" if free
+            else f"medium-defining vocabulary {(air_strong + water_strong)[:3]}")
     if water_strong and not air_strong:
         return "water", f"{lead} + water vocabulary {water[:4]}"
     if air_strong and not water_strong:
@@ -408,15 +445,28 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
         return "air", f"{lead} + air vocabulary {air[:4]}"
     if water:
         return "water", f"{lead} + water vocabulary {water[:4]}"
-    return "ground", f"{lead} but no air or water vocabulary to say which medium"
+    return "ground", (f"{lead} but no air or water vocabulary to say which "
+                      "medium")
+
+
+def _free_medium_locomotion(schema, text: str) -> Optional[str]:
+    """Why this schema's player moves freely through its medium rather than
+    over a surface — or None. Structured `locomotion` first, then the hover/
+    float vocabulary the enum cannot carry."""
+    if schema.locomotion in ("fly", "swim"):
+        return f"locomotion={schema.locomotion!r}"
+    free = _hits(text, _FREE_MEDIUM_WORDS)
+    return f"free-medium vocabulary {free[:3]}" if free else None
 
 
 def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     """How the player's own motion is constrained.
 
     Order matters: an explicit rail is the most specific claim, then descent,
-    then the planar default. Descent needs strong evidence precisely because
-    getting it wrong hard-fails an otherwise healthy ground game.
+    then free movement through a medium, then the planar default. Descent needs
+    strong evidence precisely because getting it wrong hard-fails an otherwise
+    healthy ground game — and it is checked BEFORE the free-medium test, so a
+    skydiver (locomotion='fly' + freefall) still gets a corridor, not a box.
     """
     rails = _hits(text, _PATH_WORDS)
     if rails:
@@ -425,6 +475,7 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     strong = _hits(text, _VERTICAL_STRONG)
     if strong:
         return "vertical", f"descent vocabulary {strong[:4]}"
+
 
     banded = [(n, y) for n, y in entity_altitudes(schema)
               if abs(y) >= _ALTITUDE_EVIDENCE_M]
@@ -437,6 +488,16 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     if len(weak) >= 2 and medium in ("air", "water"):
         return "vertical", f"descent verbs {weak[:4]} in a {medium} scene"
 
+    # Free movement through air or water with no descent framing. Gated on the
+    # medium as well as the locomotion: a WALKING game merely described in sky
+    # vocabulary is not volumetric, and floating it in a box would be exactly
+    # the "wrong primitive" failure the abstain path exists to prevent.
+    if medium in ("air", "water"):
+        free_why = _free_medium_locomotion(schema, text)
+        if free_why:
+            extra = (f"; descent verbs {weak[:3]} too weak to make it vertical"
+                     if weak else "")
+            return "volumetric", f"{free_why}, no descent evidence{extra}"
 
     why = "no rail, descent or altitude evidence"
     if weak:
@@ -496,15 +557,6 @@ _ARCHETYPE_BY_AXES: dict[tuple[str, str], str] = {
 # "planar". They used to be reachable off one incidental mood word, which is
 # exactly how a climbing game hard-failed twice.
 _ABSTAIN_HINTS: dict[tuple[str, str], str] = {
-    ("planar", "air"): (
-        "a level-flight air game needs a volume primitive, which does not "
-        "exist yet. Set locomotion to 'walk'/'drive' for a ground arena, or "
-        "add descent content (freefall/parachute/altitude bands) for a "
-        "vertical corridor"),
-    ("planar", "water"): (
-        "a level-swim water game needs a volume primitive, which does not "
-        "exist yet. Set locomotion to 'walk'/'drive' for a ground arena, or "
-        "add descent content (dive/depth bands) for a vertical corridor"),
     ("vertical", "ground"): (
         "descent through solid ground needs a shaft primitive, which does not "
         "exist yet. If the descent is through open air or water, set "
@@ -603,6 +655,23 @@ _WATER_DWELLER_WORDS: tuple[str, ...] = (
     "urchin", "jellyfish", "turtle", "eel", "ray", "rays", "wreck",
     "shipwreck", "seabed", "sea floor", "seafloor", "treasure", "chest",
     "submarine", "submersible", "diver", "divers", "buoy", "mine", "mines",
+)
+# Things whose home is the floor of a BoundedVolume — the only content allowed
+# to sit at y = 0 in an air box.
+_GROUND_DWELLER_WORDS: tuple[str, ...] = (
+    "tree", "trees", "forest", "rock", "rocks", "boulder", "hill", "hills",
+    "mountain", "mountains", "ridge", "building", "buildings", "house",
+    "houses", "tower", "ruin", "ruins", "terrain", "ground", "grass",
+    "landing pad", "helipad", "runway", "hangar", "village", "town",
+)
+# Things that ride ON a water surface rather than under it.
+_SURFACE_KINDS: frozenset[str] = frozenset({
+    "boat", "ship", "vessel", "raft", "buoy", "surface", "dock", "pier",
+})
+_SURFACE_WORDS: tuple[str, ...] = (
+    "boat", "boats", "ship", "ships", "raft", "buoy", "buoys", "dock",
+    "docks", "pier", "pontoon", "yacht", "kayak", "canoe", "dinghy",
+    "surface marker", "water surface", "floating platform",
 )
 # ── Exit platform (VerticalCorridor) ─────────────────────────────────────────
 # The thing the player jumps FROM. Left to footprint-size stratification it
@@ -801,6 +870,33 @@ def is_water_dweller(entity) -> bool:
     return bool(_hits(_entity_words(entity), _WATER_DWELLER_WORDS))
 
 
+def is_ground_dweller(entity) -> bool:
+    """Belongs on a BoundedVolume's floor. The ONLY thing allowed to sit at
+    y = 0 in an air box — everything else is interior content, because
+    defaulting content to the floor is the flattening these primitives exist
+    to remove.
+
+    An entity that says it floats/hovers/drifts is never a ground dweller,
+    whatever it is MADE of: a "drifting rock island" is airborne content whose
+    material vocabulary would otherwise pin it to the terrain.
+    """
+    words = _entity_words(entity)
+    if _hits(words, _FREE_MEDIUM_WORDS):
+        return False
+    if is_surface_entity(entity):
+        return True
+    return bool(_hits(words, _GROUND_DWELLER_WORDS))
+
+
+def is_surface_dweller(entity) -> bool:
+    """Rides ON a water surface (boat, buoy, dock) rather than swimming below
+    it. Without this every hull would be parked underwater."""
+    kind = (entity.kind or "").lower().strip()
+    if kind in _SURFACE_KINDS:
+        return True
+    return bool(_hits(_entity_words(entity), _SURFACE_WORDS))
+
+
 def _relation_targets(schema, player) -> list[str]:
     """Noun phrases the schema says the player jumps/exits/dives FROM.
 
@@ -883,8 +979,9 @@ def entity_altitude_hint(entity) -> Optional[float]:
 
 __all__ = [
     "LayoutArchetype", "LayoutStrictError", "select_archetype",
-    "corridor_height", "entity_altitudes",
+    "corridor_height", "volume_height", "entity_altitudes",
     "entity_altitude_hint", "is_terminal_entity", "is_goal_entity",
-    "goal_rank", "pick_goal_entity", "is_water_dweller", "is_surface_entity",
-    "pick_exit_platform", "player_rank", "pick_player_entity",
+    "goal_rank", "pick_goal_entity", "is_water_dweller", "is_ground_dweller",
+    "is_surface_dweller", "is_surface_entity", "pick_exit_platform",
+    "player_rank", "pick_player_entity",
 ]

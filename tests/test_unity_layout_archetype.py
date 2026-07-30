@@ -5,17 +5,20 @@ The bug being closed: the layout pass packed every game onto one ground plane,
 so a skydiving schema — altitude-banded content, a player who exits an aircraft
 at 4 km — came out flattened with everything at y ≈ 0.
 
-Three contracts are locked here:
+Four contracts are locked here:
   1. A skydiving schema selects VerticalCorridor and actually gets a corridor,
      with the exit platform (and the player attached to it) at the top.
-  2. A planar/ground schema still selects ArenaPlane and reproduces the
+  2. A free-medium schema (fly/swim, no descent framing) selects BoundedVolume
+     and gets a play box — it must not hard-fail, and must not flatten.
+  3. A planar/ground schema still selects ArenaPlane and reproduces the
      pre-change layout EXACTLY (tests/fixtures/arenaplane_baseline.json).
-  3. Anything else abstains with [layout.strict] — never a silent fall-through.
+  4. Anything else abstains with [layout.strict] — never a silent fall-through.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import tempfile
 from pathlib import Path
 
@@ -27,6 +30,7 @@ from src.unity_layout_archetype import (
     corridor_height,
     pick_exit_platform,
     select_archetype,
+    volume_height,
 )
 from src.unity_racetrack import compose_racetrack
 from src.unity_schema import EntitySpec, UnitySchema
@@ -44,6 +48,17 @@ def _load(name: str) -> UnitySchema:
 def _skydive_schema() -> UnitySchema:
     """The DropZone skydiving fixture (derived from prompts/dropzone.txt)."""
     return _load("dropzone_skydive.schema.json")
+
+
+def _glider_schema() -> UnitySchema:
+    """fly locomotion, no descent framing — the BoundedVolume air fixture.
+    Before BoundedVolume existed this schema hard-failed [layout.strict]."""
+    return _load("skyline_glider.schema.json")
+
+
+def _survey_schema() -> UnitySchema:
+    """swim locomotion, no descent framing — the BoundedVolume water fixture."""
+    return _load("lagoon_survey.schema.json")
 
 
 def _planar_schema() -> UnitySchema:
@@ -142,17 +157,31 @@ class TestArchetypeSelection:
         assert (arch.name, arch.motion_axis, arch.medium) == (
             "VerticalCorridor", "vertical", "water")
 
-    def test_mood_vocabulary_does_not_carry_the_medium(self):
-        """Live: a CLIMBING game (player on a rock face) derived medium='air'
-        from the single word "atmosphere" in its concept and hard-failed
-        [layout.strict]. Mood and rendering words are not a claim about what
-        the player is moving through."""
+    def test_free_flight_selects_bounded_volume(self):
+        arch = select_archetype(_glider_schema())
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "BoundedVolume", "volumetric", "air")
+
+    def test_free_swim_selects_bounded_volume(self):
+        arch = select_archetype(_survey_schema())
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "BoundedVolume", "volumetric", "water")
+
+    def test_descent_evidence_still_beats_free_medium_locomotion(self):
+        """The skydiving fixture is locomotion='fly' too — descent framing is
+        what separates a corridor from a box, and it is checked first."""
+        assert select_archetype(_skydive_schema()).name == "VerticalCorridor"
+        assert select_archetype(_dive_schema()).name == "VerticalCorridor"
+
+    def test_hover_vocabulary_reaches_volumetric_without_the_enum(self):
+        """UnitySchema.locomotion cannot say "hover" — it normalises to walk.
+        The vocabulary carries it instead."""
         s = _planar_schema()
-        s.description = ("A third-person climbing game up a cliff face. Wet "
-                         "stone, heavy atmosphere, atmospheric scattering in "
-                         "the fog, a tense mood throughout.")
+        s.description = ("A drone courier game: the quadcopter hovers between "
+                         "rooftop pads high in the open sky above the yard.")
         arch = select_archetype(s)
-        assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "BoundedVolume", "volumetric", "air")
 
     def test_setting_vocabulary_never_lifts_a_walker_off_the_ground(self):
         """A walker described in sky words gets the GROUND plane.
@@ -172,33 +201,58 @@ class TestArchetypeSelection:
         arch = select_archetype(s)
         assert (arch.name, arch.medium) == ("ArenaPlane", "ground"), arch.evidence
 
+    def test_prose_can_still_name_the_medium_when_it_says_the_player_floats(self):
+        """The one case the `locomotion` enum cannot express — it normalises
+        hover/float to "walk" — still reaches a volume."""
+        s = _planar_schema()
+        s.description = ("A drone courier game: the quadcopter hovers between "
+                         "rooftop pads high in the open sky above the yard.")
+        s.locomotion = "walk"
+        arch = select_archetype(s)
+        assert (arch.name, arch.medium) == ("BoundedVolume", "air"), arch.evidence
+
+    def test_selection_is_deterministic(self):
+        a, b = select_archetype(_skydive_schema()), select_archetype(_skydive_schema())
+        assert (a.name, a.motion_axis, a.medium, a.goal_topology, a.evidence) == \
+               (b.name, b.motion_axis, b.medium, b.goal_topology, b.evidence)
+
+    def test_one_ambiguous_descent_verb_does_not_flip_a_ground_game(self):
+        """"A descent into the catacombs" is prose, not a drop corridor.
+        Flipping on it would hard-fail (vertical+ground) a healthy game."""
+        s = _planar_schema()
+        s.description = ("A dungeon crawler about the descent into the "
+                         "catacombs beneath the depot yard.")
+        assert select_archetype(s).name == "ArenaPlane"
+
+    def test_provenance_names_the_archetype_and_all_three_axes(self):
+        line = select_archetype(_skydive_schema()).provenance()
+        assert "VerticalCorridor" in line
+        for field in ("motion_axis=vertical", "medium=air",
+                      "goal_topology=reach_point"):
+            assert field in line, line
 
 
 class TestAbstain:
-    @pytest.mark.parametrize("locomotion,axes", [
-        ("fly",  "motion_axis='planar' + medium='air'"),
-        ("swim", "motion_axis='planar' + medium='water'"),
-    ])
-    def test_level_flight_and_level_swim_abstain(self, locomotion, axes):
-        """No volume primitive yet — these have no honest home, so they stop
-        rather than being flattened onto a ground plane."""
+    @pytest.mark.parametrize("locomotion", ["fly", "swim"])
+    def test_free_medium_locomotion_no_longer_hard_fails(self, locomotion):
+        """The regression BoundedVolume exists to fix: these projects used to
+        produce (wrong) output, then hard-failed, and now lay out properly."""
         s = _planar_schema()
         s.locomotion = locomotion
-        with pytest.raises(LayoutStrictError) as exc:
-            compute_layout(s)
-        msg = str(exc.value)
-        assert "[layout.strict]" in msg
-        assert axes in msg, msg
+        msgs = compute_layout(s)
+        assert msgs[0].startswith("Layout archetype BoundedVolume selected")
+        assert all(e.instance_positions for e in s.entities)
 
     def test_abstain_message_names_the_derivation_and_a_fix(self):
         s = _planar_schema()
-        s.locomotion = "fly"
+        _entity(s, "Drones").instance_positions = [[0.0, 800.0, 0.0]]  # vertical+ground
         with pytest.raises(LayoutStrictError) as exc:
             compute_layout(s)
         msg = str(exc.value)
         assert "Derived from:" in msg
         assert "Fix:" in msg
         assert "vertical+air -> VerticalCorridor" in msg
+        assert "volumetric+air -> BoundedVolume" in msg
         assert "planar+ground -> ArenaPlane" in msg
 
     def test_rail_shooter_abstains_rather_than_becoming_an_arena(self):
@@ -220,7 +274,7 @@ class TestAbstain:
 
     def test_abstain_never_silently_lays_the_scene_out(self):
         s = _planar_schema()
-        s.locomotion = "fly"
+        s.description = ("An on-rails shooter through the depot yard.")
         with pytest.raises(LayoutStrictError):
             compute_layout(s)
         for e in s.entities:
@@ -445,6 +499,106 @@ def math_dist_xz(a, b) -> float:
 
 # ── 2b. BoundedVolume ────────────────────────────────────────────────────────
 
+class TestBoundedVolume:
+    def test_volume_height_comes_from_the_schema(self):
+        h, why, defaulted = volume_height(_glider_schema())
+        assert defaulted is False
+        assert h == 900.0            # "the ceiling of the flyable airspace is 900m"
+        assert "900m" in why
+
+    def test_volume_height_falls_back_to_a_named_default_with_a_warning(self, caplog):
+        s = _survey_schema()         # no altitude figure anywhere
+        h, _why, defaulted = volume_height(s)
+        assert defaulted is True
+        assert h == 200.0            # _VOLUME_HEIGHT_DEFAULT
+        with caplog.at_level("WARNING"):
+            compute_layout(s)
+        assert any("named default box height" in r.message
+                   for r in caplog.records), caplog.text
+
+    def test_air_volume_puts_nothing_on_the_floor_but_ground_dwellers(self):
+        s = _glider_schema()
+        compute_layout(s)
+        for e in s.entities:
+            on_floor = all(p[1] == 0.0 for p in e.instance_positions)
+            if on_floor:
+                assert e.kind == "terrain", f"{e.name} defaulted to the floor"
+
+    def test_air_volume_spreads_content_through_the_interior(self):
+        s = _glider_schema()
+        h, _why, _d = volume_height(s)
+        compute_layout(s)
+        interior = {round(e.instance_positions[0][1], 3) for e in s.entities
+                    if e.instance_positions and e.instance_positions[0][1] > 0.0}
+        assert len(interior) >= 3, interior
+        assert all(0.0 < y < h for y in interior), interior
+
+    def test_player_is_inside_the_volume_not_on_a_boundary(self):
+        s = _glider_schema()
+        h, _why, _d = volume_height(s)
+        compute_layout(s)
+        py = _entity(s, "Player").instance_positions[0][1]
+        assert 0.0 < py < h, py
+
+    def test_water_volume_has_a_surface_and_everything_swims_below_it(self):
+        s = _survey_schema()
+        h, _why, _d = volume_height(s)
+        msgs = compute_layout(s)
+        assert any("Water surface plane" in m for m in msgs), msgs
+        for e in s.entities:
+            if e.name == "SurveyBoat":
+                assert [p[1] for p in e.instance_positions] == [h]
+                continue
+            for p in e.instance_positions:
+                assert p[1] < h, f"{e.name} at y={p[1]} is not below the surface"
+                assert p[1] > 0.0, f"{e.name} at y={p[1]} sank to the seabed"
+
+    def test_surface_marked_content_rides_the_surface(self):
+        s = _survey_schema()
+        h, _why, _d = volume_height(s)
+        compute_layout(s)
+        assert _entity(s, "SurveyBoat").instance_positions[0][1] == h
+
+    def test_layers_reuse_the_existing_packer_within_each_altitude(self):
+        """Groups sharing a layer must not overlap in XZ; groups in DIFFERENT
+        layers may, because they are separated vertically."""
+        s = _glider_schema()
+        compute_layout(s)
+        by_layer: dict[float, list[EntitySpec]] = {}
+        for e in s.entities:
+            if not e.instance_positions or e.name == "Player":
+                continue
+            by_layer.setdefault(round(e.instance_positions[0][1], 3), []).append(e)
+        for y, group in by_layer.items():
+            for i, a in enumerate(group):
+                for b in group[i + 1:]:
+                    d = math_dist_xz(a.origin_offset, b.origin_offset)
+                    assert d >= a.group_radius + b.group_radius - 1e-6, \
+                        f"{a.name} and {b.name} overlap at y={y}"
+
+    @pytest.mark.parametrize("builder", [_glider_schema, _survey_schema])
+    def test_volume_layout_is_deterministic_and_idempotent(self, builder):
+        a, b = builder(), builder()
+        compute_layout(a)
+        compute_layout(b)
+        assert [e.model_dump() for e in a.entities] == \
+               [e.model_dump() for e in b.entities]
+        first = [e.model_dump() for e in a.entities]
+        compute_layout(a)
+        assert [e.model_dump() for e in a.entities] == first
+
+    @pytest.mark.parametrize("builder", [_glider_schema, _survey_schema])
+    def test_ground_plane_covers_the_volume_footprint(self, builder):
+        s = builder()
+        compute_layout(s)
+        xmin, zmin, xmax, zmax = terrain_bounds(s.entities, s.locomotion)
+        for e in s.entities:
+            if e.group_radius <= 0.0:
+                continue
+            cx, cz = e.origin_offset
+            assert xmin <= cx - e.group_radius and xmax >= cx + e.group_radius
+            assert zmin <= cz - e.group_radius and zmax >= cz + e.group_radius
+
 
 # ── 3. ArenaPlane is untouched ───────────────────────────────────────────────
 
@@ -507,6 +661,8 @@ class TestProvenance:
         (_racing_schema, "ArenaPlane"),
         (_skydive_schema, "VerticalCorridor"),
         (_dive_schema, "VerticalCorridor"),
+        (_glider_schema, "BoundedVolume"),
+        (_survey_schema, "BoundedVolume"),
     ])
     def test_every_run_logs_the_archetype_and_why(self, builder, expected):
         msgs = compute_layout(builder())

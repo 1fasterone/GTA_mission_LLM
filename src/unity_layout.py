@@ -3,7 +3,7 @@ Deterministic post-schema layout pass (pipeline Step 5, Fixer stage) — selects
 a spatial ARCHETYPE for the scene, then assigns every entity group a
 world-space region inside it and bakes exact per-instance positions.
 
-Two primitives ship, chosen by src/unity_layout_archetype.py from the
+Three primitives ship, chosen by src/unity_layout_archetype.py from the
 schema's (motion_axis, medium):
 
   ArenaPlane        planar + ground. The original packer, unchanged: circle
@@ -17,6 +17,13 @@ schema's (motion_axis, medium):
                     sits on the terminal plane (ground at y=0, or a water
                     surface with the things that live in the water hanging
                     below it).
+  BoundedVolume     volumetric + air, or volumetric + water. A play box of
+                    height H for free movement through a medium with no
+                    descent framing (a glider, a flight sim, a scuba swim):
+                    content is spread across altitude LAYERS inside the box,
+                    each packed by the same 2D footprint packer, with only
+                    ground-dwelling (air) or surface-marked (water) groups
+                    allowed to touch a boundary plane.
 
 Anything else ABSTAINS — `[layout.strict]`, hard-fail, never a silent
 fall-through to ArenaPlane. A skydiving schema flattened onto a ground plane
@@ -52,12 +59,15 @@ from .unity_layout_archetype import (
     LayoutArchetype,
     corridor_height,
     entity_altitude_hint,
+    is_ground_dweller,
+    is_surface_dweller,
     is_terminal_entity,
     is_water_dweller,
     pick_exit_platform,
     pick_goal_entity,
     pick_player_entity,
     select_archetype,
+    volume_height,
 )
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
@@ -136,6 +146,18 @@ _EXIT_PLATFORM_CLEARANCE = 1.5
 # Which entity is the player is decided by unity_layout_archetype's
 # `pick_player_entity` (tag, then kind, then name) — see `player_rank` for why
 # a single strict gate was not enough.
+
+# ── BoundedVolume ────────────────────────────────────────────────────────────
+# Interior band, as a fraction of box height H. Content lives strictly inside:
+# the floor (or seabed) and the ceiling (or water surface) are boundaries, not
+# shelves to stack things on.
+_VOLUME_BAND_FLOOR = 0.2
+_VOLUME_BAND_CEIL  = 0.8
+# Altitude layers the interior is cut into. Each layer is packed independently
+# by the existing 2D footprint packer — groups in DIFFERENT layers may share
+# XZ because they are vertically separated, which is the whole point of a
+# volume. Three reads as low/mid/high without spreading a small scene thin.
+_VOLUME_LAYERS = 3
 
 
 def _effective_spacing(entity: EntitySpec,
@@ -634,6 +656,149 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
     return msgs
 
 
+def _volume_layer_fractions(n_layers: int) -> list[float]:
+    """Evenly spaced interior altitudes, as fractions of box height. A single
+    layer sits mid-box rather than against a boundary."""
+    if n_layers <= 1:
+        return [(_VOLUME_BAND_FLOOR + _VOLUME_BAND_CEIL) / 2.0]
+    span = _VOLUME_BAND_CEIL - _VOLUME_BAND_FLOOR
+    return [_VOLUME_BAND_FLOOR + span * (i / (n_layers - 1))
+            for i in range(n_layers)]
+
+
+def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
+                           footprints: Optional[dict[str, float]]) -> list[str]:
+    """Lay the scene out as a play box of height H — free movement through a
+    medium, with no descent framing.
+
+      - medium == "air": the floor at y = 0 is terrain. Only ground-dwelling
+        content (trees, rocks, buildings, a landing pad) sits on it; the player
+        and everything else live in the interior.
+      - medium == "water": the top of the box at y = H is the water SURFACE.
+        Only surface-marked content (boats, buoys, docks) rides on it; the
+        player and every swimming group hang below it.
+      - Interior content is cut into `_VOLUME_LAYERS` altitude layers, and each
+        layer is packed by the EXISTING footprint packer (`_pack_groups`).
+        Groups in different layers may share XZ — they are separated
+        vertically, which is what makes this a volume rather than a plane.
+
+    Deterministic: fixed sort order, fixed layer count, no RNG beyond the
+    existing seeded scatter jitter.
+    """
+    msgs: list[str] = []
+    height, why_height, defaulted = volume_height(schema)
+    if defaulted:
+        _log.warning(
+            "[layout] %r selected BoundedVolume but carries no altitude or "
+            "depth figure — falling back to the named default box height "
+            "%.0f m. Add a ceiling / operating altitude / dive depth to the "
+            "description, or altitude-banded entity positions, to size the "
+            "play box deliberately.", schema.project_name, height)
+        msgs.append(
+            f"BoundedVolume height defaulted to {height:g} m ({why_height})")
+    else:
+        msgs.append(f"BoundedVolume height H={height:g} m ({why_height})")
+
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    preplaced, packable = _measure_and_size(layoutable, footprints)
+
+    is_water   = arch.medium == "water"
+    floor_y    = 0.0
+    ceiling_y  = round(height, 3)
+    boundary_y = ceiling_y if is_water else floor_y
+
+    player, why_player = pick_player_entity(packable)
+    if player is not None:
+        msgs.append(f"Player group resolved to '{player.name}' "
+                    f"(signal: {why_player})")
+    rest = [e for e in packable if e is not player]
+    # The one group allowed to touch a boundary plane. Everything else is
+    # interior content — defaulting it to the floor is the flattening these
+    # primitives exist to remove.
+    on_boundary = [e for e in rest
+                   if (is_surface_dweller(e) if is_water else is_ground_dweller(e))]
+    interior = [e for e in rest if e not in on_boundary]
+
+    # The player's spawn column stays clear through the WHOLE box: in a volume
+    # the player can be at any altitude a moment later, so a group directly
+    # above them is as much of a trap as one on top of them.
+    spawn_r = _SPAWN_CLEARANCE_BY_LOCOMOTION.get(
+        schema.locomotion, _SPAWN_CLEARANCE_DEFAULT)
+    if player is not None:
+        spawn_r += player.group_radius
+    reserved: list[tuple[float, float, float]] = [
+        (_PLAYER_SPAWN_XZ[0], _PLAYER_SPAWN_XZ[1], spawn_r)
+    ]
+    reserved += [(e.origin_offset[0], e.origin_offset[1], e.group_radius)
+                 for e in preplaced]
+
+    # ── Player: mid-box, never on a boundary ─────────────────────────────────
+    player_y = round(height * (_VOLUME_BAND_FLOOR + _VOLUME_BAND_CEIL) / 2.0, 3)
+    if player is not None:
+        player.origin_offset = [0.0, 0.0]
+        player.instance_positions = _lift(
+            _bake_positions(player, _effective_spacing(player, footprints),
+                            0.0, 0.0,
+                            (footprints or {}).get(player.name, 0.0) * player.scale),
+            player_y)
+        msgs.append(
+            f"Player group '{player.name}' spawns inside the volume "
+            f"(y={player_y:g})"
+            + (f", below the water surface at y={ceiling_y:g}" if is_water
+               else ", not on the terrain floor"))
+
+    # ── Interior: altitude layers, each packed by the existing 2D packer ─────
+    ordered = sorted(interior, key=lambda e: (-e.group_radius, e.name))
+    n_layers = min(_VOLUME_LAYERS, max(1, len(ordered)))
+    layers: list[list[EntitySpec]] = [[] for _ in range(n_layers)]
+    for i, e in enumerate(ordered):
+        # Round-robin over size-sorted groups, so each layer gets a mix of
+        # large and small footprints instead of one layer holding all the bulk.
+        layers[i % n_layers].append(e)
+
+    placed_layers: list[str] = []
+    for li, (layer, frac) in enumerate(zip(layers, _volume_layer_fractions(n_layers))):
+        if not layer:
+            continue
+        y = round(height * frac, 3)
+        slots = _pack_groups(layer, reserved)
+        for e in layer:
+            cx, cz, _r = slots[e.name]
+            e.origin_offset = [round(cx, 3), round(cz, 3)]
+            e.instance_positions = _lift(
+                _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
+                                (footprints or {}).get(e.name, 0.0) * e.scale),
+                y)
+        placed_layers.append(
+            f"layer {li + 1}/{n_layers} @ y={y:g}: {', '.join(e.name for e in layer)}")
+    if placed_layers:
+        msgs.append("Distributed interior content through the volume ("
+                    + "; ".join(placed_layers) + ")")
+
+    # ── Boundary plane ───────────────────────────────────────────────────────
+    if on_boundary:
+        slots = _pack_groups(on_boundary, reserved)
+        for e in on_boundary:
+            cx, cz, _r = slots[e.name]
+            e.origin_offset = [round(cx, 3), round(cz, 3)]
+            e.instance_positions = _lift(
+                _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
+                                (footprints or {}).get(e.name, 0.0) * e.scale),
+                boundary_y)
+        plane = "water surface" if is_water else "terrain floor"
+        msgs.append(
+            f"Placed {len(on_boundary)} group(s) on the {plane} "
+            f"(y={boundary_y:g}): "
+            + ", ".join(e.name for e in on_boundary))
+    if is_water:
+        msgs.append(
+            f"Water surface plane at y={ceiling_y:g}; everything not marked "
+            "surface/boat/buoy is below it")
+
+    _attach_regions(schema, _regions_for(packable, preplaced))
+    return msgs
+
+
 def compute_layout(schema: UnitySchema,
                    footprints: Optional[dict[str, float]] = None) -> list[str]:
     """Select a spatial archetype for the scene, then lay every
@@ -643,9 +808,10 @@ def compute_layout(schema: UnitySchema,
 
     ArenaPlane (planar + ground) is the original behaviour, described below and
     unchanged. VerticalCorridor (vertical + air/water) drops the scene down a
-    corridor instead — see `_layout_vertical_corridor`. Any other pair of
-    axes raises `[layout.strict]` rather than being flattened onto a ground
-    plane.
+    corridor instead — see `_layout_vertical_corridor`; BoundedVolume
+    (volumetric + air/water) spreads it through a play box — see
+    `_layout_bounded_volume`. Any other pair of axes raises `[layout.strict]`
+    rather than being flattened onto a ground plane.
 
     ── ArenaPlane ───────────────────────────────────────────────────────────
     Pack every group into a non-overlapping world-space region and bake exact
@@ -689,6 +855,8 @@ def compute_layout(schema: UnitySchema,
     msgs: list[str] = [arch.provenance()]
     if arch.name == "VerticalCorridor":
         return msgs + _layout_vertical_corridor(schema, arch, footprints)
+    if arch.name == "BoundedVolume":
+        return msgs + _layout_bounded_volume(schema, arch, footprints)
     return msgs + _layout_arena_plane(schema, footprints)
 
 
