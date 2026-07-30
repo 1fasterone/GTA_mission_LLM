@@ -1,0 +1,161 @@
+{
+  "project_name": "DropZone",
+  "company_name": "MyCompany",
+  "description": "A 3D skydiving simulation and stunt game. The player is a competitive skydiver who exits a Cessna Caravan on a jump run, freefalls through open sky in a formation with three AI skydivers, deploys the parachute canopy at the critical moment, and steers the canopy to a precision landing pad. A pull-altitude alarm sounds at 1500m, the hard-deck is 600m, and the reserve auto-deploys below 300m. A wingsuit mode allows sustained glide along cliff faces before chute deployment.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "fly",
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "stylized",
+  "scenes": ["ColoradoFreefall", "MainMenu"],
+  "scene_specs": [
+    {
+      "name": "ColoradoFreefall",
+      "description": "Open Rocky Mountain jump, blue-sky daylight, formation objective from aircraft exit down to the landing pad.",
+      "entities": []
+    }
+  ],
+  "features": ["cinemachine", "input_system", "post_processing"],
+  "packages": [],
+  "scripts": [
+    {
+      "name": "FreefallController",
+      "type": "player",
+      "description": "6-axis body attitude control in freefall: barrel rolls, tracking dives, delta position, flare; drag scaling with body angle; terminal velocity plateau; altitude HUD readout."
+    },
+    {
+      "name": "ParachuteSystem",
+      "type": "custom",
+      "description": "Canopy deployment at a configurable altitude, inflation physics, left/right steering risers, flare brake for a precision landing."
+    },
+    {
+      "name": "AltimeterManager",
+      "type": "custom",
+      "description": "Real-time altitude from aircraft exit to ground; pull-altitude alarm at 1500m, hard-deck at 600m, emergency auto-deploy below 300m."
+    },
+    {
+      "name": "FormationAI",
+      "type": "enemy",
+      "description": "AI skydivers fly intercept curves to player-relative formation slots and break off on the pull signal."
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "State machine: Menu / Aircraft / Freefall / Canopy / Landed / Crashed / Victory. Score is precision landing distance plus formation time."
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "beat_first_jump",
+      "label": "First Jump",
+      "description": "Tutorial descent with a radio coach under a calm clear sky.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "beat_formation_lock",
+      "label": "Formation Lock",
+      "description": "All four team members reach the formation diamond in freefall.",
+      "trigger": "on_enter_zone"
+    }
+  ],
+  "missions": [
+    {
+      "id": "mission_precision_landing",
+      "title": "Precision Landing",
+      "description": "Exit the aircraft, hold the formation, deploy the canopy above the hard deck and touch down on the landing pad.",
+      "objectives": [
+        {
+          "id": "obj_formation",
+          "description": "Reach the formation diamond in freefall",
+          "type": "reach",
+          "target_ref": "FormationTarget"
+        },
+        {
+          "id": "obj_landing",
+          "description": "Land on the precision landing pad",
+          "type": "reach",
+          "target_ref": "LandingPad"
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "name": "Player",
+      "kind": "character",
+      "count": 1,
+      "placement": "single",
+      "tag": "Player",
+      "scale": 1.0,
+      "model_hint": "skydiver jumpsuit helmet",
+      "behavior": "freefall and canopy poses, humanoid rig"
+    },
+    {
+      "name": "FormationDivers",
+      "kind": "enemy",
+      "count": 3,
+      "placement": "ring",
+      "radius": 6.0,
+      "scale": 1.0,
+      "model_hint": "skydiver humanoid",
+      "behavior": "intercept curves to player-relative formation slots"
+    },
+    {
+      "name": "CessnaCaravan",
+      "kind": "vehicle",
+      "count": 1,
+      "placement": "single",
+      "scale": 4.0,
+      "model_hint": "propeller aircraft",
+      "behavior": "slow loop above the jump zone"
+    },
+    {
+      "name": "AltitudeGates",
+      "kind": "collectible",
+      "count": 5,
+      "placement": "line",
+      "spacing": 12.0,
+      "scale": 3.0,
+      "model_hint": "glowing ring gate",
+      "behavior": "fly through for bonus score"
+    },
+    {
+      "name": "FormationTarget",
+      "kind": "collectible",
+      "count": 1,
+      "placement": "single",
+      "scale": 2.0,
+      "model_hint": "diamond marker",
+      "behavior": "all four divers must reach it"
+    },
+    {
+      "name": "LandingPad",
+      "kind": "goal",
+      "count": 1,
+      "placement": "single",
+      "scale": 6.0,
+      "model_hint": "circular landing bullseye",
+      "behavior": "precision landing target"
+    },
+    {
+      "name": "CrowdStands",
+      "kind": "prop",
+      "count": 6,
+      "placement": "ring",
+      "radius": 18.0,
+      "scale": 3.0,
+      "model_hint": "grandstand seating",
+      "behavior": "surrounds the landing arena"
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "RockyMountainTerrain",
+      "description": "Rocky Mountain terrain with ridgelines and a valley floor",
+      "mesh_type": "terrain",
+      "resolution": 64
+    }
+  ]
+}

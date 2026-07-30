@@ -355,13 +355,18 @@ class TestPlayerSpawnReservation:
                 assert math.hypot(x, z) > 1.0, f"{e.name} instance sits on the player"
 
     @pytest.mark.parametrize("locomotion,clearance", [
-        ("walk", 3.0), ("swim", 6.0), ("drive", 6.0), ("fly", 8.0),
+        ("walk", 3.0), ("drive", 6.0),
     ])
     def test_clearance_scales_with_locomotion(self, locomotion, clearance):
         """A vehicle_car's runtime BoxCollider is 1.7 x 4.0 — a walker's
         clearance would still leave the car's nose inside a neighbour. The
         spiral quantizes slots, so assert the honored clearance, not the
-        distance the search happens to settle on."""
+        distance the search happens to settle on.
+
+
+        Only ground locomotion reaches ArenaPlane: "fly"/"swim" derive
+        medium=air/water, which no primitive pairs with a planar motion
+        axis (see tests/test_unity_layout_archetype.py::TestAbstain)."""
         e = EntitySpec(name="Props", count=9, placement="grid", scale=1.0)
         schema = _schema([e])
         schema.locomotion = locomotion

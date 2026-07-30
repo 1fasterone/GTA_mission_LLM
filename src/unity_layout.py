@@ -1,8 +1,30 @@
 """
-Deterministic post-schema layout pass (pipeline Step 5, Fixer stage) — assigns
-every entity group a non-overlapping world-space region and bakes exact
-per-instance positions, closing two gaps left by EntitySpawner's runtime
-placement formulas (templates/unity/EntitySpawner.cs.j2):
+Deterministic post-schema layout pass (pipeline Step 5, Fixer stage) — selects
+a spatial ARCHETYPE for the scene, then assigns every entity group a
+world-space region inside it and bakes exact per-instance positions.
+
+Two primitives ship, chosen by src/unity_layout_archetype.py from the
+schema's (motion_axis, medium):
+
+  ArenaPlane        planar + ground. The original packer, unchanged: circle
+                    packing on the ground plane around the scene origin
+                    (plus the path-route corridor variant for authored
+                    circuits). Everything below this docstring's numbered
+                    list describes it.
+  VerticalCorridor  vertical + air, or vertical + water. A drop corridor of
+                    height H: the exit platform and the player spawn take the
+                    top, content is stratified down the corridor, and the goal
+                    sits on the terminal plane (ground at y=0, or a water
+                    surface with the things that live in the water hanging
+                    below it).
+
+Anything else ABSTAINS — `[layout.strict]`, hard-fail, never a silent
+fall-through to ArenaPlane. A skydiving schema flattened onto a ground plane
+(every altitude-banded entity at y≈0, the player standing on the landing pad
+at t=0) is the exact failure that motivated the split.
+
+ArenaPlane closes two gaps left by EntitySpawner's runtime placement formulas
+(templates/unity/EntitySpawner.cs.j2):
 
   1. Every group spawned centered on the SAME world origin — its own
      `radius`/`spacing` only shaped the pattern WITHIN one group, nothing
@@ -21,13 +43,27 @@ once here in Python — never re-derived at runtime, never LLM-touched.
 
 from __future__ import annotations
 
+import logging
 import math
 import random
 from typing import Optional, Sequence
 
+from .unity_layout_archetype import (
+    LayoutArchetype,
+    corridor_height,
+    entity_altitude_hint,
+    is_terminal_entity,
+    is_water_dweller,
+    pick_exit_platform,
+    pick_goal_entity,
+    pick_player_entity,
+    select_archetype,
+)
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
                             describe, select_primitive)
+
+_log = logging.getLogger(__name__)
 
 # Minimum world-space gap enforced between two packed groups' footprint
 # circles, on top of their own radii.
@@ -75,6 +111,31 @@ _SPAWN_CLEARANCE_BY_LOCOMOTION = {"drive": 6.0, "fly": 8.0, "swim": 6.0}
 _SPAWN_CLEARANCE_DEFAULT = 3.0
 
 _LAYOUT_PLACEMENTS = frozenset({"single", "line", "ring", "grid", "scatter"})
+
+# ── VerticalCorridor ─────────────────────────────────────────────────────────
+# Stratification band, as a fraction of corridor height H. The player spawns AT
+# H, so the top band sits below them (something to fall toward, not through at
+# t=0) and the floor band sits well clear of the terminal plane (content the
+# player is still falling past when the chute/goal comes into play).
+_CORRIDOR_BAND_TOP   = 0.85
+_CORRIDOR_BAND_FLOOR = 0.15
+# Groups are parked beside the fall line rather than on it: the drop axis is
+# the player's own path down, and a group centered on it spawns inside them.
+# Each group's center sits its own footprint radius plus this clearance out.
+_CORRIDOR_LANE_CLEARANCE = 6.0
+# Successive groups are rotated by the golden angle around the drop axis —
+# deterministic, and never repeats a bearing for any practical group count
+# (a plain 2*pi/n would stack every group on one line when n is small).
+_GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
+# How deep below a water surface plane the medium's own inhabitants hang, when
+# the schema carries no depth geometry of its own.
+_WATER_DEPTH_DEFAULT = 30.0
+# Gap between the exit platform's footprint and the player standing in its
+# doorway. Small on purpose: "attached to the platform", not "near it".
+_EXIT_PLATFORM_CLEARANCE = 1.5
+# Which entity is the player is decided by unity_layout_archetype's
+# `pick_player_entity` (tag, then kind, then name) — see `player_rank` for why
+# a single strict gate was not enough.
 
 
 def _effective_spacing(entity: EntitySpec,
@@ -338,11 +399,257 @@ def _bake_positions(entity: EntitySpec, eff_spacing: float,
     return []
 
 
+def _measure_and_size(layoutable: list[EntitySpec],
+                      footprints: Optional[dict[str, float]]
+                      ) -> tuple[list[EntitySpec], list[EntitySpec]]:
+    """Split layoutable groups into (preplaced, packable) and give every group
+    a `group_radius` — measured from already-baked positions for the former,
+    computed from spacing/scale/count for the latter. A group's own footprint
+    is the same geometry whether it lands on a ground plane or in a corridor.
+
+    `_layout_arena_plane` deliberately keeps its own inline copy of this rather
+    than calling in: it interleaves the measurement with building its seed
+    circles, and its output is locked byte-for-byte against a pre-archetype
+    recording (tests/fixtures/arenaplane_baseline.json). Fold the two together
+    only under that test.
+    """
+    preplaced = [e for e in layoutable if e.instance_positions]
+    packable  = [e for e in layoutable if not e.instance_positions]
+    for e in preplaced:
+        # group_radius <= 0.0 (the schema default) means these positions were
+        # authored by something other than this function — e.g.
+        # unity_racetrack.py's start grid — and haven't been measured yet.
+        # Once measured (or if this is our OWN prior output being re-run),
+        # trust the existing origin_offset/group_radius as-is so repeated
+        # calls stay idempotent instead of re-measuring a jittered scatter's
+        # empirical centroid slightly differently each time.
+        if e.group_radius <= 0.0:
+            cx, cz, r = _measure_baked(e)
+            e.origin_offset, e.group_radius = [round(cx, 3), round(cz, 3)], round(r, 3)
+    for e in packable:
+        e.group_radius = _footprint_radius(e, _effective_spacing(e, footprints))
+    return preplaced, packable
+
+
+def _regions_for(packable: list[EntitySpec],
+                 preplaced: list[EntitySpec]) -> list[WorldRegion]:
+    """One axis-aligned XZ region per group, from its packed center + radius.
+    Altitude is deliberately absent: WorldRegion.bounds is a ground-plane
+    rectangle (and terrain sizing consumes it as one)."""
+    return [
+        WorldRegion(name=e.name, entities=[e.name],
+                    bounds=[e.origin_offset[0] - e.group_radius,
+                            e.origin_offset[1] - e.group_radius,
+                            e.origin_offset[0] + e.group_radius,
+                            e.origin_offset[1] + e.group_radius])
+        for e in list(packable) + list(preplaced)
+    ]
+
+
+def _attach_regions(schema: UnitySchema, regions: list[WorldRegion]) -> None:
+    if schema.world_spec is None:
+        schema.world_spec = WorldSpec(regions=regions)
+    else:
+        schema.world_spec.regions = list(schema.world_spec.regions) + regions
+
+
+def _lift(pts: list[list[float]], y: float) -> list[list[float]]:
+    """Raise a ground-plane bake (`_bake_positions` always emits y = 0) to the
+    corridor band it belongs in. The XZ pattern — ring, grid, jittered scatter
+    — is identical; only the altitude changes."""
+    return [[p[0], y, p[2]] for p in pts]
+
+
+def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
+                              footprints: Optional[dict[str, float]]
+                              ) -> list[str]:
+    """Lay the scene out as a drop corridor of height H.
+
+      - The EXIT PLATFORM — the thing the player jumps from — takes the top of
+        the corridor (y = H) and the player spawn is attached beside it. Left
+        to footprint-size stratification the jump ship sank below its own
+        jumper; the role overrides that ordering for both.
+      - Player spawns at the TOP (y = H), on the drop axis when there is no
+        exit platform, or in the platform's doorway when there is.
+      - Non-player groups are stratified down the corridor BELOW the exit
+        platform: any group carrying its own altitude data keeps it, the rest
+        are spread evenly across
+        [_CORRIDOR_BAND_FLOOR, _CORRIDOR_BAND_TOP] * H. Nothing lands at y = 0
+        by default — that flattening is the bug this primitive exists to fix.
+      - The terminal plane is the ground (y = 0), or a water SURFACE at y = 0
+        when medium == "water", in which case the things that live in the
+        water hang below it at negative y.
+      - The goal/landing entity is pinned to the terminal plane on the drop
+        axis, directly under the player's exit point; other surface groups
+        pack around it with the existing circle packer.
+
+    Deterministic: fixed sort order, fixed golden-angle bearings, no RNG
+    beyond the existing seeded scatter jitter. Same contract as ArenaPlane —
+    writes `origin_offset`, `group_radius`, `instance_positions`.
+    """
+    msgs: list[str] = []
+    height, why_height, defaulted = corridor_height(schema)
+    if defaulted:
+        _log.warning(
+            "[layout] %r selected VerticalCorridor but carries no altitude or "
+            "deck figure — falling back to the named default corridor height "
+            "%.0f m. Add an exit altitude / hard deck to the description, or "
+            "altitude-banded entity positions, to size the drop deliberately.",
+            schema.project_name, height)
+        msgs.append(
+            f"VerticalCorridor height defaulted to {height:g} m ({why_height})")
+    else:
+        msgs.append(f"VerticalCorridor height H={height:g} m ({why_height})")
+
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    preplaced, packable = _measure_and_size(layoutable, footprints)
+
+    # ── Roles ────────────────────────────────────────────────────────────────
+    player, why_player = pick_player_entity(packable)
+    if player is not None:
+        msgs.append(f"Player group resolved to '{player.name}' "
+                    f"(signal: {why_player})")
+    rest     = [e for e in packable if e is not player]
+    terminal = [e for e in rest if is_terminal_entity(e)]
+    corridor = [e for e in rest if not is_terminal_entity(e)]
+
+    surface_y = 0.0
+    is_water  = arch.medium == "water"
+    top_y     = round(height, 3)
+
+    # ── Exit platform: the top of the corridor belongs to it ─────────────────
+    platform, why_platform = pick_exit_platform(schema, player, corridor,
+                                                arch.medium)
+    spawn_x = 0.0
+    if platform is not None:
+        corridor = [e for e in corridor if e is not platform]
+        platform.origin_offset = [0.0, 0.0]
+        platform.instance_positions = _lift(
+            _bake_positions(platform, _effective_spacing(platform, footprints),
+                            0.0, 0.0,
+                            (footprints or {}).get(platform.name, 0.0) * platform.scale),
+            top_y)
+        # The player stands in its doorway: clear of the platform's own
+        # footprint, but attached to it rather than parked somewhere else.
+        spawn_x = round(platform.group_radius
+                        + (player.group_radius if player is not None else 0.0)
+                        + _EXIT_PLATFORM_CLEARANCE, 3)
+        msgs.append(
+            f"Exit platform '{platform.name}' takes the corridor top "
+            f"(y={top_y:g}) — signal: {why_platform}")
+
+    # ── Player: top of the corridor, attached to the platform if there is one ─
+    if player is not None:
+        player.origin_offset = [spawn_x, 0.0]
+        player.instance_positions = _lift(
+            _bake_positions(player, _effective_spacing(player, footprints),
+                            spawn_x, 0.0,
+                            (footprints or {}).get(player.name, 0.0) * player.scale),
+            top_y)
+        where = (f"attached to '{platform.name}' at x={spawn_x:g}"
+                 if platform is not None else "on the drop axis")
+        msgs.append(
+            f"Player group '{player.name}' spawns at the top of the corridor "
+            f"(y={top_y:g}, {where}) instead of standing on the terminal plane")
+
+    # ── Corridor content: stratified below the top, never all at y = 0 ───────
+    ordered = sorted(corridor, key=lambda e: (-e.group_radius, e.name))
+    span = _CORRIDOR_BAND_TOP - _CORRIDOR_BAND_FLOOR
+    banded: list[str] = []
+    for i, e in enumerate(ordered):
+        # Evenly spaced band centers, largest group highest. A single group
+        # takes the top band — near the player, where it can be reached.
+        frac = _CORRIDOR_BAND_TOP - span * (i / max(1, len(ordered) - 1))
+        hint = entity_altitude_hint(e)
+        if hint is not None:
+            y = round(max(0.0, min(height, hint)), 3)
+            band_why = f"{e.name}@{y:g}(schema)"
+        elif is_water and is_water_dweller(e):
+            # Below the surface plane: this group's home is the medium itself.
+            y = round(-_WATER_DEPTH_DEFAULT * frac, 3)
+            band_why = f"{e.name}@{y:g}(submerged)"
+        else:
+            y = round(height * frac, 3)
+            band_why = f"{e.name}@{y:g}"
+        banded.append(band_why)
+
+        # Parked beside the drop axis, one golden-angle step per group, so the
+        # player falls PAST content instead of spawning inside it.
+        theta  = i * _GOLDEN_ANGLE
+        lane_r = e.group_radius + _CORRIDOR_LANE_CLEARANCE
+        cx, cz = lane_r * math.cos(theta), lane_r * math.sin(theta)
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.instance_positions = _lift(
+            _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
+                            (footprints or {}).get(e.name, 0.0) * e.scale),
+            y)
+    if banded:
+        msgs.append(
+            f"Stratified {len(banded)} group(s) down the corridor "
+            f"({', '.join(banded)})")
+
+    # ── Terminal plane ───────────────────────────────────────────────────────
+    goal = pick_goal_entity(terminal)
+    seed_circles: list[tuple[float, float, float]] = [
+        (e.origin_offset[0], e.origin_offset[1], e.group_radius) for e in preplaced
+    ]
+    if goal is not None:
+        goal.origin_offset = [0.0, 0.0]
+        goal.instance_positions = _lift(
+            _bake_positions(goal, _effective_spacing(goal, footprints), 0.0, 0.0,
+                            (footprints or {}).get(goal.name, 0.0) * goal.scale),
+            surface_y)
+        seed_circles.append((0.0, 0.0, goal.group_radius))
+    elif player is None:
+        # No airborne player and no goal: the scene template's own Player still
+        # stands at the terminal-plane origin, so keep the ArenaPlane spawn
+        # reservation rather than packing a group on top of them.
+        seed_circles.append((_PLAYER_SPAWN_XZ[0], _PLAYER_SPAWN_XZ[1],
+                             _SPAWN_CLEARANCE_BY_LOCOMOTION.get(
+                                 schema.locomotion, _SPAWN_CLEARANCE_DEFAULT)))
+
+    others = [e for e in terminal if e is not goal]
+    if others:
+        slots = _pack_groups(others, seed_circles)
+        for e in others:
+            cx, cz, _r = slots[e.name]
+            e.origin_offset = [round(cx, 3), round(cz, 3)]
+            e.instance_positions = _lift(
+                _bake_positions(e, _effective_spacing(e, footprints), cx, cz,
+                                (footprints or {}).get(e.name, 0.0) * e.scale),
+                surface_y)
+    if terminal:
+        plane = "water surface" if is_water else "ground"
+        msgs.append(
+            f"Placed {len(terminal)} group(s) on the {plane} terminal plane "
+            f"(y={surface_y:g}"
+            + (f"; goal '{goal.name}' pinned under the drop axis" if goal else "")
+            + ")")
+    if is_water:
+        msgs.append(
+            f"Water surface plane at y={surface_y:g}; medium inhabitants hang "
+            f"below it (down to y=-{_WATER_DEPTH_DEFAULT:g})")
+
+    _attach_regions(schema, _regions_for(packable, preplaced))
+    return msgs
+
+
 def compute_layout(schema: UnitySchema,
                    footprints: Optional[dict[str, float]] = None) -> list[str]:
-    """Pack every {single,line,ring,grid,scatter} entity group into a
-    non-overlapping world-space region and bake exact instance positions onto
-    each EntitySpec (`origin_offset`, `group_radius`, `instance_positions`).
+    """Select a spatial archetype for the scene, then lay every
+    {single,line,ring,grid,scatter} entity group out inside it, baking
+    `origin_offset`, `group_radius` and `instance_positions` onto each
+    EntitySpec.
+
+    ArenaPlane (planar + ground) is the original behaviour, described below and
+    unchanged. VerticalCorridor (vertical + air/water) drops the scene down a
+    corridor instead — see `_layout_vertical_corridor`. Any other pair of
+    axes raises `[layout.strict]` rather than being flattened onto a ground
+    plane.
+
+    ── ArenaPlane ───────────────────────────────────────────────────────────
+    Pack every group into a non-overlapping world-space region and bake exact
+    instance positions.
 
     Two categories are left untouched, only treated as ALREADY-OCCUPIED space
     the packer must avoid (and terrain sizing must cover):
@@ -363,15 +670,33 @@ def compute_layout(schema: UnitySchema,
 
     2D/2D-topdown archetypes build their own course/arena layout at spawn
     time (EntitySpawner.cs.j2's BuildSideScroller2D/BuildTopDown2D) and are
-    skipped here.
+    skipped here — before archetype selection, so a 2D project is never asked
+    to justify a 3D spatial primitive it will not use.
     """
     if schema.game_type in ("2D", "2d_topdown"):
         return []
 
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
     if not layoutable:
+        # Nothing to place (e.g. a MainMenu-only schema). There is no layout to
+        # get wrong, so there is nothing for an archetype to decide either.
         return []
 
+    # Raises [layout.strict] when no Stage-1 primitive covers the derived axes.
+    # Deliberately NOT caught here: a silent fall-through to ArenaPlane is the
+    # failure mode this selection exists to remove.
+    arch = select_archetype(schema)
+    msgs: list[str] = [arch.provenance()]
+    if arch.name == "VerticalCorridor":
+        return msgs + _layout_vertical_corridor(schema, arch, footprints)
+    return msgs + _layout_arena_plane(schema, footprints)
+
+
+def _layout_arena_plane(schema: UnitySchema,
+                        footprints: Optional[dict[str, float]] = None) -> list[str]:
+    """The original ground-plane packer — see `compute_layout`'s docstring.
+    Byte-for-byte the behaviour that shipped before archetype selection."""
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
     preplaced = [e for e in layoutable if e.instance_positions]
     packable = [e for e in layoutable if not e.instance_positions]
 

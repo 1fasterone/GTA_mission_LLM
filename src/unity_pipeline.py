@@ -971,11 +971,16 @@ class UnityPipeline:
         for msg in normalize_paths(schema):
             self._fix(msg)
 
-        # Layout pass: pack every {single,line,ring,grid,scatter} entity group
-        # into a non-overlapping world-space region and bake exact per-instance
-        # positions (src/unity_layout.py) — runs after the racetrack scaffold
-        # so any injected vehicle groups get packed too, and after concept
-        # entity rescue/racing scaffold so it sees the FINAL entity list.
+        # Layout pass: select a spatial archetype for the scene, then lay every
+        # {single,line,ring,grid,scatter} entity group out inside it and bake
+        # exact per-instance positions (src/unity_layout.py) — runs after the
+        # racetrack scaffold so any injected vehicle groups get packed too, and
+        # after concept entity rescue/racing scaffold so it sees the FINAL
+        # entity list (which the archetype selection reads).
+        # Raises [layout.strict] (LayoutStrictError, a ValueError) when no
+        # Stage-1 primitive covers the schema's motion axis and medium —
+        # deliberately uncaught: flattening a drop corridor onto a ground plane
+        # is the failure this selection exists to stop.
         for msg in compute_layout(schema):
             self._fix(msg)
 
