@@ -39,6 +39,7 @@ from .unity_playability   import (PlayabilityGateError,
                                   evaluate as evaluate_playability,
                                   gate as playability_gate)
 from .unity_pathnorm      import normalize_paths
+from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 
 console = Console()
 
@@ -838,6 +839,22 @@ class UnityPipeline:
                 + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched)
             )
 
+        # Spatial facts: the brief's own numeric distances, extracted here —
+        # after the brief is final, BEFORE any model sees it — and carried past
+        # schema-fill as a sidecar (src/unity_spatial_facts.py). Deterministic
+        # regex + unit normalization, no LLM. Live: a brief saying "the summit
+        # is a nerve cluster 900m up" produced a schema with no height in it at
+        # all, and the layout built its 60 m default wall. The number was never
+        # missing from the brief — it just had no way past Step 3.
+        _spatial_facts = extract_spatial_facts(user_prompt)
+        if _spatial_facts:
+            self._ok(
+                f"Brief states {len(_spatial_facts)} spatial fact(s) — "
+                + ", ".join(f"{f.value_m:g} m ({f.referent_text!r})"
+                            for f in _spatial_facts[:3])
+                + (" …" if len(_spatial_facts) > 3 else "")
+            )
+
         # STEP 2 — concept ────────────────────────────────────────────────────
         self._step(2, "LLM generates project concept")
         if no_think:
@@ -881,6 +898,12 @@ class UnityPipeline:
         # Persist the LLM concept so the Library page can describe the project.
         schema.meta["concept"]     = concept
         schema.meta["user_prompt"] = user_prompt
+        # The brief's spatial facts ride alongside from here on. Written LAST
+        # and unconditionally, so a model that decided to author its own
+        # `meta.spatial_facts` cannot get one past the extraction pass. Step 5's
+        # dimension resolution is the only consumer
+        # (unity_layout_archetype._schema_height).
+        attach_spatial_facts(schema, _spatial_facts)
 
         # Deterministic override: if the classifier had a confident direct hit
         # on the raw prompt and the LLM's own game_type/locomotion disagree,

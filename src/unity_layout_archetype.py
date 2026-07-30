@@ -49,17 +49,38 @@ message shape, as `[assets.strict]` in src/unity_entity_asset_resolver.py.
 Evidence thresholds
 -------------------
 Misclassifying a working ground game as "vertical" would hard-fail it, so
-vertical evidence has to be STRONG: one unambiguous term (freefall, skydive,
-parachute, wingsuit, altimeter, …), or two weaker descent verbs in a scene
-that is already air/water, or real altitude data on the entities. A lone
-"descent into the caves" never flips the axis.
+vertical evidence has to be STRONG. Ascent and descent clear the SAME bar —
+this is the settled rule, not a relaxation of a stricter one: a climb is as
+much a vertical game as a drop is, and holding climbing evidence to a higher
+standard is what produced a flat arena for the living-wall brief. Either of:
+
+  * one unambiguous term — descent (freefall, skydive, parachute, wingsuit,
+    altimeter, …) or climbing (handhold, belay, piton, rock face, free solo,
+    …); or a group authored as something you grab (a Holdable tag, a
+    handhold/ledge/grip kind), which is structure rather than prose and
+    therefore stronger still;
+  * two weaker descent verbs in a scene already established as air/water;
+  * real altitude data on the entities.
+
+What does NOT clear it, in either direction, is a single ambiguous verb.
+"descent into the caves" never flips the axis, and neither does "climb the
+leaderboard" or "sales are climbing" — the ascent VERBS choose a direction once
+the axis is already vertical, and never establish the axis themselves. That
+asymmetry between climbing NOUNS (axis-establishing) and climbing VERBS
+(direction-only) is the whole guard against prose-only false positives.
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence, TypeVar
+
+from .unity_spatial_facts import (UNIT_ALTERNATION, UNIT_TO_M, match_facts,
+                                  spatial_facts_of)
+
+_log = logging.getLogger(__name__)
 
 
 class _EntityLike(Protocol):
@@ -260,18 +281,14 @@ _VOLUME_HEIGHT_DEFAULT = 200.0
 # reachability invariant in unity_layout._layout_vertical_surface).
 _SURFACE_HEIGHT_DEFAULT = 60.0
 
-_FT_TO_M = 0.3048
-# Longest units first: "metres" must not lose to a bare "m", and the trailing
-# guard rejects speeds ("200 km/h" -> "km" followed by "/" is not an altitude).
+# Unit spelling and unit VALUE come from the one table in
+# src/unity_spatial_facts.py, so the brief-side extraction pass and this
+# schema-side parser can never normalise the same figure differently. The
+# trailing guard rejects speeds ("200 km/h" -> "km" followed by "/" is not an
+# altitude); the two-digit minimum is this parser's own, since a single-digit
+# altitude is always terrain relief.
 _ALT_UNIT_RE = re.compile(
-    r"(\d{2,6}(?:\.\d+)?)\s*"
-    r"(kft|km|metres|meters|metre|meter|feet|foot|ft|m)"
-    r"(?![/\w])")
-_ALT_UNIT_TO_M: dict[str, float] = {
-    "kft": 1000.0 * _FT_TO_M, "km": 1000.0,
-    "metres": 1.0, "meters": 1.0, "metre": 1.0, "meter": 1.0, "m": 1.0,
-    "feet": _FT_TO_M, "foot": _FT_TO_M, "ft": _FT_TO_M,
-}
+    r"(\d{2,6}(?:\.\d+)?)\s*(" + UNIT_ALTERNATION + r")(?![/\w])")
 # A number with a unit is only an ALTITUDE if an altitude word sits near it —
 # "12 m wide" and "3 m above and behind" are not corridor heights.
 _ALT_CONTEXT_WORDS: tuple[str, ...] = (
@@ -281,6 +298,33 @@ _ALT_CONTEXT_WORDS: tuple[str, ...] = (
     "opening", "drop",
 )
 _ALT_CONTEXT_WINDOW = 56   # characters either side of the number
+
+# ── Brief spatial facts: referent vocabulary per dimension ───────────────────
+# Which of the brief's numbers is THIS dimension (see `_schema_height` tier 2).
+# A fact only counts when its own referent window names the thing being sized —
+# a brief may state a wall height, an approach distance and a fog radius in the
+# same paragraph, and the largest of them is not automatically the wall.
+#
+# Deliberately short: every word here can silently resize a play space, so the
+# lists carry the nouns that NAME the dimension and their plurals, nothing that
+# merely co-occurs with it. Plurals only, because `_hits` is word-bounded and
+# "cliffs" does not match "cliff".
+_SURFACE_HEIGHT_REFERENTS: tuple[str, ...] = (
+    "summit", "summits", "wall", "walls", "cliff", "cliffs", "peak", "peaks",
+    "top",
+)
+_CORRIDOR_HEIGHT_REFERENTS: tuple[str, ...] = (
+    "altitude", "altitudes", "jump", "jumps", "deck", "decks", "drop", "drops",
+)
+_VOLUME_HEIGHT_REFERENTS: tuple[str, ...] = (
+    "depth", "depths", "ceiling", "ceilings",
+)
+# Tier 1 and tier 2 disagreeing by more than this fraction is a schema-fill
+# FIDELITY signal, not an error: the brief and the schema both named a height
+# and the model changed it on the way through. Tier 1 still wins — an explicit
+# schema figure is the authored intent — but a silent 4x rewrite is exactly the
+# class of loss this sidecar exists to make visible.
+_FACT_DISAGREEMENT_FRACTION = 0.25
 
 
 class LayoutStrictError(ValueError):
@@ -394,7 +438,7 @@ def _text_altitudes(text: str) -> list[tuple[float, str]]:
         window = text[lo:m.end() + _ALT_CONTEXT_WINDOW]
         if not _hits(window, _ALT_CONTEXT_WORDS):
             continue
-        metres = float(m.group(1)) * _ALT_UNIT_TO_M[m.group(2)]
+        metres = float(m.group(1)) * UNIT_TO_M[m.group(2)]
         if _CORRIDOR_HEIGHT_MIN <= metres <= _CORRIDOR_HEIGHT_MAX:
             out.append((metres, m.group(0).strip()))
     return out
@@ -418,24 +462,102 @@ def entity_altitudes(schema) -> list[tuple[str, float]]:
     return out
 
 
-def _schema_height(schema, default: float, default_name: str
-                   ) -> tuple[float, str, bool]:
-    """(height_m, why, used_default) for any primitive that needs a vertical
-    extent.
+def _schema_dimension(schema) -> Optional[tuple[float, str]]:
+    """(metres, why) for a vertical extent the SCHEMA itself states, or None.
 
-    Schema data wins in this order: baked entity altitude (real geometry), then
-    altitude/deck figures parsed from the prose, then the caller's named
-    default with a warning. Never guesses from locomotion or genre.
+    Baked entity altitude first — that is real geometry, either authored or
+    banded by an earlier run of this pass — then altitude/deck figures parsed
+    out of the schema's own prose. Never guesses from locomotion or genre.
     """
     baked = [y for _n, y in entity_altitudes(schema) if y >= _ALTITUDE_EVIDENCE_M]
     if baked:
         h = min(_CORRIDOR_HEIGHT_MAX, max(baked))
-        return round(h, 3), f"top of baked entity altitude data ({h:g} m)", False
+        return round(h, 3), f"top of baked entity altitude data ({h:g} m)"
     readings = _text_altitudes(_schema_text(schema))
     if readings:
         metres, span = max(readings, key=lambda r: (r[0], r[1]))
         return (round(metres, 3),
-                f"highest altitude figure in the schema text ({span!r})", False)
+                f"highest altitude figure in the schema text ({span!r})")
+    return None
+
+
+def _disagrees(a: float, b: float) -> bool:
+    """True when two readings of the same dimension are far enough apart to be
+    different DESIGNS rather than different roundings."""
+    scale = max(abs(a), abs(b))
+    return scale > 0.0 and abs(a - b) / scale > _FACT_DISAGREEMENT_FRACTION
+
+
+def _schema_height(schema, default: float, default_name: str,
+                   referents: Sequence[str]) -> tuple[float, str, bool]:
+    """(height_m, why, used_default) for any primitive that needs a vertical
+    extent. One consumption rule, shared by every dimension:
+
+      1. the schema's own figure — baked altitude or a parsed prose reading —
+         wins whenever there is one;
+      2. else a spatial fact the BRIEF stated whose referent names this
+         dimension (see `_SURFACE_HEIGHT_REFERENTS` and friends), largest
+         first, because the schema-fill LLM routinely compresses the brief's
+         numbers away and layout would otherwise default silently;
+      3. else the caller's named default, with the warning it has always had.
+
+    Tier 2 exists because of a live failure: a brief said "the summit is a
+    nerve cluster 900m up", the schema that came back carried no height at all,
+    and a 60 m default wall was built for it. The number was in the brief the
+    whole time — it just had no way past Step 3 (see
+    src/unity_spatial_facts.py).
+
+    When tiers 1 and 2 BOTH have an answer and they disagree materially, tier 1
+    still wins — an explicit schema figure is authored intent — but the gap is
+    logged. That is a schema-fill fidelity signal, not an error.
+
+    The `[layout.facts]` tag lives in the LOG, never in the returned `why`.
+    `why` ends up inside a Rich `console.print` in the pipeline, and Rich reads
+    `[layout.facts]` as a markup tag and silently deletes it — caught live, the
+    e2e printed "height H=900 m ( sized from the brief". Same reason
+    `[layout.strict]` only ever appears in exception text.
+
+    The primary decision logs at WARNING, not INFO: main.py defaults the level
+    to WARNING, and tier 2 firing always means schema-fill dropped a figure the
+    brief stated. That is worth the same default visibility as the tier-3
+    fallback warning it replaces — recovered, but still a loss. The runner-up
+    candidates stay at INFO for `--verbose`.
+    """
+    facts = spatial_facts_of(schema)
+    candidates = match_facts(facts, referents,
+                             _CORRIDOR_HEIGHT_MIN, _CORRIDOR_HEIGHT_MAX)
+    schema_reading = _schema_dimension(schema)
+
+    if schema_reading is not None:
+        metres, why = schema_reading
+        if candidates and _disagrees(metres, candidates[0].value_m):
+            top = candidates[0]
+            _log.warning(
+                "[layout.facts] %r: the schema says %g m but the brief says "
+                "%s. Using the schema figure (authored intent wins), but the "
+                "gap means schema-fill changed a number the brief stated.",
+                schema.project_name, metres, top.describe())
+            why += (f"; brief disagrees — {top.value_m:g} m from "
+                    f"{top.referent_text!r}")
+        return metres, why, False
+
+    if candidates:
+        top = candidates[0]
+        _log.warning(
+            "[layout.facts] %r: the schema carries no figure for this "
+            "dimension, so it is sized from the brief — %s. schema-fill "
+            "dropped a number the brief stated; the sidecar recovered it.",
+            schema.project_name, top.describe())
+        for other in candidates[1:]:
+            _log.info("[layout.facts] %r: also considered — %s",
+                      schema.project_name, other.describe())
+        why = f"spatial fact from the brief — {top.describe()}"
+        if len(candidates) > 1:
+            why += (f"; largest of {len(candidates)} matching facts "
+                    f"({', '.join(f'{c.value_m:g} m' for c in candidates[1:])} "
+                    "also matched)")
+        return top.value_m, why, False
+
     return (default,
             f"named default {default_name} ({default:g} m) — schema carries no "
             "altitude or deck figure", True)
@@ -445,13 +567,15 @@ def corridor_height(schema) -> tuple[float, str, bool]:
     """Vertical extent of a VerticalCorridor — the drop from exit to terminal
     plane."""
     return _schema_height(schema, _CORRIDOR_HEIGHT_DEFAULT,
-                          "_CORRIDOR_HEIGHT_DEFAULT")
+                          "_CORRIDOR_HEIGHT_DEFAULT",
+                          _CORRIDOR_HEIGHT_REFERENTS)
 
 
 def surface_height(schema) -> tuple[float, str, bool]:
     """Vertical extent of a VerticalSurface — base to summit of the wall."""
     return _schema_height(schema, _SURFACE_HEIGHT_DEFAULT,
-                          "_SURFACE_HEIGHT_DEFAULT")
+                          "_SURFACE_HEIGHT_DEFAULT",
+                          _SURFACE_HEIGHT_REFERENTS)
 
 
 def volume_height(schema) -> tuple[float, str, bool]:
@@ -459,7 +583,8 @@ def volume_height(schema) -> tuple[float, str, bool]:
     water surface). Same schema evidence, smaller default: a play box is not a
     jump run."""
     return _schema_height(schema, _VOLUME_HEIGHT_DEFAULT,
-                          "_VOLUME_HEIGHT_DEFAULT")
+                          "_VOLUME_HEIGHT_DEFAULT",
+                          _VOLUME_HEIGHT_REFERENTS)
 
 
 # ── Axis derivation ──────────────────────────────────────────────────────────
