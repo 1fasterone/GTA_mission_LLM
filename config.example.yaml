@@ -7,6 +7,10 @@ lm_studio:
   timeout: 600
   concept_temperature: 0.85
   schema_temperature: 0.2
+  # Reasoning effort for the steps that reason (concept). "none" | "minimal" |
+  # "low" | "high". Mechanical steps always send "none"; --no-think forces
+  # "none" everywhere. LM Studio honours only this field for the toggle.
+  reasoning_effort: high
   # seed: 1234                     # fixed sampler seed → reproducible LLM output (unset = random)
 
 ollama:                            # used when lm_studio.backend == "ollama"

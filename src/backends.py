@@ -48,6 +48,8 @@ def active_chat_cfg(config: dict) -> dict:
             "seed":        ollama.get("seed", lm_cfg.get("seed")),
             "concept_temperature": lm_cfg.get("concept_temperature", 0.85),
             "schema_temperature":  lm_cfg.get("schema_temperature", 0.2),
+            "reasoning_effort": ollama.get("reasoning_effort",
+                                           lm_cfg.get("reasoning_effort")),
         }
 
     # default: lm_studio
@@ -61,6 +63,7 @@ def active_chat_cfg(config: dict) -> dict:
         "seed":        lm_cfg.get("seed"),
         "concept_temperature": lm_cfg.get("concept_temperature", 0.85),
         "schema_temperature":  lm_cfg.get("schema_temperature", 0.2),
+        "reasoning_effort": lm_cfg.get("reasoning_effort"),
     }
 
 
@@ -74,6 +77,7 @@ def make_chat_client(config: dict) -> LMStudioClient:
         max_tokens  = cfg["max_tokens"],
         timeout     = cfg["timeout"],
         seed        = cfg.get("seed"),
+        reasoning_effort = cfg.get("reasoning_effort"),
     )
 
 

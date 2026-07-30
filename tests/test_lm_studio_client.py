@@ -322,6 +322,25 @@ class TestChatReasoningModels:
         assert "/no_think" not in captured["user_content"]
         assert "my prompt" in captured["user_content"]
 
+    def test_reasoning_effort_is_always_sent_explicitly(self, client):
+        """The `/no_think` prefix above is IGNORED by LM Studio + qwen3.5-9b —
+        `reasoning_effort` is the only control the server honours. Measured:
+        "none" and an omitted field both produce 0 reasoning chars, "high"
+        produces ~3.7k. Because the server default is OFF, omitting the field
+        made thinking=True a no-op — the concept step asked to reason and
+        never did. Both directions must be explicit."""
+        for thinking, want in ((False, "none"), (True, "high")):
+            payload = client._build_payload("sys", "u", None, thinking, None)
+            assert payload["reasoning_effort"] == want, (thinking, payload)
+
+    def test_configured_reasoning_effort_overrides_the_on_value(self):
+        """`lm_studio.reasoning_effort` dials the steps that DO reason; the
+        mechanical steps stay off regardless."""
+        from src.lm_studio_client import LMStudioClient
+        c = LMStudioClient(base_url="http://x/v1", reasoning_effort="low")
+        assert c._build_payload("s", "u", None, True, None)["reasoning_effort"] == "low"
+        assert c._build_payload("s", "u", None, False, None)["reasoning_effort"] == "none"
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # _drop_surplus_closers  (the mirror of _repair_truncated_json)
