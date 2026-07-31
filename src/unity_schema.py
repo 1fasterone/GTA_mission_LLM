@@ -97,6 +97,17 @@ def _norm_hex(v: str, default: str = "#FFFFFF") -> str:
     return s if _HEX_RE.match(s) else default
 
 
+def _role_key(name: str) -> str:
+    """Single-token comparable form of a character/entity name.
+
+    Schema entity names are single-token by parser requirement
+    ("GrandmaEdna"), while CharacterSpec names may carry the display form
+    ("Grandma Edna") -- both collapse to "grandmaedna" so the role-graph
+    cross-check (UnitySchema.enforce_role_graph) can match them.
+    """
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
 _DEFAULT_PALETTES: dict[str, dict[str, str]] = {
     "cartoon":   {"name": "Cartoon",   "primary": "#4A90E2", "secondary": "#7ED321",
                   "accent": "#F5A623", "background": "#87CEEB", "trim": "#FFFFFF"},
@@ -1223,6 +1234,86 @@ class UnitySchema(BaseModel):
             pal_data = _DEFAULT_PALETTES.get(self.visual_style,
                                              _DEFAULT_PALETTES["stylized"])
             self.color_palette = ColorPalette(**pal_data)
+        return self
+
+    # -- Role-graph invariants (cross-field; runs after per-entity guards) -----
+    # A role inversion -- the boss filled in as role="player" and the real
+    # player demoted -- is schema-valid in BOTH orientations, so field-level
+    # coercion can never repair it; only a cross-field check can. Two ground
+    # truths make the repair deterministic and LLM-free: entity tags are
+    # assigned by the pre-flight tagger from the brief's ENTITIES list, and
+    # EntitySpec._reserve_player_tag has already stripped "Player" from
+    # never-player kinds before this root validator runs. Repairs are applied
+    # in place and logged to meta["role_lint"]["repairs"]; anything that
+    # cannot be derived without guessing is recorded under
+    # meta["role_lint"]["violations"] for the Step-7 playability gate to
+    # score -- never a hard failure, because one bad role must not throw away
+    # an otherwise valid schema (same lesson as WiringMap._accept_list).
+
+    @model_validator(mode="after")
+    def enforce_role_graph(self) -> "UnitySchema":
+        repairs:    list[str] = []
+        violations: list[str] = []
+
+        # R1 -- "Player" is a schema-wide SINGLETON tag. The per-entity guard
+        # (_reserve_player_tag) sees one entity at a time, so duplicates across
+        # groups survive it. Unity's FindWithTag returns an arbitrary match,
+        # so a duplicate breaks camera/weapon/AI wiring nondeterministically
+        # (the AstralArena failure). Keep the strongest holder -- kind="player"
+        # first, else declaration order -- and untag the rest.
+        holders = [e for e in self.entities if e.tag == "Player"]
+        if len(holders) > 1:
+            keep = next((e for e in holders
+                         if (e.kind or "").lower() == "player"), holders[0])
+            for e in holders:
+                if e is not keep:
+                    e.tag = "Untagged"
+                    repairs.append(
+                        f"R1: stripped duplicate Player tag from entity "
+                        f"{e.name!r} (kept {keep.name!r})")
+
+        # R2 -- characters[] must agree with the deterministic entity tags.
+        # The character matching the Player-tagged entity IS the player; a
+        # character whose entity is hostile-tagged can never be role="player".
+        # This is the inversion catcher, and the repair source is the entity
+        # layer, not the LLM.
+        if self.characters:
+            tag_by_key  = {_role_key(e.name): e.tag for e in self.entities}
+            kind_by_key = {_role_key(e.name): (e.kind or "").lower()
+                           for e in self.entities}
+            for c in self.characters:
+                key  = _role_key(c.name) or _role_key(c.id)
+                tag  = tag_by_key.get(key)
+                kind = kind_by_key.get(key, "")
+                if tag == "Player" and c.role != "player":
+                    repairs.append(
+                        f"R2: character {c.name!r} matches the Player-tagged "
+                        f"entity but had role={c.role!r} -> 'player'")
+                    c.role = "player"
+                elif c.role == "player" and (tag == "Enemy"
+                                             or kind in ("enemy", "boss")):
+                    demoted = "boss" if kind == "boss" else "enemy"
+                    repairs.append(
+                        f"R2: character {c.name!r} had role='player' but its "
+                        f"entity is hostile-tagged -> {demoted!r}")
+                    c.role = demoted
+
+            # R3 -- exactly one player once any characters exist. After R2 the
+            # remaining failure modes have no derivable repair (zero players
+            # with no Player-tagged entity to promote from; two players both
+            # matching neutral entities), so record for the playability gate
+            # instead of guessing.
+            players = [c.name for c in self.characters if c.role == "player"]
+            if len(players) != 1:
+                violations.append(
+                    f"R3: role graph needs exactly 1 player character, "
+                    f"found {len(players)}: {players or 'none'}")
+
+        if repairs or violations:
+            lint = dict(self.meta.get("role_lint") or {})
+            lint["repairs"]    = list(lint.get("repairs")    or []) + repairs
+            lint["violations"] = list(lint.get("violations") or []) + violations
+            self.meta["role_lint"] = lint
         return self
 
     def unresolved_packages(self) -> list[str]:
