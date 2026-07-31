@@ -232,3 +232,92 @@ class TestEnvironmentSpec:
         from src.unity_schema import EnvironmentSpec
         assert EnvironmentSpec(fog_color="ff8844").fog_color == "#FF8844"
         assert EnvironmentSpec(fog_color=None).fog_color is None
+
+
+# ── Role-graph invariants ─────────────────────────────────────────────────────
+
+class TestRoleGraphInvariants:
+    """UnitySchema.enforce_role_graph — cross-field role checks.
+
+    The motivating defect: a Step-3 schema-fill that inverted the character
+    role graph (the final boss filled in as role="player", the real player
+    demoted to an NPC). Both orientations are schema-valid, so only a
+    cross-field check against the deterministic entity tags can catch it.
+    """
+
+    @staticmethod
+    def _base(**overrides):
+        kwargs = dict(
+            project_name="AntiqueShop", game_type="3D", platform="pc",
+            render_pipeline="URP",
+        )
+        kwargs.update(overrides)
+        return UnitySchema(**kwargs)
+
+    def test_inverted_roles_repaired_from_entity_tags(self):
+        """The run-#4 inversion: boss as player, player as npc — both flipped
+        back deterministically, sourced from the entity tags, and logged."""
+        s = self._base(
+            entities=[
+                {"name": "GrandmaEdna",  "kind": "player", "tag": "Player"},
+                {"name": "TheAppraiser", "kind": "boss",   "tag": "Enemy"},
+            ],
+            characters=[
+                {"id": "appraiser", "name": "TheAppraiser", "role": "player"},
+                {"id": "edna",      "name": "GrandmaEdna",  "role": "npc"},
+            ],
+        )
+        roles = {c.name: c.role for c in s.characters}
+        assert roles["GrandmaEdna"] == "player"
+        assert roles["TheAppraiser"] == "boss"
+        repairs = s.meta["role_lint"]["repairs"]
+        assert len(repairs) == 2
+        assert not s.meta["role_lint"].get("violations")
+
+    def test_display_name_matches_single_token_entity(self):
+        """CharacterSpec may carry the display form; keys must still match."""
+        s = self._base(
+            entities=[{"name": "GrandmaEdna", "kind": "player", "tag": "Player"}],
+            characters=[{"id": "edna", "name": "Grandma Edna", "role": "npc"}],
+        )
+        assert s.characters[0].role == "player"
+
+    def test_correct_roles_untouched_and_unlogged(self):
+        s = self._base(
+            entities=[
+                {"name": "GrandmaEdna",  "kind": "player", "tag": "Player"},
+                {"name": "TheAppraiser", "kind": "boss",   "tag": "Enemy"},
+            ],
+            characters=[
+                {"id": "edna",      "name": "GrandmaEdna",  "role": "player"},
+                {"id": "appraiser", "name": "TheAppraiser", "role": "boss"},
+            ],
+        )
+        assert "role_lint" not in s.meta
+
+    def test_duplicate_player_tag_stripped_to_singleton(self):
+        """R1: per-entity _reserve_player_tag can't see siblings; the root
+        keeps the kind='player' holder and untags the rest (AstralArena)."""
+        s = self._base(entities=[
+            {"name": "WeaponModels", "kind": "vehicle", "tag": "Player"},
+            {"name": "GrandmaEdna",  "kind": "player",  "tag": "Player"},
+        ])
+        tags = {e.name: e.tag for e in s.entities}
+        assert tags["GrandmaEdna"] == "Player"
+        assert tags["WeaponModels"] == "Untagged"
+        assert any("R1" in r for r in s.meta["role_lint"]["repairs"])
+
+    def test_no_player_character_is_violation_not_failure(self):
+        """R3: underivable defects are recorded for the playability gate,
+        never raised — one bad role must not discard a valid schema."""
+        s = self._base(characters=[
+            {"id": "a", "name": "AuctionRaider", "role": "enemy"},
+        ])
+        assert s.project_name == "AntiqueShop"   # schema still valid
+        assert any("R3" in v for v in s.meta["role_lint"]["violations"])
+
+    def test_no_characters_no_lint(self):
+        """Legacy schemas without CharacterSpec stay byte-identical."""
+        s = self._base(entities=[{"name": "GrandmaEdna", "kind": "player",
+                                  "tag": "Player"}])
+        assert "role_lint" not in s.meta
