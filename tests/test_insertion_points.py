@@ -24,6 +24,7 @@ from src.micro.code_fields import (
     lint_vector3_raw_call_arg, find_vector3_raw_call_args,
     lint_undeclared_catch_exception_var, lint_vector3_entity_prop_misuse,
     find_vector3_entity_prop_misuse, _code_brace_depth,
+    _split_nested_members, _repair_numeric_literals,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -140,6 +141,161 @@ def test_out_param_still_declared_in_real_code():
 ])
 def test_out_param_declaration_respects_code_boundaries(fragment, expected, why):
     assert expected in lint_code_fragment(fragment, what="x"), why
+
+
+# ── CS1002: invalid numeric literal suffix (live: PauseMenu.cs(18,173)) ──────
+
+def test_lint_drops_invalid_numeric_literal_suffix():
+    """`-1i` ended the declaration early and cost three diagnostics."""
+    assert _repair_numeric_literals("int _seed = -1i;") == "int _seed = -1;"
+
+
+def test_lint_field_default_numeric_suffix_repaired():
+    fields = [CodeField(name="_shopLayoutSeed", type="int", default="-1i")]
+    assert lint_fields(fields, reserved=set())[0].default == "-1"
+
+
+@pytest.mark.parametrize("src, why", [
+    ("float x = 3.5f;",     "f is a real suffix"),
+    ("ulong n = 100UL;",    "UL is an integer suffix"),
+    ("decimal d = 5m;",     "m is a decimal suffix"),
+    ("double e = 1.5e3d;",  "exponent plus a valid suffix"),
+    ("int h = 0x1F;",       "hex digits are not a suffix"),
+    ("var v = _x2 + y3;",   "identifiers ending in digits are untouched"),
+])
+def test_lint_keeps_valid_numeric_literals(src, why):
+    assert _repair_numeric_literals(src) == src, why
+
+
+def test_numeric_repair_ignores_comments_and_strings():
+    src = 'var s = "cost: 5i"; // was 7i\nint n = 3i;'
+    out = _repair_numeric_literals(src)
+    assert '"cost: 5i"' in out and "// was 7i" in out
+    assert "int n = 3;" in out
+
+
+# ── CS0106: member declaration nested in a method body (live: PlayerFSM.cs) ───
+
+_NESTED_LIVE = """if (Input.GetButtonDown(_rewindInputAxisName))
+{
+    Invoke(nameof(TriggerRewind), 0.1f);
+}
+
+private void TriggerRewind()
+{
+    _temporalIntegrityMeter -= 5f;
+}"""
+
+
+def test_nested_member_is_hoisted_not_demoted():
+    body, hoisted = _split_nested_members(_NESTED_LIVE)
+    assert len(hoisted) == 1
+    assert hoisted[0].signature == "private void TriggerRewind()"
+    assert "_temporalIntegrityMeter -= 5f;" in hoisted[0].body
+    # The declaration is gone from the body, but its call site survives —
+    # Invoke() resolves by reflection, so a local function would break at run
+    # time even though it would compile.
+    assert "private void TriggerRewind" not in body
+    assert "Invoke(nameof(TriggerRewind), 0.1f);" in body
+
+
+def test_nested_member_braces_balance_so_balancer_cannot_see_it():
+    """Guards the reason this needed its own pass: the characters balance."""
+    assert _code_brace_depth(_NESTED_LIVE) == 0
+
+
+def test_nested_member_left_alone_without_a_hoist_channel():
+    out = lint_code_fragment(_NESTED_LIVE, what="body")
+    assert "private void TriggerRewind()" in out
+
+
+def test_nested_member_hoisted_through_lint_code_fragment():
+    sink: list[CodeMethod] = []
+    out = lint_code_fragment(_NESTED_LIVE, what="body", hoist_into=sink)
+    assert [m.signature for m in sink] == ["private void TriggerRewind()"]
+    assert "private void TriggerRewind" not in out
+
+
+def test_deeper_nested_member_is_not_touched():
+    """Only depth 0 of a body is the CS0106 defect; a local function is legal."""
+    src = "if (x)\n{\n    void Helper() { _n++; }\n    Helper();\n}"
+    body, hoisted = _split_nested_members(src)
+    assert hoisted == [] and body == src
+
+
+def test_unbalanced_nested_member_is_left_to_the_gate():
+    src = "private void Broken()\n{\n    _n++;"
+    body, hoisted = _split_nested_members(src)
+    assert hoisted == [] and body == src
+
+
+def test_lint_extensible_rehomes_nested_member_to_class_level():
+    schema = CodeExtensibleSchema(
+        extra_methods=[CodeMethod(signature="private void OnRewindInputPressed()",
+                                  body=_NESTED_LIVE)],
+    )
+    lint_extensible(schema, reserved_fields=set(), template_usings=set())
+    sigs = [m.signature for m in schema.extra_methods]
+    assert "private void OnRewindInputPressed()" in sigs
+    assert "private void TriggerRewind()" in sigs, "hoisted to a sibling method"
+    owner = next(m for m in schema.extra_methods
+                 if m.signature == "private void OnRewindInputPressed()")
+    assert "private void TriggerRewind" not in owner.body
+
+
+def test_lint_extensible_dedupes_hoisted_against_authored():
+    schema = CodeExtensibleSchema(
+        extra_methods=[
+            CodeMethod(signature="private void TriggerRewind()", body="_n -= 1f;"),
+            CodeMethod(signature="private void OnRewindInputPressed()",
+                       body=_NESTED_LIVE),
+        ],
+    )
+    lint_extensible(schema, reserved_fields=set(), template_usings=set())
+    names = [m.signature for m in schema.extra_methods]
+    assert names.count("private void TriggerRewind()") == 1
+
+
+# ── CS1056: undecoded \n escapes (live: WorldInteractable.cs(87,59)) ─────────
+
+def test_lint_decodes_literal_newline_escapes():
+    src = (r'if (string.IsNullOrEmpty(_p)) return;\n\nDebug.Log("x");'
+           r'\n// Trigger the ability.')
+    out = lint_code_fragment(src, what="body")
+    assert "\\n" not in out
+    assert "Debug.Log" in out
+    # The trailing comment must land on its own line, not swallow the code.
+    assert out.splitlines()[-1].strip().startswith("//")
+
+
+def test_escape_decoding_spares_real_string_literals():
+    """`\\n` inside a C# string is a legitimate escape and must survive."""
+    src = 'Debug.Log("line one\\nline two");'
+    assert lint_code_fragment(src, what="body") == src
+
+
+# ── CS1014: property authored through the method channel (SceneTransition) ────
+
+def test_property_body_gets_a_get_accessor():
+    m = CodeMethod(signature="public bool IsPlaying",
+                   body="return Time.time >= _start;")
+    out = lint_method(m, taken_names=set())
+    assert out is not None
+    assert out.body.startswith("get")
+    assert "return Time.time >= _start;" in out.body
+
+
+def test_property_with_existing_accessor_is_untouched():
+    m = CodeMethod(signature="public bool IsPlaying",
+                   body="get { return _v; }\nset { _v = value; }")
+    out = lint_method(m, taken_names=set())
+    assert out is not None and not out.body.startswith("get\n{\nget")
+
+
+def test_real_method_signature_is_not_treated_as_a_property():
+    m = CodeMethod(signature="public bool IsPlaying()", body="return _v;")
+    out = lint_method(m, taken_names=set())
+    assert out is not None and out.body == "return _v;"
 
 
 def test_lint_leaves_surplus_closers_alone():
