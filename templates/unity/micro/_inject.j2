@@ -10,9 +10,24 @@ using {{ u }};
 {%- endfor %}
 {%- endmacro %}
 
+{# One field declaration, split into parts so a generator that needs its own
+   loop, indentation or attribute placement can reuse the DECLARATION TEXT
+   without copying it. That text is what carried both injection defects found
+   so far — an unescaped quote inside [Tooltip("…")] (CS1003) and an invalid
+   `= 0i` initializer (CS1002) — and each fix had to be chased across every
+   copy of it. Seven generators keep their own surrounding whitespace, so the
+   parts are separate rather than one all-or-nothing macro.
+
+   Each macro is defined on ONE line: the micro Jinja env sets neither
+   trim_blocks nor lstrip_blocks (src/micro_pipeline.py), so a multi-line body
+   would leak its own newlines into every caller. #}
+{% macro attrs(f) %}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}{% endmacro %}
+{% macro decl(f) %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};{% endmacro %}
+{% macro field(f) %}{{ attrs(f) }}{{ decl(f) }}{% endmacro %}
+
 {% macro fields(s) -%}
 {% for f in s.extra_fields %}
-{{ "    " }}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
+{{ "    " }}{{ field(f) }}
 {%- endfor %}
 {%- endmacro %}
 

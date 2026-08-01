@@ -1357,8 +1357,163 @@ def clamp_enum(v: str, allowed: tuple[str, ...], default: str) -> str:
     return default
 
 
+# ── Field initializer sanitizing ──────────────────────────────────────────────
+# `default` is the one injected value that is not INSIDE a literal — it IS the
+# initializer expression, spliced raw into `private {type} {name} = {default};`
+# by all thirteen render sites (templates/unity/micro/_inject.j2, the seven
+# generators carrying an inline copy of it, SaveData.cs.j2, CustomBehaviour.cs.j2,
+# templates/gta5/micro/_inject.j2, mission.cs.j2, minigame.cs.j2). That is why
+# `escape_cs_string` deliberately skips it (see CodeField._escape_for_literal) —
+# but nothing validated it either, so whatever the model wrote reached the file
+# verbatim. Hit live on a ChronosDecay run, where the model generalised the
+# prompt's own float example (`"default": "0f"`) to the integer case:
+#
+#     [SerializeField] private int _timelineIntegrityBreachCount = 0i;
+#
+# → SaveSystem.cs(16,175): CS1002, then two CS1519. `i` is not a C# numeric
+# suffix; the entire valid set is f/d/m/u/l and the u+l combinations.
+#
+# Same doctrine as every other lint_* pass here: repair what is unambiguous,
+# drop what is not, never raise. A dropped initializer still compiles — C#
+# zero-initialises the field.
+
+# Valid C# numeric literal suffixes, lower-cased. Trailing letters outside this
+# set are invented and are a syntax error whatever the declared type is.
+_CS_NUM_SUFFIXES  = frozenset({"", "f", "d", "m", "u", "l", "ul", "lu"})
+_CS_INT_SUFFIXES  = frozenset({"u", "l", "ul", "lu"})
+_INTEGRAL_TYPES   = frozenset({"int", "uint", "long", "ulong",
+                               "short", "ushort", "byte", "sbyte"})
+_HEX_BIN_LITERAL_RE = re.compile(r"^[+-]?0[xXbB][0-9a-fA-F_]+(?P<sfx>[A-Za-z]*)$")
+_DEC_LITERAL_RE = re.compile(
+    r"^(?P<num>[+-]?(?:\d[\d_]*(?:\.[\d_]*)?|\.[\d_]+))"
+    r"(?P<exp>[eE][+-]?\d+)?"
+    r"(?P<sfx>[A-Za-z]*)$")
+_STRING_LITERAL_PREFIXES = ('"', '@"', '$"', '$@"', '@$"')
+_STRING_SENTINELS = frozenset({"null", "string.empty", "default"})
+_PY_LITERALS = {"none": "null", "true": "true", "false": "false"}
+
+
+def _unescaped_quote_count(text: str) -> int:
+    """Count `"` characters that actually open or close a literal (a `\\"` does
+    neither). An odd total means the literal is never terminated."""
+    count, i = 0, 0
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == '"':
+            count += 1
+        i += 1
+    return count
+
+
+def _initializer_is_structurally_safe(text: str) -> bool:
+    """True when `text` can stand as `= <text>;` without corrupting the file.
+
+    The declaration is emitted on ONE line, so a newline, a stray `;` or an
+    unclosed bracket does not merely mistype this field — it swallows or splits
+    every member after it. Brackets and semicolons are judged at CODE positions
+    only (`_code_mask`), so a `;` inside `"a;b"` is not held against it.
+    """
+    if "\n" in text or "\r" in text:
+        return False
+    if _unescaped_quote_count(text) % 2:
+        return False                                   # unterminated literal
+    mask = _code_mask(text)
+    depth = {"(": 0, "[": 0, "{": 0}
+    closers = {")": "(", "]": "[", "}": "{"}
+    for i, ch in enumerate(text):
+        if not mask[i]:
+            continue
+        if ch == ";":
+            return False
+        if ch in depth:
+            depth[ch] += 1
+        elif ch in closers:
+            depth[closers[ch]] -= 1
+            if depth[closers[ch]] < 0:
+                return False
+    return not any(depth.values())
+
+
+def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
+    """Coerce an LLM-authored initializer into a literal that parses as
+    `= <default>;` for the declared type. Returns None to drop the initializer.
+
+    Repairs, in order: Python literals (`None`/`True`), bool and string shapes,
+    then numeric suffix/type agreement. An arbitrary expression
+    (`new Vector3(0f, 1f, 0f)`, `Color.white`) cannot be retyped from here, so
+    only the structural guard applies to it.
+    """
+    if default is None:
+        return None
+    text = default.strip()
+    if not text:
+        return None
+    text = _PY_LITERALS.get(text.lower(), text)
+    base = type_str.strip().rstrip("?").strip().lower()
+
+    if base == "bool":
+        if text in ("true", "false"):
+            return text
+        if text in ("1", "0"):                         # CS0029 — int is not bool
+            return "true" if text == "1" else "false"
+        return None
+
+    if base == "string":
+        if (text.lower() in _STRING_SENTINELS
+                or text.startswith(_STRING_LITERAL_PREFIXES)):
+            return text if _initializer_is_structurally_safe(text) else None
+        # Bare prose the model forgot to quote (CS0103) — quoting keeps the
+        # authored value; dropping it would lose the content for no reason.
+        return f'"{escape_cs_string(text)}"'
+
+    # Hex/binary must be tried FIRST: in `0xFF` a decimal-shaped match would
+    # read the digits as an invented suffix and "repair" the value to 0.
+    hexbin = _HEX_BIN_LITERAL_RE.match(text)
+    if hexbin:
+        mant, exp, sfx = text[: hexbin.start("sfx")], "", hexbin.group("sfx")
+        fractional = False
+    else:
+        dec = _DEC_LITERAL_RE.match(text)
+        if dec is None:
+            # An expression (`new Vector3(0f, 1f, 0f)`, `Color.white`) — nothing
+            # here can retype it, so only the structural guard applies.
+            return text if _initializer_is_structurally_safe(text) else None
+        mant, exp, sfx = dec.group("num"), dec.group("exp") or "", dec.group("sfx")
+        # `2.` is not a C# real literal (`2.f` lexes as member access on an int),
+        # so normalise the dangling separator away rather than suffixing it.
+        if mant.endswith("."):
+            mant = mant[:-1]
+        fractional = bool(exp) or "." in mant
+
+    # Classify case-insensitively, but re-emit the author's own casing — `5L`
+    # must not come back as the far less readable `5l`.
+    kind = sfx.lower()
+    if kind not in _CS_NUM_SUFFIXES:
+        kind, sfx = "", ""                             # invented — `0i`, `5int`
+
+    if base in _INTEGRAL_TYPES:
+        # `int x = 2.5;` is CS0266 and there is no non-guessing repair:
+        # truncating invents a value, widening the field rewrites the author's
+        # declared type. Drop the initializer and let the field zero-init.
+        if fractional:
+            return None
+        return mant + exp + (sfx if kind in _CS_INT_SUFFIXES else "")
+    if base in ("float", "single"):                    # `float x = 0.5;` is CS0664
+        return mant + exp + (sfx if kind == "f" else "f")
+    if base == "double":
+        return mant + exp + (sfx if kind == "d" else "")
+    if base == "decimal":
+        return mant + exp + (sfx if kind == "m" else "m")
+    # Unknown declared type (an enum, a struct, `var`): the suffix is the only
+    # thing that is certainly wrong, so fix that and leave the value alone.
+    return mant + exp + sfx
+
+
 def lint_fields(fields: list[CodeField], *, reserved: set[str]) -> list[CodeField]:
-    """Drop fields whose name collides with template-emitted names or duplicates."""
+    """Drop fields whose name collides with template-emitted names or duplicates,
+    and repair initializers that would not parse (see `sanitize_default`)."""
     out: list[CodeField] = []
     seen: set[str] = set()
     for f in fields:
@@ -1367,6 +1522,15 @@ def lint_fields(fields: list[CodeField], *, reserved: set[str]) -> list[CodeFiel
             console.print(f"  [yellow]FIX[/]  dropped duplicate/reserved field {f.name!r}")
             continue
         seen.add(key)
+        fixed = sanitize_default(f.type, f.default)
+        if fixed != f.default:
+            if fixed is None:
+                console.print(f"  [yellow]FIX[/]  dropped uncompilable initializer "
+                              f"{f.default!r} on `{f.type} {f.name}`")
+            else:
+                console.print(f"  [magenta]FIX[/]  repaired initializer on "
+                              f"`{f.type} {f.name}`: {f.default!r} -> {fixed!r}")
+            f = f.model_copy(update={"default": fixed})
         out.append(f)
     return out
 
@@ -1468,6 +1632,14 @@ C# RULES:
 - Pure C#, never Python. No "using" lines inside bodies — put them in extra_usings.
 - No braces around extra_methods bodies — the template adds them.
 - Reference your own extra_fields by name; they become private members.
+- An extra_field "default" is the raw initializer, so it must be a literal that
+  is valid FOR THAT TYPE. The only C# numeric suffixes are f (float), d
+  (double), m (decimal) and u/l (integer width) — there is no suffix for int,
+  and no suffix is ever spelled with the type's first letter:
+    float -> "0f", "1.5f"   int  -> "0", "12"       (NEVER "0i")
+    double -> "0", "1.5"    bool -> "true"/"false"  (NEVER "True")
+  A string default must be a QUOTED C# literal (the JSON value therefore
+  contains the quote characters), or "null" — a bare word is not a literal.
 - Every prompt has SOME prompt-specific behavior — the brief you were given
   describes it. Author at least one extra_field and one extra_method (or
   awake_extra/update_extra statements) that implement it; do not fall back to
@@ -1586,6 +1758,14 @@ SHVDN RULES:
   GTA.UI.Notification.PostTicker("~y~text", false), GTA.Math.Vector3.
 - Pure C#, never Python. No "using" lines inside bodies — those go in extra_usings.
 - No braces around extra_methods bodies — the template adds them.
+- An extra_field "default" is the raw initializer, so it must be a literal that
+  is valid FOR THAT TYPE. The only C# numeric suffixes are f (float), d
+  (double), m (decimal) and u/l (integer width) — there is no suffix for int,
+  and no suffix is ever spelled with the type's first letter:
+    float -> "0f", "1.5f"   int  -> "0", "12"       (NEVER "0i")
+    double -> "0", "1.5"    bool -> "true"/"false"  (NEVER "True")
+  A string default must be a QUOTED C# literal (the JSON value therefore
+  contains the quote characters), or "null" — a bare word is not a literal.
 - OnTick fires many times per SECOND — accumulate Game.LastFrameTime for any
   per-second meter/countdown instead of decrementing every tick.
 - Every prompt has SOME prompt-specific behavior — the brief you were given
