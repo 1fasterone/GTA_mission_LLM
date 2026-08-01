@@ -167,6 +167,11 @@ _USING_RE = re.compile(r"^\s*using\s+[\w.]+\s*;\s*$", re.MULTILINE)
 # Methods longer than this get truncated with a TODO marker.
 _MAX_METHOD_LINES = 60
 
+# Ceiling on members lifted out of bodies in one lint pass (see
+# `_split_nested_members`). Real fragments hoist one or two; the bound only
+# exists so a pathological fragment cannot spin the queue in `lint_extensible`.
+_MAX_HOISTED_METHODS = 32
+
 
 def _strip_md_fences(text: str) -> str:
     return _MD_FENCE_RE.sub("", text)
@@ -327,6 +332,208 @@ def _balance_braces(text: str) -> str:
     return text
 
 
+# CS1056 ("Unexpected character '\'"): a fragment that arrives with JSON escape
+# sequences never decoded, so the whole body is one physical line carrying
+# literal backslash-n. Hit live on a grandma run,
+# WorldInteractable.cs(87,59):
+#
+#     if (string.IsNullOrEmpty(_t)) return;\n\nDebug.Log($"...");\n// comment
+#
+# Each `\` is a hard parse error and the trailing `//` then comments out
+# everything that followed on that one line. Decode only in CODE regions —
+# inside a C# string literal `\n` is a legitimate escape and must survive.
+_ESCAPED_WS_RE = re.compile(r"\\r\\n|\\n|\\t")
+
+
+def _decode_escaped_whitespace(text: str) -> str:
+    """Turn undecoded `\\n`/`\\t` escapes back into real whitespace."""
+    if "\\n" not in text and "\\t" not in text:
+        return text
+    mask = _code_mask(text)
+    out: list[str] = []
+    i = 0
+    changed = False
+    while i < len(text):
+        m = _ESCAPED_WS_RE.match(text, i)
+        if m and mask[i]:
+            out.append("\t" if m.group(0) == "\\t" else "\n")
+            i = m.end()
+            changed = True
+            continue
+        out.append(text[i])
+        i += 1
+    if not changed:
+        return text
+    console.print("  [magenta]FIX[/]  decoded literal \\n escapes in a "
+                  "fragment (CS1056)")
+    return "".join(out)
+
+
+# CS1002/CS1519: C# accepts a fixed set of numeric-literal suffixes — u/U, l/L
+# and their pairs for integers, f/F, d/D, m/M for reals. Models occasionally
+# reach for one from another language. Hit live on a grandma run,
+# PauseMenu.cs(18,173):
+#
+#     [SerializeField] private int _shopLayoutSeed = -1i;
+#
+# The stray `i` ends the declaration early (CS1002 "; expected") and the rest of
+# the line then parses as two more bogus member declarations (CS1519 x2) — three
+# diagnostics from one character. Drop the invalid suffix, keep the number.
+_VALID_NUM_SUFFIXES = {"u", "l", "ul", "lu", "f", "d", "m"}
+_NUM_SUFFIX_RE = re.compile(
+    r"(?<![\w.])"                          # not mid-identifier
+    r"(?!0[xXbB])"                         # 0x1F is one literal, not 0 + "x1F"
+    r"(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"    # the literal
+    r"([A-Za-z_]\w*)"                      # the suffix run
+)
+
+
+def _repair_numeric_literals(text: str) -> str:
+    """Strip numeric-literal suffixes C# does not accept.
+
+    A digits-then-letters run can only be a literal plus a suffix — C# has no
+    identifier starting with a digit — so this cannot corrupt a name. Hex and
+    binary literals are excluded outright: without that guard `0x1F` reads as
+    the literal `0` followed by the bogus suffix `x1F` and loses its value.
+    """
+    if not text:
+        return text
+    mask = _code_mask(text)
+    changed = False
+
+    def repl(m: "re.Match[str]") -> str:
+        nonlocal changed
+        if not mask[m.start(2)]:            # inside a comment or string literal
+            return m.group(0)
+        if m.group(2).lower() in _VALID_NUM_SUFFIXES:
+            return m.group(0)
+        changed = True
+        return m.group(1)
+
+    new = _NUM_SUFFIX_RE.sub(repl, text)
+    if changed:
+        console.print("  [magenta]FIX[/]  dropped invalid numeric literal "
+                      "suffix (CS1002)")
+    return new
+
+
+# CS0106: a member declaration nested INSIDE a method body. C# allows a local
+# FUNCTION there, but not an access modifier on it, so every `private`/`public`
+# helper the model tucks inside another method raises CS0106 — and the parser
+# then loses the class, cascading into CS1513/CS8803/CS1022. Hit live on the
+# grandma run, PlayerFSM.cs(70,2) — 11 of the run's 14 diagnostics traced to one
+# fragment:
+#
+#     private void OnRewindInputPressed()
+#     {
+#         if (Input.GetButtonDown(_rewindInputAxisName))
+#         { Invoke(nameof(TriggerRewind), 0.1f); }
+#
+#         private void TriggerRewind()          <- illegal here
+#         { _temporalIntegrityMeter -= 5f; }
+#     }
+#
+# Note the brace CHARACTERS balance, so `_balance_braces` correctly sees nothing
+# to do — this is a placement defect, not a counting one.
+#
+# The repair HOISTS the nested member out to class level rather than demoting it
+# to a local function by dropping the modifier. Demotion would compile and then
+# fail at runtime: `Invoke(nameof(TriggerRewind), 0.1f)` resolves by reflection
+# over the component's real methods, and a local function is not one. Hoisting
+# preserves both call sites and semantics.
+_ACCESS_MOD_HINT_RE = re.compile(r"\b(?:public|private|protected|internal)\b")
+_NESTED_MEMBER_RE = re.compile(
+    r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"
+    r"(?:public|private|protected|internal)\b"
+    r"(?:[ \t]+(?:static|virtual|override|sealed|async|extern|new|unsafe|partial))*"
+    r"[ \t]+[A-Za-z_][\w<>,\[\].?]*"       # return type
+    r"[ \t]+[A-Za-z_]\w*[ \t]*\("          # name (
+)
+
+
+def _member_block_end(text: str, mask: bytearray, start: int) -> Optional[int]:
+    """Index just past a member declaration beginning at `start`, or None."""
+    depth = 0
+    opened = False
+    for j in range(start, len(text)):
+        if not mask[j]:
+            continue
+        ch = text[j]
+        if ch == "{":
+            depth += 1
+            opened = True
+        elif ch == "}":
+            depth -= 1
+            if opened and depth == 0:
+                return j + 1
+        elif ch == ";" and not opened:
+            return j + 1                    # abstract / expression-bodied
+    return None
+
+
+def _split_member_block(block: str) -> tuple[str, str]:
+    """Split a captured member into (signature, body)."""
+    brace = block.find("{")
+    if brace < 0:
+        return "", ""
+    close = block.rfind("}")
+    if close < brace:
+        return "", ""
+    return block[:brace].strip(), block[brace + 1:close].strip()
+
+
+def _split_nested_members(text: str) -> tuple[str, list[CodeMethod]]:
+    """Lift member declarations the model nested inside a body fragment.
+
+    Returns `(remaining_body, hoisted)`. A fragment is a method body, so its
+    top level (depth 0) is already inside a method — an access-modified member
+    there is the CS0106 defect. Anything deeper is inside a nested block and is
+    left alone. If a captured member's braces don't close, nothing is changed
+    and the syntax gate reports it rather than this pass guessing.
+    """
+    if not text or not _ACCESS_MOD_HINT_RE.search(text):
+        return text, []
+    mask = _code_mask(text)
+    lines = text.splitlines(keepends=True)
+    offsets: list[int] = []
+    pos = 0
+    for ln in lines:
+        offsets.append(pos)
+        pos += len(ln)
+
+    kept: list[str] = []
+    hoisted: list[CodeMethod] = []
+    depth = 0
+    i = 0
+    while i < len(lines):
+        start = offsets[i]
+        if depth == 0 and _NESTED_MEMBER_RE.match(lines[i]):
+            end = _member_block_end(text, mask, start)
+            if end is None:
+                return text, []             # unbalanced — leave it to the gate
+            sig, body = _split_member_block(text[start:end])
+            if sig:
+                hoisted.append(CodeMethod(signature=sig, body=body))
+                while i < len(lines) and offsets[i] < end:
+                    i += 1
+                continue
+        line = lines[i]
+        for k in range(start, start + len(line)):
+            if mask[k]:
+                if text[k] == "{":
+                    depth += 1
+                elif text[k] == "}":
+                    depth -= 1
+        kept.append(line)
+        i += 1
+
+    if not hoisted:
+        return text, []
+    console.print(f"  [magenta]FIX[/]  hoisted {len(hoisted)} nested member "
+                  f"declaration(s) to class level (CS0106)")
+    return "".join(kept).strip(), hoisted
+
+
 def _cap_lines(text: str, *, what: str) -> str:
     lines = text.splitlines()
     if len(lines) <= _MAX_METHOD_LINES:
@@ -406,10 +613,16 @@ def _declare_inline_out_params(text: str) -> str:
     return new
 
 
-def lint_code_fragment(text: str, *, what: str) -> str:
+def lint_code_fragment(text: str, *, what: str,
+                       hoist_into: Optional[list[CodeMethod]] = None) -> str:
     """
     Clean an LLM-authored C# fragment intended for an injection point.
     Returns "" if the fragment is rejected (caller should skip it).
+
+    `hoist_into`, when given, receives any member declarations the model nested
+    inside the body (CS0106) so the caller can re-home them at class level.
+    Callers without a class-level channel omit it and the fragment is left as
+    authored for the syntax gate to report.
     """
     if not text:
         return ""
@@ -422,25 +635,75 @@ def lint_code_fragment(text: str, *, what: str) -> str:
     if _looks_like_prose(text):
         console.print(f"  [yellow]FIX[/]  rejected prose (not C#) {what}: {text[:60]!r}")
         return ""
+    # Before anything line-oriented: an undecoded `\n` makes the whole fragment
+    # one physical line, which hides its structure from every pass below.
+    text = _decode_escaped_whitespace(text)
     # Strip `using X;` lines — these belong in `extra_usings`, not the body.
     text = _USING_RE.sub("", text)
+    # Before any brace-sensitive pass: a nested member's braces are balanced,
+    # so leaving it in place would let _balance_braces conclude all is well.
+    if hoist_into is not None:
+        text, nested = _split_nested_members(text)
+        hoist_into.extend(nested)
     text = _repair_struct_member_assign(text)
     text = _declare_inline_out_params(text)
+    text = _repair_numeric_literals(text)
     text = _balance_braces(text)
     text = _cap_lines(text, what=what)
     return text.strip()
 
 
-def lint_method(m: CodeMethod, *, taken_names: set[str]) -> Optional[CodeMethod]:
+# CS1014 ("A get or set accessor expected"): the model authors a PROPERTY
+# through the method channel — a signature with no parameter list, and a body
+# that is a bare `return`. Hit live on a grandma run,
+# SceneTransition.cs(74):
+#
+#     public bool IsPlaying
+#     {
+#         return Time.time >= startTime && ...;      <- needs a get accessor
+#     }
+#
+# The template renders `signature { body }` verbatim, which is valid for a
+# method and invalid for a property. Wrapping the body in `get { … }` keeps the
+# member the model intended rather than dropping it or forcing parens onto it.
+_PROPERTY_SIG_RE = re.compile(
+    r"^(?:\[[^\]\n]*\]\s*)*"
+    r"(?:public|private|protected|internal)\b"
+    r"(?:\s+(?:static|virtual|override|sealed|new|readonly))*"
+    r"\s+[A-Za-z_][\w<>,\[\].?]*"          # type
+    r"\s+[A-Za-z_]\w*\s*$"                 # name, and nothing after it
+)
+_ACCESSOR_RE = re.compile(r"^\s*(?:get|set)\b\s*[{;=]", re.MULTILINE)
+
+
+def _wrap_property_accessor(sig: str, body: str) -> str:
+    """Give a parameterless property body the `get` accessor C# requires."""
+    if "(" in sig or not _PROPERTY_SIG_RE.match(sig):
+        return body
+    if _ACCESSOR_RE.search(body):
+        return body                        # already has get/set — leave alone
+    if not re.search(r"\breturn\b", body):
+        return body                        # not a readable property; gate reports
+    console.print("  [magenta]FIX[/]  wrapped property body in a get "
+                  "accessor (CS1014)")
+    indented = "\n".join(("    " + ln) if ln.strip() else ln
+                         for ln in body.splitlines())
+    return f"get\n{{\n{indented}\n}}"
+
+
+def lint_method(m: CodeMethod, *, taken_names: set[str],
+                hoist_into: Optional[list[CodeMethod]] = None) -> Optional[CodeMethod]:
     """
     Validate + clean a CodeMethod. Returns None if it should be dropped.
     `taken_names` is mutated with the method's lower-cased identifier so
-    duplicates are dropped.
+    duplicates are dropped. `hoist_into` collects members the model nested
+    inside this method's body — see `lint_code_fragment`.
     """
     sig  = m.signature.strip()
-    body = lint_code_fragment(m.body, what=f"method {sig!r}")
+    body = lint_code_fragment(m.body, what=f"method {sig!r}", hoist_into=hoist_into)
     if not body:
         return None
+    body = _wrap_property_accessor(sig, body)
     # Extract method name for dedupe (best-effort; brittle parse is OK here).
     name_match = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", sig)
     if name_match:
@@ -1377,9 +1640,12 @@ def clamp_enum(v: str, allowed: tuple[str, ...], default: str) -> str:
 # drop what is not, never raise. A dropped initializer still compiles — C#
 # zero-initialises the field.
 
-# Valid C# numeric literal suffixes, lower-cased. Trailing letters outside this
-# set are invented and are a syntax error whatever the declared type is.
-_CS_NUM_SUFFIXES  = frozenset({"", "f", "d", "m", "u", "l", "ul", "lu"})
+# Valid C# numeric literal suffixes, lower-cased — the same set the
+# fragment-level `_repair_numeric_literals` works from, plus "" for a bare
+# literal (an initializer may legitimately carry no suffix, a `12f` inside a
+# statement is matched only when one is present). Derived rather than restated
+# so the two passes can never disagree about what C# accepts.
+_CS_NUM_SUFFIXES  = frozenset(_VALID_NUM_SUFFIXES) | frozenset({""})
 _CS_INT_SUFFIXES  = frozenset({"u", "l", "ul", "lu"})
 _INTEGRAL_TYPES   = frozenset({"int", "uint", "long", "ulong",
                                "short", "ushort", "byte", "sbyte"})
@@ -1522,6 +1788,17 @@ def lint_fields(fields: list[CodeField], *, reserved: set[str]) -> list[CodeFiel
             console.print(f"  [yellow]FIX[/]  dropped duplicate/reserved field {f.name!r}")
             continue
         seen.add(key)
+        # `default` is interpolated raw into the declaration, so anything wrong
+        # with it is a compile error the syntax gate can only report after the
+        # fact (`private int _seed = -1i;` and `= 0i;`, both live).
+        #
+        # `sanitize_default` rather than `_repair_numeric_literals` here: it
+        # subsumes the suffix strip for this position (`-1i` -> `-1`) and adds
+        # what only a DECLARATION can know — the declared type. That type is
+        # what turns `0.5` into CS0664 on a float field and `2.5` into CS0266 on
+        # an int one, and it is unavailable to the fragment-level pass, which
+        # sees loose statements with no declaration in view.
+        # `_repair_numeric_literals` keeps its own job on fragment bodies.
         fixed = sanitize_default(f.type, f.default)
         if fixed != f.default:
             if fixed is None:
@@ -1584,15 +1861,26 @@ def lint_extensible(schema: _ExtensibleLike, *,
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=template_usings,
                                       allowed=_KNOWN_NAMESPACES)
     schema.extra_fields = lint_fields(schema.extra_fields, reserved=reserved_fields)
-    schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body")
-    schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body")
-    schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body")
+    # Members the model nested inside a body (CS0106) are re-homed here, at the
+    # one layer that can see both the bodies and the class-level method list.
+    hoisted: list[CodeMethod] = []
+    schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body",         hoist_into=hoisted)
+    schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body",       hoist_into=hoisted)
+    schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body",   hoist_into=hoisted)
     taken: set[str] = set()
     cleaned: list[CodeMethod] = []
-    for m in schema.extra_methods:
-        m2 = lint_method(m, taken_names=taken)
+    # A queue, not a for-loop: a hoisted method can itself contain a nested
+    # member, and a hoisted name must still be deduped against the authored
+    # ones. Bounded so a pathological fragment cannot spin.
+    queue: list[CodeMethod] = list(schema.extra_methods) + hoisted
+    budget = len(queue) + _MAX_HOISTED_METHODS
+    while queue and budget > 0:
+        budget -= 1
+        nested: list[CodeMethod] = []
+        m2 = lint_method(queue.pop(0), taken_names=taken, hoist_into=nested)
         if m2 is not None:
             cleaned.append(m2)
+        queue.extend(nested)
     schema.extra_methods = cleaned
 
     # Auto-heal missing usings: if the authored content needs a namespace the

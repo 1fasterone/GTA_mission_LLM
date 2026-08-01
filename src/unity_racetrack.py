@@ -356,6 +356,38 @@ def compose_racetrack(schema, centerline: list[list[float]] | None = None,
                 model_hint="tree pine foliage"))
 
     prior_entities = {e.name: e for e in schema.entities}
+
+    # Drop LLM-authored entities the scaffold is about to author itself —
+    # otherwise a rich brief that already wrote its OWN (usually geometry-less
+    # or vaguely-placed) track/barrier/vehicle content ends up with TWO
+    # overlapping circuits sharing the same origin-centered world space: the
+    # LLM's placeholder plus this deterministic one (hit live: a --route run
+    # against an already non-degenerate schema left "TrackSegments" (kind
+    # "track", zero path_points) and "Barriers" (kind "wall") sitting right
+    # on top of the new TrackSurface/TrackBarriersOuter/Inner, and an exact
+    # NAME collision on "CheckpointBanners" produced two identically-named
+    # entity groups — the tangled double-track mess this scaffold exists to
+    # prevent). Matched by kind (the same core-kinds check is_racing_degenerate
+    # uses, plus "wall" for barriers) OR by an exact name collision with a
+    # new entity. Purely decorative flavor (kind "enemy", "building",
+    # "vegetation", ...) is left alone — only the literal course/vehicle/
+    # barrier infrastructure is superseded.
+    scaffold_names = {e.name for e in new_entities}
+    _superseded_kinds = _RACING_CORE_KINDS | {"wall"}
+    dropped = [e.name for e in schema.entities
+               if e.name in scaffold_names
+               or (e.kind or "").lower() in _superseded_kinds]
+    if dropped:
+        schema.entities = [e for e in schema.entities if e.name not in dropped]
+        for s in schema.scene_specs:
+            if s.entities is not None:
+                s.entities = [n for n in s.entities if n not in dropped]
+        msgs.append(
+            "Dropped LLM-authored entities superseded by the deterministic "
+            "circuit (avoids a duplicate overlapping track/barrier/vehicle "
+            "layout): " + ", ".join(dropped)
+        )
+
     schema.entities = list(schema.entities) + new_entities
 
     # Register the circuit in per-scene entity subsets. SceneSpec semantics
