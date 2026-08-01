@@ -444,16 +444,22 @@ def test_unity_build_manifest_deps_injects_mcp_bridge() -> None:
 # produce) and assert the rendered outputs are distinct.
 
 def _render_controller(schema, variant):
-    """Render Controller.cs.j2 — same pipeline the generator uses."""
-    from jinja2 import Environment, FileSystemLoader, StrictUndefined
+    """Render Controller.cs.j2 — same pipeline the generator uses.
+
+    Through `MicroPipelineBase.jinja()` rather than a hand-rolled Environment,
+    which is what "same pipeline" has to mean: the real env searches the
+    generator's folder AND its parent (so a template can
+    `{% import "_inject.j2" %}`, as Controller.cs.j2 now does), and sets neither
+    trim_blocks nor lstrip_blocks. A local Environment that differed on either
+    was not rendering what the generator renders.
+    """
+    from pathlib import Path
     from src.micro.controller import ControllerPipeline
     pipe = ControllerPipeline.__new__(ControllerPipeline)
+    pipe.template_root = Path("templates/unity/micro/controller")
     schema = pipe.default_fix(schema, variant)
-    env = Environment(
-        loader=FileSystemLoader("templates/unity/micro/controller"),
-        undefined=StrictUndefined, trim_blocks=True, lstrip_blocks=True,
-    )
-    return env.get_template("Controller.cs.j2").render(s=schema, variant=variant)
+    return pipe.jinja().get_template("Controller.cs.j2").render(
+        s=schema, variant=variant)
 
 
 def _synthetic_controller_schemas():
