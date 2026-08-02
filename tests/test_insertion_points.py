@@ -23,7 +23,7 @@ from src.micro.code_fields import (
     lint_function_call_ref_misuse, lint_world_get_out_param_misuse,
     lint_vector3_raw_call_arg, find_vector3_raw_call_args,
     lint_undeclared_catch_exception_var, lint_vector3_entity_prop_misuse,
-    find_vector3_entity_prop_misuse, _code_brace_depth,
+    find_vector3_entity_prop_misuse, _code_brace_depth, _code_paren_depth,
     _split_nested_members, _repair_numeric_literals,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
@@ -274,6 +274,61 @@ def test_escape_decoding_spares_real_string_literals():
     assert lint_code_fragment(src, what="body") == src
 
 
+# ── CS1026 / CS8803: structurally unrepairable fragments are rejected ────────
+# Both live on the grandma run. A broken fragment does not fail alone — it eats
+# the members that follow it, so the whole build dies at the syntax gate. There
+# is no ground truth for where the missing ')' or the surplus '}' belongs, so
+# the fragment is dropped and the injection point keeps its baseline body.
+
+# NpcDialogPlayer.cs(173,118): the model dropped the closing ");" of a call.
+_UNCLOSED_CALL = (
+    'if (_isCalm)\n{\n    DialogueManager.Instance.PlayLine("Petunia", "Good work!");\n}\n'
+    'else\n{\n    DialogueManager.Instance.PlayLine("Petunia", "I\'ll brew more tea."\n}'
+)
+# EnemyFSM.cs(100,5): a surplus '}' closed the enclosing CLASS early — every
+# member after it then parsed as a top-level statement (CS8803/CS0106/CS1022).
+_SURPLUS_CLOSER = "if (_staggerTimer > 0f)\n{\n    _staggerTimer -= Time.deltaTime;\n}\n}"
+
+
+@pytest.mark.parametrize("fragment,depth,why", [
+    ("Foo(a, b);",                          0, "plain balanced"),
+    ('Foo("a", "b."',                       1, "call left unclosed"),
+    ("Foo(a));",                           -1, "surplus closer"),
+    ('Debug.Log("smile :-) here"); x();',    0, "paren inside a string"),
+    ("x(); // note (unclosed",               0, "paren inside a // comment"),
+    ('var s = $"{Foo(1)} done"; y();',       0, "interpolation hole is masked whole"),
+    ("char c = '('; y();",                   0, "char literal"),
+    ("for (int i = 0; i < n; i++) { f(i); }", 0, "control flow balances"),
+])
+def test_code_paren_depth_ignores_comments_and_literals(fragment, depth, why):
+    assert _code_paren_depth(fragment) == depth, why
+
+
+def test_lint_rejects_unclosed_call():
+    assert _code_paren_depth(_UNCLOSED_CALL) == 1
+    assert lint_code_fragment(_UNCLOSED_CALL, what="method body") == ""
+
+
+def test_lint_rejects_surplus_closing_brace():
+    assert _code_brace_depth(_SURPLUS_CLOSER) == -1
+    assert lint_code_fragment(_SURPLUS_CLOSER, what="update_extra") == ""
+
+
+def test_unclosed_call_method_is_dropped_not_emitted():
+    """The whole method goes, so the micro keeps its deterministic baseline
+    rather than shipping a body that consumes the members below it."""
+    m = CodeMethod(signature="private void OnPetuniaComment()", body=_UNCLOSED_CALL)
+    assert lint_method(m, taken_names=set()) is None
+
+
+def test_balanced_fragment_still_survives_the_new_gates():
+    """The rejections must not fire on ordinary code — a fragment whose braces
+    are merely UNDER-closed is still auto-closed, as before."""
+    out = lint_code_fragment('if (x) { Foo("a", 1);', what="x")
+    assert "Foo" in out
+    assert _code_brace_depth(out) == 0 and _code_paren_depth(out) == 0
+
+
 # ── CS1014: property authored through the method channel (SceneTransition) ────
 
 def test_property_body_gets_a_get_accessor():
@@ -298,12 +353,16 @@ def test_real_method_signature_is_not_treated_as_a_property():
     assert out is not None and out.body == "return _v;"
 
 
-def test_lint_leaves_surplus_closers_alone():
-    """The never-reduces contract survives: a fragment with MORE closers than
-    openers eats the enclosing method the same way, but dropping a brace can
-    silently merge two blocks, so it is left for the syntax gate to report."""
-    out = lint_code_fragment("foo(); }", what="x")
-    assert out.count("}") == 1 and "{" not in out
+def test_lint_rejects_surplus_closers_instead_of_deferring_to_the_gate():
+    """Supersedes the old "leave it for the syntax gate" contract.
+
+    `_balance_braces` still never REDUCES — dropping a brace can silently merge
+    two blocks — but deferring to the gate turned one bad fragment into a failed
+    build (grandma run: EnemyFSM's surplus '}' contributed 13 of 28 gate errors
+    and no project was written at all). The fragment is now dropped at the lint,
+    so the micro keeps its baseline body and the build survives."""
+    assert _code_brace_depth("foo(); }") == -1
+    assert lint_code_fragment("foo(); }", what="x") == ""
 
 
 def test_lint_repairs_value_type_property_member_assign():
