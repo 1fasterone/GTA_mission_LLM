@@ -36,9 +36,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .unity_concept_entities import extract_named_entities
-from .unity_layout import terrain_bounds
+from .unity_layout import _reach_distance, terrain_bounds
 from .unity_schema import EntitySpec, UnitySchema
-from .unity_spatial import (VOLUME_PRIMITIVES, is_grounded, select_primitive)
+from .unity_layout_archetype import is_climbable_entity
+from .unity_spatial import (GROUND_PLANE, ROUTE_CORRIDOR, VOLUME_PRIMITIVES,
+                            WALL_SURFACE, is_grounded, select_primitive)
 
 ERROR = "error"
 WARN = "warn"
@@ -66,6 +68,8 @@ _CHECK_SEVERITY: dict[str, str] = {
     "scene_population":  WARN,
     "audio":             WARN,
     "enemy_wiring":      WARN,
+    "role_graph":        ERROR,
+    "objective_kinematics": ERROR,
 }
 
 # Kinds that are scenery: present in a scene without being something the
@@ -387,6 +391,123 @@ def _check_enemy_wiring(schema: UnitySchema, rep: PlayabilityReport) -> None:
     rep.checks["enemy_wiring"] = ok
 
 
+# -- kinematic reach ----------------------------------------------------------
+# The structural checks above prove the pieces exist; these prove the player
+# can actually get to them. Static positions, kinematic rules, no simulation
+# loop -- Step 7 stays deterministic and LLM-free.
+
+# Jump reach for grounded locomotion: an objective higher than this above the
+# avatar, in a game with no way to climb or fly, is decoration.
+_WALK_REACH_Y = 2.5
+# A descent game only moves down; anything meaningfully above the jump point
+# can never be visited.
+_DESCENT_TOLERANCE = 2.0
+
+
+def _spawn_y(schema: UnitySchema) -> float:
+    avatar = next((e for e in schema.entities if e.tag == "Player"), None)
+    if avatar is None:
+        return 0.0
+    inst = _instances(avatar)
+    return inst[0][1] if inst else avatar.elevation
+
+
+def _objective_points(schema: UnitySchema) -> list[tuple[str, list[float]]]:
+    # `kind` is a bare str with no lowercasing validator, so every read of it
+    # in this file defends itself the same way -- a `kind="Collectible"` that
+    # counts as an objective for _check_objective must not go invisible here.
+    return [(e.name, p) for e in schema.entities
+            if (e.kind or "").lower() in _OBJECTIVE_KINDS
+            for p in _instances(e)]
+
+
+def _climb_ceiling(schema: UnitySchema, reach: float) -> float:
+    """Highest altitude the hold chain reaches from the ground: walk the baked
+    hold instances bottom-up and stop at the first gap wider than `reach` --
+    the same connectivity the layout pass promises, re-verified on the built
+    artifact rather than trusted."""
+    ys = sorted(p[1] for e in schema.entities if is_climbable_entity(e)
+                for p in _instances(e))
+    ceiling = 0.0
+    for y in ys:
+        if y - ceiling > reach:
+            break
+        ceiling = max(ceiling, y)
+    return ceiling
+
+
+def _check_role_graph(schema: UnitySchema, rep: PlayabilityReport) -> None:
+    """Surface what UnitySchema.enforce_role_graph recorded. R3 violations are
+    written to meta["role_lint"] for exactly this gate to score; until now
+    nothing read them, so an unresolvable role graph sailed through Step 7."""
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    lint = meta.get("role_lint")
+    if not isinstance(lint, dict):
+        return  # nothing recorded -- vacuous; do not dilute the score
+    repairs    = [str(r) for r in (lint.get("repairs") or [])]
+    violations = [str(v) for v in (lint.get("violations") or [])]
+    if not repairs and not violations:
+        return
+    for r in repairs[:6]:
+        rep.findings.append(Finding(
+            "role_graph", INFO, f"repaired upstream: {r}",
+            "unity_schema.enforce_role_graph"))
+    for v in violations[:6]:
+        rep.findings.append(Finding(
+            "role_graph", ERROR,
+            f"{v} -- win/lose wiring has no single protagonist to latch onto",
+            "unity_schema.enforce_role_graph (R3)"))
+    rep.checks["role_graph"] = not violations
+
+
+def _check_objective_kinematics(schema: UnitySchema,
+                                rep: PlayabilityReport) -> None:
+    """Can the avatar, moving the way this primitive moves, reach the
+    objectives? content_reachable proves things sit inside the ground plan;
+    this proves the third axis -- a coin 40 m up in a walking game is inside
+    every bound and still unwinnable."""
+    objs = _objective_points(schema)
+    if not objs:
+        return  # no baked objectives -- vacuous; nothing to grade
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    archetype = str(meta.get("layout_archetype") or "")
+    spawn = _spawn_y(schema)
+    lost: dict[str, str] = {}
+    if rep.primitive in (GROUND_PLANE, ROUTE_CORRIDOR):
+        for name, p in objs:
+            if p[1] - spawn > _WALK_REACH_Y:
+                lost[name] = (f"{p[1]:.1f} m up, above jump reach in a "
+                              "ground game")
+    elif rep.primitive == WALL_SURFACE:
+        # Ask the layout pass what reach it packed at rather than re-deriving
+        # it: `_reach_distance` accepts three meta keys and its own named
+        # default, and grading a wall packed at meta['hold_reach'] against a
+        # locally-mirrored 2.5 collapses the ceiling and fails the gate on a
+        # perfectly climbable wall.
+        reach, _why_reach = _reach_distance(schema)
+        ceiling = _climb_ceiling(schema, reach)
+        for name, p in objs:
+            if p[1] > max(ceiling, spawn) + reach:
+                lost[name] = (f"at {p[1]:.1f} m but the hold chain ends at "
+                              f"{ceiling:.1f} m")
+    elif (rep.primitive in VOLUME_PRIMITIVES
+          and archetype == "VerticalCorridor"):
+        for name, p in objs:
+            if p[1] - spawn > _DESCENT_TOLERANCE:
+                lost[name] = (f"{p[1] - spawn:.1f} m above the jump point in "
+                              "a descent game -- you cannot fall upwards")
+    # BoundedVolume / unknown archetype: free movement reaches anything inside
+    # the bounds, and content_reachable already polices the bounds.
+    if lost:
+        worst = sorted(lost.items())[:4]
+        rep.findings.append(Finding(
+            "objective_kinematics", ERROR,
+            "unreachable objective(s): "
+            + "; ".join(f"{n} ({why})" for n, why in worst),
+            "src/unity_layout.py baked positions"))
+    rep.checks["objective_kinematics"] = not lost
+
+
 _CHECKS = (
     _check_avatar,
     _check_controllable,
@@ -400,6 +521,8 @@ _CHECKS = (
     _check_volume_player,
     _check_audio_coverage,
     _check_enemy_wiring,
+    _check_role_graph,
+    _check_objective_kinematics,
 )
 
 
