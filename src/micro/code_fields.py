@@ -303,6 +303,26 @@ def _code_brace_depth(text: str) -> int:
     return depth
 
 
+def _code_paren_depth(text: str) -> int:
+    """Net parenthesis depth counting only parens that are real CODE.
+
+    Sibling of `_code_brace_depth`, over the same `_code_mask` and for the same
+    reason: a `(` inside a string or a `//` comment is not a delimiter. An
+    interpolated string is masked whole, so the parens inside an interpolation
+    hole (`$"{Foo(1)}"`) correctly do not count either.
+    """
+    mask = _code_mask(text)
+    depth = 0
+    for i, ch in enumerate(text):
+        if not mask[i]:
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+    return depth
+
+
 def _balance_braces(text: str) -> str:
     """Auto-close unbalanced { } with appended close-braces. Never reduces.
 
@@ -320,9 +340,11 @@ def _balance_braces(text: str) -> str:
     real closer on its own line, after the comment that swallowed the first.
 
     Still never reduces: a fragment with MORE closers than openers (which eats
-    the enclosing method the same way) is left alone rather than guessed at —
-    dropping a brace can silently merge two blocks. The syntax gate catches it
-    (src/csharp_syntax_gate.py).
+    the enclosing method the same way) is not guessed at here — dropping a brace
+    can silently merge two blocks. That case no longer reaches this function:
+    `lint_code_fragment` rejects an over-closed fragment outright, because
+    deferring it to the syntax gate cost the whole build rather than one
+    injection point (grandma run, EnemyFSM.cs).
     """
     depth = _code_brace_depth(text)
     if depth > 0:
@@ -648,6 +670,35 @@ def lint_code_fragment(text: str, *, what: str,
     text = _repair_struct_member_assign(text)
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
+    # Two structural defects that CANNOT be repaired from the fragment alone.
+    # Both were live on the grandma run and together took the whole build down
+    # (17 of 28 gate errors), because a broken fragment does not fail alone —
+    # it consumes the members that follow it:
+    #
+    #   NpcDialogPlayer.cs(173,118) CS1026 — a call left unclosed:
+    #       PlayLine("Petunia", "The air is thick with dread..."
+    #   EnemyFSM.cs(100,5) CS8803/CS0106/CS1022 — a surplus `}` closed the
+    #       CLASS early, so every member after it parsed at top level.
+    #
+    # Neither has a ground truth in the text. The missing `)` belongs at the
+    # end of ITS OWN statement, not at the end of the fragment, and appending
+    # one there just moves the error; guessing per-line is worse still, since
+    # `if (x` and `var z = Foo(a` are indistinguishable from a truncated call
+    # and "repairing" the first yields a silently empty if-body. Dropping a
+    # surplus `}` has the mirror problem — it merges two blocks that were
+    # meant to be separate. So reject, the same call `_balance_braces` already
+    # makes for over-closed braces, and let the injection point keep its
+    # deterministic baseline body. A generic micro still builds; a poisoned
+    # one fails the syntax gate and there is no project at all.
+    paren_depth = _code_paren_depth(text)
+    if paren_depth != 0:
+        console.print(f"  [yellow]FIX[/]  rejected {what}: unbalanced parentheses "
+                      f"({paren_depth:+d}) — an unclosed call has no repairable position")
+        return ""
+    if _code_brace_depth(text) < 0:
+        console.print(f"  [yellow]FIX[/]  rejected {what}: more '}}' than '{{' — "
+                      f"a surplus closer would close the enclosing class early")
+        return ""
     text = _balance_braces(text)
     text = _cap_lines(text, what=what)
     return text.strip()
