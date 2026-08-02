@@ -259,3 +259,135 @@ class TestGate:
         assert rep.playable
         assert gate(rep, min_score=100, fail_on_error=False) is not None
         assert gate(rep, min_score=0, fail_on_error=False) is None
+
+
+# -- role graph lint consumption ----------------------------------------------
+
+class TestRoleGraphLint:
+    def test_clean_meta_is_vacuous_not_a_free_pass(self):
+        rep = evaluate(_playable())
+        assert "role_graph" not in rep.checks
+        assert rep.playable
+
+    def test_r3_violation_is_an_error(self):
+        s = _playable()
+        s.meta["role_lint"] = {"violations": [
+            "R3: role graph needs exactly 1 player character, found 0: none"]}
+        rep = evaluate(s)
+        assert not rep.checks["role_graph"]
+        assert not rep.playable
+        assert any(f.check == "role_graph" and f.severity == ERROR
+                   for f in rep.findings)
+
+    def test_repairs_alone_stay_informational(self):
+        s = _playable()
+        s.meta["role_lint"] = {"repairs": [
+            "R2: demoted TheAppraiser from player (tagged FinalBoss)"]}
+        rep = evaluate(s)
+        assert rep.checks["role_graph"]
+        assert rep.playable
+
+    def test_malformed_lint_never_crashes_the_gate(self):
+        s = _playable()
+        s.meta["role_lint"] = "not-a-dict"
+        rep = evaluate(s)
+        assert "role_graph" not in rep.checks
+        assert rep.playable
+
+
+# -- kinematic reachability ---------------------------------------------------
+
+class TestObjectiveKinematics:
+    def _ground(self, y):
+        s = _playable()
+        s.meta["spatial_primitive"] = "ground_plane"
+        coin = next(e for e in s.entities if e.name == "Coin")
+        coin.instance_positions = [[3.0, y, 4.0]]
+        return s
+
+    def test_ground_level_coin_is_reachable(self):
+        rep = evaluate(self._ground(0.5))
+        assert rep.checks["objective_kinematics"]
+
+    def test_floating_coin_in_a_walking_game_is_not(self):
+        rep = evaluate(self._ground(12.0))
+        assert not rep.checks["objective_kinematics"]
+        assert not rep.playable
+
+    def test_unbaked_objectives_are_vacuous_not_a_free_pass(self):
+        s = _playable()
+        s.meta["spatial_primitive"] = "ground_plane"
+        rep = evaluate(s)
+        assert "objective_kinematics" not in rep.checks
+        assert rep.playable
+
+    def _descent(self, coin_y):
+        s = _playable(locomotion="fly")
+        s.meta["spatial_primitive"] = "airspace_column"
+        s.meta["layout_archetype"] = "VerticalCorridor"
+        hero = next(e for e in s.entities if e.tag == "Player")
+        hero.instance_positions = [[0.0, 100.0, 0.0]]
+        hero.elevation = 100.0
+        coin = next(e for e in s.entities if e.name == "Coin")
+        coin.instance_positions = [[0.0, coin_y, 5.0]]
+        coin.elevation = coin_y
+        return s
+
+    def test_descent_objective_below_the_jump_point_passes(self):
+        rep = evaluate(self._descent(40.0))
+        assert rep.checks["objective_kinematics"]
+
+    def test_descent_objective_above_the_jump_point_fails(self):
+        rep = evaluate(self._descent(150.0))
+        assert not rep.checks["objective_kinematics"]
+        assert any("cannot fall upwards" in f.summary
+                   for f in rep.findings if f.check == "objective_kinematics")
+
+    def test_bounded_volume_reaches_altitude_freely(self):
+        s = self._descent(150.0)
+        s.meta["layout_archetype"] = "BoundedVolume"
+        rep = evaluate(s)
+        assert rep.checks["objective_kinematics"]
+
+    def _wall(self, hold_ys, coin_y):
+        s = _playable()
+        s.meta["spatial_primitive"] = "wall_surface"
+        s.entities.append(EntitySpec(
+            name="Holds", kind="handhold", count=len(hold_ys),
+            tag="Environment",
+            instance_positions=[[0.0, y, 0.2] for y in hold_ys]))
+        coin = next(e for e in s.entities if e.name == "Coin")
+        coin.instance_positions = [[0.0, coin_y, 0.2]]
+        return s
+
+    def test_connected_hold_chain_reaches_the_coin(self):
+        rep = evaluate(self._wall([2, 4, 6, 8, 10], 11.0))
+        assert rep.checks["objective_kinematics"]
+
+    def test_a_gap_in_the_chain_strands_the_summit_coin(self):
+        rep = evaluate(self._wall([2, 4, 20, 22], 23.0))
+        assert not rep.checks["objective_kinematics"]
+        assert any("hold chain ends at" in f.summary
+                   for f in rep.findings if f.check == "objective_kinematics")
+
+    def test_reach_override_is_read_from_every_key_layout_accepts(self):
+        """The gate must grade the wall against the reach the LAYOUT packed at.
+        `_reach_distance` accepts three meta keys; reading only the first one
+        graded a wall packed at 'hold_reach' against the 2.5 default, collapsed
+        the ceiling to the base hold, and failed a climbable wall."""
+        s = self._wall([2, 8, 14, 20], 21.0)
+        assert not evaluate(s).checks["objective_kinematics"], "2.5 default"
+        for key in ("reach_distance", "layout_reach_distance", "hold_reach"):
+            s = self._wall([2, 8, 14, 20], 21.0)
+            s.meta[key] = 6.0
+            assert evaluate(s).checks["objective_kinematics"], key
+
+    def test_objective_kind_is_matched_case_insensitively(self):
+        """`kind` has no lowercasing validator. A capitalised kind counts as an
+        objective for _check_objective, so it must be graded here too rather
+        than making the check silently vacuous."""
+        s = self._ground(12.0)
+        coin = next(e for e in s.entities if e.name == "Coin")
+        coin.kind = "Collectible"
+        rep = evaluate(s)
+        assert not rep.checks["objective_kinematics"]

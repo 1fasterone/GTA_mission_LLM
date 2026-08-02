@@ -1202,6 +1202,7 @@ def compute_layout(schema: UnitySchema,
                      for e in schema.entities)
     if isinstance(schema.meta, dict):
         schema.meta["spatial_primitive"] = arch.spatial_primitive(_has_route)
+        schema.meta["layout_archetype"] = arch.name
     msgs: list[str] = [arch.provenance()]
     if arch.name == "VerticalCorridor":
         return msgs + _layout_vertical_corridor(schema, arch, footprints)
