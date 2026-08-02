@@ -34,6 +34,9 @@ from .unity_racetrack     import compose_racetrack, is_racing_degenerate
 from .unity_concept_entities import (extract_named_entities,
                                      inject_missing_concept_entities,
                                      render_entity_checklist)
+from .unity_concept_scripts import (extract_named_scripts,
+                                    inject_missing_concept_scripts,
+                                    render_script_checklist)
 from .unity_layout        import compute_layout
 from .unity_playability   import (PlayabilityGateError,
                                   evaluate as evaluate_playability,
@@ -833,6 +836,19 @@ class UnityPipeline:
                 "entities explicitly — passed to schema-fill as a required "
                 "checklist"
             )
+        # Same treatment for the brief's own SCRIPTS bullets. Entities had a
+        # checklist and scripts did not, so a brief could require a system
+        # explicitly ("each is required; implement as its own module") and the
+        # schema-fill model would never see the demand — 7 of 12 systems went
+        # missing on the grandma run (see render_script_checklist).
+        _script_checklist = render_script_checklist(user_prompt)
+        if _script_checklist:
+            schema_hints += "\n" + _script_checklist + "\n"
+            self._ok(
+                f"Brief names {len(extract_named_scripts(user_prompt))} "
+                "scripts explicitly — passed to schema-fill as a required "
+                "checklist"
+            )
         if intent.matched:
             self._ok(
                 "Intent: "
@@ -962,6 +978,15 @@ class UnityPipeline:
             schema, _rescue_scene_fixes = _reconcile_scene_specs(schema)
             for msg in _rescue_scene_fixes:
                 self._fix(msg)
+
+        # Concept-named SCRIPT rescue — the entity rescue's sibling, for the
+        # brief's systems. Runs here, before Step 6, so the restored scripts are
+        # generated, composed and wired exactly like the ones the LLM wrote.
+        # Deliberately after the entity rescue: a restored script's description
+        # names the entities it drives, and both halves of the brief should be
+        # whole before the generator reads either.
+        for msg in inject_missing_concept_scripts(schema):
+            self._fix(msg)
 
         # Racing-genre scaffold: a racing project whose entities carry no real
         # vehicle/track content (the LLM wrote a themed prop scatter instead
