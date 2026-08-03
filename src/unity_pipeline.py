@@ -38,6 +38,7 @@ from .unity_concept_scripts import (extract_named_scripts,
                                     inject_missing_concept_scripts,
                                     render_script_checklist)
 from .unity_layout        import compute_layout
+from .unity_scenebind     import apply_scene
 from .unity_playability   import (PlayabilityGateError,
                                   evaluate as evaluate_playability,
                                   gate as playability_gate)
@@ -772,6 +773,7 @@ class UnityPipeline:
             compose:     bool = False,
             blender_models: bool = False,
             route:       dict | None = None,
+            scene:       dict | None = None,
             no_think:    bool = False,
             micro_code:  bool = True) -> Path:
         console.print(Panel(
@@ -1018,6 +1020,26 @@ class UnityPipeline:
         # normalized coordinates).
         for msg in normalize_paths(schema):
             self._fix(msg)
+
+        # Authored scene: a Scene Compiler layout (`unity-create --scene`) is
+        # the author's own hand on the model choice AND the placement, so it
+        # binds here — after P1 normalization, so the coordinates they arranged
+        # land in world space untransformed, and before the layout pass, which
+        # then treats every authored group as PREPLACED (packed around, never
+        # repacked). Wiring is untouched: only models and transforms come from
+        # the layout. See src/unity_scenebind.py.
+        if scene:
+            _n_before_scene = len(schema.entities)
+            for msg in apply_scene(schema, scene):
+                self._fix(msg)
+            # Injected authored entities did not exist when the scene subsets
+            # were reconciled, so a schema whose scenes declare explicit entity
+            # lists would filter them straight back out (same failure the
+            # concept-entity rescue hit). No-op when nothing was injected.
+            if len(schema.entities) != _n_before_scene:
+                schema, _scene_fixes = _reconcile_scene_specs(schema)
+                for msg in _scene_fixes:
+                    self._fix(msg)
 
         # Layout pass: select a spatial archetype for the scene, then lay every
         # {single,line,ring,grid,scatter} entity group out inside it and bake

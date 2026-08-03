@@ -177,6 +177,46 @@ def _unity_pipe_cfg(cfg: dict) -> dict:
     return cfg.get("unity_pipeline", cfg.get("pipeline", {}))
 
 
+def _scene_cache_dir(cfg: dict) -> Path:
+    """Where GLB→FBX conversions of authored models are cached — beside the
+    other Blender artifacts, keyed per source file inside."""
+    blender = cfg.get("blender") or {}
+    return Path(blender.get("output_dir") or "output/blender") / "scene_compiler"
+
+
+def _load_authored_scene(scene_path: Path, models_dir: Optional[Path],
+                         cfg: dict) -> dict:
+    """Read a Scene Compiler layout (or an already-normalized scene file),
+    convert any GLB items to FBX, and return the scene dict the pipeline
+    consumes. Raises SceneInputError with an explicit remedy on any problem —
+    an authored scene degrades to nothing useful, so it never degrades."""
+    from src.unity_sceneinput import (build_scene, convert_gltf_groups,
+                                      load_layout, load_scene)
+    # A normalized scene file already carries absolute model paths, so
+    # --models-dir has nothing to apply to; only a raw layout resolves its
+    # `file` entries against a models dir.
+    is_layout = "items" in (json.loads(scene_path.read_text(encoding="utf-8"))
+                            if scene_path.is_file() else {})
+    if models_dir is not None and is_layout:
+        scene, warnings = build_scene(load_layout(scene_path), models_dir,
+                                      layout_path=scene_path)
+    else:
+        if models_dir is not None:
+            console.print("[yellow]![/] --models-dir ignored: "
+                          f"{scene_path.name} is a normalized scene file, "
+                          "which already carries absolute model paths")
+        scene, warnings = load_scene(scene_path)
+    for w in warnings:
+        console.print(f"[yellow]![/] {w}")
+    for msg in convert_gltf_groups(scene, _scene_cache_dir(cfg),
+                                   cfg.get("blender")):
+        console.print(f"[dim]{msg}[/]")
+    n_inst = sum(g["count"] for g in scene["groups"])
+    console.print(f"[cyan]Authored scene:[/] {len(scene['groups'])} group(s), "
+                  f"{n_inst} instance(s) from {scene_path}")
+    return scene
+
+
 # ── GTA5 commands ──────────────────────────────────────────────────────────────
 
 @app.command()
@@ -370,6 +410,10 @@ def unity_create(
                                               help="Build real models from the story in Blender (headless) and wire them into the scene via the Model Pack (replaces placeholders)"),
     route: Optional[Path]      = typer.Option(None, "--route",
                                               help="Route file from `unity-path` (routes.json) — compose the circuit around this authored/traced course instead of the parametric oval"),
+    scene: Optional[Path]      = typer.Option(None, "--scene",
+                                              help="Scene Compiler layout (layouts/<name>.json) or a scene file from `unity-scene` — the authored models AND their placement win over Sketchfab/Kenney"),
+    models_dir: Optional[Path] = typer.Option(None, "--models-dir",
+                                              help="--scene only: the Scene Compiler's models/ folder (default: the layout's own ../models sibling)"),
     no_think:    bool          = typer.Option(False, "--no-think",
                                               help="Disable LLM reasoning for every step (including the concept step, which normally reasons). Faster, but trades away concept creativity/quality — useful for timing/plumbing runs."),
     micro_code:  bool          = typer.Option(True, "--micro-code/--no-micro-code",
@@ -413,7 +457,18 @@ def unity_create(
                           "generate it with: python main.py unity-path ...")
             raise typer.Exit(1)
 
-    UnityPipeline(_cfg(config, model)).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, no_think=no_think, micro_code=micro_code)
+    cfg = _cfg(config, model)
+
+    scene_data = None
+    if scene is not None:
+        from src.unity_sceneinput import SceneInputError
+        try:
+            scene_data = _load_authored_scene(scene, models_dir, cfg)
+        except SceneInputError as exc:
+            console.print(f"[red]Error:[/] {exc}")
+            raise typer.Exit(1)
+
+    UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code)
 
 
 @app.command("unity-path")
@@ -503,6 +558,61 @@ def unity_path(
     console.print(f"[green]OK[/]  {source} -> [bold]{out}[/]  "
                   f"({n} points, {kind}, {width:g} m wide; P1 at origin heading +Z)")
     console.print(f"  next: python main.py unity-create \"your prompt\" --route {out}")
+
+
+@app.command("unity-scene")
+def unity_scene(
+    layout: Path            = typer.Argument(..., help="Scene Compiler layout: layouts/<name>.json"),
+    models_dir: Optional[Path] = typer.Option(None, "--models-dir", "-m",
+                                              help="The Scene Compiler's models/ folder (default: the layout's own ../models sibling)"),
+    config: str             = typer.Option("config.yaml", "--config", "-c"),
+    convert: bool           = typer.Option(True, "--convert/--no-convert",
+                                           help="Convert GLB/glTF items to FBX via headless Blender (cached). --no-convert leaves them for inspection only"),
+    out:    Optional[Path]  = typer.Option(None, "--out", "-o",
+                                           help="Write the canonical scene file here (default: print only)"),
+) -> None:
+    """Normalize a Scene Compiler layout into a scene file for `unity-create --scene`.
+
+    Deterministic, LLM-free. Converts three.js coordinates to Unity, groups
+    repeated models into one entity each with baked per-instance positions and
+    yaws, and converts GLB items to FBX.
+
+    \b
+      python main.py unity-scene "C:/Users/me/Documents/Blender/layouts/MONACO.json"
+      python main.py unity-scene layouts/MONACO.json -o scene.json
+      python main.py unity-create --file prompts/race.txt --scene scene.json
+    """
+    from src.unity_sceneinput import (build_scene, convert_gltf_groups,
+                                      describe, load_layout, SceneInputError)
+    cfg = _cfg(config)
+    try:
+        root = models_dir if models_dir is not None else None
+        if root is None:
+            from src.unity_sceneinput import default_models_dir
+            root = default_models_dir(layout)
+        scene, warnings = build_scene(load_layout(layout), root,
+                                      layout_path=layout)
+        for w in warnings:
+            console.print(f"[yellow]![/] {w}")
+        if convert:
+            for msg in convert_gltf_groups(scene, _scene_cache_dir(cfg),
+                                           cfg.get("blender")):
+                console.print(f"[dim]{msg}[/]")
+    except SceneInputError as exc:
+        console.print(f"[red]Error:[/] {exc}")
+        raise typer.Exit(1)
+
+    for line in describe(scene):
+        console.print(f"  {line}")
+    n_inst = sum(g["count"] for g in scene["groups"])
+    console.print(f"[green]OK[/]  {layout.name} -> {len(scene['groups'])} group(s), "
+                  f"{n_inst} instance(s)")
+    if out is not None:
+        out.write_text(json.dumps(scene, indent=2), encoding="utf-8")
+        console.print(f"  wrote [bold]{out}[/]")
+        console.print(f"  next: python main.py unity-create \"your prompt\" --scene {out}")
+    else:
+        console.print(f"  next: python main.py unity-create \"your prompt\" --scene {layout}")
 
 
 @app.command("unity-resolve")
