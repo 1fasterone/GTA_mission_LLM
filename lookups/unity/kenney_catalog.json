@@ -24,6 +24,12 @@
       "url": "local: F:/Downloads/big-head-cromulons-from-rick-and-morty",
       "license": "see source download — user-supplied local asset",
       "description": "Colossal disembodied floating head with huge lidded eyes — a giant hovering alien face, textured via rick_eyes.png"
+    },
+    "monaco_gp": {
+      "name": "Monaco GP Circuit + Victorian Monobike",
+      "url": "local: F:/Downloads/MONACO_bundle (Scene Compiler export); monobike: https://sketchfab.com/3d-models/victorian-monobike-86c304ead3544444b735158b19072bc0",
+      "license": "circuit: user-supplied local asset; monobike: CC-BY-SA-4.0 by gabshega (Sketchfab)",
+      "description": "Full-scale Monte Carlo street circuit (road + barrier walls, 291 x 660 m, 19 m elevation) plus a Victorian single-wheel monobike rider vehicle"
     }
   },
   "assets": [
@@ -1427,6 +1433,58 @@
       ],
       "description": "Single white barrier block, 1.5 m",
       "generic_score": 0
+    },
+    {
+      "filename": "monaco-gp-circuit.fbx",
+      "pack": "monaco_gp",
+      "category": "track",
+      "keywords": [
+        "monaco",
+        "grand",
+        "prix",
+        "circuit",
+        "racetrack",
+        "track"
+      ],
+      "kind_hints": [
+        "track",
+        "road",
+        "environment",
+        "floor",
+        "platform"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Monaco Grand Prix street circuit — one-piece full-scale Monte Carlo racetrack with road surface and barrier walls, 291 x 660 m footprint and 19 m of elevation change",
+      "generic_score": 0,
+      "scale": 1.0
+    },
+    {
+      "filename": "victorian-monobike.fbx",
+      "pack": "monaco_gp",
+      "category": "vehicle",
+      "keywords": [
+        "victorian",
+        "monobike",
+        "monowheel",
+        "steampunk",
+        "racer",
+        "vehicle"
+      ],
+      "kind_hints": [
+        "vehicle",
+        "player",
+        "racer"
+      ],
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "description": "Victorian monobike — a brass-and-iron single giant-wheel steampunk racing contraption the rider sits inside",
+      "generic_score": 0,
+      "scale": 0.6
     }
   ],
   "_resolver_config": {
