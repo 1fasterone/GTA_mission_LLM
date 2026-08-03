@@ -1,0 +1,54 @@
+TITLE
+Monaco Monowheel Grand Prix
+
+GENRE
+A fully 3d third-person racing game. Genre is racing — a timed circuit race
+around a real street course: one player machine, three AI rivals, three laps
+through the harbour, the hairpin and the tunnel, fastest total time wins.
+
+STYLE
+Victorian steampunk motorsport on the Riviera. Brass-and-iron single-wheel
+monobikes — the rider sits inside one enormous spoked wheel — hammering
+through the narrow Monte Carlo streets. Polished brass fittings, riveted iron
+plate, leaking steam, oil smoke and coal soot against pale stone barrier walls
+and Mediterranean sun. Elegant, grimy, mechanical.
+
+CORE PREMISE
+The player rides a Victorian monobike around the full Monaco Grand Prix street
+circuit — a single one-piece racetrack model with its road surface and barrier
+walls already built, 291 by 660 metres with 19 metres of elevation change from
+the harbour front up through the hill section. Three rival monobike racers set
+the pace. The player must complete three laps, keeping the machine off the
+barrier walls through the hairpin, and post the fastest total time. Clipping a
+wall costs speed and vents steam; a clean racing line through the tunnel builds
+a boost of pressure.
+
+PLAYER
+The Victorian monobike — a single giant spoked wheel with the rider slung
+inside it. Uses a vehicle_ground controller tuned for a narrow street circuit
+(throttle, brake, steering, handbrake) with rigidbody physics, a low centre of
+mass and pronounced lean into corners. Third-person chase camera behind and
+slightly above the wheel that pulls back with speed.
+
+ENTITIES
+- MonacoCircuit: the full one-piece Monaco Grand Prix street circuit, road
+  surface and barrier walls in a single model, serving as the ground the race
+  is run on (kind: track, model: monaco grand prix circuit).
+- PlayerMonobike: the player's Victorian monobike — one enormous spoked wheel
+  with the rider inside (kind: vehicle, model: victorian monobike).
+- RivalMonobikeOne: the first AI rival's Victorian monobike (kind: vehicle,
+  model: victorian monobike).
+- RivalMonobikeTwo: the second AI rival's Victorian monobike (kind: vehicle,
+  model: victorian monobike).
+- RivalMonobikeThree: the third AI rival's Victorian monobike (kind: vehicle,
+  model: victorian monobike).
+- StartFinishBanner: the start and finish gantry over the pit straight
+  (kind: prop).
+- SectorMarker: a timing marker at each sector split around the lap
+  (kind: prop).
+
+OBJECTIVE
+Complete three laps of the Monaco circuit and finish ahead of the three rival
+monobikes. A lap counter and a running lap time are shown on screen. Hitting a
+barrier wall scrubs speed. The race ends when the player crosses the finish
+line on the third lap; finishing first wins.

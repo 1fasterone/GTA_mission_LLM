@@ -13687,6 +13687,68 @@
       "source": "kenney"
     },
     {
+      "category": "track",
+      "curated": true,
+      "description": "Monaco Grand Prix street circuit — one-piece full-scale Monte Carlo racetrack with road surface and barrier walls, 291 x 660 m footprint and 19 m of elevation change",
+      "filename": "monaco-gp-circuit.fbx",
+      "format": "fbx",
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "generic_score": 0,
+      "keywords": [
+        "monaco",
+        "grand",
+        "prix",
+        "circuit",
+        "racetrack",
+        "track"
+      ],
+      "kind_hints": [
+        "track",
+        "road",
+        "environment",
+        "floor",
+        "platform"
+      ],
+      "pack": "monaco_gp",
+      "relpath": "monaco/monaco-gp-circuit.fbx",
+      "root": "Models/FBX format",
+      "scale": 1.0,
+      "source": "kenney"
+    },
+    {
+      "category": "vehicle",
+      "curated": true,
+      "description": "Victorian monobike — a brass-and-iron single giant-wheel steampunk racing contraption the rider sits inside",
+      "filename": "victorian-monobike.fbx",
+      "format": "fbx",
+      "game_contexts": [
+        "racing",
+        "any"
+      ],
+      "generic_score": 0,
+      "keywords": [
+        "victorian",
+        "monobike",
+        "monowheel",
+        "steampunk",
+        "racer",
+        "vehicle"
+      ],
+      "kind_hints": [
+        "vehicle",
+        "player",
+        "racer"
+      ],
+      "pack": "monaco_gp",
+      "relpath": "monaco/victorian-monobike.fbx",
+      "root": "Models/FBX format",
+      "scale": 0.6,
+      "source": "kenney"
+    },
+    {
       "bounds": [
         0.3349,
         0.2737,
