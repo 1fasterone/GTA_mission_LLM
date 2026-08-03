@@ -40,6 +40,7 @@ from typing import Optional
 from .unity_asset_catalog import load_catalog, tokenize
 from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
 from .unity_model_resolver import ResolvedModel
+from .unity_scenebind import authored_models
 
 _log = logging.getLogger(__name__)
 
@@ -86,6 +87,16 @@ def load_clamp_sizes(lookups_dir: str = "lookups") -> dict[str, float]:
 _RES_ROOT = "Models/Kenney"
 _SPRITE_RES_ROOT = "Sprites/Kenney"
 _SKETCHFAB_RES_ROOT = "Models/Sketchfab"
+# Tier A — models the author placed by hand in the Scene Compiler
+# (src/unity_sceneinput.py). Their own subtree so the texture copy walks the
+# right ancestor chain (see texture_dirs_with_res_root_for).
+_AUTHORED_RES_ROOT = "Models/SceneCompiler"
+_AUTHORED_SPRITE_RES_ROOT = "Sprites/SceneCompiler"
+# ResolvedModel.source -> the Resources-relative root it is copied under.
+_RES_ROOT_BY_SOURCE = {
+    "sketchfab": _SKETCHFAB_RES_ROOT,
+    "scene_compiler": _AUTHORED_RES_ROOT,
+}
 
 # 2D games prefer sprites over 3D models when both match an entity — a fish
 # PNG beats a marble-track FBX in a side-scroller. Applied only to entries
@@ -421,6 +432,45 @@ def _nearest_misses(catalog_assets: list[dict],
     return [f for s, f in scored[:n] if s > 0]
 
 
+def _register_authored(entry: dict,
+                       used_models: dict[str, ResolvedModel],
+                       is_2d: bool) -> Optional[str]:
+    """Register a Scene-Compiler-authored model in `used_models` and return its
+    Resources.Load path (None when its source file is gone).
+
+    Deliberately NOT routed through `_register`: an authored pick has no
+    catalog entry to score, no variety rotation to take part in, and — most
+    importantly — no size correction. `fit_size` stays 0.0 so neither the
+    Sketchfab uniform fit nor the shrink-only clamp can touch it, and
+    ResolvedModel.scale stays 1.0 so the FBX importer keeps the file's own
+    units; the author's layout scale rides on EntitySpec.scale instead (baked
+    by src/unity_scenebind.py), which is the transform the spawner applies.
+    """
+    src = Path(str(entry.get("src") or ""))
+    if not src.is_file():
+        return None
+    is_sprite = entry.get("type") == "sprite"
+    if is_sprite and not is_2d:
+        return None
+    res_root = _AUTHORED_SPRITE_RES_ROOT if is_sprite else _AUTHORED_RES_ROOT
+    dest_rel = f"{res_root}/Authored/{src.name}"
+    model_key = f"authored:{src.stem}"
+    rm = used_models.get(model_key)
+    if rm is None:
+        rm = ResolvedModel(
+            kind=model_key,
+            src=str(src.resolve()),
+            dest_rel=dest_rel,
+            resource_path=dest_rel.rsplit(".", 1)[0],
+            rig="sprite" if is_sprite else "generic",
+            scale=1.0,
+            source="scene_compiler",
+            fit_size=0.0,
+        )
+        used_models[model_key] = rm
+    return rm.resource_path
+
+
 def resolve_entity_assets(schema,
                           used_models: dict[str, ResolvedModel],
                           all_models: dict[str, ResolvedModel],
@@ -626,9 +676,36 @@ def resolve_entity_assets(schema,
             used_models[model_key] = rm
         return rm.resource_path
 
+    # Tier A source table: {entity_name: {src, file, type, scale}} stamped on
+    # schema.meta by src/unity_scenebind.py when the build was given a Scene
+    # Compiler layout (`unity-create --scene`). Absent -> {} -> every tier
+    # below behaves exactly as it did before authored scenes existed.
+    authored_table = authored_models(schema)
+
     for e in schema.entities:
         kind = (e.kind or "prop").lower()
         hint = (getattr(e, "model_hint", "") or "").strip().lower()
+
+        # ── Tier A: authored model (Scene Compiler) ──────────────────────────
+        # The author opened the model, looked at it, and put it there. Nothing
+        # downstream gets to overrule that: this runs ahead of the explicit
+        # kind, Sketchfab and the Kenney catalog, and takes no runtime
+        # bounds-fit or shrink clamp (fit_size stays 0.0) because the size
+        # they arranged IS the intended size.
+        _authored = authored_table.get(e.name)
+        if _authored:
+            _apath = _register_authored(_authored, used_models, is_2d)
+            if _apath:
+                entity_model_paths[e.name] = _apath
+                if kind == "vehicle":
+                    racing_core_seen = True
+                continue
+            # Source file vanished between binding and resolution — fall
+            # through to the normal tiers rather than spawn nothing, but say
+            # so: the scene will not match what the author arranged.
+            _log.warning("[assets] authored model missing for %s: %s — "
+                         "falling back to the catalog tiers",
+                         e.name, _authored.get("src"))
 
         # ── Tier 1: explicit kind (schema-default "prop" is not explicit) ────
         tier1: Optional[ResolvedModel] = None
@@ -1133,7 +1210,7 @@ def texture_dirs_for(used_models: dict[str, ResolvedModel]) -> list[Path]:
     dirs: list[Path] = []
     seen: set[str] = set()
     for key, m in sorted(used_models.items()):
-        if not key.startswith("asset:") or m.rig == "sprite":
+        if not key.startswith(("asset:", "authored:")) or m.rig == "sprite":
             continue  # sprites are self-contained PNGs — no FBX texture folder
         for parent in Path(m.src).parents:
             tex = parent / "Textures"
@@ -1162,9 +1239,9 @@ def texture_dirs_with_res_root_for(
     pairs: list[tuple[Path, str]] = []
     seen: set[tuple[str, str]] = set()
     for key, m in sorted(used_models.items()):
-        if not key.startswith("asset:") or m.rig == "sprite":
+        if not key.startswith(("asset:", "authored:")) or m.rig == "sprite":
             continue
-        res_root = _SKETCHFAB_RES_ROOT if m.source == "sketchfab" else _RES_ROOT
+        res_root = _RES_ROOT_BY_SOURCE.get(m.source, _RES_ROOT)
         for parent in Path(m.src).parents:
             tex = parent / "Textures"
             if tex.is_dir():

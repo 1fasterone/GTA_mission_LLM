@@ -106,6 +106,8 @@ Spatial + QA (Unity)
 - unity_spatial_facts.py — deterministic sidecar extracting the brief's
   numeric distances before schema-fill; consumed tiered (explicit schema
   field, then sidecar match, then named default with warning).
+- unity_sceneinput.py / unity_scenebind.py — hand-authored scene layouts from
+  the Scene Compiler (see Authored Scenes below); docs/SCENE_COMPILER.md
 - unity_playability.py — Step 7 evaluator. Deterministic structural checks
   over the final schema answering "is it a game" (avatar, controller,
   objective, reachable content, brief-entity coverage). Prints a scorecard,
@@ -138,14 +140,42 @@ Preserve this chain:
    python main.py unity-catalog; scans config assets.roots, merges
    kenney_catalog.json curated overrides)
 3. unity_model_resolver.py — resolves to Models/Defaults/<kind>/
-4. unity_entity_asset_resolver.py — per-entity tiering: explicit kind, then
-   catalog semantic match (name + kind + model_hint, deterministic variety
-   rotation), then strict hard-fail (assets.strict) / logged prop fallback
+4. unity_entity_asset_resolver.py — per-entity tiering: Tier A authored
+   (a Scene Compiler layout, see Authored Scenes below), then explicit kind,
+   then catalog semantic match (name + kind + model_hint, deterministic
+   variety rotation), then strict hard-fail (assets.strict) / logged prop
+   fallback
 5. unity_generator.py (_resolve_all_models — single source of truth for
    generate() AND write()) — copies binaries + Kenney Textures/ + writes .meta
 6. ModelSwap.cs.j2 / EntitySpawner.cs.j2 — runtime swap
 
 Wiring uses entity_model_paths. Never break this chain.
+
+# Authored Scenes (Unity)
+
+A hand-arranged Scene Compiler layout (the browser tool in
+Documents/Blender/) may supply BOTH the models and their exact transforms.
+The author's hand outranks every generated choice about assets and placement;
+it changes nothing about wiring.
+
+- unity_sceneinput.py — layout JSON -> canonical scene file: three.js Y-up ->
+  Unity (x, y, -z) and yaw -> -yaw, one group per (file, scale), GLB -> FBX
+  via headless Blender (cached, unit-guess rescale disabled). Fails loudly on
+  a missing model; warns loudly when the layout predates `base_scale` (the
+  viewer's hidden 0.01 centimeter correction).
+- unity_scenebind.py — Step 5 binding: deterministic keyword match of each
+  authored group to one entity, then bakes instance_positions/instance_yaws/
+  count/scale. A multi-instance group also spills one instance each to
+  still-unbound SINGLETON entities that scored for it (a starting grid feeds
+  the player and each named rival; the player must keep count==1 or the
+  generator's player-merge silently stops firing). Unmatched groups are
+  injected as entities; entities the layout does not cover keep resolving
+  through the normal catalog tiers. Stamps schema.meta.authored_models (the
+  Tier A table) + authored_scene.
+- CLI: python main.py unity-scene <layout.json> [-o scene.json]
+       python main.py unity-create "<prompt>" --scene <layout-or-scene.json>
+- Runs AFTER normalize_paths and BEFORE compute_layout, which then treats
+  authored groups as preplaced. docs/SCENE_COMPILER.md is the reference.
 
 # Procedural 3D Models
 

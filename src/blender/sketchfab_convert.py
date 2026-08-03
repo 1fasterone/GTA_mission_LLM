@@ -59,6 +59,11 @@ _SIZE_TABLE = {{
     "building":    (8.0, 1.5,  60.0),
     "weapon":      (0.8, 0.05, 2.5),
     "furniture":   (1.0, 0.2,  3.5),
+    # Opt-OUT sentinel (src/unity_sceneinput.py): a model the author already
+    # sized by eye in the Scene Compiler. Bounds that can never trip, so the
+    # corrective scale below is a guaranteed no-op -- second-guessing the size
+    # here would silently move everything they placed around it.
+    "as_authored": (1.0, 0.0, float("inf")),
 }}
 _DEFAULT_SIZE = (1.5, 0.05, 20.0)
 
