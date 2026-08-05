@@ -506,10 +506,18 @@ class ControllerPipeline(UnityMicroPipeline):
             already_in_template=self._TEMPLATE_USINGS,
             allowed=_KNOWN_NAMESPACES,
         )
+        # Controller.cs.j2 renders awake_extra, so an initializer that
+        # references instance state (CS0236) is re-homed into Awake() instead
+        # of dropped — see `initializer_instance_refs` in code_fields.
+        _field_inits: list[str] = []
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,
+            hoist_into=_field_inits,
         )
         schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake()")
+        if _field_inits:
+            schema.awake_extra = "\n".join(
+                _field_inits + ([schema.awake_extra] if schema.awake_extra else []))
         schema.update_extra       = lint_code_fragment(schema.update_extra,       what="Update()")
         schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate()")
         taken: set[str] = set()

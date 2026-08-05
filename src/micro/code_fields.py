@@ -1753,6 +1753,90 @@ def _initializer_is_structurally_safe(text: str) -> bool:
     return not any(depth.values())
 
 
+# CS0236 ("A field initializer cannot reference the non-static field, method,
+# or property 'X'"): C# evaluates field initializers BEFORE the constructor
+# body, so `this` does not exist yet — ANY reference to instance state from an
+# initializer is a hard compile error, however well-formed the expression is.
+# Hit live on a Monaco monobike run, MonobikeController.cs(9,45) and
+# MonobikeAI.cs(9,53):
+#
+#     [SerializeField] private Rigidbody    rb      = GetComponent<Rigidbody>();
+#     [SerializeField] private NavMeshAgent aiAgent = GetComponent<NavMeshAgent>();
+#
+# This is the model reaching for the idiom it knows from Awake() and writing it
+# one line too early. `sanitize_default` cannot see it: the expression is
+# perfectly well-FORMED — one line, balanced, no stray `;` — so every
+# structural check passes and the text reaches the file verbatim.
+#
+# Unlike the numeric-literal repairs, this one has somewhere to go, so it is a
+# MOVE rather than a drop: the author's intent is `rb = GetComponent<Rigidbody>();`
+# inside Awake(), where the same expression is legal and does exactly what was
+# meant. Dropping the initializer also compiles, but leaves a [SerializeField]
+# nothing ever assigns — the guarded body (`if (rb != null) …`) then silently
+# does nothing forever, which is the wrong-silent-fallback this codebase
+# rejects. Same rationale as the CS0106 hoist above. A render site with no
+# Awake() channel still gets the drop (a null field beats a dead assembly) plus
+# a loud log naming the remedy.
+#
+# Matched only where the name is NOT preceded by `.` — a receiver-qualified
+# call such as `Camera.main.GetComponent<T>()` or `Camera.main.transform` never
+# touches `this` and is perfectly legal in an initializer.
+_INSTANCE_MEMBERS = (
+    # Component / GameObject lookups
+    "GetComponent", "GetComponents", "GetComponentInChildren",
+    "GetComponentInParent", "GetComponentsInChildren", "GetComponentsInParent",
+    "TryGetComponent", "AddComponent", "GetInstanceID", "CompareTag",
+    # MonoBehaviour lifecycle helpers
+    "StartCoroutine", "StopCoroutine", "Invoke", "InvokeRepeating",
+    "CancelInvoke", "SendMessage", "SendMessageUpwards", "BroadcastMessage",
+    # Object / Component / Behaviour instance properties
+    "transform", "gameObject", "tag", "name", "hideFlags",
+    "enabled", "isActiveAndEnabled", "useGUILayout",
+    # The keywords themselves
+    "this", "base",
+)
+# Longest-first so `GetComponentInChildren` is tried before `GetComponent`.
+_INSTANCE_REF_RE = re.compile(
+    r"(?<![\w.])(?:"
+    + "|".join(sorted(_INSTANCE_MEMBERS, key=len, reverse=True))
+    + r")\b")
+
+
+def _unqualified_name_re(names: "set[str]") -> "re.Pattern[str]":
+    return re.compile(
+        r"(?<![\w.])(?:"
+        + "|".join(sorted((re.escape(n) for n in names), key=len, reverse=True))
+        + r")\b")
+
+
+def initializer_instance_refs(text: str, *, siblings: "set[str]") -> list[str]:
+    """Names that make `text` a CS0236 field initializer, in order of appearance.
+
+    Two sources, both unambiguous: instance members of Component/MonoBehaviour
+    used without a receiver, and the class's OWN fields — one extra_field's
+    initializer reading another (or itself) is the same error. Judged at CODE
+    positions only (`_code_mask`), so `= "transform"` and a `// name` comment
+    are not held against it.
+    """
+    if not text:
+        return []
+    mask = _code_mask(text)
+    hits: list[tuple[int, str]] = [
+        (m.start(), m.group(0))
+        for m in _INSTANCE_REF_RE.finditer(text) if mask[m.start()]
+    ]
+    if siblings:
+        hits += [
+            (m.start(), m.group(0))
+            for m in _unqualified_name_re(siblings).finditer(text) if mask[m.start()]
+        ]
+    out: list[str] = []
+    for _, name in sorted(hits):
+        if name not in out:
+            out.append(name)
+    return out
+
+
 def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     """Coerce an LLM-authored initializer into a literal that parses as
     `= <default>;` for the declared type. Returns None to drop the initializer.
@@ -1828,11 +1912,20 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     return mant + exp + sfx
 
 
-def lint_fields(fields: list[CodeField], *, reserved: set[str]) -> list[CodeField]:
+def lint_fields(fields: list[CodeField], *, reserved: set[str],
+                hoist_into: Optional[list[str]] = None) -> list[CodeField]:
     """Drop fields whose name collides with template-emitted names or duplicates,
-    and repair initializers that would not parse (see `sanitize_default`)."""
+    and repair initializers that would not parse (see `sanitize_default`).
+
+    `hoist_into`, when given, receives `name = <expr>;` statements for
+    initializers that reference instance state (CS0236) so the caller can
+    re-home them into Awake(). Callers whose template has no Awake() injection
+    point omit it and the initializer is dropped instead — see
+    `initializer_instance_refs`.
+    """
     out: list[CodeField] = []
     seen: set[str] = set()
+    sibling_names = {f.name for f in fields}
     for f in fields:
         key = f.name.lower()
         if key in reserved or key in seen:
@@ -1858,6 +1951,25 @@ def lint_fields(fields: list[CodeField], *, reserved: set[str]) -> list[CodeFiel
             else:
                 console.print(f"  [magenta]FIX[/]  repaired initializer on "
                               f"`{f.type} {f.name}`: {f.default!r} -> {fixed!r}")
+        # A well-FORMED initializer can still be illegal: `this` does not exist
+        # when field initializers run, so an instance reference is CS0236 no
+        # matter how it parses. Move it to Awake() where it belongs.
+        if fixed is not None:
+            refs = initializer_instance_refs(fixed, siblings=sibling_names)
+            if refs:
+                named = ", ".join(refs)
+                if hoist_into is not None:
+                    hoist_into.append(f"{f.name} = {fixed};")
+                    console.print(f"  [magenta]FIX[/]  moved instance-referencing "
+                                  f"initializer on `{f.type} {f.name}` into Awake() "
+                                  f"(CS0236: {named})")
+                else:
+                    console.print(f"  [yellow]FIX[/]  dropped instance-referencing "
+                                  f"initializer on `{f.type} {f.name}` (CS0236: "
+                                  f"{named}) — this render site has no Awake() "
+                                  f"channel; author the assignment in awake_extra")
+                fixed = None
+        if fixed != f.default:
             f = f.model_copy(update={"default": fixed})
         out.append(f)
     return out
@@ -1903,19 +2015,37 @@ class _ExtensibleLike(Protocol):
 
 def lint_extensible(schema: _ExtensibleLike, *,
                     reserved_fields: set[str],
-                    template_usings: set[str]) -> _ExtensibleLike:
+                    template_usings: set[str],
+                    hoist_field_inits: bool = False) -> _ExtensibleLike:
     """
     Run the full defensive lint over every `extra_*` field of an extensible
     schema, in place. Mirrors the controller's hand-written pass so every
     generator gets identical, battle-tested cleaning for free.
+
+    `hoist_field_inits` is the caller's assertion that its template actually
+    RENDERS `awake_extra` — only then can a CS0236 initializer be re-homed
+    there instead of dropped. It is opt-in rather than default because eleven
+    micro templates render extra_fields without an Awake() injection point
+    (ai, animator, dialogue, interactable, lighting, shader, statemachine,
+    transition, trigger, vfx), and hoisting into a channel nothing reads would
+    lose the assignment silently — worse than the loud drop.
     """
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=template_usings,
                                       allowed=_KNOWN_NAMESPACES)
-    schema.extra_fields = lint_fields(schema.extra_fields, reserved=reserved_fields)
+    field_inits: list[str] = []
+    schema.extra_fields = lint_fields(
+        schema.extra_fields, reserved=reserved_fields,
+        hoist_into=field_inits if hoist_field_inits else None)
     # Members the model nested inside a body (CS0106) are re-homed here, at the
     # one layer that can see both the bodies and the class-level method list.
     hoisted: list[CodeMethod] = []
     schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body",         hoist_into=hoisted)
+    # AFTER the fragment lint, and FIRST in the body: these assignments are
+    # already valid C# (they must not be re-judged as authored prose), and the
+    # author's own Awake() statements may read the fields they initialise.
+    if field_inits:
+        schema.awake_extra = "\n".join(
+            field_inits + ([schema.awake_extra] if schema.awake_extra else []))
     schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body",       hoist_into=hoisted)
     schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body",   hoist_into=hoisted)
     taken: set[str] = set()
@@ -1979,6 +2109,13 @@ C# RULES:
     double -> "0", "1.5"    bool -> "true"/"false"  (NEVER "True")
   A string default must be a QUOTED C# literal (the JSON value therefore
   contains the quote characters), or "null" — a bare word is not a literal.
+- An extra_field "default" must be a CONSTANT expression. It is evaluated
+  before the object exists, so it can never call GetComponent/
+  GetComponentInChildren, read transform or gameObject, or reference another
+  extra_field. A component reference starts as "null" and is looked up in
+  awake_extra instead:
+    {{"name": "rb", "type": "Rigidbody", "default": "null"}}
+    "awake_extra": "rb = GetComponent<Rigidbody>();"
 - Every prompt has SOME prompt-specific behavior — the brief you were given
   describes it. Author at least one extra_field and one extra_method (or
   awake_extra/update_extra statements) that implement it; do not fall back to

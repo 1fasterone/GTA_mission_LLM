@@ -395,6 +395,7 @@
   },
   "planar_project_files": [
     ".compile_map.json",
+    ".generated_files.json",
     "Assets.meta",
     "Assets/Animations.meta",
     "Assets/Animations/.gitkeep",
