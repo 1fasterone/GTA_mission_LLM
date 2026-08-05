@@ -17,12 +17,21 @@ Two halves, both deterministic:
          model the author placed always reaches the scene even when the LLM
          wrote no character for it.
 
-Nothing here invents a schema field, and nothing overwrites generated
-*wiring*: scripts, micros, objectives and controllers are untouched. The one
-thing an authored group does take over is WHICH MODEL its entity resolves to,
-via `schema.meta["authored_models"]` — read as Tier A, ahead of Sketchfab and
-Kenney, by src/unity_entity_asset_resolver.py. Entities the layout does not
-cover keep resolving through the normal catalog tiers.
+Nothing here invents a schema field. What an authored group takes over is
+WHICH MODEL its entity resolves to, via `schema.meta["authored_models"]` —
+read as Tier A, ahead of Sketchfab and Kenney, by
+src/unity_entity_asset_resolver.py — and its placement. Entities the layout
+does not cover keep resolving through the normal catalog tiers, and are named
+in the returned messages so a silent catalog pick is never a surprise.
+
+ROLE (the one wiring exception). A model filename that opens with a role word
+— `player_monobike.fbx`, `enemy_drone.fbx`, `pickup_scrap.fbx`, see
+unity_sceneinput.ROLE_PREFIXES — declares what the object IS, not just which
+mesh it is. That role binds ahead of every keyword signal, vetoes a bind to a
+conflicting role, and becomes the bound entity's `kind`, which is what gets it
+the controller / AI / objective wiring instead of scenery treatment. Scripts
+and micros are still untouched. A layout whose filenames carry no role word
+behaves exactly as it did before roles existed.
 
 Deliberate abstentions (loud, never silent):
   - 2D / 2d_topdown: EntitySpawner builds its own course at spawn time and
@@ -51,6 +60,11 @@ _W_HINT = 2.0
 _W_QUERY = 1.0
 _W_KIND = 1.0
 MIN_BIND_SCORE = 2.0
+# A declared ROLE (a `player_`/`enemy_`/`pickup_` filename prefix, see
+# unity_sceneinput.ROLE_PREFIXES) outweighs every keyword signal combined: the
+# author stated what the model IS, which is not a guess to be outvoted by a
+# lucky word overlap somewhere else in the schema.
+_W_ROLE = 8.0
 # Two tokens also match when one contains the other and the shorter is at
 # least this long — "bike" vs "monobike", "track" vs "racetrack". Below 4 the
 # containment rule starts firing on noise ("car" inside "cargo").
@@ -64,6 +78,32 @@ _STOPWORDS = frozenset({
 })
 
 _LAYOUT_PLACEMENTS = {"single", "line", "ring", "grid", "scatter"}
+
+# Roles that are MUTUALLY EXCLUSIVE gameplay jobs: a model the author labelled
+# `enemy_` must never be handed to the player's entity just because their names
+# happen to share a word. Kinds outside these families (vehicle, character, and
+# every scenery kind) are descriptive rather than exclusive — the player IS a
+# vehicle in a racing game — so they never veto a keyword bind.
+_ROLE_FAMILIES: tuple[frozenset[str], ...] = (
+    frozenset({"player"}),
+    frozenset({"enemy", "boss"}),
+    frozenset({"npc"}),
+    frozenset({"pickup", "collectible", "item", "goal", "objective"}),
+)
+# Tags with an established meaning in the generated project (declared by
+# TagManager.asset.j2). A role outside this map leaves `tag` alone.
+_ROLE_TAGS = {
+    "player": "Player", "enemy": "Enemy", "boss": "Enemy",
+    "pickup": "Collectible", "collectible": "Collectible", "item": "Collectible",
+}
+
+
+def _family(kind: str) -> Optional[frozenset[str]]:
+    k = (kind or "").lower()
+    for fam in _ROLE_FAMILIES:
+        if k in fam:
+            return fam
+    return None
 
 
 def _terms(text: str) -> set[str]:
@@ -91,14 +131,51 @@ def _overlap(a: set[str], b: set[str]) -> bool:
     return False
 
 
-def bind_score(group: dict, entity: EntitySpec) -> float:
+def _answers_to_role(entity: EntitySpec, role: str) -> bool:
+    """Does this entity already hold the job the group declares?
+
+    Three signals, any of which is the schema saying so: an exact `kind`, a
+    kind in the same exclusive family, or the TAG the role owns. The tag
+    matters most for the avatar — the generator's player-merge selects on
+    `tag == "Player"`, not on kind, so an entity the pipeline already tagged
+    is the avatar whatever the LLM called it or typed it as.
+    """
+    kind = (entity.kind or "").lower()
+    fam = _family(role)
+    if kind == role or (fam is not None and kind in fam):
+        return True
+    tag = _ROLE_TAGS.get(role)
+    return bool(tag) and entity.tag == tag
+
+
+def bind_score(group: dict, entity: EntitySpec, *, use_role: bool = True) -> float:
     """How strongly this authored model answers to this entity. Deterministic:
-    pure set arithmetic over declared text, no RNG."""
+    pure set arithmetic over declared text, no RNG.
+
+    A group that declares a ROLE is judged on that first: it scores _W_ROLE
+    against an entity already holding that job and is VETOED outright against
+    a conflicting one. Keyword overlap still runs — among three enemies the
+    best-named one should still win — but it can no longer hand
+    `enemy_drone.fbx` to the player.
+
+    `use_role=False` scores keywords only. `_plan` uses it for SPILL, where
+    the veto must not apply: a rival taking a spare bike from a `player_`
+    group shares the machine, not the job, and vetoing that would break the
+    starting grid the spill mechanism exists for.
+    """
+    role = (group.get("role") or "").lower() if use_role else ""
+    if role:
+        gfam, efam = _family(role), _family(entity.kind)
+        if gfam is not None and efam is not None and gfam is not efam:
+            return 0.0
+
     gterms = _terms(group.get("source_file", "") or group.get("file", ""))
     gterms |= _terms(group.get("name", ""))
-    if not gterms:
+    if not gterms and not role:
         return 0.0
     score = 0.0
+    if role and _answers_to_role(entity, role):
+        score += _W_ROLE
     if _overlap(gterms, _terms(entity.name)):
         score += _W_NAME
     if _overlap(gterms, _terms(getattr(entity, "model_hint", ""))):
@@ -138,11 +215,17 @@ def _plan(scene: dict, schema: UnitySchema
     groups = scene.get("groups", [])
     entities = list(schema.entities)
     scores: dict[tuple[int, int], float] = {}
+    # Spill is scored role-BLIND (see `bind_score`): sharing a machine is not
+    # taking a job, so a `player_` grid may still feed the named rivals.
+    spill_scores: dict[tuple[int, int], float] = {}
     for gi, g in enumerate(groups):
         for ei, e in enumerate(entities):
             s = bind_score(g, e)
             if s >= MIN_BIND_SCORE:
                 scores[(gi, ei)] = s
+            s2 = bind_score(g, e, use_role=False)
+            if s2 >= MIN_BIND_SCORE:
+                spill_scores[(gi, ei)] = s2
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1]))
 
     taken_g: dict[int, int] = {}
@@ -160,7 +243,7 @@ def _plan(scene: dict, schema: UnitySchema
         room = int(groups[gi].get("count", 1)) - 1
         if primary is not None and room > 0:
             cands = sorted(
-                ((s, ei) for (g2, ei), s in scores.items()
+                ((s, ei) for (g2, ei), s in spill_scores.items()
                  if g2 == gi and ei not in taken_e
                  and getattr(entities[ei], "count", 1) == 1),
                 key=lambda c: (-c[0], c[1]))
@@ -182,11 +265,53 @@ def _unique_entity_name(base: str, schema: UnitySchema) -> str:
 
 
 def _kind_for(group: dict) -> str:
-    """Kind for an INJECTED entity. Deliberately the schema default "prop" —
-    the authored model is the ground truth for what this object looks like
-    (Tier A), so guessing a semantic kind here would only mislead the
-    playability evaluator and the color/tag defaults."""
-    return "prop"
+    """Kind for an INJECTED entity.
+
+    A DECLARED role (a `pickup_`/`enemy_` filename prefix) is the author
+    stating what this object is, so it becomes the kind — that is the whole
+    point of declaring it, and it is what gets the model wired as an objective
+    or an opponent instead of set dressing.
+
+    Without one, the default stays "prop": the authored model is ground truth
+    for what the object LOOKS like (Tier A), and guessing a semantic kind from
+    a mesh would only mislead the playability evaluator and the color/tag
+    defaults.
+    """
+    return (group.get("role") or "").lower() or "prop"
+
+
+def _apply_role(entity: EntitySpec, role: str) -> Optional[str]:
+    """Stamp a declared role onto the entity that answers to it. Returns a log
+    line when something actually changed.
+
+    This is the one place an authored scene reaches past models and transforms
+    into WIRING — deliberately, and only when the author asked for it by
+    naming the file. The Pipeline LLM's `kind` is a guess from prose; a role
+    prefix is a statement, so it wins, exactly as the authored model wins over
+    the catalog pick.
+
+    Applied to the PRIMARY bind only. Spill entities (the rivals a starting
+    grid feeds, see `_plan`) keep their own kind — they share the machine, not
+    the job.
+    """
+    was = (entity.kind or "").lower()
+    entity.kind = role
+    # The tag is set even when the kind already agreed: an entity the LLM
+    # typed `enemy` but left Untagged is still invisible to everything that
+    # finds its targets by tag.
+    tag = _ROLE_TAGS.get(role, "")
+    tagged = bool(tag) and entity.tag in ("", "Untagged")
+    if tagged:
+        entity.tag = tag
+    if was == role and not tagged:
+        return None
+    parts = []
+    if was != role:
+        parts.append(f"kind {was or 'prop'!r} -> {role!r}")
+    if tagged:
+        parts.append(f"tag -> {entity.tag!r}")
+    return (f"scene: '{entity.name}' declared role '{role}' by filename — "
+            + ", ".join(parts))
 
 
 def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
@@ -256,9 +381,15 @@ def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
 
         if ei is None:
             name = _unique_entity_name(g["name"], schema)
+            _kind = _kind_for(g)
             e = EntitySpec(
                 name=name,
-                kind=_kind_for(g),
+                kind=_kind,
+                # A declared role brings its tag: the generator's player-merge
+                # selects on `tag == "Player"`, so an authored `player_` model
+                # that matched no existing entity still becomes the avatar
+                # rather than a second, inert body beside it.
+                tag=_ROLE_TAGS.get((g.get("role") or "").lower(), "Untagged"),
                 count=g["count"],
                 scale=g["scale"],
                 placement="single" if g["count"] == 1 else "scatter",
@@ -273,15 +404,53 @@ def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
             e = schema.entities[ei]
             n_bound += 1
 
+        role = (g.get("role") or "").lower()
+        if role and ei is not None:
+            changed = _apply_role(e, role)
+            if changed:
+                msgs.append(changed)
+
         # Instance split: the primary keeps the FIRST slots in layout order
         # (pole position), each spill entity takes one of the trailing ones.
         keep = g["count"] - len(spill)
+        # The avatar must stay a singleton: the generator's player-merge only
+        # fires at count == 1, and a player holding a whole starting grid drives
+        # an invisible capsule while the bikes sit there (the failure `_plan`'s
+        # spill was built for). A declared `player_` role makes that collision
+        # likely rather than accidental, so the surplus is re-homed instead —
+        # never dropped, because a model the author placed always reaches the
+        # scene.
+        player_extra: tuple[list, list] = ([], [])
+        if role == "player" and keep > 1:
+            player_extra = (g["positions"][1:keep], g["yaws"][1:keep])
+            msgs.append(
+                f"scene: '{g['file']}' declares role 'player' but places "
+                f"{keep} of them — '{e.name}' keeps pole position and the "
+                f"other {keep - 1} become scenery. Rename those copies "
+                f"`enemy_*`/`rival_*` (or name the rivals in your brief) to "
+                f"have them wired as opponents.")
+            keep = 1
+
         _place(e, g, g["positions"][:keep], g["yaws"][:keep])
+        # Spill indices are counted from the UNCLAMPED split, so a player clamp
+        # above cannot shift a rival onto the pole slot.
+        spill_base = g["count"] - len(spill)
         for n, sei in enumerate(spill):
             se = schema.entities[sei]
-            _place(se, g, g["positions"][keep + n:keep + n + 1],
-                   g["yaws"][keep + n:keep + n + 1])
+            _place(se, g, g["positions"][spill_base + n:spill_base + n + 1],
+                   g["yaws"][spill_base + n:spill_base + n + 1])
             n_spill += 1
+
+        if player_extra[0]:
+            extra = EntitySpec(
+                name=_unique_entity_name(f"{g['name']}Extra", schema),
+                kind="prop", count=len(player_extra[0]),
+                scale=g["scale"], placement="scatter",
+                model_hint=" ".join(sorted(_terms(g["source_file"]))[:6]),
+            )
+            schema.entities.append(extra)
+            n_injected += 1
+            _place(extra, g, player_extra[0], player_extra[1])
         if spill:
             msgs.append(
                 f"scene: '{g['file']}' has {g['count']} authored instances and "
@@ -295,8 +464,26 @@ def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
             f"spawn time — authored POSITIONS cannot be honored; "
             f"{len(groups)} model binding(s) applied without placement")
 
+    # Everything the layout did NOT cover keeps resolving through the catalog
+    # tiers (Sketchfab, then Kenney) — by design, but silently, which is why
+    # "the pipeline output globs of models I did not choose" reads as a bug
+    # rather than as a list of entities to add to the layout. Name them.
+    uncovered = [e for e in schema.entities if e.name not in authored]
+    if uncovered:
+        msgs.append(
+            f"scene: {len(uncovered)} entity(s) are NOT in your layout and will "
+            f"resolve from the asset catalog — "
+            + ", ".join(f"{e.name}({e.kind}"
+                        + (f" x{e.count}" if e.count > 1 else "") + ")"
+                        for e in uncovered[:12])
+            + (f", +{len(uncovered) - 12} more" if len(uncovered) > 12 else "")
+            + ". Place a model for each in the Scene Compiler to author it "
+              "instead.")
+
     meta = schema.meta if isinstance(schema.meta, dict) else {}
     meta["authored_models"] = authored
+    meta["uncovered_entities"] = [
+        {"name": e.name, "kind": e.kind, "count": e.count} for e in uncovered]
     meta["authored_scene"] = {
         "layout": scene.get("layout", ""),
         "layout_path": scene.get("layout_path", ""),
@@ -306,6 +493,7 @@ def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
         "model_only": n_model_only,
         "skipped": n_skipped,
         "spill": n_spill,
+        "uncovered": len(uncovered),
     }
     schema.meta = meta
 

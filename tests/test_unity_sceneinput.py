@@ -7,8 +7,8 @@ import pytest
 
 from src.unity_sceneinput import (MAX_INSTANCES, SceneInputError, build_scene,
                                   default_models_dir, entity_name_for,
-                                  load_layout, load_scene, to_unity_position,
-                                  to_unity_yaw)
+                                  load_layout, load_scene, role_for,
+                                  to_unity_position, to_unity_yaw)
 
 
 # ── fixtures ─────────────────────────────────────────────────────────────────
@@ -214,3 +214,61 @@ class TestSceneFile:
         p.write_text(json.dumps(scene))
         with pytest.raises(SceneInputError, match="unity-scene"):
             load_scene(p)
+
+
+# ── role prefixes ────────────────────────────────────────────────────────────
+# The author's channel for declaring WHAT a model is. Binding used to score an
+# authored group against entity names the Pipeline LLM invented, which works
+# only when the two happen to share a word — `victorian_monobike.fbx` reaches
+# an entity called `PlayerMonobike` and reaches nothing called `Racer`. A
+# leading role word on the filename is a statement instead of a coincidence,
+# and it needs no change to the Scene Compiler app.
+
+class TestRolePrefixes:
+    def test_leading_role_word_is_the_kind(self):
+        assert role_for("player_monobike.fbx") == "player"
+        assert role_for("enemy_drone.glb") == "enemy"
+        assert role_for("pickup_scrap.fbx") == "pickup"
+
+    def test_separators_and_casing_do_not_matter(self):
+        for name in ("player_monobike.fbx", "player-monobike.fbx",
+                     "playerMonobike.fbx", "Player_Monobike.fbx",
+                     "PLAYER.monobike.fbx"):
+            assert role_for(name) == "player", name
+
+    def test_aliases_normalize_to_the_pipeline_kind(self):
+        assert role_for("rival_bike.fbx") == "enemy"
+        assert role_for("hero_knight.fbx") == "player"
+        assert role_for("car_red.fbx") == "vehicle"
+
+    def test_a_non_role_first_word_declares_nothing(self):
+        """Every layout written before roles existed keeps its old binding."""
+        assert role_for("victorian_monobike.fbx") is None
+        assert role_for("monacoGP.fbx") is None
+
+    def test_the_role_word_must_LEAD(self):
+        """`bike_player.fbx` is a bike, not a declaration — only the first
+        token is read, so a role word later in the name is just a word."""
+        assert role_for("bike_player.fbx") is None
+
+    def test_role_travels_on_the_group(self, models, tmp_path):
+        (models / "player_monobike.fbx").write_bytes(b"BINARY")
+        scene, _ = build_scene(
+            _layout(_item("a", "player_monobike.fbx"),
+                    _item("b", "monacoGP.fbx")),
+            models)
+        by_file = {g["file"]: g for g in scene["groups"]}
+        assert by_file["player_monobike.fbx"]["role"] == "player"
+        assert by_file["monacoGP.fbx"]["role"] is None
+
+    def test_the_group_name_still_reads_naturally(self):
+        """The role word stays in the entity name — `PlayerMonobike` is a
+        better name than `Monobike`, and it helps keyword binding too."""
+        assert entity_name_for("player_monobike.fbx") == "PlayerMonobike"
+
+    def test_a_bare_role_word_is_not_a_declaration(self):
+        """`vehicle.fbx` / `tree.fbx` are ordinary asset names. Reading them as
+        declarations would let one generic file claim an entity outright — the
+        case MIN_BIND_SCORE exists to prevent."""
+        for name in ("vehicle.fbx", "tree.fbx", "car.fbx", "player.fbx"):
+            assert role_for(name) is None, name

@@ -22,9 +22,80 @@ scene file; everything below is detail.
 | `items[].yaw_deg` | `EntitySpec.instance_yaws` | model default rotation |
 | `items[].scale` × `base_scale` | `EntitySpec.scale` | schema / catalog |
 | N copies of one file | one entity with `count = N` | the LLM's authored count |
+| a **role prefix** on the filename | `EntitySpec.kind` + `tag` | the LLM's guess from prose |
 
 No schema field was invented for this: authored placement rides the same baked
 arrays `unity_racetrack.py`'s start grid uses.
+
+## Role prefixes — naming a model's JOB
+
+Binding scores your model against entity names the Pipeline LLM invented at
+Step 3. That works when the two share a word and fails silently when they do
+not: `victorian_monobike.fbx` reaches an entity the model called
+`PlayerMonobike`, and reaches nothing it called `Racer` — in which case the
+bike is injected as `kind="prop"`, lands exactly where you put it, and is
+wired as **scenery**. You cannot predict the model's word choice, so keyword
+overlap can never be the control surface for "this one is the player."
+
+Open the filename with a role word instead. Nothing in the Scene Compiler
+changes — rename the file in `models/` and the role travels with it:
+
+```
+player_monobike.fbx     enemy_drone.fbx      pickup_scrap.fbx
+rival_kart.glb          npc_marshal.fbx      building_grandstand.fbx
+```
+
+| Prefix | Becomes `kind` | Gets `tag` |
+|---|---|---|
+| `player_`, `hero_`, `avatar_` | `player` | `Player` |
+| `enemy_`, `foe_`, `rival_`, `boss_` | `enemy` / `boss` | `Enemy` |
+| `pickup_`, `collectible_`, `item_`, `goal_` | as written | `Collectible` |
+| `npc_`, `ally_`, `character_`, `vehicle_`, `car_` | as written | — |
+| `prop_`, `building_`, `tree_`, `road_`, `track_`, `wall_`, `water_`, … | as written | — |
+
+Separator can be `_`, `-`, `.` or a camelCase boundary (`playerMonobike.fbx`).
+The role word must **prefix something** — `vehicle.fbx` and `tree.fbx` are
+ordinary asset names, not declarations, and are read as they always were.
+
+What a declared role does:
+
+- **Binds ahead of every keyword signal** (weight 8.0 vs. 3.0 for a name hit)
+  to an entity that already holds that job — same `kind`, same role family, or
+  the role's tag. The avatar is found by `tag == "Player"`, which is what the
+  generator's player-merge selects on, so it works whatever the LLM named it.
+- **Vetoes a conflicting bind.** `enemy_drone.fbx` can never reach the player,
+  however well the names line up. `player`/`enemy`/`npc`/objective are
+  mutually exclusive; `vehicle`, `character` and scenery kinds are descriptive
+  and never veto (the player *is* a vehicle in a racing game).
+- **Sets the bound entity's `kind` and `tag`** — this is the one place an
+  authored scene reaches past models and transforms into wiring, and it
+  happens only because you asked for it by naming the file.
+- **Injects with that kind when nothing matches**, so an authored `pickup_`
+  the LLM never wrote becomes a real objective instead of set dressing. A
+  `player_` group with no match injects a tagged, `count == 1` avatar.
+- **Never spreads to spill entities.** A grid of `player_` bikes feeds the
+  named rivals the same *machine*, not the same job — otherwise the scene has
+  three avatars. Spill is scored role-blind for exactly this reason.
+- **Keeps the avatar a singleton.** `count > 1` silently disqualifies the
+  player-merge, so a `player_` group placing a whole grid keeps pole position
+  and re-homes the surplus as scenery, saying so loudly.
+
+Layouts whose filenames carry no role word behave exactly as they did before
+roles existed.
+
+## Entities your layout does not cover
+
+They keep resolving through the normal catalog tiers (Sketchfab, then Kenney)
+— by design, but the binding step now **names them**:
+
+```
+scene: 2 entity(s) are NOT in your layout and will resolve from the asset
+catalog — Grandstands(building x6), Marshals(npc x4). Place a model for each
+in the Scene Compiler to author it instead.
+```
+
+The same list is stamped on `schema.meta["uncovered_entities"]`. If the output
+contains models you did not choose, that message is the list to work from.
 
 ## The chain
 
@@ -49,6 +120,7 @@ overlap against the model's own filename:
 
 | Signal | Weight |
 |---|---|
+| declared **role** (filename prefix, above) | 8.0 |
 | entity `name` | 3.0 |
 | `model_hint` | 2.0 |
 | `sketchfab_query` | 1.0 |
