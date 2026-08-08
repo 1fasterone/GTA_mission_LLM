@@ -114,20 +114,6 @@ Spatial + QA (Unity)
   writes playability.txt, gated by playability.gate in config.yaml.
   CLI: python main.py unity-playability <schema.json> [--strict]
 
-Atoms + Microgens
-- atoms/ — atomic actions (movement, animation, camera, audio, FX, logic,
-  entity)
-- micro/ — micro-generators built from atoms
-- micro_pipeline.py — microgen 6-step pipeline
-- templates/unity/micro/ — Unity microgen templates
-
-Blender Asset Factory
-- blender_cli.py, src/blender/ — headless FBX generation
-- vehicle_generator.py, procedural_pipeline.py — parametric model builders
-
-Web UI
-- webui/server.py — FastAPI UI
-
 Always reference these paths when generating or modifying files. See also
 docs/model-pipeline-architecture.md.
 
@@ -192,7 +178,7 @@ internals unless asked.
 # Conventions to Enforce
 
 - Steps 4-7 remain deterministic
-- Graceful degradation: missing model — primitive; missing Blender — stub
+
 - Config-driven behavior (config.yaml)
 - Unity canonical script names must not change
 - Never break template references
