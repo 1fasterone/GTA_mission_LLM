@@ -18,10 +18,13 @@ import json
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+from rich.console import Console
 
 from .micro import REGISTRY
 from .micro_pipeline import to_pascal
 from .unity_generator import _make_guid, _meta_file, _default_meta
+
+console = Console()
 
 
 # Where each subsystem attaches in the scene (used by P2's scene wiring).
@@ -130,6 +133,12 @@ class MicroComposer:
             **sub.options,
         )
         schema = pipeline.default_fix(schema, variant)
+        # The compose path does not go through MicroPipeline.run, so it must run
+        # the template reconciliation itself — this is where the TurboToys
+        # PlayerHealth.cs duplicate members and SceneTrigger.cs missing
+        # System.Collections.Generic came from.
+        for msg in pipeline.harden(schema):
+            console.print(f"  [magenta]FIX[/]  {msg}")
         # attach_class: the scene-attachable MonoBehaviour (≠ schema.name when a
         # micro's primary file is a ScriptableObject, e.g. the audio bank).
         class_name = pipeline.attach_class(schema)

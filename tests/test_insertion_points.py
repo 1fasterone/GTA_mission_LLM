@@ -23,6 +23,8 @@ from src.micro.code_fields import (
     lint_function_call_ref_misuse, lint_world_get_out_param_misuse,
     lint_vector3_raw_call_arg, find_vector3_raw_call_args,
     lint_undeclared_catch_exception_var, lint_vector3_entity_prop_misuse,
+    sanitize_default, _has_malformed_char_literal,
+    template_members, template_usings, harden_against_template,
     find_vector3_entity_prop_misuse, _code_brace_depth, _code_paren_depth,
     _split_nested_members, _repair_numeric_literals,
 )
@@ -1353,3 +1355,242 @@ def test_custom_script_autodeclares_rigidbody_when_rb_used():
 def test_custom_script_no_rigidbody_when_rb_unused():
     cs = _custom_script_cs("NoRbProof", "transform.Rotate(Vector3.up * Time.deltaTime);")
     assert "Rigidbody" not in cs
+
+
+# ── CS1012: too many characters in character literal (live: ImpactVFX.cs) ─────
+#
+# A TurboToys run shipped
+#     [SerializeField] private Color _colorPalette = '#FFD700';
+# — two defects in one initializer. The single quotes are a malformed char
+# literal (CS1012), and the value is a string where the declared type is Color
+# (CS0029), so even correctly quoted it would not compile. `default` is spliced
+# raw into the declaration by all thirteen render sites, and every structural
+# check looked past it: `_code_mask` masks a char literal WHOLE, so nothing
+# downstream could see what was inside one.
+
+@pytest.mark.parametrize("text, why", [
+    ("'#FFD700'",  "the live value — seven characters in a char literal"),
+    ("'ab'",       "two characters"),
+    ("''",         "empty char literal"),
+    ("'",          "never terminated"),
+    (r"'\q'",     "not a C# escape sequence"),
+])
+def test_malformed_char_literal_is_detected(text, why):
+    assert _has_malformed_char_literal(text), why
+
+
+@pytest.mark.parametrize("text, why", [
+    ("'a'",             "one ordinary character"),
+    (r"'\n'",          "a simple escape"),
+    (r"'\''",          "an escaped quote"),
+    (r"'\u00e9'",      "a UTF-16 escape"),
+    ('"it\'s fine"',    "an apostrophe inside a STRING is not a char literal"),
+    ("Color.white",     "no char literal at all"),
+    ("new Vector3(0f, 1f, 0f)", "an ordinary expression"),
+])
+def test_valid_char_literals_are_left_alone(text, why):
+    assert not _has_malformed_char_literal(text), why
+
+
+def test_live_color_initializer_is_repaired_not_spliced():
+    """The exact ImpactVFX.cs field: the colour survives, as a Color."""
+    fields = [CodeField(name="_colorPalette", type="Color", default="'#FFD700'")]
+    assert lint_fields(fields, reserved=set())[0].default == (
+        "new Color(1f, 0.8431f, 0f, 1f)")
+
+
+@pytest.mark.parametrize("type_str, default, expected", [
+    ("Color",   "'#FFD700'",   "new Color(1f, 0.8431f, 0f, 1f)"),
+    ("Color",   '"#FFD700"',   "new Color(1f, 0.8431f, 0f, 1f)"),
+    ("Color",   "#FFD700",     "new Color(1f, 0.8431f, 0f, 1f)"),
+    ("Color",   "#FD0",        "new Color(1f, 0.8667f, 0f, 1f)"),
+    ("Color",   "#FFD70080",   "new Color(1f, 0.8431f, 0f, 0.502f)"),
+    ("Color32", "'#FFD700'",   "new Color32(255, 215, 0, 255)"),
+    ("UnityEngine.Color", "#00FF00", "new Color(0f, 1f, 0f, 1f)"),
+])
+def test_hex_colour_becomes_the_constructor_csharp_accepts(type_str, default, expected):
+    """However the model quoted it, a hex colour on a colour-typed field has
+    exactly one reading — so this is a repair, not a drop."""
+    assert sanitize_default(type_str, default) == expected
+
+
+@pytest.mark.parametrize("default", [
+    "Color.white", "Color.red", "new Color(1f, 0f, 0f)",
+    "new Color32(255, 215, 0, 255)", "Color.Lerp(Color.red, Color.blue, 0.5f)",
+])
+def test_real_colour_expressions_are_kept_as_authored(default):
+    assert sanitize_default("Color", default) == default
+
+
+@pytest.mark.parametrize("default, why", [
+    ("gold",  "a bare identifier is CS0103 on a Color field"),
+    ("0.5",   "a float is CS0029 on a Color field"),
+    ("",      "nothing to initialise with"),
+])
+def test_uncompilable_colour_defaults_are_dropped(default, why):
+    assert sanitize_default("Color", default) is None, why
+
+
+def test_malformed_char_literal_is_dropped_on_any_type():
+    """Containment for every OTHER type the colour repair does not cover: an
+    over-long char literal can never reach the file, whatever it was for."""
+    assert sanitize_default("char", "'ab'") is None
+    assert sanitize_default("KeyCode", "'#FFD700'") is None
+    assert sanitize_default("char", "'x'") == "'x'"
+
+
+def test_rendered_vfx_script_carries_a_compilable_colour(tmp_path):
+    """End to end through the generator that produced the live file."""
+    from src.micro.vfx import VfxPipeline, VfxSchema
+
+    config = {
+        "lm_studio": {"base_url": "http://localhost:1234/v1", "model": "test"},
+        "unity_pipeline": {
+            "unity_output_dir": str(tmp_path),
+            "unity_template_dir": str(Path(__file__).resolve().parent.parent
+                                      / "templates" / "unity"),
+        },
+    }
+    pipeline = VfxPipeline(config)
+    schema = VfxSchema(name="ImpactVFX", variant="impact_fx", extra_fields=[
+        CodeField(name="_colorPalette", type="Color", default="'#FFD700'",
+                  header="VFX", tooltip="The primary bright color."),
+    ])
+    schema = pipeline.default_fix(schema, "impact_fx")
+    pipeline.write_files(schema, "impact_fx", tmp_path)
+
+    cs = (tmp_path / "Scripts" / "ImpactVFX.cs").read_text(encoding="utf-8")
+    assert "private Color _colorPalette = new Color(1f, 0.8431f, 0f, 1f);" in cs
+    assert "'#" not in cs
+
+
+# ── CS0102 / CS0111 / CS0246: reconciling authored members against the template ─
+#
+# A TurboToys run produced three distinct injection defects in one build:
+#   PlayerHealth.cs(90,18)  CS0102 — 'OnHealthChanged' already defined (an event
+#                                    in the template, a method from the model)
+#   PlayerHealth.cs(84,17)  CS0111 — 'TakeDamage(float)' already defined
+#   SceneTrigger.cs(20,124) CS0246 — List<> with no System.Collections.Generic
+# The first two had no check at all; the third had one that eight generators
+# never reached because they hand-roll their lint instead of calling
+# lint_extensible.
+
+_MICRO_TEMPLATES = REPO_ROOT / "templates" / "unity" / "micro"
+
+
+def test_template_members_are_read_from_the_template():
+    """Ground truth, not a hand-authored list — the health template's own
+    members, including the two the live build collided with."""
+    members = template_members(str(_MICRO_TEMPLATES / "health"))
+    assert {"TakeDamage", "OnHealthChanged", "Heal", "Die",
+            "maxHealth", "CurrentHealth"} <= members
+
+
+def test_template_member_scan_skips_type_declarations():
+    """`public class X : MonoBehaviour` must not reserve its base type."""
+    assert "MonoBehaviour" not in template_members(str(_MICRO_TEMPLATES / "health"))
+
+
+def test_template_member_scan_sees_past_jinja():
+    """A Jinja-interpolated default must not hide the field name it follows."""
+    assert "maxHealth" in template_members(str(_MICRO_TEMPLATES / "health"))
+
+
+def test_template_usings_exclude_the_extra_usings_loop():
+    """`using {{ u }};` is the schema's own loop, not a namespace."""
+    usings = template_usings(str(_MICRO_TEMPLATES / "trigger"))
+    assert usings == {"UnityEngine", "System.Collections"}
+
+
+@pytest.mark.parametrize("kind", ["health", "trigger", "spawner", "vfx", "controller"])
+def test_every_scanned_template_yields_members(kind):
+    """A silent empty set would mean reconciling nothing while reporting success."""
+    assert template_members(str(_MICRO_TEMPLATES / kind))
+
+
+class _FakeSchema(CodeExtensibleSchema):
+    name: str = "PlayerHealth"
+
+
+def test_authored_member_colliding_with_the_template_is_dropped():
+    """The live PlayerHealth.cs pair: a method the template already defines
+    (CS0111) and one whose name is a template EVENT (CS0102) — C# has a single
+    member namespace, so both are the same collision."""
+    schema = _FakeSchema(
+        extra_fields=[CodeField(name="_health", type="float", default="100f")],
+        extra_methods=[
+            CodeMethod(signature="public void TakeDamage(float amount)",
+                       body="_health -= amount;"),
+            CodeMethod(signature="private void OnHealthChanged()",
+                       body="Debug.Log(_health);"),
+            CodeMethod(signature="public bool IsAlive()", body="return _health > 0f;"),
+        ])
+    msgs = harden_against_template(schema, _MICRO_TEMPLATES / "health")
+
+    kept = [m.signature for m in schema.extra_methods]
+    assert kept == ["public bool IsAlive()"]
+    assert any("TakeDamage" in m and "OnHealthChanged" in m for m in msgs)
+
+
+def test_authored_field_colliding_with_a_template_field_is_dropped():
+    schema = _FakeSchema(extra_fields=[
+        CodeField(name="maxHealth", type="float", default="50f"),
+        CodeField(name="_toyDurability", type="float", default="1f"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "health")
+    assert [f.name for f in schema.extra_fields] == ["_toyDurability"]
+
+
+def test_non_colliding_members_survive_untouched():
+    schema = _FakeSchema(
+        extra_fields=[CodeField(name="_toyDurability", type="float", default="1f")],
+        extra_methods=[CodeMethod(signature="private void Wobble()", body="return;")])
+    assert harden_against_template(schema, _MICRO_TEMPLATES / "health") == []
+    assert len(schema.extra_fields) == 1 and len(schema.extra_methods) == 1
+
+
+def test_generic_field_type_heals_its_using_on_a_hand_rolled_generator():
+    """The live SceneTrigger.cs: the trigger generator calls lint_fields
+    directly and so never ran the auto-heal that lint_extensible owns."""
+    schema = _FakeSchema(extra_fields=[
+        CodeField(name="_boostPads", type="List<AudioSource>", default="null"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "trigger")
+    assert "System.Collections.Generic" in schema.extra_usings
+
+
+def test_using_already_in_the_template_is_not_added_twice():
+    """The spawner template already imports it — a second copy is redundant."""
+    schema = _FakeSchema(extra_fields=[
+        CodeField(name="_pool", type="List<GameObject>", default="null"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "spawner")
+    assert "System.Collections.Generic" not in schema.extra_usings
+
+
+def test_missing_template_dir_abstains_loudly_instead_of_reserving_nothing():
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="public void TakeDamage(float a)", body="return;")])
+    assert harden_against_template(schema, _MICRO_TEMPLATES / "nope") == []
+    assert len(schema.extra_methods) == 1
+
+
+def test_every_registered_micro_reconciles_against_a_real_template():
+    """Coverage is the point: this pass runs for every micro on both paths, so
+    a generator whose templates it cannot read would silently check nothing."""
+    from src.micro import REGISTRY
+
+    config = {
+        "lm_studio": {"base_url": "http://localhost:1234/v1", "model": "test"},
+        "unity_pipeline": {
+            "unity_output_dir": str(REPO_ROOT / "output" / "unity"),
+            "unity_template_dir": str(REPO_ROOT / "templates" / "unity"),
+        },
+    }
+    missing = []
+    for kind, cls in REGISTRY.items():
+        if kind == "model":          # geometry pipeline — Blender, no C# template
+            continue
+        if not template_members(str(cls(config).template_root)):
+            missing.append(kind)
+    assert not missing, f"no template members scanned for: {missing}"
