@@ -124,6 +124,26 @@ class MicroPipeline(ABC):
     def default_fix(self, schema: BaseModel, variant: str) -> BaseModel:
         return schema
 
+    def harden(self, schema: BaseModel) -> list[str]:
+        """Reconcile the authored schema against this micro's own template.
+
+        Deliberately NOT part of `default_fix`: twenty generators override that,
+        eight of them hand-roll their lint instead of calling `lint_extensible`,
+        and a check every subclass has to remember is a check some subclass will
+        forget. Called by both paths that produce a micro — `run()` below and
+        `UnityCompose._resolve` — so coverage does not depend on the generator.
+
+        Returns fixer-log messages; never raises (a template that cannot be read
+        warns and reconciles nothing rather than failing the build).
+        """
+        from .micro.code_fields import harden_against_template
+        try:
+            return harden_against_template(schema, self.template_root)
+        except Exception as exc:                      # noqa: BLE001
+            console.print(f"  [yellow]WARN[/] template reconciliation skipped "
+                          f"({type(exc).__name__}: {exc})")
+            return []
+
     def _pre_write(self, schema: BaseModel, variant: str) -> None:
         """Hook called after the fixer (Step 5), before write_files (Step 6).
 
@@ -273,6 +293,8 @@ class MicroPipeline(ABC):
         # STEP 5 — fixer
         self._step(5, "Programmatic fixer")
         schema = self.default_fix(schema, variant)
+        for msg in self.harden(schema):
+            self._fix(msg)
         self._ok("fixer pass complete")
 
         # STEP 5.5 — pre-write hook (VRAM management, supplementary LLM calls, etc.)

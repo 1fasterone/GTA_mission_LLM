@@ -45,6 +45,7 @@ bodies gain prompt-specific content.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Iterable, Sequence
 
 from pydantic import ValidationError
@@ -185,7 +186,6 @@ def _neutralize_refs(text: str, names: set[str]) -> str:
     """
     if not text or not names:
         return text
-    import re
     pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
     out: list[str] = []
     for line in text.splitlines():
@@ -202,12 +202,87 @@ def _neutralize_refs(text: str, names: set[str]) -> str:
     return "\n".join(out)
 
 
+# A method SIGNATURE names types too, and the field-only check above walked
+# straight past them. Hit live on a TurboToys run, EnemySpawner.cs(106,44) and
+# (116,34):
+#
+#     private void ApplyRubberBandLogic(List<EnemyController> rivals, float p)
+#     private void OnRivalFinished(EnemyController rival)
+#
+# — CS0246 twice for a collaborator class the project never generates. Same
+# defect as the field case, same remedy, one declaration site further along:
+# the parameter and return types are declarations exactly like a field's, and
+# neither has a repair (inventing the class would ship a stub nothing drives).
+# Matched against the same two allowlists, so a signature naming only real
+# Unity/BCL types or a real sibling micro is never touched.
+_SIG_PARAMS_RE = re.compile(r"\((.*)\)", re.DOTALL)
+# Modifiers that precede the return type; never types themselves.
+_SIG_MODIFIERS = frozenset({
+    "public", "private", "protected", "internal", "static", "virtual",
+    "override", "sealed", "async", "extern", "new", "unsafe", "partial",
+    "readonly", "event", "ref", "out", "in", "params", "this",
+})
+
+
+def _split_params(params: str) -> list[str]:
+    """Split a parameter list on the commas that SEPARATE parameters — the ones
+    inside `Dictionary<string, int>` belong to the type, and splitting on them
+    leaves two fragments that look like neither a type nor a name."""
+    out: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in params:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    out.append("".join(current))
+    return out
+
+
+def _signature_type_names(signature: str) -> set[str]:
+    """Every type a method signature declares — return type and parameters.
+
+    Deliberately shallow: a token that is not plainly `<type> <name>` is skipped
+    rather than guessed at, so this can flag a type that is genuinely absent but
+    never invent one that is not there.
+    """
+    if not signature:
+        return set()
+    params_match = _SIG_PARAMS_RE.search(signature)
+    params = params_match.group(1) if params_match else ""
+    head = signature[: params_match.start()] if params_match else signature
+
+    names: set[str] = set()
+    # The declared name is always the LAST token; everything before it, once the
+    # modifiers are off, is the type. Joining rather than taking one token keeps
+    # `Dictionary<string, EnemyController>` in one piece — a whitespace split
+    # cuts it at the generic's own comma and loses the type that matters.
+    head_tokens = [t for t in re.split(r"\s+", head.strip()) if t]
+    while head_tokens and head_tokens[0].lower() in _SIG_MODIFIERS:
+        head_tokens.pop(0)
+    if len(head_tokens) >= 2:
+        names.add(_extract_base_type(" ".join(head_tokens[:-1])))
+    for raw in _split_params(params):
+        tokens = [t for t in re.split(r"\s+", raw.strip()) if t
+                  and t.lower() not in _SIG_MODIFIERS]
+        if len(tokens) >= 2:                     # "<type> <name>"
+            names.add(_extract_base_type(" ".join(tokens[:-1])))
+    return {n for n in names if n and re.match(r"^[A-Za-z_]\w*$", n)}
+
+
 def _drop_unresolvable_types(kind: str, candidate: dict,
                              known_types: frozenset[str]) -> tuple[dict, list[str]]:
-    """Strip fields whose type cannot resolve, plus every reference to them."""
+    """Strip fields and methods whose declared types cannot resolve, plus every
+    reference to what was removed."""
     fields = candidate.get("extra_fields")
     if not isinstance(fields, list):
-        return candidate, []
+        fields = []
 
     kept_fields: list = []
     dropped: set[str] = set()
@@ -219,11 +294,34 @@ def _drop_unresolvable_types(kind: str, candidate: dict,
             dropped.add(str(name))
             continue
         kept_fields.append(f)
+
+    # Methods whose signature names a type nothing in the project defines.
+    methods_in = candidate.get("extra_methods")
+    kept_methods: list = []
+    bad_types: set[str] = set()
+    if isinstance(methods_in, list):
+        for m in methods_in:
+            sig = (m.get("signature") if isinstance(m, dict)
+                   else getattr(m, "signature", "")) or ""
+            unresolved = {t for t in _signature_type_names(str(sig))
+                          if t not in known_types and t not in _CS_BUILTIN_TYPES}
+            if unresolved:
+                bad_types |= unresolved
+                name_m = re.search(r"\b([A-Za-z_]\w*)\s*\(", str(sig))
+                if name_m:
+                    # The method is gone; calls to it would be CS0103 next.
+                    dropped.add(name_m.group(1))
+                continue
+            kept_methods.append(m)
+
     if not dropped:
         return candidate, []
 
     out = dict(candidate)
-    out["extra_fields"] = kept_fields
+    if fields:
+        out["extra_fields"] = kept_fields
+    if isinstance(methods_in, list):
+        out["extra_methods"] = kept_methods
     for key in _FRAGMENT_KEYS:
         if isinstance(out.get(key), str):
             out[key] = _neutralize_refs(out[key], dropped)
@@ -240,8 +338,9 @@ def _drop_unresolvable_types(kind: str, candidate: dict,
                    for ln in body.splitlines()):
                 surviving.append({**m, "body": body})
         out["extra_methods"] = surviving
-    return out, [f"micro-code: dropped {kind} field(s) {', '.join(sorted(dropped))} "
-                 f"— unresolvable collaborator type (CS0246)"]
+    detail = (f" ({', '.join(sorted(bad_types))})" if bad_types else "")
+    return out, [f"micro-code: dropped {kind} member(s) {', '.join(sorted(dropped))} "
+                 f"— unresolvable collaborator type{detail} (CS0246)"]
 
 
 def _apply(sub, candidate: dict, known_types: frozenset[str] = frozenset()) -> list[str]:

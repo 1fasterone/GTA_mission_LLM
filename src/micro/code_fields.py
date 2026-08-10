@@ -21,6 +21,8 @@ raises, it cleans what it can, drops what it can't, and logs every fix.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional, Protocol
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -1709,6 +1711,19 @@ _STRING_LITERAL_PREFIXES = ('"', '@"', '$"', '$@"', '@$"')
 _STRING_SENTINELS = frozenset({"null", "string.empty", "default"})
 _PY_LITERALS = {"none": "null", "true": "true", "false": "false"}
 
+# A hex colour is the one notation every model reaches for and the one notation
+# C# cannot hold: `Color c = "#FFD700"` is CS0029 however it is quoted, and
+# `'#FFD700'` is CS1012 on top. The declared type makes the intent unambiguous,
+# so this is a repair rather than a drop — the field keeps the colour the model
+# chose. #RGB / #RGBA shorthand expands the way CSS does (nibble x 17).
+_COLOR_TYPES = frozenset({"color", "color32"})
+_HEX_COLOR_RE = re.compile(
+    r"^#?(?P<hex>[0-9a-fA-F]{3}|[0-9a-fA-F]{4}"
+    r"|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
+# A genuine colour expression the model may also write: `Color.white`,
+# `new Color32(255, 215, 0, 255)`. Kept as authored — nothing here can improve it.
+_COLOR_EXPR_RE = re.compile(r"^(?:new\s+Color(?:32)?\s*\(|Color(?:32)?\s*\.)")
+
 
 def _unescaped_quote_count(text: str) -> int:
     """Count `"` characters that actually open or close a literal (a `\\"` does
@@ -1724,6 +1739,57 @@ def _unescaped_quote_count(text: str) -> int:
     return count
 
 
+# CS1012 ("Too many characters in character literal"): a C# `'…'` holds exactly
+# ONE character, but a model reaching for a string reaches for whichever quote
+# it feels like. Hit live on a TurboToys run, ImpactVFX.cs(23,148):
+#
+#     [SerializeField] private Color _colorPalette = '#FFD700';
+#
+# `_code_mask` masks a char literal WHOLE, by design — it answers "is this
+# position code?", and the characters inside a literal are not. So every
+# structural check downstream looked straight past this one: no newline, no
+# unbalanced bracket, no stray `;` at a code position, and `_unescaped_quote_count`
+# counts only `"`. The initializer sailed through as an "expression" and was
+# spliced verbatim.
+#
+# Exactly one character, or one escape sequence C# actually defines.
+_VALID_CHAR_LITERAL_RE = re.compile(
+    r"^(?:[^'\\\n]"                        # one ordinary character
+    r"|\\['\"\\0abfnrtv]"                  # simple escape
+    r"|\\x[0-9a-fA-F]{1,4}"                # hex escape
+    r"|\\u[0-9a-fA-F]{4}"                  # UTF-16 escape
+    r"|\\U[0-9a-fA-F]{8})$")               # UTF-32 escape
+
+
+def _has_malformed_char_literal(text: str) -> bool:
+    """True when `text` contains a `'…'` that is not a legal char literal.
+
+    Finds the literals through `_code_mask` rather than a second scanner: a
+    masked run that BEGINS where code left off is a literal's opening quote, so
+    the runs starting with `'` are the char literals — string bodies, comments
+    and the `'` inside `"it's"` are already masked away by the same pass every
+    other check here trusts.
+    """
+    mask = _code_mask(text)
+    n = len(text)
+    i = 0
+    while i < n:
+        if mask[i]:
+            i += 1
+            continue
+        start = i
+        while i < n and not mask[i]:
+            i += 1
+        run = text[start:i]
+        if not run.startswith("'"):
+            continue                                   # a string or a comment
+        if len(run) < 2 or not run.endswith("'"):
+            return True                                # never terminated
+        if not _VALID_CHAR_LITERAL_RE.match(run[1:-1]):
+            return True
+    return False
+
+
 def _initializer_is_structurally_safe(text: str) -> bool:
     """True when `text` can stand as `= <text>;` without corrupting the file.
 
@@ -1736,6 +1802,8 @@ def _initializer_is_structurally_safe(text: str) -> bool:
         return False
     if _unescaped_quote_count(text) % 2:
         return False                                   # unterminated literal
+    if _has_malformed_char_literal(text):
+        return False
     mask = _code_mask(text)
     depth = {"(": 0, "[": 0, "{": 0}
     closers = {")": "(", "]": "[", "}": "{"}
@@ -1837,6 +1905,52 @@ def initializer_instance_refs(text: str, *, siblings: "set[str]") -> list[str]:
     return out
 
 
+def _unquote(text: str) -> str:
+    """Strip one matching pair of surrounding quotes, either kind — the model's
+    choice of quote says nothing about what it meant."""
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"":
+        return text[1:-1].strip()
+    return text
+
+
+def _hex_rgba(digits: str) -> tuple[int, int, int, int]:
+    """#RGB / #RGBA / #RRGGBB / #RRGGBBAA -> four 0-255 components."""
+    if len(digits) in (3, 4):
+        parts = [int(d, 16) * 17 for d in digits]
+    else:
+        parts = [int(digits[i:i + 2], 16) for i in range(0, len(digits), 2)]
+    while len(parts) < 4:
+        parts.append(255)
+    return parts[0], parts[1], parts[2], parts[3]
+
+
+def _cs_float(value: float) -> str:
+    """A C# float literal — 4 decimal places is well inside float precision and
+    keeps the generated line readable."""
+    text = f"{value:.4f}".rstrip("0").rstrip(".")
+    return (text or "0") + "f"
+
+
+def _color_initializer(base: str, text: str) -> Optional[str]:
+    """A Color/Color32 initializer, or None to drop it.
+
+    Colour is the one declared type where the model's habitual notation is not
+    C# at all, so the type is doing real work here: `#FFD700` on a `Color` field
+    can only mean one thing. Anything that is neither a hex colour nor a colour
+    expression (a bare `gold`, a stray number) has no compilable reading and is
+    dropped rather than spliced.
+    """
+    hexed = _HEX_COLOR_RE.match(_unquote(text))
+    if hexed is None:
+        if _COLOR_EXPR_RE.match(text) and _initializer_is_structurally_safe(text):
+            return text
+        return None
+    r, g, b, a = _hex_rgba(hexed.group("hex"))
+    if base == "color32":
+        return f"new Color32({r}, {g}, {b}, {a})"
+    return ("new Color(" + ", ".join(_cs_float(c / 255) for c in (r, g, b, a)) + ")")
+
+
 def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     """Coerce an LLM-authored initializer into a literal that parses as
     `= <default>;` for the declared type. Returns None to drop the initializer.
@@ -1868,6 +1982,9 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
         # Bare prose the model forgot to quote (CS0103) — quoting keeps the
         # authored value; dropping it would lose the content for no reason.
         return f'"{escape_cs_string(text)}"'
+
+    if base.rsplit(".", 1)[-1] in _COLOR_TYPES:
+        return _color_initializer(base.rsplit(".", 1)[-1], text)
 
     # Hex/binary must be tried FIRST: in `0xFF` a decimal-shaped match would
     # read the digits as an invented suffix and "repair" the value to 0.
@@ -2064,19 +2181,192 @@ def lint_extensible(schema: _ExtensibleLike, *,
         queue.extend(nested)
     schema.extra_methods = cleaned
 
-    # Auto-heal missing usings: if the authored content needs a namespace the
-    # model forgot (e.g. List<> without System.Collections.Generic), add it.
-    blob = "\n".join(
-        [schema.awake_extra, schema.update_extra, schema.fixed_update_extra]
-        + [f"{f.type} {f.default or ''}" for f in schema.extra_fields]
-        + [f"{m.signature}\n{m.body}" for m in schema.extra_methods]
-    )
-    for pattern, ns in _USING_TRIGGERS:
-        if (ns not in schema.extra_usings and ns not in template_usings
-                and re.search(pattern, blob)):
-            schema.extra_usings.append(ns)
-            console.print(f"  [magenta]FIX[/]  auto-added missing using {ns!r}")
+    # This caller has no fixer-log channel of its own, so it prints. The other
+    # caller (`harden_against_template`) returns its messages to a pipeline that
+    # logs them, and printing here too would double every line.
+    for msg in heal_missing_usings(schema, template_usings=template_usings):
+        console.print(f"  [magenta]FIX[/]  {msg}")
     return schema
+
+
+def _authored_blob(schema) -> str:
+    """Everything the model authored into a schema, as one searchable string."""
+    return "\n".join(
+        [str(getattr(schema, key, "") or "")
+         for key in ("awake_extra", "update_extra", "fixed_update_extra")]
+        + [f"{f.type} {f.default or ''}"
+           for f in (getattr(schema, "extra_fields", None) or [])]
+        + [f"{f.type} {f.default or ''}"
+           for f in (getattr(schema, "data_fields", None) or [])]
+        + [f"{m.signature}\n{m.body}"
+           for m in (getattr(schema, "extra_methods", None) or [])]
+    )
+
+
+def heal_missing_usings(schema, *, template_usings: "set[str] | frozenset[str]") -> list[str]:
+    """Add any namespace the authored content needs and the model forgot.
+
+    Extracted from `lint_extensible` because eight generators (animator,
+    controller, lighting, saveload, shader, statemachine, trigger, vfx)
+    hand-roll their own lint pass and call `lint_usings` + `lint_fields`
+    directly, so they never reached this step. Hit live on a TurboToys run,
+    SceneTrigger.cs(20,124):
+
+        [SerializeField] private List<AudioSource> _boostPads = null;
+
+    with the trigger template's own `using UnityEngine; using System.Collections;`
+    and nothing else — CS0246 twice over. The heal itself was already written
+    and already correct; it simply was not on that code path.
+    """
+    usings = getattr(schema, "extra_usings", None)
+    if usings is None:
+        return []
+    blob = _authored_blob(schema)
+    msgs: list[str] = []
+    for pattern, ns in _USING_TRIGGERS:
+        if ns in usings or ns in template_usings:
+            continue
+        if re.search(pattern, blob):
+            usings.append(ns)
+            msgs.append(f"auto-added missing using {ns!r}")
+    return msgs
+
+
+# ── Template ground truth ─────────────────────────────────────────────────────
+#
+# CS0102 / CS0111: an LLM-authored member that redeclares one the micro's own
+# template already emits. Hit live on a TurboToys run, PlayerHealth.cs:
+#
+#     (90,18) CS0102 — 'PlayerHealth' already contains a definition for 'OnHealthChanged'
+#     (84,17) CS0111 — already defines a member 'TakeDamage' with the same parameter types
+#
+# The template declares `public event Action<float,float> OnHealthChanged;` and
+# `public void TakeDamage(float)`; the model authored both again as extra_methods.
+# Nothing checked: `lint_fields` takes a `reserved=` set, but every generator
+# hand-authors it and health's lists its FIELDS only — no method names at all —
+# while `lint_method` dedupes authored methods against each other and has no
+# notion of the template whatsoever. C# puts fields, events and methods in ONE
+# member namespace, so the two need one shared set, and hand-maintaining twenty
+# of them against twenty templates is how they drift out of date in the first
+# place.
+#
+# So the set is DERIVED from the template, which is the ground truth for what
+# the class already contains. Jinja expressions collapse to a placeholder first
+# (`= {{ "%.1f"|format(s.max_health) }}f` must not hide `maxHealth`), and type
+# declarations are skipped so `public class X : MonoBehaviour` does not reserve
+# its base type. A member behind a `{% if %}` stays reserved even when that
+# branch is off — over-reserving costs one dropped authored member and says so;
+# under-reserving costs the assembly.
+_JINJA_EXPR_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+_JINJA_TAG_RE  = re.compile(r"\{%.*?%\}|\{#.*?#\}", re.DOTALL)
+_TYPE_DECL_RE  = re.compile(r"\b(?:class|struct|interface|enum)\b")
+_TEMPLATE_MEMBER_RE = re.compile(
+    r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"          # attributes
+    r"(?:public|private|protected|internal)\b"  # a member always has one here
+    r"[^;{(=\n]*?"                              # modifiers + return/field type
+    r"\b([A-Za-z_]\w*)[ \t]*"                   # the declared name
+    r"(?:\(|;|=>|=[^=]|\{|$)")                  # method, field, property, event
+_TEMPLATE_USING_RE = re.compile(r"^[ \t]*using[ \t]+([\w.]+)[ \t]*;", re.MULTILINE)
+
+
+_JINJA_PLACEHOLDER = "_J_"
+
+
+@lru_cache(maxsize=64)
+def _template_text(template_dir: str) -> str:
+    """Every C# template in the micro's own folder, with Jinja neutralised."""
+    root = Path(template_dir)
+    if not root.is_dir():
+        return ""
+    text = "\n".join(p.read_text(encoding="utf-8", errors="replace")
+                     for p in sorted(root.glob("*.cs.j2")))
+    return _JINJA_EXPR_RE.sub(_JINJA_PLACEHOLDER, _JINJA_TAG_RE.sub("", text))
+
+
+@lru_cache(maxsize=64)
+def template_members(template_dir: str) -> frozenset[str]:
+    """Member names the micro's template already declares."""
+    names: set[str] = set()
+    for line in _template_text(template_dir).splitlines():
+        if _TYPE_DECL_RE.search(line):
+            continue
+        m = _TEMPLATE_MEMBER_RE.match(line)
+        if m:
+            names.add(m.group(1))
+    return frozenset(names)
+
+
+@lru_cache(maxsize=64)
+def template_usings(template_dir: str) -> frozenset[str]:
+    """Namespaces the micro's template already imports.
+
+    `_JINJA_PLACEHOLDER` is excluded: `using {{ u }};` is the extra_usings loop,
+    which imports whatever the schema carries — not a namespace of its own.
+    """
+    return frozenset(ns for ns in _TEMPLATE_USING_RE.findall(_template_text(template_dir))
+                     if ns != _JINJA_PLACEHOLDER)
+
+
+def _method_name(signature: str) -> str:
+    m = re.search(r"\b([A-Za-z_]\w*)\s*\(", signature or "")
+    return m.group(1) if m else ""
+
+
+def harden_against_template(schema, template_dir) -> list[str]:
+    """Reconcile an authored schema against what its own template emits.
+
+    The last gate before render, and the only one that can see both sides. Runs
+    for EVERY micro on both paths that produce one — `MicroPipeline.run` (the
+    LLM path) and `UnityCompose._resolve` (the compose path) — so a generator
+    that hand-rolls its lint is covered exactly like one that calls
+    `lint_extensible`, and a generator added later is covered without being
+    asked to remember.
+
+    Drops what would not compile and says which, then heals the usings the
+    authored content needs. Never raises: a micro missing one authored member
+    still builds, and a duplicate definition takes the whole assembly down.
+    """
+    reserved = {n.lower() for n in template_members(str(template_dir))}
+    msgs: list[str] = []
+    if not reserved:
+        # No parseable template — abstain rather than "reserve nothing" silently.
+        console.print(f"  [yellow]WARN[/] no C# template found under "
+                      f"{template_dir!r} — authored members went unchecked "
+                      f"against the template (CS0102/CS0111 possible)")
+        return msgs
+
+    for attr in ("extra_fields", "data_fields"):
+        fields = getattr(schema, attr, None)
+        if not isinstance(fields, list) or not fields:
+            continue
+        kept, dropped = [], []
+        for f in fields:
+            name = str(getattr(f, "name", "") or "")
+            if name.lower() in reserved:
+                dropped.append(name)
+            else:
+                kept.append(f)
+        if dropped:
+            setattr(schema, attr, kept)
+            msgs.append(f"dropped {len(dropped)} authored field(s) the template "
+                        f"already declares (CS0102): {', '.join(dropped)}")
+
+    methods = getattr(schema, "extra_methods", None)
+    if isinstance(methods, list) and methods:
+        kept_m, dropped_m = [], []
+        for m in methods:
+            name = _method_name(getattr(m, "signature", ""))
+            if name and name.lower() in reserved:
+                dropped_m.append(name)
+            else:
+                kept_m.append(m)
+        if dropped_m:
+            schema.extra_methods = kept_m
+            msgs.append(f"dropped {len(dropped_m)} authored method(s) the template "
+                        f"already defines (CS0102/CS0111): {', '.join(dropped_m)}")
+
+    msgs += heal_missing_usings(schema, template_usings=template_usings(str(template_dir)))
+    return msgs
 
 
 # ── Shared prompt instructions ────────────────────────────────────────────────

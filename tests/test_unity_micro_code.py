@@ -12,12 +12,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.unity_compose import MicroComposer, Subsystem, subsystems_for
 from src.unity_micro_code import (
     CODE_KEYS,
     code_keys_for,
     enrich_subsystems,
     merge_authored_code,
+    _signature_type_names,
 )
 from src.unity_schema import MicrogensSpec
 
@@ -273,3 +276,93 @@ def test_same_options_still_emit_byte_identical_bytes(tmp_path):
     enrich_subsystems(subs, llm=FakeLLM({s.kind: _SWIM_CODE for s in subs}),
                       concept="A deep-sea salvage diver runs out of air.")
     assert _emit(tmp_path / "a", subs) == _emit(tmp_path / "b", subs)
+
+
+# ── unresolvable collaborator type in a METHOD SIGNATURE (CS0246) ─────────────
+#
+# The field check above walked past signatures. Hit live on a TurboToys run,
+# EnemySpawner.cs(106,44) and (116,34):
+#
+#     private void ApplyRubberBandLogic(List<EnemyController> rivals, float p)
+#     private void OnRivalFinished(EnemyController rival)
+#
+# `EnemyController` is a class the project never generates. A parameter type is
+# a declaration exactly like a field's, and has just as little repair available.
+
+_INVENTED_IN_SIGNATURE = {
+    "extra_fields": [{"name": "_rubberBandMultiplier", "type": "float",
+                      "default": "0.2f"}],
+    "extra_methods": [
+        {"signature": "private void ApplyRubberBandLogic(List<EnemyController> rivals, float p)",
+         "body": "foreach (var r in rivals) { r.speed += p; }"},
+        {"signature": "private void OnRivalFinished(EnemyController rival)",
+         "body": "_rubberBandMultiplier = 0.5f;"},
+        {"signature": "private void Tick(float dt)",
+         "body": "_rubberBandMultiplier -= dt;"},
+    ],
+}
+
+
+@pytest.mark.parametrize("signature, expected", [
+    ("private void Ok(Vector3 p, float t)",                    {"void", "Vector3", "float"}),
+    ("public bool IsAlive()",                                  {"bool"}),
+    ("private IEnumerator Wait(float s)",                      {"IEnumerator", "float"}),
+    ("public void Bar(ref Vector3 v, out bool hit)",           {"void", "Vector3", "bool"}),
+    ("private void Rubber(List<EnemyController> r, float p)",  {"void", "EnemyController", "float"}),
+    # A generic's own comma must not split the parameter — the type that
+    # matters is on the far side of it.
+    ("public void Map(Dictionary<string, EnemyController> b)", {"void", "EnemyController"}),
+])
+def test_signature_type_extraction(signature, expected):
+    assert _signature_type_names(signature) == expected
+
+
+def test_method_with_an_unresolvable_parameter_type_is_dropped():
+    sub = Subsystem(kind="spawner", variant="wave", target="systems",
+                    name="EnemySpawner")
+    msgs = merge_authored_code([sub], [MicrogensSpec(kind="spawner",
+                                                     input=dict(_INVENTED_IN_SIGNATURE))])
+    sigs = [m["signature"] for m in sub.options.get("extra_methods", [])]
+
+    assert sigs == ["private void Tick(float dt)"], sigs
+    assert any("EnemyController" in m for m in msgs), msgs
+    # The valid float field is untouched — only the declarations that cannot
+    # resolve go.
+    assert [f["name"] for f in sub.options["extra_fields"]] == ["_rubberBandMultiplier"]
+
+
+def test_calls_to_a_dropped_method_are_neutralized():
+    """A dropped method leaves its call sites behind — CS0103 next build."""
+    sub = Subsystem(kind="spawner", variant="wave", target="systems",
+                    name="EnemySpawner")
+    payload = dict(_INVENTED_IN_SIGNATURE)
+    payload["update_extra"] = "OnRivalFinished(null);"
+    merge_authored_code([sub], [MicrogensSpec(kind="spawner", input=payload)])
+
+    update = sub.options.get("update_extra", "")
+    live = [ln for ln in update.splitlines()
+            if "OnRivalFinished" in ln and not ln.lstrip().startswith("//")]
+    assert live == [], live
+
+
+def test_signature_naming_only_real_types_is_untouched():
+    sub = Subsystem(kind="spawner", variant="wave", target="systems",
+                    name="EnemySpawner")
+    merge_authored_code([sub], [MicrogensSpec(kind="spawner", input={
+        "extra_methods": [
+            {"signature": "private void Nudge(GameObject go, Vector3 dir)",
+             "body": "go.transform.position += dir;"},
+        ]})])
+    assert len(sub.options["extra_methods"]) == 1
+
+
+def test_sibling_micro_class_is_resolvable_in_a_signature():
+    """A parameter typed after another composed micro compiles."""
+    subs = [Subsystem(kind="spawner", variant="wave", target="systems",
+                      name="EnemySpawner"),
+            Subsystem(kind="health", variant="simple", target="player",
+                      name="RivalHealth")]
+    merge_authored_code(subs, [MicrogensSpec(kind="spawner", input={
+        "extra_methods": [{"signature": "private void Hurt(RivalHealth h)",
+                           "body": "h.TakeDamage(1f);"}]})])
+    assert len(subs[0].options["extra_methods"]) == 1
