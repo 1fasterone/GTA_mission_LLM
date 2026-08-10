@@ -1133,6 +1133,7 @@ class UnityPipeline:
                                         genre=schema.meta.get("genre", "universal"),
                                         audio_specs=schema.audio_specs,
                                         vfx_specs=schema.vfx,
+                                        shaders=schema.shaders,
                                         animations=schema.animations,
                                         characters=schema.characters,
                                         missions=schema.missions,

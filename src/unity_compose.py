@@ -721,6 +721,29 @@ def _vfx_options_from_specs(specs) -> dict:
     return {"variant": "vfx_sequence", "cues": cues}
 
 
+_SHADER_PASSTHROUGH = (
+    "loop", "duration", "auto_start", "reverse_on_repeat",
+    "flash_color_r", "flash_color_g", "flash_color_b", "flash_duration",
+    "speed_x", "speed_y", "min_value", "max_value", "pulse_speed",
+)
+
+
+def _shader_options_from_specs(spec) -> dict:
+    """One ShaderSpec (schema.shaders) -> ShaderSchema options (micro/shader.py:60-95).
+    ShaderSpec.parameters is a loose bag with no shape guarantee, so every key is
+    read defensively; ShaderSchema.default_fix fills whatever is left with the
+    variant's own sensible defaults (property_name, color_cycle stops, ...)."""
+    params = spec.parameters or {}
+    opts: dict = {
+        "variant":       str(params.get("variant", "color_cycle")),
+        "property_name": params.get("property_name", ""),
+    }
+    for key in _SHADER_PASSTHROUGH:
+        if key in params:
+            opts[key] = params[key]
+    return opts
+
+
 def _animator_clips_from_specs(animations, characters) -> dict:
     """schema.animations + CharacterSpec.animation_set -> AnimatorSchema.clips
     (state_name -> clip_name, micro/animator.py:36). animations is authoritative;
@@ -831,6 +854,7 @@ def subsystems_for(
     genre:        str               = "universal",   # schema.meta["genre"] — see unity_archetypes.py
     audio_specs   = None,            # schema.audio_specs: list[AudioSpec]
     vfx_specs     = None,            # schema.vfx: list[VfxSpec]
+    shaders       = None,            # schema.shaders: list[ShaderSpec]
     animations    = None,            # schema.animations: list[AnimationSpec]
     characters    = None,            # schema.characters: list[CharacterSpec]
     missions      = None,            # schema.missions: list[MissionSpec]
@@ -1130,6 +1154,22 @@ def subsystems_for(
         vfx_variant = vfx_opts.pop("variant", "impact_fx")
         subs.append(Subsystem(kind="vfx", variant=vfx_variant, target="world",
                               name="ImpactVFX", options=vfx_opts))
+    # Runtime shader/material controllers — one per authored schema.shaders
+    # entry (MaterialPropertyBlock property driver, never the shared asset).
+    # Unlike vfx there's no "sequence" merge: each ShaderSpec drives its own
+    # object's property independently, so it gets its own Subsystem, same
+    # shape as the per-mission/per-behavior_tree loops below. No authored
+    # specs but the feature is requested -> one default color_cycle controller.
+    if shaders:
+        for spec in shaders:
+            shader_label = to_pascal(spec.name, "Shader")
+            shader_opts = _shader_options_from_specs(spec)
+            shader_variant = shader_opts.pop("variant", "color_cycle")
+            subs.append(Subsystem(kind="shader", variant=shader_variant, target="world",
+                                  name=f"{shader_label}Controller", options=shader_opts))
+    elif {"shader", "shaders", "material", "materials"} & feats:
+        subs.append(Subsystem(kind="shader", variant="color_cycle", target="world",
+                              name="ShaderController"))
     # Spoken NPCs (Kokoro TTS). skip_audio is the DEFAULT (a bare MicroComposer.emit
     # stays TTS-free — no generic preset clips), but the main pipeline LIFTS it:
     # unity_pipeline.run pre-extracts concept-specific lines while LM Studio is
