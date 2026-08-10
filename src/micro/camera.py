@@ -112,8 +112,11 @@ class CameraRigPipeline(UnityMicroPipeline):
         # First-person rig is rooted on the head — zero out follow offsets
         if variant == "first_person":
             schema.offset_x = schema.offset_y = schema.offset_z = 0.0
+        # hoist_field_inits: this generator's template renders awake_extra,
+        # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
-                        template_usings=self._TEMPLATE_USINGS)
+                        template_usings=self._TEMPLATE_USINGS,
+                        hoist_field_inits=True)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

@@ -15,14 +15,16 @@ docstring: a missing SDK is not a defect in the generated project).
 
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
 from src.csharp_syntax_gate import (CSharpSyntaxError, SyntaxDiagnostic,
                                     check_files, enforce)
-from src.micro.code_fields import (CodeField, escape_cs_string, lint_fields,
-                                   sanitize_default)
+from src.micro.code_fields import (CodeField, escape_cs_string,
+                                   initializer_instance_refs, lint_extensible,
+                                   lint_fields, sanitize_default)
 
 # The exact tooltip from the run, as the model returned it.
 _LIVE_TOOLTIP = 'Current active quest identifier (e.g., "RocBiomeFreefall", ...'
@@ -168,6 +170,130 @@ def test_repaired_field_renders_a_parseable_declaration():
 
     assert "= 0;" in tpl.render(s=S())
     assert "0i" not in tpl.render(s=S())
+
+
+# ── instance-referencing initializers (CS0236) ────────────────────────────────
+# A field initializer runs before `this` exists, so an instance reference is a
+# hard error however well-formed the expression is — every structural check in
+# sanitize_default passes it. Live on a Monaco monobike run:
+#   MonobikeController.cs(9,45)  = GetComponent<Rigidbody>()
+#   MonobikeAI.cs(9,53)          = GetComponent<NavMeshAgent>()
+
+_LIVE_RB_INIT    = "GetComponent<Rigidbody>()"
+_LIVE_AGENT_INIT = "GetComponent<NavMeshAgent>()"
+
+
+def test_getcomponent_initializer_moves_into_awake():
+    """The repair is a MOVE, not a drop: dropping alone compiles but leaves a
+    null the scene never assigns, and the guarded body silently does nothing."""
+    hoisted: list[str] = []
+    out = lint_fields([CodeField(name="rb", type="Rigidbody", default=_LIVE_RB_INIT)],
+                      reserved=set(), hoist_into=hoisted)
+    assert out[0].default is None
+    assert hoisted == ["rb = GetComponent<Rigidbody>();"]
+
+
+def test_getcomponent_initializer_is_dropped_without_an_awake_channel():
+    """Eleven micro templates render extra_fields with no Awake() injection
+    point; there the compile error still has to go, so the initializer does."""
+    out = lint_fields(
+        [CodeField(name="aiAgent", type="NavMeshAgent", default=_LIVE_AGENT_INIT)],
+        reserved=set())
+    assert out[0].default is None
+
+
+def test_receiver_qualified_expressions_are_legal_and_untouched():
+    """`Camera.main.GetComponent<T>()` never touches `this`, so CS0236 does not
+    apply — flagging it would move a perfectly good initializer."""
+    for expr in ("Camera.main.GetComponent<AudioListener>()",
+                 "Camera.main.transform",
+                 "Time.deltaTime",
+                 "nameof(Rigidbody)"):
+        assert initializer_instance_refs(expr, siblings=set()) == []
+        assert sanitize_default("float", expr) == expr
+
+
+def test_sibling_field_reference_is_the_same_error():
+    """One extra_field's initializer reading another is CS0236 too — the other
+    field is instance state, and initializer order is not guaranteed."""
+    hoisted: list[str] = []
+    out = lint_fields(
+        [CodeField(name="baseSpeed",  type="float", default="10f"),
+         CodeField(name="boostSpeed", type="float", default="baseSpeed * 2f")],
+        reserved=set(), hoist_into=hoisted)
+    assert out[0].default == "10f"                 # untouched
+    assert out[1].default is None
+    assert hoisted == ["boostSpeed = baseSpeed * 2f;"]
+
+
+def test_instance_names_inside_literals_are_not_references():
+    """Judged at CODE positions only — the same `_code_mask` every other pass
+    uses, so a string that merely spells `transform` is not held against it."""
+    assert initializer_instance_refs('"transform"', siblings=set()) == []
+    assert initializer_instance_refs('"the gameObject name"', siblings={"name"}) == []
+
+
+def test_hoisted_field_renders_a_bare_declaration():
+    """Through the real macro: the declaration keeps the field, loses the
+    initializer, and no GetComponent survives at class level."""
+    env = Environment(loader=FileSystemLoader("templates/unity/micro"))
+    tpl = env.from_string(
+        '{% import "_inject.j2" as inject %}{{ inject.fields(s) }}')
+
+    class S:
+        extra_fields = lint_fields(
+            [CodeField(name="rb", type="Rigidbody", default=_LIVE_RB_INIT)],
+            reserved=set(), hoist_into=[])
+
+    rendered = tpl.render(s=S())
+    assert "private Rigidbody rb;" in rendered
+    assert "GetComponent" not in rendered
+
+
+def _extensible(**kw):
+    """Minimal object satisfying `_ExtensibleLike` (lint_extensible mutates it
+    in place; the real schemas are Pydantic models with the same attributes)."""
+    return SimpleNamespace(
+        extra_usings=kw.get("extra_usings", []),
+        extra_fields=kw.get("extra_fields", []),
+        awake_extra=kw.get("awake_extra", ""),
+        update_extra=kw.get("update_extra", ""),
+        fixed_update_extra=kw.get("fixed_update_extra", ""),
+        extra_methods=kw.get("extra_methods", []),
+    )
+
+
+def test_lint_extensible_hoists_ahead_of_authored_awake_statements():
+    """Order matters: the author's own Awake() body may read the field the
+    hoisted assignment initialises."""
+    s = _extensible(
+        extra_fields=[CodeField(name="rb", type="Rigidbody", default=_LIVE_RB_INIT)],
+        awake_extra="rb.mass = 250f;")
+    lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"},
+                    hoist_field_inits=True)
+    assert s.extra_fields[0].default is None
+    assert s.awake_extra == "rb = GetComponent<Rigidbody>();\nrb.mass = 250f;"
+
+
+def test_lint_extensible_hoist_is_opt_in():
+    """Default off: a caller whose template does not render awake_extra would
+    otherwise lose the assignment silently."""
+    s = _extensible(
+        extra_fields=[CodeField(name="rb", type="Rigidbody", default=_LIVE_RB_INIT)])
+    lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"})
+    assert s.extra_fields[0].default is None
+    assert s.awake_extra == ""
+
+
+def test_hoisted_initializer_still_triggers_its_missing_using():
+    """The auto-heal blob reads awake_extra, so moving the expression out of
+    the declaration must not cost the field its namespace (CS0246)."""
+    s = _extensible(
+        extra_fields=[CodeField(name="agent", type="NavMeshAgent",
+                                default=_LIVE_AGENT_INIT)])
+    lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"},
+                    hoist_field_inits=True)
+    assert "UnityEngine.AI" in s.extra_usings
 
 
 # ── the declaration text lives in exactly one place ──────────────────────────

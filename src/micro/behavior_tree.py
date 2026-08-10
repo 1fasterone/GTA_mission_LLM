@@ -153,8 +153,11 @@ class BehaviorTreePipeline(UnityMicroPipeline):
             schema.root = schema.nodes[0].id
         elif schema.root and schema.root not in valid_ids and schema.nodes:
             schema.root = schema.nodes[0].id
+        # hoist_field_inits: this generator's template renders awake_extra,
+        # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
-                        template_usings=self._TEMPLATE_USINGS)
+                        template_usings=self._TEMPLATE_USINGS,
+                        hoist_field_inits=True)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

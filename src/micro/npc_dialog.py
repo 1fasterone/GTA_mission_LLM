@@ -443,8 +443,11 @@ class NpcDialogPipeline(UnityMicroPipeline):
         if not schema.prefab_path:
             schema.prefab_path = f"Prefabs/NPCs/{schema.speaker_name}"
 
+        # hoist_field_inits: this generator's template renders awake_extra,
+        # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
-                        template_usings=self._TEMPLATE_USINGS)
+                        template_usings=self._TEMPLATE_USINGS,
+                        hoist_field_inits=True)
         return schema
 
     def attach_class(self, schema) -> str:

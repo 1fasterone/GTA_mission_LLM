@@ -1915,8 +1915,15 @@ class UnityProjectGenerator:
                          | {u.class_name for u in (composed_units or [])})
         for s in schema.scripts:
             if s.type == "custom":
+                # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra
+                # (and emits an Awake() whenever it is non-empty), so an
+                # instance-referencing initializer the model wrote one line too
+                # early — `private Rigidbody rb = GetComponent<Rigidbody>();`,
+                # CS0236, live on a Monaco monobike run — is moved into Awake()
+                # rather than dropped to a null the scene never assigns.
                 lint_extensible(s, reserved_fields=set(),
-                                template_usings={"UnityEngine"})
+                                template_usings={"UnityEngine"},
+                                hoist_field_inits=True)
                 # Must run AFTER lint_extensible: it needs the final, cleaned
                 # extra_fields to know which field types are our own stubs.
                 _sanitize_stub_type_usage(s)
@@ -2790,6 +2797,8 @@ class UnityProjectGenerator:
             tmp.write_text(content, encoding="utf-8")
             os.replace(tmp, dest)
 
+        self._sweep_stale_outputs(root, schema.project_name, set(files))
+
         # Binary model copies. Same _resolve_all_models call as generate() —
         # deterministic, so the .meta files emitted there and the binaries
         # copied here always line up (including rig downgrades that drop clips).
@@ -2868,6 +2877,76 @@ class UnityProjectGenerator:
                 n_models += 1
 
         return root / schema.project_name, len(files) + n_models
+
+    # ── stale-output sweep ─────────────────────────────────────────────────────
+
+    # Name of the per-project manifest of everything the LAST write() rendered.
+    _MANIFEST_NAME = ".generated_files.json"
+
+    def _sweep_stale_outputs(self, root: Path, project_name: str,
+                             current: set[str]) -> list[str]:
+        """Delete files an earlier write() rendered that this one no longer does.
+
+        `write()` renders into the project directory in place, and Unity
+        compiles EVERY .cs under Assets/ — not just the ones in the current
+        build. So a regeneration that renames a script leaves the old class
+        behind as a live compilation unit. Hit live on the Monaco monobike
+        project: a 14:57 run produced MonobikeController/MonobikeAI, the 15:36
+        regeneration of the same directory produced PlayerMonobikeController/
+        RivalAIController instead, and Unity kept reporting CS0236 in two files
+        that the current schema does not contain and nothing references.
+
+        The sweep is driven by a manifest of the previous run's own output,
+        never by scanning the directory: only a path THIS generator wrote
+        before, and does not write now, is removed. A hand-added script, a
+        Unity Library/ artifact and a copied model binary are all invisible to
+        it. Paths are re-checked against `root` before unlinking so a
+        hand-edited manifest cannot reach outside the project.
+
+        Returns the project-relative paths removed (for logging and tests).
+        """
+        manifest = root / project_name / self._MANIFEST_NAME
+        previous: list[str] = []
+        if manifest.is_file():
+            try:
+                loaded = json.loads(manifest.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    previous = [p for p in loaded if isinstance(p, str)]
+            except (json.JSONDecodeError, OSError) as exc:
+                _log.warning("[sweep] unreadable manifest %s (%s) — no stale "
+                             "files removed this run", manifest, exc)
+
+        root_res = root.resolve()
+        removed: list[str] = []
+        for rel in previous:
+            if rel in current:
+                continue
+            target = (root / rel)
+            try:
+                if not target.resolve().is_relative_to(root_res):
+                    _log.warning("[sweep] manifest entry escapes the output "
+                                 "root, ignored: %s", rel)
+                    continue
+            except OSError:
+                continue
+            if not target.is_file():
+                continue
+            target.unlink()
+            removed.append(rel)
+            # Unity writes a sidecar .meta for every asset it imports. Left
+            # behind it is inert, but it also re-imports as a broken reference,
+            # so it goes with the file it described — never on its own.
+            meta = target.with_name(target.name + ".meta")
+            if f"{rel}.meta" not in current and meta.is_file():
+                meta.unlink()
+
+        if removed:
+            _log.info("[sweep] removed %d stale generated file(s): %s",
+                      len(removed), ", ".join(sorted(removed)))
+
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps(sorted(current), indent=2), encoding="utf-8")
+        return removed
 
     # ── private helpers ────────────────────────────────────────────────────────
 

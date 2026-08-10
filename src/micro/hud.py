@@ -117,6 +117,8 @@ class HUDPipeline(UnityMicroPipeline):
         # racing_hud template-owned refs
         "speedtext", "laptext", "positiontext", "cointext", "boostmeter",
         "countdowntext", "countdowngroup",
+        # full_hud_bundle template-owned refs
+        "healthbar", "ammotext", "scoretext",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.UI", "TMPro", "UnityEngine.UIElements"}
 
@@ -125,8 +127,11 @@ class HUDPipeline(UnityMicroPipeline):
         # Crosshair is always centered
         if variant == "crosshair":
             schema.anchor = "center"
+        # hoist_field_inits: this generator's template renders awake_extra,
+        # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
-                        template_usings=self._TEMPLATE_USINGS)
+                        template_usings=self._TEMPLATE_USINGS,
+                        hoist_field_inits=True)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

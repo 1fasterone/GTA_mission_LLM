@@ -15,8 +15,13 @@
    (`com.unity.inputsystem`) if it isn't already installed.
 {% endif %}
 3. Add the `{{ s.name }}` component to any GameObject you want the player to control.
-{% if variant.startswith("vehicle_") %}
-4. The vehicle stub uses `Rigidbody`. Add a Rigidbody + collider to the controlled object.
+{% if variant == "vehicle_hover" %}
+4. Builds a raycast spring-damper hover rig on Awake (no WheelColliders — for
+   craft with no wheel bones). `Rigidbody` + collider are added automatically if missing.
+{% elif variant.startswith("vehicle_") %}
+4. Builds a 4-wheel `WheelCollider` rig on Awake (uses named wheel bones if the
+   model has them, primitive wheels otherwise). `Rigidbody` + collider are added
+   automatically if missing.
 {% elif variant.startswith("2d_") %}
 4. Requires `Rigidbody2D` + a 2D collider on the controlled object.
 {% else %}

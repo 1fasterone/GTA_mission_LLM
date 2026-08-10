@@ -349,14 +349,23 @@ public class {{ script.name }} : MonoBehaviour
     }
 
 {% elif game_type == "VR" %}
-    // VR locomotion — requires XR Interaction Toolkit
+    // VR locomotion — head-relative continuous move on the left thumbstick,
+    // turn on the right thumbstick (smooth or snap). Read straight off the XR
+    // input devices (UnityEngine.XR), so it works with any XR runtime and
+    // doesn't require an Input Actions asset or the XR Interaction Toolkit.
     [Header("VR Movement")]
-    [SerializeField] private float moveSpeed = 2f;
-    [SerializeField] private bool  smoothTurn = true;
-    [SerializeField] private float turnSpeed  = 60f;
+    [SerializeField] private float moveSpeed     = 2f;
+    [SerializeField] private bool  smoothTurn    = true;
+    [SerializeField] private float turnSpeed     = 60f;
+    [SerializeField] private float snapTurnAngle = 45f;
+
+    private const float TurnDeadzone = 0.5f;
+    private const float TurnReleaseZone = 0.2f;
 
     private CharacterController _cc;
     private Transform           _xrOrigin;
+    private Transform           _head;
+    private bool                _snapReady = true;
 
     private void Awake()
     {
@@ -364,19 +373,55 @@ public class {{ script.name }} : MonoBehaviour
         if (_cc == null) _cc = gameObject.AddComponent<CharacterController>();
         // XR Origin is the parent rig — assign in Inspector or find at runtime.
         _xrOrigin = transform.parent != null ? transform.parent : transform;
+        _head     = Camera.main != null ? Camera.main.transform : transform;
     }
 
     private void Update()
     {
-        // Thumbstick locomotion placeholder — wire up XRI inputs in Inspector
-        // via the XR Interaction Toolkit's Action-based controller components.
+        Vector2 moveAxis = ReadAxis(UnityEngine.XR.XRNode.LeftHand);
+        Vector2 turnAxis = ReadAxis(UnityEngine.XR.XRNode.RightHand);
+
+        Vector3 headForward = Vector3.ProjectOnPlane(_head.forward, Vector3.up).normalized;
+        Vector3 headRight   = Vector3.ProjectOnPlane(_head.right,   Vector3.up).normalized;
+        Vector3 moveDir     = headForward * moveAxis.y + headRight * moveAxis.x;
+        if (moveDir.sqrMagnitude > 1f) moveDir.Normalize();
+        _cc.Move(moveDir * moveSpeed * Time.deltaTime);
+
         ApplyGravity();
+        ApplyTurn(turnAxis.x);
+    }
+
+    private void ApplyTurn(float turnInput)
+    {
+        Vector3 pivot = _head != null ? _head.position : transform.position;
+        if (smoothTurn)
+        {
+            if (Mathf.Abs(turnInput) > 0.01f)
+                _xrOrigin.RotateAround(pivot, Vector3.up, turnInput * turnSpeed * Time.deltaTime);
+            return;
+        }
+        if (!_snapReady && Mathf.Abs(turnInput) < TurnReleaseZone)
+            _snapReady = true;
+        else if (_snapReady && Mathf.Abs(turnInput) >= TurnDeadzone)
+        {
+            _xrOrigin.RotateAround(pivot, Vector3.up, Mathf.Sign(turnInput) * snapTurnAngle);
+            _snapReady = false;
+        }
     }
 
     private void ApplyGravity()
     {
         if (_cc != null && !_cc.isGrounded)
             _cc.Move(Vector3.down * (9.81f * Time.deltaTime));
+    }
+
+    private static Vector2 ReadAxis(UnityEngine.XR.XRNode node)
+    {
+        var device = UnityEngine.XR.InputDevices.GetDeviceAtXRNode(node);
+        if (device.isValid &&
+            device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxis, out Vector2 axis))
+            return axis;
+        return Vector2.zero;
     }
 {% endif %}
 }

@@ -109,6 +109,22 @@ def load_layout(path: str | Path) -> dict:
 _CAMEL_SPLIT = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
 
+def stem_words(filename: str) -> list[str]:
+    """The file stem split into words on separators AND camelCase boundaries.
+
+    `monacoGP.fbx` -> ["monaco", "GP"];  `player_monobike.fbx` -> ["player",
+    "monobike"]. Shared by `entity_name_for` and `role_for` so the name a
+    group gets and the role it declares can never disagree about where the
+    first word ends.
+    """
+    words: list[str] = []
+    for chunk in re.split(r"[^A-Za-z0-9]+", Path(filename).stem):
+        if not chunk:
+            continue
+        words.extend(w for w in _CAMEL_SPLIT.split(chunk) if w)
+    return words
+
+
 def entity_name_for(filename: str) -> str:
     """`monacoGP.fbx` -> `MonacoGP`; `big-head-cromulon.fbx` -> `BigHeadCromulon`.
 
@@ -116,16 +132,72 @@ def entity_name_for(filename: str) -> str:
     camelCase boundaries, capitalize each word's first letter but keep the
     rest as authored (so `GP` survives as `GP`, not `Gp`).
     """
-    stem = Path(filename).stem
-    words: list[str] = []
-    for chunk in re.split(r"[^A-Za-z0-9]+", stem):
-        if not chunk:
-            continue
-        words.extend(w for w in _CAMEL_SPLIT.split(chunk) if w)
+    words = stem_words(filename)
     if not words:
         return "AuthoredItem"
     out = "".join(w[0].upper() + w[1:] for w in words)
     return out if out[0].isalpha() else f"M{out}"
+
+
+# ── role prefixes ────────────────────────────────────────────────────────────
+# The author's channel for saying WHAT A MODEL IS, not just which mesh it is.
+#
+# Binding (src/unity_scenebind.py) scores an authored group against the entity
+# names the Pipeline LLM invented at Step 3. That works when the two happen to
+# share a word and fails silently when they do not: `victorian_monobike.fbx`
+# binds an entity the model called `PlayerMonobike`, and binds NOTHING when it
+# called the same thing `Racer` — in which case the file is injected as
+# `kind="prop"`, lands in exactly the right spot, and is wired as scenery. The
+# author cannot predict the LLM's word choice, so keyword overlap can never be
+# the control surface for "this one is the player".
+#
+# A leading token on the model's own FILENAME can be, and it is the one channel
+# that needs no change to the Scene Compiler app: rename the file in models/
+# and the role travels with it through every layout that references it.
+#
+#     player_monobike.fbx   enemy_drone.fbx   pickup_scrap.fbx
+#
+# A stem whose first word is not a role word (`victorian_monobike.fbx`) yields
+# None and behaves exactly as it always has — this is additive, and every
+# layout written before it keeps its old binding.
+#
+# Values are the `EntitySpec.kind` strings the rest of the pipeline already
+# reads: the spawner's player/enemy/npc/character/vehicle wiring, the objective
+# kinds in unity_playability._OBJECTIVE_KINDS, and its scenery set.
+ROLE_PREFIXES: dict[str, str] = {
+    # actors
+    "player": "player", "hero": "player", "avatar": "player",
+    "enemy": "enemy", "foe": "enemy", "rival": "enemy", "boss": "boss",
+    "npc": "npc", "ally": "npc", "character": "character",
+    "vehicle": "vehicle", "car": "vehicle",
+    # objectives
+    "pickup": "pickup", "collectible": "collectible", "item": "item",
+    "goal": "goal", "objective": "objective",
+    # scenery
+    "prop": "prop", "building": "building", "tree": "tree", "rock": "rock",
+    "decor": "decor", "wall": "wall", "crowd": "crowd", "scenery": "scenery",
+    "furniture": "furniture", "terrain": "terrain", "ground": "ground",
+    "road": "road", "track": "track", "street": "street", "rail": "rail",
+    "water": "water", "fx": "fx", "floor": "floor",
+}
+
+
+def role_for(filename: str) -> Optional[str]:
+    """The `EntitySpec.kind` a filename's leading token declares, or None.
+
+    `player_monobike.fbx` / `playerMonobike.fbx` / `Player-Monobike.fbx` all
+    give "player"; `victorian_monobike.fbx` gives None.
+
+    A role word must PREFIX something — `vehicle.fbx`, `tree.fbx`, `car.fbx`
+    are ordinary asset names people ship without meaning to declare anything,
+    and reading them as declarations would let one generic file claim an
+    entity outright (the case `MIN_BIND_SCORE` exists to prevent). Two words
+    minimum, so the intent is unmistakable.
+    """
+    words = stem_words(filename)
+    if len(words) < 2:
+        return None
+    return ROLE_PREFIXES.get(words[0].lower())
 
 
 def _dedupe(name: str, taken: set[str]) -> str:
@@ -250,6 +322,9 @@ def build_scene(layout: dict,
                 "src": str(src.resolve()),
                 "type": kind,
                 "orient": orient,
+                # A pure function of `rel`, which is part of the group key —
+                # so every instance in a group always declares the same role.
+                "role": role_for(rel),
                 "scale": scale,
                 "count": 0,
                 "positions": [],
@@ -413,5 +488,7 @@ def describe(scene: dict) -> list[str]:
         pos = g["positions"][0] if g["positions"] else [0, 0, 0]
         where = (f"({pos[0]:g}, {pos[1]:g}, {pos[2]:g})" if g["count"] == 1
                  else f"{g['count']} instances")
-        out.append(f"{g['name']:<28} {g['file']:<38} scale {g['scale']:g}  {where}")
+        role = f"  role={g['role']}" if g.get("role") else ""
+        out.append(f"{g['name']:<28} {g['file']:<38} scale {g['scale']:g}  "
+                   f"{where}{role}")
     return out

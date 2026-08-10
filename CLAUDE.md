@@ -114,20 +114,6 @@ Spatial + QA (Unity)
   writes playability.txt, gated by playability.gate in config.yaml.
   CLI: python main.py unity-playability <schema.json> [--strict]
 
-Atoms + Microgens
-- atoms/ — atomic actions (movement, animation, camera, audio, FX, logic,
-  entity)
-- micro/ — micro-generators built from atoms
-- micro_pipeline.py — microgen 6-step pipeline
-- templates/unity/micro/ — Unity microgen templates
-
-Blender Asset Factory
-- blender_cli.py, src/blender/ — headless FBX generation
-- vehicle_generator.py, procedural_pipeline.py — parametric model builders
-
-Web UI
-- webui/server.py — FastAPI UI
-
 Always reference these paths when generating or modifying files. See also
 docs/model-pipeline-architecture.md.
 
@@ -155,17 +141,23 @@ Wiring uses entity_model_paths. Never break this chain.
 
 A hand-arranged Scene Compiler layout (the browser tool in
 Documents/Blender/) may supply BOTH the models and their exact transforms.
-The author's hand outranks every generated choice about assets and placement;
-it changes nothing about wiring.
+The author's hand outranks every generated choice about assets and placement.
+It reaches wiring in exactly one place, and only on request: a ROLE PREFIX on
+the model's filename (`player_monobike.fbx`, `enemy_drone.fbx`,
+`pickup_scrap.fbx` — unity_sceneinput.ROLE_PREFIXES) declares what the object
+IS, binds ahead of every keyword signal, vetoes a conflicting bind, and
+becomes the bound entity's `kind`/`tag`. Scripts and micros stay untouched.
 
 - unity_sceneinput.py — layout JSON -> canonical scene file: three.js Y-up ->
   Unity (x, y, -z) and yaw -> -yaw, one group per (file, scale), GLB -> FBX
   via headless Blender (cached, unit-guess rescale disabled). Fails loudly on
   a missing model; warns loudly when the layout predates `base_scale` (the
   viewer's hidden 0.01 centimeter correction).
-- unity_scenebind.py — Step 5 binding: deterministic keyword match of each
-  authored group to one entity, then bakes instance_positions/instance_yaws/
-  count/scale. A multi-instance group also spills one instance each to
+- unity_scenebind.py — Step 5 binding: role prefix first, then deterministic
+  keyword match of each authored group to one entity, then bakes
+  instance_positions/instance_yaws/count/scale. Entities the layout does not
+  cover are NAMED in the log (schema.meta.uncovered_entities) rather than
+  silently falling through to the catalog. A multi-instance group also spills one instance each to
   still-unbound SINGLETON entities that scored for it (a starting grid feeds
   the player and each named rival; the player must keep count==1 or the
   generator's player-merge silently stops firing). Unmatched groups are
@@ -186,7 +178,7 @@ internals unless asked.
 # Conventions to Enforce
 
 - Steps 4-7 remain deterministic
-- Graceful degradation: missing model — primitive; missing Blender — stub
+
 - Config-driven behavior (config.yaml)
 - Unity canonical script names must not change
 - Never break template references

@@ -341,6 +341,31 @@ def test_hud_racing_variant_not_clamped(tmp_path, dummy_config):
     assert s.variant == "racing_hud"
 
 
+def test_hud_full_bundle_variant_emits_all_gauges_ugui(tmp_path, dummy_config):
+    p = HUDPipeline(dummy_config)
+    s = HUDSchema(name="GameHud", variant="full_hud_bundle", backend="uGUI")
+    s = p.default_fix(s, "full_hud_bundle")
+    p.write_files(s, "full_hud_bundle", tmp_path)
+    cs = (tmp_path / "Scripts" / "GameHud.cs").read_text(encoding="utf-8")
+    for api in ("SetHealth", "SetAmmo", "SetScore"):
+        assert f"public void {api}(" in cs, api
+    for field in ("healthBar", "ammoText", "scoreText", "mapImage", "mapCamera"):
+        assert field in cs, field
+
+
+def test_hud_full_bundle_variant_emits_all_gauges_uitoolkit(tmp_path, dummy_config):
+    p = HUDPipeline(dummy_config)
+    s = HUDSchema(name="GameHud", variant="full_hud_bundle", backend="UIToolkit")
+    s = p.default_fix(s, "full_hud_bundle")
+    p.write_files(s, "full_hud_bundle", tmp_path)
+    cs = (tmp_path / "Scripts" / "GameHud.cs").read_text(encoding="utf-8")
+    for api in ("SetHealth", "SetAmmo", "SetScore"):
+        assert f"public void {api}(" in cs, api
+    uxml = (tmp_path / "UI" / "GameHud.uxml").read_text(encoding="utf-8")
+    for name in ('name="HealthBar"', 'name="Ammo"', 'name="Score"', 'name="Map"'):
+        assert name in uxml, name
+
+
 @pytest.mark.parametrize("variant", HUDPipeline.variants)
 def test_hud_uitoolkit_emits_uxml_and_uss(tmp_path, dummy_config, variant):
     p = HUDPipeline(dummy_config)

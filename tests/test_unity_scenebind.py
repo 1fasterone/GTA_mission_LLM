@@ -12,6 +12,7 @@ import pytest
 from src.unity_entity_asset_resolver import resolve_entity_assets
 from src.unity_layout import compute_layout
 from src.unity_model_resolver import ResolvedModel
+from src.unity_sceneinput import role_for
 from src.unity_scenebind import (MIN_BIND_SCORE, apply_scene, authored_models,
                                  bind_score)
 from src.unity_schema import EntitySpec, UnitySchema
@@ -30,11 +31,12 @@ def _schema(entities, game_type="3D", scenes=None):
 
 
 def _group(name, file, src="", count=1, positions=None, yaws=None,
-           scale=1.0, gtype="model"):
+           scale=1.0, gtype="model", role=None):
     positions = positions or [[0.0, 0.0, 0.0]]
     return {
         "name": name, "file": file, "source_file": file,
         "src": src or f"C:/models/{file}", "type": gtype, "orient": None,
+        "role": role if role is not None else role_for(file),
         "scale": scale, "count": count or len(positions),
         "positions": positions, "yaws": yaws or [0.0] * len(positions),
         "items": [f"{name}_{i+1:02d}" for i in range(len(positions))],
@@ -348,3 +350,140 @@ class TestTierA:
         schema = _schema([EntitySpec(name="PlayerBike", kind="vehicle")])
         paths, used = self._resolve(schema)
         assert not any(k.startswith("authored:") for k in used)
+
+
+# ── declared roles ────────────────────────────────────────────────────────────
+# The author names the file `player_monobike.fbx` and the pipeline stops
+# guessing: the role binds ahead of keyword overlap, refuses a conflicting
+# entity outright, and becomes the bound entity's `kind` — which is what gets
+# the model the controller/AI/objective wiring instead of scenery treatment.
+
+class TestDeclaredRole:
+    def test_role_binds_where_keywords_never_would(self):
+        """The live failure: the LLM called the avatar `Racer`, so no word in
+        `victorian_monobike.fbx` reached it and the bike became a prop."""
+        e = EntitySpec(name="Racer", kind="player")
+        plain = _group("VictorianMonobike", "victorian_monobike.fbx")
+        named = _group("PlayerMonobike", "player_monobike.fbx")
+        assert bind_score(plain, e) < MIN_BIND_SCORE
+        assert bind_score(named, e) >= MIN_BIND_SCORE
+
+    def test_role_outranks_a_keyword_hit_on_the_wrong_entity(self):
+        """Two candidates, one lucky word: the role must win the avatar."""
+        avatar = EntitySpec(name="Racer", kind="player")
+        scenery = EntitySpec(name="MonobikeStatue", kind="prop")
+        g = _group("PlayerMonobike", "player_monobike.fbx")
+        assert bind_score(g, avatar) > bind_score(g, scenery)
+
+    def test_a_conflicting_role_is_vetoed_not_merely_outscored(self):
+        """`enemy_drone.fbx` must never reach the player, however well the
+        names happen to line up."""
+        player = EntitySpec(name="DroneRider", kind="player")
+        assert bind_score(_group("EnemyDrone", "enemy_drone.fbx"), player) == 0.0
+
+    def test_descriptive_kinds_never_veto(self):
+        """The player IS a vehicle in a racing game — only player/enemy/npc/
+        objective are mutually exclusive jobs."""
+        e = EntitySpec(name="PlayerMonobike", kind="vehicle")
+        assert bind_score(_group("PlayerMonobike", "player_monobike.fbx"),
+                          e) >= MIN_BIND_SCORE
+
+    def test_role_claims_the_entity_the_schema_already_tagged(self):
+        """The avatar is whichever entity carries tag=="Player" — that is what
+        the generator's player-merge selects on, so it is a far better signal
+        than the name or kind the LLM happened to write."""
+        s = _schema([EntitySpec(name="Racer", kind="vehicle", tag="Player")])
+        apply_scene(s, _scene(_group("PlayerMonobike", "player_monobike.fbx")))
+        racer = next(e for e in s.entities if e.name == "Racer")
+        assert racer.kind == "player"
+        assert "Racer" in authored_models(s)
+        assert len(s.entities) == 1, "claimed, not duplicated"
+
+    def test_role_injects_a_tagged_avatar_when_nothing_holds_the_job(self):
+        """A schema whose avatar is neither kind='player' nor tagged has no
+        entity to claim, so the authored model becomes the avatar itself —
+        tagged and count==1, which is exactly what the merge looks for."""
+        s = _schema([EntitySpec(name="Racer", kind="vehicle", tag="Untagged")])
+        apply_scene(s, _scene(_group("PlayerMonobike", "player_monobike.fbx")))
+        avatar = next(e for e in s.entities if e.name == "PlayerMonobike")
+        assert (avatar.kind, avatar.tag, avatar.count) == ("player", "Player", 1)
+        # Exactly one Player-tagged singleton — two would split the avatar.
+        assert sum(1 for e in s.entities if e.tag == "Player") == 1
+
+    def test_unmatched_role_injects_with_its_kind_not_prop(self):
+        """The whole point: an authored pickup the LLM never wrote becomes a
+        real objective, not set dressing."""
+        s = _schema([EntitySpec(name="Track", kind="road")])
+        apply_scene(s, _scene(_group("PickupScrap", "pickup_scrap.fbx",
+                                     count=3,
+                                     positions=[[0, 0, 0], [2, 0, 0], [4, 0, 0]])))
+        injected = [e for e in s.entities if e.name == "PickupScrap"]
+        assert injected and injected[0].kind == "pickup"
+        assert injected[0].count == 3
+
+    def test_roleless_layouts_are_unaffected(self):
+        """Additive: a layout written before roles existed binds identically."""
+        s = _schema([EntitySpec(name="PlayerBike", kind="vehicle")])
+        apply_scene(s, _scene(_group("VictorianMonobike",
+                                     "victorian_monobike.fbx")))
+        assert s.entities[0].kind == "vehicle"     # untouched
+        assert "PlayerBike" in authored_models(s)
+
+    def test_spill_entities_keep_their_own_job(self):
+        """A grid of `player_` bikes feeds the rivals the same MACHINE, never
+        the player's role — otherwise the scene has three avatars."""
+        s = _schema([
+            EntitySpec(name="Racer", kind="player"),
+            EntitySpec(name="RivalOne", kind="enemy", model_hint="monobike"),
+            EntitySpec(name="RivalTwo", kind="enemy", model_hint="monobike"),
+        ])
+        apply_scene(s, _scene(_group(
+            "PlayerMonobike", "player_monobike.fbx", count=3,
+            positions=[[0, 0, 0], [3, 0, 0], [6, 0, 0]])))
+        by_name = {e.name: e for e in s.entities}
+        assert by_name["Racer"].kind == "player"
+        assert by_name["RivalOne"].kind == "enemy"
+        assert by_name["RivalTwo"].kind == "enemy"
+        # All three ride the authored bike.
+        assert set(authored_models(s)) == {"Racer", "RivalOne", "RivalTwo"}
+
+    def test_player_stays_a_singleton_and_the_surplus_is_re_homed(self):
+        """count > 1 silently disqualifies the generator's player-merge, so a
+        `player_` group that places a whole grid keeps pole position only —
+        and the rest still reach the scene."""
+        s = _schema([EntitySpec(name="Racer", kind="player")])
+        msgs = apply_scene(s, _scene(_group(
+            "PlayerMonobike", "player_monobike.fbx", count=3,
+            positions=[[0, 0, 0], [3, 0, 0], [6, 0, 0]])))
+        racer = next(e for e in s.entities if e.name == "Racer")
+        assert racer.count == 1
+        assert racer.instance_positions == [[0.0, 0.0, 0.0]]
+        extra = next(e for e in s.entities if e.name.endswith("Extra"))
+        assert extra.count == 2
+        assert extra.kind == "prop"
+        assert extra.instance_positions == [[3.0, 0.0, 0.0], [6.0, 0.0, 0.0]]
+        assert any("pole position" in m for m in msgs)
+
+
+# ── uncovered entities ────────────────────────────────────────────────────────
+
+class TestUncoveredReport:
+    def test_entities_the_layout_misses_are_named(self):
+        """Catalog fallback is by design, but silent it reads as 'the pipeline
+        output models I never chose'."""
+        s = _schema([
+            EntitySpec(name="PlayerBike", kind="vehicle"),
+            EntitySpec(name="Grandstands", kind="building", count=6),
+            EntitySpec(name="Marshals", kind="npc", count=4),
+        ])
+        msgs = apply_scene(s, _scene(_group("PlayerBike", "player_bike.fbx")))
+        report = next(m for m in msgs if "NOT in your layout" in m)
+        assert "Grandstands(building x6)" in report
+        assert "Marshals(npc x4)" in report
+        assert "PlayerBike" not in report
+        assert s.meta["authored_scene"]["uncovered"] == 2
+
+    def test_a_fully_authored_scene_reports_nothing(self):
+        s = _schema([EntitySpec(name="PlayerBike", kind="vehicle")])
+        msgs = apply_scene(s, _scene(_group("PlayerBike", "player_bike.fbx")))
+        assert not any("NOT in your layout" in m for m in msgs)
