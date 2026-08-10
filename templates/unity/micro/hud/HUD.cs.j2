@@ -41,6 +41,12 @@ public class {{ s.name }} : MonoBehaviour
     [SerializeField] private CanvasGroup countdownGroup;
     [SerializeField] private RawImage    mapImage;
     [SerializeField] private Camera      mapCamera;
+{% elif variant == "full_hud_bundle" %}
+    [SerializeField] private Slider   healthBar;
+    [SerializeField] private TMP_Text ammoText;
+    [SerializeField] private TMP_Text scoreText;
+    [SerializeField] private RawImage mapImage;
+    [SerializeField] private Camera   mapCamera;
 {% endif %}
 {% else %}
     [Header("UI Toolkit")]
@@ -224,7 +230,33 @@ public class {{ s.name }} : MonoBehaviour
 {% elif variant == "crosshair" %}
     // Crosshair is purely visual; no runtime API needed.
 {% elif variant == "full_hud_bundle" %}
-    // Bundle stub: extend with bar/ammo/score refs as needed.
+    public void SetHealth(float current, float max)
+    {
+        float t = max > 0f ? Mathf.Clamp01(current / max) : 0f;
+{% if s.backend == "uGUI" %}
+        if (healthBar != null) healthBar.value = t;
+{% else %}
+        if (_root != null) _root.Q<ProgressBar>("HealthBar")?.SetValueWithoutNotify(t * 100f);
+{% endif %}
+    }
+    public void SetAmmo(int loaded, int reserve)
+    {
+{% if s.backend == "uGUI" %}
+        if (ammoText != null) ammoText.text = $"{loaded} / {reserve}";
+{% else %}
+        if (_root != null) _root.Q<Label>("Ammo").text = $"{loaded} / {reserve}";
+{% endif %}
+    }
+    public void SetScore(long score)
+    {
+{% if s.backend == "uGUI" %}
+        if (scoreText != null) scoreText.text = score.ToString("N0");
+{% else %}
+        if (_root != null) _root.Q<Label>("Score").text = score.ToString("N0");
+{% endif %}
+    }
+    // Minimap: mapImage/mapCamera are exposed for a top-down ortho camera you
+    // assign in the Inspector — same contract as the standalone "minimap" variant.
 {% endif %}
 {{ inject.fixed_update(s) }}
 {{ inject.methods(s) }}

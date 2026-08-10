@@ -25,6 +25,11 @@
         <engine:Label name="Countdown" text="" class="hud-title hud-countdown" />
 {% elif variant == "crosshair" %}
         <engine:VisualElement name="Crosshair" class="hud-crosshair" />
+{% elif variant == "full_hud_bundle" %}
+        <engine:ProgressBar name="HealthBar" value="100" low-value="0" high-value="100" title="HP" />
+        <engine:Label name="Ammo" text="0 / 0" class="hud-label" />
+        <engine:Label name="Score" text="0" class="hud-label hud-score" />
+        <engine:VisualElement name="Map" class="hud-minimap" />
 {% else %}
         <engine:Label text="HUD" />
 {% endif %}

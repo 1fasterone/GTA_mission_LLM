@@ -117,6 +117,8 @@ class HUDPipeline(UnityMicroPipeline):
         # racing_hud template-owned refs
         "speedtext", "laptext", "positiontext", "cointext", "boostmeter",
         "countdowntext", "countdowngroup",
+        # full_hud_bundle template-owned refs
+        "healthbar", "ammotext", "scoretext",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.UI", "TMPro", "UnityEngine.UIElements"}
 
