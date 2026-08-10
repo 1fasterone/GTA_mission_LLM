@@ -1,4 +1,0 @@
-tier,name_or_handle,platform,contact_url,sent_date,response,build_sent_date,round_tripped,notes
-1,Example Friend,Discord,@example#1234,2026-06-01,yes,2026-06-01,yes,"Returned feedback day 4 — controller variant bug, filed in TESTING.md"
-2,Example DiscordContact,Discord,@somehandle,,,,,
-3,Example RedditUser,Reddit,/u/someone,,,,,

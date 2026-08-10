@@ -68,3 +68,17 @@ desktop.ini
 # ── C# syntax-gate build output (regenerated on first use) ──────────
 tools/csharp_syntax_gate/bin/
 tools/csharp_syntax_gate/obj/
+
+# ── Personal/experimental drops (not repo content) ───────────────────
+Models/FBX format/cromulon/
+Models/FBX format/molnia-track/
+Models/FBX format/molnia/
+Models/FBX format/monaco/
+prompts/Gigantinut.txt
+prompts/New Text Document.txt
+prompts/grandma.txt
+prompts/grandmas_antique_shop.txt
+prompts/molnia-drag-race.txt
+prompts/newring.txt
+reviews/
+routes/molnia_drag_strip.json
