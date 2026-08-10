@@ -12,11 +12,13 @@ STEP 6 — Generator compiles schema -> Unity project folder (no LLM)
 import re
 from pathlib import Path
 
+from pydantic import ValidationError
 from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
 from .unity_schema       import UnityPackage, UnitySchema, UnityScript
+from .unity_schema_clamp import clamp_capped_lists, render_cap_reminder
 from .capability_resolver import resolve_capabilities, resolve_microgens
 from .unity_asset_catalog import asset_vocabulary
 from .unity_resolver     import UnityResolver
@@ -592,9 +594,28 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
     return schema, fixes
 
 
+# Appended to the Step-3 prompt on a re-roll. The GTA5 and micro pipelines have
+# carried a reminder like this for as long as they have had a retry
+# (src/pipeline.py, src/micro_pipeline.py); Unity was the one pipeline that
+# validated the fill once and crashed the whole run on a bad roll. The list-size
+# clause is built from the schema's own caps so the number the model is told is
+# the number Pydantic enforces.
+_SCHEMA_FILL_RETRY_REMINDER = (
+    "\n\nREMINDER: Output ONE valid JSON object only — no prose, no markdown. "
+    "Never repeat an entry you have already written, and keep every list inside "
+    "its limit (" + render_cap_reminder() + "). Prefer few, substantial entries "
+    "over many thin ones."
+)
+
+
 # ── Pipeline class ─────────────────────────────────────────────────────────────
 
 class UnityPipeline:
+    # A local model that fumbles the fill (invalid JSON, a value the schema
+    # rejects) gets one re-roll at a colder temperature before the run dies —
+    # by Step 3 both LLM calls are already paid for.
+    SCHEMA_FILL_ATTEMPTS = 2
+
     def __init__(self, config: dict):
         self.config = config
         lm_cfg   = config["lm_studio"]
@@ -904,14 +925,40 @@ class UnityPipeline:
         # inventing singletons (which the fixer strips).
         if compose:
             schema_user += GAMECONTEXT_SCHEMA_GUIDANCE
-        schema_raw = self.llm.chat(
-            system      = UNITY_SCHEMA_FILL_SYSTEM,
-            user        = schema_user,
-            temperature = self.schema_temp,
-            thinking    = False,
-        )
-        schema_dict = self.llm.extract_json(schema_raw)
-        schema      = UnitySchema.model_validate(schema_dict)
+        # One re-roll on a bad fill, and a deterministic clamp before validation
+        # so a runaway list costs its own overflow instead of the whole run
+        # (src/unity_schema_clamp.py — live: 155 scripts against a cap of 24).
+        schema: UnitySchema | None = None
+        clamp_msgs: list[str] = []
+        last_err: Exception | None = None
+        for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
+            user_msg = schema_user
+            if attempt > 0:
+                user_msg += _SCHEMA_FILL_RETRY_REMINDER
+            try:
+                schema_raw = self.llm.chat(
+                    system      = UNITY_SCHEMA_FILL_SYSTEM,
+                    user        = user_msg,
+                    temperature = (self.schema_temp if attempt == 0
+                                   else min(self.schema_temp, 0.1)),
+                    thinking    = False,
+                )
+                schema_dict = self.llm.extract_json(schema_raw)
+                clamp_msgs  = clamp_capped_lists(schema_dict)
+                schema      = UnitySchema.model_validate(schema_dict)
+                break
+            except (ValueError, ValidationError) as exc:
+                last_err = exc
+                if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
+                    self._warn(f"schema fill attempt {attempt + 1} failed "
+                               f"({type(exc).__name__}); retrying colder")
+        if schema is None:
+            raise RuntimeError(
+                f"schema fill failed after {self.SCHEMA_FILL_ATTEMPTS} "
+                f"attempts: {last_err}"
+            ) from last_err
+        for msg in clamp_msgs:
+            self._fix(msg)
         schema.meta = {**schema.meta, **theme_meta}
         # Persist the LLM concept so the Library page can describe the project.
         schema.meta["concept"]     = concept
