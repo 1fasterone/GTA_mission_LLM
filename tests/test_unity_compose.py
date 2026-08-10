@@ -724,6 +724,39 @@ def test_vfx_multiple_specs_flow_into_vfx_sequence_cues():
     assert ids == ["Spark", "Smoke"]
 
 
+def test_shader_feature_composes_default_controller():
+    subs = subsystems_for("3D", ["shader"])
+    s = [x for x in subs if x.kind == "shader"]
+    assert len(s) == 1 and s[0].variant == "color_cycle" and s[0].name == "ShaderController"
+
+
+def test_shader_specs_alone_activate_the_shader_subsystem():
+    # No "shader" feature flag — authored schema.shaders content alone is enough.
+    from src.unity_schema import ShaderSpec
+    specs = [ShaderSpec(id="sh1", name="LavaFlow")]
+    kinds = {s.kind for s in subsystems_for("3D", [], shaders=specs)}
+    assert "shader" in kinds
+
+
+def test_shader_spec_flows_into_options():
+    from src.unity_schema import ShaderSpec
+    specs = [ShaderSpec(id="sh1", name="LavaFlow",
+                        parameters={"variant": "uv_scroll", "speed_x": 1.5})]
+    shader = next(s for s in subsystems_for("3D", [], shaders=specs) if s.kind == "shader")
+    assert shader.variant == "uv_scroll"
+    assert shader.name == "LavaFlowController"
+    assert shader.options["speed_x"] == 1.5
+
+
+def test_shader_multiple_specs_each_get_their_own_subsystem():
+    # Unlike vfx, shader controllers each drive an independent object's
+    # material — no "sequence" merge, one Subsystem per authored spec.
+    from src.unity_schema import ShaderSpec
+    specs = [ShaderSpec(id="sh1", name="LavaFlow"), ShaderSpec(id="sh2", name="ForceField")]
+    shaders = [s for s in subsystems_for("3D", [], shaders=specs) if s.kind == "shader"]
+    assert [s.name for s in shaders] == ["LavaFlowController", "ForceFieldController"]
+
+
 def test_animator_clips_from_animations_and_character_animation_set():
     animations = [AnimationSpec(id="a1", name="Run", clip="Run_Clip")]
     characters = [CharacterSpec(id="c1", name="Hero", animation_set=["Idle"])]
