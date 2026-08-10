@@ -633,6 +633,17 @@ class TestPlayerControllerGuard:
         cs = files_2d["PlatformerGame/Assets/Scripts/PlayerController.cs"]
         assert "CharacterController" not in cs
 
+    def test_vr_player_controller_has_real_locomotion(self, gen, schema_vr):
+        # Regression: the VR branch used to declare moveSpeed/smoothTurn/turnSpeed
+        # and never read them — Update() only called ApplyGravity(). It must now
+        # actually move and turn the rig off the XR thumbsticks.
+        files = gen.generate(schema_vr, {})
+        cs = files["VRProject/Assets/Scripts/PlayerController.cs"]
+        assert "InputDevices.GetDeviceAtXRNode" in cs
+        assert "CommonUsages.primary2DAxis" in cs
+        assert "moveSpeed" in cs and "_cc.Move(moveDir" in cs
+        assert "smoothTurn" in cs and "RotateAround" in cs
+
 
 # ── Custom script channel (prompt-authored behaviors) ──────────────────────────
 
