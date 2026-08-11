@@ -15,6 +15,9 @@ python -m pytest -q
 
 # Output smoke against everything currently in output/ and output/unity/
 python -m pytest -m smoke
+
+# Playability eval — is the output still a GAME? (see A1 below)
+python -m pytest -m playability
 ```
 
 The smoke suite (`tests/test_outputs_smoke.py`) gates:
@@ -37,6 +40,46 @@ The smoke suite (`tests/test_outputs_smoke.py`) gates:
 If anything fails, **do not ship** until either the broken output is
 regenerated or removed from `output/`. Stale outputs from old template
 versions are a normal cause — regenerate them through the UI.
+
+---
+
+## A1. Playability eval (is it still a GAME?)
+
+The smoke suite proves a project is structurally sound and `verify` proves it
+compiles. Neither notices when the output stops being playable. The playability
+eval closes that loop:
+
+```powershell
+python -m pytest -m playability      # the gate
+python main.py unity-eval            # the same cases, with full scorecards
+python main.py unity-eval --case dropzone_arcade
+python main.py unity-eval --update-floors   # after a deliberate improvement
+```
+
+Each case in `evals/playability/cases/` replays a **captured schema-fill
+output** through the deterministic tail (Steps 4-6), grades the final schema
+(`src/unity_playability.py`) *and* the files the generator emitted
+(`src/unity_playability_artifact.py`), and compares the result to a floor locked
+in the case file. Logs land in `evals/playability/_runs/<case>.{json,txt}`; every
+finding names the pipeline stage that produced it, so a failure points somewhere.
+
+A case fails when it drops below its locked score, loses a check that used to
+pass, or **stops being able to grade an ERROR-class check at all**. That last
+one is the reason the harness exists: the evaluator used to let a check return
+silently when its evidence was missing, so a build whose avatar spawned at the
+world origin 2000 m below its own game printed `96/100 PLAYABLE` with four
+ERROR-class checks never run. See `evals/playability/README.md` for the case
+format and the eval-discipline declaration each case carries.
+
+`unity-create` itself stays advisory (`playability.gate: false`) — the eval is
+what gates, so tightening a check cannot break in-flight generation.
+
+### Known-failing checks are recorded, not hidden
+`living_wall` ships with `objective_targets` failing: that capture's mission
+targets an entity named `SummitView` the fill never wrote, and no entity
+resembles a summit, so there is nothing to repair it from deterministically. The
+check records it and the case notes say why. Repair where ground truth exists;
+record where it does not.
 
 ---
 

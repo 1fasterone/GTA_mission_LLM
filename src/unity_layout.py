@@ -1141,6 +1141,33 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
     return msgs
 
 
+# The full archetype decision, stamped by the first layout pass so later passes
+# replay it rather than re-deriving one from the positions the first pass baked.
+_ARCH_DECISION_KEY = "layout_archetype_decision"
+
+
+def _replay_archetype(schema: UnitySchema) -> Optional[LayoutArchetype]:
+    """The archetype an earlier pass on this schema already committed to, or
+    None when there is none to replay. Deliberately tolerant of a malformed or
+    partial stamp: a bad stamp falls back to a fresh derivation rather than
+    failing a build, in the same spirit as WiringMap._accept_list."""
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    stamped = meta.get(_ARCH_DECISION_KEY)
+    if not isinstance(stamped, dict):
+        return None
+    try:
+        return LayoutArchetype(
+            name=str(stamped["name"]),
+            motion_axis=str(stamped["motion_axis"]),
+            medium=str(stamped["medium"]),
+            goal_topology=str(stamped["goal_topology"]),
+            evidence=dict(stamped.get("evidence") or {}),
+            direction=str(stamped.get("direction") or ""),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def compute_layout(schema: UnitySchema,
                    footprints: Optional[dict[str, float]] = None) -> list[str]:
     """Select a spatial archetype for the scene, then lay every
@@ -1193,7 +1220,17 @@ def compute_layout(schema: UnitySchema,
     # Raises [layout.strict] when no Stage-1 primitive covers the derived axes.
     # Deliberately NOT caught here: a silent fall-through to ArenaPlane is the
     # failure mode this selection exists to remove.
-    arch = select_archetype(schema)
+    #
+    # The FIRST pass's decision is authoritative for every later pass. The
+    # generator re-runs this function once models are resolved, to re-pack with
+    # real measured footprints — and re-deriving the archetype there reads
+    # evidence THIS pass created: the altitudes it just baked. A lagoon survey
+    # (locomotion='swim', explicitly "no descent", selected BoundedVolume) came
+    # back from the second pass as a VerticalCorridor purely because the first
+    # pass had banded its content by altitude, so a game about swimming around
+    # a reef was re-packed as a fall column — silently, since the generator
+    # discards the messages this returns.
+    arch = _replay_archetype(schema) or select_archetype(schema)
     # Step 7 (src/unity_playability.py) grades the scene against a spatial
     # primitive. Stamp the one the layout actually used, so the evaluator
     # judges what was built rather than re-deriving a second opinion from
@@ -1203,6 +1240,13 @@ def compute_layout(schema: UnitySchema,
     if isinstance(schema.meta, dict):
         schema.meta["spatial_primitive"] = arch.spatial_primitive(_has_route)
         schema.meta["layout_archetype"] = arch.name
+        # The whole decision, not just its name, so a second pass can replay it
+        # instead of re-deriving one from this pass's own output.
+        schema.meta[_ARCH_DECISION_KEY] = {
+            "name": arch.name, "motion_axis": arch.motion_axis,
+            "medium": arch.medium, "goal_topology": arch.goal_topology,
+            "direction": arch.direction, "evidence": dict(arch.evidence),
+        }
     msgs: list[str] = [arch.provenance()]
     if arch.name == "VerticalCorridor":
         return msgs + _layout_vertical_corridor(schema, arch, footprints)

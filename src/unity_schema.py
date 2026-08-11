@@ -1272,6 +1272,58 @@ class UnitySchema(BaseModel):
                         f"R1: stripped duplicate Player tag from entity "
                         f"{e.name!r} (kept {keep.name!r})")
 
+        # R1a -- the singleton tag on a GROUP is the same defect one level down.
+        # A count=6 Player-tagged group spawns six tagged objects, so FindWithTag
+        # picks arbitrarily among them, AND it silently fails the generator's
+        # player-merge gate (which requires count==1), which costs the avatar its
+        # resolved model and the layout's baked spawn in one move. The avatar is
+        # singular by definition, so this needs no guessing.
+        for e in self.entities:
+            if e.tag == "Player" and e.count > 1:
+                repairs.append(
+                    f"R1a: clamped Player-tagged entity {e.name!r} from "
+                    f"count={e.count} to 1 -- the avatar is singular")
+                e.count = 1
+                if len(e.instance_positions) > 1:
+                    e.instance_positions = e.instance_positions[:1]
+
+        # R1b -- restore an avatar the per-entity guard demoted. _reserve_player_tag
+        # strips "Player" from never-player kinds, which is right in isolation and
+        # terminal in effect: it is the ONLY code that removes the tag, and the
+        # only code that re-assigns it (unity_concept_entities' rescue) skips
+        # entity names that already exist. A live DropZone run authored its avatar
+        # as kind='prop', tag='Player', count=6, and shipped a build with no
+        # Player-tagged entity at all -- so the generator's player-merge (which
+        # needs tag=Player, count==1, an avatar kind) never fired, the avatar kept
+        # the scene template's origin spawn 2000 m below a descent course the
+        # layout had placed it at the top of, and six lookalike props spawned at
+        # the exit altitude instead.
+        #
+        # The repair is deterministic, not a guess: the entity is NAMED as the
+        # player (unity_layout_archetype.pick_player_entity's rank-1 signal, the
+        # same one the layout pass uses to decide where the player starts), and
+        # the fill's own Player tag was the intent being restored. Logged to
+        # role_lint like every other repair here.
+        if not any(e.tag == "Player" for e in self.entities):
+            from .unity_layout_archetype import pick_player_entity
+            cand, signal = pick_player_entity(self.entities)
+            if cand is not None:
+                was = f"kind={cand.kind!r}, tag={cand.tag!r}, count={cand.count}"
+                if (cand.kind or "").lower() in _NEVER_PLAYER_KINDS:
+                    # A kind that may never hold the tag would be demoted again
+                    # by _reserve_player_tag on the next validation pass.
+                    cand.kind = "character"
+                cand.tag = "Player"
+                # The avatar is singular by definition: count>1 spawns N
+                # Player-tagged objects AND silently disables the player-merge.
+                if cand.count > 1:
+                    cand.count = 1
+                if len(cand.instance_positions) > 1:
+                    cand.instance_positions = cand.instance_positions[:1]
+                repairs.append(
+                    f"R1b: no entity held tag=Player -- promoted {cand.name!r} "
+                    f"({was}) to the avatar on the {signal} signal")
+
         # R2 -- characters[] must agree with the deterministic entity tags.
         # The character matching the Player-tagged entity IS the player; a
         # character whose entity is hostile-tagged can never be role="player".

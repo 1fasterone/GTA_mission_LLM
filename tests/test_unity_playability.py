@@ -11,7 +11,8 @@ from __future__ import annotations
 
 from src.unity_layout import compute_layout
 from src.unity_playability import (ERROR, WARN, evaluate, gate)
-from src.unity_schema import (EntitySpec, SceneSpec, StoryBeat, UnitySchema,
+from src.unity_schema import (EntitySpec, MissionObjective, MissionSpec,
+                              SceneSpec, StoryBeat, UnitySchema,
                               UnityScript)
 
 
@@ -391,3 +392,256 @@ class TestObjectiveKinematics:
         coin.kind = "Collectible"
         rep = evaluate(s)
         assert not rep.checks["objective_kinematics"]
+
+
+# -- graded vs ungraded -------------------------------------------------------
+# The evaluator's first version let a check `return` when its evidence was
+# missing, which shrank the score's denominator silently. Missing evidence is
+# now reported, and an ERROR-class check that never ran can fail the gate.
+
+class TestUngradedChecks:
+    def test_an_ungraded_check_is_neither_a_pass_nor_a_failure(self):
+        rep = evaluate(_playable())
+        assert "role_graph" not in rep.checks
+        assert "role_graph" in rep.not_graded
+        assert rep.playable
+
+    def test_the_scorecard_names_what_it_could_not_grade(self):
+        text = evaluate(_playable()).render()
+        assert "not graded" in text
+        assert "NOGRD role_graph" in text
+
+    def test_an_empty_user_prompt_no_longer_passes_brief_coverage(self):
+        """A replayed schema carries no prompt. Returning True here handed a
+        full-weight ERROR-class pass to every schema graded through the CLI."""
+        rep = evaluate(_playable(user_prompt=""))
+        assert "brief_entities" not in rep.checks
+        assert "user_prompt" in rep.not_graded["brief_entities"]
+
+    def test_unbaked_positions_no_longer_pass_the_spatial_checks(self):
+        rep = evaluate(_playable(locomotion="fly"))
+        for check in ("spawn_clear", "content_reachable"):
+            assert check not in rep.checks
+            assert "compute_layout" in rep.not_graded[check]
+
+    def test_gate_can_require_that_error_checks_actually_ran(self):
+        rep = evaluate(_playable(user_prompt=""))
+        assert rep.playable
+        assert gate(rep, fail_on_error=True) is None
+        reason = gate(rep, fail_on_error=True, require_graded=True)
+        assert reason is not None and "could not be graded" in reason
+
+    def test_ungraded_warn_class_checks_never_fail_the_gate(self):
+        rep = evaluate(_playable())
+        assert "scene_population" in rep.not_graded          # WARN class
+        assert "scene_population" not in rep.ungraded_errors
+
+
+# -- objectives the fill expressed through tags and missions -------------------
+
+class TestObjectiveIdentity:
+    def _tagged_objective(self, tag, kind="mechanism"):
+        s = _schema(
+            [EntitySpec(name="Hero", kind="player", tag="Player"),
+             EntitySpec(name="Gates", kind=kind, count=4, placement="scatter",
+                        tag=tag)],
+            scripts=[UnityScript(name="P", type="player", description="d")])
+        s.meta["spatial_primitive"] = "ground_plane"
+        return s
+
+    def test_a_generic_kind_with_the_meaning_in_the_tag_is_an_objective(self):
+        """Live schema-fill writes kind='mechanism' tag='Gate'. Reading kind
+        alone made every objective check vacuous on real output."""
+        rep, checks = _checks(self._tagged_objective("Gate"))
+        assert "objective" not in checks          # it found the objective
+        assert rep.checks["objective"]
+
+    def test_an_untagged_generic_objective_is_still_not_an_objective(self):
+        rep, checks = _checks(self._tagged_objective("Untagged"))
+        assert "objective" in checks
+
+    def test_tag_carried_objectives_are_graded_for_reach(self):
+        s = self._tagged_objective("Target")
+        gates = next(e for e in s.entities if e.name == "Gates")
+        gates.instance_positions = [[2.0, 40.0, 2.0]]
+        rep = evaluate(s)
+        assert not rep.checks["objective_kinematics"]
+
+    def test_a_mission_target_makes_its_entity_an_objective(self):
+        s = _schema(
+            [EntitySpec(name="Hero", kind="player", tag="Player"),
+             EntitySpec(name="LandingPad", kind="platform", tag="Target",
+                        instance_positions=[[0.0, 30.0, 6.0]])],
+            scripts=[UnityScript(name="P", type="player", description="d")])
+        s.meta["spatial_primitive"] = "ground_plane"
+        s.missions = [MissionSpec(
+            id="m1", title="Land", description="d",
+            objectives=[MissionObjective(id="o1", description="touch down",
+                                         type="reach",
+                                         target_ref="LandingPad")])]
+        rep = evaluate(s)
+        assert not rep.checks["objective_kinematics"]
+
+    def test_a_mission_targeting_absent_content_is_an_error(self):
+        s = _playable()
+        s.missions = [MissionSpec(
+            id="m1", title="Summit", description="d",
+            objectives=[MissionObjective(id="o1", description="reach it",
+                                         type="reach",
+                                         target_ref="SummitView")])]
+        rep, checks = _checks(s)
+        assert "objective_targets" in checks
+        assert not rep.playable
+        assert "SummitView" in next(
+            f.summary for f in rep.findings if f.check == "objective_targets")
+
+    def test_no_target_refs_is_ungraded_not_a_pass(self):
+        rep = evaluate(_playable())
+        assert "objective_targets" not in rep.checks
+        assert "objective_targets" in rep.not_graded
+
+
+# -- the avatar chain ---------------------------------------------------------
+
+class TestAvatarBinding:
+    def _script_only(self):
+        """A player script but no Player-tagged entity — what
+        _reserve_player_tag leaves behind when it demotes a kind='prop' avatar
+        and nothing restores the tag."""
+        return _schema(
+            [EntitySpec(name="Statue", kind="prop", count=6, tag="Untagged")],
+            scripts=[UnityScript(name="P", type="player", description="d")])
+
+    def test_a_script_without_a_tagged_entity_is_a_warning(self):
+        rep, checks = _checks(self._script_only())
+        assert "avatar_binding" in checks
+        assert next(f for f in rep.findings
+                    if f.check == "avatar_binding").severity == WARN
+
+    def test_a_tagged_avatar_binds(self):
+        rep = evaluate(_playable())
+        assert rep.checks["avatar_binding"]
+
+    def test_a_plural_avatar_is_an_error(self):
+        """count>1 spawns N Player-tagged objects and disables the generator's
+        player-merge, which needs count==1."""
+        s = _playable()
+        hero = next(e for e in s.entities if e.tag == "Player")
+        hero.count = 6
+        rep, checks = _checks(s)
+        assert "avatar_cardinality" in checks
+        assert not rep.playable
+
+    def test_cardinality_is_ungraded_with_no_tagged_avatar(self):
+        rep = evaluate(self._script_only())
+        assert "avatar_cardinality" not in rep.checks
+        assert "avatar_cardinality" in rep.not_graded
+
+    def test_a_volume_game_with_no_tagged_avatar_fails_volume_player(self):
+        """The check used to pass here: `avatar is None` skipped it, so the
+        more broken the schema, the likelier it scored."""
+        s = self._script_only()
+        s.locomotion = "fly"
+        s.entities.append(EntitySpec(name="Gates", kind="collectible", count=4,
+                                     placement="scatter", elevation=800.0))
+        rep, checks = _checks(s)
+        assert "volume_player" in checks
+        assert not rep.playable
+
+
+# -- spawn clearance is measured against the real spawn -----------------------
+
+class TestSpawnPoint:
+    def test_a_blocker_at_an_elevated_spawn_is_found(self):
+        s = _playable()
+        hero = next(e for e in s.entities if e.tag == "Player")
+        hero.instance_positions = [[0.0, 40.0, 0.0]]
+        crate = EntitySpec(name="Crate", kind="obstacle", count=1)
+        crate.instance_positions = [[0.3, 40.2, 0.4]]
+        s.entities.append(crate)
+        _, checks = _checks(s)
+        assert "spawn_clear" in checks
+
+    def test_the_origin_is_not_assumed_to_be_the_spawn(self):
+        """A climbing wall stands the player at z=4 facing holds at z=0.2.
+        Measuring those holds against (0,0) reported the entire hold chain as
+        trapping the player at t=0."""
+        s = _playable()
+        hero = next(e for e in s.entities if e.tag == "Player")
+        hero.instance_positions = [[0.0, 0.0, 4.0]]
+        holds = EntitySpec(name="Holds", kind="handhold", count=2,
+                           tag="Interactable")
+        holds.instance_positions = [[0.0, 0.0, 0.2], [0.0, 2.0, 0.2]]
+        s.entities.append(holds)
+        _, checks = _checks(s)
+        assert "spawn_clear" not in checks
+
+    def test_a_platform_at_the_spawn_is_the_floor_not_a_trap(self):
+        """VerticalCorridor deliberately spawns the player attached to the exit
+        platform."""
+        s = _playable()
+        hero = next(e for e in s.entities if e.tag == "Player")
+        hero.instance_positions = [[0.0, 2000.0, 0.0]]
+        exit_pad = EntitySpec(name="Exit", kind="structure", count=1)
+        exit_pad.instance_positions = [[0.0, 2000.0, 0.0]]
+        s.entities.append(exit_pad)
+        _, checks = _checks(s)
+        assert "spawn_clear" not in checks
+
+
+# -- unbaked gameplay groups --------------------------------------------------
+
+class TestUnbakedGameplay:
+    def _volume(self):
+        """Everything already baked, so each test isolates the ONE group it
+        adds."""
+        s = _playable(locomotion="fly")
+        s.meta["spatial_primitive"] = "airspace_column"
+        hero = next(e for e in s.entities if e.tag == "Player")
+        hero.instance_positions = [[0.0, 500.0, 0.0]]
+        coin = next(e for e in s.entities if e.name == "Coin")
+        coin.instance_positions = [[2.0, 480.0, 2.0]]
+        return s
+
+    def test_a_gameplay_group_with_no_baked_position_is_flagged(self):
+        s = self._volume()
+        s.entities.append(EntitySpec(name="Rivals", kind="enemy", count=6,
+                                     placement="scatter", tag="Enemy"))
+        rep, checks = _checks(s)
+        assert "unbaked_gameplay" in checks
+
+    def test_a_path_group_with_points_is_legitimately_unbaked(self):
+        s = self._volume()
+        s.entities.append(EntitySpec(
+            name="Rivals", kind="enemy", count=6, placement="path",
+            tag="Enemy", path_points=[[0.0, 500.0, 0.0], [0.0, 500.0, 50.0]]))
+        _, checks = _checks(s)
+        assert "unbaked_gameplay" not in checks
+
+    def test_the_flat_plane_lets_the_runtime_scatter_decide(self):
+        s = _playable()
+        s.meta["spatial_primitive"] = "ground_plane"
+        s.entities.append(EntitySpec(name="Rivals", kind="enemy", count=6,
+                                     placement="scatter", tag="Enemy"))
+        _, checks = _checks(s)
+        assert "unbaked_gameplay" not in checks
+
+
+# -- a swimmer swims up -------------------------------------------------------
+
+def test_a_swim_descent_never_fails_content_above_the_diver():
+    """'You cannot fall upwards' is a statement about freefall. Applied to
+    water it failed a reef survey on fish 18 m above the diver."""
+    s = _schema(
+        [EntitySpec(name="Diver", kind="character", tag="Player",
+                    instance_positions=[[0.0, 100.0, 0.0]]),
+         EntitySpec(name="ReefFish", kind="enemy", count=12, tag="Enemy",
+                    instance_positions=[[3.0, 118.0, 3.0]])],
+        scripts=[UnityScript(name="P", type="player", description="d")],
+        locomotion="swim")
+    s.meta["spatial_primitive"] = "depth_column"
+    s.meta["layout_archetype"] = "VerticalCorridor"
+    assert evaluate(s).checks["objective_kinematics"]
+
+    s.locomotion = "fly"
+    assert not evaluate(s).checks["objective_kinematics"]

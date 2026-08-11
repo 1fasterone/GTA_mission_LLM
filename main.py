@@ -662,6 +662,83 @@ def unity_playability(
         raise typer.Exit(1)
 
 
+@app.command("unity-eval")
+def unity_eval(
+    case:  list[str] = typer.Option(None, "--case",
+                                    help="Case name(s) to run; default all"),
+    live:  bool = typer.Option(False, "--live",
+                               help="Run the LIVE tier (full pipeline through "
+                                    "the LLM). Deferred — no live cases ship yet"),
+    update_floors: bool = typer.Option(False, "--update-floors",
+                                       help="Re-lock each case's floor to what "
+                                            "it scores now (after a deliberate fix)"),
+    quiet: bool = typer.Option(False, "--quiet", "-q",
+                               help="One line per case instead of full scorecards"),
+) -> None:
+    """Playability regression eval — replay captured schemas, grade, compare.
+
+    Each case replays a filled schema through the deterministic tail (Steps
+    4-6), grades the final schema AND the files the generator emitted, and
+    compares the result to a floor locked in the case file. Exits non-zero when
+    a case drops below its floor, loses a check it used to pass, or stops being
+    able to grade an ERROR-class check at all.
+
+      python main.py unity-eval
+      python main.py unity-eval --case dropzone_arcade
+      python main.py unity-eval --update-floors
+
+    Logs land in evals/playability/_runs/<case>.{json,txt} — the JSON names the
+    pipeline stage behind every finding.
+    """
+    from src.unity_eval import (CASES_DIR, EvalCaseError, floor_from_result,
+                                load_cases, run_cases)
+
+    if live:
+        console.print("[yellow]--live is not wired yet[/]: the live tier runs "
+                      "the full pipeline from brief text through LM Studio, "
+                      "but no live cases ship in evals/playability/cases yet. "
+                      "Run without --live for the replay tier.")
+        raise typer.Exit(2)
+    try:
+        cases   = load_cases(only=case or None)
+        results = run_cases(cases)
+    except EvalCaseError as exc:
+        console.print(f"[red]eval case error[/] {exc}")
+        raise typer.Exit(2) from exc
+
+    failed = [r for r in results if not r.ok]
+    for r in results:
+        tag = "[green]PASS[/]" if r.ok else "[red]FAIL[/]"
+        console.print(f"\n{tag} [bold]{r.case.name}[/] "
+                      f"[dim]({r.case.input_kind})[/]  "
+                      f"score {r.score}/100  floor {r.case.floor_score}")
+        if not quiet:
+            # markup=False: findings carry schema field paths and C# generics
+            # that rich would read as console markup.
+            console.print(r.report.render(), markup=False)
+        for reason in r.reasons():
+            console.print(f"  [red]![/] {reason}", markup=False)
+        if not r.ok:
+            for hint in r.stage_hints():
+                console.print(f"  [dim]look at:[/] {hint}", markup=False)
+
+    if update_floors:
+        for r in results:
+            path = CASES_DIR / f"{r.case.name}.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["floor"] = floor_from_result(r)
+            path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+            console.print(f"[cyan]re-locked[/] {path.name} -> "
+                          f"score {r.score}, "
+                          f"{len(data['floor']['must_pass'])} must-pass checks")
+        return
+
+    console.print(f"\n{len(results) - len(failed)}/{len(results)} case(s) at or "
+                  f"above their floor")
+    if failed:
+        raise typer.Exit(1)
+
+
 @app.command("unity-validate")
 def unity_validate(
     schema_file:    str  = typer.Argument(..., help="Path to a Unity schema JSON file"),
