@@ -2,7 +2,7 @@ TITLE
 Turbo Toys 
 
 GENRE
-A fully 3D arcade kart racing game. Genre is racing — a cartoon kart racer / grand
+A fully 3D arcade racing game. Genre is racing — a kart racer / grand
 prix with power slides, boost pads, and lap-based circuit races.
 
 STYLE
@@ -24,12 +24,12 @@ cartoon wheels. Third-person vehicle chase camera that swings wide on drifts.
 ENTITIES
 - PlayerCar: the player's cartoon toy race car (kind: vehicle / car).
 - RivalRedRacer: an AI rival cartoon race car, aggressive (kind: vehicle / car).
-- RivalBlueSpeedster: an AI rival cartoon sports car, fast on straights (kind: vehicle / car).
-- RivalGreenBuggy: an AI rival cartoon off-road car, cuts corners (kind: vehicle / car).
-- Coin: spinning pickup collectible scattered on the track (kind: collectible).
+- RivalSportCar: an AI rival cartoon sports car, fast on straights (kind: vehicle / car).
+- RivalTrophyTruck: an AI rival cartoon off-road car, cuts corners (kind: vehicle / car).
+- Star: spinning pickup collectible scattered on the track (kind: collectible).
 - BoostPad: a springy trigger pad that launches the car forward (kind: prop).
-All four cars are cartoon toy cars and should resolve to real Sketchfab cartoon-car
-models (cartoon race car, low poly cartoon sports car).
+All four cars are toy cars and should resolve to real Sketchfab toy car
+models ( race car, low poly sports car).
 
 NPCS
 - Sparky the Pit Chief: a voiced NPC quest giver at the garage. He greets the player,
