@@ -1,0 +1,33 @@
+{
+  "name": "skyline_glider",
+  "schema": "tests/fixtures/skyline_glider.schema.json",
+  "input": "engineer-authored",
+  "provenance": "Hand-written layout fixture (tests/fixtures/README.md). Tests Steps 4-7 only.",
+  "notes": "BoundedVolume air: locomotion=fly with no descent framing, a 900 m ceiling, floating islands and one terrain ridge. Free movement, so the kinematic reach rules must not fail content at altitude. No missions and no story beats \u2014 the objective check has to hold on entities alone.",
+  "floor": {
+    "score": 97,
+    "must_pass": [
+      "avatar",
+      "avatar_binding",
+      "avatar_cardinality",
+      "avatar_not_duplicated",
+      "avatar_singleton",
+      "avatar_spawn",
+      "camera",
+      "content_reachable",
+      "controllable",
+      "interactables",
+      "objective",
+      "objective_kinematics",
+      "objectives_spawned",
+      "spawn_clear",
+      "unbaked_gameplay",
+      "volume_player"
+    ],
+    "ungraded_ok": [
+      "brief_entities",
+      "objective_targets",
+      "role_graph"
+    ]
+  }
+}

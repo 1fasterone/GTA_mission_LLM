@@ -20,6 +20,7 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
                                           texture_dirs_with_res_root_for)
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
+from .unity_layout_archetype import pick_player_entity
 from .micro.code_fields import CodeField, lint_extensible
 
 _log = logging.getLogger(__name__)
@@ -2051,22 +2052,34 @@ class UnityProjectGenerator:
                 (e for e in schema.entities
                  if e.tag == "Player" and e.count == 1
                  and (e.kind or "").lower() in _PLAYER_MERGE_KINDS), None)
+            # ── Spawn transfer — deliberately NOT gated on the merge ──────────
+            # The layout pass decides where the player starts, and this was the
+            # only code that carried that decision into the scene. Nested inside
+            # the merge it inherited all three of the merge's conditions, so any
+            # schema that failed one of them silently spawned the avatar at the
+            # template's origin instead: a captured DropZone run laid the player
+            # out at the top of a 2000 m descent corridor and shipped a scene
+            # with the avatar at y=1, 2000 m below its own game, and every
+            # automated check passed. The model transfer below still needs a
+            # mergeable entity; the START POSITION only needs the layout to have
+            # chosen one, so it is read from the player's group directly (the
+            # same rank-based resolution the layout used to pick it).
+            # Capsule pivot is its centre — feet 1 m below.
+            _spawn_src, _spawn_signal = pick_player_entity(schema.entities)
+            if _spawn_src is not None and _spawn_src.instance_positions:
+                _px, _py, _pz = (round(v, 3)
+                                 for v in _spawn_src.instance_positions[0])
+                _yaw = (round(_spawn_src.instance_yaws[0], 3)
+                        if _spawn_src.instance_yaws else 0.0)
+                _half = math.radians(_yaw) / 2.0
+                player_spawn = {
+                    "position": f"{{x: {_px}, y: {round(_py + 1.0, 3)}, z: {_pz}}}",
+                    "rotation": (f"{{x: 0, y: {round(math.sin(_half), 6)}, "
+                                 f"z: 0, w: {round(math.cos(_half), 6)}}}"),
+                    "euler":    f"{{x: 0, y: {_yaw}, z: 0}}",
+                }
             if _pe is not None:
                 _is_vehicle = (_pe.kind or "").lower() == "vehicle"
-                # Baked spawn: a racing grid pole for a vehicle, or the layout
-                # pass's reserved non-overlapping slot for a walker. Absent
-                # (no layout positions) the dedicated Player keeps its default
-                # origin spawn. Capsule pivot is its center — feet 1 m below.
-                if _pe.instance_positions:
-                    _px, _py, _pz = (round(v, 3) for v in _pe.instance_positions[0])
-                    _yaw = round(_pe.instance_yaws[0], 3) if _pe.instance_yaws else 0.0
-                    _half = math.radians(_yaw) / 2.0
-                    player_spawn = {
-                        "position": f"{{x: {_px}, y: {round(_py + 1.0, 3)}, z: {_pz}}}",
-                        "rotation": (f"{{x: 0, y: {round(math.sin(_half), 6)}, "
-                                     f"z: 0, w: {round(math.cos(_half), 6)}}}"),
-                        "euler":    f"{{x: 0, y: {_yaw}, z: 0}}",
-                    }
                 _pe_path = entity_model_paths.get(_pe.name, "")
                 if _pe_path and not _pe_path.startswith(
                         ("skip:", "procedural:", "fx:")):

@@ -348,6 +348,23 @@ def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema
 
 # ── Consistency checker ────────────────────────────────────────────────────────
 
+# Kind -> the tag that makes that kind of content interactive. Only kinds whose
+# gameplay role is unambiguous appear here: "prop" and "structure" are
+# deliberately absent, because scenery with a collider tag is a different bug.
+# Every value is one of the tags TagManager.asset.j2 already declares.
+_OBJECTIVE_KIND_TAGS: dict[str, str] = {
+    "collectible": "Collectible",
+    "pickup":      "Collectible",
+    "item":        "Collectible",
+    "goal":        "Interactable",
+    "objective":   "Interactable",
+    "enemy":       "Enemy",
+    "boss":        "Enemy",
+    "obstacle":    "Obstacle",
+    "hazard":      "Obstacle",
+}
+
+
 def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     """
     Ensure script types and features are coherent.
@@ -358,6 +375,27 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     # Helper re-derived each call so injections made above are visible below.
     def _stypes() -> set[str]:
         return {s.type for s in schema.scripts}
+
+    # Load-bearing tags for objective content. EntitySpawner only attaches a
+    # collider to a group that carries a tag (templates/unity/EntitySpawner.cs.j2)
+    # and the composed micros acquire their targets with FindGameObjectWithTag,
+    # so an untagged collectible cannot be picked up and an untagged enemy cannot
+    # be seen, hit or chased — it is scenery with a hostile name. The rescue path
+    # in unity_concept_entities already tags the entities it restores from the
+    # brief; entities the fill wrote ITSELF had nothing doing the same for them,
+    # which is why a skydiving build shipped four uncollectable altitude gates
+    # and an enemy script with nothing tagged Enemy to drive.
+    #
+    # `kind` is the ground truth here — a deterministic lookup, not a guess —
+    # and the generator copies every entity tag into TagManager, so the tag it
+    # assigns always exists at runtime.
+    for _e in schema.entities:
+        _canon = _OBJECTIVE_KIND_TAGS.get((_e.kind or "").lower())
+        if _canon and (not _e.tag or _e.tag == "Untagged"):
+            _e.tag = _canon
+            fixes.append(f"Untagged {_e.kind} {_e.name!r} -> tag={_canon} "
+                         "(no tag = no collider, so it cannot be "
+                         "collected/hit)")
 
     # VR requires Input System for XR controller input
     if schema.game_type == "VR" and "input_system" not in schema.features:

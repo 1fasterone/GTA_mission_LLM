@@ -873,26 +873,44 @@ def _safe_to_comment_out(line: str) -> bool:
     return stripped.endswith((";", "}"))
 
 
-# A bare if/else-if/while header (condition only, `{` opens on a later line)
-# whose condition references a bad identifier can't be commented out, but its
-# condition CAN always be swapped for the literal `false` -- syntactically
-# valid regardless of what the original expression was, and always disables
-# the guarded block without touching any other line's braces. Restricted to
-# if/while: for/foreach/switch conditions aren't simple boolean swaps, so
-# those are left alone (skipped) for the compiler to catch.
+# A bare if/else-if/while header whose condition references a bad identifier
+# can't be commented out, but its condition CAN always be swapped for the
+# literal `false` -- syntactically valid regardless of what the original
+# expression was, and always disables the guarded block without touching any
+# other line's braces. Restricted to if/while: for/foreach/switch conditions
+# aren't simple boolean swaps, so those are left alone (skipped) for the
+# compiler to catch.
+#
+# The opening `{` may sit on this line or a later one, and either way it is
+# PRESERVED verbatim -- disabling a condition must never change brace
+# structure. Hit live on a TurboToys run, RivalPathfinderBT.cs(132,13):
+#
+#     if (playerPositionPercent < 0.45f) { // Trigger taunt audio here }
+#
+# a header, its brace, and a trailing comment that swallowed the closer, all on
+# one physical line. Without the `{`/comment tail the pattern did not match, so
+# the line was skipped entirely and its CS0103 survived to the build.
 _DISABLEABLE_HEADER_RE = re.compile(
-    r'^(?P<indent>\s*)(?P<prefix>(?:\}\s*)?(?:else\s+)?(?:if|while))\s*\((?P<cond>.*)\)\s*$')
+    r'^(?P<indent>\s*)(?P<prefix>(?:\}\s*)?(?:else\s+)?(?:if|while))\s*'
+    r'\((?P<cond>.*)\)\s*(?P<brace>\{)?[ \t]*(?://.*)?$')
 
 
 def _disable_bad_header(line: str, names: "list[str] | set[str]") -> "str | None":
     """Return `line` with an if/else-if/while condition replaced by `false`,
-    or None if `line` isn't a bare header of that shape (e.g. has a trailing
-    `{`/`;`, or is a for/foreach/switch -- those are left for the caller to
-    handle via the normal comment-out / skip path)."""
+    or None if `line` isn't a header of that shape (e.g. has a trailing `;`, or
+    is a for/foreach/switch -- those are left for the caller to handle via the
+    normal comment-out / skip path).
+
+    A trailing `{` is re-emitted, and a trailing `//` comment is dropped along
+    with the condition it belonged to -- the comment cannot carry a real closing
+    brace (anything inside `//` was never a delimiter), so dropping it leaves the
+    brace count exactly as it was.
+    """
     m = _DISABLEABLE_HEADER_RE.match(line)
     if not m:
         return None
-    return (f"{m.group('indent')}{m.group('prefix')} (false) "
+    brace = f" {m.group('brace')}" if m.group("brace") else ""
+    return (f"{m.group('indent')}{m.group('prefix')} (false){brace} "
             f"/* AUDIT: condition removed, referenced invalid "
             f"{', '.join(sorted(set(names)))} */")
 
@@ -1968,13 +1986,6 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     text = _PY_LITERALS.get(text.lower(), text)
     base = type_str.strip().rstrip("?").strip().lower()
 
-    if base == "bool":
-        if text in ("true", "false"):
-            return text
-        if text in ("1", "0"):                         # CS0029 — int is not bool
-            return "true" if text == "1" else "false"
-        return None
-
     if base == "string":
         if (text.lower() in _STRING_SENTINELS
                 or text.startswith(_STRING_LITERAL_PREFIXES)):
@@ -1982,6 +1993,40 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
         # Bare prose the model forgot to quote (CS0103) — quoting keeps the
         # authored value; dropping it would lose the content for no reason.
         return f'"{escape_cs_string(text)}"'
+
+    # CS0029: a STRING literal initialising a field that is not a string. Hit
+    # live on a TurboToys run, SaveSystem.cs(15,166):
+    #
+    #     [SerializeField] private Dictionary<string, object> _saveData = "null";
+    #
+    # — the model quoted the null sentinel, and every branch below is numeric or
+    # bool, so the quoted text fell through to the structural guard untouched and
+    # shipped. `object`/`var`/`dynamic` are excepted: there a string genuinely
+    # does convert.
+    #
+    # Unquoting is a REPAIR, not a drop: a model that quotes a value
+    # (`float _drag = "0.5"`, `bool _loop = "true"`) meant the value, and the
+    # quotes are the only thing wrong. The recursive call then re-judges the
+    # unquoted text against the declared type exactly as if it had arrived that
+    # way. `_unquote` strips the quote, so this recurses at most once.
+    if (text.startswith(_STRING_LITERAL_PREFIXES)
+            and base not in ("object", "var", "dynamic")):
+        inner = _unquote(text)
+        if inner == text:                              # `@"…"` / `$"…"` — no pair
+            return None
+        # A bare word is not an initializer for a non-string type. Accepting it
+        # would trade CS0029 for CS0103, which is not a repair.
+        if (re.fullmatch(r"[A-Za-z_]\w*", inner)
+                and inner not in ("null", "true", "false", "default")):
+            return None
+        return sanitize_default(type_str, inner)
+
+    if base == "bool":
+        if text in ("true", "false"):
+            return text
+        if text in ("1", "0"):                         # CS0029 — int is not bool
+            return "true" if text == "1" else "false"
+        return None
 
     if base.rsplit(".", 1)[-1] in _COLOR_TYPES:
         return _color_initializer(base.rsplit(".", 1)[-1], text)
@@ -2267,20 +2312,47 @@ _TEMPLATE_MEMBER_RE = re.compile(
     r"\b([A-Za-z_]\w*)[ \t]*"                   # the declared name
     r"(?:\(|;|=>|=[^=]|\{|$)")                  # method, field, property, event
 _TEMPLATE_USING_RE = re.compile(r"^[ \t]*using[ \t]+([\w.]+)[ \t]*;", re.MULTILINE)
+_TEMPLATE_TYPE_RE = re.compile(r"\b(?:class|struct|interface|enum)\s+([A-Za-z_]\w*)")
+# A method DECLARATION line, captured with its parameter list so the arity of a
+# call against it can be checked. Same anchor as _TEMPLATE_MEMBER_RE (a member
+# always carries an access modifier in these templates), narrowed to the shape
+# that has a parameter list.
+_TEMPLATE_METHOD_DECL_RE = re.compile(
+    r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"
+    r"(?:public|private|protected|internal)\b"
+    r"[^;{(=\n]*?"
+    r"\b(?P<name>[A-Za-z_]\w*)[ \t]*\((?P<params>[^)]*)\)")
 
 
 _JINJA_PLACEHOLDER = "_J_"
 
 
 @lru_cache(maxsize=64)
-def _template_text(template_dir: str) -> str:
-    """Every C# template in the micro's own folder, with Jinja neutralised."""
+def _template_files(template_dir: str) -> "tuple[tuple[str, str, str], ...]":
+    """`((filename, jinja-neutralised C#, raw source), ...)` for the micro's folder.
+
+    The raw source is kept because the injection points are Jinja and nothing
+    else — `{% for f in s.extra_fields %}` is deleted and `{{ inject.methods(s) }}`
+    collapses to a placeholder, so a marker search over the neutralised text
+    finds nothing at all.
+    """
     root = Path(template_dir)
     if not root.is_dir():
-        return ""
-    text = "\n".join(p.read_text(encoding="utf-8", errors="replace")
-                     for p in sorted(root.glob("*.cs.j2")))
-    return _JINJA_EXPR_RE.sub(_JINJA_PLACEHOLDER, _JINJA_TAG_RE.sub("", text))
+        return ()
+    out: list[tuple[str, str, str]] = []
+    for p in sorted(root.glob("*.cs.j2")):
+        raw = p.read_text(encoding="utf-8", errors="replace")
+        out.append((p.name,
+                    _JINJA_EXPR_RE.sub(_JINJA_PLACEHOLDER,
+                                       _JINJA_TAG_RE.sub("", raw)),
+                    raw))
+    return tuple(out)
+
+
+@lru_cache(maxsize=64)
+def _template_text(template_dir: str) -> str:
+    """Every C# template in the micro's own folder, with Jinja neutralised."""
+    return "\n".join(text for _, text, _raw in _template_files(template_dir))
 
 
 @lru_cache(maxsize=64)
@@ -2294,6 +2366,82 @@ def template_members(template_dir: str) -> frozenset[str]:
         if m:
             names.add(m.group(1))
     return frozenset(names)
+
+
+# Which file's members are actually IN SCOPE for authored code: the one the
+# extras are injected into. A micro folder can hold more than one class, and a
+# sibling class's fields are not in scope — they are reachable only through an
+# instance, which is a member access this module never judges. Hit live on the
+# TurboToys dialogue micro: `Node.cs.j2` declares `public string text;`, so a
+# folder-wide member set swore `text` was in scope and
+# SparkyDialogue.cs(120,16) CS0103 shipped.
+#
+# Deliberately NOT applied to `template_members`, whose job is the opposite —
+# reserving a name so an authored member cannot redeclare it (CS0102). There,
+# over-reserving is the documented safe direction.
+_INJECTION_MARKERS = ("extra_methods", "extra_fields", "extra_usings",
+                      "awake_extra", "update_extra", "fixed_update_extra",
+                      "inject.")
+
+
+@lru_cache(maxsize=64)
+def template_scope_members(template_dir: str) -> frozenset[str]:
+    """Member names in scope for code injected into this micro's template."""
+    injecting = [text for _name, text, raw in _template_files(template_dir)
+                 if any(mark in raw for mark in _INJECTION_MARKERS)]
+    if not injecting:
+        # No identifiable injection site — fall back to the folder-wide set
+        # rather than claiming an empty scope, which would accuse everything.
+        return template_members(template_dir)
+    names: set[str] = set()
+    for text in injecting:
+        for line in text.splitlines():
+            if _TYPE_DECL_RE.search(line):
+                continue
+            m = _TEMPLATE_MEMBER_RE.match(line)
+            if m:
+                names.add(m.group(1))
+    return frozenset(names)
+
+
+@lru_cache(maxsize=64)
+def template_types(template_dir: str) -> frozenset[str]:
+    """Type names the micro's own template declares.
+
+    `template_members` deliberately skips a `class`/`struct`/`enum` line so a
+    base type is not reserved as a member; the names on those lines are still
+    real, referable types in the produced file (saveload's `SaveSystemData`,
+    which the syntax gate's docstring names as exactly the kind of symbol only
+    binding can decide). The unbound-identifier gate needs them or it would
+    flag `new SaveSystemData()` as unresolvable.
+    """
+    return frozenset(_TEMPLATE_TYPE_RE.findall(_template_text(template_dir)))
+
+
+@lru_cache(maxsize=64)
+def template_method_arities(template_dir: str) -> "dict[str, tuple[int, int]]":
+    """`{method_name: (min_args, max_args)}` for the methods the template declares.
+
+    A parameter with a `=` default is optional, so the accepted count is a RANGE.
+    Overloads widen the range rather than being tracked separately — the point is
+    to catch a call that matches NO overload (CS7036), and a range that spans two
+    real signatures can only ever under-report, never accuse a legal call.
+    """
+    out: "dict[str, tuple[int, int]]" = {}
+    for line in _template_text(template_dir).splitlines():
+        if _TYPE_DECL_RE.search(line):
+            continue
+        m = _TEMPLATE_METHOD_DECL_RE.match(line)
+        if not m:
+            continue
+        raw = m.group("params").strip()
+        params = [p for p in _split_top_level_args(raw) if p.strip()] if raw else []
+        lo = sum(1 for p in params if "=" not in p)
+        hi = len(params)
+        prev = out.get(m.group("name"))
+        out[m.group("name")] = ((min(lo, prev[0]), max(hi, prev[1])) if prev
+                                else (lo, hi))
+    return out
 
 
 @lru_cache(maxsize=64)
@@ -2312,7 +2460,446 @@ def _method_name(signature: str) -> str:
     return m.group(1) if m else ""
 
 
-def harden_against_template(schema, template_dir) -> list[str]:
+# ── CS0103 / CS7036 — an authored identifier that cannot bind ────────────────
+#
+# The largest single class of live failure, and the one nothing checked. A
+# TurboToys run shipped 49 compile errors across 10 micros; 41 of them were one
+# defect repeated — the model authored a fragment referencing state it never
+# declared:
+#
+#   PlayerCamera.cs(60,13)   CS0103  'driftIntensity' does not exist
+#   PlayerHealth.cs(51,13)   CS0103  'health' does not exist  (the field is `_current`)
+#   PlayerController.cs(250) CS0103  'rb' does not exist
+#   SaveSystem.cs(84,59)     CS0103  'FileUtility' does not exist
+#   ...Objectives.cs(106,35) CS0103  'IsReachedFinishLine' does not exist
+#   UIOverlayShaderController.cs(101,233) CS1061  no 'GetFloatProperty' on this
+#   WorldInteractable.cs(87,9)  CS7036  OnTriggerEnter() needs a Collider
+#
+# Every one is a BINDING error, and the syntax gate is parse-only by design
+# ("What this gate does NOT catch", csharp_syntax_gate.py) — all 49 files parse
+# perfectly. Nothing downstream looks at names at all.
+#
+# What makes the check possible now is `template_members`: until it existed the
+# per-micro `_RESERVED_FIELD_NAMES` sets were the only notion of what a class
+# contains, and they are hand-maintained and incomplete — which is exactly why
+# `_drop_unresolvable_types` (unity_micro_code.py) restricted itself to names it
+# had removed moments earlier rather than judging identifiers in general. The
+# template IS the ground truth for the class, so the judgement is now sound.
+#
+# Scope is chosen so the ground truth is COMPLETE for what it judges:
+#   * a plain identifier (`health`, `rb`, `Sparky`)     -> members + locals
+#   * an unqualified or `this.`-qualified call          -> members + local funcs
+#   * a type / static head (`FileUtility.Save`)         -> the symbol allowlist
+# A member access on something else (`_source.Play()`) is NEVER judged — the
+# type of `_source` is not knowable here.
+#
+# The repair is the one this module already uses for invented Hash natives and
+# invented type members: neutralize the STATEMENT, loudly, and never guess a
+# replacement. A micro that lost one statement still builds; a micro that keeps
+# it takes the whole assembly down.
+
+# Instance members every generated MonoBehaviour inherits. They are real and
+# referable but appear nowhere in the template text, so the template-derived
+# ground truth cannot see them and would otherwise flag `transform`.
+_MONO_INHERITED = frozenset({
+    "transform", "gameObject", "name", "tag", "enabled", "isActiveAndEnabled",
+    "hideFlags", "useGUILayout", "runInEditMode", "didAwake", "didStart",
+    "GetComponent", "GetComponents", "GetComponentInChildren", "TryGetComponent",
+    "GetComponentsInChildren", "GetComponentInParent", "GetComponentsInParent",
+    "CompareTag", "SendMessage", "SendMessageUpwards", "BroadcastMessage",
+    "StartCoroutine", "StopCoroutine", "StopAllCoroutines",
+    "Invoke", "InvokeRepeating", "CancelInvoke", "IsInvoking",
+    "Instantiate", "Destroy", "DestroyImmediate", "DontDestroyOnLoad",
+    "FindObjectOfType", "FindObjectsOfType", "FindAnyObjectByType",
+    "FindFirstObjectByType", "FindObjectsByType", "print",
+    "Equals", "ReferenceEquals", "GetHashCode", "GetType", "ToString",
+})
+
+# Types and static classes a generated MonoBehaviour may name without declaring
+# anything. Deliberately generous: a name missing from this set costs one
+# commented-out statement and a loud fixer line, so the set errs toward
+# admitting a symbol rather than accusing it.
+_KNOWN_SYMBOLS = frozenset({
+    # C# primitives / BCL
+    "bool", "byte", "char", "decimal", "double", "float", "int", "long",
+    "object", "sbyte", "short", "string", "uint", "ulong", "ushort", "void",
+    "Boolean", "Byte", "Char", "Decimal", "Double", "Int16", "Int32", "Int64",
+    "SByte", "Single", "String", "UInt16", "UInt32", "UInt64", "Object",
+    "Math", "Convert", "Array", "Enum", "Guid", "DateTime", "DateTimeOffset",
+    "TimeSpan", "Environment", "BitConverter", "Buffer", "Activator", "Type",
+    "Attribute", "Nullable", "Tuple", "ValueTuple", "KeyValuePair", "Comparer",
+    "EqualityComparer", "StringComparison", "StringComparer", "StringSplitOptions",
+    "Exception", "ArgumentException", "ArgumentNullException", "IOException",
+    "ArgumentOutOfRangeException", "InvalidOperationException", "FormatException",
+    "NotImplementedException", "NotSupportedException", "OverflowException",
+    "IndexOutOfRangeException", "NullReferenceException", "SystemException",
+    "Action", "Func", "Predicate", "Comparison", "EventHandler", "EventArgs",
+    "Delegate", "IDisposable", "IComparable", "IEquatable", "IEnumerable",
+    "IEnumerator", "ICollection", "IList", "IDictionary", "IReadOnlyList",
+    "IReadOnlyCollection", "IReadOnlyDictionary", "List", "Dictionary",
+    "HashSet", "Queue", "Stack", "LinkedList", "SortedList", "SortedSet",
+    "SortedDictionary", "Enumerable", "StringBuilder", "Encoding", "Regex",
+    "Match", "CultureInfo", "NumberStyles", "Path", "File", "Directory",
+    "FileInfo", "DirectoryInfo", "StreamReader", "StreamWriter", "MemoryStream",
+    "FileMode", "FileAccess", "Task", "Thread", "CancellationToken",
+    "Interlocked", "Stopwatch", "Console", "Serializable", "NonSerialized",
+    # UnityEngine statics / structs / utility types
+    "Application", "Camera", "Cursor", "Debug", "Display", "Event", "Gizmos",
+    "Graphics", "GUI", "GUILayout", "GUIUtility", "Handheld", "Input",
+    "JsonUtility", "LayerMask", "Mathf", "Physics", "Physics2D", "PlayerPrefs",
+    "Profiler", "QualitySettings", "Random", "Resources", "Screen", "Shader",
+    "SystemInfo", "Time", "Vector2", "Vector2Int", "Vector3", "Vector3Int",
+    "Vector4", "Quaternion", "Matrix4x4", "Color", "Color32", "Gradient",
+    "Rect", "RectInt", "RectOffset", "Bounds", "BoundsInt", "Plane", "Ray",
+    "Ray2D", "RaycastHit", "RaycastHit2D", "AnimationCurve", "Keyframe",
+    "Mesh", "Material", "MaterialPropertyBlock", "Texture", "Texture2D",
+    "RenderTexture", "Sprite", "Font", "GUIStyle", "GUIContent", "Debug",
+    # UnityEngine components
+    "Transform", "RectTransform", "GameObject", "MonoBehaviour", "Component",
+    "ScriptableObject", "Behaviour", "Renderer", "MeshRenderer", "MeshFilter",
+    "SkinnedMeshRenderer", "SpriteRenderer", "LineRenderer", "TrailRenderer",
+    "Rigidbody", "Rigidbody2D", "Collider", "Collider2D", "BoxCollider",
+    "SphereCollider", "CapsuleCollider", "MeshCollider", "CharacterController",
+    "BoxCollider2D", "CircleCollider2D", "PolygonCollider2D", "EdgeCollider2D",
+    "Animator", "Animation", "AnimationClip", "AnimatorStateInfo", "Avatar",
+    "AudioSource", "AudioClip", "AudioListener", "AudioMixer", "AudioMixerGroup",
+    "Light", "Canvas", "CanvasGroup", "CanvasScaler", "GraphicRaycaster",
+    "EventSystem", "ParticleSystem", "NavMeshAgent", "NavMesh", "NavMeshPath",
+    "Terrain", "TerrainData", "Joint", "SpringJoint", "HingeJoint",
+    "ConfigurableJoint", "CharacterJoint", "WheelCollider", "Skybox",
+    "Coroutine", "YieldInstruction", "AsyncOperation", "WaitForSeconds",
+    "WaitForSecondsRealtime", "WaitForFixedUpdate", "WaitForEndOfFrame",
+    "WaitUntil", "WaitWhile", "Scene", "SceneManager", "LoadSceneMode",
+    # enums referenced bare
+    "KeyCode", "ForceMode", "ForceMode2D", "Space", "RigidbodyConstraints",
+    "RigidbodyInterpolation", "CollisionDetectionMode", "CursorLockMode",
+    "TextAnchor", "TextAlignment", "FontStyle", "HorizontalWrapMode",
+    "RenderMode", "ScaleMode", "ShadowCastingMode", "LightType", "LightShadows",
+    "AudioRolloffMode", "AudioClipLoadType", "WrapMode", "PrimitiveType",
+    "SendMessageOptions", "HideFlags", "LogType", "RuntimePlatform",
+    "SystemLanguage", "DeviceType", "ScreenOrientation", "FilterMode",
+    "TextureWrapMode", "TextureFormat", "RenderTextureFormat", "PlayMode",
+    "QueryTriggerInteraction", "AnimatorCullingMode", "AnimatorUpdateMode",
+    "AvatarTarget", "AvatarIKGoal", "ParticleSystemStopBehavior",
+    # UI / TMP / Input System / misc packages
+    "Text", "Image", "RawImage", "Button", "Toggle", "Slider", "Scrollbar",
+    "ScrollRect", "Dropdown", "InputField", "Selectable", "Graphic", "Outline",
+    "Shadow", "ContentSizeFitter", "LayoutElement", "HorizontalLayoutGroup",
+    "VerticalLayoutGroup", "GridLayoutGroup", "AspectRatioFitter", "Mask",
+    "TMP_Text", "TMP_InputField", "TMP_Dropdown", "TMP_FontAsset",
+    "TextMeshPro", "TextMeshProUGUI", "UIDocument", "VisualElement",
+    "InputSystem", "InputAction", "InputActionAsset", "InputActionMap",
+    "InputActionReference", "Keyboard", "Mouse", "Gamepad", "Touchscreen",
+    "UnityEvent", "UnityAction", "PlayableDirector", "VideoPlayer",
+    "SpriteAtlas", "Tilemap", "TileBase", "Volume", "VolumeProfile",
+})
+
+_CS_KEYWORDS = frozenset({
+    "abstract", "as", "base", "break", "case", "catch", "checked", "class",
+    "const", "continue", "default", "delegate", "do", "else", "enum", "event",
+    "explicit", "extern", "false", "finally", "fixed", "for", "foreach",
+    "goto", "if", "implicit", "in", "interface", "internal", "is", "lock",
+    "namespace", "new", "null", "operator", "out", "override", "params",
+    "private", "protected", "public", "readonly", "ref", "return", "sealed",
+    "sizeof", "stackalloc", "static", "struct", "switch", "this", "throw",
+    "true", "try", "typeof", "unchecked", "unsafe", "using", "virtual",
+    "volatile", "while",
+    # contextual keywords + the compiler-supplied `value` in a setter
+    "add", "alias", "and", "ascending", "async", "await", "by", "descending",
+    "dynamic", "equals", "from", "get", "global", "group", "init", "into",
+    "join", "let", "nameof", "not", "on", "or", "orderby", "partial", "record",
+    "remove", "select", "set", "value", "var", "when", "where", "with", "yield",
+})
+
+# An identifier occurrence that is a candidate for binding. The lookbehind
+# excludes a member access (`Time.deltaTime` -> `deltaTime` is not judged) and
+# the tail of a numeric literal (`0.5f` -> the `f` is not an identifier).
+_BINDABLE_IDENT_RE = re.compile(r"(?<![\w.])([A-Za-z_]\w*)")
+# `X y` — the second identifier is a DECLARATION (local, parameter, foreach
+# variable, catch variable, `is Foo f` pattern) as long as the first token is a
+# type and not a keyword. Deliberately generous: over-collecting a declaration
+# only ever costs a missed error, while under-collecting accuses a real local.
+_DECL_PAIR_RE = re.compile(
+    r"(?<![\w.])(?P<type>[A-Za-z_][\w.]*)"
+    r"(?:\s*<[^<>;{}()]*>)?(?:\s*\[\s*\])*\s*\??"
+    r"\s+(?P<name>[A-Za-z_]\w*)\b")
+_VAR_DECL_RE     = re.compile(r"(?<![\w.])(?:var|dynamic)\s+([A-Za-z_]\w*)")
+_OUT_REF_DECL_RE = re.compile(
+    r"(?<![\w.])(?:out|ref)\s+(?:var\s+|[A-Za-z_][\w.<>,\[\]?]*\s+)?([A-Za-z_]\w*)")
+_TUPLE_DECL_RE   = re.compile(r"(?<![\w.])var\s*\(([^)]*)\)")
+_LAMBDA_ONE_RE   = re.compile(r"(?<![\w.])([A-Za-z_]\w*)\s*=>")
+_LAMBDA_MANY_RE  = re.compile(r"\(([^()]*)\)\s*=>")
+# `this.Member` — unlike any other member access, the ground truth IS complete.
+# Hit live: UIOverlayShaderController.cs authored `this.GetFloatProperty(...)`.
+_THIS_MEMBER_RE  = re.compile(r"(?<![\w.])this\s*\.\s*([A-Za-z_]\w*)")
+
+
+def _fragment_declares(text: str) -> set[str]:
+    """Every name the fragment itself brings into scope.
+
+    CODE positions only. English prose in a `//` comment parses as a perfectly
+    good `<type> <name>` pair, and the phantom declarations that produces are
+    silent — they do not break anything, they quietly TEACH this pass that an
+    undeclared name is fine. Hit live on the TurboToys controller:
+
+        // Consume boost to increase speed
+        rb.AddForce(...);
+
+    `speed` + newline + `rb` read as a declaration of `rb`, so the five real
+    CS0103s on `rb` went unflagged. Same defect class as the brace counter and
+    the out-param rewriter above, in the direction that is hardest to notice.
+    """
+    names: set[str] = set()
+    if not text:
+        return names
+    mask = _code_mask(text)
+
+    def add_all(pattern: "re.Pattern[str]", group: int = 1) -> None:
+        for m in pattern.finditer(text):
+            if mask[m.start()]:
+                names.add(m.group(group))
+
+    add_all(_VAR_DECL_RE)
+    add_all(_OUT_REF_DECL_RE)
+    add_all(_LAMBDA_ONE_RE)
+    for pattern in (_TUPLE_DECL_RE, _LAMBDA_MANY_RE):
+        for m in pattern.finditer(text):
+            if not mask[m.start()]:
+                continue
+            for part in _split_top_level_args(m.group(1)):
+                tokens = [t for t in re.split(r"\s+", part.strip()) if t]
+                if tokens:
+                    names.add(tokens[-1])
+    for m in _DECL_PAIR_RE.finditer(text):
+        if not mask[m.start("type")] or not mask[m.start("name")]:
+            continue
+        if m.group("type") in _CS_KEYWORDS:
+            continue                       # `return foo` / `new Foo` declare nothing
+        names.add(m.group("name"))
+    return names
+
+
+def _signature_param_names(signature: str) -> set[str]:
+    """Parameter names a method signature brings into scope for its own body."""
+    m = re.search(r"\((.*)\)", signature or "", re.DOTALL)
+    if not m:
+        return set()
+    out: set[str] = set()
+    for raw in _split_top_level_args(m.group(1)):
+        part = raw.split("=", 1)[0].strip()
+        tokens = [t for t in re.split(r"\s+", part) if t]
+        if len(tokens) >= 2:               # "<type> <name>"
+            out.add(tokens[-1])
+    return out
+
+
+def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
+                             arities: "dict[str, tuple[int, int]] | None" = None
+                             ) -> "dict[int, set[str]]":
+    """`{line_index: {name, ...}}` for identifiers in `text` that cannot bind.
+
+    `known` is the complete set of names in scope — template members and types,
+    authored fields and methods, inherited MonoBehaviour members, the symbol
+    allowlist, and whatever the fragment declares locally (added here).
+    `arities` additionally checks the argument COUNT of a call against a
+    template-declared method (CS7036).
+    """
+    if not text:
+        return {}
+    mask = _code_mask(text)
+    scope = set(known) | _fragment_declares(text) | _CS_KEYWORDS
+    bad: "dict[int, set[str]]" = {}
+
+    def flag(pos: int, name: str) -> None:
+        bad.setdefault(text.count("\n", 0, pos), set()).add(name)
+
+    for m in _BINDABLE_IDENT_RE.finditer(text):
+        start, name = m.start(1), m.group(1)
+        if not mask[start] or name in scope:
+            continue
+        after = text[m.end(1):]
+        # A named argument (`Foo(speed: 3)`), a label, or a `case X:` arm names
+        # something this pass cannot see. Skipping costs a missed error only.
+        if re.match(r"\s*:(?!:)", after):
+            continue
+        call = re.match(r"\s*(?:<[^<>;{}()]*>)?\s*\(", after)
+        if call:
+            flag(start, f"{name}()")
+        else:
+            flag(start, name)
+
+    # `this.Member` — the only member access with complete ground truth.
+    for m in _THIS_MEMBER_RE.finditer(text):
+        if mask[m.start()] and m.group(1) not in scope:
+            flag(m.start(1), f"this.{m.group(1)}")
+
+    if arities:
+        for m in _BINDABLE_IDENT_RE.finditer(text):
+            name = m.group(1)
+            if not mask[m.start(1)] or name not in arities:
+                continue
+            paren = re.match(r"\s*\(", text[m.end(1):])
+            if not paren:
+                continue
+            open_at = m.end(1) + paren.end() - 1
+            close = _find_matching_brace_generic(text, open_at, "(", ")", mask)
+            if close < 0:
+                continue
+            inner = text[open_at + 1:close].strip()
+            count = len([p for p in _split_top_level_args(inner) if p.strip()]) if inner else 0
+            lo, hi = arities[name]
+            if not (lo <= count <= hi):
+                flag(m.start(1), f"{name}({count} args, needs {lo}..{hi})")
+    return bad
+
+
+def _find_matching_brace_generic(text: str, open_idx: int, opener: str,
+                                 closer: str, mask: bytearray) -> int:
+    """Index of the `closer` matching `text[open_idx]`, or -1. CODE only."""
+    depth = 0
+    for i in range(open_idx, len(text)):
+        if not mask[i]:
+            continue
+        if text[i] == opener:
+            depth += 1
+        elif text[i] == closer:
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
+                             arities: "dict[str, tuple[int, int]] | None" = None
+                             ) -> "tuple[str, set[str]]":
+    """Neutralize statements referencing an identifier that cannot bind.
+
+    Returns `(text, flagged_names)`. Same three-way strategy as every other
+    `lint_*` pass here: comment out a complete self-terminating statement,
+    swap an `if`/`while` condition for `false` when the statement spans lines,
+    and leave a line alone entirely when neither is safe.
+    """
+    bad = find_unbound_identifiers(text, known=known, arities=arities)
+    if not bad:
+        return text, set()
+    out: list[str] = []
+    flagged: set[str] = set()
+    for i, line in enumerate(text.splitlines()):
+        names = bad.get(i)
+        if not names or line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, names)
+            if disabled is None:
+                out.append(line)           # neither repair is safe — report only
+                continue
+            flagged.update(names)
+            out.append(disabled)
+            continue
+        flagged.update(names)
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed unbindable reference(s) "
+                   f"{', '.join(sorted(names))} -- {line.strip()}")
+    return "\n".join(out), flagged
+
+
+def _body_is_live(body: str) -> bool:
+    """True if a method body still has a statement (not only AUDIT comments)."""
+    return any(ln.strip() and not ln.lstrip().startswith("//")
+               for ln in (body or "").splitlines())
+
+
+# A neutralized statement can orphan the NEXT one: commenting out
+# `float lateralSpeed = rb.velocity.x;` leaves `lateralSpeed` undeclared for the
+# line below it (live, PlayerController.cs), and dropping a method whose body
+# went empty orphans its call sites. So the pass runs to a fixpoint, with the
+# scope recomputed each round. Bounded — a round that changes nothing stops it,
+# and the ceiling only exists so a pathological fragment cannot spin.
+_MAX_BIND_ROUNDS = 8
+
+
+def bind_authored_code(schema, template_dir) -> list[str]:
+    """Neutralize every authored statement that cannot bind against its own
+    micro's class. Mutates `schema` in place; returns fixer-log messages."""
+    tdir = str(template_dir)
+    if not template_members(tdir):
+        return []                          # no parseable template — abstain
+    # A template's sibling types are NAMED after the schema — saveload declares
+    # `class {{ s.name }}Data`, which neutralises to the placeholder `_J_Data`
+    # and matches nothing an authored fragment could write. Expanding it back
+    # with the schema's own name is what makes `new SaveSystemData()` bind.
+    own = str(getattr(schema, "name", "") or "")
+    types = {t.replace(_JINJA_PLACEHOLDER, own) if own else t
+             for t in template_types(tdir)}
+    base = (set(template_scope_members(tdir)) | types
+            | _MONO_INHERITED | _KNOWN_SYMBOLS)
+    base.discard(_JINJA_PLACEHOLDER)
+    arities = template_method_arities(tdir)
+    flagged: set[str] = set()
+    dropped: list[str] = []
+
+    for _ in range(_MAX_BIND_ROUNDS):
+        methods = [m for m in (getattr(schema, "extra_methods", None) or [])]
+        known = set(base)
+        for attr in ("extra_fields", "data_fields"):
+            for f in (getattr(schema, attr, None) or []):
+                known.add(str(getattr(f, "name", "") or ""))
+        for m in methods:
+            known.add(_method_name(getattr(m, "signature", "")))
+        # An authored method shadows the template's arity — its own signature is
+        # what a call to it must match, and this pass does not re-derive that.
+        live_arities = {k: v for k, v in arities.items()
+                        if k not in {_method_name(m.signature) for m in methods}}
+        changed = False
+
+        for key in ("awake_extra", "update_extra", "fixed_update_extra"):
+            before = getattr(schema, key, "") or ""
+            if not before:
+                continue
+            after, names = lint_unbound_identifiers(before, known=known,
+                                                    arities=live_arities)
+            if names:
+                setattr(schema, key, after)
+                flagged |= names
+                changed = True
+
+        surviving: list = []
+        for m in methods:
+            body = getattr(m, "body", "") or ""
+            after, names = lint_unbound_identifiers(
+                body, known=known | _signature_param_names(getattr(m, "signature", "")),
+                arities=live_arities)
+            if names:
+                flagged |= names
+                changed = True
+                m = m.model_copy(update={"body": after}) if hasattr(m, "model_copy") else m
+            if _body_is_live(getattr(m, "body", "")):
+                surviving.append(m)
+            else:
+                name = _method_name(getattr(m, "signature", ""))
+                dropped.append(name or "<unnamed>")
+                changed = True
+        # Unconditionally, not only when one was dropped: a neutralized body is
+        # a model_copy, so skipping the write-back would silently discard the
+        # repair on every method that survived it.
+        if getattr(schema, "extra_methods", None) is not None:
+            schema.extra_methods = surviving
+        if not changed:
+            break
+
+    msgs: list[str] = []
+    if flagged:
+        msgs.append(f"neutralized {len(flagged)} unbindable reference(s) in "
+                    f"authored C# (CS0103/CS1061/CS7036): "
+                    f"{', '.join(sorted(flagged))}")
+    if dropped:
+        msgs.append(f"dropped {len(dropped)} authored method(s) left with no "
+                    f"live statement: {', '.join(sorted(set(dropped)))}")
+    return msgs
+
+
+def harden_against_template(schema, template_dir, *, engine: str = "unity") -> list[str]:
     """Reconcile an authored schema against what its own template emits.
 
     The last gate before render, and the only one that can see both sides. Runs
@@ -2325,6 +2912,13 @@ def harden_against_template(schema, template_dir) -> list[str]:
     Drops what would not compile and says which, then heals the usings the
     authored content needs. Never raises: a micro missing one authored member
     still builds, and a duplicate definition takes the whole assembly down.
+
+    `engine` gates the binding pass (`bind_authored_code`), whose symbol
+    universe — inherited MonoBehaviour members, the UnityEngine allowlist — is
+    Unity's. A GTA/SHVDN micro derives from `Script`, not `MonoBehaviour`, so
+    judging its identifiers against Unity's scope would accuse `Tick` and
+    `Interval` of not existing. It abstains there rather than guessing; the GTA
+    path keeps its own `lint_hash_references`/`lint_member_references` passes.
     """
     reserved = {n.lower() for n in template_members(str(template_dir))}
     msgs: list[str] = []
@@ -2364,6 +2958,12 @@ def harden_against_template(schema, template_dir) -> list[str]:
             schema.extra_methods = kept_m
             msgs.append(f"dropped {len(dropped_m)} authored method(s) the template "
                         f"already defines (CS0102/CS0111): {', '.join(dropped_m)}")
+
+    # LAST, and after the drops above on purpose: a field this function just
+    # removed as a duplicate (CS0102) leaves its every reference unbindable, and
+    # only a pass that runs afterwards can see that.
+    if engine == "unity":
+        msgs += bind_authored_code(schema, template_dir)
 
     msgs += heal_missing_usings(schema, template_usings=template_usings(str(template_dir)))
     return msgs

@@ -85,6 +85,13 @@ playability:
   # existing projects with known findings.
   gate: false
   # Also fail below this 0-100 weighted score. 0 disables the threshold.
+  #
+  # Read the score next to the scorecard's "not graded" line, never alone: it is
+  # the weighted share of the checks that COULD be graded, and a mid-pipeline
+  # schema legitimately lacks the evidence some of them need. The regression gate
+  # is `python main.py unity-eval` / `pytest -m playability`, which replays
+  # captured schemas against locked per-case floors and additionally fails when
+  # an ERROR-class check stops being gradable at all (see docs/TESTING.md A1).
   min_score: 0
 
 assets:

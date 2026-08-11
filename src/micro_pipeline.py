@@ -138,7 +138,8 @@ class MicroPipeline(ABC):
         """
         from .micro.code_fields import harden_against_template
         try:
-            return harden_against_template(schema, self.template_root)
+            return harden_against_template(schema, self.template_root,
+                                           engine=self.engine)
         except Exception as exc:                      # noqa: BLE001
             console.print(f"  [yellow]WARN[/] template reconciliation skipped "
                           f"({type(exc).__name__}: {exc})")

@@ -1,0 +1,34 @@
+{
+  "name": "dropzone_arcade",
+  "schema": "tests/fixtures/dropzone_arcade_llm.schema.json",
+  "input": "captured-llm",
+  "provenance": "Schema-fill (Step 3) output captured verbatim from a live `unity-create` run. Never hand-edited; see tests/fixtures/README.md.",
+  "notes": "VerticalCorridor descent, 2000 m. The shape hand-written fixtures never reproduced: generic `kind` with the meaning carried in `tag`, and a player group the fill tagged Player on a kind=prop entity. This is the case that exposed the avatar spawning at the world origin while the layout placed it at the corridor top.",
+  "floor": {
+    "score": 98,
+    "must_pass": [
+      "avatar",
+      "avatar_binding",
+      "avatar_cardinality",
+      "avatar_not_duplicated",
+      "avatar_singleton",
+      "avatar_spawn",
+      "camera",
+      "content_reachable",
+      "controllable",
+      "enemy_wiring",
+      "interactables",
+      "objective",
+      "objective_kinematics",
+      "objective_targets",
+      "objectives_spawned",
+      "role_graph",
+      "spawn_clear",
+      "unbaked_gameplay",
+      "volume_player"
+    ],
+    "ungraded_ok": [
+      "brief_entities"
+    ]
+  }
+}

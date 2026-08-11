@@ -1,0 +1,33 @@
+{
+  "name": "lagoon_survey",
+  "schema": "tests/fixtures/lagoon_survey.schema.json",
+  "input": "engineer-authored",
+  "provenance": "Hand-written layout fixture (tests/fixtures/README.md). Tests Steps 4-7 only.",
+  "notes": "BoundedVolume water: locomotion=swim, no descent framing and no altitude figure anywhere, so it also exercises the layout's named-default warning. Surface-marked survey boat.",
+  "floor": {
+    "score": 97,
+    "must_pass": [
+      "avatar",
+      "avatar_binding",
+      "avatar_cardinality",
+      "avatar_not_duplicated",
+      "avatar_singleton",
+      "avatar_spawn",
+      "camera",
+      "content_reachable",
+      "controllable",
+      "interactables",
+      "objective",
+      "objective_kinematics",
+      "objectives_spawned",
+      "spawn_clear",
+      "unbaked_gameplay",
+      "volume_player"
+    ],
+    "ungraded_ok": [
+      "brief_entities",
+      "objective_targets",
+      "role_graph"
+    ]
+  }
+}
