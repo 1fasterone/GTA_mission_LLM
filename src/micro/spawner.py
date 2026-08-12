@@ -129,7 +129,7 @@ class SpawnerPipeline(UnityMicroPipeline):
         "targettag", "_alive", "_timer", "_wave", "_started",
     }
     _TEMPLATE_USINGS = {
-        "UnityEngine", "System.Collections", "System.Collections.Generic",
+        "System", "UnityEngine", "System.Collections", "System.Collections.Generic",
     }
 
     def default_fix(self, schema, variant):

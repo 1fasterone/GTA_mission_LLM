@@ -1499,7 +1499,11 @@ def test_template_member_scan_sees_past_jinja():
 def test_template_usings_exclude_the_extra_usings_loop():
     """`using {{ u }};` is the schema's own loop, not a namespace."""
     usings = template_usings(str(_MICRO_TEMPLATES / "trigger"))
-    assert usings == {"UnityEngine", "System.Collections"}
+    # System arrived with the OnActivated event (SEAM 8): the trigger needs
+    # Action, and the scanner must see it exactly like the hand-written ones.
+    assert usings == {"System", "UnityEngine", "System.Collections"}
+    # The point of the test: the Jinja loop variable is never mistaken for one.
+    assert not any("{" in u or "}" in u for u in usings)
 
 
 @pytest.mark.parametrize("kind", ["health", "trigger", "spawner", "vfx", "controller"])

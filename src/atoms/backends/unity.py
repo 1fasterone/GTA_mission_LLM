@@ -772,6 +772,51 @@ def _wire_grounded_bridge(args: dict) -> str:
     )
 
 
+def _objective_seam(args: dict, *, source_key: str, source_default: str,
+                    event: str, lambda_sig: str, delegate_default: str) -> str:
+    """Shared shape for the three objective seams: store the delegate in a field
+    so OnDestroy can unsubscribe the *same* instance, then subscribe.
+
+    `objective_id` is required. The caller only ever passes an id it matched
+    against an authored objective; with no match there is nothing honest to
+    report, so the seam is omitted with a comment rather than inventing an id."""
+    sv  = _s(args.get(source_key, source_default))
+    ov  = _s(args.get("objectives_var", "_objectives"))
+    dv  = _s(args.get("delegate_var", delegate_default))
+    oid = args.get("objective_id")
+    if not oid:
+        return (f"// No authored objective matched this source - "
+                f"{source_key.replace('_var', '')} -> objectives seam omitted.")
+    return (
+        f"if ({sv} != null && {ov} != null)\n"
+        f"{{\n"
+        f"    {dv} = {lambda_sig} => {ov}.ReportProgress(\"{_s(oid)}\");\n"
+        f"    {sv}.{event} += {dv};\n"
+        f"}}"
+    )
+
+
+def _wire_trigger_to_objectives(args: dict) -> str:
+    return _objective_seam(
+        args, source_key="trigger_var", source_default="_trigger",
+        event="OnActivated", lambda_sig="()",
+        delegate_default="_onReachObjective")
+
+
+def _wire_interactable_to_objectives(args: dict) -> str:
+    return _objective_seam(
+        args, source_key="interactable_var", source_default="_interactable",
+        event="OnInteract", lambda_sig="()",
+        delegate_default="_onCollectObjective")
+
+
+def _wire_spawner_to_objectives(args: dict) -> str:
+    return _objective_seam(
+        args, source_key="spawner_var", source_default="_spawner",
+        event="OnDespawned", lambda_sig="_",
+        delegate_default="_onEliminateObjective")
+
+
 def _wire_trigger_to_save(args: dict) -> str:
     tv = _s(args.get("trigger_var",  "_trigger"))
     sv = _s(args.get("saveload_var", "_saveload"))
@@ -860,6 +905,9 @@ _SNIPPETS: dict[str, Any] = {
     "WireInputToFSM":         _wire_input_to_fsm,
     "WireGroundedBridge":     _wire_grounded_bridge,
     "WireTriggerToSave":      _wire_trigger_to_save,
+    "WireTriggerToObjectives":      _wire_trigger_to_objectives,
+    "WireInteractableToObjectives": _wire_interactable_to_objectives,
+    "WireSpawnerToObjectives":      _wire_spawner_to_objectives,
 }
 
 

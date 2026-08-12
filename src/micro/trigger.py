@@ -128,7 +128,7 @@ class TriggerPipeline(UnityMicroPipeline):
     template_subdir = "trigger"
 
     _RESERVED_FIELD_NAMES = {"_fired", "_timer", "_lastFire", "_player"}
-    _TEMPLATE_USINGS = {"UnityEngine", "System.Collections"}
+    _TEMPLATE_USINGS = {"System", "UnityEngine", "System.Collections"}
 
     def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "TriggerZone")

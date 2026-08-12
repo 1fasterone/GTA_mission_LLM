@@ -125,6 +125,65 @@ WIRING_ATOMS: list[AtomDef] = [
         ],
     ),
     AtomDef(
+        name="WireTriggerToObjectives",
+        category="wiring",
+        description=(
+            "Connect TriggerZone.OnActivated -> MissionObjectives.ReportProgress for a "
+            "`reach` objective, so entering the zone advances the mission. objective_id "
+            "is always a real id from this project's authored mission, never synthesized."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["reach_objective_advances_on_zone_enter"],
+        params=[
+            AtomParam(name="trigger_var",    type="string", default="_trigger"),
+            AtomParam(name="objectives_var", type="string", default="_objectives"),
+            AtomParam(name="delegate_var",   type="string", default="_onReachObjective",
+                      description="Stored Action field so OnDestroy can unsubscribe"),
+            AtomParam(name="objective_id",   type="string", default=None,
+                      description="Authored objective id to advance; None omits the seam"),
+        ],
+    ),
+    AtomDef(
+        name="WireInteractableToObjectives",
+        category="wiring",
+        description=(
+            "Connect Interactable.OnInteract -> MissionObjectives.ReportProgress for a "
+            "`collect` or `interact` objective. Each interaction advances progress by "
+            "one, so an objective count of N needs N pickups in the scene."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["collect_objective_advances_on_pickup"],
+        params=[
+            AtomParam(name="interactable_var", type="string", default="_interactable"),
+            AtomParam(name="objectives_var",   type="string", default="_objectives"),
+            AtomParam(name="delegate_var",     type="string", default="_onCollectObjective"),
+            AtomParam(name="objective_id",     type="string", default=None,
+                      description="Authored objective id to advance; None omits the seam"),
+        ],
+    ),
+    AtomDef(
+        name="WireSpawnerToObjectives",
+        category="wiring",
+        description=(
+            "Connect Spawner.OnDespawned -> MissionObjectives.ReportProgress for an "
+            "`eliminate` objective. The spawner raises OnDespawned once per tracked "
+            "instance that leaves play, which is the only honest kill signal a composed "
+            "project has: no enemy Health component is composed."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["eliminate_objective_advances_on_enemy_despawn"],
+        params=[
+            AtomParam(name="spawner_var",    type="string", default="_spawner"),
+            AtomParam(name="objectives_var", type="string", default="_objectives"),
+            AtomParam(name="delegate_var",   type="string", default="_onEliminateObjective"),
+            AtomParam(name="objective_id",   type="string", default=None,
+                      description="Authored objective id to advance; None omits the seam"),
+        ],
+    ),
+    AtomDef(
         name="WireTriggerToSave",
         category="wiring",
         description=(

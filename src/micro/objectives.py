@@ -24,6 +24,22 @@ VARIANTS = list(ObjectivesVariant.__args__)   # type: ignore[attr-defined]
 ObjectiveType = Literal["reach", "collect", "eliminate", "escort", "survive", "interact"]
 _VALID_OBJ_TYPE = frozenset(ObjectiveType.__args__)   # type: ignore[attr-defined]
 
+# This micro's vocabulary and the IR's (unity_schema.MissionObjType = reach |
+# collect | defeat | survive | escort | timer) were authored separately and
+# disagree on two words in each direction. Before this table the disagreement
+# was resolved by _clamp_type's fallback, so every authored `defeat` objective
+# arrived here as "reach" — a silent rewrite that made kill objectives
+# unroutable and, once SEAM 8 dispatches on type, unwireable. Translate the
+# known synonyms instead of dropping them; genuinely unknown words still clamp.
+_TYPE_ALIASES = {
+    "defeat":    "eliminate",
+    "kill":      "eliminate",
+    "destroy":   "eliminate",
+    "timer":     "survive",
+    "use":       "interact",
+    "talk":      "interact",
+}
+
 
 class ObjectiveEntry(BaseModel):
     id:          str
@@ -37,6 +53,7 @@ class ObjectiveEntry(BaseModel):
     @classmethod
     def _clamp_type(cls, v) -> str:
         s = str(v).strip().lower()
+        s = _TYPE_ALIASES.get(s, s)
         return s if s in _VALID_OBJ_TYPE else "reach"
 
     @field_validator("count", mode="before")
@@ -117,6 +134,11 @@ class ObjectivesPipeline(UnityMicroPipeline):
 
     _RESERVED_FIELD_NAMES = {
         "objectives", "rewards", "title", "_progress", "_complete",
+        # Also emitted by the template: the survive-objective clock and the
+        # read-only readout surface a HUD binds to. An extra_field colliding
+        # with any of these is CS0102 (or shadows the property), so lint drops it.
+        "_surviveTimer", "_missionComplete", "_byId",
+        "CompletedRequired", "TotalRequired", "ActiveObjective", "Title",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "System", "System.Collections.Generic"}
 
