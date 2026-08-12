@@ -84,16 +84,27 @@ and was deleted rather than kept as a dead, drifting duplicate.
   wings/fins) in `vehicle_generator.py` — geometrically simple shapes merged into the same welded
   mesh, not a separate-object union, but not sculpted detail either.
 
-### 2. boat ✅ (implemented)
+### 2. boat ✅ (implemented, AAA-sculpted)
 - **Variants:** rowboat, sailboat, schooner (2-mast), motorboat, tugboat/steamer.
-- **Parts:** lofted U-section `Hull` (tapered bow/stern, keel z=0), inset deck, cabin/wheelhouse,
-  masts + square sails, funnel, steerable `Rudder`, motor propeller (`PropBlade_*`).
+- **Parts:** double-skinned U-section `Hull` (one closed station loop = outer skin + inner skin, so
+  the bulwark has real thickness and the shell is watertight), `Deck` (flat sole sweeping up to the
+  sheer past 60% half-length → real fore/after decks), `Deckhouse` + `Wheelhouse` (floor ring →
+  recessed window band → eave → crowned roof, aft door notch, raked screen), `Mast_*` + `Yard_*`
+  (tapered n-gon spars, flared truck), `Sail_*` (bellied cloth volumes), `Funnel` + `FunnelBand`
+  (hollow stack with a rolled rim + bridged collar annulus), foil `Rudder` + `RudderStock`,
+  `PropHub` + `PropShaft` + twisted-foil `PropBlade_*`.
+- **Hull profile:** one `station(ty)` closure returns (half-beam, section depth, rim height) and is
+  the single source of truth — the deck outline, the rudder's top and the propeller's depth all
+  query it instead of re-deriving the hull's shape. Eased plan taper floored at 0.10 half-beam
+  (a stem, not a knife edge), sheer + rocker rising toward both ends.
 - **Scale knobs:** hull_len/beam/depth, deck_h, mast_h.
 - **Structural knobs:** `masts` (0–3), `sails`(0/1), `prop`(0/1 → motor), `cabin`(0/1),
   `rudder`(0/1), `funnel`(0/1).
 - **Rig:** Root → Hull → `RudderSteer` (yaws) + `Propeller` (spins); both name-driven by
   `VehicleBoneDriver` (steer / prop). Rigid mechanical bind (weight 1.0). Full Unity pipeline
-  (UV + COL_ hull + LOD0/1). Hull keel at z=0.
+  (UV + COL_ hull + LOD0/1). Hull keel at z=0 amidships.
+- **Gate:** `pytest -m blender_render -k boat` builds all six variants in real headless Blender and
+  asserts every mesh is manifold and every `BOAT_BONES` entry gets a non-empty vertex group.
 
 ### 3. building
 - **Variants:** house, shop, tower, warehouse, hut.
@@ -210,8 +221,19 @@ then live-verify in Blender (build → rig → pose → render) and confirm rigg
   carries the same `"bone"` value it always did. **humanoid** (ring-stack body, proximity skin,
   Unity Humanoid avatar) is the other base that was already fully sculpted, no rework needed —
   ported from the proven standalone generator (`humangen.py`) and ships the full Unity pipeline.
-  **boat** (lofted U-hull + masts/sails or cabin/funnel/prop, with a rudder+prop mechanical rig)
-  ships the same pipeline, though its cabin/masts/sails/funnel/rudder/prop are still
-  primitive-composite. Bike/furniture adopt the sculpting toolkit next.
+  **boat** was the fourth: the cabin/masts/sails/funnel/rudder/prop that used to be
+  primitive-composite are now a ring-grown deckhouse and wheelhouse with recessed window bands,
+  tapered n-gon masts/yards/stock/hub, doubly-curved cloth sails, a hollow funnel with a bridged
+  collar, and NACA-foil rudder and twisted propeller blades. Three hull defects the new headless
+  render gate exposed were fixed with it, since they made the sculpted parts look worse than they
+  were: the hull was a single-sided open shell (non-manifold at every rim edge, see-through from
+  inboard once Unity culls backfaces) and is now double-skinned; the plan taper collapsed to 4% at
+  the ends, so both ends rendered as two thin prongs with the cockpit slot running out between
+  them, now an eased taper floored at 10% with real sheer and a deck that sweeps up to close the
+  ends; and the propeller/rudder hung in open water below the counter, now placed off the hull's
+  own `station()` profile with a shaft into the hull. **bike** and **furniture** closed the set:
+  bike moved every frame tube to `loft()` (freeing the last `tube_between` caller) and fixed a rig
+  that placed both wheel bones on the world origin; furniture replaced the slab-on-cylinders with
+  turned legs, aprons, moulded edges, panelled carcasses and loose cushions.
 - For unique *hero* assets, the complementary **text-to-3D** track (cloud or bigger VRAM) can feed
   the same Blender sanitizer (cleanup → UV → LOD → rig). Parametric stays the controllable spine.

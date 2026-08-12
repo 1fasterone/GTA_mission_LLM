@@ -1375,15 +1375,64 @@ def build(p, ox):
 '''
 
 _BOAT_SRC = '''
+def _sobj(bm, name, rgb, bevel=0.008, subsurf=0):
+    """Weld a boat-part bmesh into a named, coloured, finished object — every
+    superstructure / spar / cloth / foil part goes through here, so none of them can
+    fall back to a bare box()/cyl()/cone()/sphere() union."""
+    import bmesh as _bmesh
+    _bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new(name + "_m")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _into(o)
+    colour(o, rgb)
+    finish(o, smooth=True, subsurf=subsurf, bevel=bevel)
+    return o
+
+def _ring_scale(axis, k):
+    """extrude_ring's (sx, sy, sz) for a uniform in-plane scale of a ring that lies
+    perpendicular to `axis` — the ring's own plane is the other two axes, and the
+    axis component must stay 1.0 or the section thickens as it tapers."""
+    if axis == "Y":
+        return (k, 1.0, k)
+    if axis == "X":
+        return (1.0, k, k)
+    return (k, k, 1.0)
+
+def _foil_ring(bm, center, chord, thick, n=12):
+    """A closed n-vert boundary ring shaped like a symmetric NACA-00xx aerofoil
+    section, lying in the XY plane (chord along Y, thickness along X) so it grows
+    along Z — the cross-section rudder and propeller blades start from, in place of
+    a flat rectangle. Sampled on half-steps so no vertex lands exactly on the
+    leading/trailing edge, where the two surfaces meet and a coincident vertex pair
+    would collapse into the zero-length edge that breaks bridge_loops."""
+    cx, cy, cz = center
+    verts = []
+    for k in range(n):
+        a = 2.0 * _PI * (k + 0.5) / n
+        xc = 0.5 * (1.0 - _cos(a))
+        yt = 5.0 * thick * (0.2969 * xc ** 0.5 - 0.1260 * xc - 0.3516 * xc ** 2
+                            + 0.2843 * xc ** 3 - 0.1015 * xc ** 4)
+        side = 1.0 if a < _PI else -1.0
+        verts.append(bm.verts.new((cx + side * yt, cy + (xc - 0.5) * chord, cz)))
+    edges = [bm.edges.new((verts[i], verts[(i + 1) % n])) for i in range(n)]
+    return verts, edges
+
 def build(p, ox):
-    """One parametric watercraft: a lofted U-section hull (tapered to bow/stern,
-    keel at z=0) + deck, then bolt-on structural slots that span a rowboat
-    (no mast/sail/motor), a sailboat (masts + square sails), a motorboat/tug
-    (propeller + cabin [+ funnel]). Bow is -Y. The rudder (`RudderSteer`) and any
-    propeller (`Propeller`) are named so the VehicleBoneDriver yaws/spins them.
-    Knobs: hull_len/_beam/_depth, deck_h, mast_h + structural masts/sails/prop/
-    cabin/rudder/funnel."""
-    import bmesh, math
+    """One parametric watercraft, every part edge-loop sculpted: a lofted U-section
+    hull (tapered to bow/stern, keel at z=0) + deck, then bolt-on structural slots
+    that span a rowboat (no mast/sail/motor), a sailboat (tapered masts + yards +
+    bellied square sails), a motorboat/tug (foil-bladed propeller + deckhouse
+    [+ funnel]). Bow is -Y. Superstructure grows from its own floor ring with a
+    recessed window band and an overhanging eave; masts, yards and the rudder stock
+    are tapered n-gon spars; sails are doubly-curved cloth volumes; the funnel is a
+    hollow stack with a closed collar; rudder and propeller blades are NACA foils,
+    the propeller's twisted so pitch washes out toward the tip. The rudder
+    (`RudderSteer`) and any propeller (`Propeller`) are named so the
+    VehicleBoneDriver yaws/spins them. Knobs: hull_len/_beam/_depth, deck_h, mast_h
+    + structural masts/sails/prop/cabin/rudder/funnel."""
+    import bmesh, math, mathutils
     L = p["hull_len"]; beam = p["hull_beam"]; depth = p["hull_depth"]
     deck_h = p["deck_h"]; mast_h = p["mast_h"]
     nmast = max(0, min(3, int(round(p["masts"]))))
@@ -1397,36 +1446,159 @@ def build(p, ox):
     def tag(o, bone, role="boat"):
         o["bone"] = bone; o["role"] = role; parts.append(o); return o
 
+    def spar(name, start, end, sections, rgb, ring_axis, bone="Hull", role="boat",
+             n=8, bevel=0.004):
+        """One tapered round spar grown by n-gon-ring extrusion: a heel ring, then one
+        extruded section per (t, radius) stop marching along start -> end. A mast
+        tapers to a flared truck, a yard swells at the waist and tapers to both tips,
+        a rudder stock is a near-parallel post — all three from this one path."""
+        bm = bmesh.new()
+
+        def at(t):
+            return tuple(start[i] + (end[i] - start[i]) * t for i in range(3))
+
+        t0, r0 = sections[0]
+        v, e = ngon_ring(bm, at(t0), r0, n, axis=ring_axis)
+        bm.faces.new(v[::-1])
+        pt, pr = t0, r0
+        for t, r in sections[1:]:
+            a0 = at(pt); a1 = at(t)
+            v, e = extrude_ring(bm, e,
+                                translate=(a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]),
+                                scale=_ring_scale(ring_axis, r / pr))
+            pt, pr = t, r
+        bm.faces.new(v)
+        return tag(_sobj(bm, name, rgb, bevel=bevel), bone, role)
+
+    def house(name, cy, w, ln, h, z0, rgb, rake=0.0, door=False):
+        """A deckhouse / wheelhouse as ONE welded shell grown from its floor ring:
+        kick panel, a recessed window band (a real inset groove running right round
+        the house, not a painted stripe), header, tumblehome, an overhanging eave and
+        a crowned roof. `rake` leans each section aft as it rises, giving a
+        wheelhouse its slanted screen; `door` recesses a doorway into the aft face."""
+        bm = bmesh.new()
+        v, e = quad_ring(bm, (ox, cy, z0), w, ln, axis="Z")
+        bm.faces.new(v)
+        v, e = extrude_ring(bm, e, translate=(0, rake * h * 0.28, h * 0.28))
+        v, e = extrude_ring(bm, e, translate=(0, 0, h * 0.04), scale=(0.93, 0.95, 1))
+        v, e = extrude_ring(bm, e, translate=(0, rake * h * 0.34, h * 0.34))
+        v, e = extrude_ring(bm, e, translate=(0, 0, h * 0.04), scale=(1 / 0.93, 1 / 0.95, 1))
+        v, e = extrude_ring(bm, e, translate=(0, rake * h * 0.22, h * 0.22),
+                            scale=(0.95, 0.96, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, 0), scale=(1.12, 1.09, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, h * 0.08), scale=(0.97, 0.98, 1))
+        bm.faces.new(v[::-1])
+        if door:
+            bm.faces.ensure_lookup_table()
+            aft = [f for f in bm.faces if f.normal.y > 0.85]
+            if aft:
+                low = min(aft, key=lambda ff: ff.calc_center_median().z)
+                try:
+                    notch(bm, low, inset=min(w, h * 0.28) * 0.28,
+                          depth=min(0.05, ln * 0.10))
+                except Exception:
+                    pass
+        return tag(_sobj(bm, name, rgb, bevel=min(0.02, h * 0.05)), "Hull")
+
+    def sail(name, cx, cy, foot_z, sw, sh, belly, rgb):
+        """A bellied square sail: horizontal cloth sections (a closed loop that arcs
+        across the span on the windward face and returns one cloth-thickness behind
+        it) stacked foot to head, bowing fullest just above mid-hoist and narrowing
+        toward the head — a doubly-curved cloth volume, not a flat slab. Lofted
+        vertex-by-vertex like the hull, since the bow depth changes per section and
+        extrude_ring can only translate/scale a copy of the ring below. The grid is
+        deliberately fine: a doubly-curved surface has no planar quads, and a coarse
+        one renders the twist as hard-edged bright patches across the cloth (the
+        bilinear-patch artifact). Out-of-plane error falls off with the square of the
+        grid step, so 8x8 sections put it below the shading threshold."""
+        bm = bmesh.new()
+        m = 9; K = 8; th = max(0.010, sw * 0.012)
+        rings = []
+        for k in range(K + 1):
+            t = k / K
+            hw = sw * 0.5 * (1.0 - 0.14 * t)
+            bow = belly * _sin(_PI * (0.10 + 0.85 * t))
+            z = foot_z + sh * t
+            ring = []
+            for i in range(m):                              # windward face, bowed
+                u = -1.0 + 2.0 * i / (m - 1)
+                ring.append(bm.verts.new((cx + u * hw, cy + bow * (1.0 - u * u), z)))
+            for i in range(m - 1, -1, -1):                  # leeward face, one cloth back
+                u = -1.0 + 2.0 * i / (m - 1)
+                ring.append(bm.verts.new((cx + u * hw, cy + bow * (1.0 - u * u) + th, z)))
+            rings.append(ring)
+        nv = 2 * m
+        for k in range(K):
+            for j in range(nv):
+                try:
+                    bm.faces.new([rings[k][j], rings[k][(j + 1) % nv],
+                                  rings[k + 1][(j + 1) % nv], rings[k + 1][j]])
+                except ValueError:
+                    pass
+        for cap in (rings[0][::-1], rings[-1]):
+            try:
+                bm.faces.new(cap)
+            except ValueError:
+                pass
+        return tag(_sobj(bm, name, rgb, bevel=0.0), "Hull")
+
     # ---- hull: loft a U cross-section across stations, tapered toward the ends ----
+    # Each station is a CLOSED loop — the outer skin arc, then the inner skin back
+    # along the same arc one wall in — so the hull is a shell with real thickness
+    # that closes at the gunwale, not a single-sided surface. The old open arc left
+    # every rim edge a boundary edge: watertight nowhere, backfaces visible from
+    # inboard (Unity culls them, so you saw straight through the bulwark), and the
+    # headless manifold gate flagged it. The inner skin is pulled in to 0.87 of the
+    # half-beam, which is where the deck's 0.86 inset lands, so the sole meets the
+    # bulwark instead of floating inside it.
     hb = beam * 0.5
+
+    def station(ty):
+        """(half-beam, section depth, rim height) at fore-aft fraction ty in
+        [-0.5, 0.5] — the hull's shape in one place, so the deck, the rudder and the
+        propeller can all ask where the hull actually IS instead of re-deriving it.
+        The plan taper is eased (cosine to the 0.62) and floored at a tenth of the
+        half-beam: a straight cosine collapsed the last station to 4% and left both
+        ends as a pair of thin blades with the open cockpit slot running out between
+        them — a forked bow, not a stem. The rim carries real sheer (it rises toward
+        bow and stern) and the section depth shortens with it, which is also the
+        rocker that lifts the keel clear of the water at the ends."""
+        c = max(0.0, math.cos(ty * math.pi))
+        t = c ** 0.62 * 0.88 + 0.12                    # ~1 amidships, 0.12 at the tips
+        return (hb * max(0.10, t), depth * max(0.20, t),
+                depth + depth * 0.12 * (2.0 * abs(ty)) ** 2.2)
+
     bm = bmesh.new(); M = 15; N = 13; rings = []
     for i in range(M):
         ty = i / (M - 1) - 0.5
         cy = ty * L
-        t = math.cos(ty * math.pi) * 0.9 + 0.1        # ~1 amidships, ~0.1 at the tips
-        hbi = hb * max(0.04, t); di = depth * max(0.12, t)
+        hbi, di, rim = station(ty)
+        wall = min(di * 0.35, hb * 0.13)               # never thicker than the section
         ring = []
         for j in range(N):
             a = math.pi * j / (N - 1)                  # left rim -> round bottom -> right rim
             x = -math.cos(a) * hbi
-            z = depth - math.sin(a) * di               # rim at z=depth, keel bottom at z=depth-di
+            z = rim - math.sin(a) * di                 # rim at the sheer line, keel below it
+            ring.append(bm.verts.new((ox + x, cy, z)))
+        for j in range(N - 1, -1, -1):                 # inner skin, back along the same arc
+            a = math.pi * j / (N - 1)
+            x = -math.cos(a) * hbi * 0.87
+            z = rim - math.sin(a) * (di - wall)
             ring.append(bm.verts.new((ox + x, cy, z)))
         rings.append(ring)
+    NV = 2 * N
     for i in range(M - 1):
-        for j in range(N - 1):
+        for j in range(NV):
             try:
-                bm.faces.new([rings[i][j], rings[i][j + 1],
-                              rings[i + 1][j + 1], rings[i + 1][j]])
+                bm.faces.new([rings[i][j], rings[i][(j + 1) % NV],
+                              rings[i + 1][(j + 1) % NV], rings[i + 1][j]])
             except ValueError:
                 pass
-    try:
-        bm.faces.new(rings[0][:])                      # bow cap
-    except ValueError:
-        pass
-    try:
-        bm.faces.new(rings[-1][::-1])                  # stern cap
-    except ValueError:
-        pass
+    for cap in (rings[0][::-1], rings[-1]):            # bow + stern caps (C-sections)
+        try:
+            bm.faces.new(cap)
+        except ValueError:
+            pass
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     me = bpy.data.meshes.new("Hull_m"); bm.to_mesh(me); bm.free()
     hull = bpy.data.objects.new("Hull", me); _into(hull); colour(hull, hullc); finish(hull)
@@ -1434,17 +1606,23 @@ def build(p, ox):
 
     # deck — a tapered slab that follows the hull's plan outline (inset inside the
     # rim), dropped just below it so the hull sides read as a bulwark and the deck
-    # never overhangs the bow/stern.
+    # never overhangs the bow/stern. Past 60% of the half-length it sweeps up to the
+    # sheer, which is what makes the ends read as a fore and after deck: left flat,
+    # the open cockpit slot runs all the way out to the stem and the bow renders as
+    # two thin prongs with a gap down the middle.
     deck_z = depth - max(0.10, depth * 0.18)
 
     def half_w(ty):
-        t = math.cos(ty * math.pi) * 0.9 + 0.1
-        return hb * max(0.04, t) * 0.86            # 0.86 -> tucked inside the rim
+        return station(ty)[0] * 0.88               # just into the inner skin (0.87)
+
+    def deck_top(ty):
+        u = min(1.0, max(0.0, (abs(ty) - 0.30) / 0.20))
+        return deck_z + (station(ty)[2] - deck_z) * (u * u * (3.0 - 2.0 * u))
 
     dbm = bmesh.new(); Lt = []; Rt = []; Lb = []; Rb = []
     for i in range(M):
         ty = i / (M - 1) - 0.5; cy = ty * L; hw = half_w(ty)
-        zt = deck_z; zb = deck_z - deck_h
+        zt = deck_top(ty); zb = zt - deck_h
         Lt.append(dbm.verts.new((ox - hw, cy, zt))); Rt.append(dbm.verts.new((ox + hw, cy, zt)))
         Lb.append(dbm.verts.new((ox - hw, cy, zb))); Rb.append(dbm.verts.new((ox + hw, cy, zb)))
     for i in range(M - 1):
@@ -1467,50 +1645,143 @@ def build(p, ox):
     tag(deck, "Hull")
 
     # superstructure: a modest deckhouse + a smaller wheelhouse stacked on top,
-    # set aft of midships — NOT one big block that merges with the hull.
+    # set aft of midships — NOT one big block that merges with the hull. dh_h/dh_y
+    # are computed unconditionally because the funnel stands on the deckhouse roof.
+    dh_h = max(0.35, depth * 0.50)
+    dh_y = L * 0.10
     if cabin:
-        dh_h = max(0.35, depth * 0.50)
-        dh_y = L * 0.10
-        tag(box((ox, dh_y, deck_z + dh_h * 0.5), (beam * 0.55, L * 0.26, dh_h), deckc), "Hull")
+        house("Deckhouse", dh_y, beam * 0.55, L * 0.26, dh_h, deck_z, deckc, door=True)
         wh_h = max(0.28, depth * 0.38)
-        tag(box((ox, dh_y - L * 0.05, deck_z + dh_h + wh_h * 0.5),
-                (beam * 0.40, L * 0.13, wh_h), deckc), "Hull")
+        house("Wheelhouse", dh_y - L * 0.05, beam * 0.40, L * 0.13, wh_h,
+              deck_z + dh_h, deckc, rake=0.10)
 
-    # masts (along the centreline) + optional square sails
+    # masts (along the centreline) + optional square sails, each on its own yard
     if nmast > 0 and mast_h > 0.1:
+        mr = max(0.035, beam * 0.045)
         for k in range(nmast):
             my = (L * 0.3) - (L * 0.6) * (k / max(1, nmast - 1) if nmast > 1 else 0.5)
-            mx = ox
-            tag(cyl((mx, my, deck_z + mast_h * 0.5), max(0.04, beam * 0.04), mast_h, mastc), "Hull")
+            spar("Mast_%d" % k, (ox, my, deck_z), (ox, my, deck_z + mast_h),
+                 [(0.0, mr), (0.06, mr * 0.94), (0.45, mr * 0.78), (0.80, mr * 0.58),
+                  (0.95, mr * 0.48), (0.965, mr * 0.95), (0.98, mr * 0.95),
+                  (1.0, mr * 0.42)], mastc, "Z", n=10)
             if sails:
                 for s_i in range(2):
-                    sz = deck_z + mast_h * (0.30 + 0.38 * s_i)
                     sw = beam * (0.85 - 0.18 * s_i)
                     sh = mast_h * 0.32
-                    tag(box((mx, my, sz), (sw, 0.02, sh), sailc), "Hull")
+                    foot = deck_z + mast_h * (0.30 + 0.38 * s_i) - mast_h * 0.16
+                    sail("Sail_%d_%d" % (k, s_i), ox, my, foot, sw, sh,
+                         -beam * 0.16, sailc)
+                    yw = sw * 0.5 + beam * 0.07
+                    yr = max(0.028, beam * 0.030)
+                    spar("Yard_%d_%d" % (k, s_i), (ox - yw, my, foot + sh),
+                         (ox + yw, my, foot + sh),
+                         [(0.0, yr * 0.42), (0.12, yr * 0.72), (0.5, yr),
+                          (0.88, yr * 0.72), (1.0, yr * 0.42)], mastc, "X")
 
-    # funnel / smokestack (steamer / tug) — tall + distinct, aft of the wheelhouse
+    # funnel / smokestack (steamer / tug) — a hollow stack (flared base skirt, raked
+    # barrel, flared cap, rim rolled over into a real bore recess) + a closed collar
+    # ring for the band, aft of the wheelhouse
     if funnel:
-        base_h = (max(0.35, depth * 0.50) if cabin else 0.0)
-        fz = deck_z + base_h + depth * 0.7
-        tag(cyl((ox, L * 0.24, fz), beam * 0.11, depth * 1.3, dark), "Hull")
-        tag(cyl((ox, L * 0.24, fz + depth * 0.68), beam * 0.13, depth * 0.12, red), "Hull")  # cap band
+        fy = dh_y + L * 0.06                       # ON the deckhouse roof, not off its aft edge
+        fbase = deck_z + (dh_h if cabin else 0.0)
+        fh = depth * 1.30
+        fr = max(0.06, beam * 0.11)
+        bm = bmesh.new()
+        v, e = ngon_ring(bm, (ox, fy, fbase), fr * 1.20, 14, axis="Z")
+        bm.faces.new(v)
+        v, e = extrude_ring(bm, e, translate=(0, 0, fh * 0.06), scale=(1 / 1.2, 1 / 1.2, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, fh * 0.62))
+        v, e = extrude_ring(bm, e, translate=(0, 0, fh * 0.16), scale=(0.93, 0.93, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, fh * 0.10), scale=(1.14, 1.14, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, fh * 0.06), scale=(0.98, 0.98, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, 0), scale=(0.74, 0.74, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, -fh * 0.22), scale=(0.96, 0.96, 1))
+        bm.faces.new(v)
+        tag(_sobj(bm, "Funnel", dark, bevel=min(0.02, fr * 0.15)), "Hull")
+        band_z = fbase + fh * 0.80; band_h = fh * 0.10
+        r_out = fr * 1.22; r_in = fr * 0.90
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, (ox, fy, band_z), r_out, 14, axis="Z")
+        v, e = extrude_ring(bm, e0, translate=(0, 0, band_h))
+        v, e = extrude_ring(bm, e, translate=(0, 0, 0), scale=(r_in / r_out, r_in / r_out, 1))
+        v, e = extrude_ring(bm, e, translate=(0, 0, -band_h))
+        bmesh.ops.bridge_loops(bm, edges=list(e) + list(e0))   # close the bottom annulus
+        tag(_sobj(bm, "FunnelBand", red, bevel=0.004), "Hull")
 
-    # rudder at the stern (+Y), below the waterline — steers (yaws)
+    # rudder at the stern (+Y), below the waterline — a tapered NACA foil blade on a
+    # round stock rising to deck level; steers (yaws) about the stock. Its top is
+    # taken from the hull's own stern station so the blade tucks under the counter
+    # instead of hanging in open water below it.
+    rud_y = L * 0.5 + beam * 0.03
     if rudder:
-        rud = box((ox, L * 0.5 + beam * 0.05, depth * 0.42),
-                  (max(0.04, beam * 0.05), beam * 0.22, depth * 0.7), red)
-        rud.name = "Rudder"; tag(rud, "RudderSteer", "steer")
+        ry = rud_y
+        rchord = max(0.08, beam * 0.22); rthick = max(0.02, beam * 0.05)
+        _hbs, _dis, _rims = station(0.5)
+        top_z = (_rims - _dis) - depth * 0.02
+        bot_z = depth * 0.10
+        rspan = top_z - bot_z
+        bm = bmesh.new()
+        v, e = _foil_ring(bm, (ox, ry, top_z), rchord, rthick, 12)
+        bm.faces.new(v)
+        for dz, sc in ((-rspan * 0.42, 1.0), (-rspan * 0.36, 0.90), (-rspan * 0.22, 0.62)):
+            v, e = extrude_ring(bm, e, translate=(0, 0, dz), scale=(sc, sc, 1))
+        bm.faces.new(v[::-1])
+        tag(_sobj(bm, "Rudder", red, bevel=0.006), "RudderSteer", "steer")
+        spar("RudderStock", (ox, ry - rchord * 0.28, top_z - rspan * 0.02),
+             (ox, ry - rchord * 0.28, deck_z + max(0.08, depth * 0.10)),
+             [(0.0, rthick * 0.55), (1.0, rthick * 0.42)], metal, "Z",
+             bone="RudderSteer", role="steer", n=10)
 
-    # motor propeller just ahead of the rudder, underwater — spins about forward
+    # motor propeller just ahead of the rudder, underwater — spins about forward.
+    # Hub is a ring-loft boss with an ogive fairing; each blade is a twisted NACA
+    # foil, rotated into place through the BMESH (verts are in world coords with the
+    # object left at the origin, so rotating the finished object would pivot around
+    # world (0,0,0) and fling the blade off — the bug the plane's props hit).
+    prop_ty = 0.46
+    _hbp, _dip, _rimp = station(prop_ty)
+    hull_bot = _rimp - _dip                        # hull underside over the propeller
+    hub_r = max(0.03, min(beam * 0.06, depth * 0.10))
+    hub_l = max(0.10, min(beam * 0.24, L * 0.10))
+    span = max(0.10, min(depth * 0.26, beam * 0.20))
+    # hang the disc just clear of the hull instead of at a fixed depth, so the blade
+    # tips nearly touch the counter at any hull_depth rather than floating below it
+    prop_z = max(depth * 0.10, hull_bot - depth * 0.04 - hub_r * 0.80 - span)
     if prop:
-        px, py, pz = ox, L * 0.46, depth * 0.22
-        tag(cone((px, py, pz), beam * 0.06, beam * 0.14, metal, rot=(radians(90), 0, 0)),
-            "Propeller", "prop")
+        px = ox; py = L * prop_ty; pz = prop_z
+        spar("PropHub", (px, py - hub_l * 0.45, pz), (px, py + hub_l * 0.55, pz),
+             [(0.0, hub_r * 0.42), (0.16, hub_r), (0.52, hub_r), (0.80, hub_r * 0.70),
+              (1.0, hub_r * 0.26)], metal, "Y", bone="Propeller", role="prop", n=12)
+        # shaft up into the hull — without it the propeller reads as a detached part.
+        # Kept short so it enters the hull near the counter instead of running
+        # forward in open water to a station the hull bottom has not risen past yet.
+        sh_y = py - hub_l * 1.3
+        _hbs2, _dis2, _rims2 = station(sh_y / L)
+        spar("PropShaft", (px, sh_y, (_rims2 - _dis2) + depth * 0.06),
+             (px, py - hub_l * 0.30, pz),
+             [(0.0, hub_r * 0.34), (1.0, hub_r * 0.42)], metal, "Y", n=10)
+        chord = max(0.05, span * 0.52)
+        root_z = pz + hub_r * 0.80
         for i in range(3):
-            bl = box((px, py, pz), (0.03 + beam * 0.02, 0.02, depth * 0.5), dark)
-            bl.name = "PropBlade_%d" % i; bl.rotation_euler = (0, radians(i * 120), 0)
-            tag(bl, "Propeller", "prop")
+            bm = bmesh.new()
+            v, e = _foil_ring(bm, (px, py, root_z), chord, chord * 0.22, 12)
+            bm.faces.new(v[::-1])
+            bmesh.ops.rotate(bm, cent=(px, py, root_z),          # root pitch angle
+                             matrix=mathutils.Matrix.Rotation(math.radians(34.0), 3, "Z"),
+                             verts=v)
+            for dz, sc, tw in ((span * 0.40, 1.10, -8.0), (span * 0.36, 0.90, -8.0),
+                               (span * 0.24, 0.50, -6.0)):
+                v, e = extrude_ring(bm, e, translate=(0, 0, dz), scale=(sc, sc, 1))
+                cen = mathutils.Vector((0.0, 0.0, 0.0))
+                for vv in v:
+                    cen = cen + vv.co
+                bmesh.ops.rotate(bm, cent=cen / len(v),          # wash the pitch out
+                                 matrix=mathutils.Matrix.Rotation(math.radians(tw), 3, "Z"),
+                                 verts=v)
+            bm.faces.new(v)
+            bmesh.ops.rotate(bm, cent=(px, py, pz),
+                             matrix=mathutils.Matrix.Rotation(math.radians(i * 120.0), 3, "Y"),
+                             verts=bm.verts[:])
+            tag(_sobj(bm, "PropBlade_%d" % i, dark, bevel=0.002), "Propeller", "prop")
 
     # bone table for the rigid mechanical rigger
     global BOAT_BONES
@@ -1520,11 +1791,11 @@ def build(p, ox):
         ("Hull", (ox, 0, cz), (ox, -L * 0.3, cz), "Root"),
     ]
     if rudder:
-        BOAT_BONES.append(("RudderSteer", (ox, L * 0.5, depth * 0.42),
-                           (ox, L * 0.5, depth * 0.42 + 0.4), "Hull"))
+        BOAT_BONES.append(("RudderSteer", (ox, rud_y, depth * 0.42),
+                           (ox, rud_y, depth * 0.42 + 0.4), "Hull"))
     if prop:
-        BOAT_BONES.append(("Propeller", (ox, L * 0.46, depth * 0.22),
-                           (ox, L * 0.46 - 0.3, depth * 0.22), "Hull"))
+        BOAT_BONES.append(("Propeller", (ox, L * prop_ty, prop_z),
+                           (ox, L * prop_ty - 0.3, prop_z), "Hull"))
     return parts
 '''
 

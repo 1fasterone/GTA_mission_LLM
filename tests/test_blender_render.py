@@ -172,6 +172,87 @@ def test_plane_builds_clean_in_real_blender(label, raw):
     )
 
 
+# boat's rig contract (base_models._BOAT_RIG) binds by name the same way plane's
+# does — an unknown "bone" silently falls back to "Hull" rather than erroring — and
+# its sculpted parts (bellied sail loft, hollow funnel + closed collar, foil rudder,
+# twisted foil propeller blades) are exactly the shapes a compile-only test cannot
+# check. Same tail as the plane's, with BOAT_BONES' expected set.
+_BOAT_VALIDATE_TAIL = '''
+_bad = []
+for _o in _coll().objects:
+    if _o.type != "MESH":
+        continue
+    import bmesh as _bm5
+    _b = _bm5.new(); _b.from_mesh(_o.data)
+    _nm = [e for e in _b.edges if not e.is_manifold]
+    if _nm or _o.data.validate(verbose=False):
+        _bad.append(_o.name)
+    _b.free()
+result["nonmanifold_or_invalid"] = _bad
+_rig = [o for o in _coll().objects if o.type == "ARMATURE"]
+_bones = {b.name for b in _rig[0].data.bones} if _rig else set()
+result["missing_bones"] = sorted({n for n, _h, _t, _p in BOAT_BONES} - _bones)
+_empty_vg = []
+for _o in _coll().objects:
+    if _o.type == "MESH":
+        for _vg in _o.vertex_groups:
+            _n = sum(1 for _v in _o.data.vertices for _g in _v.groups
+                     if _g.group == _vg.index and _g.weight > 0)
+            if _n == 0:
+                _empty_vg.append(_o.name + "/" + _vg.name)
+result["empty_vertex_groups"] = _empty_vg
+result["part_names"] = sorted(o.name for o in _coll().objects if o.type == "MESH")
+import json as _json5, os as _os5
+with open(_os5.path.join(_OUT_DIR, COLL + ".result.json"), "w", encoding="utf-8") as _f5:
+    _json5.dump(result, _f5, indent=2)
+'''
+
+
+@pytest.mark.blender_render
+@pytest.mark.parametrize("label,raw,expect", [
+    ("sailboat", {"masts": 1, "sails": 1, "prop": 0},
+     ("Mast_0", "Sail_0_0", "Yard_0_0")),
+    ("schooner", {"masts": 2, "sails": 1, "hull_len": 12.0, "mast_h": 7.0},
+     ("Mast_1", "Sail_1_1", "Yard_1_1")),
+    ("tug", {"masts": 0, "sails": 0, "prop": 1, "cabin": 1, "funnel": 1},
+     ("Deckhouse", "Wheelhouse", "Funnel", "FunnelBand", "PropHub", "PropBlade_2")),
+    ("rowboat", {"masts": 0, "sails": 0, "prop": 0, "rudder": 0}, ("Hull", "Deck")),
+    ("extreme_min", {"hull_len": 3.0, "hull_beam": 1.0, "hull_depth": 0.6,
+                     "deck_h": 0.05, "mast_h": 1.0, "masts": 3, "sails": 1,
+                     "prop": 1, "cabin": 1, "rudder": 1, "funnel": 1},
+     ("Rudder", "RudderStock", "PropBlade_0")),
+    ("extreme_max", {"hull_len": 16.0, "hull_beam": 5.0, "hull_depth": 3.0,
+                     "deck_h": 0.40, "mast_h": 9.0, "masts": 3, "sails": 1,
+                     "prop": 1, "cabin": 1, "rudder": 1, "funnel": 1},
+     ("Rudder", "RudderStock", "PropBlade_0")),
+])
+def test_boat_builds_clean_in_real_blender(label, raw, expect):
+    """Every boat part is a real, manifold, error-free mesh and every BOAT_BONES
+    entry still gets a matching, non-empty vertex group. Covers the AAA sculpting
+    pass: the sail's hand-lofted closed cloth volume, the funnel's rolled rim +
+    bridged collar annulus, the NACA foil sections (whose leading/trailing edges
+    collapse into zero-length edges if sampled on whole steps), and the propeller
+    blades' bmesh-space rotation about the hub."""
+    p = clamp_params("boat", raw)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        code = build_base_code("boat", p, coll=f"PROC_{label}", rig=True, demo=True,
+                               out_dir=str(tmp_path))
+        code += _BOAT_VALIDATE_TAIL
+        result = _run_headless(code, tmp_path, label)
+    assert result["parts"] > 0
+    assert result["nonmanifold_or_invalid"] == [], (
+        f"non-manifold/invalid mesh(es) in {label}: {result['nonmanifold_or_invalid']}"
+    )
+    assert result["missing_bones"] == [], f"missing BOAT_BONES in {label}: {result['missing_bones']}"
+    assert result["empty_vertex_groups"] == [], (
+        f"empty vertex group(s) (silent fallback-to-Hull?) in {label}: "
+        f"{result['empty_vertex_groups']}"
+    )
+    missing = [n for n in expect if n not in result["part_names"]]
+    assert missing == [], f"{label} lost sculpted part(s) {missing}: {result['part_names']}"
+
+
 # vehicle_generator's detailed builder writes ONE object (`obj`), not a named
 # collection iterated via _coll() — a different validate tail than base_models'.
 _VG_VALIDATE_TAIL = '''

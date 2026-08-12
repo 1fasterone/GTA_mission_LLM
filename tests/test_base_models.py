@@ -428,6 +428,48 @@ def test_boat_map_prompt_fallback():
     compile(build_base_code(m["base"], m["params"], coll="PROC_sail"), "<sail>", "exec")
 
 
+def test_boat_emit_uses_edge_loop_toolkit_and_sculpted_parts():
+    """The AAA pass (docs/PROCEDURAL_BASES.md): the superstructure, spars, sails,
+    funnel, rudder and propeller are all sculpted — deckhouse/wheelhouse grown from
+    a floor ring with a recessed window band, masts/yards/stock/hub as tapered n-gon
+    spars, sails as lofted cloth volumes, blades as NACA foil sections — so none of
+    them is a bare box()/cyl()/cone()/sphere() any more."""
+    code = build_base_code("boat", clamp_params("boat", {"masts": 2, "sails": 1,
+                                                         "prop": 1, "cabin": 1,
+                                                         "funnel": 1}),
+                           coll="PROC_b", rig=True)
+    compile(code, "<b>", "exec")
+    for fn in ("def quad_ring(", "def ngon_ring(", "def extrude_ring(",
+               "def notch(", "def _foil_ring(", "def _sobj("):
+        assert fn in code
+    assert "bridge_loops" in code
+    for part in ('"Deckhouse"', '"Wheelhouse"', '"Funnel"', '"FunnelBand"',
+                 '"Rudder"', '"RudderStock"', '"PropHub"', '"PropShaft"'):
+        assert part in code, part
+    assert _no_bare_primitives(code, "boat")
+
+
+def test_boat_no_bare_primitive_calls_anywhere_in_the_knob_matrix():
+    for label, raw in [
+        ("default", {}),
+        ("sailboat", {"masts": 1, "sails": 1, "prop": 0}),
+        ("schooner", {"masts": 2, "sails": 1}),
+        ("motorboat", {"masts": 0, "sails": 0, "prop": 1, "cabin": 1}),
+        ("tug", {"prop": 1, "cabin": 1, "funnel": 1}),
+        ("rowboat", {"masts": 0, "sails": 0, "prop": 0, "rudder": 0}),
+        ("extreme_min", {"hull_len": 3.0, "hull_beam": 1.0, "hull_depth": 0.6,
+                         "deck_h": 0.05, "mast_h": 1.0, "masts": 3, "sails": 1,
+                         "prop": 1, "cabin": 1, "rudder": 1, "funnel": 1}),
+        ("extreme_max", {"hull_len": 16.0, "hull_beam": 5.0, "hull_depth": 3.0,
+                         "deck_h": 0.40, "mast_h": 9.0, "masts": 3, "sails": 1,
+                         "prop": 1, "cabin": 1, "rudder": 1, "funnel": 1}),
+    ]:
+        p = clamp_params("boat", raw)
+        code = build_base_code("boat", p, coll=f"PROC_{label}")
+        compile(code, f"<{label}>", "exec")
+        assert _no_bare_primitives(code, "boat"), label
+
+
 def test_model_wrapper_gates_unity_pipeline_to_toolkit_bases():
     from src.micro.model import _build_base_code_with_fbx
     h = _build_base_code_with_fbx("humanoid", clamp_params("humanoid", {}),
