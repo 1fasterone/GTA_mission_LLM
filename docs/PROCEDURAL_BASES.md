@@ -83,17 +83,38 @@ and was deleted rather than kept as a dead, drifting duplicate.
   (plain `_cone()` cylinders for wheels/lights/struts) and `add_slab` (`bmesh.ops.create_cube` for
   wings/fins) in `vehicle_generator.py` — geometrically simple shapes merged into the same welded
   mesh, not a separate-object union, but not sculpted detail either.
+- **Routing contract (both CLIs):** a base that keyword-routes here but has no builder here must
+  reach its real builder or stop — it must never quietly become another base. `clamp_params` and
+  `build_base_code` raise `UnknownBaseError` (`[base.strict]`, naming where the builder lives), and
+  `procedural_pipeline.py` auto-selects the detailed backend for `DETAILED_ONLY`
+  (= `DETAILED_BASES - BASE_PARAM_SCHEMA`, derived so it cannot go stale, currently `{"car"}`).
+  Both used to substitute `"furniture"` for an unrecognised base, so
+  `procedural_pipeline.py "a jeep with big tires"` emitted a **table** and reported it as base
+  `"car"`; `main.py unity-model` was always correct via `_VG_VARIANTS`. `plane` is deliberately NOT
+  in `DETAILED_ONLY` — base_models builds the edge-loop-sculpted plane, and auto-routing would swap
+  it for `vehicle_generator`'s. `--detailed` remains an explicit opt-in for it.
 
-### 2. boat ✅ (implemented)
+### 2. boat ✅ (implemented, AAA-sculpted)
 - **Variants:** rowboat, sailboat, schooner (2-mast), motorboat, tugboat/steamer.
-- **Parts:** lofted U-section `Hull` (tapered bow/stern, keel z=0), inset deck, cabin/wheelhouse,
-  masts + square sails, funnel, steerable `Rudder`, motor propeller (`PropBlade_*`).
+- **Parts:** double-skinned U-section `Hull` (one closed station loop = outer skin + inner skin, so
+  the bulwark has real thickness and the shell is watertight), `Deck` (flat sole sweeping up to the
+  sheer past 60% half-length → real fore/after decks), `Deckhouse` + `Wheelhouse` (floor ring →
+  recessed window band → eave → crowned roof, aft door notch, raked screen), `Mast_*` + `Yard_*`
+  (tapered n-gon spars, flared truck), `Sail_*` (bellied cloth volumes), `Funnel` + `FunnelBand`
+  (hollow stack with a rolled rim + bridged collar annulus), foil `Rudder` + `RudderStock`,
+  `PropHub` + `PropShaft` + twisted-foil `PropBlade_*`.
+- **Hull profile:** one `station(ty)` closure returns (half-beam, section depth, rim height) and is
+  the single source of truth — the deck outline, the rudder's top and the propeller's depth all
+  query it instead of re-deriving the hull's shape. Eased plan taper floored at 0.10 half-beam
+  (a stem, not a knife edge), sheer + rocker rising toward both ends.
 - **Scale knobs:** hull_len/beam/depth, deck_h, mast_h.
 - **Structural knobs:** `masts` (0–3), `sails`(0/1), `prop`(0/1 → motor), `cabin`(0/1),
   `rudder`(0/1), `funnel`(0/1).
 - **Rig:** Root → Hull → `RudderSteer` (yaws) + `Propeller` (spins); both name-driven by
   `VehicleBoneDriver` (steer / prop). Rigid mechanical bind (weight 1.0). Full Unity pipeline
-  (UV + COL_ hull + LOD0/1). Hull keel at z=0.
+  (UV + COL_ hull + LOD0/1). Hull keel at z=0 amidships.
+- **Gate:** `pytest -m blender_render -k boat` builds all six variants in real headless Blender and
+  asserts every mesh is manifold and every `BOAT_BONES` entry gets a non-empty vertex group.
 
 ### 3. building
 - **Variants:** house, shop, tower, warehouse, hut.
@@ -114,15 +135,26 @@ and was deleted rather than kept as a dead, drifting duplicate.
 - **Rig:** root → receiver; `Trigger` bone (pivot), `Bolt`/`Slide` bone (travel), `Magazine`
   bone (insert/eject), `Stock` hinge if folding. Origin at grip for hand attach.
 
-### 5. furniture
-- **Variants:** chair, table, bed, shelf, lamp, desk, stool, sofa.
-- **Parts:** top/surface, `Leg` ×N, backrest, cushion, drawer (slide), shade, `Light` (emissive +
-  point light), mattress, frame.
-- **Scale knobs:** width, depth, height, leg_thickness.
-- **Structural knobs:** `leg_count` (3/4), `back`(0/1), `arms`(0/1), `drawers` (count),
-  `light`(0/1 + colour/intensity), `material` (wood/metal/fabric → colour+roughness preset).
-- **Rig:** mostly static; `Drawer` bones (slide), lamp `Shade` (tilt). Lights are real
-  `bpy.data.lights` parented in.
+### 5. furniture ✅ (implemented, AAA-sculpted)
+- **Variants:** table, desk, chair, stool, bench, sofa, bookcase, dresser, pedestal table.
+- **Parts:** `top` (slab with a MOULDED edge — the rim is stepped in and out, not a cut cube),
+  `leg_*` TURNED on a profile of revolution (post block → cove → vase swell → taper → foot) with
+  the `leg_*_block` its `apron_x_*`/`apron_y_*` rails tenon into, panelled carcass (`side_*`,
+  `back_panel`, `plinth`, `pedestal`) with recessed fields, `shelf_*`, a joined back
+  (`back_stile_*` + `back` crest rail + `back_rail`), and `Drawer.*` fronts with a recessed panel
+  and a turned brass `knob_*`. Upholstered pieces (`seat`+`cushion`) become a frame deck carrying
+  loose `cushion_*` and `back_cushion_*` (1 for an armchair, 2–3 across a sofa) between padded
+  `arm_*` — one full-width pad read as a padded bench.
+- **Toolkit:** `quad_ring`/`extrude_ring` for slabs and panels, `notch` for recessed fields and the
+  cushion's stitched seam, `loft()` for turned legs, columns and knobs. Moulding is auto-dropped on
+  panels thinner than 6% of their footprint: a 15 mm shelf takes a crisp arris, and moulding one
+  then shading it smooth reads as a pillow.
+- **Scale knobs:** width, depth, height, top_t, leg_r.
+- **Structural knobs:** `legs` (0 carcass / 1 pedestal / 3 / 4), `seat`(0/1), `back`(0/1),
+  `shelves` (count), `drawers` (count), `cushion`(0/1).
+- **Rig:** static decor → the no-op rigger. Drawer fronts stay named `Drawer.*` by role for later
+  articulation.
+- **Gate:** `pytest -m blender_render -k furniture` — 9 variants, every mesh manifold.
 
 ### 6. animals
 - **Sub-bases (distinct topologies — not one base):**
@@ -146,15 +178,30 @@ and was deleted rather than kept as a dead, drifting duplicate.
 - **Rig:** static (root at ground); signal lamps as named parts the engine toggles
   (material emission swap, no bones needed).
 
-### 8. bikes
-- **Variants:** bicycle, road motorbike, dirt/off-road bike, unicycle, scooter, chopper.
-- **Parts:** frame (tube assembly), `Wheel.F/R` (reuse `make_wheel`!), handlebars (steer),
-  seat, fork, fuel tank (motorbike), pedals (bicycle), engine block.
-- **Scale knobs:** wheelbase, wheel_r (knobby/big for dirt), frame_size.
+### 8. bikes ✅ (implemented, AAA-sculpted)
+- **Variants:** bicycle, road motorbike, dirt/off-road bike, unicycle, chopper.
+- **Parts:** a real diamond frame (`head_tube`/`top_tube`/`down_tube`/`seat_tube` plus PAIRED
+  `chain_stay_*`/`seat_stay_*` — one centreline stay read as a bike sliced in half), twin tapered
+  `fork_*` blades on a `fork_crown` + `steerer`, a swept `handlebar` with `grip_*`, a sculpted
+  `seat` (superellipse saddle: narrow nose, wide dished tail) and `tank` (teardrop), `Wheel.F/R`
+  (reuse `make_wheel`), and for a motorbike an `engine` crankcase + finned `cylinder` barrel +
+  bent `exhaust`. Bicycles get `chainring`, `crank_*`, `pedal_*`.
+- **Toolkit:** `loft()` for every tube (an arbitrary spine, so the swept bar and bent exhaust are
+  the same call as a straight seat tube, and a butted tube is just a radius per station);
+  `quad_ring`/`extrude_ring` for hard-surface parts; `_se_ring` (superellipse) for saddle and tank.
+- **Scale knobs:** wheelbase, wheel_r, wheel_w, frame_h, handlebar_w, rim.
 - **Structural knobs:** `wheels` (1 unicycle / 2), `engine`(0/1 → motorbike vs bicycle),
-  `tank`(0/1), `pedals`(0/1), `suspension`(0/1, dirt forks), `handlebar_style`.
-- **Rig:** root → frame; `Wheel.F/R` (spin), `Handlebars` + `Fork` (steer), `Pedal` bones
-  (bicycle). Reuses the car's wheel-bone approach.
+  `tank`(0/1), `pedals`(0/1), `suspension`(0/1, dirt forks).
+- **Rig:** root → frame; `steer` (fork + handlebar bind to it), `Wheel.F/R` (spin, front parented
+  to `steer`). Binding is still by ROLE; positions come from `BIKE_BONES`, built in `build()`.
+  **They used to come from `obj.location`**, which is `(0,0,0)` for every bmesh part in this file
+  (world-coord verts, object left at the origin — see `loft()`), so both wheel bones sat on the
+  world origin and `VehicleBoneDriver`'s roll swung the wheels around it in a circle instead of
+  spinning them on their axles. The steering stack is also measured off the TYRE now, not off a
+  fraction of `frame_h`, which had put the fork crown 0.15 m inside the front wheel at the default
+  knobs.
+- **Gate:** `pytest -m blender_render -k bike` — manifold meshes, every `BIKE_BONES` entry bound,
+  and each wheel bone asserted to be within 5 cm of its wheel's centroid.
 
 ### 9. (open) anything else the prompt needs
 The router can grow: tree/plant (lean on `recipes.py`), barrel/crate/prop, fence/wall segment,
@@ -178,22 +225,32 @@ can't be a knob on an existing one.
 ## Build order (incremental, each shippable + tested)
 
 1. ✅ **car** — part library + structural knobs + bone rig + FBX export.
-2. **bike** — fastest win, reuses `make_wheel` + wheel-bone rig; proves part reuse across bases.
+2. ✅ **bike** — reuses `make_wheel` + wheel-bone rig; proves part reuse across bases.
 3. **traffic props** — simple, static, high prop-value for GTA-style scenes; adds `Light` parts.
-4. **furniture** — static + drawer/light knobs; adds `make_hinge_panel`, lights, material presets.
+4. ✅ **furniture** — static + drawer knobs. (Lamps/lights + material presets not built.)
 5. **building** — adds `make_window`/`make_hinge_panel` at scale + door rig.
-6. **gun** — enum part-swaps (scope/muzzle/stock) — proves the "swap" structural knob.
-7. **boat** — hull lofting + prop/oar/rudder rig.
+6. ✅ **gun** (shipped as `weapon`) — enum part-swaps (scope/muzzle/stock).
+7. ✅ **boat** — hull lofting + prop/rudder rig.
 8. **animals** — the biggest: `make_limb` chains + `rig_chain`; quadruped → bird → fish → insect → spider.
+
+All seven implemented families (car, bike, boat, furniture, humanoid, plane, weapon) have now had
+the AAA sculpting pass. `building`, `traffic props` and `animals` are unbuilt, not unsculpted.
 
 Each step: add schema + parts + assembler + rigger, unit-test (clamp + compile + role tags),
 then live-verify in Blender (build → rig → pose → render) and confirm rigged FBX export.
 
 ## Notes / honest limits
 
-- Mechanical bases still built as **primitive-composites** (`box`/`cyl`/`cone`/`sphere` unions) —
-  bike/furniture — are placeholders, not AAA meshes, and are the next candidates for the edge-loop
-  sculpting toolkit below. **weapon** was the first: every part (receiver/barrel welded into one
+- **No base is a primitive-composite any more.** Every family in `_BUILDERS` (plus `car` in
+  `vehicle_generator.py`) is edge-loop sculpted or ring-lofted, and each one is pinned by a
+  `_no_bare_primitives` gate over its whole knob matrix plus a headless Blender build that asserts
+  manifold meshes. What remains primitive is *inside* `vehicle_generator.py`
+  (`add_wheel`/`add_disc`/`add_strut`/`add_slab`, listed under car above) — simple shapes merged
+  into the same welded body mesh, not separate-object unions. `tube_between()` in `_PARTS` is now
+  unused by every base (bike was its last caller) and is the one remaining
+  `primitive_cylinder_add` in the shared toolkit; it stays only as a helper for future bases and
+  should be replaced by `loft()` if anything reaches for it. **weapon** was the first: every part
+  (receiver/barrel welded into one
   spine, muzzle device, stock, grip, trigger guard, magazine, foregrip, scope+mounts) is now built
   from `quad_ring`/`ngon_ring` + `extrude_ring` (real `bridge_loops` edge-loop extrusion, the same
   move as extruding a loop in the modeller) instead of primitive unions, and is gated into the full
@@ -210,8 +267,19 @@ then live-verify in Blender (build → rig → pose → render) and confirm rigg
   carries the same `"bone"` value it always did. **humanoid** (ring-stack body, proximity skin,
   Unity Humanoid avatar) is the other base that was already fully sculpted, no rework needed —
   ported from the proven standalone generator (`humangen.py`) and ships the full Unity pipeline.
-  **boat** (lofted U-hull + masts/sails or cabin/funnel/prop, with a rudder+prop mechanical rig)
-  ships the same pipeline, though its cabin/masts/sails/funnel/rudder/prop are still
-  primitive-composite. Bike/furniture adopt the sculpting toolkit next.
+  **boat** was the fourth: the cabin/masts/sails/funnel/rudder/prop that used to be
+  primitive-composite are now a ring-grown deckhouse and wheelhouse with recessed window bands,
+  tapered n-gon masts/yards/stock/hub, doubly-curved cloth sails, a hollow funnel with a bridged
+  collar, and NACA-foil rudder and twisted propeller blades. Three hull defects the new headless
+  render gate exposed were fixed with it, since they made the sculpted parts look worse than they
+  were: the hull was a single-sided open shell (non-manifold at every rim edge, see-through from
+  inboard once Unity culls backfaces) and is now double-skinned; the plan taper collapsed to 4% at
+  the ends, so both ends rendered as two thin prongs with the cockpit slot running out between
+  them, now an eased taper floored at 10% with real sheer and a deck that sweeps up to close the
+  ends; and the propeller/rudder hung in open water below the counter, now placed off the hull's
+  own `station()` profile with a shaft into the hull. **bike** and **furniture** closed the set:
+  bike moved every frame tube to `loft()` (freeing the last `tube_between` caller) and fixed a rig
+  that placed both wheel bones on the world origin; furniture replaced the slab-on-cylinders with
+  turned legs, aprons, moulded edges, panelled carcasses and loose cushions.
 - For unique *hero* assets, the complementary **text-to-3D** track (cloud or bigger VRAM) can feed
   the same Blender sanitizer (cleanup → UV → LOD → rig). Parametric stays the controllable spine.
