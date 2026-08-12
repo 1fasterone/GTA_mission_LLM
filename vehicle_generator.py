@@ -312,6 +312,11 @@ def add_wheel(bm, pos, wheel_r, wheel_w, rim, segments=24):
             if f in seen or not all(vv in tyre_verts for vv in f.verts):
                 continue
             seen.add(f)
+            # EVERY tyre face is rubber, caps included. Only the tread band used
+            # to be assigned, which left each sidewall — one big n-gon covering
+            # the whole disc — on material slot 0, so all four wheels rendered
+            # in BODY PAINT with just a thin black tread at the rim.
+            f.material_index = Material.tire
             local_x = (f.calc_center_median() - pos).x
             if abs(local_x) < wheel_w * 0.45:      # side band, not the end caps
                 side_faces.append(f)
@@ -336,9 +341,14 @@ def add_wheel(bm, pos, wheel_r, wheel_w, rim, segments=24):
             except Exception:
                 pass
     if rim > 0.05:
+        # The hub must stand proud of the sidewall by MORE than recessed_grid
+        # digs back into it below (wheel_r * 0.03), or the chrome face ends up
+        # buried inside the tyre and the wheel loses its rim entirely. The old
+        # wheel_w * 1.06 gave it 0.03 * wheel_w of clearance — never enough.
+        hub_proud = wheel_r * 0.06
         hub = _cone(bm, cap_ends=True, cap_tris=False, segments=12,
                     radius1=wheel_r * rim, radius2=wheel_r * rim,
-                    depth=wheel_w * 1.06, matrix=mat)
+                    depth=wheel_w + hub_proud * 2.0, matrix=mat)
         hub_verts = set(hub["verts"])
         end_faces, seen2 = [], set()
         for v in hub["verts"]:
@@ -625,12 +635,17 @@ def generate_vehicle(random_seed="", params=None, name="Vehicle",
         add_disc(bm, Vector((sx * bw * 0.28, rear_y - 0.04, -bh * 0.42)),
                  "Y", 0.05, 0.10, Material.chrome)
 
-    # Side vents/character line on the lower doors (subtle greeble like the ship).
+    # Side character line on the lower doors (subtle greeble like the ship).
+    # PAINT, not trim: recessed_grid recolours every cell it makes, and the side
+    # face is the whole door — asking for trim turned the entire flank black,
+    # which is how a random seed could hand you a two-tone car nobody asked for.
+    # A character line is a crease pressed into the bodywork, so it stays body
+    # colour and reads by its shading alone.
     for axis in (Vector((1, 0, 0)), Vector((-1, 0, 0))):
         side = face_by_normal(bm, axis)
         if random() > 0.5:
             try:
-                recessed_grid(bm, side, Material.trim, cuts=randint(1, 2),
+                recessed_grid(bm, side, Material.paint, cuts=randint(1, 2),
                               depth=0.03, scale=0.9)
             except Exception:
                 pass

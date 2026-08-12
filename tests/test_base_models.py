@@ -212,6 +212,33 @@ def test_bike_routing_and_hints():
     assert keyword_hints("a unicycle", "bike")["wheels"] == 1.0
 
 
+def test_the_default_bike_wears_a_bicycle_tyre_not_a_motorcycle_one():
+    """The default bike IS a bicycle (pedals=1, engine=0), so its default tyre
+    has to be a bicycle's. The old 0.10 default was a 100 mm motorcycle tyre on
+    a 680 mm wheel, which made every unqualified `bike` prompt a fatbike, and the
+    old lo=0.06 floor meant a road tyre could not be requested at any setting."""
+    p = clamp_params("bike", {})
+    assert p["pedals"] == 1.0 and p["engine"] == 0.0, "the default bike is a bicycle"
+    assert p["wheel_w"] <= 0.05, (
+        f"default tyre is {p['wheel_w'] * 1000:.0f} mm wide on a "
+        f"{p['wheel_r'] * 2000:.0f} mm wheel — that is a motorcycle tyre"
+    )
+    # a road tyre (25 mm) must survive clamping rather than being floored away
+    assert clamp_params("bike", {"wheel_w": 0.025})["wheel_w"] == pytest.approx(0.025)
+    # ...and a chopper's must still be reachable at the top of the range
+    assert clamp_params("bike", {"wheel_w": 0.32})["wheel_w"] == pytest.approx(0.32)
+
+
+def test_a_mountain_bicycle_keeps_its_knobblies_and_gets_its_pedals_back():
+    """`bicycle` is matched last, so it used to overwrite the off-road cue's tyre
+    with a thin one. It now sets only the drivetrain, leaving the wider match to
+    decide the tyre — a mountain bicycle is a fat-tyred bike you pedal."""
+    mtb = keyword_hints("a mountain bicycle", "bike")
+    assert mtb["pedals"] == 1.0 and mtb["engine"] == 0.0
+    assert mtb["wheel_w"] >= 0.20, f"mountain bicycle lost its knobblies: {mtb}"
+    assert keyword_hints("a scooter", "bike")["wheel_w"] >= 0.08
+
+
 def test_bike_builds_and_rigs_compile():
     p = clamp_params("bike", {"engine": 1, "tank": 1, "pedals": 0, "suspension": 1})
     code = build_base_code("bike", p, coll="PROC_bike", rig=True, demo=True)
@@ -297,6 +324,19 @@ def test_furniture_routing_and_hints():
     assert shelf["legs"] == 0 and shelf["shelves"] >= 1
     dresser = keyword_hints("a dresser", "furniture")
     assert dresser["drawers"] >= 1 and dresser["legs"] == 0
+
+
+def test_padded_pieces_set_both_halves_of_the_upholstery_gate():
+    """The builder gates its padded path on seat AND cushion. `bed` set only
+    cushion, so the flag did nothing and a bed came out as a bare moulded slab on
+    legs — a low table. Any piece that asks for padding must set both."""
+    for prompt in ("a double bed", "a leather sofa", "a fabric couch"):
+        hints = keyword_hints(prompt, "furniture")
+        assert hints.get("cushion") == 1.0, f"{prompt!r} asked for no padding: {hints}"
+        assert hints.get("seat") == 1.0, (
+            f"{prompt!r} sets cushion but not seat, so the upholstered path never "
+            f"fires and the padding is silently dropped: {hints}"
+        )
 
 
 def test_furniture_clamp_includes_structural_knobs():

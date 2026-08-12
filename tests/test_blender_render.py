@@ -311,7 +311,7 @@ with open(_os6.path.join(_OUT_DIR, COLL + ".result.json"), "w", encoding="utf-8"
     ("dirtbike", {"engine": 1, "tank": 1, "pedals": 0, "suspension": 1,
                   "wheel_w": 0.20}, ("fork_0", "fork_1", "steerer")),
     ("unicycle", {"wheels": 1}, ("Wheel.C", "post", "seat")),
-    ("extreme_min", {"wheelbase": 0.60, "wheel_r": 0.20, "wheel_w": 0.06,
+    ("extreme_min", {"wheelbase": 0.60, "wheel_r": 0.20, "wheel_w": 0.022,
                      "frame_h": 0.25, "handlebar_w": 0.30, "engine": 1, "tank": 1,
                      "suspension": 1, "pedals": 1}, ("engine", "tank")),
     ("extreme_max", {"wheelbase": 1.60, "wheel_r": 0.55, "wheel_w": 0.32,
@@ -363,7 +363,9 @@ _PART_NAMES_TAIL = _VALIDATE_TAIL.replace(
     ("chair", {"seat": 1, "back": 1, "width": 0.45, "depth": 0.45, "height": 0.45},
      ("back", "back_stile_0", "back_rail")),
     ("sofa", {"seat": 1, "back": 1, "cushion": 1, "width": 1.9, "depth": 0.85,
-              "height": 0.42}, ("top", "back")),
+              "height": 0.42},
+     ("top", "back", "arm_0", "arm_1", "arm_roll_0", "back_roll",
+      "cushion_0", "back_cushion_0")),
     ("bookcase", {"legs": 0, "shelves": 4, "height": 1.8, "depth": 0.32},
      ("side_0", "back_panel", "plinth", "shelf_3")),
     ("dresser", {"legs": 0, "drawers": 4, "height": 1.1},
@@ -395,6 +397,134 @@ def test_furniture_builds_clean_in_real_blender(label, raw, expect):
     )
     missing = [n for n in expect if n not in result["part_names"]]
     assert missing == [], f"{label} lost sculpted part(s) {missing}: {result['part_names']}"
+
+
+# _VALIDATE_TAIL plus each part's WORLD bounding box. The defects below are all
+# "the mesh is perfectly valid, it is just the wrong size / in the wrong place",
+# which every other gate in this file passes straight over: manifold checks,
+# part-name checks and bone-offset checks are all blind to a part that quietly
+# grew 12% and swallowed its neighbour.
+_BOUNDS_TAIL = _VALIDATE_TAIL.replace(
+    'import json as _json2, os as _os2',
+    'import mathutils as _mu7\n'
+    'bpy.context.view_layer.update()   # matrix_world is stale after location edits\n'
+    '_bx = {}\n'
+    'for _o in _coll().objects:\n'
+    '    if _o.type != "MESH":\n'
+    '        continue\n'
+    '    _wc = [_o.matrix_world @ _mu7.Vector(_c) for _c in _o.bound_box]\n'
+    '    _bx[_o.name] = [[min(_v[_i] for _v in _wc) for _i in range(3)],\n'
+    '                    [max(_v[_i] for _v in _wc) for _i in range(3)]]\n'
+    'result["bounds"] = _bx\n'
+    'result["part_names"] = sorted(_bx)\n'
+    'import json as _json2, os as _os2')
+
+
+def _span(bounds, name, axis):
+    lo, hi = bounds[name]
+    return lo[axis], hi[axis]
+
+
+@pytest.mark.blender_render
+@pytest.mark.parametrize("label,raw", [
+    ("sofa", {"seat": 1, "back": 1, "cushion": 1, "width": 2.0, "depth": 0.90,
+              "height": 0.45}),
+    ("armchair", {"seat": 1, "back": 1, "cushion": 1, "width": 0.85, "depth": 0.85,
+                  "height": 0.42}),
+    ("extreme_max", {"seat": 1, "back": 1, "cushion": 1, "width": 3.00,
+                     "depth": 2.20, "height": 2.20, "top_t": 0.20}),
+])
+def test_upholstered_cushions_never_overlap_the_arms(label, raw):
+    """An upholstered piece is a sofa only if the arms are BESIDE the cushions.
+
+    Regression cover for two defects a manifold/part-name gate cannot see:
+
+    1. slab(puffy=True) applied its two bulge rings cumulatively (1.05 * 1.07),
+       so every pad came out 12.35% wider than the caller asked for. Each end
+       cushion grew 60 mm into the arm next to it and hid it completely.
+    2. the seat cushions spanned the full width rather than the width BETWEEN
+       the arms, so the arms sat on top of the cushions instead of flanking them.
+
+    Both produced a perfectly valid mesh that simply did not read as a sofa.
+    """
+    p = clamp_params("furniture", raw)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        code = build_base_code("furniture", p, coll=f"PROC_{label}",
+                               out_dir=str(tmp_path))
+        code += _BOUNDS_TAIL
+        result = _run_headless(code, tmp_path, label)
+    assert result["nonmanifold_or_invalid"] == [], (
+        f"non-manifold/invalid mesh(es) in {label}: {result['nonmanifold_or_invalid']}"
+    )
+    bounds = result["bounds"]
+    arms = [n for n in bounds if n.startswith("arm_") and "roll" not in n]
+    cushions = [n for n in bounds if n.startswith(("cushion_", "back_cushion_"))]
+    assert len(arms) == 2, f"{label} built {len(arms)} arm panels, expected 2"
+    assert cushions, f"{label} built no cushions"
+
+    tol = 0.002       # 2 mm of shared skin is fine; a cushion inside an arm is not
+    for arm in arms:
+        a0, a1 = _span(bounds, arm, 0)
+        for cush in cushions:
+            c0, c1 = _span(bounds, cush, 0)
+            overlap = min(a1, c1) - max(a0, c0)
+            assert overlap <= tol, (
+                f"{label}: {cush} overlaps {arm} by {overlap * 1000:.0f} mm in X — "
+                f"the cushion is buried in the arm, so the piece reads as a padded "
+                f"bench rather than a sofa"
+            )
+
+    # and no arm may bulge outboard of the back panel, which spans the full width
+    b0, b1 = _span(bounds, "back", 0)
+    for arm in arms:
+        a0, a1 = _span(bounds, arm, 0)
+        assert a0 >= b0 - tol and a1 <= b1 + tol, (
+            f"{label}: {arm} spans x[{a0:.3f} {a1:.3f}] but the back panel spans "
+            f"x[{b0:.3f} {b1:.3f}] — the arm sticks out past the piece"
+        )
+
+
+@pytest.mark.blender_render
+@pytest.mark.parametrize("label,raw", [
+    ("road", {"wheel_w": 0.022}),
+    ("default_bicycle", {}),
+    ("motorbike", {"wheel_w": 0.18, "engine": 1, "tank": 1, "pedals": 0}),
+    ("chopper", {"wheel_w": 0.32, "wheel_r": 0.55, "engine": 1, "tank": 1, "pedals": 0}),
+])
+def test_wheel_tread_stays_inside_its_own_envelope(label, raw):
+    """A tyre's tread may not push past the wheel's nominal radius or width.
+
+    notch()'s `inset` is an ABSOLUTE distance (inset_individual's thickness), but
+    _wheel_ring passed a flat 0.10 as though it were a fraction. On anything
+    narrower than a 200 mm tyre the inset exceeded the whole face, inset_individual
+    inverted, and the grooves came out as lugs standing PROUD of the tread — every
+    bicycle looked like a fatbike, and the tyre's true lowest point moved, which
+    silently breaks the `wheel_z = wheel_r` axle-height assumption make_wheel's
+    docstring depends on for the wheel to sit flush on the ground.
+    """
+    p = clamp_params("bike", raw)
+    wr, ww = p["wheel_r"], p["wheel_w"]
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        code = build_base_code("bike", p, coll=f"PROC_{label}", out_dir=str(tmp_path))
+        code += _BOUNDS_TAIL
+        result = _run_headless(code, tmp_path, label)
+    bounds = result["bounds"]
+    wheels = [n for n in bounds if n.startswith("Wheel.")]
+    assert wheels, f"{label} built no wheels: {result['part_names']}"
+    for wheel in wheels:
+        z0, z1 = _span(bounds, wheel, 2)
+        assert z1 - z0 <= wr * 2.0 + 0.002, (
+            f"{label}: {wheel} is {z1 - z0:.4f} tall but its nominal diameter is "
+            f"{wr * 2.0:.4f} — the tread is proud of the rolling radius, so the "
+            f"wheel no longer sits flush on the ground"
+        )
+        x0, x1 = _span(bounds, wheel, 0)
+        assert x1 - x0 <= ww * 1.12 + 0.002, (
+            f"{label}: {wheel} is {x1 - x0:.4f} wide but wheel_w is {ww:.4f} "
+            f"(hub adds 8%) — the tread has blown out sideways into lugs"
+        )
 
 
 # vehicle_generator's detailed builder writes ONE object (`obj`), not a named
@@ -438,4 +568,78 @@ def test_vehicle_builds_clean_in_real_blender(kind, label, raw):
     assert result["rigged"] is True
     assert result["nonmanifold_or_invalid"] == [], (
         f"non-manifold/invalid mesh in {kind}/{label}: {result['nonmanifold_or_invalid']}"
+    )
+
+
+# The car is ONE welded mesh — wheels, lights and body share it, and which part
+# you are looking at is decided purely by each face's material_index. That makes a
+# missed material assignment invisible to every geometry check in this file: the
+# mesh stays manifold, the wheel stays exactly where it belongs, and it renders in
+# body paint. This tail reports material slots by WORLD position so the tests below
+# can assert what each region is actually made of.
+_VG_MATERIAL_TAIL = '''
+import mathutils as _mu9
+bpy.context.view_layer.update()
+_slots = [m.name if m else "" for m in obj.data.materials]
+_ix = {n: i for i, n in enumerate(_slots)}
+_half_w = PARAMS["body_w"] * 0.5
+_half_l = PARAMS["body_len"] * 0.5
+_outboard = {}
+_side = {}
+for _p in obj.data.polygons:
+    _c = obj.matrix_world @ _p.center
+    _name = _slots[_p.material_index] if _p.material_index < len(_slots) else "?"
+    if abs(_c.x) > _half_w + 0.02:                      # only wheels reach out here
+        _outboard[_name] = _outboard.get(_name, 0) + 1
+    if abs(_c.x) > _half_w * 0.88 and abs(_c.y) < _half_l * 0.60:   # door flank
+        _side[_name] = _side.get(_name, 0) + 1
+result["material_slots"] = _slots
+result["outboard_face_materials"] = _outboard
+result["flank_face_materials"] = _side
+import json as _json9, os as _os9
+with open(_os9.path.join(_OUT_DIR, COLL + ".result.json"), "w", encoding="utf-8") as _f9:
+    _json9.dump(result, _f9, indent=2)
+'''
+
+
+@pytest.mark.blender_render
+@pytest.mark.parametrize("label,raw", [
+    ("sedan", {}),
+    ("suv", {"body_h": 1.05, "wheel_r": 0.60, "cabin_h": 0.80, "body_len": 4.6}),
+    ("extreme_wheel", {"wheel_r": 0.95, "wheel_w": 0.62, "rim": 0.72}),
+])
+def test_car_wheels_are_rubber_not_bodywork(label, raw):
+    """Every face out at the wheels is tyre or hub — never body paint.
+
+    add_wheel assigned Material.tire only to the tread band it collected for
+    grooving, so each tyre's two end caps (one big n-gon covering the whole disc)
+    kept material slot 0 and rendered in BODY PAINT. All four wheels came out
+    body-coloured with a thin black rim, on a mesh that passes every manifold,
+    bone-offset and part-name check in this file.
+
+    The flank assertion covers the second half of the same class of defect:
+    recessed_grid recolours every cell it creates, and the side face IS the whole
+    door, so asking it for Material.trim turned the entire flank black on a coin
+    flip of the random seed.
+    """
+    p = vg.clamp_params(raw)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        code = vg.build_detailed_code(p, coll=f"PROC_{label}", name=label,
+                                      seed_str=label, kind="car",
+                                      out_dir=str(tmp_path))
+        code += _VG_MATERIAL_TAIL
+        result = _run_headless(code, tmp_path, label)
+    outboard = result["outboard_face_materials"]
+    assert outboard, f"{label}: no faces found outboard of the body at all"
+    assert outboard.get("veh_paint", 0) == 0, (
+        f"{label}: {outboard['veh_paint']} body-paint face(s) out at the wheels — "
+        f"the tyre sidewalls are painted the body colour. Got {outboard}"
+    )
+    assert outboard.get("veh_tire", 0) > 0, f"{label}: no rubber at the wheels: {outboard}"
+
+    flank = result["flank_face_materials"]
+    assert flank.get("veh_trim", 0) == 0, (
+        f"{label}: {flank['veh_trim']} trim face(s) on the door flank — the side "
+        f"character line has repainted the whole panel black. Got {flank}"
     )

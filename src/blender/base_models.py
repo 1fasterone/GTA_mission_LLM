@@ -75,7 +75,11 @@ BASE_PARAM_SCHEMA: dict[str, dict[str, tuple]] = {
     "bike": {
         "wheelbase":   (1.05, 0.60, 1.60),
         "wheel_r":     (0.34, 0.20, 0.55),
-        "wheel_w":     (0.10, 0.06, 0.32),   # thin (road) -> fat (dirt/chopper)
+        # tyre width, metres. The DEFAULT bike is a bicycle (pedals=1, engine=0),
+        # so the default tyre must be a bicycle's: 45 mm is a city/hybrid tyre.
+        # The old 0.10 default put a 100 mm motorcycle tyre on every pedal bike,
+        # and lo=0.06 made a road tyre inexpressible at any knob setting.
+        "wheel_w":     (0.045, 0.022, 0.32),  # road 25 mm -> chopper 320 mm
         "frame_h":     (0.40, 0.25, 0.65),
         "handlebar_w": (0.50, 0.30, 0.80),
         "rim":         (0.55, 0.0, 0.70),
@@ -239,11 +243,14 @@ def keyword_hints(prompt: str, base: str) -> dict:
         if any(w in p for w in ("motorbike", "motorcycle", "chopper", "moped")):
             out.update(engine=1.0, tank=1.0, pedals=0.0, wheel_w=0.18)
         if "scooter" in p:
-            out.update(engine=1.0, tank=0.0, pedals=0.0, wheel_r=0.26)
+            out.update(engine=1.0, tank=0.0, pedals=0.0, wheel_r=0.26, wheel_w=0.10)
         if "unicycle" in p:
             out.update(wheels=1.0, pedals=1.0, engine=0.0)
         if "bicycle" in p:
-            out.update(engine=0.0, tank=0.0, pedals=1.0, wheel_w=0.08)
+            # no wheel_w here: the schema default is already a bicycle tyre, and
+            # forcing one would undo the off-road cue above — "mountain bicycle"
+            # should keep its 240 mm knobblies AND get pedals back.
+            out.update(engine=0.0, tank=0.0, pedals=1.0)
     elif base == "furniture":
         # kind of piece (later cues win, so generic "table" stays a clean default)
         if "table" in p:
@@ -263,7 +270,10 @@ def keyword_hints(prompt: str, base: str) -> dict:
         if any(w in p for w in ("dresser", "drawers", "cabinet", "nightstand", "wardrobe")):
             out.update(width=1.0, depth=0.5, height=0.9, legs=0, drawers=4)
         if "bed" in p:
-            out.update(width=1.6, depth=2.0, height=0.5, legs=4, cushion=1.0)
+            # seat=1 is what turns `cushion` into real padding (the builder gates
+            # the upholstered path on seat AND cushion). Without it a bed came out
+            # a bare moulded slab on legs — a low table, not a mattress.
+            out.update(width=1.6, depth=2.0, height=0.5, legs=4, cushion=1.0, seat=1.0)
         if "round" in p or "pedestal" in p:
             out["legs"] = 1
     elif base == "weapon":
@@ -423,21 +433,28 @@ def _wheel_ring(obj_name, center, radius, width, rgb, groove, end_notch):
             return _atan2(c.z - center.z, c.y - center.y)
 
         side.sort(key=_angle)
-        groove_depth = radius * 0.05
+        # notch()'s `inset` is an ABSOLUTE distance (inset_individual's thickness),
+        # not a fraction of the face. A flat 0.10 exceeded the whole face on any
+        # tyre narrower than 200 mm, so inset_individual inverted and the grooves
+        # came out as lugs standing PROUD of the tread — which is what made every
+        # bicycle look like a fatbike. Size both insets off the face itself.
+        tread_arc = 2 * _PI * radius / 20.0          # circumferential face length
+        tread_inset = min(width, tread_arc) * 0.22
+        groove_depth = min(radius * 0.05, width * 0.35)
         for i, f in enumerate(side):
             if not f.is_valid:
                 continue
             near_bottom = abs(_angle(f) - (-1.5708)) < 0.35   # contact-patch arc, stays full radius
             if i % 2 == 1 and not near_bottom:
                 try:
-                    notch(bm, f, inset=0.10, depth=groove_depth)
+                    notch(bm, f, inset=tread_inset, depth=groove_depth)
                 except Exception:
                     pass
     if end_notch:
         for cap in (cap0, cap1):
             if cap.is_valid:
                 try:
-                    notch(bm, cap, inset=0.35, depth=radius * 0.04)
+                    notch(bm, cap, inset=radius * 0.35, depth=radius * 0.04)
                 except Exception:
                     pass
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
@@ -1445,6 +1462,7 @@ def build(p, ox):
     col = tuple(p["color"]); dark = (0.10, 0.10, 0.10)
     brass = (0.62, 0.50, 0.24)
     pad = tuple(min(1.0, c + 0.06) for c in col)        # lighter upholstery tint
+    pad2 = tuple(min(1.0, c + 0.13) for c in col)       # loose cushions, lighter again
     parts = []
 
     def tag(o, role):
@@ -1460,9 +1478,14 @@ def build(p, ox):
         if moulded and t < min(sw, sd) * 0.06:
             moulded = False        # a 15 mm shelf takes a crisp arris, not an ogee:
                                    # moulding one and shading it smooth reads as a pillow
+        # A puffy pad's two bulge rings scale CUMULATIVELY (1.05 * 1.07 = 1.1235),
+        # so the finished cushion used to come out 12% larger than the caller asked
+        # for. Start the top ring in by exactly that factor: `sw`/`sd` then bound
+        # the FINISHED pad. (The unaccounted growth is what buried each sofa
+        # cushion 60 mm inside the arm beside it.)
+        k = 0.8901 if puffy else (0.94 if moulded else 1.0)
         bm = bmesh.new()
-        v, e = quad_ring(bm, (cx, cy, z_top), sw * (0.94 if moulded else 1.0),
-                         sd * (0.94 if moulded else 1.0), axis="Z")
+        v, e = quad_ring(bm, (cx, cy, z_top), sw * k, sd * k, axis="Z")
         bm.faces.new(v[::-1])
         if puffy:
             v, e = extrude_ring(bm, e, translate=(0, 0, -t * 0.16), scale=(1.05, 1.05, 1))
@@ -1530,20 +1553,37 @@ def build(p, ox):
     leg_top = surf_top - pan_t
     side_t = max(0.03, top_t)
     puffy = bool(seat and cushion)
-    # An upholstered seat is a frame deck carrying LOOSE cushions, and how many
-    # depends on how wide the piece is: one for an armchair, two or three across a
-    # sofa. One full-width pad over the whole frame reads as a bench with padding.
-    n_cush = max(1, min(3, int(round(w / max(0.55, d * 0.90))))) if puffy else 1
+    br_h = max(0.30, h * 0.95)          # backrest height above the seat
+    # A padded seat WITH a back is a sofa/armchair, and a sofa is defined by its
+    # ARMS: a rolled bolster carried on an upholstered outer panel, flanking the
+    # seat. The cushions therefore span the width BETWEEN the arms — running them
+    # out to the outer edge leaves each arm buried inside the end cushion, which
+    # is what made this piece read as a padded bench.
+    arms = bool(cushion and back)
+    arm_w = min(max(0.10, d * 0.20), w * 0.24) if arms else 0.0
+    roll_r = arm_w * 0.46               # the roll that caps an arm / the back
+    arm_h = max(0.15, br_h * 0.52)      # arm top above the seat
+    back_t = max(0.06, side_t * 2.0) if arms else 0.0     # upholstered back frame
+    bc_t = max(0.10, d * 0.16) if arms else 0.0           # back-cushion thickness
+    inner_w = w - arm_w * 2.0
+    # how many seat cushions: one for an armchair, two or three across a sofa
+    n_cush = max(1, min(3, int(round(inner_w / max(0.55, d * 0.90))))) if puffy else 1
     if puffy:
         plat_t = pan_t * 0.34
         cush_t = pan_t - plat_t
-        slab("top", ox, 0.0, surf_top - cush_t, w, d, plat_t, col, "surface",
+        slab("top", ox, 0.0, surf_top - cush_t, w, d, plat_t, pad, "surface",
              moulded=False)
-        gap = w * 0.010
-        cw = (w - gap * (n_cush - 1)) / n_cush
+        # a seat cushion runs from the front edge back to the FACE of the back
+        # cushion, not the full depth — at full depth it buries itself in the back
+        y_front = d * 0.5 - 0.006
+        y_rear = -d * 0.5 + (back_t + bc_t if arms else 0.02)
+        cd = max(d * 0.30, y_front - y_rear)
+        cy = y_front - cd * 0.5
+        gap = inner_w * 0.012
+        cw = (inner_w - gap * (n_cush - 1)) / n_cush
         for i in range(n_cush):
-            slab("cushion_%d" % i, ox - w * 0.5 + cw * (i + 0.5) + gap * i, 0.0,
-                 surf_top, cw, d * 0.96, cush_t, pad, "surface",
+            slab("cushion_%d" % i, ox - inner_w * 0.5 + cw * (i + 0.5) + gap * i, cy,
+                 surf_top, cw, cd, cush_t, pad2, "surface",
                  moulded=False, puffy=True)
     else:
         slab("top", ox, 0.0, surf_top, w, d, pan_t, col, "surface")
@@ -1603,30 +1643,57 @@ def build(p, ox):
                 slab("apron_x_%d" % (sx > 0), ox + sx * lx, 0.0, ap_z, ap_t,
                      abs(ly) * 2.0, ap_h, col, "body", moulded=False)
 
-    # backrest. Upholstered (cushion) means ONE padded back and a pair of padded
+    # backrest. Upholstered (cushion) means a rolled back and a pair of rolled
     # arms — stiles with open slats between them is a garden bench, not a sofa.
     # Bare timber keeps the joined chair back: stiles, crest rail, mid rail.
     if back:
-        br_h = max(0.30, h * 0.95)
         by = -d * 0.5 + side_t
         st_w = max(0.03, w * 0.06)
-        if cushion:
-            arm_w = st_w * 1.9
-            arm_h = max(0.14, br_h * 0.62)
+        if arms:
+            def bolster(name, a, b, r):
+                """The roll that caps an arm or a back — a lofted tube along the
+                part's own axis with both ends drawn in, so it terminates in a
+                scroll instead of a cut face. This is the part that makes an
+                upholstered panel read as an ARM rather than a stray cushion."""
+                import mathutils
+                a = mathutils.Vector(a); b = mathutils.Vector(b)
+                if (b - a).length < 1e-6:
+                    return
+                u = (b - a).normalized()
+                o = loft(name, [(a - u * r * 0.10, r * 0.55),
+                                (a + u * r * 0.55, r * 0.98),
+                                (b - u * r * 0.55, r * 0.98),
+                                (b + u * r * 0.10, r * 0.55)], pad, n=16)
+                finish(o, smooth=True, bevel=0.002)
+                tag(o, "back")
+
+            arm_top = surf_top + arm_h
+            arm_d = d * 0.96
+            arm_z0 = surf_top - pan_t            # the arm lands on the frame rail
             for sx in (1, -1):
-                slab("arm_%d" % (sx > 0), ox + sx * (w * 0.5 - arm_w * 0.5), 0.0,
-                     surf_top + arm_h, arm_w, d * 0.94, arm_h, pad, "back",
+                ax = ox + sx * (w * 0.5 - arm_w * 0.5)
+                slab("arm_%d" % (sx > 0), ax, 0.0, arm_top - roll_r, arm_w, arm_d,
+                     max(0.05, arm_top - roll_r - arm_z0), pad, "back",
                      moulded=False, puffy=True)
+                bolster("arm_roll_%d" % (sx > 0),
+                        (ax, arm_d * 0.5, arm_top - roll_r),
+                        (ax, -arm_d * 0.5, arm_top - roll_r), roll_r)
+            # the back is upholstered too: frame panel + rolled top rail. NOT
+            # puffy — a 7% bulge on a 2 m panel would swell it past the arms.
+            back_top = surf_top + br_h
+            byc = -d * 0.5 + back_t * 0.5
+            slab("back", ox, byc, back_top - roll_r, w, back_t,
+                 max(0.05, back_top - roll_r - arm_z0), pad, "back", moulded=False)
+            bolster("back_roll", (ox - w * 0.5 + roll_r * 0.3, byc, back_top - roll_r),
+                    (ox + w * 0.5 - roll_r * 0.3, byc, back_top - roll_r), roll_r)
             # back cushions match the seat cushions across the width, inside the arms
-            bw = w - arm_w * 2.0
-            gap = bw * 0.012
-            cw = (bw - gap * (n_cush - 1)) / max(1, n_cush)
-            slab("back", ox, by + side_t * 0.2, surf_top + br_h, w, side_t * 1.6,
-                 br_h, col, "back", moulded=False)               # the frame behind
+            gap = inner_w * 0.012
+            cw = (inner_w - gap * (n_cush - 1)) / max(1, n_cush)
             for i in range(n_cush):
                 slab("back_cushion_%d" % i,
-                     ox - bw * 0.5 + cw * (i + 0.5) + gap * i, by + side_t * 1.5,
-                     surf_top + br_h * 0.94, cw, side_t * 2.2, br_h * 0.80, pad,
+                     ox - inner_w * 0.5 + cw * (i + 0.5) + gap * i,
+                     -d * 0.5 + back_t + bc_t * 0.5,
+                     surf_top + br_h * 0.90, cw, bc_t, br_h * 0.90, pad2,
                      "back", moulded=False, puffy=True)
         else:
             for sx in (1, -1):
