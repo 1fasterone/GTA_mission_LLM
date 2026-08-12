@@ -79,10 +79,24 @@ and was deleted rather than kept as a dead, drifting duplicate.
   extrude+rake greenhouse, `recessed_grid` grille/vents, real PBR materials with procedural
   normal-map noise), not a primitive-composite. `"car"` still keyword-routes correctly
   (`base_models.keyword_base`) into this path via `src/micro/model.py`'s `_variant_table()`.
-- **Still primitive today (candidate for the next AAA pass):** `add_wheel`/`add_disc`/`add_strut`
-  (plain `_cone()` cylinders for wheels/lights/struts) and `add_slab` (`bmesh.ops.create_cube` for
-  wings/fins) in `vehicle_generator.py` — geometrically simple shapes merged into the same welded
-  mesh, not a separate-object union, but not sculpted detail either.
+- **The four part helpers are NOT primitives** (this was previously recorded as a known limit and
+  was wrong): `add_wheel` is a treaded tyre plus a spoked chrome hub, `add_disc` a domed lens,
+  `add_slab` a tapered aerofoil, `add_strut` a two-segment leg with a joint bulge. The file
+  contains no `primitive_*_add` call at all. They are merged into the welded body mesh rather than
+  unioned as separate objects, and that is **deliberate, not a gap**: `rig_vehicle` skin-binds each
+  wheel's vertices to its `Wheel.*` bone via a MATERIAL test (`Material.tire`) over the single
+  mesh, and `_finalize` bakes the whole vehicle to the ground as one object. Splitting the parts
+  out would break both. Do not "fix" it.
+- **The real remaining gap is wheel arches.** The body is a slab-sided box, so each wheel is sunk
+  into a flat flank with no arch cut around it — the biggest tell left on the car.
+- **Because it is one mesh, a part's identity is its `material_index` alone**, which makes a missed
+  material assignment invisible to every geometry check: the mesh stays manifold and the part stays
+  in place, it just renders as something else. Two such defects were fixed here — `add_wheel`
+  assigned `Material.tire` only to the tread band it collected for grooving, leaving each tyre's
+  two end caps (one n-gon covering the whole disc) on slot 0, so **all four wheels rendered in body
+  paint**; and the side character line asked `recessed_grid` for `Material.trim`, which recolours
+  every cell it creates on a face that IS the whole door, turning the entire flank black on a coin
+  flip of the random seed. `pytest -m blender_render -k rubber` asserts material by world position.
 - **Routing contract (both CLIs):** a base that keyword-routes here but has no builder here must
   reach its real builder or stop — it must never quietly become another base. `clamp_params` and
   `build_base_code` raise `UnknownBaseError` (`[base.strict]`, naming where the builder lives), and
@@ -143,8 +157,14 @@ and was deleted rather than kept as a dead, drifting duplicate.
   `back_panel`, `plinth`, `pedestal`) with recessed fields, `shelf_*`, a joined back
   (`back_stile_*` + `back` crest rail + `back_rail`), and `Drawer.*` fronts with a recessed panel
   and a turned brass `knob_*`. Upholstered pieces (`seat`+`cushion`) become a frame deck carrying
-  loose `cushion_*` and `back_cushion_*` (1 for an armchair, 2–3 across a sofa) between padded
-  `arm_*` — one full-width pad read as a padded bench.
+  loose `cushion_*` and `back_cushion_*` (1 for an armchair, 2–3 across a sofa). With a `back` they
+  gain real ARMS: an upholstered `arm_*` panel landing on the frame rail, capped by an `arm_roll_*`
+  bolster lofted front-to-back, plus a `back` panel with its own `back_roll` top rail. The cushions
+  span the width BETWEEN the arms — running them the full width buried each arm inside the end
+  cushion, and the piece read as a padded bench. Note `slab(puffy=True)` bulges its pad out to
+  exactly the `sw`/`sd` asked for; its two bulge rings scale cumulatively (1.05 × 1.07), so the
+  top ring starts in by that factor. A padded piece must set BOTH `seat` and `cushion` — `cushion`
+  alone is silently inert (that is what left `bed` a bare slab on legs).
 - **Toolkit:** `quad_ring`/`extrude_ring` for slabs and panels, `notch` for recessed fields and the
   cushion's stitched seam, `loft()` for turned legs, columns and knobs. Moulding is auto-dropped on
   panels thinner than 6% of their footprint: a 15 mm shelf takes a crisp arris, and moulding one
@@ -189,7 +209,14 @@ and was deleted rather than kept as a dead, drifting duplicate.
 - **Toolkit:** `loft()` for every tube (an arbitrary spine, so the swept bar and bent exhaust are
   the same call as a straight seat tube, and a butted tube is just a radius per station);
   `quad_ring`/`extrude_ring` for hard-surface parts; `_se_ring` (superellipse) for saddle and tank.
-- **Scale knobs:** wheelbase, wheel_r, wheel_w, frame_h, handlebar_w, rim.
+- **Scale knobs:** wheelbase, wheel_r, wheel_w, frame_h, handlebar_w, rim. `wheel_w` spans
+  0.022–0.32 m (road tyre → chopper) and defaults to **0.045**, a city/hybrid bicycle tyre: the
+  default bike is a bicycle (`pedals`=1, `engine`=0), so its default tyre must be one. The old
+  0.10 default put a motorcycle tyre on every pedal bike and the old 0.06 floor made a road tyre
+  unrequestable. Tread grooves are sized off the tread face itself — `notch()`'s `inset` is an
+  ABSOLUTE distance, and the old flat 0.10 exceeded the whole face on any tyre under 200 mm, so
+  `inset_individual` inverted and the grooves stood PROUD of the tread as lugs, moving the tyre's
+  lowest point and quietly breaking the `wheel_z = wheel_r` ground-contact assumption.
 - **Structural knobs:** `wheels` (1 unicycle / 2), `engine`(0/1 → motorbike vs bicycle),
   `tank`(0/1), `pedals`(0/1), `suspension`(0/1, dirt forks).
 - **Rig:** root → frame; `steer` (fork + handlebar bind to it), `Wheel.F/R` (spin, front parented
@@ -244,9 +271,10 @@ then live-verify in Blender (build → rig → pose → render) and confirm rigg
 - **No base is a primitive-composite any more.** Every family in `_BUILDERS` (plus `car` in
   `vehicle_generator.py`) is edge-loop sculpted or ring-lofted, and each one is pinned by a
   `_no_bare_primitives` gate over its whole knob matrix plus a headless Blender build that asserts
-  manifold meshes. What remains primitive is *inside* `vehicle_generator.py`
-  (`add_wheel`/`add_disc`/`add_strut`/`add_slab`, listed under car above) — simple shapes merged
-  into the same welded body mesh, not separate-object unions. `tube_between()` in `_PARTS` is now
+  manifold meshes. Nothing primitive remains inside `vehicle_generator.py` either — its four part
+  helpers (`add_wheel`/`add_disc`/`add_strut`/`add_slab`) are sculpted, and their merging into the
+  welded body mesh is required by `rig_vehicle`'s material-based wheel binding rather than a gap
+  (see the car section above; the real one left there is wheel arches). `tube_between()` in `_PARTS` is now
   unused by every base (bike was its last caller) and is the one remaining
   `primitive_cylinder_add` in the shared toolkit; it stays only as a helper for future bases and
   should be replaced by `loft()` if anything reaches for it. **weapon** was the first: every part
@@ -257,7 +285,7 @@ then live-verify in Blender (build → rig → pose → render) and confirm rigg
   Unity pipeline (UVs + LOD0/1 + convex collider) like humanoid/plane/boat. **car** (see the car
   section above) is built by `vehicle_generator.py`'s own welded-bmesh toolkit
   (`extrude_face`/`scale_face`/`recessed_grid`) with real PBR materials — not primitive-composite for
-  the body, though its wheels/lights/struts/wing-slabs still are. **plane** was the third: the
+  the body, and its wheels/lights/struts/wing-slabs are sculpted too. **plane** was the third: the
   ellipsoid-scaled `sphere()` fuselage/nose/tail is now a `ngon_ring`/`extrude_ring` ring-loft tube
   with tapered nose/tail caps, the cockpit is a real `uvsphere_bm` dome, wings/stabilisers/prop
   blades are `quad_ring`-tapered aerofoils, engines are ring-loft nacelles, gear struts are tapered
