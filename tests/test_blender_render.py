@@ -253,6 +253,150 @@ def test_boat_builds_clean_in_real_blender(label, raw, expect):
     assert missing == [], f"{label} lost sculpted part(s) {missing}: {result['part_names']}"
 
 
+# bike's rigger binds by ROLE and places bones from BIKE_BONES. On top of the usual
+# manifold/vertex-group checks this tail reports each wheel bone's head against its
+# wheel's actual vertex centroid: the bones used to be positioned from obj.location,
+# which is (0,0,0) for every bmesh part in base_models (world-coord verts, object at
+# the origin), so rolling a wheel bone swung the wheel around the world origin.
+_BIKE_VALIDATE_TAIL = '''
+import mathutils as _mu6
+_bad = []
+for _o in _coll().objects:
+    if _o.type != "MESH":
+        continue
+    import bmesh as _bm6
+    _b = _bm6.new(); _b.from_mesh(_o.data)
+    _nm = [e for e in _b.edges if not e.is_manifold]
+    if _nm or _o.data.validate(verbose=False):
+        _bad.append(_o.name)
+    _b.free()
+result["nonmanifold_or_invalid"] = _bad
+_rig = [o for o in _coll().objects if o.type == "ARMATURE"]
+_bones = {b.name: b for b in _rig[0].data.bones} if _rig else {}
+result["missing_bones"] = sorted({n for n, _h, _t, _p in BIKE_BONES} - set(_bones))
+_empty_vg = []
+for _o in _coll().objects:
+    if _o.type == "MESH":
+        for _vg in _o.vertex_groups:
+            _n = sum(1 for _v in _o.data.vertices for _g in _v.groups
+                     if _g.group == _vg.index and _g.weight > 0)
+            if _n == 0:
+                _empty_vg.append(_o.name + "/" + _vg.name)
+result["empty_vertex_groups"] = _empty_vg
+_off = {}
+for _o in _coll().objects:
+    if _o.type != "MESH" or _o.get("role") != "wheel":
+        continue
+    _label = _o.get("wheel_label", "")
+    _b = _bones.get(_label)
+    if _b is None:
+        continue
+    _c = sum((_o.matrix_world @ _mu6.Vector(_v.co) for _v in _o.data.vertices),
+             _mu6.Vector()) / max(1, len(_o.data.vertices))
+    _off[_label] = round((_c - _b.head_local).length, 4)
+result["wheel_bone_offsets"] = _off
+result["part_names"] = sorted(o.name for o in _coll().objects if o.type == "MESH")
+import json as _json6, os as _os6
+with open(_os6.path.join(_OUT_DIR, COLL + ".result.json"), "w", encoding="utf-8") as _f6:
+    _json6.dump(result, _f6, indent=2)
+'''
+
+
+@pytest.mark.blender_render
+@pytest.mark.parametrize("label,raw,expect", [
+    ("bicycle", {}, ("Wheel.F", "Wheel.R", "top_tube", "chain_stay_1", "seat",
+                     "chainring", "crank_0", "handlebar", "grip_0")),
+    ("motorbike", {"engine": 1, "tank": 1, "pedals": 0},
+     ("engine", "cylinder", "exhaust", "tank")),
+    ("dirtbike", {"engine": 1, "tank": 1, "pedals": 0, "suspension": 1,
+                  "wheel_w": 0.20}, ("fork_0", "fork_1", "steerer")),
+    ("unicycle", {"wheels": 1}, ("Wheel.C", "post", "seat")),
+    ("extreme_min", {"wheelbase": 0.60, "wheel_r": 0.20, "wheel_w": 0.06,
+                     "frame_h": 0.25, "handlebar_w": 0.30, "engine": 1, "tank": 1,
+                     "suspension": 1, "pedals": 1}, ("engine", "tank")),
+    ("extreme_max", {"wheelbase": 1.60, "wheel_r": 0.55, "wheel_w": 0.32,
+                     "frame_h": 0.65, "handlebar_w": 0.80, "engine": 1, "tank": 1,
+                     "suspension": 1, "pedals": 1}, ("engine", "tank")),
+])
+def test_bike_builds_clean_in_real_blender(label, raw, expect):
+    """Every bike part is a real, manifold, error-free mesh, and each wheel bone sits
+    ON its wheel rather than at the world origin — the rig defect this gate was
+    written to catch, invisible to compile-only tests because the bones were placed
+    from obj.location, which every bmesh part legitimately leaves at (0,0,0)."""
+    p = clamp_params("bike", raw)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        code = build_base_code("bike", p, coll=f"PROC_{label}", rig=True, demo=True,
+                               out_dir=str(tmp_path))
+        code += _BIKE_VALIDATE_TAIL
+        result = _run_headless(code, tmp_path, label)
+    assert result["parts"] > 0
+    assert result["nonmanifold_or_invalid"] == [], (
+        f"non-manifold/invalid mesh(es) in {label}: {result['nonmanifold_or_invalid']}"
+    )
+    assert result["missing_bones"] == [], f"missing BIKE_BONES in {label}: {result['missing_bones']}"
+    assert result["empty_vertex_groups"] == [], (
+        f"empty vertex group(s) in {label}: {result['empty_vertex_groups']}"
+    )
+    offsets = result["wheel_bone_offsets"]
+    assert offsets, f"{label} bound no wheel to a wheel bone"
+    for bone, dist in offsets.items():
+        assert dist < 0.05, (
+            f"{label}: bone {bone} is {dist} from its wheel's centre — rolling it "
+            f"orbits the wheel instead of spinning it"
+        )
+    missing = [n for n in expect if n not in result["part_names"]]
+    assert missing == [], f"{label} lost sculpted part(s) {missing}: {result['part_names']}"
+
+
+# _VALIDATE_TAIL plus the emitted part names, for the un-rigged bases whose gate is
+# "is every mesh real and did the sculpted parts all show up".
+_PART_NAMES_TAIL = _VALIDATE_TAIL.replace(
+    'import json as _json2, os as _os2',
+    'result["part_names"] = sorted(o.name for o in _coll().objects if o.type == "MESH")\n'
+    'import json as _json2, os as _os2')
+
+
+@pytest.mark.blender_render
+@pytest.mark.parametrize("label,raw,expect", [
+    ("table", {}, ("top", "leg_0", "leg_0_block", "apron_y_1")),
+    ("chair", {"seat": 1, "back": 1, "width": 0.45, "depth": 0.45, "height": 0.45},
+     ("back", "back_stile_0", "back_rail")),
+    ("sofa", {"seat": 1, "back": 1, "cushion": 1, "width": 1.9, "depth": 0.85,
+              "height": 0.42}, ("top", "back")),
+    ("bookcase", {"legs": 0, "shelves": 4, "height": 1.8, "depth": 0.32},
+     ("side_0", "back_panel", "plinth", "shelf_3")),
+    ("dresser", {"legs": 0, "drawers": 4, "height": 1.1},
+     ("Drawer.0", "Drawer.3", "knob_0", "body")),
+    ("desk", {"drawers": 3, "width": 1.4}, ("pedestal", "Drawer.2", "leg_3")),
+    ("pedestal_table", {"legs": 1, "width": 0.6, "depth": 0.6}, ("column", "foot")),
+    ("extreme_min", {"width": 0.30, "depth": 0.25, "height": 0.30, "top_t": 0.02,
+                     "leg_r": 0.02, "legs": 3, "shelves": 6, "drawers": 6},
+     ("top", "leg_0")),
+    ("extreme_max", {"width": 3.00, "depth": 2.20, "height": 2.20, "top_t": 0.20,
+                     "leg_r": 0.18, "legs": 4, "seat": 1, "back": 1, "cushion": 1,
+                     "drawers": 6}, ("top", "back")),
+])
+def test_furniture_builds_clean_in_real_blender(label, raw, expect):
+    """Every furniture part is a real, manifold, error-free mesh across the whole
+    knob matrix — the turned legs' profile-of-revolution loft, the moulded slab
+    edges, the notched carcass panels and drawer fields, and the puffy cushion with
+    its stitched seam."""
+    p = clamp_params("furniture", raw)
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        code = build_base_code("furniture", p, coll=f"PROC_{label}",
+                               out_dir=str(tmp_path))
+        code += _PART_NAMES_TAIL
+        result = _run_headless(code, tmp_path, label)
+    assert result["parts"] > 0
+    assert result["nonmanifold_or_invalid"] == [], (
+        f"non-manifold/invalid mesh(es) in {label}: {result['nonmanifold_or_invalid']}"
+    )
+    missing = [n for n in expect if n not in result["part_names"]]
+    assert missing == [], f"{label} lost sculpted part(s) {missing}: {result['part_names']}"
+
+
 # vehicle_generator's detailed builder writes ONE object (`obj`), not a named
 # collection iterated via _coll() — a different validate tail than base_models'.
 _VG_VALIDATE_TAIL = '''

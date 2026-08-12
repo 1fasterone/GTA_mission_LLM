@@ -217,10 +217,66 @@ def test_bike_builds_and_rigs_compile():
     code = build_base_code("bike", p, coll="PROC_bike", rig=True, demo=True)
     compile(code, "<bike_rig>", "exec")
     assert "def rig_model(parts, ox):" in code and "steer" in code
-    assert "make_wheel(" in code and "tube_between(" in code
+    assert "make_wheel(" in code
     # unicycle variant also compiles
     uni = clamp_params("bike", {"wheels": 1})
     compile(build_base_code("bike", uni, coll="PROC_uni", rig=True), "<uni>", "exec")
+
+
+def test_bike_rig_places_bones_from_the_bone_table_not_obj_location():
+    """Bone positions come from BIKE_BONES, built in build() from the numbers that
+    placed the geometry. They used to be read off obj.location, which is (0,0,0) for
+    every bmesh part in this file (world-coord verts, object left at the origin) —
+    so both wheel bones sat on the world origin and rolling one swung the wheel
+    around it. tests/test_blender_render.py measures the real distance."""
+    code = build_base_code("bike", clamp_params("bike", {}), coll="PROC_b", rig=True)
+    compile(code, "<b>", "exec")
+    assert "BIKE_BONES" in code
+    for bone in ('"root"', '"frame"', '"steer"', '"Wheel.F"', '"Wheel.R"'):
+        assert bone in code, bone
+    # bound the slice to rig_model itself: demo_pose follows it and legitimately
+    # sets pose-bone .location to demonstrate suspension travel
+    start = code.index("def rig_model(parts, ox):")
+    rig_src = _strip_prose(code[start:code.index("def demo_pose(", start)])
+    assert ".location" not in rig_src, "bike rigger is reading obj.location again"
+
+
+def test_bike_emit_uses_sculpting_toolkit_and_has_a_full_frame():
+    """The AAA pass: a real diamond frame (head/top/down/seat tubes and PAIRED
+    stays), twin fork blades on a crown, a swept bar with grips, a sculpted saddle
+    and superellipse tank, and a finned cylinder over a crankcase — all ring-lofted
+    or edge-loop extruded, none a bare primitive."""
+    code = build_base_code("bike", clamp_params("bike", {"engine": 1, "tank": 1,
+                                                         "pedals": 0}),
+                           coll="PROC_b", rig=True)
+    compile(code, "<b>", "exec")
+    for fn in ("def _kobj(", "def _se_ring(", "def loft(", "def extrude_ring("):
+        assert fn in code
+    for part in ('"head_tube"', '"top_tube"', '"down_tube"', '"seat_tube"',
+                 '"chain_stay_%d"', '"seat_stay_%d"', '"fork_%d"', '"fork_crown"',
+                 '"steerer"', '"handlebar"', '"grip_%d"', '"cylinder"', '"exhaust"'):
+        assert part in code, part
+    assert _no_bare_primitives(code, "bike")
+
+
+def test_bike_no_bare_primitive_calls_anywhere_in_the_knob_matrix():
+    for label, raw in [
+        ("bicycle", {}),
+        ("motorbike", {"engine": 1, "tank": 1, "pedals": 0}),
+        ("dirtbike", {"engine": 1, "tank": 1, "pedals": 0, "suspension": 1}),
+        ("unicycle", {"wheels": 1}),
+        ("chopper", {"engine": 1, "tank": 1, "wheelbase": 1.60, "wheel_w": 0.32}),
+        ("extreme_min", {"wheelbase": 0.60, "wheel_r": 0.20, "wheel_w": 0.06,
+                         "frame_h": 0.25, "handlebar_w": 0.30, "engine": 1,
+                         "tank": 1, "suspension": 1, "pedals": 1}),
+        ("extreme_max", {"wheelbase": 1.60, "wheel_r": 0.55, "wheel_w": 0.32,
+                         "frame_h": 0.65, "handlebar_w": 0.80, "engine": 1,
+                         "tank": 1, "suspension": 1, "pedals": 1}),
+    ]:
+        p = clamp_params("bike", raw)
+        code = build_base_code("bike", p, coll=f"PROC_{label}")
+        compile(code, f"<{label}>", "exec")
+        assert _no_bare_primitives(code, "bike"), label
 
 
 def test_bike_map_prompt_fallback():
@@ -273,6 +329,46 @@ def test_furniture_gets_noop_rigger():
                            coll="PROC_furniture", rig=True)
     compile(code, "<furniture_rig>", "exec")
     assert "def rig_model(parts, ox):\n    return None" in code   # static decor
+
+
+def test_furniture_emit_uses_sculpting_toolkit_and_real_joinery():
+    """The AAA pass: legs are TURNED on a profile of revolution and carry the post
+    block a legged piece's apron tenons into, slabs get a moulded edge, carcass
+    panels and drawer fronts get recessed fields, drawers get turned knobs. A slab
+    on four plain cylinders was the tell that this base was primitive-composite."""
+    code = build_base_code("furniture", clamp_params("furniture", {"drawers": 3}),
+                           coll="PROC_f")
+    compile(code, "<f>", "exec")
+    for fn in ("def _fobj(", "def slab(", "def turned_leg(", "def panel(",
+               "def loft(", "def notch("):
+        assert fn in code
+    for part in ('"top"', '"leg_%d"', '"apron_y_%d"', '"apron_x_%d"',
+                 '"Drawer.%d"', '"knob_%d"', '"pedestal"'):
+        assert part in code, part
+    assert _no_bare_primitives(code, "furniture")
+
+
+def test_furniture_no_bare_primitive_calls_anywhere_in_the_knob_matrix():
+    for label, raw in [
+        ("table", {}),
+        ("bookcase", {"legs": 0, "shelves": 4, "height": 1.8}),
+        ("dresser", {"legs": 0, "drawers": 5}),
+        ("desk", {"legs": 4, "drawers": 3}),
+        ("chair", {"seat": 1, "back": 1, "height": 0.46}),
+        ("sofa", {"seat": 1, "back": 1, "cushion": 1, "width": 1.9, "height": 0.42}),
+        ("pedestal", {"legs": 1}),
+        ("stool", {"seat": 1, "legs": 3, "height": 0.60}),
+        ("extreme_min", {"width": 0.30, "depth": 0.25, "height": 0.30, "top_t": 0.02,
+                         "leg_r": 0.02, "legs": 3, "shelves": 6, "drawers": 6,
+                         "seat": 1, "back": 1, "cushion": 1}),
+        ("extreme_max", {"width": 3.00, "depth": 2.20, "height": 2.20, "top_t": 0.20,
+                         "leg_r": 0.18, "legs": 4, "shelves": 6, "drawers": 6,
+                         "seat": 1, "back": 1, "cushion": 1}),
+    ]:
+        p = clamp_params("furniture", raw)
+        code = build_base_code("furniture", p, coll=f"PROC_{label}")
+        compile(code, f"<{label}>", "exec")
+        assert _no_bare_primitives(code, "furniture"), label
 
 
 def test_furniture_map_prompt_fallback():
@@ -350,6 +446,14 @@ def test_weapon_emit_uses_edge_loop_spine_toolkit():
     assert _no_bare_primitives(code, "weapon")
 
 
+def _strip_prose(text: str) -> str:
+    """Code with `#` comments AND triple-quoted docstrings removed, so a gate that
+    forbids a construct isn't tripped by the prose explaining why it was removed."""
+    body = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    body = re.sub(r'""".*?"""', "", body, flags=re.DOTALL)
+    return re.sub(r"'''.*?'''", "", body, flags=re.DOTALL)
+
+
 def _no_bare_primitives(code: str, base: str) -> bool:
     """True when `base`'s own build() text — not the always-present _HELPERS
     definitions, which legitimately contain these substrings — never calls a
@@ -360,10 +464,7 @@ def _no_bare_primitives(code: str, base: str) -> bool:
     AND triple-quoted docstrings first, so prose explaining what was REMOVED
     (e.g. build()'s own docstring saying "never a bare box()/cyl()" — plane's
     does, right where this slice starts) doesn't false-positive as a call."""
-    start = code.index("def build(p, ox):")
-    body = "\n".join(line.split("#", 1)[0] for line in code[start:].splitlines())
-    body = re.sub(r'""".*?"""', "", body, flags=re.DOTALL)
-    body = re.sub(r"'''.*?'''", "", body, flags=re.DOTALL)
+    body = _strip_prose(code[code.index("def build(p, ox):"):])
     return not any(f"{fn}(" in body for fn in ("box", "cyl", "cone", "sphere"))
 
 
