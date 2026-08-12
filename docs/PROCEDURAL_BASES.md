@@ -83,6 +83,16 @@ and was deleted rather than kept as a dead, drifting duplicate.
   (plain `_cone()` cylinders for wheels/lights/struts) and `add_slab` (`bmesh.ops.create_cube` for
   wings/fins) in `vehicle_generator.py` — geometrically simple shapes merged into the same welded
   mesh, not a separate-object union, but not sculpted detail either.
+- **Routing contract (both CLIs):** a base that keyword-routes here but has no builder here must
+  reach its real builder or stop — it must never quietly become another base. `clamp_params` and
+  `build_base_code` raise `UnknownBaseError` (`[base.strict]`, naming where the builder lives), and
+  `procedural_pipeline.py` auto-selects the detailed backend for `DETAILED_ONLY`
+  (= `DETAILED_BASES - BASE_PARAM_SCHEMA`, derived so it cannot go stale, currently `{"car"}`).
+  Both used to substitute `"furniture"` for an unrecognised base, so
+  `procedural_pipeline.py "a jeep with big tires"` emitted a **table** and reported it as base
+  `"car"`; `main.py unity-model` was always correct via `_VG_VARIANTS`. `plane` is deliberately NOT
+  in `DETAILED_ONLY` — base_models builds the edge-loop-sculpted plane, and auto-routing would swap
+  it for `vehicle_generator`'s. `--detailed` remains an explicit opt-in for it.
 
 ### 2. boat ✅ (implemented, AAA-sculpted)
 - **Variants:** rowboat, sailboat, schooner (2-mast), motorboat, tugboat/steamer.

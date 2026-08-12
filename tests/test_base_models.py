@@ -10,10 +10,11 @@ import re
 import pytest
 
 from src.blender.base_models import (
-    BASE_NAMES, BASE_PARAM_SCHEMA, HUMANOID_PALETTE, build_base_code, clamp_params,
-    keyword_base, keyword_hints,
+    BASE_NAMES, BASE_PARAM_SCHEMA, BASES_BUILT_ELSEWHERE, HUMANOID_PALETTE,
+    UnknownBaseError, _KEYWORD_BASE, build_base_code, clamp_params, keyword_base,
+    keyword_hints,
 )
-from procedural_pipeline import map_prompt
+from procedural_pipeline import DETAILED_ONLY, map_prompt
 
 
 # ── param clamping ────────────────────────────────────────────────────────────
@@ -32,12 +33,48 @@ def test_clamp_clamps_out_of_range_and_bad_values():
     assert p["legs"] == 4                  # non-numeric -> default
 
 
-def test_clamp_drops_unknown_keys_and_bad_base():
-    p = clamp_params("nonsense", {"bogus": 1, "width": 0.5})
+def test_clamp_drops_unknown_keys():
+    p = clamp_params("furniture", {"bogus": 1, "width": 0.5})
     assert "bogus" not in p
-    # "car" has no schema here (built by vehicle_generator.py instead) so it can't
-    # be the bad-base fallback; furniture is.
     assert set(p) == set(BASE_PARAM_SCHEMA["furniture"]) | {"color"}
+    assert p["width"] == pytest.approx(0.5)
+
+
+@pytest.mark.parametrize("fn", [
+    lambda b: clamp_params(b, {}),
+    lambda b: build_base_code(b, {}, coll="PROC_x"),
+])
+@pytest.mark.parametrize("base", ["car", "nonsense"])
+def test_unknown_base_abstains_loudly_instead_of_becoming_furniture(fn, base):
+    """Both entry points used to substitute "furniture" for any base they did not
+    recognise. `keyword_base("a jeep")` returns "car" — routed correctly, but built
+    by vehicle_generator.py — so that fallback silently emitted a TABLE and reported
+    it as base "car". Per CLAUDE.md's abstain-loudly rule the message must name the
+    remedy, not just the failure."""
+    with pytest.raises(UnknownBaseError) as exc:
+        fn(base)
+    msg = str(exc.value)
+    assert "[base.strict]" in msg and repr(base) in msg
+    assert "Fix:" in msg
+    for implemented in BASE_NAMES:
+        assert implemented in msg
+    if base == "car":
+        assert "vehicle_generator.py" in msg      # where it IS built
+        assert "--detailed" in msg                # ...and how to reach it
+
+
+def test_unknown_base_error_is_a_value_error():
+    """Subclassing ValueError keeps existing `except ValueError` param guards
+    working — the new type narrows, it does not break callers."""
+    assert issubclass(UnknownBaseError, ValueError)
+
+
+def test_every_keyword_route_is_buildable_or_named_as_built_elsewhere():
+    """No prompt can route to a base that nothing can build: every target of the
+    keyword table is either in _BUILDERS or carries a BASES_BUILT_ELSEWHERE entry
+    pointing at its real builder."""
+    for keywords, base in _KEYWORD_BASE:
+        assert base in BASE_NAMES or base in BASES_BUILT_ELSEWHERE, (base, keywords[0])
 
 
 def test_clamp_color_validation():
@@ -91,6 +128,29 @@ def test_build_base_code_tail_when_out_dir():
 def test_map_prompt_fallback_plane_and_humanoid():
     assert map_prompt("a small plane", use_llm=False)["base"] == "plane"
     assert map_prompt("a humanoid figure", use_llm=False)["base"] == "humanoid"
+
+
+def test_car_prompt_routes_to_the_detailed_backend_not_a_table():
+    """`python procedural_pipeline.py "a jeep with big tires"` used to emit a TABLE:
+    the base resolved to "car", base_models silently substituted furniture, and the
+    report still said base "car". A car has no base_models schema, so map_prompt
+    leaves params empty (the detailed path maps its own) and main() must take the
+    detailed backend with or without --detailed."""
+    m = map_prompt("a jeep with big tires", use_llm=False)
+    assert m["base"] == "car"
+    assert m["base"] in DETAILED_ONLY
+    assert m["params"] == {}, "car knobs come from map_vehicle_prompt, not clamp_params"
+    with pytest.raises(UnknownBaseError):
+        build_base_code(m["base"], m["params"], coll="PROC_jeep")
+
+
+def test_detailed_only_is_derived_and_excludes_plane():
+    """DETAILED_ONLY is computed from what base_models actually builds, so a base
+    moving in or out cannot leave a stale hard-coded list. plane must NOT be in it:
+    base_models builds the edge-loop-sculpted plane, and auto-routing would silently
+    swap it for vehicle_generator's."""
+    assert DETAILED_ONLY == {"car"}
+    assert "plane" not in DETAILED_ONLY and "plane" in BASE_NAMES
 
 
 def test_static_base_gets_noop_rigger():

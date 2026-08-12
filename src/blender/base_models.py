@@ -18,6 +18,15 @@ Pieces:
     in a collection at an X offset (runs in live MCP Blender or headless, like the
     rest of the package).
 
+Robustness is scoped to VALUES, not to the base itself: a bad LLM token in a param
+dict is clamped away, but an unknown base raises `UnknownBaseError` rather than
+quietly building something else. Both entry points used to substitute "furniture"
+for anything they did not recognise, which turned `keyword_base("a jeep")` -> "car"
+(routed correctly, built by vehicle_generator.py) into a silently-emitted TABLE,
+reported as base "car". That is the failure mode CLAUDE.md's "abstain loudly, never
+silently default" rule exists to prevent: the wrong model is harder to diagnose than
+a refusal naming the remedy.
+
 Coordinate care baked into the authored builders (where the LLM failed): Z-up, parts
 stand on the ground (z=0), wheels are side-facing cylinders (axle along X), slabs are
 scaled cubes. Proven believable live on an 8GB 4060.
@@ -146,6 +155,40 @@ _KEYWORD_BASE = [
       "sniper", "shotgun", "smg", "submachine", "musket", "blaster", "sidearm"), "weapon"),
     (("human", "humanoid", "person", "character", "man", "woman", "robot", "biped", "figure"), "humanoid"),
 ]
+
+
+# Bases that keyword_base can legitimately return but that this module does NOT
+# build — named in the abstain message so a caller landing on one is told where the
+# builder actually lives instead of just that it failed. "car" is the only one: it
+# routes here by keyword and is built by vehicle_generator.py's detailed bmesh
+# builder (see BASE_PARAM_SCHEMA's header note).
+BASES_BUILT_ELSEWHERE: dict[str, str] = {
+    "car": ("vehicle_generator.py (welded bmesh + real PBR materials). Reach it with "
+            '`python main.py unity-model "<prompt>"` or '
+            '`python procedural_pipeline.py "<prompt>" --detailed`'),
+}
+
+
+class UnknownBaseError(ValueError):
+    """A base has no schema/builder here. Subclasses ValueError so existing
+    `except ValueError` guards around param handling still catch it."""
+
+
+def _require_base(base: str, known, what: str) -> None:
+    """Abstain loudly on an unrecognised base. Both entry points route through here
+    so neither can drift back to a silent substitution."""
+    if base in known:
+        return
+    where = BASES_BUILT_ELSEWHERE.get(base)
+    fix = (f"build it with {where}" if where else
+           f"pick one of the implemented bases, or add {base!r} to BASE_PARAM_SCHEMA "
+           "and _BUILDERS")
+    raise UnknownBaseError(
+        f"[base.strict] base {base!r} {what} in base_models.py. "
+        f"Implemented here: {', '.join(sorted(known))}. Fix: {fix}. "
+        "This does not fall back to furniture - a prompt that asked for a vehicle "
+        "and silently received a table is harder to diagnose than this error."
+    )
 
 
 def keyword_base(prompt: str) -> Optional[str]:
@@ -283,8 +326,9 @@ def _clamp_color(v, default):
 
 def clamp_params(base: str, raw: Optional[dict]) -> dict:
     """Fill defaults + clamp every known knob to its range; validate colour; drop
-    unknown keys. A bad LLM token can never break the builder."""
-    base = base if base in BASE_PARAM_SCHEMA else "furniture"
+    unknown keys. A bad LLM token in a VALUE can never break the builder — but an
+    unknown `base` raises rather than silently returning another base's knobs."""
+    _require_base(base, BASE_PARAM_SCHEMA, "has no parameter schema")
     raw = raw or {}
     schema = BASE_PARAM_SCHEMA[base]
     out = {}
@@ -2071,8 +2115,11 @@ def build_base_code(base: str, params: dict, coll: str, ox: float = 0.0,
     rig  — also build the base's skeleton and skin-bind the parts (game-functional).
     demo — pose the rig (spin wheels + suspension) to demonstrate it moves.
     out_dir — append a tail that writes a result JSON (for the headless backend).
+
+    Raises UnknownBaseError for a base with no builder here — it will not emit a
+    different base's geometry under the requested name.
     """
-    base = base if base in _BUILDERS else "furniture"
+    _require_base(base, _BUILDERS, "has no builder")
     header = (
         "BASE = {b!r}\nCOLL = {c!r}\nOX = {x}\nRIG = {r}\nDEMO = {dm}\nPARAMS = {p}\n".format(
             b=base, c=coll, x=float(ox), r=bool(rig), dm=bool(demo), p=json.dumps(params))

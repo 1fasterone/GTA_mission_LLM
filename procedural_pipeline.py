@@ -39,6 +39,16 @@ from vehicle_generator import (
 
 # bases that have a high-detail single-mesh builder in vehicle_generator
 DETAILED_BASES = {"car", "plane"}
+# ...of those, the ones base_models cannot build AT ALL, so the detailed backend is
+# not an opt-in upgrade but the only way to serve the prompt. "car" is the case:
+# it keyword-routes to a real base, but its schema and builder live in
+# vehicle_generator.py, so without this the standard backend is handed a base
+# base_models refuses. Derived, not hard-coded, so moving a base in or out of
+# base_models can't leave a stale list behind. `plane` stays opt-in: base_models
+# builds the edge-loop-sculpted one that `--detailed` would otherwise replace.
+DETAILED_ONLY = DETAILED_BASES - set(BASE_PARAM_SCHEMA)
+# every base this CLI can legitimately end up on
+ROUTABLE = set(BASE_PARAM_SCHEMA) | DETAILED_BASES
 
 LLM_URL = "http://localhost:1234/v1/chat/completions"
 DEFAULT_MODEL = "qwen2.5-coder-7b-instruct"
@@ -103,26 +113,38 @@ def llm_json(prompt: str, model: str, system: str | None = None) -> dict | None:
     return None
 
 
+def _packed(base: str, raw: dict, source: str) -> dict:
+    """{base, params, source}, with params left EMPTY for a detailed-only base:
+    its knobs come from map_vehicle_prompt/map_plane_prompt on the detailed path,
+    and base_models.clamp_params would (correctly) refuse to invent them."""
+    if base in DETAILED_ONLY:
+        return {"base": base, "params": {}, "source": source}
+    return {"base": base, "params": clamp_params(base, raw), "source": source}
+
+
 def map_prompt(prompt: str, use_llm: bool = True, model: str = DEFAULT_MODEL) -> dict:
     """prompt -> {base, params(clamped, incl color), source}. LLM with deterministic
-    keyword fallback."""
+    keyword fallback.
+
+    Accepts any base in ROUTABLE, not just the ones base_models can build: SYSTEM's
+    own few-shot examples answer "car", and rejecting that used to drop a CORRECT
+    LLM answer on the floor and fall through to the keyword path."""
     if use_llm:
         try:
             j = llm_json(prompt, _resolve_model(model))
-            if j and j.get("base") in BASE_PARAM_SCHEMA:
+            if j and j.get("base") in ROUTABLE:
                 raw = dict(j.get("params") or {})
                 if "color" in j:
                     raw["color"] = j["color"]
-                return {"base": j["base"], "params": clamp_params(j["base"], raw),
-                        "source": "llm"}
+                return _packed(j["base"], raw, "llm")
         except Exception as exc:  # noqa: BLE001 - any LLM/transport failure -> fallback
             print(f"  [llm unavailable: {type(exc).__name__}: {exc}] -> keyword fallback")
-    # "car" is a valid ROUTING target (DETAILED_BASES) but has no schema in
-    # base_models.BASE_PARAM_SCHEMA (built by vehicle_generator.py instead), so it
-    # is not a safe default for the non-detailed base_models fallback path below.
-    base = keyword_base(prompt) or "furniture"
-    return {"base": base, "params": clamp_params(base, keyword_hints(prompt, base)),
-            "source": "fallback"}
+    base = keyword_base(prompt)
+    if base is None:
+        base = "furniture"
+        print(f"  [no keyword matched {prompt!r} -> defaulting to base 'furniture'; "
+              f"routable bases: {', '.join(sorted(ROUTABLE))}]")
+    return _packed(base, keyword_hints(prompt, base), "fallback")
 
 
 # ── detailed-vehicle backend (high-detail single mesh via vehicle_generator) ──
@@ -211,8 +233,12 @@ def main():
 
     # Pick the backend. --detailed routes cars/planes to the high-detail bmesh
     # builder; bases without a detailed builder (humanoid/bike) gracefully fall
-    # back to the standard parametric/rigged base_models path.
-    use_detailed = a.detailed and m["base"] in DETAILED_BASES
+    # back to the standard parametric/rigged base_models path. A DETAILED_ONLY base
+    # takes the detailed backend with or without the flag — base_models cannot build
+    # it, so the alternative is not a lesser model but the wrong one.
+    use_detailed = m["base"] in DETAILED_BASES and (a.detailed or m["base"] in DETAILED_ONLY)
+    if use_detailed and not a.detailed:
+        print(f"  [base '{m['base']}' is built by vehicle_generator -> detailed backend]")
     if a.detailed and not use_detailed:
         print(f"  [--detailed has no builder for base '{m['base']}' -> standard backend]")
 
