@@ -39,3 +39,25 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt pytest
       - run: pytest
+
+  blender-render:
+    name: Test (blender_render)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      # Headless Blender needs these even in --background mode (no GUI, but
+      # still links GL/X11 at load time).
+      - run: sudo apt-get update && sudo apt-get install -y libxrender1 libxi6 libxkbcommon0 libsm6 libgl1
+      - name: Install Blender (4.2 LTS, linux x64)
+        run: |
+          url=$(curl -s https://download.blender.org/release/Blender4.2/ \
+            | grep -oE 'blender-4\.2\.[0-9]+-linux-x64\.tar\.xz' | sort -V | tail -1)
+          curl -sL -o blender.tar.xz "https://download.blender.org/release/Blender4.2/${url}"
+          tar -xf blender.tar.xz
+          echo "${PWD}/${url%.tar.xz}" >> "$GITHUB_PATH"
+      - run: blender --version
+      - run: pytest -m blender_render
