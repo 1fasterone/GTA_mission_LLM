@@ -2,6 +2,7 @@
 // Generator: objectives  |  Variant: {{ variant }}  |  Mission: {{ s.title }}
 // {{ s.description }}
 {% import "_inject.j2" as inject %}
+{% set survive_objs = s.objectives | selectattr("type", "equalto", "survive") | list %}
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -43,9 +44,48 @@ public class {{ s.name }} : MonoBehaviour
 
     private Dictionary<string, Objective> _byId;
     private bool _missionComplete;
+{% if survive_objs %}
+    private float _surviveTimer;
+{% endif %}
 
     public bool MissionComplete => _missionComplete;
     public IReadOnlyList<Objective> Objectives => objectives;
+
+    /// <summary>Mission title, for any UI that names what is being tracked.</summary>
+    public string Title => "{{ s.title | replace('"', '\\"') }}";
+
+    /// <summary>Required (non-optional) objectives completed so far, and how many
+    /// exist in total — the pair a HUD objective readout binds to.</summary>
+    public int CompletedRequired
+    {
+        get
+        {
+            int n = 0;
+            foreach (var o in objectives) if (!o.optional && o.complete) n++;
+            return n;
+        }
+    }
+
+    public int TotalRequired
+    {
+        get
+        {
+            int n = 0;
+            foreach (var o in objectives) if (!o.optional) n++;
+            return n;
+        }
+    }
+
+    /// <summary>The first incomplete required objective, or null once the mission
+    /// is done — what a "current objective" HUD line shows.</summary>
+    public Objective ActiveObjective
+    {
+        get
+        {
+            foreach (var o in objectives) if (!o.optional && !o.complete) return o;
+            return null;
+        }
+    }
 
     private void Awake()
     {
@@ -53,10 +93,23 @@ public class {{ s.name }} : MonoBehaviour
         foreach (var o in objectives) _byId[o.id] = o;
 {{ inject.lifecycle(s.awake_extra) }}
     }
-{% if s.update_extra %}
+{% if s.update_extra or survive_objs %}
 
     private void Update()
     {
+{% if survive_objs %}
+        // survive objectives advance one count per second of elapsed play, so a
+        // `count` of 90 means "stay alive 90 seconds". Drained in a loop rather
+        // than reset, so a long frame cannot swallow a whole second.
+        _surviveTimer += Time.deltaTime;
+        while (_surviveTimer >= 1f)
+        {
+            _surviveTimer -= 1f;
+{% for o in survive_objs %}
+            ReportProgress("{{ o.id }}");
+{% endfor %}
+        }
+{% endif %}
 {{ s.update_extra | indent(8, True) }}
     }
 {% endif %}

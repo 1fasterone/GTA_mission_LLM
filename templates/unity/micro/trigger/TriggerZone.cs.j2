@@ -2,6 +2,7 @@
 // Generator: trigger  |  Variant: {{ variant }}
 // {{ s.description }}
 {% import "_inject.j2" as inject -%}
+using System;
 using UnityEngine;
 using System.Collections;
 {% for u in s.extra_usings %}
@@ -28,6 +29,11 @@ public class {{ s.name }} : MonoBehaviour
 {% for f in s.extra_fields %}
     {{ inject.field(f) }}
 {% endfor %}
+
+    /// <summary>Raised every time this trigger activates, after the cooldown and
+    /// one-shot gates pass. The typed seam other subsystems subscribe to — the
+    /// SendMessage actions below stay for scripts that prefer the loose hook.</summary>
+    public event Action OnActivated;
 
     // ── Runtime ───────────────────────────────────────────────────────────────
     private bool  _fired;
@@ -108,6 +114,7 @@ public class {{ s.name }} : MonoBehaviour
 
         _fired    = true;
         _lastFire = Time.time;
+        OnActivated?.Invoke();
 {% for action in s.actions %}
 {% if action.delay > 0 %}
         StartCoroutine(FireDelayed("{{ action.event_name }}", {{ "%.2f"|format(action.delay) }}f));

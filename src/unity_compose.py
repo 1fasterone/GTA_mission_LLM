@@ -47,6 +47,11 @@ class ComposedUnit(BaseModel):
     target:     Target
     file_id:    int = 0                # scene MonoBehaviour fileID (per-target wiring)
     scripts:    list[str] = Field(default_factory=list)   # asset-relative .cs paths
+    objectives: list[dict] = Field(default_factory=list)  # objectives kind only: the
+                                                            # authored ObjectiveEntry
+                                                            # {id,type,count,...} rows, so
+                                                            # SEAM 8 binds real ids rather
+                                                            # than inventing them.
     cues:       list[dict] = Field(default_factory=list)  # audio kind only: resolved
                                                             # AudioCueSpec {id,category,
                                                             # descriptor} — lets seam
@@ -56,6 +61,16 @@ class ComposedUnit(BaseModel):
 
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
 _COMPOSED_FILE_ID_BASE = 900000010
+
+# SEAM 8 unsubscription targets: the C# event each objective-seam atom subscribes
+# to, so OnDestroy can detach the exact delegate it attached. Kept beside the
+# atom names rather than inside the emitter because only the caller builds the
+# cleanup block (same split the other seams use).
+_OBJECTIVE_EVENTS = {
+    "WireTriggerToObjectives":      "OnActivated",
+    "WireInteractableToObjectives": "OnInteract",
+    "WireSpawnerToObjectives":      "OnDespawned",
+}
 
 # Kinds that GameWiring / GameContext must NOT FindFirstObjectByType:
 #   wiring/context — the synthetic glue components themselves.
@@ -154,9 +169,13 @@ class MicroComposer:
             _, schema, variant, class_name, guid = self._resolve(sub)
             cues = ([{"id": c.id, "category": c.category, "descriptor": c.descriptor}
                      for c in schema.cues] if sub.kind == "audio" else [])
+            objs = ([{"id": o.id, "type": o.type, "count": o.count,
+                      "optional": o.optional, "target_ref": o.target_ref}
+                     for o in schema.objectives] if sub.kind == "objectives" else [])
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
-                target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues))
+                target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
+                objectives=objs))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -437,6 +456,75 @@ class MicroComposer:
                 }),
             })
 
+        # SEAM 8 — gameplay events → mission objectives (closes the mission loop)
+        # Without this the objectives tracker receives real authored objectives and
+        # then sits inert: nothing in the project ever called ReportProgress, so
+        # OnMissionComplete was unreachable and no generated game could be won.
+        #
+        # Each objective TYPE has exactly one honest event source in a composed
+        # project. A source can only be bound to ONE objective: two `eliminate`
+        # objectives sharing the single enemy spawner would both advance on every
+        # kill, which is worse than not wiring the second at all. So the first
+        # match (schema order) binds and every other objective is NAMED in the log
+        # rather than silently mis-wired — abstain loudly, never default quietly.
+        interactable = _pick("interactable", "world")
+        spawner      = _pick("spawner",      "world")
+        objective_units = [u for u in real_units if u.kind == "objectives"]
+
+        #  types                    source unit    atom                            source arg-name     delegate field           delegate C# type
+        _OBJECTIVE_SOURCES = (
+            (("reach",),             trigger,      "WireTriggerToObjectives",      "trigger_var",      "_onReachObjective",     "Action"),
+            (("collect", "interact"), interactable, "WireInteractableToObjectives", "interactable_var", "_onCollectObjective",   "Action"),
+            (("eliminate",),         spawner,      "WireSpawnerToObjectives",      "spawner_var",      "_onEliminateObjective", "Action<GameObject>"),
+        )
+        # `survive` needs no seam — the tracker runs its own clock (Objectives.cs.j2).
+        _SELF_DRIVEN_TYPES = {"survive"}
+
+        bound_ids: set[str] = set()
+        for types, source, atom, source_arg, delegate, delegate_type in _OBJECTIVE_SOURCES:
+            if source is None:
+                continue
+            match = next(
+                ((u, o) for u in objective_units for o in u.objectives
+                 if o.get("type") in types and o.get("id")),
+                None,
+            )
+            if match is None:
+                continue
+            unit, obj = match
+            ov = _fv(unit)
+            stored_delegates.append({"type": delegate_type, "name": delegate})
+            awake_seams.append({
+                "label": f"SEAM 8: {source.kind} → objectives ({obj['type']}: {obj['id']})",
+                "snippet": unity_atom_snippet(atom, {
+                    source_arg: _fv(source), "objectives_var": ov,
+                    "delegate_var": delegate, "objective_id": obj["id"],
+                }),
+            })
+            destroy_cleanups.append(
+                f"if ({_fv(source)} != null && {delegate} != null)\n"
+                f"    {_fv(source)}.{_OBJECTIVE_EVENTS[atom]} -= {delegate};"
+            )
+            bound_ids.add(f"{unit.class_name}.{obj['id']}")
+
+        # Abstain loudly: name every authored objective this build cannot advance.
+        unbound = [
+            f"{u.class_name}.{o['id']} ({o.get('type')})"
+            for u in objective_units for o in u.objectives
+            if o.get("id")
+            and f"{u.class_name}.{o['id']}" not in bound_ids
+            and o.get("type") not in _SELF_DRIVEN_TYPES
+        ]
+        if objective_units and unbound:
+            console.print(
+                "  [yellow]WARN[/]  objectives: no event source for "
+                + ", ".join(unbound)
+                + " — these cannot advance at runtime. Reachable sources this "
+                  "build: " + (", ".join(sorted(
+                      s.kind for _t, s, *_r in _OBJECTIVE_SOURCES if s is not None
+                  )) or "none")
+            )
+
         # ── schema.wiring (WiringMap/WiringDependency) — additive only ─────────
         # Every composed unit already gets its own auto-found scene ref (the
         # `units` loop above — a private field + FindFirstObjectByType in
@@ -453,6 +541,9 @@ class MicroComposer:
             frozenset({"health", "audio"}), frozenset({"statemachine", "animator"}),
             frozenset({"input", "controller"}), frozenset({"input", "statemachine"}),
             frozenset({"trigger", "saveload"}),
+            # SEAM 8 pairs
+            frozenset({"trigger", "objectives"}), frozenset({"interactable", "objectives"}),
+            frozenset({"spawner", "objectives"}),
         }
         if wiring_map is not None:
             for dep in wiring_map.dependencies:
@@ -805,10 +896,18 @@ def _npc_dialog_lines_for_character(char) -> list[dict]:
 
 def _objectives_options_for_mission(mission) -> dict:
     """schema.missions (MissionSpec/MissionObjective, unity_schema.py:734-764) ->
-    ObjectivesSchema options (ObjectiveEntry, micro/objectives.py). `triggers`/
-    `story_beat_ref` have no trigger-execution engine to hook into in this
-    codebase — passed through as inert metadata (documented in the rendered
-    README), not silently dropped."""
+    ObjectivesSchema options (ObjectiveEntry, micro/objectives.py).
+
+    `triggers` now feeds the composed trigger zone's action list — see
+    _trigger_options_for_missions. `story_beat_ref` still has no execution engine
+    to hook into and stays inert metadata (documented in the rendered README),
+    not silently dropped.
+
+    Objective TYPE crosses a vocabulary boundary here: the IR's MissionObjType
+    (reach|collect|defeat|survive|escort|timer) is not the micro's ObjectiveType
+    (reach|collect|eliminate|escort|survive|interact). ObjectiveEntry._clamp_type
+    translates the synonyms; before it did, every `defeat` objective silently
+    became "reach" and no kill objective could ever be wired."""
     return {
         "title": mission.title,
         "objectives": [{
@@ -821,6 +920,36 @@ def _objectives_options_for_mission(mission) -> dict:
         } for o in mission.objectives],
         "rewards": mission.rewards,
     }
+
+
+def _trigger_options_for_missions(missions) -> dict:
+    """schema.missions[].triggers (list[str], unity_schema.py) -> TriggerSchema.actions.
+
+    Previously dropped on the floor: the trigger micro was composed with dimension
+    metadata only, so its `actions` always fell back to the single defaulted
+    OnTriggerActivate and the brief's own trigger language never reached the code.
+
+    Each authored trigger phrase becomes a SendMessage target that a prompt-authored
+    script can implement by name. OnTriggerActivate is ALWAYS kept first: SEAM 7's
+    CheckpointSaveRelay listens for exactly that message, so replacing the action
+    list rather than extending it would silently break checkpoint saving.
+    """
+    seen  = {"OnTriggerActivate"}
+    names = ["OnTriggerActivate"]
+    for mission in (missions or []):
+        for phrase in (mission.triggers or []):
+            name = to_pascal(str(phrase), "")
+            if not name:
+                continue
+            name = name if name.startswith("On") else f"On{name}"
+            # C# method names cap out well before this; a whole sentence as an
+            # identifier is unreadable in the generated file either way.
+            name = name[:64]
+            if name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+    return {"actions": [{"event_name": n, "delay": 0.0, "one_shot": True} for n in names]}
 
 
 def _bt_options_for_entry(entry) -> dict:
@@ -1065,7 +1194,12 @@ def subsystems_for(
         Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable", options=dim_meta),
         Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator", options=anim_opts),
         Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
-        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger", options=dim_meta),
+        # dim_meta (game_type, for the 2D/3D collider split) PLUS the brief's own
+        # trigger phrases from schema.missions[].triggers — see
+        # _trigger_options_for_missions. Merge order matters: the mission actions
+        # must not clobber the dimension metadata the template branches on.
+        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger",
+                  options={**dim_meta, **_trigger_options_for_missions(missions)}),
         # Always-on: the light rig AND the environment-lighting guard. Not a
         # "nice to have" — scene.unity.j2 ships one directional light and an
         # AmbientMode.Skybox pointing at the built-in Default-Skybox, and the

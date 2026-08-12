@@ -2,6 +2,7 @@
 // Generator: spawner  |  Variant: {{ variant }}  |  Shape: {{ s.spawn_shape }}  |  Pooling: {{ s.pooling }}
 // {{ s.description }}
 {% import "_inject.j2" as inject %}
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -40,6 +41,14 @@ public class {{ s.name }} : MonoBehaviour
 {% if s.spawn_shape == "spawn_points" %}
     [SerializeField] private Transform[] spawnPoints = new Transform[0];
 {% endif %}
+
+    /// <summary>Raised once for each spawned instance that leaves play — destroyed
+    /// or deactivated. For a spawner feeding enemies this is the kill signal;
+    /// pooled instances raise it on return, so treat it as "left the field".</summary>
+    public event Action<GameObject> OnDespawned;
+
+    /// <summary>Instances currently in play, as of the last prune.</summary>
+    public int AliveCount => _alive.Count;
 
     private readonly List<GameObject> _alive = new List<GameObject>();
 {% if variant == "continuous_spawner" %}
@@ -157,10 +166,23 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 
+    // Prune runs every frame, not only on the next spawn attempt: a wave_spawner
+    // that has finished its waves never calls SpawnOne() again, so pruning there
+    // alone would stop reporting despawns exactly while the last wave is being
+    // cleared — the moment an "eliminate N enemies" objective needs the signal.
+    private void LateUpdate() => Prune();
+
     private void Prune()
     {
         for (int i = _alive.Count - 1; i >= 0; i--)
-            if (_alive[i] == null || !_alive[i].activeInHierarchy) _alive.RemoveAt(i);
+        {
+            GameObject go = _alive[i];
+            if (go != null && go.activeInHierarchy) continue;
+            _alive.RemoveAt(i);
+            // `go` is null (destroyed) or inactive (pooled) — passed through so a
+            // subscriber can identify what left; pure counters can ignore it.
+            OnDespawned?.Invoke(go);
+        }
     }
 
     private void OnDrawGizmosSelected()

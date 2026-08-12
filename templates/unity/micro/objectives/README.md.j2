@@ -35,6 +35,25 @@ tracker.OnMissionComplete   += () => Debug.Log("Mission complete!");
 {% endif %}
 
 Mission completes when every non-optional objective reaches its required count.
-`triggers`/`story_beat_ref` from the authored `MissionSpec` are not wired to any
-trigger-execution engine yet — hook `OnObjectiveComplete`/`OnMissionComplete` up
-to your own trigger/cutscene logic manually.
+
+## What advances each objective
+
+In a `--compose` build, SEAM 8 subscribes this tracker to the project's own
+gameplay events, so progress is reported without you writing any glue:
+
+| Type | Advanced by |
+|---|---|
+| `reach` | the scene trigger's `OnActivated` |
+| `collect`, `interact` | the world interactable's `OnInteract` |
+| `eliminate` | the enemy spawner's `OnDespawned` (one per instance leaving play) |
+| `survive` | this component's own clock — one count per second |
+| `escort` | nothing: no honest signal exists yet, so it is left unwired and named in the build log |
+
+A single source binds a single objective: two `eliminate` objectives sharing one
+spawner would both advance on every kill, so only the first is wired and the rest
+are reported at build time rather than mis-wired.
+
+Standalone (no `--compose`), call `ReportProgress(objectiveId, amount)` yourself.
+`story_beat_ref` from the authored `MissionSpec` is still passed through as
+metadata only. `MissionSpec.triggers` becomes `SendMessage` action names on the
+composed trigger zone, which your own scripts can implement by name.
