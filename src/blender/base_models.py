@@ -29,22 +29,12 @@ import json
 from typing import Optional
 
 # ── parameter schemas: {param: (default, lo, hi)} ─────────────────────────────
+# "car" is NOT a key here: it is built by repo-root vehicle_generator.py (real
+# PBR materials, edge-loop-sculpted body — see _VG_VARIANTS in src/micro/model.py),
+# not by this file. base_models used to carry a second, CLI-unreachable
+# primitive-composite car builder (_CAR_SRC/_CAR_RIG); it was deleted rather than
+# maintained as a dead duplicate — see docs/PROCEDURAL_BASES.md.
 BASE_PARAM_SCHEMA: dict[str, dict[str, tuple]] = {
-    "car": {
-        "body_w":      (1.7, 1.2, 2.4),
-        "body_len":    (3.8, 2.8, 5.5),
-        "body_h":      (0.60, 0.40, 1.20),
-        "cabin_h":     (0.50, 0.30, 1.00),
-        "wheel_r":     (0.42, 0.30, 0.95),
-        "wheel_w":     (0.34, 0.20, 0.60),
-        "ride":        (0.00, 0.00, 0.60),
-        # structural knobs — these change the SILHOUETTE, not just the scale:
-        "cabin_len":   (0.50, 0.30, 0.90),   # cabin length as a fraction of body_len
-        "cabin_pos":   (0.00, -0.30, 0.30),  # cabin shift toward front(+) / rear(-)
-        "bed":         (0.0, 0.0, 1.0),      # >=0.5 -> open pickup bed behind the cabin
-        "wheel_pairs": (2, 2, 3),            # axles: 2 (normal) or 3 (6-wheel limo/truck)
-        "rim":         (0.45, 0.0, 0.6),     # hub radius as a fraction of the tyre (0 = none)
-    },
     "plane": {
         "fuselage_len": (5.0, 3.0, 9.0),
         "fuselage_r":   (0.50, 0.30, 1.00),
@@ -118,7 +108,6 @@ BASE_PARAM_SCHEMA: dict[str, dict[str, tuple]] = {
 BASE_NAMES = tuple(BASE_PARAM_SCHEMA.keys())
 
 DEFAULT_COLOR: dict[str, tuple] = {
-    "car":      (0.12, 0.32, 0.72),
     "plane":    (0.85, 0.85, 0.88),
     "boat":     (0.32, 0.20, 0.12),     # varnished wood hull
     "humanoid": (0.80, 0.66, 0.55),
@@ -173,14 +162,7 @@ def keyword_hints(prompt: str, base: str) -> dict:
     LLM is wired). Conservative — only unmistakable cues."""
     p = prompt.lower()
     out: dict = {}
-    if base == "car":
-        if any(w in p for w in ("big tire", "big tyre", "big wheel", "offroad", "off-road", "monster", "jeep", "lifted")):
-            out["wheel_r"] = 0.75
-            out["ride"] = 0.35
-            out["body_h"] = 0.85
-        if "long" in p or "limo" in p:
-            out["body_len"] = 4.6
-    elif base == "plane":
+    if base == "plane":
         if "big" in p or "jumbo" in p or "large" in p:
             out["fuselage_len"] = 7.5
             out["wing_span"] = 9.0
@@ -302,7 +284,7 @@ def _clamp_color(v, default):
 def clamp_params(base: str, raw: Optional[dict]) -> dict:
     """Fill defaults + clamp every known knob to its range; validate colour; drop
     unknown keys. A bad LLM token can never break the builder."""
-    base = base if base in BASE_PARAM_SCHEMA else "car"
+    base = base if base in BASE_PARAM_SCHEMA else "furniture"
     raw = raw or {}
     schema = BASE_PARAM_SCHEMA[base]
     out = {}
@@ -366,19 +348,71 @@ def sphere(loc, r, rgb):
 # right pivot, so the engine/rig can drive it (a wheel spins about its axle, etc.).
 # This is the part-library half of the pattern — assemblers compose these.
 _PARTS = '''
+def _wheel_ring(obj_name, center, radius, width, rgb, groove, end_notch):
+    """One ring-extruded band (tyre or hub): ngon_ring(axis='X') -> extrude_ring
+    to width -> optional alternating tread grooves (a full-radius contact-patch
+    arc is kept at the bottom so the wheel still sits flush on the ground,
+    regardless of segment count) -> optional recessed spoke panels on the two
+    end caps. Real bmesh throughout — no primitive_cylinder_add."""
+    import bmesh, mathutils
+    from math import atan2 as _atan2
+    center = mathutils.Vector(center)
+    bm = bmesh.new()
+    v0, e0 = ngon_ring(bm, (center.x - width / 2, center.y, center.z), radius, 20, axis="X")
+    cap0 = bm.faces.new(v0[::-1])
+    v1, e1 = extrude_ring(bm, e0, translate=(width, 0, 0))
+    cap1 = bm.faces.new(v1)
+    if groove:
+        bm.faces.ensure_lookup_table()
+        side, seen = [], set()
+        for v in list(v0) + list(v1):
+            for f in v.link_faces:
+                if f in seen:
+                    continue
+                seen.add(f)
+                c = f.calc_center_median()
+                if abs(c.x - center.x) < width * 0.45:
+                    side.append(f)
+
+        def _angle(f):
+            c = f.calc_center_median()
+            return _atan2(c.z - center.z, c.y - center.y)
+
+        side.sort(key=_angle)
+        groove_depth = radius * 0.05
+        for i, f in enumerate(side):
+            if not f.is_valid:
+                continue
+            near_bottom = abs(_angle(f) - (-1.5708)) < 0.35   # contact-patch arc, stays full radius
+            if i % 2 == 1 and not near_bottom:
+                try:
+                    notch(bm, f, inset=0.10, depth=groove_depth)
+                except Exception:
+                    pass
+    if end_notch:
+        for cap in (cap0, cap1):
+            if cap.is_valid:
+                try:
+                    notch(bm, cap, inset=0.35, depth=radius * 0.04)
+                except Exception:
+                    pass
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new(obj_name + "_m")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(obj_name, me)
+    _into(o)
+    colour(o, rgb)
+    return o
+
 def make_wheel(name, loc, r, w, rim=0.45):
     """A wheel as ONE object, origin at the axle centre, axle along X (so rotating
-    it about its local axis spins it). Tyre + optional hub joined into one mesh."""
-    bpy.ops.mesh.primitive_cylinder_add(radius=r, depth=w, location=loc, vertices=24)
-    tire = _into(bpy.context.active_object)
-    tire.name = name
-    tire.rotation_euler = (0, radians(90), 0)
-    colour(tire, (0.05, 0.05, 0.05))
+    it about its local axis spins it). A treaded tyre (real grooves, not a plain
+    cylinder) with an optional spoked chrome hub joined into one mesh."""
+    tire = _wheel_ring(name, loc, r, w, (0.05, 0.05, 0.05), groove=True, end_notch=False)
     if rim > 0.01:
-        bpy.ops.mesh.primitive_cylinder_add(radius=r * rim, depth=w * 1.08, location=loc, vertices=12)
-        hub = _into(bpy.context.active_object)
-        hub.rotation_euler = (0, radians(90), 0)
-        colour(hub, (0.55, 0.55, 0.58))
+        hub = _wheel_ring(name + "_hub", loc, r * rim, w * 1.08,
+                          (0.55, 0.55, 0.58), groove=False, end_notch=True)
         bpy.ops.object.select_all(action="DESELECT")
         hub.select_set(True); tire.select_set(True)
         bpy.context.view_layer.objects.active = tire
@@ -582,57 +616,122 @@ def make_lods(parts, levels=2):
             d["role"] = "lod"
             made.append(d)
     return made
-'''
 
-_CAR_SRC = '''
-def build(p, ox):
-    wr, ww = p["wheel_r"], p["wheel_w"]
-    bw, bl, bh = p["body_w"], p["body_len"], p["body_h"]
-    ch = p["cabin_h"]; rim = p.get("rim", 0.45)
-    bed = p["bed"] >= 0.5
-    pairs = max(2, min(3, int(round(p["wheel_pairs"]))))
-    col = tuple(p["color"]); parts = []
-    body_z = wr + p["ride"] + bh * 0.5 + 0.05
-    # chassis + cabin (named parts, role-tagged so lookups survive name collisions)
-    b = box((ox, 0, body_z), (bw, bl, bh), col); b.name = "body"; b["role"] = "body"; parts.append(b)
-    clen = max(0.5, p["cabin_len"] * bl)
-    cy = p["cabin_pos"] * (bl * 0.5)
-    lim = max(0.0, bl * 0.5 - clen * 0.5)
-    cy = max(-lim, min(lim, cy))
-    cab_z = body_z + bh * 0.5 + ch * 0.5
-    cab = box((ox, cy, cab_z), (bw * 0.88, clen, ch), col); cab.name = "cabin"; cab["role"] = "cabin"; parts.append(cab)
-    # pickup bed
-    if bed:
-        cabin_back = cy - clen * 0.5
-        rear_end = -bl * 0.5
-        blen = cabin_back - rear_end
-        if blen > 0.4:
-            bd = box((ox, (cabin_back + rear_end) * 0.5, body_z + bh * 0.5 + 0.09),
-                     (bw * 0.92, blen - 0.05, 0.18), col)
-            bd.name = "bed"; bd["role"] = "bed"; parts.append(bd)
-    # wheels as functional parts, named Wheel.<F/M/R><L/R>
-    wx = bw * 0.5 + ww * 0.5 - 0.05
-    fy = bl * 0.5 - wr - 0.1
-    ry = -(bl * 0.5 - wr - 0.1)
-    labels = {2: ["F", "R"], 3: ["F", "M", "R"]}[pairs]
-    ys = [fy, ry] if pairs == 2 else [fy, (fy + ry) * 0.5, ry]
-    for lab, ay in zip(labels, ys):
-        for side, sx in (("L", 1), ("R", -1)):
-            parts.append(make_wheel("Wheel." + lab + side, (ox + sx * wx, ay, wr), wr, ww, rim))
-    return parts
+# Edge-loop sculpting toolkit (AAA pass — see docs/PROCEDURAL_BASES.md). Grows a
+# part as ONE welded mesh from an open boundary ring, the same move as extruding
+# an edge loop in the modeller: duplicate the ring, move/scale the copy, weld it
+# back on. No part may fall back to a bare box()/cyl()/cone()/sphere() union.
+#   quad_ring / ngon_ring — start an open boundary ring (rect or round cross-section)
+#   extrude_ring          — the core move: duplicate -> transform -> bridge_loops
+#   bevel_edges           — crisp hard-surface edges on a specific edge set
+#   notch                 — recess a panel into a face (openings, texture detail)
+def quad_ring(bm, center, w, h, axis="Y"):
+    """4 verts forming a rectangular cross-section ring perpendicular to `axis`,
+    centred at `center`. axis='Y' (default) -> the ring lies in the XZ plane, i.e.
+    forward is +Y (this file's convention for cars/planes/weapons)."""
+    cx, cy, cz = center
+    if axis == "Y":
+        pts = [(cx - w/2, cy, cz - h/2), (cx + w/2, cy, cz - h/2),
+               (cx + w/2, cy, cz + h/2), (cx - w/2, cy, cz + h/2)]
+    elif axis == "X":
+        pts = [(cx, cy - w/2, cz - h/2), (cx, cy + w/2, cz - h/2),
+               (cx, cy + w/2, cz + h/2), (cx, cy - w/2, cz + h/2)]
+    else:  # 'Z'
+        pts = [(cx - w/2, cy - h/2, cz), (cx + w/2, cy - h/2, cz),
+               (cx + w/2, cy + h/2, cz), (cx - w/2, cy + h/2, cz)]
+    verts = [bm.verts.new(p) for p in pts]
+    edges = [bm.edges.new((verts[i], verts[(i + 1) % 4])) for i in range(4)]
+    return verts, edges
+
+def ngon_ring(bm, center, radius, n, axis="Y"):
+    """n verts around a circle perpendicular to `axis`, centred at `center` — the
+    round-cross-section counterpart to quad_ring (barrels, scope tubes, spokes)."""
+    cx, cy, cz = center
+    verts = []
+    for k in range(n):
+        a = 2 * _PI * k / n
+        if axis == "Y":
+            p = (cx + radius * _cos(a), cy, cz + radius * _sin(a))
+        elif axis == "X":
+            p = (cx, cy + radius * _cos(a), cz + radius * _sin(a))
+        else:
+            p = (cx + radius * _cos(a), cy + radius * _sin(a), cz)
+        verts.append(bm.verts.new(p))
+    edges = [bm.edges.new((verts[i], verts[(i + 1) % n])) for i in range(n)]
+    return verts, edges
+
+def extrude_ring(bm, edges, translate=(0.0, 0.0, 0.0), scale=1.0):
+    """Duplicate an open boundary edge loop, translate/scale the copy, then weld
+    it back onto the body with bridge_loops — grows the mesh by one section as
+    ONE continuous surface, never a union. `scale` is a float (uniform) or an
+    (sx, sy, sz) tuple, applied about the loop's own centroid. `edges` must be an
+    equal-length ring (any n, quad or n-gon) for bridge_loops to match them up.
+    Returns (new_verts, new_edges) so the caller keeps extruding forward."""
+    import bmesh, mathutils
+    dup = bmesh.ops.duplicate(bm, geom=list(edges))
+    geom = dup["geom"]
+    new_verts = [g for g in geom if isinstance(g, bmesh.types.BMVert)]
+    new_edges = [g for g in geom if isinstance(g, bmesh.types.BMEdge)]
+    if scale != 1.0:
+        vec = scale if isinstance(scale, (tuple, list)) else (scale, scale, scale)
+        center = sum((v.co for v in new_verts), mathutils.Vector()) / len(new_verts)
+        bmesh.ops.scale(bm, verts=new_verts, vec=mathutils.Vector(vec),
+                        space=mathutils.Matrix.Translation(-center))
+    if translate != (0.0, 0.0, 0.0):
+        bmesh.ops.translate(bm, verts=new_verts, vec=mathutils.Vector(translate))
+    bmesh.ops.bridge_loops(bm, edges=list(edges) + new_edges)
+    return new_verts, new_edges
+
+def bevel_edges(bm, edges, width, segments=2):
+    """Bevel a specific edge set (not a blanket modifier) — muzzle crowns, receiver
+    corners, a trigger-guard opening. Local and selective, unlike finish()'s
+    whole-object BEVEL modifier."""
+    import bmesh
+    bmesh.ops.bevel(bm, geom=list(edges), offset=width, segments=segments,
+                    affect="EDGES")
+
+def notch(bm, face, inset=0.15, depth=0.02):
+    """Recess a panel into `face`: inset its border, then push the inner face
+    inward along the normal — a trigger-guard opening, grip texture panel, mag
+    seam. inset_individual's return is the BORDER ring faces, not the shrunk
+    inner one, so the inner face is found by geometry (closest surviving face
+    with a matching normal) rather than trusted from the op's result. Built
+    from the same duplicate/bridge primitive as extrude_ring, not
+    extrude_face_region, which left the recess with an open (non-manifold)
+    boundary on a single-face extrude. Returns True."""
+    import bmesh
+    center = face.calc_center_median()
+    normal = face.normal.copy()
+    bmesh.ops.inset_individual(bm, faces=[face], thickness=inset, depth=0.0)
+    bm.faces.ensure_lookup_table()
+    candidates = [f for f in bm.faces if f.normal.dot(normal) > 0.9]
+    inner = min(candidates, key=lambda f: (f.calc_center_median() - center).length)
+    inner_edges = list(inner.edges)
+    bmesh.ops.delete(bm, geom=[inner], context="FACES_ONLY")
+    dup = bmesh.ops.duplicate(bm, geom=inner_edges)
+    new_verts = [g for g in dup["geom"] if isinstance(g, bmesh.types.BMVert)]
+    new_edges = [g for g in dup["geom"] if isinstance(g, bmesh.types.BMEdge)]
+    bmesh.ops.translate(bm, verts=new_verts, vec=-normal * depth)
+    bmesh.ops.bridge_loops(bm, edges=inner_edges + new_edges)
+    bmesh.ops.edgeloop_fill(bm, edges=new_edges)
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    return True
 '''
 
 _PLANE_SRC = '''
 def build(p, ox):
-    """Recognisable propeller aircraft ported from the proven planegen.py: an
-    ellipsoid fuselage (nose + cockpit glass + tail cone), wings, vertical/horizontal
-    stabilisers, two under-wing engines with 3-blade propellers, and a tricycle
-    landing gear that parks the wheels on the ground (z~0). Forward is -Y (so it
-    matches the other bases and imports nose-forward in Unity). Each part is tagged
-    with its mechanical bone so the rigid rigger + VehicleBoneDriver spin the props
-    (`Propeller_*`) and roll/steer the wheels (`Wheel.*`). Knobs: fuselage_len/_r,
+    """Recognisable propeller aircraft: a ring-loft fuselage (tapered tube, not an
+    ellipsoid) with a sculpted nose/tail cap and a domed cockpit canopy, tapered
+    aerofoil wings/stabilisers, ring-loft nacelle engines with tapered 3-blade
+    propellers, and a tricycle landing gear (tapered struts + treaded wheels) that
+    parks the wheels on the ground (z~0). Every part is edge-loop sculpted
+    (quad_ring/ngon_ring + extrude_ring) or, for the canopy, a real bmesh sphere
+    (uvsphere_bm) — never a bare box()/cyl()/cone()/sphere() union. Forward is -Y
+    (so it matches the other bases and imports nose-forward in Unity). Each part is
+    tagged with its mechanical bone so the rigid rigger + VehicleBoneDriver spin the
+    props (`Propeller_*`) and roll/steer the wheels (`Wheel.*`). Knobs: fuselage_len/_r,
     wing_span, wing_chord, fin_h."""
-    import math
+    import bmesh, math, mathutils
     fl = p["fuselage_len"]; fr = p["fuselage_r"]
     span = p["wing_span"]; chord = p["wing_chord"]; fin = p["fin_h"]
     body = tuple(p["color"]); wingc = tuple(min(1.0, c * 0.92) for c in p["color"])
@@ -646,61 +745,130 @@ def build(p, ox):
     eng_x = span * 0.30
     hub_dy = fl * 0.05 + fl * 0.17 + fr * 0.2
 
-    def fix(o):
-        bpy.context.view_layer.objects.active = o
-        bpy.ops.object.select_all(action="DESELECT"); o.select_set(True)
-        bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-        bpy.ops.object.select_all(action="DESELECT")
-        return o
-
     def tag(o, bone, role="plane"):
         o["bone"] = bone; o["role"] = role; parts.append(o); return o
 
-    def ell(name, loc, scale, rgb):
-        o = sphere(loc, 1.0, rgb); o.name = name; o.scale = scale; finish(o); return fix(o)
+    def pobj(bm, name, rgb, bevel=0.004):
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+        me = bpy.data.meshes.new(name + "_m")
+        bm.to_mesh(me); bm.free()
+        o = bpy.data.objects.new(name, me)
+        _into(o); colour(o, rgb); finish(o, smooth=True, subsurf=0, bevel=bevel)
+        return o
 
-    def slab(name, loc, scale, rgb):
-        o = box(loc, scale, rgb, bevel=0.0); o.name = name; return fix(o)
+    def cone_cap(name, base_center, tip_center, r0, rgb):
+        """A short tapered cone (base ring -> point) — nose cap / tail cone."""
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, base_center, r0, 12, axis="Y")
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=tuple(t - b for t, b in zip(tip_center, base_center)),
+                              scale=0.02)
+        bm.faces.new(v1)
+        return pobj(bm, name, rgb)
 
-    # fuselage shell: body + nose + cockpit glass + tail cone
-    tag(ell("Fuselage", (ox, 0, cz),                       (fr, fl * 0.5, fr), body), "Fuselage")
-    tag(ell("Nose",     (ox, fwd * (fl * 0.5 + fr * 0.25), cz), (fr * 0.85, fr * 0.8, fr * 0.85), body), "Fuselage")
-    tag(ell("Cockpit",  (ox, fwd * (fl * 0.12), cz + fr * 0.55), (fr * 0.7, fr * 1.1, fr * 0.55), glass), "Fuselage")
-    tag(ell("TailCone", (ox, -fwd * (fl * 0.5), cz),       (fr * 0.6, fr * 0.8, fr * 0.6), body), "Fuselage")
+    def aerofoil(name, root_center, axis_vec, span_len, chord_w, thick_h, ring_axis, rgb, taper=0.4):
+        """A wing/stabiliser/blade: full-section root -> tapered tip, extruded along
+        `axis_vec` (a unit-ish direction with the right sign) by `span_len`."""
+        bm = bmesh.new()
+        if ring_axis == "X":
+            v0, e0 = quad_ring(bm, root_center, chord_w, thick_h, axis="X")
+        else:
+            v0, e0 = quad_ring(bm, root_center, chord_w, thick_h, axis="Z")
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=tuple(c * span_len for c in axis_vec),
+                              scale=(1, taper, taper) if ring_axis == "X" else (taper, taper, 1))
+        bm.faces.new(v1)
+        return pobj(bm, name, rgb, bevel=0.003)
 
-    # wings (span along X), mounted low
+    # ── fuselage: ring-loft tube, tapered at both ends ──
+    bm = bmesh.new()
+    r0 = fr * 0.32
+    v0, e0 = ngon_ring(bm, (ox, -fl * 0.5, cz), r0, 14, axis="Y")
+    bm.faces.new(v0[::-1])
+    v1, e1 = extrude_ring(bm, e0, translate=(0, fl * 0.16, 0), scale=(fr / r0, 1, fr / r0))
+    v2, e2 = extrude_ring(bm, e1, translate=(0, fl * 0.34, 0))
+    v3, e3 = extrude_ring(bm, e2, translate=(0, fl * 0.34, 0))
+    v4, e4 = extrude_ring(bm, e3, translate=(0, fl * 0.16, 0), scale=(r0 / fr, 1, r0 / fr))
+    bm.faces.new(v4)
+    tag(pobj(bm, "Fuselage", body), "Fuselage")
+
+    # nose cap (beyond the fuselage's forward taper) + tail cone (beyond the rear)
+    tag(cone_cap("Nose", (ox, fwd * fl * 0.5, cz), (ox, fwd * (fl * 0.5 + fr * 0.55), cz),
+                fr * 0.34, body), "Fuselage")
+    tag(cone_cap("TailCone", (ox, -fwd * fl * 0.5, cz), (ox, -fwd * (fl * 0.5 + fr * 0.42), cz),
+                fr * 0.34, body), "Fuselage")
+
+    # cockpit canopy: a real bmesh dome, not a bare primitive
+    cockpit = uvsphere_bm("Cockpit", (ox, fwd * (fl * 0.12), cz + fr * 0.35), fr * 0.62, glass,
+                          seg=14, ring=8)
+    cockpit.scale = (1.0, 1.5, 0.75)
+    bpy.context.view_layer.objects.active = cockpit
+    bpy.ops.object.select_all(action="DESELECT"); cockpit.select_set(True)
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    tag(cockpit, "Fuselage")
+
+    # wings (span along X), mounted low, tapered root->tip
     wt = max(0.04, fr * 0.16)
     for sgn, nm in ((1, "Wing_R"), (-1, "Wing_L")):
-        tag(slab(nm, (ox + sgn * span * 0.27, fwd * (-fl * 0.02), cz - fr * 0.25),
-                 (span * 0.54, chord, wt), wingc), "Fuselage")
+        tag(aerofoil(nm, (ox, fwd * (-fl * 0.02), cz - fr * 0.25), (sgn, 0, 0), span * 0.54,
+                    chord, wt, "X", wingc), "Fuselage")
 
     # tail surfaces at the +Y end
     tail_y = -fwd * (fl * 0.46)
-    tag(slab("V_Stabilizer", (ox, tail_y, cz + fin * 0.5),
-             (0.06 + fr * 0.1, chord * 0.6, fin), accent), "Fuselage")
+    tag(aerofoil("V_Stabilizer", (ox, tail_y, cz), (0, 0, 1), fin,
+                0.06 + fr * 0.1, chord * 0.6, "Z", accent), "Fuselage")
     for sgn, nm in ((1, "H_Stabilizer_R"), (-1, "H_Stabilizer_L")):
-        tag(slab(nm, (ox + sgn * span * 0.14, tail_y, cz),
-                 (span * 0.26, chord * 0.5, wt * 0.8), accent), "Fuselage")
+        tag(aerofoil(nm, (ox, tail_y, cz), (sgn, 0, 0), span * 0.26,
+                    chord * 0.5, wt * 0.8, "X", accent), "Fuselage")
 
-    # engines under the wings + 3-blade propellers at their fronts
+    # engines under the wings (ring-loft nacelle) + 3-blade tapered propellers
     for sgn, suf in ((1, "R"), (-1, "L")):
         ex = ox + sgn * eng_x
-        eng = cyl((ex, fwd * (fl * 0.05), cz - fr * 0.45), fr * 0.42, fl * 0.34, metal,
-                  rot=(radians(90), 0, 0))
-        eng.name = "Engine_" + suf; tag(fix(eng), "Fuselage")
-        hub_y = fwd * hub_dy
-        hub = cone((ex, hub_y, cz - fr * 0.45), fr * 0.22, fr * 0.5, metal,
-                   rot=(radians(-90), 0, 0))
-        hub.name = "PropHub_" + suf; tag(fix(hub), "Propeller_" + suf, "prop")
-        for i in range(3):
-            bl = box((ex, hub_y, cz - fr * 0.45), (0.04 + fr * 0.05, 0.02, fr * 1.7), dark)
-            bl.name = "PropBlade_%d_%s" % (i, suf); bl.rotation_euler = (0, radians(i * 120), 0)
-            tag(fix(bl), "Propeller_" + suf, "prop")
+        ey = cz - fr * 0.45
+        er = fr * 0.42
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, (ex, fwd * (fl * 0.05 - fl * 0.17), ey), er * 0.55, 12, axis="Y")
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=(0, fwd * fl * 0.10, 0), scale=(er / (er * 0.55), 1, er / (er * 0.55)))
+        v2, e2 = extrude_ring(bm, e1, translate=(0, fwd * fl * 0.14, 0))
+        v3, e3 = extrude_ring(bm, e2, translate=(0, fwd * fl * 0.10, 0), scale=0.8)
+        bm.faces.new(v3)
+        tag(pobj(bm, "Engine_" + suf, metal), "Fuselage")
 
-    # tricycle landing gear: strut (-> Fuselage) + rolling wheel (-> Wheel.*)
+        hub_y = fwd * hub_dy
+        tag(cone_cap("PropHub_" + suf, (ex, hub_y - fwd * fr * 0.05, ey),
+                    (ex, hub_y + fwd * fr * 0.45, ey), fr * 0.20, metal),
+            "Propeller_" + suf, "prop")
+        for i in range(3):
+            # rotate the BMESH verts around the hub before conversion — every part in
+            # this file keeps its verts in world coords with the object left at the
+            # origin (matches loft()'s convention), so rotating the finished OBJECT
+            # afterwards would pivot around world (0,0,0), not the hub, and fling the
+            # blade away (caught by the headless render check, not the compile check).
+            bm = bmesh.new()
+            v0, e0 = quad_ring(bm, (ex, hub_y, ey), 0.04 + fr * 0.05, 0.02, axis="Z")
+            bm.faces.new(v0[::-1])
+            v1, e1 = extrude_ring(bm, e0, translate=(0, 0, fr * 1.7), scale=(1, 0.15, 0.15))
+            bm.faces.new(v1)
+            bmesh.ops.rotate(bm, cent=(ex, hub_y, ey),
+                             matrix=mathutils.Matrix.Rotation(math.radians(i * 120), 3, "Y"),
+                             verts=bm.verts[:])
+            bl = pobj(bm, "PropBlade_%d_%s" % (i, suf), dark, bevel=0.002)
+            tag(bl, "Propeller_" + suf, "prop")
+
+    # tricycle landing gear: tapered strut (-> Fuselage) + rolling wheel (-> Wheel.*)
     def gear(gx, gy, wheel_bone):
-        st = cyl((ox + gx, gy, cz - fr * 0.5 - gl * 0.5), fr * 0.07, gl, strutc)
-        st.name = "Strut_" + wheel_bone.replace("Wheel.", ""); tag(fix(st), "Fuselage")
+        top = (ox + gx, gy, cz - fr * 0.5)
+        bot = (ox + gx, gy, cz - fr * 0.5 - gl)
+        bm = bmesh.new()
+        r0 = fr * 0.05; joint_r = fr * 0.075
+        v0, e0 = ngon_ring(bm, top, r0, 8, axis="Z")
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=(0, 0, -gl * 0.5), scale=(joint_r / r0, joint_r / r0, 1))
+        v2, e2 = extrude_ring(bm, e1, translate=(0, 0, -gl * 0.5), scale=(r0 / joint_r, r0 / joint_r, 1))
+        bm.faces.new(v2)
+        st = pobj(bm, "Strut_" + wheel_bone.replace("Wheel.", ""), strutc)
+        tag(st, "Fuselage")
         tag(make_wheel(wheel_bone, (ox + gx, gy, wr), wr, wr * 0.5, 0.4), wheel_bone, "wheel")
     gear(0.0,            fwd * (fl * 0.33),  "Wheel.F")
     gear(span * 0.10,  -fwd * (fl * 0.02),  "Wheel.RR")
@@ -993,14 +1161,31 @@ def build(p, ox):
 '''
 
 _WEAPON_SRC = '''
+def _wobj(bm, name, rgb, role, bevel=0.004, subsurf=0):
+    """Weld a weapon-part bmesh into a named, coloured, finished object — every
+    weapon part goes through here, none through box()/cyl()/cone()/sphere()."""
+    import bmesh as _bmesh
+    _bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
+    me = bpy.data.meshes.new(name + "_m")
+    bm.to_mesh(me)
+    bm.free()
+    o = bpy.data.objects.new(name, me)
+    _into(o)
+    colour(o, rgb)
+    finish(o, smooth=True, subsurf=subsurf, bevel=bevel)
+    o["role"] = role
+    return o
+
 def build(p, ox):
-    """One parametric firearm: a receiver block + barrel + bolt-on attachment
-    slots (scope / stock / muzzle device / magazine / grips). The same knobs span
-    a pistol (no stock, short barrel), an SMG, a rifle/carbine and a sniper (long
-    barrel + scope). Forward is +Y (the muzzle direction), Z up. Every attachment
-    is named by role (barrel / muzzle / stock / scope / magazine / grip / foregrip)
-    so a fire-point or runtime attachment swap can key off the names later. Static
-    prop, so it gets the no-op rigger."""
+    """One parametric firearm: receiver+barrel welded into ONE sculpted spine plus
+    bolt-on attachment slots (scope / stock / muzzle device / magazine / grips),
+    every part built by edge-loop extrusion (quad_ring/ngon_ring + extrude_ring),
+    never a bare primitive. The same knobs span a pistol (no stock, short barrel),
+    an SMG, a rifle/carbine and a sniper (long barrel + scope). Forward is +Y (the
+    muzzle direction), Z up. Every part is named by role (body / muzzle / stock /
+    scope / magazine / grip / foregrip) so a fire-point or runtime attachment swap
+    can key off the names later. Static prop, so it gets the no-op rigger."""
+    import bmesh
     L = p["length"]; cal = max(0.012, p["caliber"]); blen = p["barrel_len"]
     nstock = max(0, min(2, int(round(p["stock"]))))
     nmuzzle = max(0, min(2, int(round(p["muzzle"]))))
@@ -1016,65 +1201,176 @@ def build(p, ox):
     front_y = recv_len * 0.5
     rear_y = -recv_len * 0.5
 
-    # receiver / body block, centred at the origin
-    body = box((ox, 0, bz), (recv_w, recv_len, recv_h), col)
-    body.name = "receiver"; body["role"] = "body"; parts.append(body)
-
-    # barrel: cylinder forward (+Y) from the receiver face (axle along Y)
-    barrel = cyl((ox, front_y + blen * 0.5, bz), cal, blen, metal, rot=(radians(90), 0, 0))
-    barrel.name = "barrel"; barrel["role"] = "barrel"; parts.append(barrel)
+    # ── receiver + barrel: ONE welded spine, grown by edge-loop extrusion ──
+    bm = bmesh.new()
+    v0, e0 = quad_ring(bm, (ox, rear_y, bz), recv_w, recv_h)
+    bm.faces.new(v0[::-1])                                       # rear cap (-Y facing)
+    v1, e1 = extrude_ring(bm, e0, translate=(0, recv_len, 0))    # receiver block, no taper
+    bore_w = min(cal * 2.2, recv_w * 0.9); bore_h = min(cal * 2.2, recv_h * 0.85)
+    shoulder_dy = min(0.02, blen * 0.15)
+    v2, e2 = extrude_ring(bm, e1, translate=(0, shoulder_dy, 0),  # shoulder -> bore diameter
+                          scale=(bore_w / recv_w, bore_h / recv_h, 1))
+    run_dy = blen - shoulder_dy
+    v3, e3 = extrude_ring(bm, e2, translate=(0, run_dy, 0))       # barrel run, constant bore
     muzzle_y = front_y + blen
+    if nmuzzle == 0:                                              # bare muzzle: crown + cap
+        crown_dy = min(0.01, blen * 0.05)
+        v4, e4 = extrude_ring(bm, e3, translate=(0, crown_dy, 0), scale=(0.85, 0.85, 1))
+        bm.faces.new(v4)
+    else:                                                         # muzzle device caps it instead
+        bm.faces.new(v3)
+    bevel_edges(bm, e1 + e2, min(0.006, bore_w * 0.15), 2)        # crisp shoulder/receiver step
+    body = _wobj(bm, "receiver", col, "body")
+    parts.append(body)
 
-    # muzzle device at the tip
-    if nmuzzle == 1:                            # muzzle brake / compensator
-        mz = cyl((ox, muzzle_y + 0.03, bz), cal * 1.6, 0.07, black, rot=(radians(90), 0, 0))
-        mz.name = "muzzle"; mz["role"] = "muzzle"; parts.append(mz)
-    elif nmuzzle == 2:                          # suppressor
-        mz = cyl((ox, muzzle_y + 0.11, bz), cal * 2.3, 0.22, black, rot=(radians(90), 0, 0))
-        mz.name = "muzzle"; mz["role"] = "muzzle"; parts.append(mz)
+    # ── muzzle device: stepped/tapered n-gon tube, not a bare cyl() ──
+    if nmuzzle == 1:                                              # muzzle brake / compensator
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, (ox, muzzle_y, bz), cal * 1.15, 12)
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=(0, 0.015, 0), scale=1.4)   # flange out
+        v2, e2 = extrude_ring(bm, e1, translate=(0, 0.03, 0))               # brake body
+        v3, e3 = extrude_ring(bm, e2, translate=(0, 0.01, 0), scale=0.75)   # crown taper
+        bm.faces.new(v3)
+        mz = _wobj(bm, "muzzle", black, "muzzle")
+        parts.append(mz)
+    elif nmuzzle == 2:                                            # suppressor
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, (ox, muzzle_y, bz), cal * 1.3, 14)
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=(0, 0.02, 0), scale=1.7)    # rear cap flange
+        v2, e2 = extrude_ring(bm, e1, translate=(0, 0.16, 0))               # main tube run
+        v3, e3 = extrude_ring(bm, e2, translate=(0, 0.03, 0), scale=0.8)    # front taper
+        bm.faces.new(v3)
+        mz = _wobj(bm, "muzzle", black, "muzzle")
+        parts.append(mz)
 
-    # stock (rearward, -Y)
+    # ── stock (rearward, -Y): tapered extrusion, skeleton variant flares mid-length ──
     if nstock >= 1:
         slen = max(0.10, L * 0.32)
-        if nstock == 1:                         # fixed solid stock
-            stk = box((ox, rear_y - slen * 0.5, bz - recv_h * 0.1), (recv_w * 0.9, slen, recv_h * 1.5), col)
-        else:                                   # skeleton / folding stock
-            stk = box((ox, rear_y - slen * 0.5, bz - recv_h * 0.1), (recv_w * 0.7, slen, recv_h * 0.6), black)
-        stk.name = "stock"; stk["role"] = "stock"; parts.append(stk)
+        sz0 = bz - recv_h * 0.1
+        bm = bmesh.new()
+        if nstock == 1:                         # fixed solid stock: taper toward the butt
+            w0, h0 = recv_w * 0.9, recv_h * 1.5
+            v0, e0 = quad_ring(bm, (ox, rear_y, sz0), w0, h0)
+            bm.faces.new(v0)
+            v1, e1 = extrude_ring(bm, e0, translate=(0, -slen * 0.6, 0))
+            v2, e2 = extrude_ring(bm, e1, translate=(0, -slen * 0.4, 0), scale=(1.15, 1.0, 1.3))
+            bm.faces.new(v2[::-1])
+            stk = _wobj(bm, "stock", col, "stock")
+        else:                                   # skeleton/folding: thin, flares at the shoulder hook
+            w0, h0 = recv_w * 0.55, recv_h * 0.5
+            v0, e0 = quad_ring(bm, (ox, rear_y, sz0), w0, h0)
+            bm.faces.new(v0)
+            v1, e1 = extrude_ring(bm, e0, translate=(0, -slen * 0.55, 0))
+            v2, e2 = extrude_ring(bm, e1, translate=(0, -slen * 0.30, 0), scale=(1.0, 1.7, 1.0))
+            v3, e3 = extrude_ring(bm, e2, translate=(0, -slen * 0.15, 0), scale=(1.0, 0.6, 1.0))
+            bm.faces.new(v3[::-1])
+            stk = _wobj(bm, "stock", black, "stock")
+        parts.append(stk)
 
-    # pistol grip (down, behind the trigger)
+    # ── pistol grip (down, behind the trigger): tapered swell + texture notch ──
     if grip:
-        g = box((ox, rear_y + recv_len * 0.18, bz - recv_h * 0.5 - 0.07),
-                (recv_w * 0.9, 0.05, 0.16), black)
-        g.name = "grip"; g["role"] = "grip"; parts.append(g)
+        gy = rear_y + recv_len * 0.18; gz0 = bz - recv_h * 0.5
+        bm = bmesh.new()
+        v0, e0 = quad_ring(bm, (ox, gy, gz0), recv_w * 0.85, 0.05, axis="Z")
+        bm.faces.new(v0)
+        v1, e1 = extrude_ring(bm, e0, translate=(0, 0, -0.09), scale=(1.15, 1.15, 1))  # swell
+        v2, e2 = extrude_ring(bm, e1, translate=(0, 0, -0.06), scale=(0.7, 0.7, 1))    # narrow to butt
+        bm.faces.new(v2[::-1])
+        bm.faces.ensure_lookup_table()
+        front_face = max(bm.faces, key=lambda f: f.calc_center_median().y)
+        try:
+            notch(bm, front_face, inset=0.2, depth=0.006)      # stipple texture panel
+        except Exception:
+            pass
+        g = _wobj(bm, "grip", black, "grip")
+        parts.append(g)
 
-    # trigger guard under the receiver
-    tg = box((ox, rear_y + recv_len * 0.30, bz - recv_h * 0.5 - 0.025),
-             (recv_w * 0.55, 0.10, 0.015), black)
-    tg["role"] = "body"; parts.append(tg)
+    # ── trigger guard: a swept rod bow (round cross-section, not a flat ribbon —
+    # a flat quad-ring folded through a bend reads as broken shards from most
+    # angles; a round rod stays legible bent) ──
+    tgy = rear_y + recv_len * 0.30; tgz = bz - recv_h * 0.5 - 0.01
+    gr = max(0.003, recv_w * 0.06)
+    bm = bmesh.new()
+    v0, e0 = ngon_ring(bm, (ox, tgy - 0.06, tgz), gr, 8)
+    bm.faces.new(v0[::-1])
+    v1, e1 = extrude_ring(bm, e0, translate=(0, 0.02, -0.03))     # down from the receiver
+    v2, e2 = extrude_ring(bm, e1, translate=(0, 0.05, -0.01))     # forward along the bottom
+    v3, e3 = extrude_ring(bm, e2, translate=(0, 0.03, 0.03))      # sweep back up
+    v4, e4 = extrude_ring(bm, e3, translate=(0, 0.0, 0.03))       # close toward the receiver
+    bm.faces.new(v4)
+    tg = _wobj(bm, "trigger_guard", black, "body")
+    parts.append(tg)
 
-    # magazine (down, ahead of the grip)
-    if nmag == 1:                               # box magazine
-        mg = box((ox, recv_len * 0.05, bz - recv_h * 0.5 - 0.11), (recv_w * 0.8, 0.04, 0.20), black)
-        mg.name = "magazine"; mg["role"] = "magazine"; parts.append(mg)
-    elif nmag == 2:                             # drum magazine (disc, axle along X)
-        mg = cyl((ox, recv_len * 0.05, bz - recv_h * 0.5 - 0.13), 0.10, recv_w * 0.8, black,
-                 rot=(0, radians(90), 0))
-        mg.name = "magazine"; mg["role"] = "magazine"; parts.append(mg)
+    # ── magazine (down, ahead of the grip): tapered body, drum variant is round ──
+    if nmag == 1:                               # box magazine, slight taper + seam notch
+        my = recv_len * 0.05; mz0 = bz - recv_h * 0.5
+        bm = bmesh.new()
+        v0, e0 = quad_ring(bm, (ox, my, mz0), recv_w * 0.75, 0.04, axis="Z")
+        bm.faces.new(v0)
+        v1, e1 = extrude_ring(bm, e0, translate=(0, 0, -0.15))
+        v2, e2 = extrude_ring(bm, e1, translate=(0, 0, -0.045), scale=(0.85, 0.9, 1))
+        bm.faces.new(v2[::-1])
+        bm.faces.ensure_lookup_table()
+        side_face = max(bm.faces, key=lambda f: f.calc_center_median().x)
+        try:
+            notch(bm, side_face, inset=0.35, depth=0.003)      # seam line
+        except Exception:
+            pass
+        mg = _wobj(bm, "magazine", black, "magazine")
+        parts.append(mg)
+    elif nmag == 2:                             # drum magazine: round body, axle along X
+        my = recv_len * 0.05; mz0 = bz - recv_h * 0.5 - 0.10
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, (ox, my, mz0), 0.05, 16, axis="X")
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=(recv_w * 0.30, 0, 0), scale=1.5)   # drum bulge
+        v2, e2 = extrude_ring(bm, e1, translate=(recv_w * 0.30, 0, 0), scale=0.67)  # back down
+        bm.faces.new(v2)
+        mg = _wobj(bm, "magazine", black, "magazine")
+        parts.append(mg)
 
-    # vertical foregrip under the handguard
+    # ── vertical foregrip under the handguard: same tapered-swell treatment ──
     if foregrip:
-        fg = box((ox, front_y + blen * 0.30, bz - recv_h * 0.5 - 0.06), (recv_w * 0.6, 0.04, 0.13), black)
-        fg.name = "foregrip"; fg["role"] = "foregrip"; parts.append(fg)
+        fy = front_y + blen * 0.30; fz0 = bz - recv_h * 0.5
+        bm = bmesh.new()
+        v0, e0 = quad_ring(bm, (ox, fy, fz0), recv_w * 0.55, 0.04, axis="Z")
+        bm.faces.new(v0)
+        v1, e1 = extrude_ring(bm, e0, translate=(0, 0, -0.07), scale=(1.1, 1.1, 1))
+        v2, e2 = extrude_ring(bm, e1, translate=(0, 0, -0.04), scale=(0.75, 0.75, 1))
+        bm.faces.new(v2[::-1])
+        fg = _wobj(bm, "foregrip", black, "foregrip")
+        parts.append(fg)
 
-    # optic on the top rail: a scope tube on two mount blocks
+    # ── optic on the top rail: n-gon scope tube with turret bumps + rail mounts ──
     if scope:
-        sy = recv_len * 0.1; sz = bz + recv_h * 0.5 + 0.05
-        sc = cyl((ox, sy, sz), cal * 1.6, L * 0.25, metal, rot=(radians(90), 0, 0))
-        sc.name = "scope"; sc["role"] = "scope"; parts.append(sc)
-        for ry in (sy - L * 0.08, sy + L * 0.08):
-            mt = box((ox, ry, bz + recv_h * 0.5 + 0.015), (recv_w * 0.5, 0.02, 0.06), black)
-            mt["role"] = "scope"; parts.append(mt)
+        sy = recv_len * 0.1; sz = bz + recv_h * 0.5 + 0.05; slen2 = L * 0.25
+        r0 = cal * 1.4
+        bm = bmesh.new()
+        v0, e0 = ngon_ring(bm, (ox, sy - slen2 * 0.5, sz), r0 * 1.15, 14)  # objective bell
+        bm.faces.new(v0[::-1])
+        v1, e1 = extrude_ring(bm, e0, translate=(0, slen2 * 0.18, 0), scale=r0 / (r0 * 1.15))
+        v2, e2 = extrude_ring(bm, e1, translate=(0, slen2 * 0.24, 0), scale=1.25)   # windage turret
+        v3, e3 = extrude_ring(bm, e2, translate=(0, slen2 * 0.24, 0), scale=0.8)
+        v4, e4 = extrude_ring(bm, e3, translate=(0, slen2 * 0.24, 0), scale=1.1)    # ocular bell
+        bm.faces.new(v4)
+        sc = _wobj(bm, "scope", metal, "scope")
+        parts.append(sc)
+        for i, ry in enumerate((sy - L * 0.08, sy + L * 0.08)):
+            bm = bmesh.new()
+            v0, e0 = quad_ring(bm, (ox, ry, bz + recv_h * 0.5), recv_w * 0.45, 0.03, axis="Z")
+            bm.faces.new(v0)
+            v1, e1 = extrude_ring(bm, e0, translate=(0, 0, 0.05))
+            bm.faces.new(v1[::-1])
+            bm.faces.ensure_lookup_table()
+            top_face = max(bm.faces, key=lambda f: f.calc_center_median().z)
+            try:
+                notch(bm, top_face, inset=0.3, depth=0.004)   # rail-clamp groove
+            except Exception:
+                pass
+            mt = _wobj(bm, "scope_mount_%d" % i, black, "scope")
+            parts.append(mt)
     return parts
 '''
 
@@ -1232,7 +1528,7 @@ def build(p, ox):
     return parts
 '''
 
-_BUILDERS = {"car": _CAR_SRC, "plane": _PLANE_SRC, "boat": _BOAT_SRC,
+_BUILDERS = {"plane": _PLANE_SRC, "boat": _BOAT_SRC,
              "humanoid": _HUMANOID_SRC, "bike": _BIKE_SRC,
              "furniture": _FURNITURE_SRC, "weapon": _WEAPON_SRC}
 
@@ -1240,47 +1536,6 @@ _BUILDERS = {"car": _CAR_SRC, "plane": _PLANE_SRC, "boat": _BOAT_SRC,
 # Car: a root + body bone + one bone per wheel (axle along +X). Each part is rigidly
 # skin-bound (single vertex group, weight 1.0) to its bone, so a wheel bone's roll
 # spins that wheel and its Z move = suspension travel. Exports as a rigged FBX.
-_CAR_RIG = '''
-def rig_model(parts, ox):
-    body = next((o for o in parts if o.get("role") == "body"), None)
-    if body is None:
-        return None
-    wheels = [o for o in parts if o.get("role") == "wheel"]
-    arm = bpy.data.armatures.new(COLL + "_arm")
-    rig = bpy.data.objects.new(COLL + "_rig", arm)
-    _into(rig)
-    bpy.context.view_layer.objects.active = rig
-    bpy.ops.object.mode_set(mode="EDIT")
-    eb = arm.edit_bones
-    root = eb.new("root"); root.head = (ox, 0, 0.02); root.tail = (ox, 0, 0.32)
-    bb = eb.new("body"); bz = body.location.z
-    bb.head = (ox, 0, bz); bb.tail = (ox, 0.6, bz); bb.parent = root
-    labels = {}
-    for w in wheels:
-        lab = w.get("wheel_label", w.name)
-        bn = eb.new(lab)                                      # bone names unique within this rig
-        bn.head = (w.location.x, w.location.y, w.location.z)
-        bn.tail = (w.location.x + 0.3, w.location.y, w.location.z)   # axle along +X
-        bn.parent = root
-        labels[w.name] = lab
-    bpy.ops.object.mode_set(mode="OBJECT")
-
-    def bind(obj, bone):
-        if obj is None:
-            return
-        obj.parent = rig
-        vg = obj.vertex_groups.new(name=bone)
-        vg.add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
-        m = obj.modifiers.new("arm", "ARMATURE"); m.object = rig
-
-    bind(body, "body")
-    bind(next((o for o in parts if o.get("role") == "cabin"), None), "body")
-    bind(next((o for o in parts if o.get("role") == "bed"), None), "body")
-    for w in wheels:
-        bind(w, labels[w.name])
-    return rig
-'''
-
 _BIKE_RIG = '''
 def rig_model(parts, ox):
     wheels = [o for o in parts if o.get("role") == "wheel"]
@@ -1480,7 +1735,7 @@ def rig_model(parts, ox):
     return None
 '''
 
-_RIGGERS = {"car": _CAR_RIG, "bike": _BIKE_RIG, "humanoid": _HUMANOID_RIG,
+_RIGGERS = {"bike": _BIKE_RIG, "humanoid": _HUMANOID_RIG,
             "plane": _PLANE_RIG, "boat": _BOAT_RIG}
 
 # Pose the rig into a demo: roll every wheel bone (spin) + lift the front axle
@@ -1546,7 +1801,7 @@ def build_base_code(base: str, params: dict, coll: str, ox: float = 0.0,
     demo — pose the rig (spin wheels + suspension) to demonstrate it moves.
     out_dir — append a tail that writes a result JSON (for the headless backend).
     """
-    base = base if base in _BUILDERS else "car"
+    base = base if base in _BUILDERS else "furniture"
     header = (
         "BASE = {b!r}\nCOLL = {c!r}\nOX = {x}\nRIG = {r}\nDEMO = {dm}\nPARAMS = {p}\n".format(
             b=base, c=coll, x=float(ox), r=bool(rig), dm=bool(demo), p=json.dumps(params))

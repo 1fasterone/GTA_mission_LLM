@@ -117,7 +117,10 @@ def map_prompt(prompt: str, use_llm: bool = True, model: str = DEFAULT_MODEL) ->
                         "source": "llm"}
         except Exception as exc:  # noqa: BLE001 - any LLM/transport failure -> fallback
             print(f"  [llm unavailable: {type(exc).__name__}: {exc}] -> keyword fallback")
-    base = keyword_base(prompt) or "car"
+    # "car" is a valid ROUTING target (DETAILED_BASES) but has no schema in
+    # base_models.BASE_PARAM_SCHEMA (built by vehicle_generator.py instead), so it
+    # is not a safe default for the non-detailed base_models fallback path below.
+    base = keyword_base(prompt) or "furniture"
     return {"base": base, "params": clamp_params(base, keyword_hints(prompt, base)),
             "source": "fallback"}
 

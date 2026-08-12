@@ -80,10 +80,12 @@ def _build_base_code_with_fbx(base: str, params: dict, coll: str,
     fbx_fwd = str(fbx_path).replace("\\", "/")
     code += f'\n_OUT_DIR = r"{out_fwd}"\n'
 
-    # Full Unity pipeline (rigged bases): smart-project UVs, build a convex COL_
-    # collider hull and LOD0_/LOD1_ decimated copies before export. Gated to the
-    # ported, properly-rigged bases; the others stay untouched until they're ported.
-    if base in ("humanoid", "plane", "boat"):
+    # Full Unity pipeline: smart-project UVs, build a convex COL_ collider hull and
+    # LOD0_/LOD1_ decimated copies before export. Gated to the bases built from the
+    # edge-loop sculpting toolkit (humanoid/plane/boat are rigged; weapon is a
+    # static sculpted prop) — the rest stay untouched until they're ported off
+    # primitive-composite construction.
+    if base in ("humanoid", "plane", "boat", "weapon"):
         code += '''
 # --- full Unity pipeline: UVs + collider + LODs ---
 _meshes = [o for o in _parts if o.type == "MESH"]

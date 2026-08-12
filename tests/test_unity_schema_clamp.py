@@ -259,6 +259,29 @@ def test_a_rejected_fill_gets_one_colder_re_roll(clamp_pipeline_config):
     assert 'at most 24 "scripts"' in second.kwargs["user"]
 
 
+def test_a_schema_valid_json_but_invalid_fill_also_gets_one_re_roll(clamp_pipeline_config):
+    """The re-roll's except clause names two exceptions: ValueError, from
+    extract_json on unparsable text (the case above), and pydantic's
+    ValidationError, from JSON that parses fine but fails the schema itself —
+    e.g. a required field the model just left out. Both must retry the same
+    way; a fill that is valid JSON is not the same thing as a valid schema."""
+    bad_json = json.dumps({
+        "project_name": "Gigantinut", "game_type": "3D", "platform": "PC",
+        # render_pipeline omitted — required, no default: model_validate raises
+        # ValidationError, not extract_json raising ValueError.
+    })
+    pipeline = UnityPipeline(clamp_pipeline_config)
+    pipeline.llm.chat = MagicMock(
+        side_effect=_chat_script(bad_json, _schema_json()))
+
+    root = pipeline.run("a giant squirrel wrecks a kart race")
+
+    assert root.exists()
+    first, second = _fill_calls(pipeline.llm.chat)
+    assert second.kwargs["temperature"] < first.kwargs["temperature"]
+    assert "REMINDER" in second.kwargs["user"]
+
+
 def test_two_failed_fills_still_fail_loudly(clamp_pipeline_config):
     """The clamp is not a licence to limp on: an unusable fill twice over is a
     hard error naming the last one, not a default schema."""
