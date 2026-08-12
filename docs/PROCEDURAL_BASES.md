@@ -2,7 +2,8 @@
 
 The pipeline: **prompt → (LLM) base + params → (deterministic) parts → assembler → rig → export.**
 The LLM only classifies and turns knobs; geometry is authored and recognisable by construction.
-Proven on `car` (incl. structural knobs + a bone-driven wheel rig). This doc plans the rest.
+Proven on `humanoid`/`plane`/`boat`/`weapon` (this file's `_BUILDERS`) and on `car` (built by the
+sibling `vehicle_generator.py`, not this file — see the car section below). This doc plans the rest.
 
 ## The pattern (every base follows it)
 
@@ -68,12 +69,20 @@ FBX. `templates/unity/ProcGenImporter.cs` (an `AssetPostprocessor` the overlay d
 
 ## Base families
 
-### 1. car ✅ (reference implementation)
-- **Variants:** sedan, jeep/SUV, pickup, van, sports, limo, 6-wheeler.
-- **Parts:** body, cabin, bed, `Wheel.<F/M/R><L/R>`.
-- **Scale knobs:** body_w/len/h, cabin_h, wheel_r/w, ride, rim.
-- **Structural knobs:** cabin_len, cabin_pos, bed, wheel_pairs.
-- **Rig:** root → body + per-wheel bones (axle +X) → wheels spin + suspension. ✅ done.
+### 1. car ✅ (built by `vehicle_generator.py`, not this file's `_BUILDERS`)
+`base_models.py` does NOT have a `car` entry — `BASE_NAMES`/`BASE_PARAM_SCHEMA` skip it on
+purpose. Car used to have a second, primitive-composite implementation here (`_CAR_SRC`/`_CAR_RIG`,
+box/cyl body + `make_wheel` wheels) but it was never reachable from the live `unity-model` CLI
+(`_VG_VARIANTS = {"car"}` in `src/micro/model.py` always routed to `vehicle_generator.py` instead)
+and was deleted rather than kept as a dead, drifting duplicate.
+- **Real implementation:** `vehicle_generator.generate_vehicle()` — ONE continuous bmesh (inset+
+  extrude+rake greenhouse, `recessed_grid` grille/vents, real PBR materials with procedural
+  normal-map noise), not a primitive-composite. `"car"` still keyword-routes correctly
+  (`base_models.keyword_base`) into this path via `src/micro/model.py`'s `_variant_table()`.
+- **Still primitive today (candidate for the next AAA pass):** `add_wheel`/`add_disc`/`add_strut`
+  (plain `_cone()` cylinders for wheels/lights/struts) and `add_slab` (`bmesh.ops.create_cube` for
+  wings/fins) in `vehicle_generator.py` — geometrically simple shapes merged into the same welded
+  mesh, not a separate-object union, but not sculpted detail either.
 
 ### 2. boat ✅ (implemented)
 - **Variants:** rowboat, sailboat, schooner (2-mast), motorboat, tugboat/steamer.
@@ -182,13 +191,27 @@ then live-verify in Blender (build → rig → pose → render) and confirm rigg
 
 ## Notes / honest limits
 
-- Mechanical bases (car/bike/weapon/furniture) stay **primitive-composites** — great for greybox /
-  GTA-sub-game props / placeholders, not AAA meshes. **humanoid** (ring-stack body, proximity skin,
-  Unity Humanoid avatar) and **plane** (ellipsoid fuselage + wings + tail + engines/props + gear,
-  rigid mechanical rig driven by `VehicleBoneDriver` — props spin, wheels roll) are ported from the
-  proven standalone generators (`humangen.py` / `planegen.py`) and ship the full Unity pipeline
-  (UVs + LOD0/1 + convex collider). **boat** (lofted U-hull + masts/sails or cabin/funnel/prop, with a
-  rudder+prop mechanical rig) is built from scratch guided by the V1/V2 specs + this boat family, and
-  ships the same pipeline. Bike/furniture/weapon adopt the same approach next.
+- Mechanical bases still built as **primitive-composites** (`box`/`cyl`/`cone`/`sphere` unions) —
+  bike/furniture — are placeholders, not AAA meshes, and are the next candidates for the edge-loop
+  sculpting toolkit below. **weapon** was the first: every part (receiver/barrel welded into one
+  spine, muzzle device, stock, grip, trigger guard, magazine, foregrip, scope+mounts) is now built
+  from `quad_ring`/`ngon_ring` + `extrude_ring` (real `bridge_loops` edge-loop extrusion, the same
+  move as extruding a loop in the modeller) instead of primitive unions, and is gated into the full
+  Unity pipeline (UVs + LOD0/1 + convex collider) like humanoid/plane/boat. **car** (see the car
+  section above) is built by `vehicle_generator.py`'s own welded-bmesh toolkit
+  (`extrude_face`/`scale_face`/`recessed_grid`) with real PBR materials — not primitive-composite for
+  the body, though its wheels/lights/struts/wing-slabs still are. **plane** was the third: the
+  ellipsoid-scaled `sphere()` fuselage/nose/tail is now a `ngon_ring`/`extrude_ring` ring-loft tube
+  with tapered nose/tail caps, the cockpit is a real `uvsphere_bm` dome, wings/stabilisers/prop
+  blades are `quad_ring`-tapered aerofoils, engines are ring-loft nacelles, gear struts are tapered
+  with a joint bulge, and the wheels (via the now-shared `make_wheel()`, also used by bike) have
+  real tread grooves + a recessed-spoke hub — no part left primitive. `PLANE_BONES`'s name-based
+  rig binding (not material_index like car's wheels) was the contract to preserve; every part still
+  carries the same `"bone"` value it always did. **humanoid** (ring-stack body, proximity skin,
+  Unity Humanoid avatar) is the other base that was already fully sculpted, no rework needed —
+  ported from the proven standalone generator (`humangen.py`) and ships the full Unity pipeline.
+  **boat** (lofted U-hull + masts/sails or cabin/funnel/prop, with a rudder+prop mechanical rig)
+  ships the same pipeline, though its cabin/masts/sails/funnel/rudder/prop are still
+  primitive-composite. Bike/furniture adopt the sculpting toolkit next.
 - For unique *hero* assets, the complementary **text-to-3D** track (cloud or bigger VRAM) can feed
   the same Blender sanitizer (cleanup → UV → LOD → rig). Parametric stays the controllable spine.

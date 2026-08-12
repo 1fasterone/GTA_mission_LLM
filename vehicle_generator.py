@@ -39,7 +39,7 @@
 
 import os
 import json
-from math import pi, radians
+from math import atan2, pi, radians
 from random import random, seed, uniform, randint
 from colorsys import hls_to_rgb
 from enum import IntEnum
@@ -273,62 +273,137 @@ def recessed_grid(bm, face, mat_index, cuts=3, depth=0.04, scale=0.82):
 
 
 def add_disc(bm, pos, axis_char, radius, depth, mat_index, segments=20):
-    """A shallow capped cylinder (disc) facing along an axis — head/taillights,
-    exhaust tips, beacons. axis_char is 'X', 'Y' or 'Z' (the flat faces point
-    that way; a cone's native axis is already Z)."""
+    """A domed lens facing along an axis — head/taillights, exhaust tips, beacons
+    — not a flat disc: the far cap tapers to 78% radius so the shape actually
+    reads as a lens/bezel instead of a coin. axis_char is 'X', 'Y' or 'Z' (the
+    direction the dome faces; a cone's native axis is already Z)."""
     if axis_char == "Y":
         rot = Matrix.Rotation(radians(90), 4, "X")
     elif axis_char == "X":
         rot = Matrix.Rotation(radians(90), 4, "Y")
     else:  # 'Z' — native orientation
         rot = Matrix.Identity(4)
-    mat = Matrix.Translation(pos) @ rot
+    mat = Matrix.Translation(Vector(pos)) @ rot
     res = _cone(bm, cap_ends=True, cap_tris=False, segments=segments,
-                radius1=radius, radius2=radius, depth=depth, matrix=mat)
+                radius1=radius, radius2=radius * 0.78, depth=depth, matrix=mat)
     for v in res["verts"]:
         for f in v.link_faces:
             f.material_index = mat_index
 
 
-def add_wheel(bm, pos, wheel_r, wheel_w, rim):
-    """A wheel as part of the hull bmesh: rubber tyre + chrome hub, axle along X."""
+def add_wheel(bm, pos, wheel_r, wheel_w, rim, segments=24):
+    """A wheel as part of the hull bmesh: a treaded tyre (alternating recessed
+    grooves around the tread band, real geometry not a plain cylinder) + a
+    spoked chrome hub, axle along X. A ~40 degree arc at the very bottom is kept
+    at full radius (never recessed) so the wheel still sits flush on the ground
+    regardless of which tread face a given segment count lands a groove on —
+    _finalize()'s whole-vehicle ground bake and rig_vehicle()'s `wheel_z = wheel_r`
+    axle-height assumption both depend on the tyre's true lowest point staying at
+    exactly wheel_r below the axle."""
+    pos = Vector(pos)
     mat = Matrix.Translation(pos) @ Matrix.Rotation(radians(90), 4, "Y")
-    res = _cone(bm, cap_ends=True, cap_tris=False, segments=24,
+    res = _cone(bm, cap_ends=True, cap_tris=False, segments=segments,
                 radius1=wheel_r, radius2=wheel_r, depth=wheel_w, matrix=mat)
+    tyre_verts = set(res["verts"])
+    side_faces = []
+    seen = set()
     for v in res["verts"]:
         for f in v.link_faces:
-            f.material_index = Material.tire
+            if f in seen or not all(vv in tyre_verts for vv in f.verts):
+                continue
+            seen.add(f)
+            local_x = (f.calc_center_median() - pos).x
+            if abs(local_x) < wheel_w * 0.45:      # side band, not the end caps
+                side_faces.append(f)
+
+    def _angle(f):
+        c = f.calc_center_median() - pos
+        return atan2(c.z, c.y)                      # axle along X, cross-section YZ
+
+    side_faces.sort(key=_angle)
+    groove_depth = wheel_r * 0.03
+    for i, f in enumerate(side_faces):
+        if not f.is_valid:
+            continue
+        f.material_index = Material.tire
+        near_bottom = abs(_angle(f) - (-1.5708)) < 0.35   # contact-patch arc, stays full radius
+        if i % 2 == 1 and not near_bottom:
+            try:
+                inner = extrude_face(bm, f, -groove_depth)
+                for iv in inner.verts:
+                    for ff in iv.link_faces:
+                        ff.material_index = Material.tire
+            except Exception:
+                pass
     if rim > 0.05:
-        res = _cone(bm, cap_ends=True, cap_tris=False, segments=12,
+        hub = _cone(bm, cap_ends=True, cap_tris=False, segments=12,
                     radius1=wheel_r * rim, radius2=wheel_r * rim,
                     depth=wheel_w * 1.06, matrix=mat)
-        for v in res["verts"]:
+        hub_verts = set(hub["verts"])
+        end_faces, seen2 = [], set()
+        for v in hub["verts"]:
             for f in v.link_faces:
+                if f in seen2 or not all(vv in hub_verts for vv in f.verts):
+                    continue
+                seen2.add(f)
                 f.material_index = Material.chrome
+                if abs((f.calc_center_median() - pos).x) > wheel_w * 0.45:
+                    end_faces.append(f)             # the two flat hub caps
+        for f in end_faces:
+            try:
+                recessed_grid(bm, f, Material.chrome, cuts=2, depth=wheel_r * 0.03, scale=0.7)
+            except Exception:
+                pass
 
 
-def add_slab(bm, center, size, mat_index):
-    """An axis-aligned box added at `center` with full dimensions `size` — wings,
-    stabilisers, fins, propeller blades."""
+def add_slab(bm, center, size, mat_index, taper=0.32):
+    """A wing/stabiliser/fin/prop-blade slab, tapered from a full-section leading
+    edge to a thin trailing edge (an aerofoil silhouette) instead of a flat box.
+    `size` is (X, Y, Z) full extents; on every existing call site in this file, Y
+    is the chord (wing/stabiliser/fin) or the thin flat dimension (prop blades),
+    so tapering the +Y face toward the -Y face reads correctly for all of them."""
     mat = Matrix.Translation(Vector(center)) @ Matrix.Diagonal(Vector(size)).to_4x4()
     res = bmesh.ops.create_cube(bm, size=1.0, matrix=mat)
+    new_verts = set(res["verts"])
+    new_faces = set()
     for v in res["verts"]:
         for f in v.link_faces:
-            f.material_index = mat_index
+            if all(vv in new_verts for vv in f.verts):
+                new_faces.add(f)
+    trailing = max(new_faces, key=lambda f: f.calc_center_median().y)
+    scale_face(bm, trailing, taper, taper, 1.0)
+    for f in new_faces:
+        f.material_index = mat_index
     return res
 
 
 def add_strut(bm, top, bot, r, mat_index, segments=8):
-    """A vertical cylinder spanning two points (landing-gear leg)."""
+    """A landing-gear leg: two tapered segments meeting at a joint bulge midway
+    (not a plain uniform cylinder)."""
     top, bot = Vector(top), Vector(bot)
-    center = (top + bot) * 0.5
-    depth = max(0.02, (top - bot).length)
-    res = _cone(bm, cap_ends=True, cap_tris=False, segments=segments,
-                radius1=r, radius2=r, depth=depth, matrix=Matrix.Translation(center))
-    for v in res["verts"]:
-        for f in v.link_faces:
-            f.material_index = mat_index
-    return res
+    d = top - bot
+    length = max(0.02, d.length)
+    axis = d.normalized()
+    up = Vector((0, 0, 1)) if abs(axis.z) < 0.99 else Vector((1, 0, 0))
+    x_axis = axis.cross(up).normalized()
+    y_axis = axis.cross(x_axis)
+    rot = Matrix((x_axis, y_axis, axis)).transposed().to_4x4()
+
+    def _seg(a, b, r0, r1):
+        seg_len = (b - a).length
+        if seg_len < 1e-6:
+            return
+        mat = Matrix.Translation((a + b) * 0.5) @ rot
+        res = _cone(bm, cap_ends=True, cap_tris=False, segments=segments,
+                    radius1=r0, radius2=r1, depth=seg_len, matrix=mat)
+        for v in res["verts"]:
+            for f in v.link_faces:
+                f.material_index = mat_index
+
+    mid = bot + axis * (length * 0.5)
+    joint_r = r * 1.35
+    _seg(bot, mid, r, joint_r)
+    _seg(mid, top, joint_r, r)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -778,9 +853,8 @@ def rig_plane(obj, params=None, name=None, demo=False):
 # ──────────────────────────────────────────────────────────────────────────────
 # Rigging: make the single detailed mesh drivable.
 # The detailed vehicle is ONE fused mesh, so we can't parent separate wheel
-# objects to bones the way base_models does. Instead we build the same car
-# skeleton (root + body + 4 wheel bones, axle along +X — identical layout to
-# base_models._CAR_RIG so export/demo treat both backends alike) and skin-bind
+# objects to bones the way base_models does for its other bases. Instead we
+# build a car skeleton (root + body + 4 wheel bones, axle along +X) and skin-bind
 # the one mesh: wheel polygons are found by MATERIAL (tyre, plus chrome hubs near
 # a wheel centre — which excludes the rear exhaust tips), everything else binds to
 # the body bone. A wheel bone's roll then spins just that wheel's vertices.

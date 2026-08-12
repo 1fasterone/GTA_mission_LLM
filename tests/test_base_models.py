@@ -5,6 +5,7 @@ emitted-script validity (compile-checked, not executed). No Blender / no LLM.
 """
 
 import json
+import re
 
 import pytest
 
@@ -18,30 +19,32 @@ from procedural_pipeline import map_prompt
 # ── param clamping ────────────────────────────────────────────────────────────
 
 def test_clamp_fills_defaults_and_color():
-    p = clamp_params("car", {})
-    for k, (default, lo, hi) in BASE_PARAM_SCHEMA["car"].items():
+    p = clamp_params("furniture", {})
+    for k, (default, lo, hi) in BASE_PARAM_SCHEMA["furniture"].items():
         assert p[k] == default
-    assert p["color"] == pytest.approx((0.12, 0.32, 0.72))
+    assert p["color"] == pytest.approx((0.45, 0.30, 0.16))
 
 
 def test_clamp_clamps_out_of_range_and_bad_values():
-    p = clamp_params("car", {"wheel_r": 99.0, "body_w": -5, "ride": "huge"})
-    assert p["wheel_r"] == 0.95            # clamped to max
-    assert p["body_w"] == 1.2              # clamped to min
-    assert p["ride"] == 0.0                # non-numeric -> default
+    p = clamp_params("furniture", {"width": 99.0, "depth": -5, "legs": "huge"})
+    assert p["width"] == 3.0               # clamped to max
+    assert p["depth"] == 0.25              # clamped to min
+    assert p["legs"] == 4                  # non-numeric -> default
 
 
 def test_clamp_drops_unknown_keys_and_bad_base():
-    p = clamp_params("nonsense", {"bogus": 1, "wheel_r": 0.5})
+    p = clamp_params("nonsense", {"bogus": 1, "width": 0.5})
     assert "bogus" not in p
-    assert set(p) == set(BASE_PARAM_SCHEMA["car"]) | {"color"}   # bad base -> car
+    # "car" has no schema here (built by vehicle_generator.py instead) so it can't
+    # be the bad-base fallback; furniture is.
+    assert set(p) == set(BASE_PARAM_SCHEMA["furniture"]) | {"color"}
 
 
 def test_clamp_color_validation():
     # 0..1 values clamp; a 0-255 triple (max>1) is normalised to 0..1
-    assert clamp_params("car", {"color": [0.2, -1, 0.5]})["color"] == pytest.approx((0.2, 0.0, 0.5))
-    assert clamp_params("car", {"color": [255, 0, 128]})["color"] == pytest.approx((1.0, 0.0, 128 / 255))
-    assert clamp_params("car", {"color": "red"})["color"] == pytest.approx((0.12, 0.32, 0.72))
+    assert clamp_params("furniture", {"color": [0.2, -1, 0.5]})["color"] == pytest.approx((0.2, 0.0, 0.5))
+    assert clamp_params("furniture", {"color": [255, 0, 128]})["color"] == pytest.approx((1.0, 0.0, 128 / 255))
+    assert clamp_params("furniture", {"color": "red"})["color"] == pytest.approx((0.45, 0.30, 0.16))
 
 
 # ── keyword routing (no-LLM fallback) ─────────────────────────────────────────
@@ -54,11 +57,6 @@ def test_clamp_color_validation():
 ])
 def test_keyword_base(prompt, expected):
     assert keyword_base(prompt) == expected
-
-
-def test_keyword_hints_big_tires():
-    h = keyword_hints("jeep with big tires", "car")
-    assert h["wheel_r"] >= 0.7 and h["ride"] > 0.0
 
 
 def test_keyword_hints_tall_thin():
@@ -80,54 +78,19 @@ def test_build_base_code_compiles(base):
 
 
 def test_build_base_code_tail_when_out_dir():
-    code = build_base_code("car", clamp_params("car", {}), coll="PROC_car", out_dir="/tmp/x")
+    code = build_base_code("furniture", clamp_params("furniture", {}), coll="PROC_furn", out_dir="/tmp/x")
     assert "result.json" in code and "_OUT_DIR" in code
-    compile(code, "<car_tail>", "exec")
+    compile(code, "<furn_tail>", "exec")
 
 
 # ── end-to-end mapping (fallback path, no LLM) ────────────────────────────────
-
-def test_map_prompt_fallback_jeep():
-    m = map_prompt("a jeep with big tires", use_llm=False)
-    assert m["source"] == "fallback" and m["base"] == "car"
-    assert m["params"]["wheel_r"] >= 0.7
-    # the plan must produce a compilable script
-    code = build_base_code(m["base"], m["params"], coll="PROC_test")
-    compile(code, "<map>", "exec")
-
+# "car" keyword-routes correctly (test_keyword_base above) but is built by
+# vehicle_generator.py, not base_models.py — map_prompt's base_models-only fallback
+# path is only exercised here for bases base_models actually builds.
 
 def test_map_prompt_fallback_plane_and_humanoid():
     assert map_prompt("a small plane", use_llm=False)["base"] == "plane"
     assert map_prompt("a humanoid figure", use_llm=False)["base"] == "humanoid"
-
-
-# ── structural car knobs (limo != stretched jeep) ─────────────────────────────
-
-def test_car_structural_knobs_clamp_and_compile():
-    p = clamp_params("car", {"bed": 1, "wheel_pairs": 3, "cabin_len": 0.78, "cabin_pos": 0.9})
-    assert p["bed"] == 1.0
-    assert p["wheel_pairs"] == 3.0
-    assert p["cabin_len"] == 0.78
-    assert p["cabin_pos"] == 0.30                  # clamped to max
-    compile(build_base_code("car", p, coll="PROC_pickup"), "<pickup>", "exec")
-
-
-def test_car_defaults_include_structural_knobs():
-    p = clamp_params("car", {})
-    for k in ("cabin_len", "cabin_pos", "bed", "wheel_pairs", "rim"):
-        assert k in p
-
-
-# ── part-library: rig + semantic names ────────────────────────────────────────
-
-def test_car_rig_code_compiles_and_has_parts_and_rigger():
-    code = build_base_code("car", clamp_params("car", {}), coll="PROC_car", rig=True, demo=True)
-    compile(code, "<car_rig>", "exec")
-    assert "def make_wheel(" in code            # part builder present
-    assert "Wheel." in code                     # semantic wheel naming
-    assert "def rig_model(parts, ox):" in code  # rigger present
-    assert "def demo_pose(" in code             # demo present
-    assert "ARMATURE" in code                   # skin-bind
 
 
 def test_static_base_gets_noop_rigger():
@@ -150,6 +113,32 @@ def test_plane_emit_ports_planegen_and_mechanical_rig():
     # rigid mechanical rigger (weight 1.0 single bind), not the no-op
     assert "PLANE_BONES" in code and "1.0" in code
     assert "def rig_model(parts, ox):\n    return None" not in code
+
+
+def test_plane_emit_uses_edge_loop_toolkit_and_no_bare_primitives():
+    """Fuselage/nose/tail/wings/stabilisers/engines/props/gear are all edge-loop
+    sculpted (or, for the canopy, a real bmesh sphere) — the old ellipsoid-scaled
+    sphere() fuselage and box()/cyl()/cone() parts are gone."""
+    code = build_base_code("plane", clamp_params("plane", {}), coll="PROC_p")
+    compile(code, "<p>", "exec")
+    for fn in ("def quad_ring(", "def ngon_ring(", "def extrude_ring(", "def uvsphere_bm("):
+        assert fn in code
+    assert "bridge_loops" in code
+    assert _no_bare_primitives(code, "plane")
+
+
+def test_plane_no_bare_primitive_calls_anywhere_in_the_knob_matrix():
+    for label, raw in [
+        ("default", {}),
+        ("min", {"fuselage_len": 3.0, "fuselage_r": 0.30, "wing_span": 3.0,
+                 "wing_chord": 0.6, "fin_h": 0.5}),
+        ("max", {"fuselage_len": 9.0, "fuselage_r": 1.00, "wing_span": 12.0,
+                 "wing_chord": 2.5, "fin_h": 2.0}),
+    ]:
+        p = clamp_params("plane", raw)
+        code = build_base_code("plane", p, coll=f"PROC_{label}")
+        compile(code, f"<{label}>", "exec")
+        assert _no_bare_primitives(code, "plane"), label
 
 
 # ── bike base (part reuse: make_wheel + wheel-bone rig) ───────────────────────
@@ -284,6 +273,60 @@ def test_weapon_map_prompt_fallback():
     compile(build_base_code(m["base"], m["params"], coll="PROC_sniper"), "<sniper>", "exec")
 
 
+def test_weapon_emit_uses_edge_loop_spine_toolkit():
+    """Every weapon part is grown by edge-loop extrusion (quad_ring/ngon_ring ->
+    extrude_ring -> bridge_loops), never a bare box()/cyl()/cone()/sphere() union —
+    the AAA-quality bar (docs/PROCEDURAL_BASES.md). Receiver+barrel are welded
+    into ONE spine, so the old standalone "barrel" object/role is gone."""
+    code = build_base_code("weapon", clamp_params("weapon", {"scope": 1, "muzzle": 2}),
+                           coll="PROC_w")
+    compile(code, "<w>", "exec")
+    for fn in ("def quad_ring(", "def ngon_ring(", "def extrude_ring(",
+              "def bevel_edges(", "def notch("):
+        assert fn in code
+    assert "bridge_loops" in code
+    assert '"barrel"' not in code
+    assert '"receiver"' in code
+    assert _no_bare_primitives(code, "weapon")
+
+
+def _no_bare_primitives(code: str, base: str) -> bool:
+    """True when `base`'s own build() text — not the always-present _HELPERS
+    definitions, which legitimately contain these substrings — never calls a
+    bare-primitive helper as a final part shape. Slices the base's own blob out
+    of the concatenated script rather than checking the whole text, since
+    "primitive_" appears in every base's emitted code regardless of whether that
+    base's build() actually uses box()/cyl()/cone()/sphere(); strips `#` comments
+    AND triple-quoted docstrings first, so prose explaining what was REMOVED
+    (e.g. build()'s own docstring saying "never a bare box()/cyl()" — plane's
+    does, right where this slice starts) doesn't false-positive as a call."""
+    start = code.index("def build(p, ox):")
+    body = "\n".join(line.split("#", 1)[0] for line in code[start:].splitlines())
+    body = re.sub(r'""".*?"""', "", body, flags=re.DOTALL)
+    body = re.sub(r"'''.*?'''", "", body, flags=re.DOTALL)
+    return not any(f"{fn}(" in body for fn in ("box", "cyl", "cone", "sphere"))
+
+
+def test_weapon_no_bare_primitive_calls_anywhere_in_the_loadout_matrix():
+    for label, raw in [
+        ("rifle", {}), ("pistol", {"stock": 0, "barrel_len": 0.14, "length": 0.32}),
+        ("sniper", {"barrel_len": 0.9, "scope": 1, "stock": 1}),
+        ("suppressed", {"muzzle": 2, "foregrip": 1}),
+        ("drum_smg", {"magazine": 2, "stock": 2, "length": 0.6}),
+        ("revolver", {"stock": 0, "magazine": 0, "grip": 1}),
+        ("extreme_min", {"length": 0.20, "caliber": 0.015, "barrel_len": 0.10,
+                          "stock": 2, "muzzle": 1, "magazine": 2, "scope": 1,
+                          "grip": 1, "foregrip": 1}),
+        ("extreme_max", {"length": 1.40, "caliber": 0.08, "barrel_len": 0.95,
+                          "stock": 2, "muzzle": 2, "magazine": 2, "scope": 1,
+                          "grip": 1, "foregrip": 1}),
+    ]:
+        p = clamp_params("weapon", raw)
+        code = build_base_code("weapon", p, coll=f"PROC_{label}")
+        compile(code, f"<{label}>", "exec")
+        assert _no_bare_primitives(code, "weapon"), label
+
+
 # ── humanoid: ring-loft toolkit, palette, proximity-weighted Unity rig ──────────
 
 def test_humanoid_palette_clamp_and_default():
@@ -385,13 +428,18 @@ def test_boat_map_prompt_fallback():
     compile(build_base_code(m["base"], m["params"], coll="PROC_sail"), "<sail>", "exec")
 
 
-def test_model_wrapper_gates_unity_pipeline_to_humanoid():
+def test_model_wrapper_gates_unity_pipeline_to_toolkit_bases():
     from src.micro.model import _build_base_code_with_fbx
     h = _build_base_code_with_fbx("humanoid", clamp_params("humanoid", {}),
                                   "MODEL_H", "out", "out/H.fbx", rig=True)
     compile(h, "<hw>", "exec")
     assert "collider_hull(COLL" in h and "make_lods(_parts" in h
-    # other bases are untouched this pass (no LOD/collider post-pass)
+    # weapon (edge-loop sculpted, static prop) is gated in too
+    w = _build_base_code_with_fbx("weapon", clamp_params("weapon", {}),
+                                  "MODEL_WPN", "out", "out/W.fbx")
+    compile(w, "<ww>", "exec")
+    assert "collider_hull(COLL" in w and "make_lods(_parts" in w
+    # other (still primitive-composite) bases are untouched this pass
     b = _build_base_code_with_fbx("bike", clamp_params("bike", {}),
                                   "MODEL_B", "out", "out/B.fbx", rig=True)
     compile(b, "<bw>", "exec")
