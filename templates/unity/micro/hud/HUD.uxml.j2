@@ -30,8 +30,15 @@
         <engine:Label name="Ammo" text="0 / 0" class="hud-label" />
         <engine:Label name="Score" text="0" class="hud-label hud-score" />
         <engine:VisualElement name="Map" class="hud-minimap" />
-{% else %}
+{% elif not s.widgets %}
         <engine:Label text="HUD" />
 {% endif %}
+{%- for w in s.widgets %}
+{%- if w.kind == "bar" %}
+        <engine:ProgressBar name="{{ w.ident }}" value="{{ "%.0f"|format(w.max_value) }}" low-value="0" high-value="{{ "%.0f"|format(w.max_value) }}" title="{{ w.display_label }}" />
+{%- else %}
+        <engine:Label name="{{ w.ident }}" text="{{ w.display_label }}" class="hud-label hud-widget-{{ w.kind }}" />
+{%- endif %}
+{%- endfor %}
     </engine:VisualElement>
 </engine:UXML>

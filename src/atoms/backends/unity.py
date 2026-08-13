@@ -796,6 +796,36 @@ def _objective_seam(args: dict, *, source_key: str, source_default: str,
     )
 
 
+def _wire_objectives_to_hud(args: dict) -> str:
+    ov = _s(args.get("objectives_var", "_objectives"))
+    uv = _s(args.get("hud_var",        "_hud"))
+    rm = _s(args.get("refresh_method", "RefreshObjectiveHud"))
+    return (
+        f"if ({ov} != null && {uv} != null)\n"
+        f"{{\n"
+        f"    _onObjectiveHudProgress = (id, progress, required) => {rm}();\n"
+        f"    _onObjectiveHudComplete = id => {rm}();\n"
+        f"    {ov}.OnObjectiveProgress += _onObjectiveHudProgress;\n"
+        f"    {ov}.OnObjectiveComplete += _onObjectiveHudComplete;\n"
+        f"    {rm}();\n"
+        f"}}"
+    )
+
+
+def _wire_inventory_to_hud(args: dict) -> str:
+    iv = _s(args.get("inventory_var", "_inventory"))
+    uv = _s(args.get("hud_var",       "_hud"))
+    st = _s(args.get("setter",        "SetCarried"))
+    return (
+        f"if ({iv} != null && {uv} != null)\n"
+        f"{{\n"
+        f"    _onInventoryHud = () => {uv}.{st}({iv}.TotalCount);\n"
+        f"    {iv}.OnChanged += _onInventoryHud;\n"
+        f"    _onInventoryHud();\n"
+        f"}}"
+    )
+
+
 def _wire_trigger_to_objectives(args: dict) -> str:
     return _objective_seam(
         args, source_key="trigger_var", source_default="_trigger",
@@ -908,6 +938,8 @@ _SNIPPETS: dict[str, Any] = {
     "WireTriggerToObjectives":      _wire_trigger_to_objectives,
     "WireInteractableToObjectives": _wire_interactable_to_objectives,
     "WireSpawnerToObjectives":      _wire_spawner_to_objectives,
+    "WireObjectivesToHUD":          _wire_objectives_to_hud,
+    "WireInventoryToHUD":           _wire_inventory_to_hud,
 }
 
 

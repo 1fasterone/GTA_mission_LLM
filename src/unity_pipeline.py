@@ -834,7 +834,8 @@ class UnityPipeline:
             route:       dict | None = None,
             scene:       dict | None = None,
             no_think:    bool = False,
-            micro_code:  bool = True) -> Path:
+            micro_code:  bool = True,
+            no_llm:      bool = False) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -932,75 +933,103 @@ class UnityPipeline:
                 + (" …" if len(_spatial_facts) > 3 else "")
             )
 
-        # STEP 2 — concept ────────────────────────────────────────────────────
-        self._step(2, "LLM generates project concept")
-        if no_think:
-            self._ok("--no-think: reasoning disabled for the whole run "
-                     "(concept quality/creativity trades for speed)")
-        concept = self.llm.chat(
-            system      = UNITY_CONCEPT_SYSTEM,
-            user        = UNITY_CONCEPT_USER.format(user_prompt=user_prompt, theme_block=theme_block),
-            temperature = self.concept_temp,
-            thinking    = not no_think,
-        )
-        self._ok(f"{len(concept)} chars of project concept generated")
-        if self.show_prompts:
-            console.print(concept)
-
-        # STEP 3 — fill schema ────────────────────────────────────────────────
-        self._step(3, "LLM fills project schema")
-        # Multimodal IR ask: core sections always, optional ones gated on the
-        # concept's own content so the prompt stays inside a local model's
-        # context window (src/unity_prompts.py).
-        mm = render_multimodal_block(concept, user_prompt,
-                                     max_optional=self.multimodal_max_sections)
-        self._ok("Multimodal IR sections requested: " + ", ".join(mm.sections))
-        schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept,
-                                                    schema_hints=schema_hints,
-                                                    multimodal_block=mm.text)
-        # In --compose mode the micros + GameContext locator exist, so steer the
-        # LLM to reach subsystems via GameContext.Instance.Get<T>() instead of
-        # inventing singletons (which the fixer strips).
-        if compose:
-            schema_user += GAMECONTEXT_SCHEMA_GUIDANCE
-        # One re-roll on a bad fill, and a deterministic clamp before validation
-        # so a runaway list costs its own overflow instead of the whole run
-        # (src/unity_schema_clamp.py — live: 155 scripts against a cap of 24).
+        # STEPS 2-3, offline ──────────────────────────────────────────────────
+        # --no-llm: the brief's own sections ARE the schema. Steps 2 and 3 are
+        # replaced by a deterministic parse (src/unity_briefparse.py) and no
+        # model is contacted anywhere in the run. This is the control arm for
+        # measuring what the Pipeline LLM contributes — NOT a test of Step 3,
+        # which does not run. See the module docstring on Eval Discipline.
         schema: UnitySchema | None = None
-        clamp_msgs: list[str] = []
-        last_err: Exception | None = None
-        for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
-            user_msg = schema_user
-            if attempt > 0:
-                user_msg += _SCHEMA_FILL_RETRY_REMINDER
-            try:
-                schema_raw = self.llm.chat(
-                    system      = UNITY_SCHEMA_FILL_SYSTEM,
-                    user        = user_msg,
-                    temperature = (self.schema_temp if attempt == 0
-                                   else min(self.schema_temp, 0.1)),
-                    thinking    = False,
-                )
-                schema_dict = self.llm.extract_json(schema_raw)
-                clamp_msgs  = clamp_capped_lists(schema_dict)
-                schema      = UnitySchema.model_validate(schema_dict)
-                break
-            except (ValueError, ValidationError) as exc:
-                last_err = exc
-                if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
-                    self._warn(f"schema fill attempt {attempt + 1} failed "
-                               f"({type(exc).__name__}); retrying colder")
-        if schema is None:
-            raise RuntimeError(
-                f"schema fill failed after {self.SCHEMA_FILL_ATTEMPTS} "
-                f"attempts: {last_err}"
-            ) from last_err
-        for msg in clamp_msgs:
-            self._fix(msg)
+        concept = ""
+        if no_llm:
+            self._step(2, "Deterministic brief parse (--no-llm — Steps 2-3 offline)")
+            from .unity_briefparse import parse_brief
+            schema, parse_msgs = parse_brief(user_prompt)
+            for msg in parse_msgs:
+                self._fix(msg)
+            self._step(3, "Schema filled from the brief (no model contacted)")
+            # Steps 4-7 below are shared verbatim with the LLM path — that is
+            # the point of the control arm. Only the SOURCE of the schema
+            # differs; the compiler that consumes it must not.
+
+        else:
+            # STEP 2 — concept ────────────────────────────────────────────────
+            self._step(2, "LLM generates project concept")
+            if no_think:
+                self._ok("--no-think: reasoning disabled for the whole run "
+                         "(concept quality/creativity trades for speed)")
+            concept = self.llm.chat(
+                system      = UNITY_CONCEPT_SYSTEM,
+                user        = UNITY_CONCEPT_USER.format(user_prompt=user_prompt, theme_block=theme_block),
+                temperature = self.concept_temp,
+                thinking    = not no_think,
+            )
+            self._ok(f"{len(concept)} chars of project concept generated")
+            if self.show_prompts:
+                console.print(concept)
+
+            # STEP 3 — fill schema ────────────────────────────────────────────
+            self._step(3, "LLM fills project schema")
+            # Multimodal IR ask: core sections always, optional ones gated on
+            # the concept's own content so the prompt stays inside a local
+            # model's context window (src/unity_prompts.py).
+            mm = render_multimodal_block(concept, user_prompt,
+                                         max_optional=self.multimodal_max_sections)
+            self._ok("Multimodal IR sections requested: " + ", ".join(mm.sections))
+            schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept,
+                                                        schema_hints=schema_hints,
+                                                        multimodal_block=mm.text)
+            # In --compose mode the micros + GameContext locator exist, so steer
+            # the LLM to reach subsystems via GameContext.Instance.Get<T>()
+            # instead of inventing singletons (which the fixer strips).
+            if compose:
+                schema_user += GAMECONTEXT_SCHEMA_GUIDANCE
+            # One re-roll on a bad fill, and a deterministic clamp before
+            # validation so a runaway list costs its own overflow instead of the
+            # whole run (src/unity_schema_clamp.py — live: 155 scripts against a
+            # cap of 24).
+            clamp_msgs: list[str] = []
+            last_err: Exception | None = None
+            for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
+                user_msg = schema_user
+                if attempt > 0:
+                    user_msg += _SCHEMA_FILL_RETRY_REMINDER
+                try:
+                    schema_raw = self.llm.chat(
+                        system      = UNITY_SCHEMA_FILL_SYSTEM,
+                        user        = user_msg,
+                        temperature = (self.schema_temp if attempt == 0
+                                       else min(self.schema_temp, 0.1)),
+                        thinking    = False,
+                    )
+                    schema_dict = self.llm.extract_json(schema_raw)
+                    clamp_msgs  = clamp_capped_lists(schema_dict)
+                    schema      = UnitySchema.model_validate(schema_dict)
+                    break
+                except (ValueError, ValidationError) as exc:
+                    last_err = exc
+                    if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
+                        self._warn(f"schema fill attempt {attempt + 1} failed "
+                                   f"({type(exc).__name__}); retrying colder")
+            if schema is None:
+                raise RuntimeError(
+                    f"schema fill failed after {self.SCHEMA_FILL_ATTEMPTS} "
+                    f"attempts: {last_err}"
+                ) from last_err
+            for msg in clamp_msgs:
+                self._fix(msg)
+
+        # Shared tail of Steps 2-3 — runs for both fills. The offline fill has
+        # already written meta.user_prompt/concept/fill; re-writing them here
+        # keeps one source of truth for the theme + spatial-fact stamps.
         schema.meta = {**schema.meta, **theme_meta}
         # Persist the LLM concept so the Library page can describe the project.
+        # Empty string under --no-llm: no concept step ran, and every consumer
+        # that gates on a concept must see that and skip rather than be handed
+        # a synthesised one.
         schema.meta["concept"]     = concept
         schema.meta["user_prompt"] = user_prompt
+        schema.meta["fill"]        = "deterministic" if no_llm else "llm"
         # The brief's spatial facts ride alongside from here on. Written LAST
         # and unconditionally, so a model that decided to author its own
         # `meta.spatial_facts` cannot get one past the extraction pass. Step 5's
@@ -1180,7 +1209,10 @@ class UnityPipeline:
         # regardless of `compose`/`subsystems`: the concept-translated query
         # also drives the LOCAL catalog tiers (see _query_weights), so entity
         # -> model matching is concept-aware even when Sketchfab is off or fails.
-        if schema.entities:
+        # --no-llm skips this: the enrichment is a model call, and its
+        # deterministic fallback (model_hint / entity name, both already parsed
+        # from the brief) is exactly what the offline arm is meant to exercise.
+        if schema.entities and not no_llm:
             try:
                 from .unity_sketchfab_translator import translate_concept
                 _llm_seed = getattr(self.llm, "seed", None)
@@ -1236,11 +1268,14 @@ class UnityPipeline:
             # dialog pre-extraction is (LM Studio idle-unload would otherwise
             # turn every call into a swallowed failure).
             from .unity_micro_code import enrich_subsystems, merge_authored_code
-            if micro_code:
+            if micro_code and not no_llm:
                 for msg in enrich_subsystems(subsystems, llm=self.llm,
                                              concept=concept,
                                              user_prompt=user_prompt):
                     self._fix(msg)
+            elif no_llm:
+                self._ok("--no-llm: micros keep their deterministic baseline "
+                         "bodies (Step 3.5 code enrichment skipped)")
             # Fallback: schema.microgens[].input is already LLM-authored, so it
             # costs nothing and covers whatever enrichment left empty (disabled,
             # failed, or nothing usable returned for that kind).
@@ -1378,7 +1413,8 @@ class UnityPipeline:
 
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
-            if audio_backend == "stable3" and any(s.kind == "audio" for s in subsystems):
+            if (audio_backend == "stable3" and not no_llm
+                    and any(s.kind == "audio" for s in subsystems)):
                 # 1. Extract diegetic cues from concept WHILE LM Studio is loaded.
                 #    Inject into the audio subsystem meta so default_fix() finds them
                 #    without needing a live LLM (it's unloaded a few lines below).

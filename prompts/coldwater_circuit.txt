@@ -1,0 +1,133 @@
+TITLE
+Coldwater Circuit
+
+GENRE
+A fully 3D, third-person arcade racing game. Genre is racing — a winter rally
+circuit racer where the player drives a rally car against three rival cars on
+frozen lake courses. Ice grip, not top speed, decides who wins.
+
+CORE PREMISE
+The player drives a lightweight rally car across four frozen-lake circuits in a
+single winter championship. Every surface is ice with a different grade of grip:
+polished black ice, wind-scoured blue ice, packed snow, and slush near the shore
+where the lake is thawing. Studded tyres bite into snow and skitter on black ice,
+so the racing line is a constant trade between the fast polished lane and the
+slow surface that will actually hold a corner. Rivals learn the player's line and
+block it. Warming huts along the shore act as checkpoints; passing one refills
+the tyre-stud meter, and studs wear down every time the car slides.
+
+SCENES (5 total):
+1. MainMenu        — title over a frozen lake at first light, static aurora on the
+                     horizon, Race / Championship / Settings / Quit
+2. ServiceTent     — heated service tent hub between rounds: pick the car, choose a
+                     stud compound, talk to the crew chief, start the round
+3. BlackIceBay     — opening circuit on polished black ice, overcast flat daylight,
+                     lowest grip and the widest drifts of the championship
+4. SnowdriftPass   — packed-snow circuit threading between drifts and pine banks at
+                     dusk, high grip, tight technical corners
+5. ThawShoreFinal  — championship decider along a thawing shoreline at night under
+                     floodlights, slush puddles that grab a wheel and pull the car
+
+NARRATIVE — six acts:
+1. Cold Start      — crew chief walks the player through studs and grip on a warm-up
+                     lap of Black Ice Bay (on_start)
+2. First Blood     — player takes a podium place off a rival for the first time
+                     (on_enter_zone)
+3. Stud Failure    — studs wear to nothing mid-race and the car goes loose on ice
+                     (on_timer)
+4. Blocked Line    — lead rival starts deliberately defending the fast polished lane
+                     (on_enter_zone)
+5. Thin Ice        — a shortcut across untested ice cracks under the car near the
+                     shore (on_timer)
+6. Championship Won — player takes the flag at Thaw Shore under floodlights
+                     (on_enter_zone)
+
+SCRIPTS:
+- IceHandling          (player)        rally car handling on ice: per-surface grip
+                                       coefficients for black ice, blue ice, packed
+                                       snow and slush; weight transfer into a slide;
+                                       counter-steer recovery; handbrake pivot
+- StudWearSystem       (custom)        tyre-stud meter that depletes on every slide
+                                       and refills at a warming hut; grip scales with
+                                       remaining studs; warning chirp under 20 percent
+- RivalRacerAI         (enemy)         three rival cars that learn the player's racing
+                                       line over laps and move to defend the fast lane;
+                                       per-rival aggression and recovery from spins
+- SurfaceGripMap       (custom)        samples the track surface under each wheel and
+                                       reports the grip grade to handling and audio
+- ChaseCamera          (camera)        third-person chase rig that widens on a slide and
+                                       tightens on the straights, speed-scaled FOV
+- RaceDirector         (game_manager)  lap counting, checkpoint order, race position,
+                                       countdown start, championship points across rounds
+- WarmingHutCheckpoint (collectible)   shoreline hut checkpoints: refill studs, split
+                                       time readout, respawn anchor after a spin
+- RaceHUD              (ui_manager)    speed, lap 1/3, position 2nd/4, stud meter, split
+                                       delta to the rival ahead, minimap of the circuit
+- WinterAudio          (audio_manager) surface-aware tyre audio bed, engine load layers,
+                                       wind across the open lake, muffled cabin interior
+- CrewChiefRadio       (dialogue_manager) crew chief radio calls: stud warnings, rival
+                                       position, thin-ice alerts, championship standings
+- IcePalette           (material_palette) runtime palette swap per circuit: overcast grey
+                                       bay, dusk blue pass, floodlit night shore
+- FrozenLakeGenerator  (level_generator) procedural frozen-lake circuit: ribbon course,
+                                       pine banks, snowdrift walls, shoreline slush patches
+
+ENTITIES:
+- PlayerRallyCar:   the player's studded rally car, boxy hatchback rally silhouette,
+                    roof light pod (kind: vehicle)
+- RivalBlueCoupe:   rival rally car in team blue, aggressive line defender (kind: enemy)
+- RivalOrangeWagon: rival rally estate car in hazard orange, steady pace setter
+                    (kind: enemy)
+- RivalBlackSaloon: rival rally saloon in matte black, late-braking specialist
+                    (kind: enemy)
+- WarmingHut:       timber shoreline hut with a lit window, checkpoint marker,
+                    count 6 (kind: collectible)
+- StudCrate:        roadside crate of spare tyre studs, pickup, count 8
+                    (kind: collectible)
+- PineBank:         snow-laden pine tree bank lining the circuit edge, count 40
+                    (kind: prop)
+- SnowdriftWall:    packed snowdrift barrier walling the course, count 24 (kind: prop)
+- CrewChief:        the player's crew chief in a heavy parka and headset (kind: npc)
+
+AUDIO — ten cues that should sound unmistakably like ice racing:
+- engine_rally_loop     ambient  looping  four-cylinder rally engine under load, turbo
+                                          flutter on lift, cabin-muffled
+- studs_on_packed_snow  ambient  looping  metal studs biting and crunching into packed
+                                          snow, steady grip texture
+- studs_on_black_ice    ambient  looping  studs skittering and chattering across polished
+                                          black ice, thin scraping whine, no bite
+- slide_into_drift      sfx               tyres break traction and the car swings into a
+                                          long slide, rising scrape and body roll creak
+- snowdrift_impact      sfx               car buries its nose into a packed snowdrift,
+                                          soft heavy thud and spray of loose snow
+- stud_meter_warning    sfx               three-tone electronic chirp as the stud meter
+                                          drops under twenty percent
+- warming_hut_pass      sfx               warm bell chime and a rush of hut-side air as
+                                          the car passes a checkpoint
+- ice_crack_under_wheel sfx               sharp splintering crack running out across
+                                          thin ice, deep groan underneath
+- lake_wind_open        ambient  looping   open-lake wind moving across bare ice, hollow
+                                          low whistle, distant and cold
+- finish_flag_crowd     sfx               small trackside crowd cheer in heavy coats,
+                                          air horn, flag snapping in wind
+
+PROCEDURAL GEOMETRY:
+- Frozen lake circuit ribbon with shoreline slush patches   (road, resolution 64)
+- Snowdrift barrier walls along the course edge             (rock, resolution 32)
+- Pine bank treeline lining the lake shore                  (rock, resolution 24)
+- Warming hut shell with lit window and door                (room, resolution 16)
+
+VISUAL STYLE: stylized winter realism — flat overcast light, low saturation, hard
+specular glints on ice, heavy contact snow spray.
+
+COLOR PALETTE name "Coldwater":
+  primary    #7FB2D9  (blue ice — the fast polished lane)
+  secondary  #1B2A3A  (black ice and night water — deep cold slate)
+  accent     #FF7A29  (hazard orange — studs, checkpoints, rival livery)
+  background #E8EEF2  (packed snow and overcast sky — bright cold white)
+  trim       #2F3A42  (rally car trim, hut timber, floodlight rigs — gunmetal)
+
+FEATURES: input_system, cinemachine, post_processing, navmesh, audio, timeline
+RENDER PIPELINE: URP  (ice specular, volumetric snow spray, floodlight bloom at night)
+UNITY VERSION: 6000.0
+PLATFORM: PC

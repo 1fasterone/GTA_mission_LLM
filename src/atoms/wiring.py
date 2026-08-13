@@ -184,6 +184,48 @@ WIRING_ATOMS: list[AtomDef] = [
         ],
     ),
     AtomDef(
+        name="WireObjectivesToHUD",
+        category="wiring",
+        description=(
+            "Connect MissionObjectives.OnObjectiveProgress AND .OnObjectiveComplete -> a "
+            "HUD objective readout, via a caller-supplied refresh method that reads "
+            "ActiveObjective/CompletedRequired/TotalRequired. Both events are bound "
+            "because ReportProgress raises OnObjectiveProgress before it marks the "
+            "objective complete, so a progress-only binding shows a stale active "
+            "objective. Fires once at Awake so the readout is correct before the first "
+            "gameplay event."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["hud_shows_current_objective_and_tally"],
+        params=[
+            AtomParam(name="objectives_var", type="string", default="_objectives"),
+            AtomParam(name="hud_var",        type="string", default="_hud"),
+            AtomParam(name="refresh_method", type="string", default="RefreshObjectiveHud",
+                      description="GameWiring method that pushes the current objective "
+                                  "into the HUD; the caller emits it as a helper"),
+        ],
+    ),
+    AtomDef(
+        name="WireInventoryToHUD",
+        category="wiring",
+        description=(
+            "Connect Inventory.OnChanged -> a HUD counter readout showing "
+            "Inventory.TotalCount. `setter` is the widget setter name the HUD "
+            "provably declares — the composer passes only a setter read back from "
+            "the post-lint widget list, never a guessed one."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["hud_reflects_carried_item_count"],
+        params=[
+            AtomParam(name="inventory_var", type="string", default="_inventory"),
+            AtomParam(name="hud_var",       type="string", default="_hud"),
+            AtomParam(name="setter",        type="string", default="SetCarried",
+                      description="HUD counter setter to call with TotalCount"),
+        ],
+    ),
+    AtomDef(
         name="WireTriggerToSave",
         category="wiring",
         description=(

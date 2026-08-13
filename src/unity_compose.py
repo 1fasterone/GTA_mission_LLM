@@ -15,6 +15,7 @@ the real scene template is P2.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -47,6 +48,16 @@ class ComposedUnit(BaseModel):
     target:     Target
     file_id:    int = 0                # scene MonoBehaviour fileID (per-target wiring)
     scripts:    list[str] = Field(default_factory=list)   # asset-relative .cs paths
+    widgets:    list[dict] = Field(default_factory=list)  # hud kind only: the readouts
+                                                            # this HUD emits {id,kind,
+                                                            # setter}, so SEAM 9/10 can
+                                                            # call a setter that provably
+                                                            # exists on the class.
+    setters:    list[str]  = Field(default_factory=list)  # hud kind only: EVERY public
+                                                            # setter the class declares
+                                                            # (variant baseline + widgets).
+                                                            # SEAM 1/9/10 gate on this
+                                                            # instead of the variant name.
     objectives: list[dict] = Field(default_factory=list)  # objectives kind only: the
                                                             # authored ObjectiveEntry
                                                             # {id,type,count,...} rows, so
@@ -172,10 +183,18 @@ class MicroComposer:
             objs = ([{"id": o.id, "type": o.type, "count": o.count,
                       "optional": o.optional, "target_ref": o.target_ref}
                      for o in schema.objectives] if sub.kind == "objectives" else [])
+            # Read back AFTER default_fix, so a widget the HUD's collision lint
+            # dropped is never wired to a setter the class does not declare.
+            widgets, setters = [], []
+            if sub.kind == "hud":
+                from .micro.hud import hud_setters
+                widgets = [{"id": w.id, "kind": w.kind, "setter": w.setter}
+                           for w in schema.widgets]
+                setters = sorted(hud_setters(variant, schema.widgets))
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
                 target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
-                objectives=objs))
+                objectives=objs, widgets=widgets, setters=setters))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -309,7 +328,12 @@ class MicroComposer:
         has_trigger_save              = False
 
         # SEAM 1 — Health → HUD (hp bar reflects damage/heal live)
-        if health and hud and hud.variant == "health_bar":
+        # Gated on the HUD class actually declaring SetHealth, not on the variant
+        # name. Three ways it can: the health_bar baseline, the full_hud_bundle
+        # baseline (which the old variant=="health_bar" test silently skipped, so
+        # a bundled HUD showed a permanently full bar), or a composer-fed Health
+        # widget on any other variant — racing_hud included.
+        if health and hud and "SetHealth" in hud.setters:
             hv, uv = _fv(health), _fv(hud)
             awake_seams.append({
                 "label":   "SEAM 1: Health → HUD",
@@ -525,6 +549,67 @@ class MicroComposer:
                   )) or "none")
             )
 
+        # SEAM 9 — objectives → HUD (the mission loop becomes visible)
+        # SEAM 8 makes the mission finishable; without this the player has no way
+        # to know it is progressing. Bound to OnObjectiveComplete as well as
+        # OnObjectiveProgress deliberately: ReportProgress fires OnObjectiveProgress
+        # BEFORE it sets o.complete (Objectives.cs.j2), so a progress-only binding
+        # would show the just-finished objective as still active — the readout
+        # would trail the game by one event.
+        if objective_units and hud and "SetObjective" in hud.setters:
+            obj_unit = objective_units[0]
+            ov, uv = _fv(obj_unit), _fv(hud)
+            stored_delegates += [
+                {"type": "Action<string, int, int>", "name": "_onObjectiveHudProgress"},
+                {"type": "Action<string>",           "name": "_onObjectiveHudComplete"},
+            ]
+            awake_seams.append({
+                "label": "SEAM 9: objectives → HUD (current objective + tally)",
+                "snippet": unity_atom_snippet("WireObjectivesToHUD", {
+                    "objectives_var": ov, "hud_var": uv,
+                    "refresh_method": "RefreshObjectiveHud",
+                }),
+            })
+            helper_methods.append(
+                f"private void RefreshObjectiveHud()\n"
+                f"    {{\n"
+                f"        if ({ov} == null || {uv} == null) return;\n"
+                f"        var active = {ov}.ActiveObjective;\n"
+                f"        {uv}.SetObjective(active != null ? active.description : \"\",\n"
+                f"                          {ov}.CompletedRequired, {ov}.TotalRequired);\n"
+                f"    }}"
+            )
+            destroy_cleanups.append(
+                f"if ({ov} != null)\n"
+                f"{{\n"
+                f"    if (_onObjectiveHudProgress != null) {ov}.OnObjectiveProgress -= _onObjectiveHudProgress;\n"
+                f"    if (_onObjectiveHudComplete != null) {ov}.OnObjectiveComplete -= _onObjectiveHudComplete;\n"
+                f"}}"
+            )
+            if len(objective_units) > 1:
+                console.print(
+                    "  [yellow]WARN[/]  hud: one objective readout exists, so it "
+                    f"tracks {obj_unit.class_name} only — "
+                    + ", ".join(u.class_name for u in objective_units[1:])
+                    + " progress live but is never displayed."
+                )
+
+        # SEAM 10 — inventory → HUD (carried count)
+        inventory = _pick("inventory", "systems")
+        if inventory and hud and "SetCarried" in hud.setters:
+            iv, uv = _fv(inventory), _fv(hud)
+            stored_delegates.append({"type": "Action", "name": "_onInventoryHud"})
+            awake_seams.append({
+                "label": "SEAM 10: inventory → HUD (carried count)",
+                "snippet": unity_atom_snippet("WireInventoryToHUD", {
+                    "inventory_var": iv, "hud_var": uv, "setter": "SetCarried",
+                }),
+            })
+            destroy_cleanups.append(
+                f"if ({iv} != null && _onInventoryHud != null)\n"
+                f"    {iv}.OnChanged -= _onInventoryHud;"
+            )
+
         # ── schema.wiring (WiringMap/WiringDependency) — additive only ─────────
         # Every composed unit already gets its own auto-found scene ref (the
         # `units` loop above — a private field + FindFirstObjectByType in
@@ -544,6 +629,8 @@ class MicroComposer:
             # SEAM 8 pairs
             frozenset({"trigger", "objectives"}), frozenset({"interactable", "objectives"}),
             frozenset({"spawner", "objectives"}),
+            # SEAM 9/10 pairs
+            frozenset({"objectives", "hud"}), frozenset({"inventory", "hud"}),
         }
         if wiring_map is not None:
             for dep in wiring_map.dependencies:
@@ -922,6 +1009,114 @@ def _objectives_options_for_mission(mission) -> dict:
     }
 
 
+def _hud_widgets_for_project(*, hud_variant: str, missions, has_inventory: bool) -> list[dict]:
+    """The readouts this specific project can actually feed.
+
+    Deliberately conservative: a widget is only added when a composed subsystem
+    exists to publish into it (SEAM 9/1b/10 below). Adding an "oxygen gauge"
+    nothing ever writes to would be the same inert content this whole change
+    exists to remove — a HUD that displays nothing is worse than no widget.
+
+    The Pipeline LLM can still author widgets of its own through HUDSchema.widgets;
+    these are the ones the composer can guarantee.
+    """
+    widgets: list[dict] = []
+    if any(m.objectives for m in (missions or [])):
+        widgets.append({"id": "Objective", "kind": "objective",
+                        "label": "OBJECTIVE", "source": "objectives"})
+    # health_bar and full_hud_bundle already own SetHealth (SEAM 1). Every other
+    # variant — racing_hud especially — shows no HP at all without this.
+    if hud_variant not in ("health_bar", "full_hud_bundle"):
+        widgets.append({"id": "Health", "kind": "bar",
+                        "label": "HP", "source": "health", "max_value": 100})
+    if has_inventory:
+        widgets.append({"id": "Carried", "kind": "counter",
+                        "label": "CARRIED", "source": "inventory"})
+    return widgets
+
+
+def _ai_states_from_brief(entities, characters, scripts=None) -> list[dict]:
+    """EntitySpec.behavior + CharacterSpec.npc_brain + the enemy script's own
+    description -> AI FSM states.
+
+    All three were dropped on the floor: the ai micro was composed with bare
+    dimension metadata, so an enemy the brief described as "prowls the gantries,
+    freezes when it hears you, then charges" produced the same stateless patroller
+    as an enemy described not at all.
+
+    The enemy SCRIPT is included because that is where a structured brief actually
+    puts its behaviour prose. EntitySpec has no description field, so an entity
+    bullet's wording never survives the parse and `behavior` frequently holds a
+    script reference ("EnemyAI") rather than a description. Read before
+    drop_owned_scripts runs (unity_pipeline.py), so the enemy script is still
+    present even in --compose builds where the micro later replaces it.
+
+    Each clause is mapped to a behaviour role by src/micro/ai.infer_role, and the
+    STATE KEEPS THE BRIEF'S OWN WORD ("Prowl", "Freeze", "Charge") while the role
+    is what the generator emits code for. One state per role — a second "chase"
+    clause adds vocabulary, not a second identical case.
+    """
+    from .micro.ai import infer_role
+
+    sources: list[str] = []
+    for e in (entities or []):
+        if str(getattr(e, "kind", "") or "").lower() in ("enemy", "npc", "creature"):
+            sources.append(str(getattr(e, "behavior", "") or ""))
+    for c in (characters or []):
+        brain = getattr(c, "npc_brain", None)
+        if brain is not None:
+            sources += [str(g) for g in (getattr(brain, "goals", None) or [])]
+            sources += [str(t) for t in (getattr(brain, "traits", None) or [])]
+    for sc in (scripts or []):
+        if str(getattr(sc, "type", "") or "").lower() in ("enemy", "ai", "npc"):
+            sources.append(str(getattr(sc, "description", "") or ""))
+
+    by_role: dict[str, str] = {}
+    for text in sources:
+        for clause in re.split(r"[,;.]| then | and | but ", text):
+            clause = clause.strip()
+            if not clause:
+                continue
+            role = infer_role(clause)
+            # infer_role is total and falls back to "idle", so an unmatched
+            # clause would claim the idle slot with unrelated prose. Only keep a
+            # clause that genuinely names a behaviour.
+            if role == "idle" and not re.search(r"idle|wait|rest|stand|hold|dormant",
+                                                clause, re.I):
+                continue
+            by_role.setdefault(role, clause)
+
+    # One role is not a state machine — leave the stateless variant alone.
+    if len(by_role) < 2:
+        return []
+    return [{"name": _state_name_from_clause(clause, role),
+             "role": role, "description": clause[:120]}
+            for role, clause in by_role.items()]
+
+
+def _state_name_from_clause(clause: str, role: str) -> str:
+    """The brief's own word for this behaviour, as a C# identifier.
+
+    Uses the matched KEYWORD rather than the inflected token from the brief:
+    "prowls the gantries" -> Prowl, "charges at full thrust" -> Charge. The
+    keyword is already the uninflected stem, so this needs no stemming rules to
+    get wrong (an early cut of this stripped "es" and produced `Charg`).
+
+    Falls back to the role name when no keyword can be located, so a state is
+    always named something rather than dropped.
+    """
+    from .micro.ai import _ROLE_KEYWORDS, _KEYWORD_DISPLAY
+
+    keywords = [k for k, r in _ROLE_KEYWORDS if r == role]
+    for word in re.findall(r"[A-Za-z]+", clause):
+        low = word.lower()
+        for k in keywords:
+            if k in low:
+                name = _KEYWORD_DISPLAY.get(k, k)
+                return name[:1].upper() + name[1:]
+    return role.title()
+
+
 def _trigger_options_for_missions(missions) -> dict:
     """schema.missions[].triggers (list[str], unity_schema.py) -> TriggerSchema.actions.
 
@@ -1173,6 +1368,15 @@ def subsystems_for(
     if palette_rgb:
         light_opts["meta"]["palette_rgb"] = palette_rgb
 
+    hud_variant = "racing_hud" if genre == "racing" else "health_bar"
+    # Evaluated HERE, not at the inventory append site below, because the HUD's
+    # "Carried" readout may only exist if there is an inventory to publish into
+    # it (SEAM 10). Same condition, one source.
+    has_inventory = ("inventory" in feats or "inventory" in prompt_low
+                     or any("inventory" in t for t in script_types))
+    hud_opts: dict = {"widgets": _hud_widgets_for_project(
+        hud_variant=hud_variant, missions=missions, has_inventory=has_inventory)}
+
     subs: list[Subsystem] = [
         # Core (always)
         Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
@@ -1184,8 +1388,10 @@ def subsystems_for(
         # racing prompt classified genre="racing" by unity_archetypes.py. The
         # health_bar HUD is coupled to the always-on health micro (see SEAM 1
         # below); racing_hud is event-driven, resolved via GameContext.Get<T>().
-        Subsystem(kind="hud",         variant=("racing_hud" if genre == "racing" else "health_bar"),
-                  target="ui",      name="GameHud"),
+        # `widgets` is what makes either variant show THIS project's readouts
+        # rather than only its prebuilt layout (SEAM 1/9/10 publish into them).
+        Subsystem(kind="hud",         variant=hud_variant,
+                  target="ui",      name="GameHud", options=hud_opts),
         Subsystem(kind="menu",        variant="pause_menu",   target="ui",      name="PauseMenu", options={"backend": "uGUI"}),
         Subsystem(kind="saveload",    variant="json_file",    target="systems", name="SaveSystem"),
         # Always-on: physics body, input reader, interactables, animator, triggers
@@ -1243,7 +1449,23 @@ def subsystems_for(
             ai_var, ai_tgt = "flying_swarm", "world"
         else:
             ai_var, ai_tgt = "navmesh_patrol", "world"
-        subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=dim_meta))
+        # An enemy the brief actually DESCRIBES gets a state machine instead of a
+        # stateless patroller: two or more distinct behaviour roles in
+        # EntitySpec.behavior / CharacterSpec.npc_brain upgrade the variant to
+        # fsm_guard and become its real, named states. Racing rivals and flying
+        # swarms keep their own movement variants — their behaviour is the
+        # movement, and fsm_guard has neither a waypoint follower nor a hover rig.
+        ai_opts: dict = dict(dim_meta)
+        ai_states = _ai_states_from_brief(entities, characters, scripts)
+        if ai_states and ai_var == "navmesh_patrol":
+            ai_var = "fsm_guard"
+            ai_opts["states"] = ai_states
+            console.print(
+                "  [green]OK[/]    ai: brief describes "
+                + ", ".join(f"{s['name']}({s['role']})" for s in ai_states)
+                + " — composing fsm_guard instead of navmesh_patrol"
+            )
+        subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=ai_opts))
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
     if "audio" in feats or audio_specs:
@@ -1259,8 +1481,7 @@ def subsystems_for(
             audio_opts["cues"] = _audio_cues_from_specs(audio_specs)
         subs.append(Subsystem(kind="audio", variant="categorical_mixer", target="systems",
                               name="AudioDirector", options=audio_opts))
-    if "inventory" in feats or "inventory" in prompt_low \
-            or any("inventory" in t for t in script_types):
+    if has_inventory:   # hoisted above — the HUD's "Carried" widget shares it
         subs.append(Subsystem(kind="inventory",    variant="slot_based",    target="systems", name="PlayerInventory"))
     # Dialogue — one subsystem per character with real authored dialogue
     # (CharacterSpec.dialog_graph), following the same per-role duplication

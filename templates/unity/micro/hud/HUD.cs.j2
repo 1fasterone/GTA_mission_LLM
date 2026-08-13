@@ -48,6 +48,14 @@ public class {{ s.name }} : MonoBehaviour
     [SerializeField] private RawImage mapImage;
     [SerializeField] private Camera   mapCamera;
 {% endif %}
+{% if s.widgets %}
+
+    [Header("Widgets")]
+{%- for w in s.widgets %}
+    [Tooltip("{{ w.display_label }}{% if w.source %} — fed by {{ w.source }}{% endif %}")]
+    [SerializeField] private {{ w.csharp_type }} {{ w.field_name }};
+{%- endfor %}
+{% endif %}
 {% else %}
     [Header("UI Toolkit")]
     [SerializeField] private UIDocument document;
@@ -257,6 +265,73 @@ public class {{ s.name }} : MonoBehaviour
     }
     // Minimap: mapImage/mapCamera are exposed for a top-down ortho camera you
     // assign in the Inspector — same contract as the standalone "minimap" variant.
+{% endif %}
+{% if s.widgets %}
+
+    // ── Widgets ───────────────────────────────────────────────────────────────
+    // One typed setter per readout this project actually needs. Publishers call
+    // these; resolve the component once via GameContext.Get<{{ s.name }}>().
+{%- for w in s.widgets %}
+{%- if w.kind == "bar" %}
+    /// <summary>{{ w.display_label }} — normalised to 0..1 for the slider.</summary>
+    public void {{ w.setter }}(float current, float max = {{ "%.1f"|format(w.max_value) }}f)
+    {
+        float t = max > 0f ? Mathf.Clamp01(current / max) : 0f;
+{%- if s.backend == "uGUI" %}
+        if ({{ w.field_name }} != null) {{ w.field_name }}.value = t;
+{%- else %}
+        _root?.Q<ProgressBar>("{{ w.ident }}")?.SetValueWithoutNotify(t * 100f);
+{%- endif %}
+    }
+{%- elif w.kind == "counter" %}
+    /// <summary>{{ w.display_label }}</summary>
+    public void {{ w.setter }}(long value)
+    {
+        string text = $"{{ w.display_label }}: {value:N0}";
+{%- if s.backend == "uGUI" %}
+        if ({{ w.field_name }} != null) {{ w.field_name }}.text = text;
+{%- else %}
+        var el = _root?.Q<Label>("{{ w.ident }}"); if (el != null) el.text = text;
+{%- endif %}
+    }
+{%- elif w.kind == "timer" %}
+    /// <summary>{{ w.display_label }} — seconds rendered as m:ss.</summary>
+    public void {{ w.setter }}(float seconds)
+    {
+        if (seconds < 0f) seconds = 0f;
+        int total = Mathf.FloorToInt(seconds);
+        string text = $"{{ w.display_label }}: {total / 60}:{total % 60:00}";
+{%- if s.backend == "uGUI" %}
+        if ({{ w.field_name }} != null) {{ w.field_name }}.text = text;
+{%- else %}
+        var el = _root?.Q<Label>("{{ w.ident }}"); if (el != null) el.text = text;
+{%- endif %}
+    }
+{%- elif w.kind == "objective" %}
+    /// <summary>{{ w.display_label }} — current objective line plus its tally.</summary>
+    public void {{ w.setter }}(string description, int done, int total)
+    {
+        string text = string.IsNullOrEmpty(description)
+            ? "{{ w.display_label }} complete"
+            : $"{description}  ({done}/{total})";
+{%- if s.backend == "uGUI" %}
+        if ({{ w.field_name }} != null) {{ w.field_name }}.text = text;
+{%- else %}
+        var el = _root?.Q<Label>("{{ w.ident }}"); if (el != null) el.text = text;
+{%- endif %}
+    }
+{%- else %}
+    /// <summary>{{ w.display_label }}</summary>
+    public void {{ w.setter }}(string value)
+    {
+{%- if s.backend == "uGUI" %}
+        if ({{ w.field_name }} != null) {{ w.field_name }}.text = value;
+{%- else %}
+        var el = _root?.Q<Label>("{{ w.ident }}"); if (el != null) el.text = value;
+{%- endif %}
+    }
+{%- endif %}
+{%- endfor %}
 {% endif %}
 {{ inject.fixed_update(s) }}
 {{ inject.methods(s) }}

@@ -18,3 +18,10 @@
 .hud-crosshair{ width: 16px; height: 16px; background-color: white; border-radius: 8px; }
 .hud-speed    { font-size: 44px; }
 .hud-countdown{ position: absolute; top: 50%; left: 50%; translate: -50% -50%; font-size: 96px; }
+
+/* Widget readouts — one class per kind so a project can restyle a whole
+   category (all timers, all objective lines) without touching each element. */
+.hud-widget-counter   { font-size: 28px; }
+.hud-widget-timer     { font-size: 28px; -unity-font-style: bold; }
+.hud-widget-objective { font-size: 20px; color: rgb(255, 236, 170); white-space: normal; }
+.hud-widget-text      { font-size: 22px; }
