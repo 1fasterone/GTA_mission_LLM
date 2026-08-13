@@ -7,7 +7,8 @@ feature, so you get a focused output you can copy into any existing project.
 
 - **Base class:** `src/micro_pipeline.py` (`MicroPipeline`)
 - **Generators (15):** `src/micro/*.py` (`controller`, `camera`, `physics`, `hud`, `input`, `audio`, `ai`, `spawner`, `saveload`, `inventory`, `dialogue`, `menu`, `interactable`, `transition`, `health`)
-- **Composition:** `unity-create --compose` assembles these into one wired project — see `src/unity_compose.py`.
+- **Composition:** `unity-create --compose` assembles these into one wired project — see `src/unity_compose.py`. The named connections between micros are documented in [`WIRING_SEAMS.md`](WIRING_SEAMS.md).
+- **What the LLM may author into a micro:** [`LLM_ENRICHMENT_STRATEGY.md`](LLM_ENRICHMENT_STRATEGY.md) — the name/role split that lets a model's invented vocabulary reach the emitted code without being able to break it.
 - **Templates:** `templates/unity/micro/<kind>/`
 - **Registry:** `src/micro/__init__.py` (`REGISTRY`)
 - **CLI:** `python main.py unity-<kind> "<prompt>"` (list all with `python main.py unity-tools list`)

@@ -120,6 +120,7 @@ from src.pipeline           import MissionPipeline
 from src.resolver           import ModelResolver
 
 # ── Unity pipeline ─────────────────────────────────────────────────────────────
+from src.unity_briefparse   import BriefParseError
 from src.unity_generator    import UnityProjectGenerator
 from src.unity_pipeline     import UnityPipeline
 from src.unity_resolver     import UnityResolver
@@ -418,6 +419,8 @@ def unity_create(
                                               help="Disable LLM reasoning for every step (including the concept step, which normally reasons). Faster, but trades away concept creativity/quality — useful for timing/plumbing runs."),
     micro_code:  bool          = typer.Option(True, "--micro-code/--no-micro-code",
                                               help="With --compose: let the LLM author prompt-specific C# into each composed micro (one focused call per subsystem). --no-micro-code keeps the deterministic baseline bodies and is faster."),
+    no_llm:      bool          = typer.Option(False, "--no-llm",
+                                              help="Run the compiler with NO model at all: Steps 2-3 are replaced by a deterministic parse of the brief's own sections (TITLE/SCENES/NARRATIVE/SCRIPTS/ENTITIES/AUDIO/...). Requires a structured brief and abstains loudly if one section is missing. This is the control arm for measuring what the Pipeline LLM contributes — it is NOT a test of Step 3, which does not run."),
 ) -> None:
     """Generate a complete Unity project folder from a plain-English prompt.
 
@@ -468,7 +471,13 @@ def unity_create(
             console.print(f"[red]Error:[/] {exc}")
             raise typer.Exit(1)
 
-    UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code)
+    try:
+        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm)
+    except BriefParseError as exc:
+        # Abstain, don't half-fill: the brief is too thin to compile offline and
+        # the message names every missing section plus the remedy.
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2)
 
 
 @app.command("unity-path")

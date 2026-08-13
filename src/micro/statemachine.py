@@ -7,9 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import to_pascal
+import re
+
+from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
-from .code_fields import CodeField, CodeMethod, lint_code_fragment, lint_usings, lint_fields
+from .code_fields import (CodeField, CodeMethod, csharp_ident,
+                          find_unbound_identifiers, lint_code_fragment,
+                          lint_usings, lint_fields)
 
 
 StateMachineVariant = Literal[
@@ -97,6 +101,13 @@ _DEFAULT_TRANSITIONS: dict[str, list[dict]] = {
         {"from_state": "Chase",  "to_state": "Attack", "condition": "_distToPlayer < attackRange"},
         {"from_state": "Attack", "to_state": "Chase",  "condition": "_distToPlayer >= attackRange"},
         {"from_state": "Chase",  "to_state": "Patrol", "condition": "!_seesPlayer && _lostTimer <= 0f"},
+        # Death. Unlike player_fsm the template gives enemy_fsm no Kill(), so
+        # without these three edges the Dead state it ships is unreachable — a
+        # terminal state no enemy could ever enter, which the graph lint now
+        # reports. Driven by _hp, declared in _DEFAULT_CONDITION_FIELDS below.
+        {"from_state": "Patrol", "to_state": "Dead",   "condition": "_hp <= 0f"},
+        {"from_state": "Chase",  "to_state": "Dead",   "condition": "_hp <= 0f"},
+        {"from_state": "Attack", "to_state": "Dead",   "condition": "_hp <= 0f"},
     ],
     "game_fsm": [
         {"from_state": "MainMenu", "to_state": "Playing",  "condition": "_startPressed"},
@@ -124,6 +135,10 @@ _DEFAULT_CONDITION_FIELDS: dict[str, list[dict]] = {
         {"name": "_heardNoise",   "type": "bool",  "default": "false"},
         {"name": "_alertTimer",   "type": "float", "default": "0f"},
         {"name": "_lostTimer",    "type": "float", "default": "0f"},
+        # Drives the three -> Dead edges above. Serialized so a health micro or
+        # a prompt-authored script can drive it without another seam.
+        {"name": "_hp",           "type": "float", "default": "100f",
+         "header": "Stats"},
     ],
     "game_fsm": [
         {"name": "_startPressed",   "type": "bool", "default": "false"},
@@ -138,6 +153,63 @@ _DEFAULT_CONDITION_FIELDS: dict[str, list[dict]] = {
         {"name": "_hp",           "type": "float", "default": "100f", "header": "Stats"},
     ],
 }
+
+
+# Fields StateMachine.cs.j2 declares itself, per variant. A transition condition
+# may reference these without declaring anything; anything else it names has to
+# be declared or the emitted CheckTransitions() is CS0103.
+_TEMPLATE_FIELDS: dict[str, set[str]] = {
+    "player_fsm": {"_currentState", "_prevState",
+                   "_moveInput", "_jumpPressed", "_grounded"},
+}
+_ALWAYS_FIELDS = {"_currentState", "_prevState", "CurrentState", "IsIn",
+                  "OnStateChanged"}
+
+# State names the TEMPLATE itself emits code against. StateMachine.cs.j2 gives
+# player_fsm a hardcoded CheckTransitions() and a Kill() that transitions to
+# State.Dead, so these four must exist in the enum however the model names its
+# own states — and SEAM 2 (Health.OnDeath -> FSM.Kill) depends on Dead.
+_TEMPLATE_REQUIRED_STATES: dict[str, tuple[str, ...]] = {
+    "player_fsm": ("Idle", "Moving", "Jumping", "Dead"),
+}
+
+# States the template reaches WITHOUT a transition, so the unreachable-state
+# report must not flag them: player_fsm's Kill() transitions straight to Dead,
+# and SEAM 2 (Health.OnDeath -> FSM.Kill) is what calls it.
+_TEMPLATE_DRIVEN_STATES: dict[str, tuple[str, ...]] = {
+    "player_fsm": ("Dead",),
+}
+
+# Type inferred for an identifier the model referenced but never declared, read
+# off how the condition USES it. Ordered: the first pattern that matches wins.
+_INFERRED_TYPE: tuple[tuple[str, str, str], ...] = (
+    # (regex against the condition, C# type, default value)
+    (r"\b{name}\s*(?:[<>]=?|[=!]=)\s*-?\d+(?:\.\d+)?f?\b", "float", "0f"),
+    (r"-?\d+(?:\.\d+)?f?\s*(?:[<>]=?|[=!]=)\s*\b{name}\b", "float", "0f"),
+    (r"\b{name}\s*(?:[=!]=)\s*\"",                          "string", "\"\""),
+)
+
+# A call the model invented cannot be declared as a field, so a condition that
+# makes one is dropped rather than repaired.
+_CALL_RE_TMPL = r"\b{name}\s*\("
+
+
+def _infer_field(name: str, condition: str) -> CodeField:
+    """Declare an identifier the model used but never introduced.
+
+    This is the Tier-V half of the name/role split applied to expressions
+    (docs/LLM_ENRICHMENT_STRATEGY.md): the SHAPE of the condition is the
+    model's — `_alertTimer > 2f` says something real about the game — while the
+    declaration that makes it compile is the compiler's. Dropping the
+    transition instead would throw the model's intent away to fix a missing
+    `private float`.
+    """
+    for pattern, ctype, default in _INFERRED_TYPE:
+        if re.search(pattern.format(name=re.escape(name)), condition):
+            return CodeField(name=name, type=ctype, default=default,
+                             header="FSM (inferred)")
+    return CodeField(name=name, type="bool", default="false",
+                     header="FSM (inferred)")
 
 
 CONCEPT_PROMPT = """\
@@ -239,6 +311,11 @@ class StateMachinePipeline(UnityMicroPipeline):
                 if d["name"] not in existing:
                     schema.extra_fields.append(CodeField(**d))
 
+        # Make the graph provably compile BEFORE the field/using lints run, so a
+        # backing field this pass infers is linted like any other.
+        for note in self._lint_graph(schema, variant):
+            console.print(f"  [yellow]WARN[/]  {note}")
+
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
         )
@@ -248,6 +325,145 @@ class StateMachinePipeline(UnityMicroPipeline):
         for i, m in enumerate(schema.extra_methods):
             schema.extra_methods[i].body = lint_code_fragment(m.body, what="method body")
         return schema
+
+    # ── Graph repair ──────────────────────────────────────────────────────────
+
+    def _lint_graph(self, schema, variant) -> list[str]:
+        """Make `states` + `transitions` into a graph that provably compiles.
+
+        The same three failure modes the `ai` micro had, and for the same
+        reason: state names reach a generated enum that a switch dispatches on,
+        and transition conditions reach emitted C#. Deterministic repair over
+        authored content — names are sanitised rather than rejected, an
+        undeclared identifier is declared rather than dropped, and only a
+        genuinely unrepairable edge is removed, by name. Never raises.
+        """
+        notes: list[str] = []
+
+        # 1. Sanitise + de-duplicate state names (CS0117 / CS1001 at the root).
+        #    (step 1b below adds back any name the TEMPLATE itself requires)
+        seen: dict[str, str] = {}
+        renames: dict[str, str] = {}
+        kept: list[StateDefinition] = []
+        for st in schema.states:
+            ident = csharp_ident(st.name, "State")
+            if ident in seen:
+                notes.append(f"fsm state {st.name!r} dropped: collides with "
+                             f"{seen[ident]!r} after C# name sanitising")
+                continue
+            seen[ident] = st.name
+            renames[str(st.name)] = ident
+            if st.name != ident:
+                notes.append(f"fsm state {st.name!r} renamed to {ident} "
+                             f"(valid C# enum member)")
+            st.name = ident
+            kept.append(st)
+        if not kept:
+            kept = [StateDefinition(**d)
+                    for d in _DEFAULT_STATES.get(variant, _DEFAULT_STATES["player_fsm"])]
+            notes.append("fsm: no usable state names survived; the default "
+                         f"{variant} state set was emitted instead")
+        # 1b. States the TEMPLATE's own code references by name. player_fsm's
+        #     CheckTransitions() and Kill() are hardcoded blocks in
+        #     StateMachine.cs.j2, so renaming these four out of the enum is
+        #     CS0117 in template-owned code — and SEAM 2 calls Kill(). Missing
+        #     ones are added back; the model's own states ride alongside them.
+        required = _TEMPLATE_REQUIRED_STATES.get(variant, ())
+        have = {st.name for st in kept}
+        for want in required:
+            if want not in have:
+                kept.append(StateDefinition(name=want,
+                                            on_update=f"// {want} (required by "
+                                                      f"the {variant} template)"))
+                have.add(want)
+                notes.append(f"fsm state {want} re-added — the {variant} "
+                             f"template's own CheckTransitions/Kill names it")
+        schema.states = kept
+        names = {st.name for st in kept}
+
+        def _resolve(ref: str) -> "str | None":
+            r = str(ref)
+            if r in names:
+                return r
+            if r in renames and renames[r] in names:
+                return renames[r]
+            ident = csharp_ident(r, "State")
+            return ident if ident in names else None
+
+        # 2. Transitions: drop dangling endpoints and self-loops, then make
+        #    every surviving condition bindable.
+        declared = (set(_ALWAYS_FIELDS) | _TEMPLATE_FIELDS.get(variant, set())
+                    | {f.name for f in schema.extra_fields}
+                    | {m.signature.split("(")[0].split()[-1]
+                       for m in schema.extra_methods if "(" in m.signature})
+        added: list[CodeField] = []
+        valid: list[StateTransition] = []
+        for t in schema.transitions:
+            src, dst = _resolve(t.from_state), _resolve(t.to_state)
+            if src is None or dst is None:
+                missing = t.from_state if src is None else t.to_state
+                notes.append(f"fsm transition {t.from_state}->{t.to_state} "
+                             f"dropped: no state named {missing!r}")
+                continue
+            if src == dst:
+                notes.append(f"fsm transition {src}->{dst} dropped: self-loop")
+                continue
+
+            cond = (t.condition or "").strip() or "false"
+            unbound: set[str] = set()
+            for row in find_unbound_identifiers(
+                    cond, known=declared | names | {"State"}).values():
+                unbound |= row
+            # A call cannot be declared as a field, so an invented method name
+            # is the one case this pass cannot repair. find_unbound_identifiers
+            # reports a call as "Name()", so strip that before testing.
+            calls, fields = set(), set()
+            for n in unbound:
+                base = n.split("(")[0].strip()
+                if n != base or re.search(
+                        _CALL_RE_TMPL.format(name=re.escape(base)), cond):
+                    calls.add(base)
+                elif base:
+                    fields.add(base)
+            if calls:
+                notes.append(
+                    f"fsm transition {src}->{dst} dropped: condition calls "
+                    f"{', '.join(sorted(calls))}(), which nothing declares")
+                continue
+            for n in sorted(fields):
+                f = _infer_field(n, cond)
+                added.append(f)
+                declared.add(n)
+                notes.append(f"fsm condition on {src}->{dst} referenced "
+                             f"undeclared {n} — declared as {f.type} {n} = "
+                             f"{f.default}")
+            t.condition, t.from_state, t.to_state = cond, src, dst
+            valid.append(t)
+        schema.transitions = valid
+        schema.extra_fields = list(schema.extra_fields) + added
+
+        # 3. initial_state must name a real state.
+        init = _resolve(schema.initial_state) if schema.initial_state else None
+        if init is None:
+            init = kept[0].name
+            if schema.initial_state:
+                notes.append(f"fsm initial_state {schema.initial_state!r} is "
+                             f"not a state; using {init}")
+        schema.initial_state = init
+
+        # 4. Abstain loudly on states nothing can reach: they render (the
+        #    model's vocabulary is preserved) but will never run.
+        #    Template-owned code counts as a route in: player_fsm's Kill() is
+        #    what drives Dead (SEAM 2 calls it), so no transition names it and
+        #    reporting it as unreachable would be a false alarm on every build.
+        reachable = ({schema.initial_state}
+                     | {t.to_state for t in schema.transitions}
+                     | set(_TEMPLATE_DRIVEN_STATES.get(variant, ())))
+        orphans = [st.name for st in kept if st.name not in reachable]
+        if orphans:
+            notes.append("fsm: no transition reaches " + ", ".join(orphans)
+                         + " — emitted but unreachable at runtime")
+        return notes
 
     def write_files(self, schema, variant, out_dir: Path) -> int:
         env = self.jinja()

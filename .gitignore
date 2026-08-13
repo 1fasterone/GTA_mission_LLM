@@ -85,3 +85,6 @@ prompts/molnia-drag-race.txt
 prompts/newring.txt
 reviews/
 routes/molnia_drag_strip.json
+
+# Session scratch (A/B run captures, generated project copies)
+SCRATCH/

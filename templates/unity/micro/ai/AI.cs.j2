@@ -39,7 +39,15 @@ public class {{ s.name }} : MonoBehaviour
     private float       _attackTimer;
 
 {% if variant in ("fsm_guard", "behaviour_tree_lite") %}
-    private {{ s.name }}State _state = {{ s.name }}State.Idle;
+    [Header("FSM")]
+    [Tooltip("Seconds an alert state holds before it commits to the chase.")]
+    [SerializeField] private float alertSeconds = {{ "%.2f"|format(s.alert_seconds) }}f;
+    private {{ s.name }}State _state = {{ s.name }}State.{{ s.initial_state }};
+    /// <summary>Seconds spent in the current state — drives `alert_elapsed`.</summary>
+    private float _stateTime;
+
+    /// <summary>Current FSM state, for wiring and debugging.</summary>
+    public {{ s.name }}State CurrentState => _state;
 {% endif %}
 
 {% if variant == "waypoint_follow" %}
@@ -139,35 +147,75 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
         if (Vector3.Distance(transform.position, _target.position) < attackRadius) TryAttack();
 {% elif variant in ("fsm_guard", "behaviour_tree_lite") %}
-        if (_target == null) return;
-        float dist = Vector3.Distance(transform.position, _target.position);
+        // Distance is +infinity while there is no target, so `target_lost` style
+        // transitions still evaluate and a guard keeps patrolling an empty scene
+        // instead of freezing on an early return.
+        float dist = _target != null
+            ? Vector3.Distance(transform.position, _target.position)
+            : float.PositiveInfinity;
+        _stateTime += Time.deltaTime;
 
+        // One case per AUTHORED state — the enum in {{ s.name }}State.cs and these
+        // labels render from the same sanitised names, so naming the states
+        // anything at all still compiles.
         switch (_state)
         {
-            case {{ s.name }}State.Idle:
-                if (dist < detectionRadius) _state = {{ s.name }}State.Chase;
-{% if variant == "fsm_guard" %}
-{% if s.nav_backend == "navmesh" %}
-                else PatrolStep();
-{% else %}
-                else PatrolStep2D();
-{% endif %}
-{% endif %}
-                break;
-            case {{ s.name }}State.Chase:
-{% if s.nav_backend == "navmesh" %}
-                if (_agent != null) _agent.SetDestination(_target.position);
-{% else %}
-                MoveTowards(_target.position);
-{% endif %}
-                if (dist < attackRadius)      _state = {{ s.name }}State.Attack;
-                else if (dist > detectionRadius * 1.5f) _state = {{ s.name }}State.Idle;
-                break;
-            case {{ s.name }}State.Attack:
+{%- for st in s.states %}
+            case {{ s.name }}State.{{ st.name }}:
+{%- if st.role == "patrol" %}
+{%- if s.nav_backend == "navmesh" %}
+                PatrolStep();
+{%- else %}
+                PatrolStep2D();
+{%- endif %}
+{%- elif st.role == "alert" %}
+                if (_target != null)
+                {
+                    Vector3 look{{ loop.index }} = _target.position - transform.position;
+{%- if s.nav_backend == "navmesh" %}
+                    look{{ loop.index }}.y = 0f;
+                    if (look{{ loop.index }}.sqrMagnitude > 0.001f) transform.forward = look{{ loop.index }}.normalized;
+{%- else %}
+                    look{{ loop.index }}.z = 0f;
+                    if (look{{ loop.index }}.sqrMagnitude > 0.001f) transform.right = look{{ loop.index }}.normalized;
+{%- endif %}
+                }
+{%- if s.nav_backend == "navmesh" %}
+                if (_agent != null && _agent.hasPath) _agent.ResetPath();
+{%- endif %}
+{%- elif st.role == "chase" %}
+{%- if s.nav_backend == "navmesh" %}
+                if (_target != null && _agent != null) _agent.SetDestination(_target.position);
+{%- else %}
+                if (_target != null) MoveTowards(_target.position);
+{%- endif %}
+{%- elif st.role == "attack" %}
                 TryAttack();
-                if (dist > attackRadius) _state = {{ s.name }}State.Chase;
+{%- elif st.role == "flee" %}
+                if (_target != null)
+                {
+                    Vector3 away{{ loop.index }} = transform.position
+                        + (transform.position - _target.position).normalized * detectionRadius;
+{%- if s.nav_backend == "navmesh" %}
+                    if (_agent != null) _agent.SetDestination(away{{ loop.index }});
+{%- else %}
+                    MoveTowards(away{{ loop.index }});
+{%- endif %}
+                }
+{%- elif st.role == "dead" %}
+{%- if s.nav_backend == "navmesh" %}
+                if (_agent != null && _agent.hasPath) _agent.ResetPath();
+{%- endif %}
+                enabled = false;   // terminal state
+{%- else %}
+                // {{ st.name }}: hold position and scan{% if st.description %} — {{ st.description }}{% endif %}
+
+{%- endif %}
                 break;
+{%- endfor %}
         }
+
+        CheckTransitions(dist);
 {% elif variant == "cover_shooter" %}
         if (_target == null) return;
         float dist = Vector3.Distance(transform.position, _target.position);
@@ -273,6 +321,30 @@ public class {{ s.name }} : MonoBehaviour
         if (parent == null) return;   // EntitySpawner may not have run yet — retry next frame
         _waypoints = new List<Transform>();
         foreach (Transform child in parent.transform) _waypoints.Add(child);
+    }
+
+{% endif %}
+{% if variant in ("fsm_guard", "behaviour_tree_lite") %}
+    /// <summary>The authored transition graph, evaluated once per frame after the
+    /// active state has run. `when` values are a closed vocabulary (see
+    /// src/micro/ai.py) so every condition here is an expression this class can
+    /// actually evaluate — no authored C# reaches this method.</summary>
+    private void CheckTransitions(float dist)
+    {
+{%- for t in s.transitions %}
+        if (_state == {{ s.name }}State.{{ t.from_state }} && ({{ t.condition }}))
+        {
+            SetState({{ s.name }}State.{{ t.to_state }});
+            return;
+        }
+{%- endfor %}
+    }
+
+    private void SetState({{ s.name }}State next)
+    {
+        if (_state == next) return;
+        _state     = next;
+        _stateTime = 0f;
     }
 
 {% endif %}

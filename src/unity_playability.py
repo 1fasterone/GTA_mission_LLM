@@ -76,6 +76,11 @@ _CHECK_SEVERITY: dict[str, str] = {
     "avatar_cardinality": ERROR,
     "controllable":      ERROR,
     "objective":         ERROR,
+    "mission_loop":      ERROR,
+    "mission_visible":   WARN,
+    # Advisory only: carries the story-beats -> missions remedy rather than
+    # grading anything, so it never sets rep.checks and never moves the score.
+    "mission_derivable": INFO,
     "objective_targets": ERROR,
     "brief_entities":    ERROR,
     "spawn_clear":       ERROR,
@@ -145,6 +150,15 @@ class PlayabilityGateError(RuntimeError):
     CSharpSyntaxError / PackageCacheError, so callers can catch it precisely."""
 
 
+# ── Remedies: the feedback path back into the pipeline ───────────────────────
+# A finding that names a deterministic repair carries its action here.
+# src/unity_playability_repair.py is the only thing that reads these; this
+# module still never mutates the schema. Adding an action means teaching the
+# repair pass to apply it — an unknown action is reported and skipped, never
+# guessed at.
+REMEDY_MISSIONS_FROM_BEATS = "missions_from_story_beats"
+
+
 @dataclass(frozen=True)
 class Finding:
     """One structural defect, named by the thing the player cannot do."""
@@ -154,6 +168,10 @@ class Finding:
     # The schema field / pipeline stage responsible — so a failure points
     # somewhere rather than just scoring low.
     source: str = ""
+    # A deterministic repair the pipeline can apply, or "" when the only honest
+    # response is to report. Never a guess: a remedy exists only where authored
+    # content already answers the question the check failed on.
+    remedy: str = ""
 
     def __str__(self) -> str:
         # Parenthesised, not bracketed: the scorecard is printed through rich,
@@ -381,6 +399,81 @@ def _check_objective(schema: UnitySchema, rep: PlayabilityReport) -> None:
             "story beats, so the run has no goal and cannot be won or lost",
             "schema.entities.kind / schema.missions / schema.story_beats"))
     rep.checks["objective"] = ok
+
+    # A brief can describe its progression as NARRATIVE and never write a
+    # MISSIONS section — which is exactly what the deterministic (--no-llm)
+    # fill produces, since it has no rule that turns beats into objectives.
+    # The result passes this check on story_beats alone and then composes no
+    # objectives micro at all, so SEAM 8/9 have nothing to bind and the game
+    # cannot be won. The beats already say what happens and when; deriving
+    # objectives from them is a transformation of authored content, not
+    # invention, so it carries a remedy.
+    if ok and schema.story_beats and not schema.missions:
+        rep.findings.append(Finding(
+            "mission_derivable", INFO,
+            f"{len(schema.story_beats)} story beat(s) but no mission — the run "
+            "has content to reach and no objective tracking it, so nothing can "
+            "report completion",
+            "schema.story_beats -> schema.missions",
+            remedy=REMEDY_MISSIONS_FROM_BEATS))
+
+
+def _check_mission_loop(schema: UnitySchema, rep: PlayabilityReport) -> None:
+    """Can the run actually be COMPLETED, and can the player see it happening?
+
+    `objective` above passes on the mere presence of something to do — a
+    collectible, an enemy, a story beat. That is why it graded an unwinnable
+    build 91/100: the content was there and nothing advanced it. This check
+    grades the loop itself, from what the wiring pass actually bound
+    (schema.meta["wiring"], stamped by MicroComposer.wiring_report) rather than
+    from what the schema merely declares.
+
+    Ungraded on a non-composed build: without --compose there are no seams to
+    bind objectives, and grading a standalone project against a loop it never
+    claimed to have would be a false failure.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    wiring = meta.get("wiring")
+    if not isinstance(wiring, dict) or not wiring:
+        _ungraded(rep, "mission_loop",
+                  "no composed wiring report — build did not run --compose")
+        return
+    total = int(wiring.get("objectives_total") or 0)
+    if not total:
+        _ungraded(rep, "mission_loop",
+                  "the build declares no mission objectives to advance")
+        return
+
+    bound = list(wiring.get("objectives_bound") or [])
+    unbound = list(wiring.get("objectives_unbound") or [])
+    ok = bool(bound)
+    if not ok:
+        rep.findings.append(Finding(
+            "mission_loop", ERROR,
+            f"none of the {total} mission objective(s) has an event source, so "
+            "nothing ever calls ReportProgress and the mission can never be "
+            "completed — the project is a scene, not a game"
+            + (f" (unbound: {', '.join(unbound[:4])})" if unbound else ""),
+            "src/unity_compose.py SEAM 8"))
+    elif unbound:
+        rep.findings.append(Finding(
+            "mission_loop", WARN,
+            f"{len(unbound)} of {total} objective(s) cannot advance at runtime "
+            f"({', '.join(unbound[:4])}) — no composed micro raises the event "
+            "their type needs",
+            "src/unity_compose.py SEAM 8"))
+    rep.checks["mission_loop"] = ok
+
+    # Progress the player cannot see is progress they cannot act on.
+    if ok:
+        shown = bool(wiring.get("hud_objective"))
+        if not shown:
+            rep.findings.append(Finding(
+                "mission_visible", WARN,
+                "the mission advances but nothing displays it — no HUD "
+                "objective readout, so the player cannot tell they are winning",
+                "src/unity_compose.py SEAM 9"))
+        rep.checks["mission_visible"] = shown
 
 
 def _check_objective_targets(schema: UnitySchema,
@@ -818,6 +911,7 @@ _CHECKS = (
     _check_controllable,
     _check_camera,
     _check_objective,
+    _check_mission_loop,
     _check_objective_targets,
     _check_brief_entity_coverage,
     _check_interactables_tagged,

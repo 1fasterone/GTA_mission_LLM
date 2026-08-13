@@ -26,6 +26,7 @@
     ],
     "ungraded_ok": [
       "brief_entities",
+      "mission_loop",
       "objective_targets",
       "role_graph"
     ]

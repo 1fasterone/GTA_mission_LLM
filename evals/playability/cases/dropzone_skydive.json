@@ -2,7 +2,7 @@
   "name": "dropzone_skydive",
   "schema": "tests/fixtures/dropzone_skydive.schema.json",
   "input": "engineer-authored",
-  "provenance": "Hand-written layout fixture for the DropZone skydiving brief (tests/fixtures/README.md). Tests Steps 4-7 only \u2014 it says nothing about what the schema-fill LLM produces.",
+  "provenance": "Hand-written layout fixture for the DropZone skydiving brief (tests/fixtures/README.md). Tests Steps 4-7 only — it says nothing about what the schema-fill LLM produces.",
   "notes": "VerticalCorridor + exit platform: locomotion=fly, altitude-banded content, a Cessna the player exits, a landing pad on the ground. Explicit objective kinds (collectible/goal) and no tags, the mirror image of dropzone_arcade's tag-carried meaning.",
   "floor": {
     "score": 98,
@@ -28,6 +28,7 @@
     ],
     "ungraded_ok": [
       "brief_entities",
+      "mission_loop",
       "role_graph"
     ]
   }

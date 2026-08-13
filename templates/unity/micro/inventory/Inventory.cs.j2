@@ -54,6 +54,10 @@ public class {{ s.name }} : MonoBehaviour
 
     public bool IsEquipped(string slot) => _equipped.ContainsKey(slot);
 
+    /// <summary>How many items are currently held — the single number a HUD
+    /// "carried" counter binds to. Equipment counts filled slots.</summary>
+    public int TotalCount => _equipped.Count;
+
     public void Clear()
     {
         _equipped.Clear();
@@ -72,6 +76,18 @@ public class {{ s.name }} : MonoBehaviour
     private readonly List<{{ s.name }}Stack> _stacks = new List<{{ s.name }}Stack>();
 
     public IReadOnlyList<{{ s.name }}Stack> Stacks => _stacks;
+
+    /// <summary>How many items are currently held, summed across stacks — the
+    /// single number a HUD "carried" counter binds to.</summary>
+    public int TotalCount
+    {
+        get
+        {
+            int n = 0;
+            foreach (var st in _stacks) n += st.count;
+            return n;
+        }
+    }
 {% if variant in ("slot_based", "hotbar") %}
     public int Capacity => slotCount;
 {% elif variant == "grid" %}
