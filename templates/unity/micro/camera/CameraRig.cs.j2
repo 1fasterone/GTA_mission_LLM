@@ -27,6 +27,19 @@ public class {{ s.name }} : MonoBehaviour
     private Transform _target;
     private Vector3   _vel;
     private Camera    _cam;
+{% if variant == "board_framing" %}
+
+    [Header("Board")]
+    [Tooltip("Extra margin around the board, as a fraction of its height.")]
+    [SerializeField] private float framingMargin = 0.12f;
+    [Tooltip("How far back the camera sits from the board plane.")]
+    [SerializeField] private float boardDistance = 10f;
+    [SerializeField] private float minZoom = 2f;
+    [SerializeField] private float maxZoom = 60f;
+    [SerializeField] private float zoomSpeed = 4f;
+    private bool    _fitted;
+    private Bounds  _board;
+{% endif %}
 {% if variant == "first_person" %}
 
     [Header("First-person fallback")]
@@ -41,14 +54,87 @@ public class {{ s.name }} : MonoBehaviour
 {% if variant == "follow_2d" %}
         _cam.orthographic     = true;
         _cam.orthographicSize = 6f;
+{% elif variant == "board_framing" %}
+        // Orthographic: a board is read, not looked into. Perspective would
+        // give the panels at the edge of the frame a keystone that reads as a
+        // rendering fault rather than as depth.
+        _cam.orthographic     = true;
+        _cam.orthographicSize = 6f;
+        transform.rotation    = Quaternion.identity;   // face +Z, the board's normal
 {% else %}
         _cam.fieldOfView = fovBase;
 {% endif %}
 {{ inject.lifecycle(s.awake_extra) }}
     }
+{% if variant == "board_framing" %}
+
+    /// <summary>World bounds of everything currently rendered, or false when
+    /// nothing is. Renderers rather than a named root: the board's content is
+    /// built at runtime by EntitySpawner, one GameObject per group, and there
+    /// is no single parent that reliably contains all of it.</summary>
+    private bool TryMeasureBoard(out Bounds bounds)
+    {
+        bounds = new Bounds(Vector3.zero, Vector3.zero);
+        bool any = false;
+        foreach (var r in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
+        {
+            if (r == null || !r.enabled) continue;
+            if (any) bounds.Encapsulate(r.bounds);
+            else { bounds = r.bounds; any = true; }
+        }
+        return any;
+    }
+
+    /// <summary>Frame the whole board. Public so a scene that rebuilds its
+    /// content (a level transition, a new hand dealt) can re-fit rather than
+    /// keeping a frame sized for the layout it replaced.</summary>
+    public void FitToBoard()
+    {
+        if (!TryMeasureBoard(out _board)) return;
+        _fitted = true;
+        float halfH = Mathf.Max(0.5f, _board.extents.y);
+        float halfW = Mathf.Max(0.5f, _board.extents.x);
+        // Orthographic size is HALF-HEIGHT, so a wide board has to be fitted
+        // through the aspect ratio or its edges sit outside the frame.
+        float aspect = _cam.aspect > 0.01f ? _cam.aspect : 16f / 9f;
+        float size = Mathf.Max(halfH, halfW / aspect) * (1f + framingMargin);
+        _cam.orthographicSize = Mathf.Clamp(size, minZoom, maxZoom);
+        transform.position = new Vector3(_board.center.x, _board.center.y,
+                                         _board.min.z - boardDistance);
+        transform.rotation = Quaternion.identity;
+    }
+{% endif %}
 
     private void LateUpdate()
     {
+{% if variant == "board_framing" %}
+        // Fit on the first frame that has anything to fit to — the board is
+        // spawned at runtime, so Awake is too early and there is nothing to
+        // measure. Deliberately NOT re-fitted every frame: a camera that
+        // re-frames continuously drifts whenever a panel is dragged.
+        if (!_fitted) { FitToBoard(); return; }
+
+        // Scroll to zoom, drag with the right/middle button to pan, both
+        // clamped to the board — a pointer game has no avatar to walk back to
+        // the content, so a camera that can lose the board is a dead end.
+        float scroll = Input.mouseScrollDelta.y;
+        if (Mathf.Abs(scroll) > 0.001f)
+            _cam.orthographicSize = Mathf.Clamp(
+                _cam.orthographicSize - scroll * zoomSpeed, minZoom, maxZoom);
+
+        if (Input.GetMouseButton(1) || Input.GetMouseButton(2))
+        {
+            float k = _cam.orthographicSize * 0.004f;
+            Vector3 p = transform.position;
+            p.x -= Input.GetAxis("Mouse X") * k * 60f * Time.deltaTime * 60f;
+            p.y -= Input.GetAxis("Mouse Y") * k * 60f * Time.deltaTime * 60f;
+            transform.position = new Vector3(
+                Mathf.Clamp(p.x, _board.min.x, _board.max.x),
+                Mathf.Clamp(p.y, _board.min.y, _board.max.y),
+                p.z);
+        }
+{{ inject.lifecycle(s.update_extra) }}
+{% else %}
         if (_target == null)
         {
 {% if variant == "first_person" %}
@@ -142,6 +228,7 @@ public class {{ s.name }} : MonoBehaviour
         }
 {% endif %}
 {{ inject.lifecycle(s.update_extra) }}
+{% endif %}
     }
 {{ inject.fixed_update(s) }}
 {{ inject.methods(s) }}

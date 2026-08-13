@@ -330,8 +330,14 @@ class MicroComposer:
         # them (guarded there by `not variant.startswith("vehicle_") and
         # variant != "aircraft"`). Wiring seams that call those methods must be
         # gated the same way or the composed GameWiring won't compile (CS1061).
+        # The pointer controller belongs in the self-driven set for the same
+        # reason a car does: it reads its own input device (the cursor) and
+        # PointerController.cs.j2 declares neither SetInputReader nor
+        # IsGrounded. Wiring SEAM 4b/5/6 to it would be a CS1061 on a method
+        # that does not exist — and there is no ground under a board anyway.
         _ctrl_var = ctrl.variant if ctrl else ""
-        _ctrl_self_driven  = _ctrl_var.startswith("vehicle_") or _ctrl_var == "aircraft"
+        _ctrl_self_driven  = (_ctrl_var.startswith("vehicle_")
+                              or _ctrl_var in ("aircraft", "pointer"))
         _ctrl_has_input_rd = bool(ctrl) and not _ctrl_self_driven
         _ctrl_has_grounded = _ctrl_has_input_rd and _ctrl_var not in ("swimming", "flying")
 
@@ -1280,6 +1286,12 @@ def subsystems_for(
     feats = set(features or [])
     gt = (game_type or "3D").lower()
     genre = (genre or "universal").lower()
+    # A game that declared it has no avatar (locomotion='none' — see
+    # unity_schema.is_embodied). Read once, here, because it changes the CORE
+    # set and not just an option: seven of the always-on subsystems below exist
+    # to move, animate, collide with or keep alive a player object that this
+    # project does not have.
+    ui_first = locomotion == "none"
 
     # ── Deterministic content signals (what the game actually contains) ───────
     scene_count  = len(scenes or [])
@@ -1331,6 +1343,17 @@ def subsystems_for(
                 ctrl = "vehicle_hover"
             cam  = loco_cam.get(locomotion, "follow")
 
+    # No avatar: the cursor is the controller and the camera frames the board.
+    # Overrides the game_type table above rather than sitting inside it — a
+    # non-embodied game can be declared 2D, top-down or 3D, and none of those
+    # dimensions makes a walk controller correct for it. This is the whole
+    # first half of the fix: CodeVault shipped a 2d_topdown walk rig, a follow
+    # camera hunting a Player tag that was never going to exist, a Rigidbody2D
+    # and a humanoid animator, for a game whose own concept said it excluded
+    # locomotion.
+    if ui_first:
+        ctrl, cam = "pointer", "board_framing"
+
     # Controller options — capabilities override defaults when declared
     ctrl_opts: dict = {"input_backend": "legacy"}
     if capabilities and capabilities.controller:
@@ -1366,7 +1389,8 @@ def subsystems_for(
     # Input variant must align with the CONTROLLER, not raw locomotion: a wheel
     # reader's OnMove is inert on a character (2d_platformer/etc.) controller, so
     # the player can't move. Only a vehicle controller gets the wheel.
-    input_variant = ("gamepad" if gt == "vr"
+    input_variant = ("pointer" if ctrl == "pointer"
+                     else "gamepad" if gt == "vr"
                      else "racing_wheel" if ctrl.startswith("vehicle_")
                      else "keyboard_mouse")
 
@@ -1417,7 +1441,16 @@ def subsystems_for(
     # trigger/interactable need to know the project's dimension so their
     # generated scripts author Collider2D + OnTrigger*2D callbacks instead of
     # the 3D Physics API — a Collider2D never raises OnTriggerEnter(Collider).
-    dim_meta = {"meta": {"game_type": game_type or "3D"}}
+    #
+    # A UI board reports 3D whatever the project's game_type says, and that is
+    # not a lie about the project: the board IS a flat plane of 3D colliders,
+    # laid out by _layout_ui_board and spawned by EntitySpawner's generic
+    # branch, and the pointer picks it with Physics.Raycast. Collider2D has no
+    # Raycast(Ray) overload at all, so a 2d_topdown teaching sim emitting the
+    # 2D API here would compile and then never register a single click. Only
+    # these two micros read dim_meta; everything else about the project's
+    # dimension (orthographic camera, sprite loading) is untouched.
+    dim_meta = {"meta": {"game_type": "3D" if ui_first else (game_type or "3D")}}
 
     # schema.animations + CharacterSpec.animation_set -> AnimatorSchema.clips.
     # Additive: empty dict when neither field is populated, so the always-on
@@ -1438,7 +1471,13 @@ def subsystems_for(
     if palette_rgb:
         light_opts["meta"]["palette_rgb"] = palette_rgb
 
-    hud_variant = "racing_hud" if genre == "racing" else "health_bar"
+    # A UI game has no player to take damage, so it gets no health micro (see
+    # the core list below) — and health_bar's whole layout is the bar SEAM 1
+    # feeds from it. score_panel is the honest default for a board game: a
+    # readout the objectives seam (SEAM 9) can publish into.
+    hud_variant = ("score_panel" if ui_first
+                   else "racing_hud" if genre == "racing"
+                   else "health_bar")
     # Evaluated HERE, not at the inventory append site below, because the HUD's
     # "Carried" readout may only exist if there is an inventory to publish into
     # it (SEAM 10). Same condition, one source.
@@ -1447,9 +1486,18 @@ def subsystems_for(
     hud_opts: dict = {"widgets": _hud_widgets_for_project(
         hud_variant=hud_variant, missions=missions, has_inventory=has_inventory)}
 
+    # ── The core set ─────────────────────────────────────────────────────────
+    # `target="player"` is not a label: it is what makes the scene template
+    # build a Player GameObject at all (scene.unity.j2's player_units block,
+    # and the generator's _has_player_object). A non-embodied project must not
+    # emit ONE unit targeting "player", or the compiler builds the avatar the
+    # schema declared it does not have — which is the exact contradiction this
+    # archetype exists to remove. Its controller rides the systems holder.
+    _ctrl_target = "systems" if ui_first else "player"
     subs: list[Subsystem] = [
         # Core (always)
-        Subsystem(kind="controller",  variant=ctrl,           target="player",  name="PlayerController", options=ctrl_opts),
+        Subsystem(kind="controller",  variant=ctrl,           target=_ctrl_target,
+                  name="PointerController" if ui_first else "PlayerController", options=ctrl_opts),
         Subsystem(kind="camera",      variant=cam,            target="camera",  name="PlayerCamera", options=cam_opts),
         Subsystem(kind="health",      variant="simple",       target="player",  name="PlayerHealth"),
         # Racing games get the race-feedback HUD (speed/lap/position/coins/boost
@@ -1467,14 +1515,28 @@ def subsystems_for(
         # Always-on: physics body, input reader, interactables, animator, triggers
         Subsystem(kind="physics",     variant=phys_variant,   target="player",  name="PhysicsBody", options=phys_opts),
         Subsystem(kind="input",       variant=input_variant,  target="systems", name="InputReader"),
-        Subsystem(kind="interactable",variant="pickup",       target="world",   name="WorldInteractable", options=dim_meta),
+        # A UI game's interactables are CLICKED, not walked into: `pickup` +
+        # trigger detection waits for a Player-tagged collider to enter, so on a
+        # board every one of them stays inert forever — and SEAM 8 would wire a
+        # collect/interact objective to an event that can never fire.
+        Subsystem(kind="interactable",
+                  variant="button_switch" if ui_first else "pickup",
+                  target="world",   name="WorldInteractable",
+                  options={**dim_meta,
+                           **({"detection": "pointer", "prompt_text": "Click",
+                               "radius": 1.0} if ui_first else {})}),
         Subsystem(kind="animator",    variant=anim_variant,   target="player",  name="PlayerAnimator", options=anim_opts),
         Subsystem(kind="statemachine",variant="player_fsm",   target="player",  name="PlayerFSM"),
         # dim_meta (game_type, for the 2D/3D collider split) PLUS the brief's own
         # trigger phrases from schema.missions[].triggers — see
         # _trigger_options_for_missions. Merge order matters: the mission actions
         # must not clobber the dimension metadata the template branches on.
-        Subsystem(kind="trigger",     variant="zone_enter",   target="world",   name="SceneTrigger",
+        # click_zone is the same trigger reached by a pointer instead of a body,
+        # which is what keeps SEAM 7 (checkpoint save) and SEAM 8's `reach`
+        # objective source alive in a game with nothing to walk in.
+        Subsystem(kind="trigger",
+                  variant="click_zone" if ui_first else "zone_enter",
+                  target="world",   name="SceneTrigger",
                   options={**dim_meta, **_trigger_options_for_missions(missions)}),
         # Always-on: the light rig AND the environment-lighting guard. Not a
         # "nice to have" — scene.unity.j2 ships one directional light and an
@@ -1487,6 +1549,32 @@ def subsystems_for(
         Subsystem(kind="lighting",    variant=light_variant,  target="world",   name="LightingDirector",
                   options=light_opts),
     ]
+
+    # A non-embodied game drops every core subsystem that rides the avatar.
+    # `target == "player"` is exactly that test and needs no second list to
+    # maintain: it is already the thing that makes the scene template build a
+    # Player GameObject, so a unit targeting it in a game with no avatar is a
+    # MonoBehaviour attached to an object that is never created. Health,
+    # PhysicsBody, PlayerAnimator and PlayerFSM all qualify — taking damage,
+    # colliding, playing a walk cycle, being in the Idle state.
+    #
+    # Filtered HERE, in one place, rather than gated at each line above, for
+    # the two reasons the playability evaluator filters _EMBODIED_ONLY_CHECKS
+    # the same way: the embodied list keeps its exact ORDER (plan() assigns
+    # file ids by position, and the golden core-signature tests read them), and
+    # a core subsystem added later cannot forget to opt out.
+    #
+    # It runs BEFORE the feature-driven additions below on purpose — those are
+    # world-targeted (enemy AI, spawners, the enemy FSM), and an enemy in a
+    # board game is a legitimate thing that never needed a player object.
+    if ui_first:
+        dropped = [s for s in subs if s.target == "player"]
+        subs = [s for s in subs if s.target != "player"]
+        console.print(
+            "  [green]OK[/]    ui-first: locomotion='none' — composed a pointer "
+            "controller and a board-framing camera; dropped "
+            + ", ".join(sorted(s.kind for s in dropped))
+            + " (each one rides an avatar this game declares it has none of)")
 
     # Feature- AND content-driven additions
     if has_enemies:

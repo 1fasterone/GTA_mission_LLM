@@ -9,7 +9,10 @@ using UnityEngine;
 
 /// <summary>{{ s.description }}
 /// Subscribe to OnPrompt (show/hide a HUD prompt) and OnInteract for behaviour.</summary>
-{% if is2d %}
+{# Pointer detection casts a 3D ray at a 3D Collider whatever the project's
+   declared dimension — a UI board is a flat plane built in 3D space by
+   EntitySpawner, and Collider2D has no Raycast(Ray) overload. #}
+{% if is2d and s.detection != "pointer" %}
 [RequireComponent(typeof(Collider2D))]
 {% else %}
 [RequireComponent(typeof(Collider))]
@@ -19,7 +22,12 @@ public class {{ s.name }} : MonoBehaviour
 {{ inject.fields(s) }}
     [SerializeField] private float  radius     = {{ "%.2f"|format(s.radius) }}f;
     [SerializeField] private string promptText = {{ s.prompt_text|tojson }};
+{% if s.detection == "pointer" %}
+    [Tooltip("How far down the pointer ray this object can still be clicked.")]
+    [SerializeField] private float  maxPointerDistance = 500f;
+{% else %}
     [SerializeField] private string playerTag  = {{ s.player_tag|tojson }};
+{% endif %}
 
     /// <summary>Raised with prompt text when in range, and "" when out of range.</summary>
     public event Action<string> OnPrompt;
@@ -64,6 +72,29 @@ public class {{ s.name }} : MonoBehaviour
         OnPrompt?.Invoke("");
     }
 {% endif %}
+{% elif s.detection == "pointer" %}
+    // ── Pointer detection (non-embodied games) ────────────────────────────────
+    // Hover is the prompt and a click is the interaction. No `playerTag` is
+    // consulted anywhere in this branch: there is no player object to tag, and
+    // testing for one is what left a UI game's click targets permanently out
+    // of range. The ray is cast against this collider only, so a panel behind
+    // another panel never steals its own hover.
+    private bool _hovered;
+
+    private bool PointerOverMe()
+    {
+        var cam = Camera.main;
+        if (cam == null) return false;
+        if (!TryGetComponent<Collider>(out var self)) return false;
+        return self.Raycast(cam.ScreenPointToRay(Input.mousePosition), out _, maxPointerDistance);
+    }
+
+    private void UpdatePointer()
+    {
+        _hovered = PointerOverMe();
+        if (_hovered && !_inRange) { _inRange = true;  if (!_used) OnPrompt?.Invoke(promptText); }
+        else if (!_hovered && _inRange) { _inRange = false; OnPrompt?.Invoke(""); }
+    }
 {% else %}
     private void UpdateRaycast()
     {
@@ -90,9 +121,16 @@ public class {{ s.name }} : MonoBehaviour
     {
 {% if s.detection == "raycast" %}
         UpdateRaycast();
+{% elif s.detection == "pointer" %}
+        UpdatePointer();
 {% endif %}
+{% if s.detection == "pointer" %}
+        if (_inRange && !_used && Input.GetMouseButtonDown(0))
+            Interact();
+{% else %}
         if (_inRange && !_used && Input.GetKeyDown(KeyCode.{{ s.interact_key }}))
             Interact();
+{% endif %}
 {{ inject.lifecycle(s.update_extra) }}
     }
 

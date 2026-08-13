@@ -7,30 +7,40 @@ groups out inside it.
 ```
 schema ──► select_archetype() ──► (motion_axis[/direction], medium, goal_topology)
                                         │
-    ┌───────────────┬────────────┬──────┴─────────┬───────────────┐
- vertical        vertical    volumetric      planar+ground   anything else
- /descent        /ascent     +air/water           │               │
- +air/water         │             │               │               │
-    │               │             │               │               │
-VerticalCorridor  VerticalSurface  BoundedVolume  ArenaPlane  [layout.strict]
+    ┌──────────────┬───────────┬────────┴──────┬──────────────┬──────────────┐
+ vertical       vertical   volumetric    planar+ground   static+screen   anything
+ /descent       /ascent    +air/water          │        (declared, not      else
+ +air/water        │            │              │          derived)           │
+    │              │            │              │              │              │
+VerticalCorridor VerticalSurface BoundedVolume ArenaPlane  UISurface  [layout.strict]
 ```
 
 | file | role |
 | --- | --- |
-| `src/unity_layout_archetype.py` | derives the three axes, maps them to an archetype, abstains when nothing fits; resolves every primitive's height through one tiered rule |
-| `src/unity_layout.py` | `compute_layout()` dispatches; `_layout_arena_plane()`, `_layout_vertical_corridor()`, `_layout_bounded_volume()` and `_layout_vertical_surface()` are the primitives |
+| `src/unity_layout_archetype.py` | derives the three axes, maps them to an archetype, abstains when nothing fits; resolves every primitive's height through one tiered rule; owns the UISurface role vocabulary (`ui_element_of` / `ui_board_layer` / `ui_board_rank`) |
+| `src/unity_layout.py` | `compute_layout()` dispatches; `_layout_arena_plane()`, `_layout_vertical_corridor()`, `_layout_bounded_volume()`, `_layout_vertical_surface()` and `_layout_ui_board()` are the primitives |
 | `src/unity_spatial_facts.py` | extracts the brief's numeric distances before schema-fill and carries them past it in `schema.meta` |
+| `src/unity_schema.py` | `is_embodied()` — the one predicate every pass reads the `locomotion='none'` declaration through |
 
 ## The derived axes
 
 | axis | values | derived from |
 | --- | --- | --- |
-| `motion_axis` | `vertical` / `volumetric` / `planar` / `path` | rail wording, descent vocabulary, **unambiguous climbing nouns or climbable entities**, entity altitude data, free-medium locomotion |
+| `motion_axis` | `static` / `vertical` / `volumetric` / `planar` / `path` | **`locomotion='none'` first**, then rail wording, descent vocabulary, **unambiguous climbing nouns or climbable entities**, entity altitude data, free-medium locomotion |
 | `direction` | `ascent` / `descent` (vertical only) | `locomotion='climb'` → then strong vocabulary → then entity tags (`Holdable` → ascent, exit platform → descent) |
-| `medium` | `air` / `water` / `ground` | `locomotion` first, then air/water vocabulary |
+| `medium` | `screen` / `air` / `water` / `ground` | **`locomotion='none'` first**, then `locomotion`, then air/water vocabulary |
 | `goal_topology` | `reach_point` / `survive_area` / `hit_target` / `traverse` | `MissionObjective.type` first, then goal vocabulary |
 
 `goal_topology` is provenance only — the archetype is `(motion_axis, medium)`.
+
+`static` + `screen` is the one pair with no evidence behind it. Both axes fall
+out of a single declaration — `locomotion='none'`, the schema saying it has no
+avatar — and that check runs **before every vocabulary tier**, the rail test
+included. It has to: this is the one game shape whose prose is systematically
+about something other than space. A game that teaches version control says
+branch, tree, cloud, push, merge and drop in every paragraph, and none of them
+is a place. Scored as evidence they hand a game with no body an air medium and
+a descent axis, which is not a wrong number but the wrong primitive.
 
 Vertical evidence is deliberately **strong-only**, and **ascent and descent
 clear the same bar**. That is the settled rule: a climb is as much a vertical
@@ -192,11 +202,61 @@ stay an ArenaPlane concern until the spline primitive lands.
 `tests/fixtures/arenaplane_baseline.json` locks its output byte-for-byte
 against the pre-archetype recording.
 
+## UISurface
+
+The board. Every primitive above answers *where does the player's body go and
+what does it move through*; a non-embodied game (`locomotion='none'` — see
+`unity_schema.is_embodied`) has no body, so those are not hard questions but
+the wrong ones. Its content is an **interface**, and the player points at it.
+
+- The board is the **X–Y plane at z = 0**, face normal +Z — the same convention
+  as VerticalSurface, and where every flat camera preset already looks from
+  `(0, 0, -10)`. The block is centred on the origin so the camera frames it
+  without the generator having to aim.
+- Content flows in **reading order**: left to right, top to bottom, in aligned
+  rows with one constant gutter. Ordered by ROLE (`ui_board_rank` — the
+  workspace, then panels and lists, then cards and buttons, then icons), with
+  schema order breaking ties. Deliberately **not** by size: `_pack_groups`
+  sorts biggest-first so the largest footprints claim the centre, which is
+  right for a world and wrong for an interface, where position carries meaning.
+- Inside a cell, every group gets the **same** reading-order sub-grid, and the
+  schema's `placement` is ignored. Twelve commits laid out as a jittered
+  scatter read as debris, not as history.
+- Instance pitch comes from the element's **own size**, not `_effective_spacing`
+  — that floors everything at `EntitySpec.spacing` (2.0 m, a gap between props
+  a player walks between) and made a 3-unit terminal window narrower than a
+  nine-icon grid of 0.6-unit files.
+- **Three z-planes** keep it legible: backdrops behind (z = +2), content on the
+  board (z = 0), captions and legends in front (z = −1). `ui_board_layer`
+  decides which.
+- 2D is the one exception to `compute_layout`'s "2D projects build their own
+  course at spawn time": both spawn-time builders arrange content around a
+  PLAYER, so for a game with no avatar they arrange the board around something
+  that is not there. Every **embodied** 2D project still returns `[]`,
+  byte-identically.
+
+The rest of the archetype lives outside this pass and shares one vocabulary
+with it (`ui_element_of` in `src/unity_layout_archetype.py`), so a group laid
+out as a panel is also built as one:
+
+| pass | what changes |
+| --- | --- |
+| compose (`subsystems_for`) | `pointer` controller on the systems holder, `board_framing` camera, `pointer` input, `click_zone` trigger, `button_switch` + pointer-detection interactable, `score_panel` HUD. Every unit targeting `"player"` is dropped — that target is what makes the scene template build the avatar. |
+| assets (`resolve_entity_assets`) | Tier U routes controls to `ui:<element>`, built by `EntitySpawner.BuildUIElement` rather than matched to a model. The library holds 15 HUD glyphs and no UI kit, so a "commit" can only resolve to the wrong object. Unmatched content becomes a labelled card instead of a strict hard-fail. |
+| fixer (`_check_consistency`) | no `player`-type script injected — that script is what makes `scene.unity.j2` build the capsule. |
+| Step 7 (`unity_playability`) | nine avatar checks abstain; `pointer_targets` (ERROR) takes their place, and `scene_population` stops reading a board of `kind="prop"` controls as scenery. |
+
 ## Abstain
 
 Any other pair raises `LayoutStrictError` (`[layout.strict]`, a `ValueError`)
 naming the unmatched axes, the evidence behind each one, and a concrete fix.
 It is never caught and never falls back to a ground plane. Adding BoundedVolume
-did not soften this: `planar+air` / `planar+water` (a walker in a world merely
-*described* as sky or sea), `vertical+ground` (shafts) and every `path` pairing
-still abstain. Shaft and spline primitives do not exist yet.
+did not soften this, and neither did adding UISurface: `planar+air` /
+`planar+water` (a walker in a world merely *described* as sky or sea),
+`vertical+ground` (shafts) and every `path` pairing still abstain. Shaft and
+spline primitives do not exist yet.
+
+UISurface in particular widened nothing. `static` is returned by exactly one
+branch and `screen` by exactly one branch, both reading the same declaration,
+so the pair is either matched outright or the game is embodied and every rule
+above applies to it unchanged — there is no partial match to abstain on.

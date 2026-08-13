@@ -1090,6 +1090,28 @@ class UnityScript(BaseModel):
         return s if s in frozenset(get_args(ScriptAttach)) else "systems"
 
 
+# ── Embodiment ────────────────────────────────────────────────────────────────
+
+def is_embodied(schema) -> bool:
+    """False only when the schema DECLARES it has no avatar.
+
+    A positive declaration, never an inference. Reading non-embodiment off the
+    absence of a Player tag would make every avatar check vacuous on exactly
+    the builds they exist to catch — a schema-fill run that DROPPED its avatar
+    looks identical to one that never wanted one, and the playability evaluator
+    exists because the ToyRacer and DropZone runs did the former and still
+    passed.
+
+    It lives HERE, beside the field it reads, because the declaration is not a
+    grading concern: the layout pass picks a different spatial primitive for it,
+    compose picks a different subsystem set, the asset resolver picks a
+    different route, and the fixer stops injecting an avatar. One predicate for
+    all of them — a second reading of `locomotion` somewhere else is how the
+    passes start disagreeing about what kind of game they are building.
+    """
+    return str(getattr(schema, "locomotion", "walk") or "walk") != "none"
+
+
 # ── Root schema ───────────────────────────────────────────────────────────────
 
 class UnitySchema(BaseModel):

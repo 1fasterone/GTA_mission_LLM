@@ -177,11 +177,11 @@ public class ScubaExplorerController : MonoBehaviour
 
 | Kind | CLI | Variants |
 |---|---|---|
-| `controller` | `unity-controller` | first_person, third_person, top_down, 2d_platformer, 2d_topdown, vehicle_car, vehicle_bike, flying, swimming |
-| `camera` | `unity-camera` | follow, orbit, first_person, cinemachine_3p, cinemachine_topdown, rts_pan_zoom, vehicle_chase, cinematic_dolly |
+| `controller` | `unity-controller` | first_person, third_person, top_down, 2d_platformer, 2d_topdown, vehicle_car, vehicle_bike, flying, swimming, pointer |
+| `camera` | `unity-camera` | follow, orbit, first_person, cinemachine_3p, cinemachine_topdown, rts_pan_zoom, vehicle_chase, cinematic_dolly, board_framing |
 | `physics` | `unity-physics` | rigidbody_2d, rigidbody_3d, kinematic_character, ragdoll, vehicle_wheels, soft_body_stub, trigger_zone, destructible_object, buoyancy |
 | `hud` | `unity-hud` | health_bar, ammo_counter, minimap, crosshair, interaction_prompt, score_panel, pause_menu, dialogue_box, full_hud_bundle |
-| `input` | `unity-input` | keyboard_mouse, gamepad, touch, dual_stick, racing_wheel, vr_xr |
+| `input` | `unity-input` | keyboard_mouse, gamepad, touch, dual_stick, racing_wheel, vr_xr, pointer |
 | `audio` | `unity-audio` | 2d_simple, 3d_spatial, music_layers, crossfade_zones, categorical_mixer |
 | `ai` | `unity-ai` | navmesh_patrol, chase_player, fsm_guard, behaviour_tree_lite, flocking, cover_shooter, flying_swarm |
 | `spawner` | `unity-spawner` | wave_spawner, continuous_spawner, object_pool, trigger_spawner, point_spawner, radial_spawner |

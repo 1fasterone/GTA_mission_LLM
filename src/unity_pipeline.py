@@ -17,7 +17,8 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
-from .unity_schema       import UnityPackage, UnitySchema, UnityScript
+from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
+                                 is_embodied)
 from .unity_schema_clamp import clamp_capped_lists, render_cap_reminder
 from .capability_resolver import resolve_capabilities, resolve_microgens
 from .unity_asset_catalog import asset_vocabulary
@@ -416,13 +417,26 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
         ))
         fixes.append("Injected GameManager (required boilerplate)")
 
-    if "player" not in _stypes():
+    # A "player"-type script is what makes scene.unity.j2 build the Player
+    # GameObject — a capsule with a MeshRenderer, tagged Player, carrying a
+    # movement controller. Injecting it into a schema that DECLARED it has no
+    # avatar (locomotion='none') plants the exact object the declaration says
+    # does not exist, on the one path that never runs compose: the live
+    # CodeVault build shipped a walking capsule standing in the middle of a
+    # repo-teaching board. Skipped loudly, never silently.
+    if "player" not in _stypes() and is_embodied(schema):
         schema.scripts.append(UnityScript(
             name        = "PlayerController",
             type        = "player",
             description = f"Player movement controller for {schema.game_type} game",
         ))
         fixes.append("Injected PlayerController (required boilerplate)")
+    elif "player" not in _stypes():
+        fixes.append(
+            "locomotion='none': did NOT inject the PlayerController "
+            "boilerplate — a non-embodied game has no avatar, and the script "
+            "is what builds one. Its content is driven by the pointer "
+            "(compose emits a PointerController; see subsystems_for)")
 
     # HealthSystem must exist when another script references it: EnemyAI.cs.j2
     # calls SendMessage("TakeDamage"), and Collectible.cs.j2 hard-references the

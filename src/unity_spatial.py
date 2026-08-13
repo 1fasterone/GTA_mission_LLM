@@ -26,6 +26,10 @@ The primitives:
                    its own band in plan view. Fly locomotion.
   depth_column     the same volume mirrored below a surface — sea level at
                    y=0, content descending. Swim locomotion.
+  ui_board         the play space is a BOARD of panels facing the camera, and
+                   the player has no body in it at all — they act through a
+                   pointer. Selected by the schema DECLARING locomotion='none'
+                   (see unity_schema.is_embodied), never inferred.
 
 Selection is a pure function of the schema's own declared shape (`game_type`,
 `locomotion`, whether a route exists) — no prompt keywords, no LLM, no RNG.
@@ -48,6 +52,11 @@ DEPTH_COLUMN = "depth_column"
 # Ascent along a face rather than movement through open volume — the play
 # space is the SURFACE of a wall and the things attached to it.
 WALL_SURFACE = "wall_surface"
+# No player body in the space at all — the play space is a BOARD of panels
+# facing the camera, and the player acts on it through a pointer. Every other
+# primitive here answers "where does the player's body go"; this one is the
+# shape of a game that has no body to place.
+UI_BOARD = "ui_board"
 
 # The two primitives whose content occupies a volume rather than a surface.
 VOLUME_PRIMITIVES = frozenset({AIRSPACE_COLUMN, DEPTH_COLUMN})
@@ -69,6 +78,11 @@ def primitive_for_archetype(archetype: str, medium: str,
                             has_route: bool = False) -> str:
     """Translate a layout archetype into this module's vocabulary, so the
     playability evaluator and the layout pass describe the same scene."""
+    if archetype == "UISurface":
+        # Checked before the route test: an authored route through a game with
+        # no avatar is not a course the player drives, and calling it one would
+        # hand the evaluator a moving player to look for.
+        return UI_BOARD
     if archetype == "VerticalSurface":
         return WALL_SURFACE
     hit = _PRIMITIVE_BY_ARCHETYPE.get((archetype, (medium or "").lower()))

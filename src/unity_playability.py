@@ -52,8 +52,13 @@ from typing import Optional
 
 from .unity_concept_entities import extract_named_entities
 from .unity_layout import _reach_distance, terrain_bounds
-from .unity_schema import EntitySpec, UnitySchema
-from .unity_layout_archetype import is_climbable_entity, pick_player_entity
+# `is_embodied` lives beside the field it reads (src/unity_schema.py) because
+# four passes act on the declaration, not just this one. Re-exported here: it
+# was this module's own function first, and the doctrine it carries is a
+# grading rule as much as a compiler one.
+from .unity_schema import EntitySpec, UnitySchema, is_embodied
+from .unity_layout_archetype import (is_climbable_entity, pick_player_entity,
+                                     ui_board_layer, ui_element_of)
 from .unity_spatial import (GROUND_PLANE, ROUTE_CORRIDOR, VOLUME_PRIMITIVES,
                             WALL_SURFACE, is_grounded, select_primitive)
 
@@ -100,6 +105,10 @@ _CHECK_SEVERITY: dict[str, str] = {
     "avatar_spawn":      ERROR,
     "objectives_spawned": ERROR,
     "avatar_not_duplicated": WARN,
+    # ERROR for the same reason content_reachable is: content the player
+    # cannot get to is content that is not in the game. On a board "cannot get
+    # to" means "cannot click".
+    "pointer_targets":   ERROR,
 }
 
 # Kinds that are scenery: present in a scene without being something the
@@ -258,17 +267,18 @@ _EMBODIED_ONLY_CHECKS: frozenset[str] = frozenset({
     "objective_kinematics", "unbaked_gameplay",
 })
 
-
-def is_embodied(schema: UnitySchema) -> bool:
-    """False only when the schema DECLARES it has no avatar.
-
-    A positive declaration, never an inference. Reading non-embodiment off the
-    absence of a Player tag would make every avatar check vacuous on exactly
-    the builds they exist to catch — a schema-fill run that DROPPED its avatar
-    looks identical to one that never wanted one, and this module exists
-    because the ToyRacer and DropZone runs did the former and still passed.
-    """
-    return str(getattr(schema, "locomotion", "walk") or "walk") != "none"
+# The mirror set: checks that only mean something for a game the player acts on
+# through a POINTER. Filtered out for an embodied game the same way, and for
+# the same reason — a walking game has no board of click targets to grade.
+#
+# It exists because abstaining on the nine above left a hole exactly where
+# `content_reachable` used to be: a non-embodied build could pass by having its
+# hardest checks decline to run. `pointer_targets` is what fills it — the
+# question "can the player act on anything at all" survives losing the avatar,
+# it just stops being a question about distance.
+_UI_ONLY_CHECKS: frozenset[str] = frozenset({
+    "pointer_targets",
+})
 
 
 def _ungraded(rep: PlayabilityReport, check: str, why: str) -> None:
@@ -588,10 +598,25 @@ def _check_scene_population(schema: UnitySchema,
                   "no scene declares an entity subset — every scene hosts "
                   "everything")
         return
+
+    # `kind` alone answers this for a game with a world, where a prop is a
+    # thing standing next to the game. On a BOARD a prop is the game: CodeVault
+    # authored every one of its file icons, folder containers and terminal
+    # panels as kind="prop", so reading kind alone called a complete,
+    # click-driven teaching sim a diorama. What separates content from scenery
+    # there is the layer it sits on — a backdrop and a caption are scenery, a
+    # control is not.
+    embodied = is_embodied(schema)
+
+    def _is_content(e: EntitySpec) -> bool:
+        if embodied:
+            return (e.kind or "").lower() not in _SCENERY_KINDS
+        return ui_board_layer(e) == "board"
+
     empty: list[str] = []
     for spec in subsets:
         hosted = [by_name[n] for n in (spec.entities or []) if n in by_name]
-        if not any((e.kind or "").lower() not in _SCENERY_KINDS for e in hosted):
+        if not any(_is_content(e) for e in hosted):
             empty.append(spec.name)
     if empty:
         rep.findings.append(Finding(
@@ -928,6 +953,48 @@ def _check_objective_kinematics(schema: UnitySchema,
     rep.checks["objective_kinematics"] = not lost
 
 
+def _check_pointer_targets(schema: UnitySchema,
+                           rep: PlayabilityReport) -> None:
+    """A non-embodied game has to give the pointer something to act on.
+
+    The mirror of `content_reachable`, and the reason the nine abstentions in
+    `_EMBODIED_ONLY_CHECKS` do not leave a hole. "Can the player get to the
+    content" survives losing the avatar — it just stops being a question about
+    distance and becomes one about targets: with no avatar, a board the pointer
+    cannot act on is a slideshow, and every check that would have caught that
+    was an avatar check.
+
+    A target is an entity the player can act ON: one carrying an interaction
+    tag, one an objective names, or one that reads as a control (a button, a
+    card, an icon — `ui_element_of`). A backdrop is not a target and neither is
+    a caption, which is exactly why they are excluded: a board made only of
+    labels and backing plates has nothing to do in it.
+    """
+    if not schema.entities:
+        _ungraded(rep, "pointer_targets",
+                  "the schema declares no entities at all, so there is no "
+                  "board to grade")
+        return
+    named = frozenset(_objective_names(schema))
+    targets: list[str] = []
+    for e in schema.entities:
+        if ui_board_layer(e) != "board":
+            continue          # backdrops and captions are not acted on
+        tag  = (e.tag or "").strip().lower()
+        kind = (e.kind or "").strip().lower()
+        if (tag in _OBJECTIVE_TAGS or kind in _OBJECTIVE_KINDS
+                or e.name.strip().lower() in named
+                or ui_element_of(e) is not None):
+            targets.append(e.name)
+    if not targets:
+        rep.findings.append(Finding(
+            "pointer_targets", ERROR,
+            "no entity the pointer can act on — every group is a backdrop, a "
+            "caption or scenery, so the board can be looked at but not played",
+            "schema.entities.tag / .kind / missions[].objectives[].target_ref"))
+    rep.checks["pointer_targets"] = bool(targets)
+
+
 _CHECKS = (
     _check_avatar,
     _check_avatar_binding,
@@ -948,6 +1015,7 @@ _CHECKS = (
     _check_enemy_wiring,
     _check_role_graph,
     _check_objective_kinematics,
+    _check_pointer_targets,
 )
 
 
@@ -986,14 +1054,25 @@ def evaluate(schema: UnitySchema) -> PlayabilityReport:
     # Their verdicts are DISCARDED, not passed: recording them as ungraded
     # keeps the "absence of evidence is never evidence of playability" rule
     # (they show on the scorecard and still fail gate(require_graded=True)).
+    #
+    # The filter runs in BOTH directions, and both directions RECORD what they
+    # dropped. Popping a check silently is the defect this module was rewritten
+    # to remove — the score is the share of the checks that ran, so an unlisted
+    # check is one the denominator quietly stopped covering. Declaring
+    # locomotion='none' therefore trades nine listed abstentions for one, and
+    # never buys a smaller scorecard.
     if not is_embodied(schema):
-        for name in _EMBODIED_ONLY_CHECKS:
-            rep.checks.pop(name, None)
-            _ungraded(rep, name,
-                      "locomotion='none' — the game declares no avatar, so "
-                      "there is nothing to place, control or reach")
-        rep.findings = [f for f in rep.findings
-                        if f.check not in _EMBODIED_ONLY_CHECKS]
+        dropped, why = _EMBODIED_ONLY_CHECKS, (
+            "locomotion='none' — the game declares no avatar, so there is "
+            "nothing to place, control or reach")
+    else:
+        dropped, why = _UI_ONLY_CHECKS, (
+            "the game has an avatar — it is played by moving through a space, "
+            "not by pointing at a board")
+    for name in dropped:
+        rep.checks.pop(name, None)
+        _ungraded(rep, name, why)
+    rep.findings = [f for f in rep.findings if f.check not in dropped]
     return rep
 
 
