@@ -51,7 +51,11 @@ from typing import Any, Iterable, Sequence
 from pydantic import ValidationError
 
 from .micro import REGISTRY
-from .micro.code_fields import UNITY_EXTRA_INSTRUCTIONS
+from pathlib import Path
+
+from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
+                                template_members, template_method_arities,
+                                template_usings)
 
 # ── What may be written ───────────────────────────────────────────────────────
 
@@ -355,6 +359,43 @@ def _apply(sub, candidate: dict, known_types: frozenset[str] = frozenset()) -> l
     return msgs + validation_msgs
 
 
+def _would_not_bind(sub, payload: dict) -> list[str]:
+    """What the binder WOULD cut out of this payload, without cutting it.
+
+    The diagnostics already exist and are precise — `bind_authored_code` reports
+    `OnObjectiveComplete(0 args, needs 1..1)` — they have simply never been shown
+    to the author. Run the same pass over a throwaway copy so the model can be
+    told what is wrong while it can still fix it.
+
+    Returns [] when everything binds. Never raises: a checker that can fail the
+    build is worse than one that occasionally has nothing to say.
+    """
+    tdir = _template_dir_for(sub)
+    if tdir is None:
+        return []
+    cls = REGISTRY.get(sub.kind)
+    schema_cls = getattr(cls, "schema_cls", None)
+    if schema_cls is None:
+        return []
+    try:
+        # A REAL schema instance, not a bare carrier: `bind_authored_code` reads
+        # `.signature`/`.body` off CodeMethod objects, and handing it the raw
+        # JSON dicts makes every check silently inspect nothing and report a
+        # clean bill of health. It mutates what it is given, which is exactly
+        # why this is a throwaway built from the payload rather than `sub`.
+        fields = getattr(schema_cls, "model_fields", {})
+        fixed: dict[str, Any] = {}
+        if "name" in fields and sub.name:
+            fixed["name"] = sub.name
+        if "variant" in fields and sub.variant:
+            fixed["variant"] = sub.variant
+        probe = schema_cls(**fixed, **dict(sub.options), **payload)
+        return [m for m in bind_authored_code(probe, tdir)
+                if "neutralized" in m or "dropped" in m]
+    except Exception:                       # noqa: BLE001
+        return []
+
+
 def _project_types(subsystems: Sequence[Any]) -> frozenset[str]:
     """Class names this project generates — a field typed after a sibling micro
     (e.g. `DiverHealth`) resolves at compile time and must not be dropped."""
@@ -437,8 +478,69 @@ def _structural_summary(options: dict, limit: int = 700) -> str:
     return text[:limit]
 
 
+def _template_dir_for(sub) -> "Path | None":
+    """Where this subsystem's own templates live, or None."""
+    cls = REGISTRY.get(sub.kind)
+    subdir = getattr(cls, "template_subdir", None) if cls else None
+    if not subdir:
+        return None
+    d = Path("templates/unity/micro") / str(subdir)
+    return d if d.is_dir() else None
+
+
+def _contract_for(sub, *, tags: Sequence[str] = ()) -> str:
+    """What this class ACTUALLY offers the author.
+
+    The compiler has always computed this — `template_members`,
+    `template_method_arities`, `template_usings` — and has only ever used it to
+    JUDGE the model's output. The prompt meanwhile asserted the opposite:
+
+        "Do not assume a property such as IsSprinting, CurrentSpeed or
+         IsGrounded exists on this class."
+
+    while Controller.cs.j2 declares `CurrentSpeed` and `IsGrounded` outright.
+    The model was told the class was empty, wrote code accordingly, and had
+    anything it did reach for deleted for not binding. Showing it the same table
+    the judge uses is the whole of this fix.
+    """
+    tdir = _template_dir_for(sub)
+    if tdir is None:
+        return ""
+    try:
+        arities  = template_method_arities(str(tdir))
+        members  = template_members(str(tdir))
+        usings   = template_usings(str(tdir))
+    except Exception:                       # noqa: BLE001 — never block authoring
+        return ""
+    if not members:
+        return ""
+
+    callable_names = sorted(arities)
+    plain = sorted(m for m in members if m not in arities)
+
+    lines = ["", "WHAT THIS CLASS ALREADY HAS — you may call these directly"]
+    if callable_names:
+        lines.append("  callable (name -> argument count it accepts):")
+        for n in callable_names[:40]:
+            lo, hi = arities[n]
+            span = str(lo) if lo == hi else f"{lo}..{hi}"
+            lines.append(f"    {n}({span} arg{'' if hi == 1 else 's'})")
+        lines.append("    Calling one of these with the wrong number of "
+                     "arguments will not compile — an event declared "
+                     "`Action<string>` needs exactly one.")
+    if plain:
+        lines.append("  fields / properties: " + ", ".join(plain[:40]))
+    if usings:
+        lines.append("  namespaces already imported: " + ", ".join(sorted(usings)))
+    if tags:
+        lines.append("  tags THIS PROJECT defines (no others exist — "
+                     "GameObject.FindGameObjectWithTag THROWS on an undefined "
+                     "tag): " + ", ".join(sorted(tags)))
+    return "\n".join(lines)
+
+
 def _user_prompt_for(sub, *, concept: str, user_prompt: str,
-                     keys: tuple[str, ...]) -> str:
+                     keys: tuple[str, ...], contract: str = "") -> str:
     cls = REGISTRY.get(sub.kind)
     role = getattr(cls, "display_name", sub.kind.title())
     return f"""\
@@ -453,21 +555,23 @@ THE SUBSYSTEM YOU ARE EXTENDING
   variant:    {sub.variant or "default"}
   class name: {sub.name or sub.kind.title()}
   structural settings already decided: {_structural_summary(sub.options)}
+{contract}
 
 The baseline behavior for this variant is ALREADY generated by the compiler —
 do not restate movement, input plumbing, or lifecycle scaffolding. Author only
 what makes THIS subsystem belong to THIS project, and only where it is this
 subsystem's job: the {sub.kind} micro owns its own concern, not the whole game.
 
-THE CODE MUST COMPILE ON ITS OWN. This class has no collaborators you have not
-been shown:
+THE CODE MUST COMPILE. Everything available to you is listed above:
+- Call the members shown under WHAT THIS CLASS ALREADY HAS, with the argument
+  counts given. Anything NOT listed there you must declare yourself in
+  extra_fields before you use it.
 - Every type you name must be a Unity or C# built-in (float, Vector3,
-  AudioSource, ParticleSystem, Light, List<T>, ...). Do NOT invent a helper
-  class such as OxygenManager, StatsSystem or ScoreHandler and declare a field
-  of that type — nothing will define it and the project will not compile. Model
-  the state with plain fields instead.
-- Only reference members you declare yourself in extra_fields. Do not assume a
-  property such as IsSprinting, CurrentSpeed or IsGrounded exists on this class.
+  AudioSource, ParticleSystem, Light, List<T>, ...) or a class listed above.
+  A helper class of your own (OxygenManager, StatsSystem) has nothing to define
+  it — model that state with plain fields on this class instead.
+- Use only the namespaces listed as already imported, or name what you need in
+  extra_usings.
 {_EXTRAS_CONTRACT}
 
 Return ONE JSON object containing only these keys: {", ".join(keys)}
@@ -476,7 +580,7 @@ Return ONE JSON object containing only these keys: {", ".join(keys)}
 
 def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                       user_prompt: str = "", temperature: float = 0.35,
-                      attempts: int = 2) -> list[str]:
+                      attempts: int = 3, tags: Sequence[str] = ()) -> list[str]:
     """Ask the LLM for prompt-specific C# fragments, one subsystem at a time.
 
     One focused call per subsystem rather than one bloated call for all of them:
@@ -506,19 +610,45 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
             skipped_kinds.append(sub.kind)
             continue
 
+        contract = _contract_for(sub, tags=tags)
         payload: dict = {}
+        correction = ""
         for attempt in range(attempts):
             try:
                 raw = llm.chat(
                     system=_SYSTEM,
                     user=_user_prompt_for(sub, concept=concept,
-                                          user_prompt=user_prompt, keys=keys),
+                                          user_prompt=user_prompt, keys=keys,
+                                          contract=contract) + correction,
                     temperature=temperature if attempt == 0 else min(temperature, 0.15),
                     thinking=False,
                 )
-                payload = _filter_keys(sub.kind, llm.extract_json(raw))
-                if payload:
+                candidate = _filter_keys(sub.kind, llm.extract_json(raw))
+                if not candidate:
+                    continue
+                payload = candidate
+
+                # Close the loop. Anything the binder would cut is handed BACK
+                # as a diagnostic while the author can still fix it — the whole
+                # point being that a mechanic the model meant to write survives
+                # as working code instead of as an AUDIT comment. Only the last
+                # attempt is allowed to reach the binder uncorrected.
+                if attempt + 1 >= attempts:
                     break
+                cuts = _would_not_bind(sub, payload)
+                if not cuts:
+                    break
+                correction = (
+                    "\n\nYOUR PREVIOUS ANSWER DOES NOT COMPILE AS WRITTEN.\n"
+                    "The compiler reports:\n"
+                    + "\n".join("  - " + c for c in cuts) +
+                    "\nRewrite the SAME behaviour so it binds — keep what you "
+                    "were trying to do and express it with the members listed "
+                    "above, declaring anything else you need in extra_fields. "
+                    "Do not drop the feature."
+                )
+                msgs.append(f"micro-code: {sub.kind} re-authored after "
+                            f"{len(cuts)} binding error(s)")
             except Exception as exc:  # noqa: BLE001 — one micro must not abort the build
                 if attempt + 1 >= attempts:
                     msgs.append(f"micro-code: {sub.kind} enrichment failed "

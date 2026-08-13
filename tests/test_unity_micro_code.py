@@ -366,3 +366,66 @@ def test_sibling_micro_class_is_resolvable_in_a_signature():
         "extra_methods": [{"signature": "private void Hurt(RivalHealth h)",
                            "body": "h.TakeDamage(1f);"}]})])
     assert len(subs[0].options["extra_methods"]) == 1
+
+
+# ── 6.4a/6.4b — the writer is shown the contract, and re-asked on a bad bind ──
+
+def test_contract_lists_the_members_the_prompt_used_to_deny():
+    """`CurrentSpeed` and `IsGrounded` are declared by Controller.cs.j2, and the
+    authoring prompt named them as examples of properties that do NOT exist. The
+    model wrote code accordingly and had it deleted for not binding."""
+    from src.unity_micro_code import _contract_for
+    sub = type("S", (), {"kind": "controller", "variant": "third_person",
+                         "name": "PlayerController", "options": {}})()
+    c = _contract_for(sub)
+    assert "CurrentSpeed" in c and "IsGrounded" in c
+
+
+def test_contract_states_event_arity():
+    """The exact CodeVault CS7036: `event Action<string> OnObjectiveComplete`
+    invoked with no argument, twice, because the prompt said assume nothing."""
+    from src.unity_micro_code import _contract_for
+    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
+                         "name": "MissionObjectives", "options": {}})()
+    assert "OnObjectiveComplete(1 arg)" in _contract_for(sub)
+
+
+def test_contract_names_only_the_projects_own_tags():
+    """FindGameObjectWithTag THROWS on an undefined tag — an authored
+    'FolderContainer' crashed CodeVault in Awake."""
+    from src.unity_micro_code import _contract_for
+    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
+                         "name": "MissionObjectives", "options": {}})()
+    c = _contract_for(sub, tags=["FileIcon", "Folder"])
+    assert "FileIcon, Folder" in c and "THROWS" in c
+
+
+def test_bad_bind_is_reported_before_anything_is_cut():
+    from src.unity_micro_code import _would_not_bind
+    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
+                         "name": "MissionObjectives", "options": {}})()
+    cuts = _would_not_bind(sub, {"extra_methods": [
+        {"signature": "private void Check()", "body": "OnObjectiveComplete();"}]})
+    assert any("needs 1..1" in c for c in cuts), cuts
+
+
+def test_clean_payload_triggers_no_retry():
+    from src.unity_micro_code import _would_not_bind
+    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
+                         "name": "MissionObjectives", "options": {}})()
+    assert _would_not_bind(sub, {"extra_methods": [
+        {"signature": "private void Check()",
+         "body": 'OnObjectiveComplete("obj_1");'}]}) == []
+
+
+def test_would_not_bind_never_mutates_the_payload():
+    """The check runs on a throwaway; the real payload must reach _apply intact
+    so a retry can improve on it rather than on an already-gutted body."""
+    from src.unity_micro_code import _would_not_bind
+    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
+                         "name": "MissionObjectives", "options": {}})()
+    payload = {"extra_methods": [
+        {"signature": "private void Check()", "body": "OnObjectiveComplete();"}]}
+    before = payload["extra_methods"][0]["body"]
+    _would_not_bind(sub, payload)
+    assert payload["extra_methods"][0]["body"] == before

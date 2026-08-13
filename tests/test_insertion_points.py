@@ -1563,6 +1563,83 @@ def test_generic_field_type_heals_its_using_on_a_hand_rolled_generator():
     assert "System.Collections.Generic" in schema.extra_usings
 
 
+def test_ugui_field_type_heals_its_using():
+    """The live TowerControl SceneTrigger.cs(28,106) CS0246: the micro-code step
+    authored `private Button _clearancePad = null;` into the trigger micro and
+    nothing mapped Button to UnityEngine.UI. Rare while every game had an
+    avatar — a walk controller's authored fields are transforms and rigidbodies
+    — and routine the moment a UI-first game could compile."""
+    schema = _FakeSchema(extra_fields=[
+        CodeField(name="_clearancePad", type="Button", default="null"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "trigger")
+    assert "UnityEngine.UI" in schema.extra_usings
+
+
+def test_pointer_event_types_heal_their_using():
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="public void OnPointerClick(PointerEventData e)",
+                   body="Activate();"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "trigger")
+    assert "UnityEngine.EventSystems" in schema.extra_usings
+
+
+def test_null_conditional_assignment_becomes_a_null_guard():
+    """The live TowerControl PlayerCamera.cs(128,9) CS0131. `?.` reads through a
+    null and cannot write through one, but it is what a model reaches for, and
+    the guard it meant is unambiguous — so repair it rather than delete a
+    working piece of the game."""
+    out = lint_code_fragment(
+        "_radarSweep?.localRotation = Quaternion.Euler(0f, Time.time * 20f, 0f);",
+        what="update_extra")
+    assert "?." not in out
+    assert "if (_radarSweep != null)" in out
+    assert "_radarSweep.localRotation = Quaternion.Euler" in out
+
+
+def test_null_conditional_READ_is_left_alone():
+    """Only the assignment form is illegal — `?.` on the right-hand side is the
+    idiom working as intended, and rewriting it would be vandalism."""
+    src = "float x = _rb?.linearVelocity.x ?? 0f;"
+    assert lint_code_fragment(src, what="update_extra").strip() == src
+
+
+def test_neutralized_non_void_method_keeps_a_return():
+    """The live TowerControl SaveSystem.cs(71,18) CS0161. The binding pass
+    commented out the only unconditional `return`; the surviving guard clause
+    kept the method alive, so it was neither dropped nor able to compile."""
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="private bool ValidateJson(string content)",
+                   body=('if (string.IsNullOrEmpty(content)) return false;\n'
+                         'return JsonDocument.Parse(content).Ok;')),
+    ])
+    msgs = harden_against_template(schema, _MICRO_TEMPLATES / "saveload")
+    assert len(schema.extra_methods) == 1, "the guard clause should survive"
+    body = schema.extra_methods[0].body
+    live = [ln for ln in body.splitlines() if not ln.lstrip().startswith("//")]
+    assert not any("JsonDocument" in ln for ln in live), "unbindable ref survived"
+    assert body.rstrip().endswith("return default;"), body
+    assert any("default return" in m for m in msgs), msgs
+
+
+def test_void_method_is_not_given_a_return():
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="private void Apply()",
+                   body="transform.position = Vector3.zero;"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "saveload")
+    assert "return default;" not in schema.extra_methods[0].body
+
+
+def test_method_that_already_returns_is_untouched():
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="private bool Ready()", body="return true;"),
+    ])
+    harden_against_template(schema, _MICRO_TEMPLATES / "saveload")
+    assert schema.extra_methods[0].body.strip() == "return true;"
+
+
 def test_using_already_in_the_template_is_not_added_twice():
     """The spawner template already imports it — a second copy is redundant."""
     schema = _FakeSchema(extra_fields=[
@@ -1598,3 +1675,46 @@ def test_every_registered_micro_reconciles_against_a_real_template():
         if not template_members(str(cls(config).template_root)):
             missing.append(kind)
     assert not missing, f"no template members scanned for: {missing}"
+
+
+# ── Tier 2: build what the author reached for, instead of cutting it ─────────
+
+def test_undeclared_fields_are_built_not_deleted():
+    """The exact TowerControl loss. `conflictActive` and `radarSweepColor` were
+    fields the model used but never declared; both were neutralized, which
+    emptied SetConflictAlert and GetRadarSweepColor, which were then dropped —
+    taking the game's conflict alert and radar sweep with them."""
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="public void SetConflictAlert(bool on)",
+                   body="conflictActive = on;\n"
+                        "radarSweepColor = on ? Color.yellow : Color.green;"),
+        CodeMethod(signature="public Color GetRadarSweepColor()",
+                   body="if (conflictActive) return Color.yellow;\n"
+                        "return radarSweepColor;"),
+    ])
+    msgs = harden_against_template(schema, _MICRO_TEMPLATES / "camera")
+
+    built = {(f.type, f.name) for f in schema.extra_fields}
+    assert ("bool", "conflictActive") in built, built
+    assert ("Color", "radarSweepColor") in built, built
+
+    assert len(schema.extra_methods) == 2, "both methods must survive"
+    bodies = "\n".join(m.body for m in schema.extra_methods)
+    assert "AUDIT" not in bodies, "nothing should have been cut:\n" + bodies
+    assert any("BUILT" in m for m in msgs), msgs
+
+
+def test_return_type_infers_the_field_type():
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="public Vector3 GetAnchor()", body="return _anchor;")])
+    harden_against_template(schema, _MICRO_TEMPLATES / "camera")
+    assert ("Vector3", "_anchor") in {(f.type, f.name) for f in schema.extra_fields}
+
+
+def test_uninferable_identifier_is_left_to_the_old_path():
+    """A field of the WRONG type fails louder and later than one that was never
+    declared, so an identifier whose type cannot be read is not invented."""
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="private void Poke()", body="_mystery.DoThing();")])
+    harden_against_template(schema, _MICRO_TEMPLATES / "camera")
+    assert "_mystery" not in {f.name for f in schema.extra_fields}

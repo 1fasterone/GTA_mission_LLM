@@ -1296,9 +1296,17 @@ class UnityPipeline:
             # turn every call into a swallowed failure).
             from .unity_micro_code import enrich_subsystems, merge_authored_code
             if micro_code and not no_llm:
+                # The tags TagManager will actually define. Handed to the author
+                # because GameObject.FindGameObjectWithTag THROWS on an undefined
+                # tag — live on CodeVault, an authored "FolderContainer" (the real
+                # tag is "Folder") crashed in Awake before anything could run.
+                _tags = sorted({(e.tag or "").strip() for e in schema.entities
+                                if (e.tag or "").strip()
+                                and (e.tag or "").strip() != "Untagged"})
                 for msg in enrich_subsystems(subsystems, llm=self.llm,
                                              concept=concept,
-                                             user_prompt=user_prompt):
+                                             user_prompt=user_prompt,
+                                             tags=_tags):
                     self._fix(msg)
             elif no_llm:
                 self._ok("--no-llm: micros keep their deterministic baseline "
