@@ -302,8 +302,14 @@ compile.
 | `ai` states | `AIState.name` → sanitised enum member | `AIState.role` → the emitted `case` body |
 | `ai` transitions | — | `when` clamped to 6 sensor predicates; no authored C# reaches `CheckTransitions` |
 | `hud` widgets | `label`, `source` → tooltip + on-screen text | `kind` clamped to 5; `id` → sanitised setter, collision-linted against the variant's real surface |
+| `statemachine` states | `StateDefinition.name` → sanitised enum member | template-required names re-added; SEAM 4 renders a case per declared state |
+| `statemachine` conditions | the expression's shape — `_alertTimer > 2f` | every identifier it names is declared, type read off usage; an invented *call* drops the edge |
 
-In all three, a hallucination costs a *word*, never a build.
+In all five, a hallucination costs a *word*, never a build.
+
+All sanitisation goes through one function — `code_fields.csharp_ident` — which
+is **total** by design: it always returns a usable identifier, because rejecting
+a name is precisely how variety gets filtered out.
 
 ---
 
@@ -318,12 +324,26 @@ corresponding fixer uses, exactly as `unity_concept_entities` and
 `unity_concept_scripts` already do. This makes LLM invention *purely additive*,
 after which more invention is strictly better.
 
-**1. `statemachine` — has the `ai` defect, unfixed.**
-`_DEFAULT_TRANSITIONS` conditions are raw C#, LLM-authored `condition` strings
-are unguarded (CS0103), and SEAM 4's `OnFSMStateChanged` hardcodes
-`State.Idle/Moving/Jumping/Dead`. It is safe today *only* because the composer
-never feeds it states. The moment it does, it breaks exactly as `ai` did. Port
-the `when` vocabulary and the name/role split.
+**1. `statemachine` — ~~has the `ai` defect, unfixed~~ DONE.**
+State names are sanitised into the enum, dangling and self-loop transitions are
+dropped by name, and SEAM 4's `OnFSMStateChanged` now renders a case per
+declared state instead of a hardcoded four.
+
+Its condition strings took the pattern one step further than `ai` did. `ai`
+replaced authored C# with a closed `when` vocabulary; `statemachine`'s
+conditions are genuinely open (they reference fields the model declares), so
+instead of rejecting them the lint **declares what the model referenced**:
+
+```python
+# _heardNoise && _alertTimer > 2f   ->   both fields declared, types read off usage
+private bool  _heardNoise = false;
+private float _alertTimer = 0f;     // compared to a number
+```
+
+The SHAPE of the condition is the model's — `_alertTimer > 2f` says something
+real about the game — and the declaration that makes it compile is the
+compiler's. Only an invented *method call* is unrepairable (a field can be
+declared; a body cannot be invented), and that one case drops the edge by name.
 
 **2. Feed Step 3 the brief, not only the concept.**
 The single highest-recall change available, and it needs no new schema: pass
@@ -361,6 +381,40 @@ shape.
 
 **A change that raises variety while lowering recall is a regression.** The point
 of the tiering is that those two stop trading against each other.
+
+### Step 7 can now see the loop, and feed back into it
+
+The evaluator originally graded the unwinnable control build **91/100** and the
+winnable LLM build **90** — `objective` passes on the mere *presence* of
+something to do, so nothing scored whether the mission could be completed. Two
+changes fixed that:
+
+- **`mission_loop`** grades the loop itself, from what the wiring pass actually
+  bound (`schema.meta["wiring"]`, stamped by `MicroComposer.wiring_report`)
+  rather than from what the schema declares. `mission_visible` grades whether
+  SEAM 9 puts that progress on screen.
+- **Step 5c** (`src/unity_playability_repair.py`) grades the schema *before* the
+  generator runs and applies the deterministic remedies its findings carry, so a
+  repair reaches the built project instead of being reported after the fact.
+
+The one remedy so far is the one the A/B exposed: a brief that describes its
+progression as NARRATIVE and never writes a MISSIONS section. Each beat already
+carries a `trigger` from a closed vocabulary that maps 1:1 onto an objective
+type, so the mission is a *transformation* of authored content, not invention:
+
+```
+FIX  playability repair: derived 1 mission with 5 objective(s) from story beats
+     (beat_02:reach, beat_03:survive, beat_04:reach, beat_05:survive …)
+     — the run now has a win condition SEAM 8 can bind
+```
+
+Live on the same brief, the `--no-llm` arm went from composing **no objectives
+micro at all** to SEAM 8 + SEAM 9 firing and 92/100 — while still warning
+honestly that 2 of its 5 objectives have no event source. **That arm's game can
+now be finished; before, it could not.**
+
+A remedy is never a guess. Where the honest answer is "the content is missing",
+the finding stays a finding — abstain loudly, never default quietly.
 
 > Eval note: a `--no-llm` run is **not** a test of the Pipeline LLM and must never
 > be reported as one. Step 3 does not run. It is the control. See `CLAUDE.md`

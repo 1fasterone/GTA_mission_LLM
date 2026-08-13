@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Literal
 
@@ -11,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, csharp_ident, lint_extensible, UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -95,31 +94,9 @@ _WHEN_EXPR: dict[str, str] = {
     "always":              "true",
 }
 
-# C# reserved words a sanitised state name must not become.
-_CS_KEYWORDS = frozenset("""
-abstract as base bool break byte case catch char checked class const continue
-decimal default delegate do double else enum event explicit extern false finally
-fixed float for foreach goto if implicit in int interface internal is lock long
-namespace new null object operator out override params private protected public
-readonly ref return sbyte sealed short sizeof stackalloc static string struct
-switch this throw true try typeof uint ulong unchecked unsafe ushort using
-virtual void volatile while
-""".split())
-
-
 def _state_ident(s: str, fallback: str = "State") -> str:
-    """PascalCase C# identifier for a state name.
-
-    Not to_pascal: that leaves an already-identifier-shaped string alone, so a
-    lowercase "pursue" would stay lowercase and read as a field, not a state.
-    """
-    parts = re.sub(r"[^a-zA-Z0-9]+", " ", str(s)).split()
-    out = "".join(p[:1].upper() + p[1:] for p in parts if p)
-    if not out or out[0].isdigit():
-        out = fallback + out
-    if out.lower() in _CS_KEYWORDS:
-        out += "State"
-    return out
+    """PascalCase C# identifier for a state name — see code_fields.csharp_ident."""
+    return csharp_ident(s, fallback)
 
 
 def infer_role(name: str, description: str = "") -> str:

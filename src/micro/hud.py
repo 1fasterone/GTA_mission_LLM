@@ -5,14 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-import re
 
 from pydantic import BaseModel, Field, field_validator
 
 from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, csharp_ident, lint_extensible, clamp_enum,
+    UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -49,16 +49,8 @@ _KIND_SPEC: dict[str, tuple[str, str]] = {
 
 
 def _widget_ident(s: str, fallback: str = "Value") -> str:
-    """PascalCase identifier for a widget id.
-
-    Not to_pascal: that returns an already-identifier-shaped string untouched,
-    so a lowercase id like "oxygen" would stay lowercase and produce `Setoxygen`.
-    """
-    parts = re.sub(r"[^a-zA-Z0-9]+", " ", str(s)).split()
-    out = "".join(p[:1].upper() + p[1:] for p in parts if p)
-    if not out or out[0].isdigit():
-        out = fallback + out
-    return out
+    """PascalCase identifier for a widget id — see code_fields.csharp_ident."""
+    return csharp_ident(s, fallback)
 
 
 class HudWidget(BaseModel):

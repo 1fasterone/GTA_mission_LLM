@@ -33,6 +33,26 @@ Every seam is deterministic. A seam fires only when both endpoints were composed
 Seams 1–7 wire *systems to systems*. Seams 8–10 are the **mission loop**: 8 makes
 a game finishable, 9 and 10 make its progress visible.
 
+## The wiring report — how Step 7 grades this
+
+Whether a mission can be completed is a **compose-time** fact, but the
+playability evaluator reads the *schema*. So the composer records what it
+decided on `MicroComposer.wiring_report`, and the pipeline stamps it onto
+`schema.meta["wiring"]` after `emit()`:
+
+```python
+{"seams": ["SEAM 1", "SEAM 8", "SEAM 9", ...],
+ "objectives_bound":   ["ColdwaterCircuitObjectives.beat_02"],
+ "objectives_unbound": ["ColdwaterCircuitObjectives.beat_04 (reach)"],
+ "objectives_total":   5,
+ "hud_objective":      True}
+```
+
+`unity_playability._check_mission_loop` grades that ground truth rather than
+re-deriving a prediction — which is what let it once score an unwinnable build
+above a winnable one. On a build without `--compose` it reports *ungraded*
+rather than passing: absence of evidence is never evidence of playability.
+
 ---
 
 ## Gating rule: prove the method exists

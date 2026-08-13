@@ -28,7 +28,8 @@
       "volume_player"
     ],
     "ungraded_ok": [
-      "brief_entities"
+      "brief_entities",
+      "mission_loop"
     ]
   }
 }

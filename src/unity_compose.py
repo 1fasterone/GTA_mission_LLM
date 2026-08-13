@@ -58,6 +58,11 @@ class ComposedUnit(BaseModel):
                                                             # (variant baseline + widgets).
                                                             # SEAM 1/9/10 gate on this
                                                             # instead of the variant name.
+    states:     list[str]  = Field(default_factory=list)  # statemachine kind only: the
+                                                            # enum members the class
+                                                            # declares, so SEAM 4 renders
+                                                            # a case per REAL state rather
+                                                            # than a hardcoded four.
     objectives: list[dict] = Field(default_factory=list)  # objectives kind only: the
                                                             # authored ObjectiveEntry
                                                             # {id,type,count,...} rows, so
@@ -126,6 +131,13 @@ class MicroComposer:
     def __init__(self, project_name: str, template_dir: str = "templates/unity",
                  project_config: dict | None = None):
         self.project_name = project_name
+        # What the wiring pass actually decided, for Step 7 to grade against.
+        # The playability evaluator reads the SCHEMA, but whether a mission can
+        # be completed is a compose-time fact — which seams fired and which
+        # objectives found an event source. Stamped onto schema.meta["wiring"]
+        # by the pipeline after compose(), so the evaluator grades ground truth
+        # rather than re-deriving a prediction. Empty until _emit_wiring runs.
+        self.wiring_report: dict = {}
         # Merge real project config (audio backend, paths, etc.) over the minimal
         # dummy so write_files respects backend: stable3 / generate_clips / etc.
         # The LM Studio client is still constructed but never called (compose is
@@ -191,10 +203,14 @@ class MicroComposer:
                 widgets = [{"id": w.id, "kind": w.kind, "setter": w.setter}
                            for w in schema.widgets]
                 setters = sorted(hud_setters(variant, schema.widgets))
+            # Also read back AFTER default_fix, so SEAM 4 sees the SANITISED
+            # enum members rather than whatever the model originally wrote.
+            states = ([st.name for st in schema.states]
+                      if sub.kind == "statemachine" else [])
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
                 target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
-                objectives=objs, widgets=widgets, setters=setters))
+                objectives=objs, widgets=widgets, setters=setters, states=states))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -408,16 +424,22 @@ class MicroComposer:
                 }),
             })
             fsm_cls = fsm.class_name
+            # One case per state the FSM ACTUALLY declares. The hardcoded
+            # Idle/Moving/Jumping/Dead this replaces was the same CS0117 defect
+            # the ai micro carried: it was correct only for player_fsm's default
+            # state set, and referenced members that do not exist the moment the
+            # FSM is an enemy_fsm or the model names its own states.
+            cases = "\n".join(
+                f"            case {fsm_cls}.State.{st}: "
+                f"{anv}.CrossFade(\"{_anim_clip_for_state(st)}\", 0.1f); break;"
+                for st in (fsm.states or ["Idle"]))
             helper_methods.append(
                 f"private void OnFSMStateChanged({fsm_cls}.State state)\n"
                 f"    {{\n"
                 f"        if ({anv} == null) return;\n"
                 f"        switch (state)\n"
                 f"        {{\n"
-                f"            case {fsm_cls}.State.Idle:    {anv}.CrossFade(\"Idle\",  0.1f); break;\n"
-                f"            case {fsm_cls}.State.Moving:  {anv}.CrossFade(\"Run\",   0.1f); break;\n"
-                f"            case {fsm_cls}.State.Jumping: {anv}.CrossFade(\"Jump\",  0.1f); break;\n"
-                f"            case {fsm_cls}.State.Dead:    {anv}.CrossFade(\"Death\", 0.1f); break;\n"
+                f"{cases}\n"
                 f"        }}\n"
                 f"    }}"
             )
@@ -651,6 +673,21 @@ class MicroComposer:
                         f"// type) triple can't infer which one to call."
                     ),
                 })
+
+        # ── Report what was wired (Step 7 grades this) ────────────────────────
+        # `objectives_bound` is the mission loop: an objective with an event
+        # source can advance, and one without is content the player can see and
+        # never complete. `hud_objective` is whether that progress is visible.
+        self.wiring_report = {
+            "seams": [s["label"].split(":")[0].strip()
+                      for s in (awake_seams + update_seams)
+                      if s["label"].startswith("SEAM ")],
+            "objectives_bound":   sorted(bound_ids),
+            "objectives_unbound": sorted(unbound),
+            "objectives_total":   sum(len(u.objectives) for u in objective_units),
+            "hud_objective": bool(hud and "SetObjective" in hud.setters
+                                  and objective_units),
+        }
 
         # ── Render template ───────────────────────────────────────────────────
         content = env.get_template("GameWiring.cs.j2").render(
@@ -1033,6 +1070,39 @@ def _hud_widgets_for_project(*, hud_variant: str, missions, has_inventory: bool)
         widgets.append({"id": "Carried", "kind": "counter",
                         "label": "CARRIED", "source": "inventory"})
     return widgets
+
+
+# FSM state name -> the Animator clip SEAM 4 cross-fades to. Substring match on
+# the lowercased state name, first hit wins.
+_ANIM_CLIP_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("idle", "Idle"), ("wait", "Idle"), ("dormant", "Idle"), ("inactive", "Idle"),
+    ("jump", "Jump"), ("leap", "Jump"), ("fall", "Fall"),
+    ("dead", "Death"), ("die", "Death"), ("death", "Death"),
+    ("destroy", "Death"), ("expire", "Death"),
+    ("attack", "Attack"), ("strike", "Attack"), ("lunge", "Attack"),
+    ("shoot", "Attack"), ("fire", "Attack"), ("melee", "Attack"),
+    # "mov", not "move" — the default player_fsm state is `Moving`, and the
+    # hardcoded mapping this replaces sent it to the Run clip.
+    ("mov", "Run"), ("walk", "Run"), ("run", "Run"), ("chase", "Run"),
+    ("charge", "Run"), ("pursue", "Run"), ("patrol", "Run"), ("prowl", "Run"),
+    ("hunt", "Run"), ("flee", "Run"), ("retreat", "Run"), ("escape", "Run"),
+    ("alert", "Idle"), ("freeze", "Idle"), ("watch", "Idle"),
+)
+
+
+def _anim_clip_for_state(state: str) -> str:
+    """The Animator clip a state cross-fades to.
+
+    Falls back to the STATE'S OWN NAME rather than a generic clip: an invented
+    state like `Prowl` keeps its vocabulary in the generated wiring, and
+    Animator.CrossFade against a clip the controller does not have is a runtime
+    no-op, never a compile error — so an unmatched name costs nothing.
+    """
+    low = str(state).lower()
+    for keyword, clip in _ANIM_CLIP_KEYWORDS:
+        if keyword in low:
+            return clip
+    return str(state)
 
 
 def _ai_states_from_brief(entities, characters, scripts=None) -> list[dict]:

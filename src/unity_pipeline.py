@@ -44,6 +44,7 @@ from .unity_scenebind     import apply_scene
 from .unity_playability   import (PlayabilityGateError,
                                   evaluate as evaluate_playability,
                                   gate as playability_gate)
+from .unity_playability_repair import repair_and_regrade
 from .unity_pathnorm      import normalize_paths
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 
@@ -1181,6 +1182,18 @@ class UnityPipeline:
         for msg in mg_msgs:
             self._fix(msg)
 
+        # Step 5c — playability pre-flight. Step 7 grades the finished project,
+        # which is too late to change it: a build the evaluator knows cannot be
+        # completed still shipped, with a score next to it. This grades the
+        # schema BEFORE the generator runs and applies the deterministic
+        # remedies the findings carry, so the repair reaches the built project.
+        # Deterministic and LLM-free like the rest of Steps 4-7; a remedy exists
+        # only where authored content already answers the question (see
+        # src/unity_playability_repair.py).
+        _pre_report, _repairs = repair_and_regrade(schema)
+        for msg in _repairs:
+            self._fix(msg)
+
         # Re-resolve anything that consistency check added
         schema = self.resolver.resolve_schema(schema)
         manifest_deps = self.resolver.build_manifest_deps(
@@ -1445,6 +1458,13 @@ class UnityPipeline:
             has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring)
+            # Hand the wiring pass's own decisions to Step 7. Whether a mission
+            # can actually be completed is a COMPOSE-time fact (which seams
+            # fired, which objectives found an event source), and the evaluator
+            # reads the schema — so without this stamp it can only guess, which
+            # is how it once graded an unwinnable build above a winnable one.
+            if isinstance(schema.meta, dict):
+                schema.meta["wiring"] = composer.wiring_report
             self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes "
                      "(GameContext bridges micros ↔ prompt-authored scripts)")
             # Overlay audio clips:

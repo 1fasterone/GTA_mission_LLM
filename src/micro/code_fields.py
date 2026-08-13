@@ -39,6 +39,40 @@ _CSHARP_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # arrays (int[]), and dotted refs (UnityEngine.Vector3). Defensive whitelist.
 _CSHARP_TYPE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.<>,\[\]?\s]*$")
 
+# Reserved words a sanitised identifier must never become.
+CSHARP_KEYWORDS = frozenset("""
+abstract as base bool break byte case catch char checked class const continue
+decimal default delegate do double else enum event explicit extern false finally
+fixed float for foreach goto if implicit in int interface internal is lock long
+namespace new null object operator out override params private protected public
+readonly ref return sbyte sealed short sizeof stackalloc static string struct
+switch this throw true try typeof uint ulong unchecked unsafe ushort using
+virtual void volatile while
+""".split())
+
+
+def csharp_ident(s: str, fallback: str = "Value") -> str:
+    """PascalCase C# identifier from arbitrary authored text.
+
+    The single place the compiler turns a model's free-text name into something
+    it can emit as an enum member, a field or a method name. Deliberately
+    TOTAL — every input yields a usable identifier — because this is the
+    Tier-V half of the name/role split (docs/LLM_ENRICHMENT_STRATEGY.md): the
+    model's vocabulary must survive into the generated file, and rejecting a
+    name here would put us back to filtering variety out.
+
+    Not `to_pascal`: that returns an already-identifier-shaped string untouched,
+    so a lowercase "oxygen" would stay lowercase and read as a field rather than
+    a member — which is how `Setoxygen` was once emitted.
+    """
+    parts = re.sub(r"[^a-zA-Z0-9]+", " ", str(s)).split()
+    out = "".join(p[:1].upper() + p[1:] for p in parts if p)
+    if not out or out[0].isdigit():
+        out = fallback + out
+    if out.lower() in CSHARP_KEYWORDS:
+        out += fallback          # "switch" -> SwitchState / SwitchValue
+    return out
+
 
 def escape_cs_string(text: str) -> str:
     """Escape LLM prose for a C# regular string literal.
