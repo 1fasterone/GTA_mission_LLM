@@ -16,10 +16,11 @@ was fine; the *primitive* was wrong.
 The selection is a pure, deterministic read of the schema — no RNG, no LLM, no
 I/O — producing three axes:
 
-  motion_axis   vertical | volumetric | planar | path
+  motion_axis   vertical | volumetric | planar | path | static
                                            how the player's own motion is
                                            constrained
-  medium        air | water | ground       what the space is made of
+  medium        air | water | ground | screen
+                                           what the space is made of
   goal_topology reach_point | survive_area | hit_target | traverse
 
 and then a table lookup:
@@ -29,7 +30,17 @@ and then a table lookup:
   (volumetric, air)    -> BoundedVolume
   (volumetric, water)  -> BoundedVolume
   (planar,     ground) -> ArenaPlane       (the existing packer, unchanged)
+  (static,     screen) -> UISurface        (non-embodied: a board of panels)
   anything else        -> ABSTAIN, hard-fail
+
+`static` + `screen` is the one pair not derived from evidence at all. Both
+axes fall out of a single declaration — `locomotion='none'`, the schema saying
+it has no avatar — and that declaration is checked BEFORE every vocabulary
+tier below, rails included. It has to be: this is the one game shape whose
+prose is systematically about something other than space. A game that teaches
+a version control system says branch, tree, cloud, push, pull, merge and drop
+in every paragraph, and not one of them describes a place. Scoring them would
+hand a game with no body an air medium and a descent axis.
 
 `volumetric` is the free-medium axis: the player moves in all three axes
 through air or water with no descent framing — a glider, a flight sim, a scuba
@@ -77,6 +88,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence, TypeVar
 
+from .unity_schema import is_embodied
 from .unity_spatial_facts import (UNIT_ALTERNATION, UNIT_TO_M, match_facts,
                                   spatial_facts_of)
 
@@ -609,7 +621,20 @@ def _derive_medium(schema, text: str) -> tuple[str, str]:
     (or by saying outright that the player hovers/floats) — the same
     strong-evidence tiering `_derive_motion_axis` uses, and for the same
     reason: one ambiguous word must never carry an axis.
+
+    `locomotion='none'` short-circuits all of it. A non-embodied game's play
+    space is a SCREEN — there is no medium because there is no body in it — and
+    the check has to come first, not last, because this is the one game shape
+    whose vocabulary is systematically about something else. A repo-teaching
+    sim says branch, tree, cloud, stream, push, pull, merge, drop; a card game
+    says deck and flood; a logistics sim says freight and port. Those are its
+    NOUNS. Scoring them as evidence about where the player's body is would give
+    a game with no body a medium, and the medium is half the archetype key.
     """
+    if not is_embodied(schema):
+        return "screen", ("locomotion='none' — the game declares no avatar, so "
+                          "the play space is a screen, not a volume of air, "
+                          "water or ground")
     if schema.locomotion == "swim":
         return "water", "locomotion='swim'"
     if schema.locomotion == "fly":
@@ -661,7 +686,20 @@ def _derive_motion_axis(schema, text: str, medium: str) -> tuple[str, str]:
     strong evidence precisely because getting it wrong hard-fails an otherwise
     healthy ground game — and it is checked BEFORE the free-medium test, so a
     skydiver (locomotion='fly' + freefall) still gets a corridor, not a box.
+
+    A declared non-embodied game has no player motion to constrain, and that
+    answer outranks every vocabulary tier below — including the rail check,
+    which is otherwise the most specific claim there is. This is the same
+    stickiness the declaration already has against the intent classifier
+    (src/unity_archetypes.py): schema-fill read the whole brief and said there
+    is no avatar; these tables read keywords, and a game about a version
+    control system will say "branch", "drop" and "push" in every paragraph
+    without one metre of anything moving.
     """
+    if not is_embodied(schema):
+        return "static", ("locomotion='none' — the player acts through a "
+                          "pointer, so there is no motion to constrain")
+
     rails = _hits(text, _PATH_WORDS)
     if rails:
         return "path", f"rail vocabulary {rails[:3]}"
@@ -753,6 +791,10 @@ _ARCHETYPE_BY_AXES: dict[tuple[str, str], str] = {
     ("volumetric", "air"):    "BoundedVolume",
     ("volumetric", "water"):  "BoundedVolume",
     ("planar",     "ground"): "ArenaPlane",
+    # The only row not reached through evidence. Both of its axes come from one
+    # declaration (`locomotion='none'`), so the pair is either exactly this or
+    # the game is embodied — there is no partial match to abstain on.
+    ("static",     "screen"): "UISurface",
 }
 # `vertical` splits on direction before the medium table is consulted at all.
 # Ascent is a surface, whatever it is surrounded by — a sea cliff and a desert
@@ -1177,6 +1219,132 @@ def pick_wall_surface(entities: Sequence[_Entity]) -> tuple[Optional[_Entity], s
         return best, (f"largest wall-like group by footprint "
                       f"(r={best.group_radius:.2f}, kind={best.kind!r})")
     return None, ""
+
+
+# ── UISurface roles ──────────────────────────────────────────────────────────
+# A non-embodied game's entities are not scenery standing around an avatar —
+# they ARE the interface, and their identity is a UI element rather than a
+# prop. One table answers that question for both passes that need it: the
+# layout (which cell a group takes on the board, which z-layer it sits on) and
+# the asset resolver (which `ui:` element it is built as, since the library
+# holds fifteen HUD glyphs and no UI kit — see
+# src/unity_entity_asset_resolver.py). Two tables would let a group be laid
+# out as a panel and built as an icon.
+#
+# Ordered most-specific first: the first row whose words hit wins, so a
+# "TerminalWindow" is a window and not merely a panel, and a "CommitNode" is a
+# node-card rather than an unlabelled icon.
+_UI_ELEMENT_TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("window", ("window", "windows", "terminal", "terminals", "console",
+                "consoles", "editor", "editors", "viewport", "workspace",
+                "canvas", "screen", "screens", "monitor", "display",
+                "dashboard", "inspector", "browser")),
+    ("list",   ("list", "lists", "listing", "log", "logs", "history",
+                "timeline", "queue", "feed", "table", "grid view", "tree view",
+                "column", "columns", "inbox", "changelog", "stack trace")),
+    ("panel",  ("panel", "panels", "pane", "panes", "board", "boards",
+                "sidebar", "side panel", "toolbar", "palette", "tray",
+                "container", "containers", "folder", "folders", "drawer",
+                "section", "region", "zone", "slot", "slots", "well")),
+    ("button", ("button", "buttons", "switch", "switches", "toggle",
+                "toggles", "control", "controls", "key", "keys", "lever",
+                "action", "actions", "command", "commands", "menu item")),
+    ("label",  ("label", "labels", "caption", "captions", "title", "titles",
+                "header", "headers", "heading", "footer", "legend", "legends",
+                "tooltip", "tooltips", "hint", "hints", "readout", "banner",
+                "annotation", "callout", "status bar", "breadcrumb")),
+    ("card",   ("card", "cards", "tile", "tiles", "node", "nodes", "commit",
+                "commits", "branch", "branches", "ticket", "tickets", "task",
+                "tasks", "note", "notes", "entry", "entries", "record",
+                "records", "row", "rows", "cell", "cells", "chip", "badge",
+                "token", "tokens", "block", "blocks")),
+    ("icon",   ("icon", "icons", "glyph", "glyphs", "avatar", "thumbnail",
+                "marker", "markers", "pin", "pins", "dot", "sprite", "symbol",
+                "file", "files", "document", "documents", "cursor")),
+)
+# Kinds that name the element outright. The LLM writes kind="prop" for most of
+# a UI game's content (that is the whole reason the `ui:` route exists), but
+# when it does reach for a UI kind it is the strongest signal available.
+_UI_ELEMENT_KINDS: dict[str, str] = {
+    "ui": "panel", "hud": "label", "menu": "panel", "widget": "panel",
+    "panel": "panel", "window": "window", "button": "button",
+    "label": "label", "text": "label", "icon": "icon", "card": "card",
+    "tile": "card", "list": "list",
+}
+# Behind everything, filling the frame: not content, backing. Kept apart from
+# the element table because a backdrop takes no cell in the reading flow — it
+# is the surface the flow is laid on.
+_UI_BACKDROP_KINDS: frozenset[str] = frozenset({
+    "background", "backdrop", "skybox", "sky", "terrain", "ground", "floor",
+    "wallpaper", "environment",
+})
+_UI_BACKDROP_WORDS: tuple[str, ...] = (
+    "background", "backdrop", "wallpaper", "backboard", "back plate",
+    "backplate", "vignette", "grid lines", "gridlines",
+)
+# Elements drawn IN FRONT of the board rather than on it: chrome that reads
+# the game rather than being played. A label is the archetype; a button is
+# NOT — a button is the game.
+_UI_OVERLAY_ELEMENTS: frozenset[str] = frozenset({"label"})
+
+# Reading-order rank. The board is read the way a page is: the thing being
+# worked in, then the things worked with, then everything else, then the
+# chrome that annotates it. Deliberately NOT size-ordered — `_pack_groups`
+# sorts by footprint so the biggest circles claim the centre, which is right
+# for a world and wrong for an interface, where position carries meaning.
+_UI_RANK_BY_ELEMENT: dict[str, int] = {
+    "window": 0, "panel": 1, "list": 1,
+    "card": 2, "button": 2, "icon": 3,
+    "label": 4,
+}
+_UI_RANK_DEFAULT = 3
+
+
+def ui_element_of(entity) -> Optional[str]:
+    """Which UI element this group reads as — or None when nothing says.
+
+    None is a real answer and the callers treat it as one: the layout gives an
+    unclassified group an ordinary board cell, and the asset resolver lets it
+    keep looking for a real model. A teaching game about an engine legitimately
+    contains an engine.
+    """
+    kind = (entity.kind or "").lower().strip()
+    hit = _UI_ELEMENT_KINDS.get(kind)
+    if hit:
+        return hit
+    words = _entity_words(entity)
+    for element, needles in _UI_ELEMENT_TABLE:
+        if _hits(words, needles):
+            return element
+    return None
+
+
+def is_ui_backdrop(entity) -> bool:
+    """Backing for the board rather than content on it."""
+    if (entity.kind or "").lower().strip() in _UI_BACKDROP_KINDS:
+        return True
+    return bool(_hits(_entity_words(entity), _UI_BACKDROP_WORDS))
+
+
+def ui_board_layer(entity) -> str:
+    """Which z-plane of the board this group belongs on: 'backdrop' (behind
+    the content), 'board' (the content itself) or 'overlay' (chrome in front
+    of it). Three planes, so a caption never occludes the thing it captions
+    and a backboard never hides the board."""
+    if is_ui_backdrop(entity):
+        return "backdrop"
+    if ui_element_of(entity) in _UI_OVERLAY_ELEMENTS:
+        return "overlay"
+    return "board"
+
+
+def ui_board_rank(entity) -> int:
+    """Reading-order rank, low first. Ties are broken by schema order at the
+    call site, never by size — an interface is read, not surveyed."""
+    element = ui_element_of(entity)
+    if element is None:
+        return _UI_RANK_DEFAULT
+    return _UI_RANK_BY_ELEMENT.get(element, _UI_RANK_DEFAULT)
 
 
 def _derive_direction(schema, text: str) -> tuple[Optional[str], str, str]:

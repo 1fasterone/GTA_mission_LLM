@@ -72,9 +72,12 @@ from .unity_layout_archetype import (
     pick_wall_surface,
     select_archetype,
     surface_height,
+    ui_board_layer,
+    ui_board_rank,
+    ui_element_of,
     volume_height,
 )
-from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec
+from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec, is_embodied
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
                             describe, select_primitive, tier_of)
 
@@ -182,6 +185,31 @@ _ZIGZAG_FRACTION = 0.9         # of the leftover horizontal budget, per step
 _HAZARD_HOLD_CLEARANCE = 1.0
 # EntitySpec.instance_positions is validator-clamped to this many points.
 _MAX_BAKED_POSITIONS = 200
+
+# ── UISurface (the board) ────────────────────────────────────────────────────
+# Same plane convention as VerticalSurface: the board is the X-Y plane at z = 0
+# with its face normal +Z, which is where every camera preset for a flat game
+# already looks from (0, 0, -10). y grows UP, so reading order runs from +y
+# down — the one place this primitive inverts a world-space habit, because a
+# board is read from the top like a page and not from the origin outward.
+_UI_BOARD_Z     = 0.0
+_UI_BACKDROP_Z  = 2.0    # behind the content, from the camera's side
+_UI_OVERLAY_Z   = -1.0   # chrome in front of it
+# Gap between two cells, and between two instances inside one cell. An
+# interface reads by ALIGNMENT, so both are constants rather than functions of
+# footprint: unequal gutters look like a bug even when the geometry is correct.
+_UI_CELL_GUTTER     = 1.6
+_UI_INSTANCE_GUTTER = 0.45
+# Target shape of the whole board. Chosen so the content fills a 16:9 frame,
+# which is what the board-framing camera (src/micro/camera.py) fits to.
+_UI_BOARD_ASPECT = 16.0 / 9.0
+# A cell never gets narrower than this, whatever its footprint says: a group of
+# one small icon still needs a hit target a pointer can land on.
+_UI_MIN_CELL = 1.2
+# Backdrops are sized to cover the content with a margin rather than to their
+# own authored radius — a backdrop that does not reach the edges is a rectangle
+# floating behind the game.
+_UI_BACKDROP_MARGIN = 2.0
 
 
 def _effective_spacing(entity: EntitySpec,
@@ -1141,6 +1169,223 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
     return msgs
 
 
+def _ui_pitch(entity: EntitySpec,
+              footprints: Optional[dict[str, float]]) -> float:
+    """Distance between two neighbouring instances of this group on the board.
+
+    An element's OWN size sets it, plus one constant gutter — deliberately not
+    `_effective_spacing`, which floors everything at `EntitySpec.spacing`
+    (default 2.0 m) and widens it by `_MODEL_CLEARANCE`. Those are ground-plane
+    numbers: two metres is a sensible gap between props a player walks between,
+    and it is a chasm between two 0.6-unit icons in a file list. Fed through
+    that rule a 3-unit terminal window came out narrower than a nine-icon grid
+    of 0.6-unit files, because the grid was being spaced by a default that had
+    nothing to do with the icons.
+
+    A measured model footprint still wins when there is one, for the same
+    reason it does everywhere else: it is the real size of the thing.
+    """
+    fp = (footprints or {}).get(entity.name) or 0.0
+    size = max(entity.scale, fp * entity.scale)
+    return max(_UI_MIN_CELL, size) + _UI_INSTANCE_GUTTER
+
+
+def _ui_cell_size(entity: EntitySpec, pitch: float) -> tuple[float, float]:
+    """Width and height of the cell this group occupies on the board.
+
+    Derived from the group's own instance grid rather than from its packing
+    radius: a cell is a RECTANGLE holding `count` instances in reading order,
+    and the circle radius `_footprint_radius` computes would make a row of ten
+    icons as tall as it is wide. Square-ish by construction (`cols` is the
+    ceiling of the square root), which is what keeps a board of mixed groups
+    from stair-stepping.
+    """
+    n = max(1, entity.count)
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    return (max(_UI_MIN_CELL, cols * pitch),
+            max(_UI_MIN_CELL, rows * pitch))
+
+
+def _ui_flow_rows(cells: list[tuple[EntitySpec, float, float]], board_w: float
+                  ) -> list[list[tuple[EntitySpec, float, float]]]:
+    """Break the cell sequence into rows that fit `board_w`, in order.
+
+    Order is never rearranged to pack tighter. A row that ends early leaves a
+    ragged right edge, which is what a reading flow looks like; reordering to
+    fill it would move a group away from the one it belongs beside, and on a
+    board adjacency is meaning.
+    """
+    rows: list[list[tuple[EntitySpec, float, float]]] = []
+    row: list[tuple[EntitySpec, float, float]] = []
+    used = 0.0
+    for cell in cells:
+        w = cell[1]
+        need = w if not row else used + _UI_CELL_GUTTER + w
+        if row and need > board_w:
+            rows.append(row)
+            row, used = [cell], w
+        else:
+            row.append(cell)
+            used = need
+    if row:
+        rows.append(row)
+    return rows
+
+
+def _ui_bake_cell(entity: EntitySpec, pitch: float,
+                  cx: float, cy: float, z: float) -> list[list[float]]:
+    """Instances inside one cell: a reading-order sub-grid, left to right and
+    top to bottom, centred on the cell.
+
+    This is the whole difference between a board and a world. `_bake_positions`
+    offers ring/scatter/line patterns because a world is looked at from any
+    angle; a board is looked at from one, so every group gets the same grid and
+    the schema's `placement` is deliberately ignored here. Twelve commits laid
+    out as a jittered scatter read as debris, not as history.
+    """
+    n = max(1, entity.count)
+    cols = math.ceil(math.sqrt(n))
+    rows = math.ceil(n / cols)
+    pts: list[list[float]] = []
+    for i in range(n):
+        row, col = divmod(i, cols)
+        # Rows count DOWN from the top of the cell — reading order.
+        pts.append([round(cx + (col - (cols - 1) / 2.0) * pitch, 3),
+                    round(cy - (row - (rows - 1) / 2.0) * pitch, 3),
+                    round(z, 3)])
+    return pts
+
+
+def _layout_ui_board(schema: UnitySchema, arch: LayoutArchetype,
+                     footprints: Optional[dict[str, float]]) -> list[str]:
+    """Lay the scene out as a board of panels facing the camera.
+
+    Every other primitive here answers "where does the player's body go, and
+    what does it move through". A non-embodied game (locomotion='none', a
+    positive declaration — see unity_schema.is_embodied) has no body, so those
+    are not hard questions to answer, they are the wrong questions. Its content
+    is an INTERFACE: the player points at it.
+
+    So the board is the X-Y plane at z = 0, and content flows across it in
+    reading order — left to right, top to bottom, in aligned rows with one
+    constant gutter — rather than being packed as circles around an origin.
+    Three z-planes keep it legible: backdrops behind, content on the board,
+    captions and legends in front.
+
+    The ordering is by ROLE (`ui_board_rank`: the workspace, then the panels
+    and lists, then the cards and buttons, then the icons), with schema order
+    breaking ties. It is deliberately not by size — `_pack_groups` sorts
+    biggest-first so the largest footprints claim the centre, which is right
+    for a world and wrong for an interface, where where-a-thing-is is what it
+    means.
+
+    Deterministic: fixed ordering, fixed gutters, no RNG at all — this
+    primitive never calls the seeded scatter jitter.
+    """
+    msgs: list[str] = []
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    preplaced, packable = _measure_and_size(layoutable, footprints)
+
+    order = {e.name: i for i, e in enumerate(schema.entities)}
+    by_layer: dict[str, list[EntitySpec]] = {"backdrop": [], "board": [],
+                                             "overlay": []}
+    for e in packable:
+        by_layer[ui_board_layer(e)].append(e)
+
+    content = sorted(by_layer["board"],
+                     key=lambda e: (ui_board_rank(e), order.get(e.name, 0)))
+    overlay = sorted(by_layer["overlay"], key=lambda e: order.get(e.name, 0))
+
+    # ── The board: cells in reading order ────────────────────────────────────
+    pitches = {e.name: _ui_pitch(e, footprints) for e in packable}
+    cells = [(e, *_ui_cell_size(e, pitches[e.name])) for e in content]
+    if cells:
+        # Board width from the content's own area at the target aspect, but
+        # never narrower than its widest single cell — a cell that does not fit
+        # its own row would start a row it then overflows anyway.
+        area = sum((w + _UI_CELL_GUTTER) * (h + _UI_CELL_GUTTER)
+                   for _e, w, h in cells)
+        board_w = max(max(w for _e, w, _h in cells),
+                      math.sqrt(max(area, 1e-6) * _UI_BOARD_ASPECT))
+        rows = _ui_flow_rows(cells, board_w)
+
+        row_heights = [max(h for _e, _w, h in row) for row in rows]
+        total_h = sum(row_heights) + _UI_CELL_GUTTER * (len(rows) - 1)
+        # The block is centred on the origin so the flat camera preset at
+        # (0, 0, -10) frames it without the generator having to aim.
+        cursor_y = total_h / 2.0
+        for row, row_h in zip(rows, row_heights):
+            row_w = (sum(w for _e, w, _h in row)
+                     + _UI_CELL_GUTTER * (len(row) - 1))
+            cursor_x = -row_w / 2.0
+            cy = cursor_y - row_h / 2.0
+            for e, w, _h in row:
+                cx = cursor_x + w / 2.0
+                e.origin_offset = [round(cx, 3), _UI_BOARD_Z]
+                e.instance_positions = _ui_bake_cell(
+                    e, pitches[e.name], cx, cy, _UI_BOARD_Z)
+                e.group_radius = round(max(w, _h) / 2.0, 3)
+                _set_elevation(e, cy)
+                cursor_x += w + _UI_CELL_GUTTER
+            cursor_y -= row_h + _UI_CELL_GUTTER
+
+        widest = max(
+            (sum(w for _e, w, _h in row) + _UI_CELL_GUTTER * (len(row) - 1))
+            for row in rows)
+        msgs.append(
+            f"UISurface board {widest:.1f} x {total_h:.1f} — {len(cells)} "
+            f"group(s) in {len(rows)} reading-order row(s): "
+            + " | ".join(", ".join(f"{e.name}({ui_element_of(e) or 'content'})"
+                                   for e, _w, _h in row) for row in rows))
+    else:
+        board_w = total_h = 0.0
+        msgs.append("UISurface board is empty — no content groups to arrange")
+
+    # ── Overlay chrome: a strip above the board, in front of it ──────────────
+    if overlay:
+        top = total_h / 2.0 + _UI_CELL_GUTTER
+        strip = [(e, *_ui_cell_size(e, pitches[e.name])) for e in overlay]
+        strip_w = (sum(w for _e, w, _h in strip)
+                   + _UI_CELL_GUTTER * (len(strip) - 1))
+        cursor_x = -strip_w / 2.0
+        for e, w, h in strip:
+            cx = cursor_x + w / 2.0
+            cy = top + h / 2.0
+            e.origin_offset = [round(cx, 3), _UI_OVERLAY_Z]
+            e.instance_positions = _ui_bake_cell(
+                e, pitches[e.name], cx, cy, _UI_OVERLAY_Z)
+            e.group_radius = round(max(w, h) / 2.0, 3)
+            _set_elevation(e, cy)
+            cursor_x += w + _UI_CELL_GUTTER
+        msgs.append(
+            f"Overlay strip above the board at z={_UI_OVERLAY_Z:g}: "
+            + ", ".join(e.name for e in overlay))
+
+    # ── Backdrops: sized to cover, parked behind ─────────────────────────────
+    # A group whose KIND is literally background/skybox/sky is claimed earlier
+    # by the asset resolver's _SKIP_KINDS (owned by SceneSetup and the sky
+    # pipeline) and never spawns — this still records where it would sit, which
+    # is what world_spec.regions and the camera fit read. The layer earns its
+    # keep on the common case instead: a kind="prop" group called
+    # "GridBackdrop", which does spawn and must not land on top of the game.
+    for e in sorted(by_layer["backdrop"], key=lambda x: order.get(x.name, 0)):
+        e.origin_offset = [0.0, _UI_BACKDROP_Z]
+        e.instance_positions = [[0.0, 0.0, _UI_BACKDROP_Z]]
+        e.count = 1
+        e.group_radius = round(
+            max(board_w, total_h) / 2.0 + _UI_BACKDROP_MARGIN, 3)
+        _set_elevation(e, 0.0)
+    if by_layer["backdrop"]:
+        msgs.append(
+            f"Backdrop group(s) behind the board at z={_UI_BACKDROP_Z:g}, "
+            f"sized to cover: "
+            + ", ".join(e.name for e in by_layer["backdrop"]))
+
+    _attach_regions(schema, _regions_for(packable, preplaced))
+    return msgs
+
+
 # The full archetype decision, stamped by the first layout pass so later passes
 # replay it rather than re-deriving one from the positions the first pass baked.
 _ARCH_DECISION_KEY = "layout_archetype_decision"
@@ -1179,8 +1424,10 @@ def compute_layout(schema: UnitySchema,
     unchanged. VerticalCorridor (vertical + air/water) drops the scene down a
     corridor instead — see `_layout_vertical_corridor`; BoundedVolume
     (volumetric + air/water) spreads it through a play box — see
-    `_layout_bounded_volume`. Any other pair of axes raises `[layout.strict]`
-    rather than being flattened onto a ground plane.
+    `_layout_bounded_volume`; UISurface (static + screen, a game that declared
+    it has no avatar) arranges it as a board of panels — see
+    `_layout_ui_board`. Any other pair of axes raises `[layout.strict]` rather
+    than being flattened onto a ground plane.
 
     ── ArenaPlane ───────────────────────────────────────────────────────────
     Pack every group into a non-overlapping world-space region and bake exact
@@ -1207,8 +1454,18 @@ def compute_layout(schema: UnitySchema,
     time (EntitySpawner.cs.j2's BuildSideScroller2D/BuildTopDown2D) and are
     skipped here — before archetype selection, so a 2D project is never asked
     to justify a 3D spatial primitive it will not use.
+
+    Except when the 2D game has no avatar. Those spawn-time builders lay a
+    course out AROUND A PLAYER — a side-scroller's single lane, a top-down
+    arena scattered about the spawn — so for a non-embodied game they arrange
+    the content around something that is not there. That is how the live
+    CodeVault run reached a 2D top-down teaching sim with its file icons
+    scattered like debris: the layout pass had declined to run, and the only
+    other opinion in the build assumed an avatar. A declared non-embodied
+    schema gets the UISurface board whatever its dimension, and every embodied
+    2D project keeps returning [] here, byte-identically.
     """
-    if schema.game_type in ("2D", "2d_topdown"):
+    if schema.game_type in ("2D", "2d_topdown") and is_embodied(schema):
         return []
 
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
@@ -1254,6 +1511,8 @@ def compute_layout(schema: UnitySchema,
         return msgs + _layout_bounded_volume(schema, arch, footprints)
     if arch.name == "VerticalSurface":
         return msgs + _layout_vertical_surface(schema, arch, footprints)
+    if arch.name == "UISurface":
+        return msgs + _layout_ui_board(schema, arch, footprints)
     return msgs + _layout_arena_plane(schema, footprints)
 
 

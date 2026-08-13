@@ -13,6 +13,11 @@ from .unity_base import UnityMicroPipeline
 
 InputVariant = Literal[
     "keyboard_mouse", "gamepad", "touch", "dual_stick", "racing_wheel", "vr_xr",
+    # The cursor as the whole input surface. Every variant above binds a Move
+    # of some kind because every one of them drives a body; a non-embodied game
+    # (locomotion='none') has none to drive, and binding WASD to nothing is how
+    # a project ships an input map that describes a game it is not.
+    "pointer",
 ]
 VARIANTS = list(InputVariant.__args__)   # type: ignore[attr-defined]
 
@@ -68,6 +73,20 @@ _DEFAULT_LAYOUTS: dict[str, list[dict]] = {
             {"name": "RightHandPos", "type": "Value", "control_type": "Vector2"},
             {"name": "Grip",         "type": "Button", "control_type": "Button"},
             {"name": "Trigger",      "type": "Button", "control_type": "Button"},
+        ]},
+    ],
+    # The map named "Player" throughout this table is the map the InputReader
+    # binds; the name is structural, so it stays even for a game with no player
+    # object. What changes is every action in it: point, click, drag, and the
+    # secondary/zoom/cancel a board needs, with no Move and no Jump.
+    "pointer": [
+        {"name": "Player", "actions": [
+            {"name": "Point",     "type": "Value",  "control_type": "Vector2"},
+            {"name": "Click",     "type": "Button", "control_type": "Button"},
+            {"name": "Secondary", "type": "Button", "control_type": "Button"},
+            {"name": "Drag",      "type": "Button", "control_type": "Button"},
+            {"name": "Zoom",      "type": "Value",  "control_type": "Axis"},
+            {"name": "Cancel",    "type": "Button", "control_type": "Button"},
         ]},
     ],
 }

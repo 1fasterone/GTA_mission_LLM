@@ -29,7 +29,8 @@
     ],
     "ungraded_ok": [
       "brief_entities",
-      "mission_loop"
+      "mission_loop",
+      "pointer_targets"
     ]
   }
 }

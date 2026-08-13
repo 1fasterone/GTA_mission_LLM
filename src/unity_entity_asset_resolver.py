@@ -39,8 +39,13 @@ from typing import Optional
 
 from .unity_asset_catalog import load_catalog, tokenize
 from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
+# One vocabulary decides what a group IS on a board, so the pass that LAYS IT
+# OUT as a panel and the pass that BUILDS it agree. See the UISurface roles
+# section of src/unity_layout_archetype.py.
+from .unity_layout_archetype import ui_element_of
 from .unity_model_resolver import ResolvedModel
 from .unity_scenebind import authored_models
+from .unity_schema import is_embodied
 
 _log = logging.getLogger(__name__)
 
@@ -537,6 +542,10 @@ def resolve_entity_assets(schema,
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
 
+    # A game that declared it has no avatar resolves its content to UI elements
+    # rather than to models — see Tier U and the Tier 4 branch in the loop.
+    embodied = is_embodied(schema)
+
     kind_sizes = load_kind_sizes(str(lookups_dir))
     clamp_sizes = load_clamp_sizes(str(lookups_dir))
 
@@ -706,6 +715,32 @@ def resolve_entity_assets(schema,
             _log.warning("[assets] authored model missing for %s: %s — "
                          "falling back to the catalog tiers",
                          e.name, _authored.get("src"))
+
+        # ── Tier U: UI element (non-embodied games only) ──────────────────────
+        # In a game that declared it has no avatar, a "CommitNode" or a
+        # "TerminalWindow" is not a prop standing in a world — it is a control
+        # on a board, and the library has no model of one. It holds 15 HUD
+        # glyph sprites and no UI kit at all, so every tier below can only ever
+        # answer this entity with the wrong object: live, CodeVault's file
+        # icons and folder containers resolved to Kenney furniture.
+        #
+        # `ui:<element>` is a POSITIVE resolution, not a fallback — the
+        # spawner builds a real card for it (body, border, label). It comes
+        # after Tier A because an author who placed a model by hand outranks
+        # every derived choice, and before the catalog because a catalog hit
+        # here is the bug.
+        #
+        # Entities that name no UI element fall straight through: a teaching
+        # game about an engine legitimately contains an engine, and there IS a
+        # model of that.
+        if not embodied:
+            element = ui_element_of(e)
+            if element is not None:
+                entity_model_paths[e.name] = f"ui:{element}"
+                _log.info("[assets] entity '%s' (kind=%s) → ui:%s — a control "
+                          "on the board, built rather than resolved",
+                          e.name, kind, element)
+                continue
 
         # ── Tier 1: explicit kind (schema-default "prop" is not explicit) ────
         tier1: Optional[ResolvedModel] = None
@@ -1150,6 +1185,20 @@ def resolve_entity_assets(schema,
             continue
 
         # ── Tier 4: fallback policy ───────────────────────────────────────────
+        # On a board, "nothing in the library matches" is not a failure to
+        # report or a prop to guess at — it is the answer. The entity is a
+        # control the brief named in its own domain vocabulary ("Remote",
+        # "Staging Area", "Conflict"), and the honest build for it is a labelled
+        # card, not a Kenney crate and not a hard stop over a model that was
+        # never going to exist. Deliberately ahead of BOTH the strict and the
+        # prop-fallback branches, because both of them assume a world.
+        if not embodied:
+            entity_model_paths[e.name] = "ui:card"
+            _log.info("[assets] entity '%s' (kind=%s) matched no model — "
+                      "building it as a labelled card (ui:card). A "
+                      "non-embodied game's unmatched content is UI.",
+                      e.name, kind)
+            continue
         if strict:
             unmatched.append((e.name, e.kind,
                               _nearest_misses(assets, qw, kind)))

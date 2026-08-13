@@ -28,6 +28,7 @@
       "brief_entities",
       "mission_loop",
       "objective_targets",
+      "pointer_targets",
       "role_graph"
     ]
   }

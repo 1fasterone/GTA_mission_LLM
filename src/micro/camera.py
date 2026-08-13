@@ -18,6 +18,12 @@ CameraVariant = Literal[
     "follow", "follow_2d", "follow_2_5d", "orbit", "first_person",
     "cinemachine_3p", "cinemachine_topdown",
     "rts_pan_zoom", "vehicle_chase", "cinematic_dolly",
+    # Frames a BOARD instead of following a body. Every variant above resolves
+    # a follow target by tag and returns early when it finds none, so in a game
+    # that declared it has no avatar (locomotion='none') they all sit at the
+    # scene origin doing nothing. This one fits the content it can see and
+    # holds it, which is the only camera behaviour a board needs.
+    "board_framing",
 ]
 VARIANTS = list(CameraVariant.__args__)   # type: ignore[attr-defined]
 
