@@ -1099,7 +1099,15 @@ class UnitySchema(BaseModel):
     description:     str           = ""
     game_type:       GameType
     platform:        Platform
-    locomotion:      Literal["walk", "drive", "fly", "swim"] = "walk"
+    # "none" = NON-EMBODIED: the player acts on the game through a pointer or a
+    # UI, and there is no avatar moving through space (a teaching sim, a card
+    # game, a management or puzzle game). It is a POSITIVE declaration and must
+    # stay one: the playability evaluator abstains on its avatar/spawn/reach
+    # checks only when a schema SAYS it has no avatar. Inferring non-embodiment
+    # from the absence of a Player tag would make those checks vacuous on
+    # exactly the builds they exist to catch — the ToyRacer and DropZone runs
+    # that lost their avatar to schema-fill and still looked structurally fine.
+    locomotion:      Literal["walk", "drive", "fly", "swim", "none"] = "walk"
     render_pipeline: RenderPipeline
     unity_version:   UnityVersion  = "6000.0"
     color_space:     Literal["Linear", "Gamma"] = "Linear"
@@ -1170,9 +1178,15 @@ class UnitySchema(BaseModel):
             "flying": "fly", "flight": "fly",
             "swimming": "swim", "underwater": "swim", "diving": "swim",
             "walking": "walk", "running": "walk", "on_foot": "walk",
+            # Non-embodied: the player acts through a pointer or UI and there is
+            # no avatar. The words a model actually reaches for when a game has
+            # no character to move.
+            "none": "none", "static": "none", "pointer": "none", "mouse": "none",
+            "point_and_click": "none", "ui": "none", "menu": "none",
+            "stationary": "none", "no_movement": "none", "n/a": "none",
         }
         s = synonyms.get(s, s)
-        return s if s in ("walk", "drive", "fly", "swim") else "walk"
+        return s if s in ("walk", "drive", "fly", "swim", "none") else "walk"
 
     @field_validator("render_pipeline", mode="before")
     @classmethod

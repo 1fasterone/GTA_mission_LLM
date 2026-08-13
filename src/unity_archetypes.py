@@ -360,8 +360,15 @@ def apply_intent(schema, intent: UnityIntent, *, min_confidence: int = 3) -> lis
             f"(prompt said: {hits})"
         )
 
+    # locomotion="none" is a POSITIVE declaration that the game has no avatar,
+    # and it is sticky: the schema-fill step read the whole brief, this
+    # classifier reads keywords. A repo-teaching game whose description happens
+    # to say "walk through the commit history" must not be flipped back to an
+    # embodied game by that one word — it would restore the false NOT PLAYABLE
+    # the declaration exists to prevent. Every other value stays overridable.
     if (intent.locomotion and intent.locomotion_confidence >= min_confidence
-            and schema.locomotion != intent.locomotion):
+            and schema.locomotion != intent.locomotion
+            and schema.locomotion != "none"):
         old = schema.locomotion
         schema.locomotion = intent.locomotion
         hits = ", ".join(intent.matched.get("locomotion", []))

@@ -247,6 +247,30 @@ class PlayabilityReport:
         return "\n".join(lines) if len(lines) > 1 else head + "\n  no findings"
 
 
+# Checks that only mean something for a game with an avatar moving through
+# space. A non-embodied game (locomotion="none") has no avatar to find, no
+# spawn to clear, and no distance for the player to cover — grading it against
+# these produced the CodeVault result: a correctly-designed repo-teaching game
+# marked NOT PLAYABLE for lacking an avatar it should not have.
+_EMBODIED_ONLY_CHECKS: frozenset[str] = frozenset({
+    "avatar", "avatar_binding", "avatar_cardinality", "controllable",
+    "spawn_clear", "content_reachable", "volume_player",
+    "objective_kinematics", "unbaked_gameplay",
+})
+
+
+def is_embodied(schema: UnitySchema) -> bool:
+    """False only when the schema DECLARES it has no avatar.
+
+    A positive declaration, never an inference. Reading non-embodiment off the
+    absence of a Player tag would make every avatar check vacuous on exactly
+    the builds they exist to catch — a schema-fill run that DROPPED its avatar
+    looks identical to one that never wanted one, and this module exists
+    because the ToyRacer and DropZone runs did the former and still passed.
+    """
+    return str(getattr(schema, "locomotion", "walk") or "walk") != "none"
+
+
 def _ungraded(rep: PlayabilityReport, check: str, why: str) -> None:
     """Record that a check had no evidence to work with. Never writes
     `rep.checks` — an ungraded check must not inflate the score in either
@@ -955,6 +979,21 @@ def evaluate(schema: UnitySchema) -> PlayabilityReport:
     )
     for check in _CHECKS:
         check(schema, rep)
+
+    # A non-embodied game answers the spatial checks by not being that kind of
+    # game. Filtered here rather than gated inside each check so a new
+    # embodied-only check cannot forget to opt out — the list is the contract.
+    # Their verdicts are DISCARDED, not passed: recording them as ungraded
+    # keeps the "absence of evidence is never evidence of playability" rule
+    # (they show on the scorecard and still fail gate(require_graded=True)).
+    if not is_embodied(schema):
+        for name in _EMBODIED_ONLY_CHECKS:
+            rep.checks.pop(name, None)
+            _ungraded(rep, name,
+                      "locomotion='none' — the game declares no avatar, so "
+                      "there is nothing to place, control or reach")
+        rep.findings = [f for f in rep.findings
+                        if f.check not in _EMBODIED_ONLY_CHECKS]
     return rep
 
 

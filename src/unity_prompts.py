@@ -213,7 +213,7 @@ OUTPUT this exact JSON structure, fully populated:
   "description": "One sentence description",
   "game_type": "one of: 2D | 2.5D | 3D | VR | top_down | 2d_topdown | isometric",
   "platform": "one of: pc | mobile | console | webgl | all",
-  "locomotion": "one of: walk | drive | fly | swim",
+  "locomotion": "one of: walk | drive | fly | swim | none  (use 'none' ONLY when the player has no avatar at all and acts through a pointer or UI — a teaching sim, card game, puzzle, management or point-and-click game. Anything with a character, vehicle or craft the player moves is NOT 'none'.)",
   "environment": {{
     "time_of_day": "one of: dawn | day | sunset | night",
     "fog": false,
