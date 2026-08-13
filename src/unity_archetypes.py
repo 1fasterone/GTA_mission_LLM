@@ -53,7 +53,11 @@ except ImportError:  # pragma: no cover - keeps this importable if rag/ isn't on
     )
 
 _VALID_GAME_TYPES = ("2D", "2.5D", "3D", "VR", "top_down", "isometric")
-_VALID_LOCOMOTION = ("walk", "drive", "fly", "swim")
+# "none" is the POSITIVE declaration that the game has no avatar at all — the
+# player acts through a pointer or UI (unity_schema.is_embodied reads it). It is
+# scored from its own declaration tier rather than a movement keyword table; see
+# _NON_EMBODIED_DECISIVE below.
+_VALID_LOCOMOTION = ("walk", "drive", "fly", "swim", "none")
 
 
 # ── Result ────────────────────────────────────────────────────────────────────
@@ -75,7 +79,17 @@ class UnityIntent:
         parts = []
         if self.game_type:
             parts.append(f"This is a {_GAME_TYPE_LABEL.get(self.game_type, self.game_type)} game.")
-        if self.locomotion and self.locomotion != "walk":
+        if self.locomotion == "none":
+            # Step 3 only ever sees the CONCEPT, never the raw brief, so if the
+            # declaration does not survive into the prose here it is gone for
+            # good — the brief's own "there is no character" cannot be consulted
+            # later. Stated positively and at the same volume as the movement
+            # line it replaces.
+            parts.append("The player has NO avatar — no character, no vehicle, "
+                         "no craft, nothing to move through the world. They act "
+                         "entirely through a pointer or UI. Do not give this "
+                         "game a body to control.")
+        elif self.locomotion and self.locomotion != "walk":
             parts.append(f"The player primarily gets around by {self.locomotion}ing "
                           f"({_LOCOMOTION_LABEL[self.locomotion]}).")
         if self.genre != "universal":
@@ -88,13 +102,33 @@ class UnityIntent:
             f"- {p}" for p in parts
         ) + "\n"
 
-    def structure_hint(self) -> str:
-        """Injected into Step 3 (UNITY_SCHEMA_FILL_USER's schema_hints slot) — pins the JSON fields."""
+    def structure_hint(self, *, min_confidence: int = 3) -> str:
+        """Injected into Step 3 (UNITY_SCHEMA_FILL_USER's schema_hints slot) — pins the JSON fields.
+
+        Gated at the same bar `apply_intent` uses. It previously emitted a MUST
+        for ANY non-None value, including one reached from a soft concept echo
+        worth 1 — so the weakest possible signal issued the strongest possible
+        instruction, under a heading that calls itself "not a suggestion".
+
+        Every line now names the words it matched instead of asserting "the
+        prompt names it explicitly", which was routinely false: TowerControl was
+        told `locomotion MUST be "fly" — the prompt names it explicitly` about a
+        brief whose text is "you are never in an aircraft".
+        """
         lines = []
-        if self.game_type:
-            lines.append(f'  "game_type" MUST be "{self.game_type}" — the prompt names it explicitly.')
-        if self.locomotion:
-            lines.append(f'  "locomotion" MUST be "{self.locomotion}" — the prompt names it explicitly.')
+        if self.game_type and self.game_type_confidence >= min_confidence:
+            hits = ", ".join(self.matched.get("game_type", []))
+            lines.append(f'  "game_type" MUST be "{self.game_type}" — matched: {hits}.')
+        if self.locomotion == "none" and self.locomotion_confidence >= min_confidence:
+            hits = ", ".join(self.matched.get("locomotion", []))
+            lines.append(
+                '  "locomotion" MUST be "none" — the brief declares the player '
+                f'has no avatar (matched: {hits}). Do NOT give this game a '
+                'character, vehicle or craft, and do NOT add a player entity: '
+                'the player acts through a pointer or UI.')
+        elif self.locomotion and self.locomotion_confidence >= min_confidence:
+            hits = ", ".join(self.matched.get("locomotion", []))
+            lines.append(f'  "locomotion" MUST be "{self.locomotion}" — matched: {hits}.')
         if self.genre != "universal":
             lines.append(f'  Bias entities/features/scripts toward a {self.genre.replace("_", " ")} game.')
             req = _GENRE_SCHEMA_REQUIREMENTS.get(self.genre)
@@ -190,6 +224,116 @@ _LOCOMOTION: list[tuple[str, list[str]]] = [
     ]),
 ]
 
+# ── Non-embodiment — a DECLARATION, read before the movement vocabulary ───────
+#
+# `locomotion` had four values and no way to say "this game has no body at all",
+# so a brief that spends four paragraphs explaining that the player never moves
+# still had to score as one of the four. The axis could not represent the answer,
+# which is not a tuning problem — it is a missing value.
+#
+# Live on prompts/tower_control.txt, an approach-control console whose prose says
+# "you are never in an aircraft" and "no character, no vehicle, no camera to
+# fly". It classified locomotion='fly' at confidence 6, because "flight" matched
+# `flight strips` — paper on a desk — and "aircraft" matched the very sentence
+# denying it. Both hints are injected unconditionally into BOTH LLM steps
+# (unity_pipeline.run), so Step 2 was told the player gets around by flying and
+# Step 3 was told locomotion MUST be "fly", about a game whose entire subject is
+# that nothing moves but the pointer.
+#
+# The `!= "none"` guard in apply_intent cannot help. It protects a schema that
+# ALREADY says none from being overridden afterwards; here the steering happens
+# first, so `none` is never written for it to protect. Same lesson the UI-first
+# layout archetype learned — READ THE DECLARATION BEFORE THE VOCABULARY — applied
+# one step upstream, at the point the vocabulary is scored.
+#
+# DECISIVE phrases can only describe a game with no avatar, so one prompt hit
+# carries the bar alone. SUPPORTING phrases are real evidence that also turn up
+# in embodied games ("no character customization" in an RPG), so they corroborate
+# and never decide by themselves.
+_NON_EMBODIED_DECISIVE: list[str] = [
+    "no player character", "no playable character", "no player avatar",
+    "no avatar", "without an avatar", "there is no player",
+    "point and click", "point-and-click",
+    "board game", "card game", "word game", "tile-laying",
+    "the pointer is the only thing that moves",
+    "the only thing that moves is the pointer",
+    "you never leave the desk", "never leave your desk",
+]
+
+_NON_EMBODIED_SUPPORTING: list[str] = [
+    "no character", "no vehicle", "no camera to fly", "no 3d scenery",
+    "no scenery", "you are never in", "you never leave",
+    "everything you do, you do with the mouse", "entirely with the mouse",
+    "entirely through the ui", "the game is the console",
+    "teaching sim", "management sim", "puzzle board",
+]
+
+# One DECISIVE phrase, or two independent SUPPORTING ones.
+_NON_EMBODIED_BAR = 6
+_DECISIVE_WEIGHT = 6
+_SUPPORTING_WEIGHT = 3
+
+
+# ── Denial-aware matching ────────────────────────────────────────────────────
+#
+# A keyword inside an explicit denial is evidence for the OPPOSITE of what it
+# scores. "you are never in an aircraft" is the brief saying this is not a flying
+# game, and it scored 3 for `fly`. Every table reads through this filter, so a
+# denial suppresses what it denies on any axis — "No 3D scenery of any kind"
+# stops arguing for game_type='3D'.
+#
+# Scope is the clause: from the cue to the next boundary, capped so that one "no"
+# early in a long sentence cannot silence the rest of a paragraph.
+_DENIAL_CUE_RE = re.compile(r"\b(?:no|not|never|without|neither|nor)\b")
+_CLAUSE_END_RE = re.compile(r"[.;,:!?—–\n]|\bbut\b")
+_DENIAL_REACH = 64
+
+
+def _denied_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """Character ranges of `text` covered by an explicit denial."""
+    spans: list[tuple[int, int]] = []
+    for cue in _DENIAL_CUE_RE.finditer(text):
+        end_m = _CLAUSE_END_RE.search(text, cue.end())
+        end = end_m.start() if end_m else len(text)
+        spans.append((cue.start(), min(end, cue.start() + _DENIAL_REACH)))
+    return tuple(spans)
+
+
+def _live_match(pat: re.Pattern, text: str,
+                spans: tuple[tuple[int, int], ...]) -> bool:
+    """Does `pat` match anywhere OUTSIDE a denial?
+
+    A word denied in one sentence and asserted in another still counts — the
+    assertion is the live one. Only a keyword whose every occurrence sits inside
+    a denial is suppressed.
+    """
+    for m in pat.finditer(text):
+        if not any(lo <= m.start() < hi for lo, hi in spans):
+            return True
+    return False
+
+
+def _score_non_embodied(prompt_low: str, concept_low: str) -> tuple[int, list[str]]:
+    """Score the explicit declaration that this game has no avatar.
+
+    Deliberately NOT denial-filtered: these phrases ARE denials, and putting them
+    through the denial filter would delete the very signal they carry.
+    """
+    score = 0
+    hits: list[str] = []
+    for phrases, weight in ((_NON_EMBODIED_DECISIVE, _DECISIVE_WEIGHT),
+                            (_NON_EMBODIED_SUPPORTING, _SUPPORTING_WEIGHT)):
+        for kw in phrases:
+            pat = _kw_pattern(kw)
+            if pat.search(prompt_low):
+                score += weight
+                hits.append(kw)
+            elif concept_low and pat.search(concept_low):
+                score += 1
+                hits.append(kw)
+    return score, hits
+
+
 # ── Gameplay genre catalogue → matches UNITY_GENRE_ATOM["genre"] exactly ───────
 
 _GENRE: list[tuple[str, list[str]]] = [
@@ -284,15 +428,18 @@ def _score(prompt_low: str, concept_low: str, table: list[tuple[str, list[str]]]
     best_name: Optional[str] = None
     best_score = 0
     best_hits: list[str] = []
+    # Computed once per call, not per keyword — every table reads the same text.
+    p_denied = _denied_spans(prompt_low)
+    c_denied = _denied_spans(concept_low) if concept_low else ()
     for name, keywords in table:
         score = 0
         hits: list[str] = []
         for kw in keywords:
             pat = _kw_pattern(kw)
-            if pat.search(prompt_low):
+            if _live_match(pat, prompt_low, p_denied):
                 score += 3
                 hits.append(kw)
-            elif concept_low and pat.search(concept_low):
+            elif concept_low and _live_match(pat, concept_low, c_denied):
                 score += 1
                 hits.append(kw)
         if score > best_score:
@@ -317,6 +464,20 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
     loco_name, loco_score, loco_hits = _score(p, c, _LOCOMOTION)
     genre_name, genre_score, genre_hits = _score(p, c, _GENRE)
 
+    # THE DECLARATION TIER, read before the movement vocabulary is trusted. A
+    # brief that states it has no avatar has answered the locomotion question
+    # outright, and no amount of incidental movement vocabulary outranks it.
+    #
+    # The `>= loco_score` tiebreak keeps this honest in the other direction: a
+    # genuine flight sim that mentions a board game once scores 6 here and 12+
+    # for `fly`, and stays a flight sim. Only a brief whose declaration is at
+    # least as strong as its movement vocabulary is read as non-embodied.
+    ne_score, ne_hits = _score_non_embodied(p, c)
+    suppressed: list[str] = []
+    if ne_score >= _NON_EMBODIED_BAR and ne_score >= loco_score:
+        suppressed = loco_hits
+        loco_name, loco_score, loco_hits = "none", ne_score, ne_hits
+
     intent = UnityIntent(
         game_type              = gt_name,
         locomotion              = loco_name,
@@ -331,6 +492,10 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
         intent.matched["locomotion"] = loco_hits
     if genre_hits:
         intent.matched["genre"] = genre_hits
+    # Never drop a signal silently — the movement words the declaration outranked
+    # are NAMED, so a wrong call is legible in the log instead of invisible.
+    if suppressed:
+        intent.matched["locomotion_suppressed"] = suppressed
     return intent
 
 

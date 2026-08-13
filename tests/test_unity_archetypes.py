@@ -181,3 +181,128 @@ def test_drifting_clouds_is_not_racing():
     assert i.genre != "racing"
     j = classify("A street racing game with drift racing and kart racers")
     assert j.genre == "racing"
+
+
+# ── The declaration tier: locomotion="none" ───────────────────────────────────
+
+class TestNonEmbodiedDeclaration:
+    """`locomotion` had four values and no way to say "this game has no body".
+
+    A brief could spend four paragraphs explaining that the player never moves
+    and still had to be scored as one of walk/drive/fly/swim, because the axis
+    could not represent the answer. That is a missing value, not a tuning
+    problem — these tests pin the value in.
+    """
+
+    def _tower_control(self):
+        with open("prompts/tower_control.txt", encoding="utf-8") as f:
+            return f.read()
+
+    def test_tower_control_is_not_a_flying_game(self):
+        # Regression (live): prompts/tower_control.txt is an approach-control
+        # console whose prose says "you are never in an aircraft" and "no
+        # character, no vehicle, no camera to fly". It classified
+        # locomotion='fly' at confidence 6 — "flight" matched `flight strips`
+        # (paper on a desk) and "aircraft" matched the sentence denying it.
+        intent = classify(self._tower_control())
+        assert intent.locomotion == "none"
+
+    def test_the_suppressed_movement_words_are_named_not_dropped(self):
+        # A signal the declaration outranks must stay legible in the log — the
+        # silent drop is the defect, not the override.
+        intent = classify(self._tower_control())
+        assert intent.matched["locomotion_suppressed"] == ["flight", "aircraft"]
+
+    def test_board_card_and_word_games_declare_none_on_one_phrase(self):
+        for text in ("A board game where ducks play monopoly in a bowl of spaghetti.",
+                     "A card game about haunted tarot decks.",
+                     "A word game about anagrams; you click letter tiles."):
+            assert classify(text).locomotion == "none", text
+
+    def test_point_and_click_declares_none(self):
+        assert classify("A point-and-click jigsaw puzzle with drag and drop "
+                        "pieces.").locomotion == "none"
+
+    def test_one_supporting_phrase_alone_never_declares_none(self):
+        # "no character customization" is ordinary RPG copy. A single SUPPORTING
+        # phrase scores 3 against a bar of 6, so it corroborates and never
+        # decides — an embodied game must not lose its avatar to one sentence.
+        intent = classify("An open world action RPG. There is no character "
+                          "customization at launch; you play a fixed hero who "
+                          "walks and rides horses.")
+        assert intent.locomotion != "none"
+
+    def test_a_real_flight_sim_outranks_an_incidental_board_game(self):
+        # The tiebreak in the other direction: the declaration wins only when it
+        # is at least as strong as the movement vocabulary it displaces.
+        intent = classify("A flight sim about jet dogfights and aerial combat "
+                          "over the ocean; the briefing room has a board game "
+                          "on the table.")
+        assert intent.locomotion == "fly"
+
+    def test_jets_over_iraq_stay_embodied(self):
+        intent = classify("A flight sim: jets in the Iraq war, dogfighting and "
+                          "strafing ground troops from the air.")
+        assert intent.locomotion == "fly"
+
+
+# ── Denial-aware keyword matching ─────────────────────────────────────────────
+
+class TestDenialAwareMatching:
+    def test_a_denied_keyword_does_not_score(self):
+        # "you are never in an aircraft" is the brief saying this is NOT a
+        # flying game, and it scored 3 for `fly`.
+        intent = classify("You work a radar desk. You are never in an aircraft.")
+        assert intent.locomotion != "fly"
+
+    def test_denial_suppresses_on_every_axis_not_just_locomotion(self):
+        intent = classify("A flat interface game. No 3D scenery of any kind.")
+        assert intent.game_type != "3D"
+
+    def test_a_word_asserted_elsewhere_still_counts(self):
+        # Only a keyword whose EVERY occurrence sits inside a denial is
+        # suppressed — one denial must not silence a genuine assertion later.
+        intent = classify("There is no underwater section. This is a driving "
+                          "game about rally cars and street racers.")
+        assert intent.locomotion == "drive"
+
+    def test_denial_does_not_run_past_the_clause(self):
+        # A "no" early in a sentence must not silence the rest of a paragraph.
+        intent = classify("There is no tutorial, and the game is a rally "
+                          "driving game with cars and vehicular combat.")
+        assert intent.locomotion == "drive"
+
+
+# ── The hints actually injected into Steps 2 and 3 ────────────────────────────
+
+class TestHintHonesty:
+    def test_structure_hint_names_what_it_matched(self):
+        # It asserted "the prompt names it explicitly" for every value,
+        # including ones reached from a soft concept echo. TowerControl was told
+        # `locomotion MUST be "fly" — the prompt names it explicitly` about a
+        # brief reading "you are never in an aircraft".
+        intent = classify("A rally driving game with cars.")
+        hint = intent.structure_hint()
+        assert "the prompt names it explicitly" not in hint
+        assert "matched:" in hint
+
+    def test_low_confidence_emits_no_MUST(self):
+        # Gated at the same bar apply_intent uses. A concept-only echo is worth
+        # 1; it must not issue the strongest possible instruction under a
+        # heading that calls itself "not a suggestion".
+        intent = classify("", concept="a game with a car in it somewhere")
+        assert intent.locomotion_confidence < 3
+        assert '"locomotion" MUST' not in intent.structure_hint()
+
+    def test_none_reaches_step2_as_prose_and_step3_as_a_constraint(self):
+        # Step 3 only ever sees the CONCEPT, so if the declaration does not
+        # survive into concept_hint it is gone before the schema is filled.
+        intent = classify("A board game where ducks play monopoly.")
+        assert "NO avatar" in intent.concept_hint()
+        assert '"locomotion" MUST be "none"' in intent.structure_hint()
+
+    def test_none_never_renders_as_noneing(self):
+        # _LOCOMOTION_LABEL has no "none" key and the movement branch builds
+        # f"{locomotion}ing" — the declaration must not reach that branch.
+        hint = classify("A board game about trains.").concept_hint()
+        assert "noneing" not in hint
