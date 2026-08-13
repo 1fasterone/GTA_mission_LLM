@@ -97,7 +97,11 @@ _VALID_PIPELINE = {"urp": "URP", "hdrp": "HDRP", "builtin": "builtin",
 _VALID_UNITY = ("6000.0", "6000.1", "6000.4", "2022.3", "2021.3")
 _VALID_GAME_TYPE = ("2D", "2.5D", "3D", "VR", "top_down", "2d_topdown",
                     "isometric")
-_VALID_LOCOMOTION = ("walk", "drive", "fly", "swim")
+# "none" declares the game has no avatar (unity_schema.is_embodied). Without it
+# an author who wrote `LOCOMOTION: none` had the line rejected as unparseable
+# and silently replaced with "walk" — the exact declaration the UI-first path
+# exists to honour, dropped at the parser.
+_VALID_LOCOMOTION = ("walk", "drive", "fly", "swim", "none")
 
 
 def _lines(prompt: str) -> list[str]:
