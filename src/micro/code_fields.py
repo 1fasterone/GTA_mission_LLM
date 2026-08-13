@@ -611,6 +611,37 @@ _STRUCT_MEMBER_ASSIGN_RE = re.compile(
     r'\.([xyzw])\s*(\+=|-=|\*=|/=|=(?!=))\s*([^;]+?)\s*;')
 
 
+# CS0131: `_thing?.member = value;` — a null-conditional on the LEFT of an
+# assignment. C# allows `?.` to READ through a possible null and not to write
+# through one, so this is a compile error rather than a null-safety idiom.
+# Models reach for it constantly because it reads like the safe thing to do,
+# and it is the one place where what they MEANT is completely unambiguous: a
+# null guard. Hit live on the TowerControl run, PlayerCamera.cs(128,9):
+#
+#     _radarSweep?.localRotation = Quaternion.Euler(0f, Time.time * _speed, 0f);
+#
+# Rewritten to the guard it was reaching for, which preserves the author's
+# intent exactly — unlike neutralizing the line, which would silently delete a
+# working piece of the game's behaviour.
+_NULL_COND_ASSIGN_RE = re.compile(
+    r'^(?P<indent>[ \t]*)(?P<recv>[A-Za-z_][A-Za-z0-9_]*)\?\.'
+    r'(?P<tail>[A-Za-z_][A-Za-z0-9_.]*)\s*(?P<op>=|\+=|-=|\*=|/=)\s*'
+    r'(?P<rhs>.+;)\s*$',
+    re.MULTILINE)
+
+
+def _repair_null_conditional_assign(text: str) -> str:
+    """Rewrite `x?.y = v;` → `if (x != null) x.y = v;` (CS0131)."""
+    new = _NULL_COND_ASSIGN_RE.sub(
+        lambda m: (f"{m['indent']}if ({m['recv']} != null) "
+                   f"{m['recv']}.{m['tail']} {m['op']} {m['rhs']}"),
+        text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  rewrote null-conditional assignment "
+                      "as a null guard (CS0131)")
+    return new
+
+
 def _repair_struct_member_assign(text: str) -> str:
     """Rewrite `prop.x += v;` → `{ var _v = prop; _v.x += v; prop = _v; }` for the
     common value-type Unity properties that otherwise throw CS1612."""
@@ -703,6 +734,7 @@ def lint_code_fragment(text: str, *, what: str,
     if hoist_into is not None:
         text, nested = _split_nested_members(text)
         hoist_into.extend(nested)
+    text = _repair_null_conditional_assign(text)
     text = _repair_struct_member_assign(text)
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
@@ -810,7 +842,8 @@ _KNOWN_NAMESPACES = {
     "System.Text", "System.IO", "System.Threading.Tasks",
     "UnityEngine", "UnityEngine.UI", "UnityEngine.UIElements",
     "UnityEngine.InputSystem", "UnityEngine.AI", "UnityEngine.Audio",
-    "UnityEngine.Events", "UnityEngine.SceneManagement", "UnityEngine.Rendering",
+    "UnityEngine.Events", "UnityEngine.EventSystems",
+    "UnityEngine.SceneManagement", "UnityEngine.Rendering",
     "UnityEngine.Rendering.Universal", "UnityEngine.Animations", "UnityEngine.Tilemaps",
     "UnityEngine.U2D", "UnityEngine.Playables", "UnityEngine.Video",
     "TMPro", "Unity.Cinemachine", "Cinemachine",
@@ -837,6 +870,46 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
     (r"\bPlayableDirector\b",                               "UnityEngine.Playables"),
     (r"\bVideoPlayer\b",                                    "UnityEngine.Video"),
     (r"\bTask\s*[<(]|\bTask\.(?:Run|Delay|WhenAll|WhenAny)\b", "System.Threading.Tasks"),
+    # LINQ. Hit live on the CodeVault run, FirstCommitObjectives.cs(102,78):
+    #
+    #     _fileIcons = FindObjectsOfType<GameObject>().Where(g => …).ToArray();
+    #
+    # CS1061, and the error message says "are you missing a using directive"
+    # in as many words. These are EXTENSION methods, so the symptom is not an
+    # unknown name but a known type that suddenly has no such member — which is
+    # why the unbound-identifier pass cannot see it either. Matched only as
+    # `.Method(`, on the operators that are unambiguously LINQ: a bare `Select`
+    # or `Count` is ordinary English and appears in authored comments.
+    (r"\.(?:Where|Select|SelectMany|OrderBy|OrderByDescending|ThenBy|FirstOrDefault|"
+     r"LastOrDefault|SingleOrDefault|ToArray|ToList|ToDictionary|Any|All|Sum|Average|"
+     r"Distinct|Concat|Except|Intersect|GroupBy|Zip|Take|Skip|TakeWhile|SkipWhile)\s*\(",
+     "System.Linq"),
+    # uGUI. Hit live on the TowerControl run, SceneTrigger.cs(28,106):
+    #
+    #     [SerializeField] private Button _clearancePad = null;
+    #
+    # with the trigger template's own usings and nothing else — CS0246. The
+    # gap is old (nothing here ever mapped a uGUI type) but it was rare while
+    # every game had an avatar: a walk controller's authored fields are
+    # transforms and rigidbodies. A UI-first game's are Buttons, and the
+    # micro-code step is asked for exactly those, so this went from a corner
+    # to the common case the moment a board could compile.
+    #
+    # `com.unity.ugui` backs both namespaces and is always in a composed
+    # manifest — hud and menu are unconditional core subsystems and both
+    # declare it (MicroComposer._KIND_MODULES). This heal only ever runs on
+    # micro schemas, so that guarantee covers every file it can touch.
+    (r"\b(?:Button|Text|Image|RawImage|Slider|Scrollbar|ScrollRect|Toggle|"
+     r"ToggleGroup|Dropdown|InputField|Selectable|GraphicRaycaster|"
+     r"CanvasScaler|ContentSizeFitter|AspectRatioFitter|LayoutElement|"
+     r"(?:Horizontal|Vertical|Grid)LayoutGroup)\b",   "UnityEngine.UI"),
+    # The pointer's own event types. A drag-and-drop board is the shape of
+    # game that reaches for these, and OnPointerClick(PointerEventData) is
+    # the signature a model writes without being asked.
+    (r"\b(?:PointerEventData|EventSystem|EventTrigger|BaseEventData|"
+     r"StandaloneInputModule|IPointer(?:Click|Enter|Exit|Down|Up)Handler|"
+     r"I(?:Begin|End)?DragHandler|IDropHandler|IScrollHandler)\b",
+     "UnityEngine.EventSystems"),
 ]
 
 
@@ -2356,6 +2429,23 @@ _TEMPLATE_METHOD_DECL_RE = re.compile(
     r"(?:public|private|protected|internal)\b"
     r"[^;{(=\n]*?"
     r"\b(?P<name>[A-Za-z_]\w*)[ \t]*\((?P<params>[^)]*)\)")
+# An EVENT (or delegate field) declaration, captured with its generic arguments
+# so a call against it can be arity-checked exactly like a method.
+#
+#     public event Action<string> OnObjectiveComplete;
+#
+# is invoked, not called — and an authored `OnObjectiveComplete()` is CS7036
+# just as surely as passing a method the wrong number of arguments. Live on the
+# CodeVault run, twice in one file (149,15 and 164,13), because the arity index
+# only ever looked at METHODS. `Action` with no generic argument takes none;
+# `Action<A,B>` takes two; `Func<A,R>` takes one, since the last type parameter
+# is the return.
+_TEMPLATE_EVENT_DECL_RE = re.compile(
+    r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"
+    r"(?:public|private|protected|internal)\b[^;(=\n]*?"
+    r"\b(?P<kind>Action|Func|UnityAction|UnityEvent)"
+    r"(?:<(?P<args>[^>;]*)>)?[ \t]+"
+    r"(?P<name>[A-Za-z_]\w*)[ \t]*(?:;|=)")
 
 
 _JINJA_PLACEHOLDER = "_J_"
@@ -2465,6 +2555,24 @@ def template_method_arities(template_dir: str) -> "dict[str, tuple[int, int]]":
     for line in _template_text(template_dir).splitlines():
         if _TYPE_DECL_RE.search(line):
             continue
+
+        # Events first: `public event Action<string> OnDone;` also matches the
+        # method regex (`Action<string>` reads as a return type and `OnDone` as
+        # a name), so testing methods first would index every event as a
+        # zero-argument method and make a legal one-argument invocation look
+        # wrong — the exact opposite of the bug being fixed.
+        e = _TEMPLATE_EVENT_DECL_RE.match(line)
+        if e:
+            raw = (e.group("args") or "").strip()
+            args = [a for a in _split_top_level_args(raw) if a.strip()] if raw else []
+            n = len(args)
+            if e.group("kind") == "Func" and n:
+                n -= 1          # the last type parameter of Func is the RETURN
+            prev = out.get(e.group("name"))
+            out[e.group("name")] = ((min(n, prev[0]), max(n, prev[1])) if prev
+                                    else (n, n))
+            continue
+
         m = _TEMPLATE_METHOD_DECL_RE.match(line)
         if not m:
             continue
@@ -2844,6 +2952,211 @@ def _body_is_live(body: str) -> bool:
                for ln in (body or "").splitlines())
 
 
+# ── Tier 2: BUILD what the author reached for ────────────────────────────────
+# An identifier the author uses but never declares is not an error. It is the
+# author telling us the class needs a piece of state. Deleting the statement
+# deletes the mechanic; declaring the field keeps it.
+#
+# Live on the TowerControl run, this exact shape cost the game its two most
+# visible systems:
+#
+#   neutralized 2 unbindable reference(s): conflictActive, radarSweepColor
+#   dropped 2 authored method(s) left with no live statement:
+#       GetRadarSweepColor, SetConflictAlert
+#
+# The methods did not fail. They were emptied by the removal of two lines that
+# assigned two fields nobody had declared — the conflict alert and the radar
+# sweep, in a game whose whole pressure mechanic is the conflict alert.
+#
+# The type is inferred ONLY from an unambiguous assignment in the same fragment.
+# No guess, no default: an identifier whose type cannot be read off a literal is
+# left alone for the existing pass to handle, because a field of the wrong type
+# fails louder and later than one that was never declared.
+_ASSIGN_LITERAL_RES: tuple[tuple[str, str], ...] = (
+    (r'=\s*(?:true|false)\s*[;,)]',                     "bool"),
+    (r'=\s*"[^"]*"\s*[;,)]',                            "string"),
+    (r"=\s*'[^']'\s*[;,)]",                             "char"),
+    (r'=\s*-?\d+\.\d*f\s*[;,)]',                        "float"),
+    (r'=\s*-?\d+f\s*[;,)]',                             "float"),
+    (r'=\s*-?\d+\.\d+\s*[;,)]',                         "float"),
+    (r'=\s*-?\d+\s*[;,)]',                              "int"),
+    (r'=\s*new\s+Color\s*\(',                           "Color"),
+    (r'=\s*new\s+Vector3\s*\(',                         "Vector3"),
+    (r'=\s*new\s+Vector2\s*\(',                         "Vector2"),
+    (r'=\s*Color\.\w+\s*[;,)]',                         "Color"),
+    (r'=\s*Vector3\.\w+\s*[;,)]',                       "Vector3"),
+    (r'=\s*Vector2\.\w+\s*[;,)]',                       "Vector2"),
+    (r'=\s*Quaternion\.\w+\s*[;,)]',                    "Quaternion"),
+    (r'=\s*Time\.(?:time|deltaTime|fixedDeltaTime)\b',  "float"),
+    (r'=\s*new\s+List<([^>]+)>\s*\(',                   "List<{0}>"),
+)
+# `if (x)` / `while (x)` / `!x` / `x &&` read as a bool even with no assignment.
+_BOOL_USE_RE_TMPL = (r'(?:if|while)\s*\(\s*!?\s*{n}\s*[)&|]'
+                     r'|!\s*{n}\b'
+                     r'|\b{n}\s*(?:&&|\|\|)')
+
+
+# Types a ternary or a return can name on both sides. Restricted to the value
+# types whose static members are unambiguous — `Color.yellow : Color.green` is
+# a Color and nothing else. A wrong type is worse than no declaration, so this
+# never guesses from a single branch.
+_INFERABLE_TYPES = ("Color", "Vector3", "Vector2", "Quaternion")
+
+
+def _infer_field_type(name: str, blob: str, *,
+                      return_types: "dict[str, str] | None" = None) -> Optional[str]:
+    """The type `name` must have, read off how it is used — or None."""
+    esc = re.escape(name)
+    for pattern, ctype in _ASSIGN_LITERAL_RES:
+        m = re.search(rf'\b{esc}\s*{pattern}', blob)
+        if m:
+            return ctype.format(*m.groups()) if "{0}" in ctype else ctype
+
+    # `x = cond ? Color.yellow : Color.green;` — both arms name the same type.
+    # This is the shape TowerControl's radar sweep used, and matching only bare
+    # literals missed it, so the sweep was deleted along with its two methods.
+    for t in _INFERABLE_TYPES:
+        if re.search(rf'\b{esc}\s*=\s*[^;]*\?\s*{t}\.\w+\s*:\s*{t}\.\w+', blob):
+            return t
+
+    # `return x;` inside a method whose return type is known.
+    if return_types and name in return_types:
+        return return_types[name]
+
+    if re.search(_BOOL_USE_RE_TMPL.format(n=esc), blob):
+        return "bool"
+    return None
+
+
+def _returned_identifier_types(schema) -> "dict[str, str]":
+    """`{identifier: type}` for bare `return <ident>;` in a typed method.
+
+    The strongest inference available and the cheapest: a method declared
+    `public Color GetRadarSweepColor()` that ends `return radarSweepColor;`
+    has told us exactly what that field is.
+    """
+    out: "dict[str, str]" = {}
+    for m in (getattr(schema, "extra_methods", None) or []):
+        sig = str(getattr(m, "signature", "") or "")
+        rt = _RETURN_TYPE_RE.match(sig)
+        if not rt:
+            continue
+        ctype = rt.group("type")
+        if ctype in _VOID_RETURNS:
+            continue
+        for ident in re.findall(r'\breturn\s+([A-Za-z_]\w*)\s*;',
+                                str(getattr(m, "body", "") or "")):
+            out.setdefault(ident, ctype)
+    return out
+
+
+_DEFAULT_FOR_TYPE = {
+    "bool": "false", "int": "0", "float": "0f", "string": '""',
+    "char": "' '", "Color": "Color.white", "Vector3": "Vector3.zero",
+    "Vector2": "Vector2.zero", "Quaternion": "Quaternion.identity",
+}
+
+
+def build_missing_fields(schema, unbound: "set[str]", blob: str) -> list[str]:
+    """Declare the fields the author used but never declared. Mutates `schema`.
+
+    Returns one message per field built. Only ever ADDS — an identifier whose
+    type cannot be inferred is left in `unbound` for the caller to handle as
+    before, so this can never make a build worse than it was.
+    """
+    fields = getattr(schema, "extra_fields", None)
+    if fields is None:
+        return []
+    existing = {str(getattr(f, "name", "")) for f in fields}
+    returns = _returned_identifier_types(schema)
+    built: list[str] = []
+    for name in sorted(unbound):
+        # Only plain identifiers: a call (`Foo()`), a member access or an
+        # arity complaint is not a field, and the diagnostics carry parentheses.
+        if not re.fullmatch(r"[A-Za-z_]\w*", name) or name in existing:
+            continue
+        ctype = _infer_field_type(name, blob, return_types=returns)
+        if ctype is None:
+            continue
+        try:
+            fields.append(CodeField(name=name, type=ctype,
+                                    default=_DEFAULT_FOR_TYPE.get(ctype, "")))
+        except Exception:                    # noqa: BLE001 — never block a build
+            continue
+        existing.add(name)
+        built.append(f"{ctype} {name}")
+    return built
+
+
+# Return types that need no `return` statement.
+_VOID_RETURNS: frozenset[str] = frozenset({"void", "IEnumerator", "async"})
+# `<modifiers> <ReturnType> Name(` — the return type is the token before the
+# method name. Generic returns (`List<T>`) are matched whole.
+_RETURN_TYPE_RE = re.compile(
+    r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|'
+    r'sealed|async|new|partial|extern|unsafe)\s+)*'
+    r'(?P<type>[A-Za-z_][A-Za-z0-9_.]*(?:<[^>()]*>)?(?:\[\])?)\s+'
+    r'[A-Za-z_][A-Za-z0-9_]*\s*\(')
+
+
+def _returns_a_value(signature: str) -> bool:
+    """Does this method signature promise a value back?"""
+    m = _RETURN_TYPE_RE.match(signature or "")
+    return m is not None and m.group("type") not in _VOID_RETURNS
+
+
+def _ends_in_return(body: str) -> bool:
+    """Is the last LIVE statement a return/throw — i.e. does the body already
+    guarantee a value on the way out?
+
+    Deliberately shallow. Proper reachability analysis is a compiler's job;
+    what this has to catch is the one shape the neutralizer creates, where the
+    trailing statements were commented out and what is left simply runs off the
+    end of the method.
+    """
+    live = [ln.strip() for ln in (body or "").splitlines()
+            if ln.strip() and not ln.lstrip().startswith("//")]
+    if not live:
+        return False
+    last = live[-1].rstrip("}").strip() or (live[-2].strip() if len(live) > 1 else "")
+    return last.startswith("return") or last.startswith("throw")
+
+
+def _ensure_returns(method):
+    """Give a neutralized non-void method a return, or None if it needs none.
+
+    CS0161. The binding pass comments out every statement carrying a reference
+    that cannot bind, and a method whose ONLY unconditional `return` was one of
+    them still passes `_body_is_live` on its surviving guard clause — so it is
+    kept, and it no longer returns anything. Hit live on the TowerControl run,
+    SaveSystem.cs(71,18):
+
+        private bool ValidateJson(string content)
+        {
+            if (string.IsNullOrEmpty(content)) return false;
+            // AUDIT: removed unbindable reference(s) System -- ...
+            // AUDIT: removed unbindable reference(s) JsonDocument -- ...
+            // AUDIT: removed unbindable reference(s) jsonDoc -- return jsonDoc...
+        }
+
+    `default` is the honest value to append: the real answer was in the
+    statements above it, the AUDIT comments say so in place, and for the
+    validators and predicates this fires on it is also the conservative one.
+    Dropping the method instead would discard the guard clause that survived
+    AND orphan the call sites — the loop handles orphans, but throwing away
+    working code to avoid writing one line is the worse trade.
+    """
+    sig = getattr(method, "signature", "") or ""
+    body = getattr(method, "body", "") or ""
+    if not _returns_a_value(sig) or _ends_in_return(body):
+        return None
+    patched = body.rstrip() + (
+        "\n        // AUDIT: neutralized statements left no return — "
+        "default so the method compiles\n        return default;")
+    return (method.model_copy(update={"body": patched})
+            if hasattr(method, "model_copy") else None)
+
+
 # A neutralized statement can orphan the NEXT one: commenting out
 # `float lateralSpeed = rb.velocity.x;` leaves `lateralSpeed` undeclared for the
 # line below it (live, PlayerController.cs), and dropping a method whose body
@@ -2872,6 +3185,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     arities = template_method_arities(tdir)
     flagged: set[str] = set()
     dropped: list[str] = []
+    returned: list[str] = []
+    built: list[str] = []
 
     for _ in range(_MAX_BIND_ROUNDS):
         methods = [m for m in (getattr(schema, "extra_methods", None) or [])]
@@ -2885,7 +3200,22 @@ def bind_authored_code(schema, template_dir) -> list[str]:
         # what a call to it must match, and this pass does not re-derive that.
         live_arities = {k: v for k, v in arities.items()
                         if k not in {_method_name(m.signature) for m in methods}}
-        changed = False
+
+        # TIER 2 FIRST — build before you cut. Anything the author used but
+        # never declared gets DECLARED, so the statements using it stay live
+        # and the mechanic survives. Only then does the neutralizer run, on
+        # whatever genuinely cannot be resolved.
+        blob = _authored_blob(schema)
+        wanted: set[str] = set()
+        for _line, names in find_unbound_identifiers(
+                blob, known=known, arities=live_arities).items():
+            wanted |= names
+        made = build_missing_fields(schema, wanted, blob)
+        if made:
+            built.extend(made)
+            known |= {m.split()[-1] for m in made}
+
+        changed = bool(made)
 
         for key in ("awake_extra", "update_extra", "fixed_update_extra"):
             before = getattr(schema, key, "") or ""
@@ -2909,6 +3239,13 @@ def bind_authored_code(schema, template_dir) -> list[str]:
                 changed = True
                 m = m.model_copy(update={"body": after}) if hasattr(m, "model_copy") else m
             if _body_is_live(getattr(m, "body", "")):
+                # A body that survived can still have lost the only `return`
+                # its non-void signature promised (CS0161).
+                repaired = _ensure_returns(m)
+                if repaired is not None:
+                    m = repaired
+                    returned.append(_method_name(getattr(m, "signature", "")))
+                    changed = True
                 surviving.append(m)
             else:
                 name = _method_name(getattr(m, "signature", ""))
@@ -2930,6 +3267,14 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     if dropped:
         msgs.append(f"dropped {len(dropped)} authored method(s) left with no "
                     f"live statement: {', '.join(sorted(set(dropped)))}")
+    if built:
+        msgs.append(f"BUILT {len(built)} field(s) the author used but did not "
+                    f"declare, instead of deleting the statements that use "
+                    f"them: {', '.join(sorted(set(built)))}")
+    if returned:
+        msgs.append(f"appended a default return to {len(returned)} authored "
+                    f"method(s) whose only return was neutralized (CS0161): "
+                    f"{', '.join(sorted(set(returned)))}")
     return msgs
 
 

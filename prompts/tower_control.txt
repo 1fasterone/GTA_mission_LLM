@@ -1,0 +1,51 @@
+Title: Tower Control
+
+High-Level Concept:
+A calm, tense approach-control game. You are the controller working a radar
+desk at a regional airport at dusk. You never leave the desk and you are never
+in an aircraft — everything you do, you do with the mouse: you read the strips,
+you drag them between bays, and you click the headings. The game is the console.
+
+The Desk
+The whole game is one screen made of panels, arranged the way a real position
+is laid out. On the left, an inbound queue: a vertical stack of paper flight
+strips, one per aircraft, each showing a callsign, a type and a requested
+level. In the middle, the radar repeater — a dark square panel with slow sweep
+lines and a scattering of contact blips, each one labelled. On the right, a
+clearance pad: a column of large square buttons the controller presses to issue
+an instruction. Along the bottom, a strip bay divided into three racks —
+Inbound, Cleared, Handed Off — that strips are physically moved between. Above
+everything, a thin status header showing the active runway, the wind and the
+current pressure setting.
+
+What the Player Does
+Pick up a flight strip from the inbound queue and drop it into a rack. Click a
+contact on the radar to select it, then press a clearance button to issue the
+instruction: descend to level, turn onto a heading, reduce speed, cleared to
+land. Each accepted clearance updates that aircraft's strip and moves its blip
+one step along its route. There is no character, no vehicle, no camera to fly
+— the pointer is the only thing that moves.
+
+The Pressure
+Aircraft arrive on a schedule. Each one has a level and a distance, and two
+aircraft may not be cleared to the same level while their blips are converging.
+When two contacts get too close the pair flashes amber and a conflict card
+appears on the desk; clearing one of them to a different level resolves it and
+the card is dismissed. A strip left in the Inbound rack too long turns red.
+
+Shift Goal
+Work the arrivals bank: get every strip from Inbound to Handed Off with no
+conflict card left standing. When the last strip is handed off, the header
+prints the shift score and the desk goes quiet.
+
+Look and Feel
+Muted, low-contrast, instrument-panel colours — dark slate panels, amber and
+pale green text, a single warm desk lamp. Everything is flat and readable.
+Panels have real edges and sit slightly proud of the desk surface so the layout
+reads at a glance. No 3D scenery of any kind; the airport exists only as marks
+on the radar and words on the strips.
+
+Audio
+A low room tone with the hum of the radar. A soft paper sound when a strip is
+picked up and a firmer one when it is racked. A single soft chime on an
+accepted clearance and a two-tone alert when a conflict card appears.

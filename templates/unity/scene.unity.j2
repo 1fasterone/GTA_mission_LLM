@@ -1425,6 +1425,20 @@ MonoBehaviour:
    without one, _Systems has no collider and those micros are silently dead. #}
 {% set sys_kinds = sys_units | map(attribute="kind") | list %}
 {% set needs_sys_collider = "trigger" in sys_kinds or "interactable" in sys_kinds %}
+{# Which DIMENSION that collider is has to agree with the trigger/interactable
+   micros, and they do not read game_type directly — they read `dim_meta`
+   (src/unity_compose.subsystems_for), which reports 3D for a non-embodied game
+   whatever its declared dimension, because a UI board is a flat plane of 3D
+   colliders and Collider2D has no Raycast(Ray) overload. Emitting a
+   BoxCollider2D here for a 2d_topdown board therefore left [RequireComponent(
+   typeof(Collider))] unsatisfied — Unity logged "has possibly missing Required
+   Components" on _Systems and the click trigger never armed. One rule, spelled
+   the same way in both places. #}
+{# `default("walk")` because not every caller that renders this template supplies
+   locomotion, and the honest reading of its absence is "nothing declared this
+   game non-embodied" — which keeps every existing 2D project on the 2D collider
+   it already had, byte for byte. #}
+{% set sys_collider_is_2d = game_type in ("2D", "2d_topdown") and (locomotion | default("walk")) != "none" %}
 --- !u!1 &900002000
 GameObject:
   m_ObjectHideFlags: 0
@@ -1462,7 +1476,7 @@ Transform:
   m_RootOrder: 9
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 {% if needs_sys_collider %}
-{% if game_type in ("2D", "2d_topdown") %}
+{% if sys_collider_is_2d %}
 --- !u!61 &900002900
 BoxCollider2D:
   m_ObjectHideFlags: 0
