@@ -26,6 +26,11 @@ public class {{ s.name }} : MonoBehaviour
     [Header("Detection")]
     [SerializeField] private float  detectRadius = {{ "%.2f"|format(s.detect_radius) }}f;
 {% endif %}
+{% if variant == "click_zone" %}
+    [Header("Pointer")]
+    [Tooltip("How far down the pointer ray this zone can still be clicked.")]
+    [SerializeField] private float  maxClickDistance = 500f;
+{% endif %}
 {% for f in s.extra_fields %}
     {{ inject.field(f) }}
 {% endfor %}
@@ -105,6 +110,25 @@ public class {{ s.name }} : MonoBehaviour
     }
 {% endif %}
 {% endif %}
+{% if variant == "click_zone" %}
+
+    // ── Pointer activation (non-embodied games) ───────────────────────────────
+    // There is no tagged body to enter this zone, so the pointer is what
+    // arrives. Cast against the whole scene and confirm the hit is THIS
+    // collider rather than using OnMouseDown: OnMouseDown ignores the click
+    // when anything at all is over the object, and on a board of layered
+    // panels something usually is.
+    private void Update()
+    {
+        if (!Input.GetMouseButtonDown(0)) return;
+        if (!TryGetComponent<Collider>(out var self)) return;
+
+        var cam = Camera.main;
+        if (cam == null) return;
+        var ray = cam.ScreenPointToRay(Input.mousePosition);
+        if (self.Raycast(ray, out _, maxClickDistance)) Activate();
+    }
+{% endif %}
 
     // ── Activation ────────────────────────────────────────────────────────────
     private void Activate()
@@ -155,7 +179,7 @@ public class {{ s.name }} : MonoBehaviour
         Gizmos.color = new Color(1f, 0.8f, 0f, 0.25f);
         Gizmos.DrawSphere(transform.position, detectRadius);
     }
-{% elif variant == "zone_enter" or variant == "zone_exit" %}
+{% elif variant in ("zone_enter", "zone_exit", "click_zone") %}
     private void OnDrawGizmosSelected()
     {
         Gizmos.color = new Color(0f, 0.8f, 1f, 0.2f);

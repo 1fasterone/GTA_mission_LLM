@@ -1265,12 +1265,12 @@ def unity_npc_dialog(
 _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
     "controller": (
         "first_person|third_person|top_down|2d_platformer|2d_topdown|platformer_2_5d|"
-        "vehicle_car|vehicle_bike|flying|swimming|aircraft|fighting",
+        "vehicle_car|vehicle_bike|flying|swimming|aircraft|fighting|pointer",
         "Generate a focused Unity character controller (drop-in script + optional input asset).",
     ),
     "camera": (
         "follow|follow_2d|follow_2_5d|orbit|first_person|cinemachine_3p|cinemachine_topdown|"
-        "rts_pan_zoom|vehicle_chase|cinematic_dolly",
+        "rts_pan_zoom|vehicle_chase|cinematic_dolly|board_framing",
         "Generate a focused Unity camera rig (Cinemachine or plain MonoBehaviour).",
     ),
     "physics": (
@@ -1284,7 +1284,7 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
         "Generate a focused Unity Canvas / UI Toolkit HUD element.",
     ),
     "input": (
-        "keyboard_mouse|gamepad|touch|dual_stick|racing_wheel|vr_xr",
+        "keyboard_mouse|gamepad|touch|dual_stick|racing_wheel|vr_xr|pointer",
         "Generate a Unity Input System action map + InputReader ScriptableObject.",
     ),
     "ai": (
@@ -1347,7 +1347,7 @@ _SIMPLE_MICROS: dict[str, tuple[str, str]] = {
         """,
     ),
     "trigger": (
-        "zone_enter|zone_exit|timer_trigger|distance_trigger|compound",
+        "zone_enter|zone_exit|timer_trigger|distance_trigger|compound|click_zone",
         """Generate a Unity event trigger zone (enter/exit/timer/distance/compound).
 
         Events fired are derived from the prompt — spawns enemies, starts dialogue, etc.

@@ -32,7 +32,9 @@ public class EntitySpawner : MonoBehaviour
     private static bool GroupActive(string scene, string group) =>
         !_sceneGroups.TryGetValue(scene, out var set) || set.Contains(group);
 {% endif %}
-{% if game_type not in ("2D", "2d_topdown") %}
+{# `or ui_board`: a UI board takes the generic spawn branch even in a 2D
+   project, and that branch references _path_N for any path-placed group. #}
+{% if game_type not in ("2D", "2d_topdown") or ui_board %}
 {% for e in entities %}
 {% if e.placement == "path" and e.path_points and not entity_model_paths.get(e.name, "").startswith("skip:") %}
     private static readonly Vector3[] _path_{{ loop.index0 }} =
@@ -94,11 +96,15 @@ public class EntitySpawner : MonoBehaviour
 {% if scene_entity_map %}
         var _scene = SceneManager.GetActiveScene().name;
 {% endif %}
-{% if game_type == "2D" %}
+{# A UI board takes the generic branch below whatever the project's declared
+   dimension: it is the only one that honours the instance positions
+   _layout_ui_board baked, and both 2D builders arrange their content around a
+   player this game declares it does not have. #}
+{% if game_type == "2D" and not ui_board %}
         // 2D side-scroller archetype: build a COHERENT course (continuous ground +
         // entities laid along +X) instead of formula-scattering props.
         BuildSideScroller2D(sh);
-{% elif game_type == "2d_topdown" %}
+{% elif game_type == "2d_topdown" and not ui_board %}
         // 2D top-down archetype: no ground/gravity concept — scatter entity
         // groups across an open X/Y arena instead of a side-scroller's
         // single-lane course.
@@ -171,8 +177,22 @@ public class EntitySpawner : MonoBehaviour
         // cells) tinted with the group's palette color — no mesh involved.
         bool isFx = modelPath == "fx:particles";
 {% endif %}
+{% if has_ui_entities %}
+        // "ui:<element>" → a control on the board, BUILT rather than loaded.
+        // The asset library has no UI kit (fifteen HUD glyph sprites), so a
+        // "commit" or a "staging area" can only ever resolve to the wrong
+        // model — see Tier U in src/unity_entity_asset_resolver.py.
+        string uiElement = !string.IsNullOrEmpty(modelPath) && modelPath.StartsWith("ui:")
+            ? modelPath.Substring(3) : null;
+{% endif %}
         // Optional real model from the default pack (null → primitive fallback).
-{% if has_fx_entities %}
+{% if has_fx_entities and has_ui_entities %}
+        GameObject modelPrefab = string.IsNullOrEmpty(modelPath) || isFx || uiElement != null
+            ? null : Resources.Load<GameObject>(modelPath);
+{% elif has_ui_entities %}
+        GameObject modelPrefab = string.IsNullOrEmpty(modelPath) || uiElement != null
+            ? null : Resources.Load<GameObject>(modelPath);
+{% elif has_fx_entities %}
         GameObject modelPrefab = string.IsNullOrEmpty(modelPath) || isFx
             ? null : Resources.Load<GameObject>(modelPath);
 {% else %}
@@ -312,6 +332,14 @@ public class EntitySpawner : MonoBehaviour
             }
             else
 {% endif %}
+{% if has_ui_entities %}
+            if (uiElement != null)
+            {
+                go = BuildUIElement(groupName + "_" + i, uiElement, groupName, i,
+                                    count, scale, color, sh);
+            }
+            else
+{% endif %}
 {% if has_procedural_entities %}
             if (procMesh != null)
             {
@@ -346,7 +374,11 @@ public class EntitySpawner : MonoBehaviour
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
             go.transform.localScale = Vector3.one * finalScale;
-{% if game_type == "2D" %}
+{# `not ui_board`: a board is picked by Physics.Raycast against 3D colliders
+   (the pointer controller, and the interactable/trigger micros' pointer
+   detection). Swapping them for Collider2D here would compile and then never
+   register a click. #}
+{% if game_type == "2D" and not ui_board %}
             // 2D: strip imported/primitive 3D colliders, ensure one 2D collider so
             // the Rigidbody2D player can stand on / collide with this entity.
             foreach (var c3d in go.GetComponentsInChildren<Collider>()) SafeDestroy(c3d);
@@ -397,13 +429,19 @@ public class EntitySpawner : MonoBehaviour
             else
             {
                 pos = PlaceAt(placement, i, count, effectiveSpacing, effectiveRadius);
-{% if game_type == "2D" %}
+{% if game_type == "2D" and not ui_board %}
                 pos = new Vector3(pos.x, pos.z, 0f);  // XZ layout -> XY side-on plane
 {% endif %}
                 pos.y += pivotOffsetY * finalScale;
             }
             go.transform.position = pos;
-            if (sh != null && modelPrefab == null{% if has_fx_entities %} && !isFx{% endif %})   // models keep their own materials
+{% if has_ui_entities %}
+            // A card's pivot IS its centre and there is no ground under a
+            // board, so the ground-snap lift above would push every element
+            // half its own height off the row the layout put it on.
+            if (uiElement != null) go.transform.position = pos - new Vector3(0f, pivotOffsetY * finalScale, 0f);
+{% endif %}
+            if (sh != null && modelPrefab == null{% if has_fx_entities %} && !isFx{% endif %}{% if has_ui_entities %} && uiElement == null{% endif %})   // models keep their own materials
             {
                 var m = new Material(sh);
                 m.color = color;
@@ -419,6 +457,187 @@ public class EntitySpawner : MonoBehaviour
             MountIfWeapon(go, kind);
         }
     }
+
+{% if has_ui_entities %}
+    // ── UI elements ("ui:<element>") ─────────────────────────────────────────
+    // Built here rather than resolved from the library, because there is no
+    // library to resolve them from: the catalog holds fifteen HUD glyph
+    // sprites and no UI kit, so a "commit", a "staging area" or a "terminal
+    // window" can only ever match the wrong model. Live, CodeVault's file
+    // icons became Kenney furniture.
+    //
+    // Every element is a PLATE — a cube flattened to card depth — layered with
+    // a border and a label, never a bare primitive left at default proportions.
+    // Depth is what makes a board read as a board: the border sits proud of
+    // the body, the label proud of that, so a light rig throws real edges.
+    private const float UiCardDepth   = 0.08f;
+    private const float UiBorderWidth = 0.055f;
+
+    private static Material UiMaterial(Shader sh, Color c)
+    {
+        var m = new Material(sh != null ? sh : Shader.Find("Universal Render Pipeline/Lit"));
+        m.color = c;
+        if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.15f);
+        return m;
+    }
+
+    /// <summary>One flat plate, parented and coloured. Colliders are stripped:
+    /// the finished element carries exactly one, on its root, so the pointer
+    /// picks the CARD and never its own trim.</summary>
+    private static Transform UiPlate(Transform parent, string name, Vector3 size,
+                                     Vector3 localPos, Color c, Shader sh)
+    {
+        var q = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        q.name = name;
+        var col = q.GetComponent<Collider>();
+        if (col != null) SafeDestroy(col);
+        q.transform.SetParent(parent, false);
+        q.transform.localScale    = size;
+        q.transform.localPosition = localPos;
+        var r = q.GetComponent<Renderer>();
+        if (r != null) r.sharedMaterial = UiMaterial(sh, c);
+        return q.transform;
+    }
+
+    /// <summary>A world-space caption. TextMesh rather than a Canvas: the board
+    /// IS world space, so the text has to live on the card and move with it.</summary>
+    private static void UiLabel(Transform parent, string text, float width, float z, Color c)
+    {
+        if (string.IsNullOrEmpty(text)) return;
+        var go = new GameObject("Label");
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = new Vector3(0f, 0f, z);
+        var tm = go.AddComponent<TextMesh>();
+        tm.text          = text;
+        tm.characterSize = 0.08f;
+        tm.fontSize      = 72;
+        tm.anchor        = TextAnchor.MiddleCenter;
+        tm.alignment     = TextAlignment.Center;
+        tm.color         = c;
+        // Fit the caption to the card rather than letting it run off the edge:
+        // a label wider than the thing it names reads as a rendering fault.
+        var mr = go.GetComponent<MeshRenderer>();
+        if (mr != null)
+        {
+            float w = mr.bounds.size.x;
+            if (w > 0.001f && w > width * 0.86f)
+                go.transform.localScale = Vector3.one * (width * 0.86f / w);
+        }
+    }
+
+    /// <summary>"FolderContainers" → "Folder Containers", and the instance
+    /// index appended when a group has more than one, so a board of six commits
+    /// is six DISTINCT cards rather than the same word six times.</summary>
+    private static string UiCaption(string groupName, int index, int count)
+    {
+        if (string.IsNullOrEmpty(groupName)) return "";
+        var sb = new System.Text.StringBuilder(groupName.Length + 8);
+        for (int i = 0; i < groupName.Length; i++)
+        {
+            char ch = groupName[i];
+            if (i > 0 && char.IsUpper(ch) && !char.IsUpper(groupName[i - 1])) sb.Append(' ');
+            if (ch == '_' || ch == '-') sb.Append(' '); else sb.Append(ch);
+        }
+        string label = sb.ToString().Trim();
+        return count > 1 ? label + " " + (index + 1) : label;
+    }
+
+    /// <summary>Build one board control. `element` is the vocabulary from
+    /// src/unity_layout_archetype.ui_element_of — the same table that decided
+    /// this group's cell in the layout, so a group laid out as a panel is
+    /// built as one.</summary>
+    private GameObject BuildUIElement(string name, string element, string groupName,
+                                      int index, int count, float scale,
+                                      Color color, Shader sh)
+    {
+        var root = new GameObject(name);
+        var t = root.transform;
+
+        // Body / border / ink, derived from the group's own palette colour so
+        // the board is this project's palette rather than a generic grey.
+        Color body   = color;
+        Color border = Color.Lerp(color, Color.white, 0.42f);
+        Color ink    = color.grayscale > 0.5f ? new Color(0.10f, 0.11f, 0.14f)
+                                              : new Color(0.96f, 0.97f, 1f);
+        float w = 1f, h = 1f;
+        bool  caption = true;
+
+        switch (element)
+        {
+            case "window":
+                // Body, a title bar across the top, an inset content well.
+                w = 1.6f; h = 1.1f;
+                UiPlate(t, "Body",  new Vector3(w, h, UiCardDepth), Vector3.zero, body, sh);
+                UiPlate(t, "TitleBar",
+                        new Vector3(w - UiBorderWidth * 2f, 0.17f, UiCardDepth * 0.9f),
+                        new Vector3(0f, h * 0.5f - 0.115f, -UiCardDepth * 0.35f), border, sh);
+                UiPlate(t, "Well",
+                        new Vector3(w - 0.14f, h - 0.34f, UiCardDepth * 0.6f),
+                        new Vector3(0f, -0.07f, -UiCardDepth * 0.2f),
+                        Color.Lerp(body, Color.black, 0.35f), sh);
+                break;
+            case "panel":
+                w = 1.25f; h = 1.0f;
+                UiPlate(t, "Body", new Vector3(w, h, UiCardDepth), Vector3.zero, body, sh);
+                UiPlate(t, "Header",
+                        new Vector3(w - UiBorderWidth * 2f, 0.13f, UiCardDepth * 0.9f),
+                        new Vector3(0f, h * 0.5f - 0.09f, -UiCardDepth * 0.35f), border, sh);
+                break;
+            case "list":
+                // A body plus real rows — a list with no rows is a rectangle.
+                w = 1.15f; h = 1.15f;
+                UiPlate(t, "Body", new Vector3(w, h, UiCardDepth), Vector3.zero, body, sh);
+                for (int r = 0; r < 4; r++)
+                    UiPlate(t, "Row" + r,
+                            new Vector3(w - 0.18f, 0.11f, UiCardDepth * 0.55f),
+                            new Vector3(0f, h * 0.5f - 0.19f - r * 0.24f, -UiCardDepth * 0.3f),
+                            Color.Lerp(body, border, r % 2 == 0 ? 0.55f : 0.3f), sh);
+                break;
+            case "button":
+                // Raised face inside a recessed rim — the shape that says
+                // "press me" without a single word of instruction.
+                w = 0.95f; h = 0.42f;
+                UiPlate(t, "Rim",  new Vector3(w, h, UiCardDepth * 0.7f), Vector3.zero,
+                        Color.Lerp(body, Color.black, 0.3f), sh);
+                UiPlate(t, "Face",
+                        new Vector3(w - UiBorderWidth * 2f, h - UiBorderWidth * 2f, UiCardDepth),
+                        new Vector3(0f, 0f, -UiCardDepth * 0.3f), border, sh);
+                break;
+            case "icon":
+                // A rounded-feeling tile: a plate, a smaller contrasting mark.
+                w = 0.6f; h = 0.6f;
+                UiPlate(t, "Tile", new Vector3(w, h, UiCardDepth), Vector3.zero, body, sh);
+                UiPlate(t, "Mark", new Vector3(w * 0.44f, h * 0.44f, UiCardDepth * 1.2f),
+                        new Vector3(0f, 0f, -UiCardDepth * 0.4f), border, sh);
+                caption = false;   // an icon grid captioned six times is noise
+                break;
+            case "label":
+                // Text only. A label with a plate behind it is a card.
+                w = 1.1f; h = 0.3f;
+                break;
+            default:   // "card" and anything the table has no shape for
+                w = 0.95f; h = 1.25f;
+                UiPlate(t, "Border", new Vector3(w, h, UiCardDepth * 0.8f), Vector3.zero, border, sh);
+                UiPlate(t, "Body",
+                        new Vector3(w - UiBorderWidth * 2f, h - UiBorderWidth * 2f, UiCardDepth),
+                        new Vector3(0f, 0f, -UiCardDepth * 0.25f), body, sh);
+                break;
+        }
+
+        if (caption)
+            UiLabel(t, UiCaption(groupName, index, count), w, -UiCardDepth, ink);
+        else if (element == "label")
+            UiLabel(t, UiCaption(groupName, index, count), w, 0f, border);
+
+        // ONE collider, on the root, covering the whole element — what the
+        // pointer picks and what the interactable/trigger micros require.
+        var bc = root.AddComponent<BoxCollider>();
+        bc.size   = new Vector3(w, h, Mathf.Max(UiCardDepth * 2f, 0.12f));
+        bc.center = Vector3.zero;
+        return root;
+    }
+{% endif %}
 
     // A weapon entity is the player's HELD gun, not scenery. Left in the world
     // it spawns as an unreachable prop somewhere on the map and the player

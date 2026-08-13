@@ -32,6 +32,12 @@ ControllerVariant = Literal[
     # New genres
     "aircraft",   # fixed-wing arcade: pitch/roll/yaw/throttle via Rigidbody
     "fighting",   # third_person base + melee combat atoms (punch/kick/block/dodge)
+    # No avatar at all: the player acts on the game through the cursor
+    # (locomotion='none'). Emitted from its own template — PointerController.cs.j2
+    # — because it is not this file's subject with the movement removed. Every
+    # variant above answers "how does the player's body move"; this one answers
+    # "what is the pointer over, what did it pick up, where did that land".
+    "pointer",
 ]
 
 VARIANTS = list(ControllerVariant.__args__)   # type: ignore[attr-defined]
@@ -59,6 +65,9 @@ Ability = Literal[
     "interact", "use_item", "open_inventory", "open_map", "pause",
     # vehicle
     "nitro", "brake",
+    # pointer (the `pointer` variant) — the verbs of a game with no avatar.
+    # "grab" above is a brawler's grapple, not picking a card up off a board.
+    "drag",
 ]
 
 InputBackend  = Literal["input_system", "legacy"]
@@ -81,6 +90,12 @@ class ControllerSchema(BaseModel):
     move_speed:   float = 6.0
     sprint_speed: float = 10.0
     jump_force:   float = 8.0
+
+    # ── Pointer (pointer variant only) ────────────────────────────────────────
+    # Hover feedback is on by default because it is the only thing that tells a
+    # player a board is interactive at all: with no avatar there is no walking
+    # up to something to discover it responds.
+    hover_highlight: bool = True
 
     # ── Mouse look (first_person variant) ─────────────────────────────────────
     # Without these the first_person rig emitted movement but no rotation at
@@ -447,6 +462,16 @@ class ControllerPipeline(UnityMicroPipeline):
             # Free-fly: ascend/descend override jump
             schema.abilities = [a for a in schema.abilities
                                 if a not in ("jump", "double_jump")]
+        if variant == "pointer":
+            # There is no body, so every locomotion and combat atom is
+            # meaningless here — keep only what a cursor can actually do. Drag
+            # is added when nothing survives, because a board you can hover but
+            # never move anything on is a picture.
+            schema.abilities = [a for a in schema.abilities
+                                if a in ("drag", "interact", "use_item",
+                                         "open_inventory", "open_map", "pause")]
+            if "drag" not in schema.abilities:
+                schema.abilities.append("drag")
 
         # fly binds Shift; drop sprint to avoid key conflict
         if "fly" in schema.abilities and "sprint" in schema.abilities:
@@ -533,8 +558,13 @@ class ControllerPipeline(UnityMicroPipeline):
         scripts_dir = out_dir / "Scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
+        # The pointer variant has its own template: Controller.cs.j2 is a
+        # movement rig branching on which KIND of body it drives, and a game
+        # with no body belongs in none of those branches.
+        tpl = ("PointerController.cs.j2" if variant == "pointer"
+               else "Controller.cs.j2")
         (scripts_dir / f"{schema.name}.cs").write_text(
-            env.get_template("Controller.cs.j2").render(s=schema, variant=variant),
+            env.get_template(tpl).render(s=schema, variant=variant),
             encoding="utf-8",
         )
 

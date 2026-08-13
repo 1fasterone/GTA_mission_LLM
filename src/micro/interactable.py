@@ -19,7 +19,12 @@ InteractableVariant = Literal[
 ]
 VARIANTS = list(InteractableVariant.__args__)   # type: ignore[attr-defined]
 
-Detection = Literal["trigger", "raycast"]
+# "trigger"  a tagged body walks into it
+# "raycast"  the camera's forward ray hits it — a crosshair
+# "pointer"  the CURSOR's ray hits it and the player clicks. The detection mode
+#            for a game with no avatar: the other two both wait for a body,
+#            one to arrive and one to aim, and a non-embodied game has neither.
+Detection = Literal["trigger", "raycast", "pointer"]
 InputKey  = Literal["E", "F", "Space", "Return"]
 
 
@@ -44,7 +49,7 @@ class InteractableSchema(CodeExtensibleSchema):
     @field_validator("detection", mode="before")
     @classmethod
     def _clamp_detection(cls, v: str) -> str:
-        return clamp_enum(v, ("trigger", "raycast"), "trigger")
+        return clamp_enum(v, ("trigger", "raycast", "pointer"), "trigger")
 
     @field_validator("interact_key", mode="before")
     @classmethod

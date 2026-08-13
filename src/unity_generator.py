@@ -14,7 +14,8 @@ from pathlib import Path
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
-from .unity_schema import ProceduralMesh, UnitySchema, UnityScript
+from .unity_schema import (ProceduralMesh, UnitySchema, UnityScript,
+                           is_embodied)
 from .unity_asset_resolver import resolve_assets
 from .unity_entity_asset_resolver import (resolve_entity_assets,
                                           texture_dirs_with_res_root_for)
@@ -2082,7 +2083,7 @@ class UnityProjectGenerator:
                 _is_vehicle = (_pe.kind or "").lower() == "vehicle"
                 _pe_path = entity_model_paths.get(_pe.name, "")
                 if _pe_path and not _pe_path.startswith(
-                        ("skip:", "procedural:", "fx:")):
+                        ("skip:", "procedural:", "fx:", "ui:")):
                     _pe_model = _by_resource_path.get(_pe_path)
                     _merged = {
                         "resource_path": _pe_path,
@@ -2128,6 +2129,20 @@ class UnityProjectGenerator:
         # byte-identical.
         has_fx_entities = any(
             p.startswith("fx:") for p in entity_model_paths.values())
+        # A non-embodied game's content is UI: entities routed to "ui:<element>"
+        # are BUILT as board controls (BuildUIElement) rather than loaded, and
+        # the flag gates that whole branch so every other project's spawner
+        # stays byte-identical. See Tier U in unity_entity_asset_resolver.py.
+        has_ui_entities = any(
+            p.startswith("ui:") for p in entity_model_paths.values())
+        # A board is laid out by compute_layout (the UISurface primitive) and
+        # spawned by the generic branch, which is the only one that honours the
+        # baked instance positions. The two 2D builders lay their content out
+        # around a PLAYER — a side-scroller's lane, a top-down arena about the
+        # spawn — so for a game with no avatar they arrange the board around
+        # something that is not there. That is exactly how CodeVault's file
+        # icons ended up scattered like debris.
+        ui_board = not is_embodied(schema)
         # path_width > 0 on a path-placed group = end-to-end segment tiling
         # (SpawnTiledGroup) — gate the spawner's tile branch so projects
         # without tiled paths stay byte-identical. 3D only: 2D archetypes
@@ -2241,6 +2256,8 @@ class UnityProjectGenerator:
             "entity_fit_sizes":  entity_fit_sizes,
             "has_procedural_entities": has_procedural_entities,
             "has_fx_entities":   has_fx_entities,
+            "has_ui_entities":   has_ui_entities,
+            "ui_board":          ui_board,
             "has_tiled_paths":   has_tiled_paths,
             "has_baked_yaws":    has_baked_yaws,
             "has_banked_paths":  has_banked_paths,
@@ -2288,7 +2305,17 @@ class UnityProjectGenerator:
             "EditorBuildSettings.asset.j2", {**base_ctx, "scene_guids": scene_guids}
         )
 
-        _cam = _CAMERA_PRESETS.get(schema.game_type, _CAMERA_PRESETS["3D"])
+        # A UI board is the X-Y plane at z = 0 (src/unity_layout._layout_ui_board),
+        # so the camera has to look STRAIGHT AT it from -Z. Every 3D-ish preset
+        # is tilted down at a ground plane — the 3D one by 35 degrees — which
+        # frames a board edge-on. Keyed off the declaration rather than the
+        # game_type because a non-embodied game can be authored 2D, top-down or
+        # 3D and the board is the same shape in all three. The composed
+        # board_framing camera re-fits this at runtime once the board exists;
+        # this is what a build WITHOUT --compose gets, and it is already
+        # correct because the layout centres the board on the origin.
+        _cam = (_CAMERA_PRESETS["2D"] if not is_embodied(schema)
+                else _CAMERA_PRESETS.get(schema.game_type, _CAMERA_PRESETS["3D"]))
         # scripts_by_type lets the scene template wire MonoBehaviour components
         # to the correct script GUID without looping in Jinja2.
         scripts_by_type = {s.type: s for s in schema.scripts}

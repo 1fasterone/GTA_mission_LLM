@@ -15,6 +15,13 @@ from .code_fields import CodeField, CodeMethod, lint_code_fragment, lint_usings,
 TriggerVariant = Literal[
     "zone_enter", "zone_exit", "timer_trigger",
     "distance_trigger", "compound",
+    # The pointer's zone. Every variant above waits for a BODY — a tagged
+    # collider entering, exiting, or coming within a radius — which a game that
+    # declared it has no avatar (locomotion='none') can never satisfy: its
+    # triggers would sit armed forever and SEAM 7/8 would wire a mission
+    # objective to an event that cannot fire. click_zone is the same trigger
+    # with the same OnActivated seam, reached by clicking the region instead.
+    "click_zone",
 ]
 VARIANTS = list(TriggerVariant.__args__)  # type: ignore[attr-defined]
 
