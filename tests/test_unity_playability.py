@@ -123,6 +123,41 @@ class TestReportedFailures:
         assert "objective" not in checks
 
 
+class TestConceptFidelity:
+    """The gap brief_entities cannot see: the NAME survived, the WORDS didn't.
+    'purple hippos with six legs' -> an entity called Hippo with no colour and
+    no leg count grades clean on entity coverage alone."""
+
+    def test_a_modifier_dropped_from_every_field_is_a_warning(self):
+        brief = "ENTITIES\n- Hippo: a purple hippo with six legs.\n"
+        schema = _playable(user_prompt=brief)
+        schema.entities.append(
+            EntitySpec(name="Hippo", kind="character", model_hint="hippo"))
+        rep, checks = _checks(schema)
+        assert "concept_fidelity" in checks
+        finding = next(f for f in rep.findings if f.check == "concept_fidelity")
+        assert finding.severity == WARN
+        assert rep.playable          # WARN never flips the verdict alone
+
+    def test_a_build_that_kept_the_words_passes(self):
+        brief = "ENTITIES\n- Hippo: a purple hippo with six legs.\n"
+        schema = _playable(user_prompt=brief)
+        schema.entities.append(EntitySpec(
+            name="Hippo", kind="character",
+            model_hint="purple hippo six legs"))
+        _, checks = _checks(schema)
+        assert "concept_fidelity" not in checks
+
+    def test_an_empty_user_prompt_is_not_graded(self):
+        rep = evaluate(_playable(user_prompt=""))
+        assert "concept_fidelity" not in rep.checks
+        assert "user_prompt" in rep.not_graded["concept_fidelity"]
+
+    def test_a_vibe_prompt_with_no_concrete_words_is_not_graded(self):
+        rep = evaluate(_playable(user_prompt="make me a game"))
+        assert "concept_fidelity" not in rep.checks
+
+
 # ── individual checks ─────────────────────────────────────────────────────────
 
 class TestAvatar:
