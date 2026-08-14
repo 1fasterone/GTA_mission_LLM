@@ -587,18 +587,31 @@ def _check_concept_fidelity(schema: UnitySchema,
                   "schema.meta.user_prompt is empty — nothing to compare the "
                   "build against (a replay grades the schema, not the brief)")
         return
-    fidelity = check_fidelity(prompt, schema)
-    if not fidelity.checked:
+    # The asset half only runs when the build stamped its resolved table
+    # (unity_generator._resolve_all_models). Without it this graded modifiers
+    # only — and an entity resolved to an unrelated model is the larger loss.
+    paths = meta.get("entity_model_paths")
+    fidelity = check_fidelity(
+        prompt, schema,
+        entity_model_paths=paths if isinstance(paths, dict) else None)
+    # `and not gaps`: abstaining on an empty word count while holding asset gaps
+    # would drop them silently, which is the defect this whole module measures.
+    if not fidelity.checked and not fidelity.gaps:
         _ungraded(rep, "concept_fidelity",
                   "the brief commits to no concrete words to check")
         return
     if fidelity.gaps:
         lost = ", ".join(g.demand for g in fidelity.gaps[:6])
+        n_asset = sum(1 for g in fidelity.gaps if g.kind == "asset")
+        what = (f"{len(fidelity.gaps)}/{fidelity.checked} checks lost"
+                if n_asset else
+                f"{len(fidelity.gaps)}/{fidelity.checked} demanded words never "
+                f"reached the build")
         rep.findings.append(Finding(
             "concept_fidelity", WARN,
-            f"{fidelity.score}/100 concept fidelity — "
-            f"{len(fidelity.gaps)}/{fidelity.checked} demanded words never "
-            f"reached the build ({lost})",
+            f"{fidelity.score}/100 concept fidelity — {what} ({lost})"
+            + (f"; {n_asset} entity/entities resolved to an unrelated model"
+               if n_asset else ""),
             "Step 3 schema-fill / Step 6 model spec"))
     rep.checks["concept_fidelity"] = not fidelity.gaps
 

@@ -671,6 +671,73 @@ def unity_playability(
         raise typer.Exit(1)
 
 
+@app.command("unity-fidelity")
+def unity_fidelity(
+    schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),
+    brief_file:  str = typer.Option(None, "--brief",
+                                    help="Brief to grade against; defaults to "
+                                         "schema.meta.user_prompt"),
+    min_score:   int = typer.Option(0, "--min-score",
+                                    help="Exit non-zero below this 0-100 score"),
+    limit:       int = typer.Option(20, "--limit",
+                                    help="Max losses to list"),
+) -> None:
+    """Grade how much of the brief's own vocabulary reached the build.
+
+    Playability answers "is it a game". This answers "is it THE game that was
+    asked for" — the two are independent, and a build can score 100 on one
+    while losing every adjective in the prompt.
+
+    Two kinds of loss. A MODIFIER gap is a word bound to a noun in the brief
+    that appears nowhere in the output ("purple", "six legs"). An ASSET gap is
+    an entity whose resolved model shares no vocabulary with the thing it is
+    supposed to be — "commit node" resolved to marble-center-butterfly-low.fbx,
+    where the entity name survived and the model is a marble run. Asset gaps
+    need `schema.meta.entity_model_paths`, which the generator stamps.
+
+      python main.py unity-fidelity output/unity/DropZone/DropZone.schema.json
+      python main.py unity-fidelity MyGame.schema.json --brief prompts/hippos.txt
+    """
+    from src.unity_concept_fidelity import check_fidelity, render_scorecard
+
+    data   = json.loads(Path(schema_file).read_text(encoding="utf-8"))
+    schema = UnitySchema.model_validate(data)
+    meta   = schema.meta if isinstance(schema.meta, dict) else {}
+
+    if brief_file:
+        brief = Path(brief_file).read_text(encoding="utf-8")
+    else:
+        brief = str(meta.get("user_prompt", "") or "")
+    if not brief.strip():
+        # Abstain loudly with the remedy, never grade a build against nothing:
+        # a 100/100 from an empty brief is the worst possible output here.
+        console.print("[yellow]ABSTAIN[/] no brief to grade against — this "
+                      "schema carries no meta.user_prompt. Pass --brief "
+                      "<file> with the brief it was built from.")
+        raise typer.Exit(2)
+
+    paths  = meta.get("entity_model_paths")
+    report = check_fidelity(
+        brief, schema,
+        entity_model_paths=paths if isinstance(paths, dict) else None)
+    if not report.checked:
+        # Never print 100/100 for a build nothing was checked against — an
+        # unearned perfect score is worse than no score, because it is the one
+        # output a reader will act on without reading.
+        console.print("[yellow]ABSTAIN[/] nothing to check — the brief names no "
+                      "concrete nouns and the schema has no entities to bind "
+                      "them to. Fidelity NOT graded.")
+        raise typer.Exit(2)
+    console.print(render_scorecard(report, limit=limit), markup=False)
+    if not isinstance(paths, dict):
+        console.print("[yellow]NOTE[/]  no meta.entity_model_paths — modifiers "
+                      "graded, assets NOT graded. Re-run the build to stamp it.")
+    if min_score and report.score < min_score:
+        console.print(f"[red]FAIL[/] concept fidelity {report.score}/100 "
+                      f"below --min-score {min_score}")
+        raise typer.Exit(1)
+
+
 @app.command("unity-eval")
 def unity_eval(
     case:  list[str] = typer.Option(None, "--case",
