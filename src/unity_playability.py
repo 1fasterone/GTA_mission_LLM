@@ -84,6 +84,10 @@ _CHECK_SEVERITY: dict[str, str] = {
     "objective":         ERROR,
     "mission_loop":      ERROR,
     "mission_visible":   WARN,
+    # An optional objective that cannot advance is content the player can never
+    # resolve — but it cannot block MissionComplete, so it is not the same
+    # defect as an unbound required one and does not fail mission_loop.
+    "mission_optional":  WARN,
     # Advisory only: carries the story-beats -> missions remedy rather than
     # grading anything, so it never sets rep.checks and never moves the score.
     "mission_derivable": INFO,
@@ -466,6 +470,19 @@ def _check_mission_loop(schema: UnitySchema, rep: PlayabilityReport) -> None:
     (schema.meta["wiring"], stamped by MicroComposer.wiring_report) rather than
     from what the schema merely declares.
 
+    Completion is AND-shaped, and grading it as OR-shaped was this check's own
+    version of the defect it exists to catch. `Objectives.cs.j2` sets
+    MissionComplete only once EVERY non-optional objective is done, so a
+    mission with one bound objective and five dead ones can never finish — and
+    `ok = bool(bound)` passed it with a warning. It is graded on the required
+    objectives that have no source instead: one of those is an unwinnable
+    build, however many others bound.
+
+    The mirror error was failing an all-`survive` mission, where the tracker's
+    own clock advances every objective and the correct number of seams is zero.
+    Self-driven objectives count as advanceable; optional ones cannot block,
+    because they cannot block MissionComplete either.
+
     Ungraded on a non-composed build: without --compose there are no seams to
     bind objectives, and grading a standalone project against a loop it never
     claimed to have would be a false failure.
@@ -482,10 +499,15 @@ def _check_mission_loop(schema: UnitySchema, rep: PlayabilityReport) -> None:
                   "the build declares no mission objectives to advance")
         return
 
-    bound = list(wiring.get("objectives_bound") or [])
-    unbound = list(wiring.get("objectives_unbound") or [])
-    ok = bool(bound)
-    if not ok:
+    bound       = list(wiring.get("objectives_bound") or [])
+    unbound     = list(wiring.get("objectives_unbound") or [])
+    self_driven = list(wiring.get("objectives_self_driven") or [])
+    optional    = list(wiring.get("objectives_optional_unbound") or [])
+    advanceable = len(bound) + len(self_driven)
+    required    = int(wiring.get("objectives_required") or (len(bound) + len(unbound)))
+
+    ok = advanceable > 0 and not unbound
+    if not advanceable:
         rep.findings.append(Finding(
             "mission_loop", ERROR,
             f"none of the {total} mission objective(s) has an event source, so "
@@ -495,15 +517,26 @@ def _check_mission_loop(schema: UnitySchema, rep: PlayabilityReport) -> None:
             "src/unity_compose.py SEAM 8"))
     elif unbound:
         rep.findings.append(Finding(
-            "mission_loop", WARN,
-            f"{len(unbound)} of {total} objective(s) cannot advance at runtime "
-            f"({', '.join(unbound[:4])}) — no composed micro raises the event "
-            "their type needs",
+            "mission_loop", ERROR,
+            f"{len(unbound)} of {required} REQUIRED objective(s) cannot advance "
+            f"at runtime ({', '.join(unbound[:4])}) — no composed micro raises "
+            "the event their type needs, and the mission completes only when "
+            "every required objective does, so it can never be won",
+            "src/unity_compose.py SEAM 8"))
+    if optional:
+        rep.findings.append(Finding(
+            "mission_optional", WARN,
+            f"{len(optional)} optional objective(s) cannot advance "
+            f"({', '.join(optional[:4])}) — the run is still winnable without "
+            "them, but they are content the player can never resolve",
             "src/unity_compose.py SEAM 8"))
     rep.checks["mission_loop"] = ok
 
-    # Progress the player cannot see is progress they cannot act on.
-    if ok:
+    # Progress the player cannot see is progress they cannot act on. Graded on
+    # anything being able to advance, not on the loop being whole: a build with
+    # one dead objective still shows the other five, and skipping the readout
+    # check would hide a second defect behind the first.
+    if advanceable:
         shown = bool(wiring.get("hud_objective"))
         if not shown:
             rep.findings.append(Finding(

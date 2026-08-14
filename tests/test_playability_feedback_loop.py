@@ -185,6 +185,91 @@ def test_mission_loop_passes_when_an_objective_is_bound(tmp_path):
     assert rep.checks["mission_loop"] is True
 
 
+# ── completion is AND-shaped ─────────────────────────────────────────────────
+#
+# `ok = bool(bound)` was this check's own version of the defect it exists to
+# catch. Objectives.cs.j2 sets MissionComplete only once EVERY non-optional
+# objective is done, so one live objective out of six is still an unwinnable
+# build — and it passed with a warning.
+
+def _partly_wired() -> UnitySchema:
+    schema = _schema(missions=[MissionSpec(id="m", title="M", objectives=[
+        MissionObjective(id=f"o{i}", description="d", type="reach")
+        for i in range(1, 7)])])
+    schema.meta["wiring"] = {
+        "objectives_total": 6, "objectives_required": 6,
+        "objectives_bound": ["MObjectives.o1"],
+        "objectives_unbound": [f"MObjectives.o{i} (reach)" for i in range(2, 7)],
+        "objectives_optional_unbound": [], "objectives_self_driven": [],
+        "hud_objective": True, "seams": ["SEAM 8", "SEAM 9"]}
+    return schema
+
+
+def test_one_live_objective_out_of_six_is_not_a_winnable_mission():
+    rep = evaluate(_partly_wired())
+    assert rep.checks["mission_loop"] is False
+    assert any(f.check == "mission_loop" and f.severity == "error"
+               and "REQUIRED" in f.summary for f in rep.findings)
+
+
+def test_the_partly_wired_build_still_gets_its_readout_graded():
+    """A second defect must not hide behind the first: five dead objectives do
+    not stop the sixth from being displayed, or from being missing."""
+    rep = evaluate(_partly_wired())
+    assert rep.checks["mission_visible"] is True
+
+
+def test_a_self_driven_mission_needs_no_seam_at_all():
+    """The mirror error. `survive` objectives advance on the tracker's own
+    clock (Objectives.cs.j2's Update), so the correct number of seams is zero —
+    and an all-survive mission was graded unwinnable for having them."""
+    schema = _schema(missions=[MissionSpec(id="m", title="M", objectives=[
+        MissionObjective(id="o1", description="d", type="survive", count=90)])])
+    schema.meta["wiring"] = {
+        "objectives_total": 1, "objectives_required": 1,
+        "objectives_bound": [], "objectives_unbound": [],
+        "objectives_optional_unbound": [],
+        "objectives_self_driven": ["MObjectives.o1 (survive)"],
+        "hud_objective": True, "seams": []}
+    rep = evaluate(schema)
+    assert rep.checks["mission_loop"] is True
+    assert not [f for f in rep.errors if f.check == "mission_loop"]
+
+
+def test_an_optional_objective_cannot_make_a_build_unwinnable():
+    """It cannot block MissionComplete either — CheckMissionComplete skips
+    optional. Reported, because it is content the player can never resolve;
+    not a failure, because the run still finishes."""
+    schema = _schema(missions=[MissionSpec(id="m", title="M", objectives=[
+        MissionObjective(id="o1", description="d", type="reach"),
+        MissionObjective(id="o2", description="d", type="escort", optional=True)])])
+    schema.meta["wiring"] = {
+        "objectives_total": 2, "objectives_required": 1,
+        "objectives_bound": ["MObjectives.o1"], "objectives_unbound": [],
+        "objectives_optional_unbound": ["MObjectives.o2 (escort)"],
+        "objectives_self_driven": [], "hud_objective": True, "seams": ["SEAM 8"]}
+    rep = evaluate(schema)
+    assert rep.checks["mission_loop"] is True
+    assert any(f.check == "mission_optional" and f.severity == "warn"
+               for f in rep.findings)
+
+
+def test_the_composer_reports_the_three_kinds_of_unbound_apart(tmp_path):
+    """Step 7 can only tell them apart if the composer does. One list was
+    doing the work of three facts: self-driven, optional, and blocking."""
+    schema = _schema(missions=[MissionSpec(id="m", title="M", objectives=[
+        MissionObjective(id="live",  description="d", type="reach"),
+        MissionObjective(id="clock", description="d", type="survive", count=30),
+        MissionObjective(id="extra", description="d", type="escort", optional=True),
+        MissionObjective(id="dead",  description="d", type="escort")])])
+    _wiring, report = _compose(schema, tmp_path)
+    assert report["objectives_bound"]         == ["MObjectives.live"]
+    assert report["objectives_self_driven"]   == ["MObjectives.clock (survive)"]
+    assert report["objectives_optional_unbound"] == ["MObjectives.extra (escort)"]
+    assert report["objectives_unbound"]       == ["MObjectives.dead (escort)"]
+    assert report["objectives_required"] == 3
+
+
 def test_an_unwinnable_build_no_longer_outscores_a_winnable_one(tmp_path):
     """The defect that motivated this: 91/100 for the build that cannot be
     completed, 90 for the one that can."""

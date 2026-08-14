@@ -147,7 +147,7 @@ reachable from an objective. *Absence of evidence is never evidence of
 playability* — the rule the non-embodied work already applies to abstained
 checks.
 
-### Stage 6.5 — the `rules` micro
+### Stage 6.5 — the `rules` micro  ✅ *shipped*
 
 A micro that is **not per-subsystem**. It receives the whole concept and the
 whole schema and emits one `<Project>Game.cs`:
@@ -168,6 +168,52 @@ This is the piece written by hand twice. `TowerControlGame.cs` and
 `CodeVaultGame.cs` differ in domain and rules and are **structurally identical**
 in briefing, step plan, hint bar and completion — which is the evidence it is
 templatable rather than bespoke.
+
+### Stage 6.6 — the `board` micro  ✅ *shipped*
+
+`rules` shipped the progression and the instructions and explicitly not the
+first item on the list above: the domain model and the legal-move logic. So a
+build said *"drag every file icon into a folder container"* and nothing in it
+made dragging a file icon into a folder container a thing that works. The
+instruction was true prose about a mechanic that did not exist.
+
+`src/micro/board.py` is that mechanic, and it is deliberately not per-subsystem
+either — it is the verbs of a game with no avatar:
+
+- a **domain model** — every piece, every zone, and where each piece IS
+- a **legal move** — `TryPlace`, which refuses BY NAME (already there / a
+  readout cannot be dropped into / this zone does not take that / it has to
+  come from somewhere else first)
+- **drag and drop** over the plates `EntitySpawner` already built, adopted
+  rather than rebuilt, because the layout pass chose where they go
+- a **command parser** — quote-aware, with `move`/`status`/`zones`/`help`
+  built in and the domain's own verbs declared on top — reaching the SAME
+  `TryPlace`, so the two surfaces cannot disagree about what is legal
+
+The deterministic derivation reads the UI vocabulary the layout and asset passes
+already share (`ui_element_of`): an icon or card is a piece, a panel is a place,
+a **log is a place you cannot drop into** — a history is produced by a command,
+not filled in by hand — and a terminal-shaped window is the command line. So a
+board is playable with no model at all, and the Pipeline LLM authors the verbs,
+the orderings and the per-piece names on top of it.
+
+Its events (`OnPiecePlaced`, `OnGroupComplete`, `OnZoneFilled`, `OnCommand`) are
+the honest event source a UI-first game never had — SEAM 8 could only offer a
+trigger volume or an interactable, both of which wait for a body to arrive.
+
+### The `mission_loop` bug  ✅ *fixed*
+
+Found while wiring the above. `_check_mission_loop` graded `ok = bool(bound)` —
+its own version of the defect it was written to catch. Completion is AND-shaped
+(`CheckMissionComplete` returns early on the first incomplete non-optional
+objective), so a mission with one live objective and five dead ones can never
+finish, and it passed with a warning. The mirror error failed an all-`survive`
+mission, where the tracker's own clock advances everything and the correct
+number of seams is zero.
+
+The composer now reports self-driven, optional-unbound and required-unbound
+apart, and the check grades the third: **one unbound required objective is an
+unwinnable build, however many others bound.**
 
 ### The metric — concept fidelity
 

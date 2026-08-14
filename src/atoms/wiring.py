@@ -184,6 +184,38 @@ WIRING_ATOMS: list[AtomDef] = [
         ],
     ),
     AtomDef(
+        name="WireBoardToObjectives",
+        category="wiring",
+        description=(
+            "Connect a GameBoard event -> MissionObjectives.ReportProgress for an "
+            "objective about a board group. The board's events all carry a KEY (a "
+            "piece group, a zone or a verb), so this seam is filtered: it advances "
+            "the objective only when the key is the one the objective names, which "
+            "is what lets several objectives ride the same event without every move "
+            "advancing all of them. The honest event source for a game with no "
+            "avatar — a trigger volume and an interactable both wait for a body."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["objective_advances_when_the_board_changes"],
+        params=[
+            AtomParam(name="board_var",      type="string", default="_board"),
+            AtomParam(name="objectives_var", type="string", default="_objectives"),
+            AtomParam(name="delegate_var",   type="string", default="_onBoardObjective",
+                      description="Stored Action<string> field so OnDestroy can "
+                                  "unsubscribe the same instance"),
+            AtomParam(name="event_name",     type="string", default="OnPiecePlaced",
+                      description="OnPiecePlaced | OnGroupComplete | OnZoneFilled | OnCommand"),
+            AtomParam(name="match_key",      type="string", default=None,
+                      description="The group / zone / verb this objective is about"),
+            AtomParam(name="objective_id",   type="string", default=None,
+                      description="Authored objective id to advance; None omits the seam"),
+            AtomParam(name="amount",         type="int",    default=1,
+                      description="Progress per event. 1 for the per-piece event; the "
+                                  "objective's whole count for an event that fires once"),
+        ],
+    ),
+    AtomDef(
         name="WireObjectivesToHUD",
         category="wiring",
         description=(

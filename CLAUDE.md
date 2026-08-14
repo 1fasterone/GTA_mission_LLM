@@ -114,6 +114,18 @@ Spatial + QA (Unity)
   writes playability.txt, gated by playability.gate in config.yaml.
   CLI: python main.py unity-playability <schema.json> [--strict]
 
+Rules + mechanic (UI-first games)
+- micro/rules.py — the briefing, the step the player is on, and the hint bar
+  that names the next action. Composed once per PROJECT from the mission's
+  objectives. Owns what the player is TOLD.
+- micro/board.py — the domain model and the legal-move logic behind it: every
+  piece, every zone, where each piece is, and whether a move is legal
+  (`TryPlace`, which refuses by name). Drag and a quote-aware command parser
+  reach the same move core, so the two surfaces cannot disagree. Adopts the
+  plates EntitySpawner built; never spawns its own. Composed for
+  locomotion='none' only. Its events are what SEAM 8a binds a mission
+  objective to. docs/PLAYABLE_GAME_GAP.md is the reference.
+
 Always reference these paths when generating or modifying files. See also
 docs/model-pipeline-architecture.md.
 

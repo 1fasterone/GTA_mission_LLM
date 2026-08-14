@@ -847,6 +847,43 @@ def _wire_spawner_to_objectives(args: dict) -> str:
         delegate_default="_onEliminateObjective")
 
 
+# Events the board raises, and nothing else. A seam is a promise that the method
+# is really there (WIRING_SEAMS.md), and an event name that does not exist on the
+# emitted class is CS1061 in generated glue — the worst place to debug.
+_BOARD_EVENTS = frozenset({
+    "OnPiecePlaced", "OnGroupComplete", "OnZoneFilled", "OnCommand", "OnRejected",
+})
+
+
+def _wire_board_to_objectives(args: dict) -> str:
+    """Filtered objective seam: the board's events all carry a key, so the
+    lambda advances the objective only for the key it is about."""
+    bv    = _s(args.get("board_var",      "_board"))
+    ov    = _s(args.get("objectives_var", "_objectives"))
+    dv    = _s(args.get("delegate_var",   "_onBoardObjective"))
+    event = _s(args.get("event_name",     "OnPiecePlaced"))
+    key   = args.get("match_key")
+    oid   = args.get("objective_id")
+    if not oid or not key:
+        return ("// No authored objective matched a board group - "
+                "board -> objectives seam omitted.")
+    if event not in _BOARD_EVENTS:
+        return (f"// Board raises no event named {event!r} - "
+                f"board -> objectives seam omitted.")
+    try:
+        amount = max(1, int(args.get("amount", 1)))
+    except (TypeError, ValueError):
+        amount = 1
+    return (
+        f"if ({bv} != null && {ov} != null)\n"
+        f"{{\n"
+        f"    {dv} = key => {{ if (key == \"{_s(key)}\") "
+        f"{ov}.ReportProgress(\"{_s(oid)}\", {amount}); }};\n"
+        f"    {bv}.{event} += {dv};\n"
+        f"}}"
+    )
+
+
 def _wire_trigger_to_save(args: dict) -> str:
     tv = _s(args.get("trigger_var",  "_trigger"))
     sv = _s(args.get("saveload_var", "_saveload"))
@@ -938,6 +975,7 @@ _SNIPPETS: dict[str, Any] = {
     "WireTriggerToObjectives":      _wire_trigger_to_objectives,
     "WireInteractableToObjectives": _wire_interactable_to_objectives,
     "WireSpawnerToObjectives":      _wire_spawner_to_objectives,
+    "WireBoardToObjectives":        _wire_board_to_objectives,
     "WireObjectivesToHUD":          _wire_objectives_to_hud,
     "WireInventoryToHUD":           _wire_inventory_to_hud,
 }

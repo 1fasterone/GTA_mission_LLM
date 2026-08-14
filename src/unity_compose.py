@@ -73,6 +73,12 @@ class ComposedUnit(BaseModel):
                                                             # descriptor} — lets seam
                                                             # codegen match real cues
                                                             # instead of guessing names.
+    board:      dict       = Field(default_factory=dict)  # board kind only: the group ids
+                                                            # and verbs the emitted class
+                                                            # really carries
+                                                            # {pieces,zones,commands}, so
+                                                            # SEAM 8 filters on a key the
+                                                            # board can actually raise.
 
 
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
@@ -87,6 +93,13 @@ _OBJECTIVE_EVENTS = {
     "WireInteractableToObjectives": "OnInteract",
     "WireSpawnerToObjectives":      "OnDespawned",
 }
+
+# Objective types the tracker advances on its own clock (Objectives.cs.j2's
+# Update drains one count per second), so they need no seam and their absence
+# from `objectives_bound` is not a hole. Named here because both the WARN below
+# and Step 7's mission_loop check have to agree on what "needs a source" means —
+# they disagreed once, and an all-`survive` mission was graded unwinnable.
+_SELF_DRIVEN_OBJECTIVE_TYPES = frozenset({"survive"})
 
 # Kinds that GameWiring / GameContext must NOT FindFirstObjectByType:
 #   wiring/context — the synthetic glue components themselves.
@@ -207,10 +220,18 @@ class MicroComposer:
             # enum members rather than whatever the model originally wrote.
             states = ([st.name for st in schema.states]
                       if sub.kind == "statemachine" else [])
+            # Read back AFTER default_fix for the same reason as the HUD's
+            # setters: a command whose verb the schema dropped is a key SEAM 8
+            # would filter on and the board could never raise.
+            board = ({"pieces":   [p.id for p in schema.pieces if p.id],
+                      "zones":    [z.id for z in schema.zones if z.id],
+                      "commands": [c.verb for c in schema.commands if c.verb]}
+                     if sub.kind == "board" else {})
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
                 target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
-                objectives=objs, widgets=widgets, setters=setters, states=states))
+                objectives=objs, widgets=widgets, setters=setters, states=states,
+                board=board))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -521,6 +542,7 @@ class MicroComposer:
         # rather than silently mis-wired — abstain loudly, never default quietly.
         interactable = _pick("interactable", "world")
         spawner      = _pick("spawner",      "world")
+        board        = _pick("board",        "systems")
         objective_units = [u for u in real_units if u.kind == "objectives"]
 
         #  types                    source unit    atom                            source arg-name     delegate field           delegate C# type
@@ -530,15 +552,59 @@ class MicroComposer:
             (("eliminate",),         spawner,      "WireSpawnerToObjectives",      "spawner_var",      "_onEliminateObjective", "Action<GameObject>"),
         )
         # `survive` needs no seam — the tracker runs its own clock (Objectives.cs.j2).
-        _SELF_DRIVEN_TYPES = {"survive"}
+        _SELF_DRIVEN_TYPES = _SELF_DRIVEN_OBJECTIVE_TYPES
 
         bound_ids: set[str] = set()
+
+        # SEAM 8a — board → objectives, FIRST and per objective.
+        #
+        # The generic sources below bind ONE objective each, because a trigger
+        # volume and an enemy spawner cannot tell which objective an event was
+        # about. A board can: every event it raises carries the group, zone or
+        # verb it happened to, so each objective gets its own filtered binding
+        # and a six-step board does not have to settle for one advanceable step.
+        #
+        # It runs before them so a `collect` objective about a real piece group
+        # binds to the piece being placed rather than to any click on any
+        # interactable — the difference between the instruction being true and
+        # the instruction merely being displayed.
+        if board is not None and objective_units:
+            bv = _fv(board)
+            n = 0
+            for unit in objective_units:
+                for obj in unit.objectives:
+                    if not obj.get("id"):
+                        continue
+                    bind = _board_objective_binding(board, obj)
+                    if bind is None:
+                        continue
+                    event, key, amount = bind
+                    delegate = f"_onBoardObjective{n}"
+                    n += 1
+                    stored_delegates.append({"type": "Action<string>", "name": delegate})
+                    awake_seams.append({
+                        "label": f"SEAM 8: board → objectives "
+                                 f"({obj.get('type')}: {obj['id']} ← {event} {key})",
+                        "snippet": unity_atom_snippet("WireBoardToObjectives", {
+                            "board_var": bv, "objectives_var": _fv(unit),
+                            "delegate_var": delegate, "event_name": event,
+                            "match_key": key, "objective_id": obj["id"],
+                            "amount": amount,
+                        }),
+                    })
+                    destroy_cleanups.append(
+                        f"if ({bv} != null && {delegate} != null)\n"
+                        f"    {bv}.{event} -= {delegate};"
+                    )
+                    bound_ids.add(f"{unit.class_name}.{obj['id']}")
+
         for types, source, atom, source_arg, delegate, delegate_type in _OBJECTIVE_SOURCES:
             if source is None:
                 continue
             match = next(
                 ((u, o) for u in objective_units for o in u.objectives
-                 if o.get("type") in types and o.get("id")),
+                 if o.get("type") in types and o.get("id")
+                 and f"{u.class_name}.{o['id']}" not in bound_ids),
                 None,
             )
             if match is None:
@@ -560,22 +626,43 @@ class MicroComposer:
             bound_ids.add(f"{unit.class_name}.{obj['id']}")
 
         # Abstain loudly: name every authored objective this build cannot advance.
-        unbound = [
-            f"{u.class_name}.{o['id']} ({o.get('type')})"
-            for u in objective_units for o in u.objectives
-            if o.get("id")
-            and f"{u.class_name}.{o['id']}" not in bound_ids
-            and o.get("type") not in _SELF_DRIVEN_TYPES
-        ]
-        if objective_units and unbound:
-            console.print(
-                "  [yellow]WARN[/]  objectives: no event source for "
-                + ", ".join(unbound)
-                + " — these cannot advance at runtime. Reachable sources this "
-                  "build: " + (", ".join(sorted(
-                      s.kind for _t, s, *_r in _OBJECTIVE_SOURCES if s is not None
-                  )) or "none")
-            )
+        #
+        # Split three ways rather than two, because "unbound" was doing the work
+        # of three different facts and Step 7 could not tell them apart:
+        #   self-driven   the tracker's own clock advances it — not a hole
+        #   optional      unbound, but it does not block OnMissionComplete
+        #   required      unbound AND blocking — the mission can never finish
+        # The mission_loop check grades the third list only.
+        self_driven, optional_unbound, unbound = [], [], []
+        for u in objective_units:
+            for o in u.objectives:
+                if not o.get("id"):
+                    continue
+                label = f"{u.class_name}.{o['id']} ({o.get('type')})"
+                if o.get("type") in _SELF_DRIVEN_TYPES:
+                    self_driven.append(label)
+                elif f"{u.class_name}.{o['id']}" in bound_ids:
+                    continue
+                elif o.get("optional"):
+                    optional_unbound.append(label)
+                else:
+                    unbound.append(label)
+        if objective_units and (unbound or optional_unbound):
+            sources = sorted(
+                {s.kind for _t, s, *_r in _OBJECTIVE_SOURCES if s is not None}
+                | ({"board"} if board is not None else set()))
+            if unbound:
+                console.print(
+                    "  [yellow]WARN[/]  objectives: no event source for "
+                    + ", ".join(unbound)
+                    + " — these cannot advance at runtime, so the mission can "
+                      "never complete. Reachable sources this build: "
+                    + (", ".join(sources) or "none"))
+            if optional_unbound:
+                console.print(
+                    "  [yellow]WARN[/]  objectives: no event source for optional "
+                    + ", ".join(optional_unbound)
+                    + " — the mission still completes without them.")
 
         # SEAM 9 — objectives → HUD (the mission loop becomes visible)
         # SEAM 8 makes the mission finishable; without this the player has no way
@@ -656,7 +743,7 @@ class MicroComposer:
             frozenset({"trigger", "saveload"}),
             # SEAM 8 pairs
             frozenset({"trigger", "objectives"}), frozenset({"interactable", "objectives"}),
-            frozenset({"spawner", "objectives"}),
+            frozenset({"spawner", "objectives"}), frozenset({"board", "objectives"}),
             # SEAM 9/10 pairs
             frozenset({"objectives", "hud"}), frozenset({"inventory", "hud"}),
         }
@@ -684,13 +771,26 @@ class MicroComposer:
         # `objectives_bound` is the mission loop: an objective with an event
         # source can advance, and one without is content the player can see and
         # never complete. `hud_objective` is whether that progress is visible.
+        #
+        # The three unbound lists are reported separately because completion is
+        # AND-shaped: Objectives.cs.j2 sets MissionComplete only once every
+        # non-optional objective is done, so ONE unbound required objective is
+        # an unwinnable build no matter how many others bound. A single
+        # `objectives_unbound` list could not say which — the reason Step 7
+        # passed a mission with five dead objectives out of six.
+        required_total = sum(
+            1 for u in objective_units for o in u.objectives
+            if o.get("id") and not o.get("optional"))
         self.wiring_report = {
             "seams": [s["label"].split(":")[0].strip()
                       for s in (awake_seams + update_seams)
                       if s["label"].startswith("SEAM ")],
-            "objectives_bound":   sorted(bound_ids),
-            "objectives_unbound": sorted(unbound),
-            "objectives_total":   sum(len(u.objectives) for u in objective_units),
+            "objectives_bound":       sorted(bound_ids),
+            "objectives_unbound":     sorted(unbound),            # required + blocking
+            "objectives_optional_unbound": sorted(optional_unbound),
+            "objectives_self_driven": sorted(self_driven),
+            "objectives_total":       sum(len(u.objectives) for u in objective_units),
+            "objectives_required":    required_total,
             "hud_objective": bool(hud and "SetObjective" in hud.setters
                                   and objective_units),
         }
@@ -1024,6 +1124,52 @@ def _npc_dialog_lines_for_character(char) -> list[dict]:
     } for n in char.dialog_graph.nodes]
 
 
+def _board_objective_binding(board, objective: dict) -> tuple[str, str, int] | None:
+    """Which board event advances this objective — (event, match key, amount).
+
+    None means the board has nothing to do with it, and the objective falls
+    through to the generic sources. Deliberately keyed on `target_ref`, the
+    field the mission uses to name the content it is about: a board can only
+    honestly advance an objective that names something ON the board.
+
+        collect / interact  a piece group   OnPiecePlaced, one count per piece
+        reach               a zone          OnZoneFilled, the whole count at once
+        interact            a command verb  OnCommand,     the whole count at once
+
+    `amount` differs because the events do: OnPiecePlaced fires once per piece,
+    so an objective of count 9 completes after nine placements. The other two
+    fire ONCE, so a count of 9 bound at 1-per-event would never complete —
+    silently, which is the failure mode this whole seam exists to end.
+    """
+    from .micro.board import norm_ref
+
+    ref = norm_ref(objective.get("target_ref") or "")
+    if not ref:
+        return None
+    otype = str(objective.get("type") or "").lower()
+    try:
+        count = max(1, int(objective.get("count") or 1))
+    except (TypeError, ValueError):
+        count = 1
+
+    groups   = {norm_ref(g): g for g in (board.board.get("pieces") or [])}
+    zones    = {norm_ref(z): z for z in (board.board.get("zones") or [])}
+    commands = {norm_ref(c): c for c in (board.board.get("commands") or [])}
+
+    if otype in ("collect", "interact") and ref in groups:
+        return ("OnPiecePlaced", groups[ref], 1)
+    if ref in zones:
+        return ("OnZoneFilled", zones[ref], count)
+    if ref in commands:
+        return ("OnCommand", commands[ref], count)
+    # A `reach`/`eliminate` objective naming a piece group still has an honest
+    # board answer — the group being finished — even though the per-piece event
+    # is not the right granularity for it.
+    if ref in groups:
+        return ("OnGroupComplete", groups[ref], count)
+    return None
+
+
 def _objectives_options_for_mission(mission) -> dict:
     """schema.missions (MissionSpec/MissionObjective, unity_schema.py:734-764) ->
     ObjectivesSchema options (ObjectiveEntry, micro/objectives.py).
@@ -1249,6 +1395,7 @@ def _bt_options_for_entry(entry) -> dict:
 
 from .micro.lighting import select_variant as _lighting_variant  # noqa: E402
 from .micro.rules import steps_from_mission as _rule_steps_for_mission  # noqa: E402
+from .micro.board import board_options_for_entities as _board_options_for_entities  # noqa: E402
 
 
 def _mission_goal(mission) -> str:
@@ -1735,6 +1882,37 @@ def subsystems_for(
         subs.append(Subsystem(kind="objectives", variant="tracker", target="systems",
                               name=f"{to_pascal(mission.title, 'Mission')}Objectives",
                               options=_objectives_options_for_mission(mission)))
+    # ── The board layer ──────────────────────────────────────────────────────
+    # The MECHANIC of a game with no avatar: the domain model (where every piece
+    # is) and the legal-move logic (whether it may go where the player is
+    # dragging it), plus the command parser that reaches the same move core.
+    #
+    # UI-first only, and not by preference: an embodied game's verbs are the
+    # controller's, and this one binds to the built board plates that the
+    # `ui:<element>` route produces. Composed BEFORE the rules layer so SEAM 8
+    # can bind an objective to a real move rather than to any click on any
+    # interactable — otherwise the rules micro states an instruction ("drag
+    # every file icon into a folder container") that nothing in the build
+    # implements, which is the whole defect it was written to close.
+    if ui_first:
+        _board_opts = _board_options_for_entities(entities or [])
+        if _board_opts:
+            _board_variant = _board_opts.pop("variant")
+            subs.append(Subsystem(kind="board", variant=_board_variant,
+                                  target="systems", name="GameBoard",
+                                  options=_board_opts))
+            console.print(
+                f"  [green]OK[/]    board: {len(_board_opts['pieces'])} piece "
+                f"group(s), {len(_board_opts['zones'])} place(s), "
+                f"{_board_variant.replace('_', ' ')} — the moves are real")
+        else:
+            # Abstain loudly: this game has no avatar AND no board, so nothing
+            # composed here owns its verbs.
+            console.print(
+                "  [yellow]WARN[/]  board: this cast has no movable pieces and "
+                "places to move them to (icons/cards + panels), so no legal-move "
+                "logic was composed — every objective must find another source")
+
     # ── The rules layer ──────────────────────────────────────────────────────
     # One per PROJECT, not per subsystem. Everything above is a mechanism; this
     # is the briefing, the step the player is on, and the hint bar that names
