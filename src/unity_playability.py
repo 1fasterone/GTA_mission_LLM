@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .unity_concept_entities import extract_named_entities
+from .unity_concept_fidelity import check_fidelity
 from .unity_layout import _reach_distance, terrain_bounds
 # `is_embodied` lives beside the field it reads (src/unity_schema.py) because
 # four passes act on the declaration, not just this one. Re-exported here: it
@@ -88,6 +89,9 @@ _CHECK_SEVERITY: dict[str, str] = {
     "mission_derivable": INFO,
     "objective_targets": ERROR,
     "brief_entities":    ERROR,
+    # WARN, not ERROR: a lost adjective is degraded fidelity, not a missing
+    # entity — brief_entities already owns "the thing isn't in the game".
+    "concept_fidelity":  WARN,
     "spawn_clear":       ERROR,
     "content_reachable": ERROR,
     "volume_player":     ERROR,
@@ -566,6 +570,39 @@ def _check_brief_entity_coverage(schema: UnitySchema,
     rep.checks["brief_entities"] = not missing
 
 
+def _check_concept_fidelity(schema: UnitySchema,
+                            rep: PlayabilityReport) -> None:
+    """Did the concrete WORDS the brief committed to survive into the build?
+
+    `_check_brief_entity_coverage` grades NAMES: the brief said "Hippo", the
+    schema has an entity called "Hippo", pass. It never looks at what that
+    entity became, so "purple hippos with six legs" survives as an entity
+    named Hippo with no colour and no leg count, and nothing here used to
+    notice. `src/unity_concept_fidelity.py` measures the words themselves.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    prompt = str(meta.get("user_prompt", "") or "")
+    if not prompt.strip():
+        _ungraded(rep, "concept_fidelity",
+                  "schema.meta.user_prompt is empty — nothing to compare the "
+                  "build against (a replay grades the schema, not the brief)")
+        return
+    fidelity = check_fidelity(prompt, schema)
+    if not fidelity.checked:
+        _ungraded(rep, "concept_fidelity",
+                  "the brief commits to no concrete words to check")
+        return
+    if fidelity.gaps:
+        lost = ", ".join(g.demand for g in fidelity.gaps[:6])
+        rep.findings.append(Finding(
+            "concept_fidelity", WARN,
+            f"{fidelity.score}/100 concept fidelity — "
+            f"{len(fidelity.gaps)}/{fidelity.checked} demanded words never "
+            f"reached the build ({lost})",
+            "Step 3 schema-fill / Step 6 model spec"))
+    rep.checks["concept_fidelity"] = not fidelity.gaps
+
+
 def _check_interactables_tagged(schema: UnitySchema,
                                 rep: PlayabilityReport) -> None:
     """EntitySpawner only attaches a collider to a group that carries a tag
@@ -1005,6 +1042,7 @@ _CHECKS = (
     _check_mission_loop,
     _check_objective_targets,
     _check_brief_entity_coverage,
+    _check_concept_fidelity,
     _check_interactables_tagged,
     _check_scene_population,
     _check_spawn_clear,
