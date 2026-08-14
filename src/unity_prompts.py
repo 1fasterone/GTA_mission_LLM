@@ -604,6 +604,10 @@ WIRING_MICRO_KINDS: tuple[str, ...] = (
     "input", "interactable", "animator", "statemachine", "trigger", "audio",
     "ai", "spawner", "inventory", "dialogue", "npc_dialog", "vfx",
     "transition", "objectives", "behavior_tree", "lighting",
+    # The rules layer — briefing, step progression and the next-action hint
+    # bar. Composed once per project from the mission's own objectives, so it
+    # is a legitimate wiring target (rules↔objectives is how a step clears).
+    "rules",
 )
 
 # Pairs unity_compose already wires with a named seam — declaring them again
