@@ -1,0 +1,30 @@
+# {{ s.name }} — rules, progression and instructions
+
+Variant: `{{ variant }}`
+
+The layer that makes this build a game rather than a scene. Every other micro is
+a mechanism; this one tells the player what they are doing.
+
+- **Briefing** — modal, shown before play. States the goal and lists every step.
+- **Step panel** — what the current step teaches, on screen while playing.
+- **Hint bar** — always names the next action. Never says "good luck".
+
+## Goal
+
+{{ s.goal }}
+
+## Steps
+
+{% for st in s.steps %}
+{{ loop.index }}. **{{ st.title }}** (`{{ st.objective_id }}`)
+   - teaches: {{ st.teaches }}
+   - ask: {{ st.ask }}
+{% endfor %}
+
+## How a step clears
+
+This does not decide what "done" means. It finds the objectives tracker by duck
+type (anything exposing `CompletedRequired` + `MissionComplete`) and reads its
+completed count, so the tracker stays the single definition of completion. A
+step that never clears means its objective has no event source — see SEAM 8 in
+`src/unity_compose.py`.

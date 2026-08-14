@@ -64,6 +64,12 @@ def test_registry_has_all_known():
         "objectives",
         # Minimal behavior-tree interpreter (schema.behavior_trees)
         "behavior_tree",
+        # Rules, progression and player instructions — the briefing, the step
+        # panel and the next-action hint bar. Composed once per PROJECT from
+        # the mission's objectives, not once per subsystem: every other micro
+        # is a mechanism, and this is the layer that tells a human what to do
+        # with them.
+        "rules",
     }
 
 

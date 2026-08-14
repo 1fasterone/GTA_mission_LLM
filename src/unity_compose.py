@@ -1248,6 +1248,22 @@ def _bt_options_for_entry(entry) -> dict:
 # tests keep a stable import site.
 
 from .micro.lighting import select_variant as _lighting_variant  # noqa: E402
+from .micro.rules import steps_from_mission as _rule_steps_for_mission  # noqa: E402
+
+
+def _mission_goal(mission) -> str:
+    """One sentence naming what winning is.
+
+    Built from the mission's own description, or from its objectives when it
+    has none — never left blank, because "what counts as winning" is the first
+    thing a player needs and the last thing any build has ever stated.
+    """
+    desc = str(getattr(mission, "description", "") or "").strip()
+    if desc:
+        return desc if len(desc) <= 200 else desc[:197] + "…"
+    n = len(getattr(mission, "objectives", None) or [])
+    return f"Complete all {n} objective(s) of {mission.title}." if n else \
+           "Complete the mission."
 
 
 def subsystems_for(
@@ -1719,6 +1735,36 @@ def subsystems_for(
         subs.append(Subsystem(kind="objectives", variant="tracker", target="systems",
                               name=f"{to_pascal(mission.title, 'Mission')}Objectives",
                               options=_objectives_options_for_mission(mission)))
+    # ── The rules layer ──────────────────────────────────────────────────────
+    # One per PROJECT, not per subsystem. Everything above is a mechanism; this
+    # is the briefing, the step the player is on, and the hint bar that names
+    # the next action — the three things whose absence is why a build could
+    # compile, pass every structural check, and still leave a human with no
+    # idea what to do.
+    #
+    # Gated on there being a mission with objectives, because the progression
+    # IS the objective list: with nothing to sequence there is no game to
+    # explain, and a briefing that says "achieve the goal" is the empty
+    # scaffolding this exists to replace.
+    _missions_with_objectives = [m for m in (missions or []) if m.objectives]
+    if _missions_with_objectives:
+        _m = _missions_with_objectives[0]
+        _steps = _rule_steps_for_mission(_m)
+        subs.append(Subsystem(
+            kind="rules", variant="guided", target="ui", name="GameRules",
+            options={
+                "game_title": _m.title or "This Game",
+                "goal": _mission_goal(_m),
+                "steps": _steps,
+                # The ids a step is allowed to reference. `harden` reports any
+                # step pointing at an objective this mission does not declare —
+                # such a step can never clear and strands the player on it.
+                "meta": {"objective_ids": [o.id for o in _m.objectives if o.id]},
+            }))
+        console.print(
+            f"  [green]OK[/]    rules: {len(_steps)} step(s) from mission "
+            f"{_m.title!r} — briefing, step panel and next-action hint bar")
+
     # Behavior trees — one interpreter subsystem per authored AIBehaviorTree
     # entry (schema.behavior_trees). CharacterSpec.npc_brain.behavior_tree (a
     # second, per-character embedding of the same BehaviorTree type) is left
