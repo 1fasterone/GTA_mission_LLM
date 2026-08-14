@@ -26,12 +26,44 @@ Every seam is deterministic. A seam fires only when both endpoints were composed
 | 5 | input → statemachine | both composed | move/jump reach the FSM |
 | 6 | controller → fsm/animator | grounded bridge (runs in `Update`) | jump/land read correctly |
 | 7 | trigger → saveload | both composed | zones checkpoint-save |
-| 8 | trigger / interactable / spawner → objectives | an authored objective of a matching type exists | **the mission can be completed** |
+| 8a | **board → objectives** | an objective's `target_ref` names a piece group, zone or verb the board carries | **the move the player was told to make completes the objective** |
+| 8 | trigger / interactable / spawner → objectives | an authored objective of a matching type exists, still unbound | **the mission can be completed** |
 | 9 | objectives → hud | the HUD declares `SetObjective` | the current objective + tally is on screen |
 | 10 | inventory → hud | the HUD declares `SetCarried` | the carried count is on screen |
 
 Seams 1–7 wire *systems to systems*. Seams 8–10 are the **mission loop**: 8 makes
 a game finishable, 9 and 10 make its progress visible.
+
+## SEAM 8a — why the board binds first, and per objective
+
+A trigger volume and an enemy spawner cannot tell which objective an event was
+about, so each binds exactly ONE: two `eliminate` objectives sharing one spawner
+would both advance on every kill, which is worse than not wiring the second.
+
+A board can tell. Every event it raises carries a **key** — the piece group, the
+zone, or the verb it happened to — so each objective gets its own filtered
+binding and a six-objective board does not have to settle for one live step:
+
+```csharp
+_onBoardObjective0 = key => { if (key == "FileIcons") _objectives.ReportProgress("obj_1", 1); };
+_gameboard.OnPiecePlaced += _onBoardObjective0;
+```
+
+| objective | board event | amount |
+|---|---|---|
+| `collect` / `interact` naming a piece group | `OnPiecePlaced` (per piece) | 1 |
+| naming a zone | `OnZoneFilled` (once) | the objective's whole `count` |
+| naming a command verb | `OnCommand` (once) | the whole `count` |
+| otherwise naming a piece group | `OnGroupComplete` (once) | the whole `count` |
+
+The amount differs because the events do. An event that fires once, bound at one
+count per event, leaves a `count: 5` objective permanently at 1/5 — silently,
+which is the failure mode this seam exists to end.
+
+It runs before the generic sources so a `collect` objective about real pieces
+binds to a piece being placed rather than to any click on any interactable. That
+is the difference between the rules micro's instruction being **true** and it
+merely being **displayed**.
 
 ## The wiring report — how Step 7 grades this
 
@@ -42,16 +74,34 @@ decided on `MicroComposer.wiring_report`, and the pipeline stamps it onto
 
 ```python
 {"seams": ["SEAM 1", "SEAM 8", "SEAM 9", ...],
- "objectives_bound":   ["ColdwaterCircuitObjectives.beat_02"],
- "objectives_unbound": ["ColdwaterCircuitObjectives.beat_04 (reach)"],
- "objectives_total":   5,
- "hud_objective":      True}
+ "objectives_bound":            ["ColdwaterCircuitObjectives.beat_02"],
+ "objectives_unbound":          ["ColdwaterCircuitObjectives.beat_04 (reach)"],
+ "objectives_optional_unbound": ["ColdwaterCircuitObjectives.beat_07 (escort)"],
+ "objectives_self_driven":      ["ColdwaterCircuitObjectives.beat_05 (survive)"],
+ "objectives_total":    5,
+ "objectives_required": 4,
+ "hud_objective":       True}
 ```
 
 `unity_playability._check_mission_loop` grades that ground truth rather than
 re-deriving a prediction — which is what let it once score an unwinnable build
 above a winnable one. On a build without `--compose` it reports *ungraded*
 rather than passing: absence of evidence is never evidence of playability.
+
+### The unbound list is three lists
+
+`Objectives.cs.j2` sets `MissionComplete` only once **every** non-optional
+objective is done, so completion is AND-shaped and the three cases below are not
+interchangeable. Reporting them as one list is what let the check pass a mission
+with one live objective and five dead ones (`ok = bool(bound)` — its own version
+of the defect it exists to catch), and fail an all-`survive` mission whose
+correct number of seams is zero.
+
+| list | blocks completion? | mission_loop |
+|---|---|---|
+| `objectives_self_driven` | no — the tracker's own clock advances it | counts as advanceable |
+| `objectives_optional_unbound` | no — `CheckMissionComplete` skips optional | `mission_optional` WARN |
+| `objectives_unbound` | **yes** | ERROR, however many others bound |
 
 ---
 

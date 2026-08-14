@@ -27,6 +27,7 @@ from .lighting      import LightingPipeline,      LightingSchema,   LightSpec
 from .shader        import ShaderPipeline,        ShaderSchema
 from .objectives    import ObjectivesPipeline,    ObjectivesSchema
 from .rules         import RulesPipeline,         RulesSchema
+from .board         import BoardPipeline,         BoardSchema
 from .behavior_tree  import BehaviorTreePipeline,  BehaviorTreeSchema
 
 __all__ = [
@@ -55,6 +56,7 @@ __all__ = [
     "ShaderPipeline",       "ShaderSchema",
     "ObjectivesPipeline",   "ObjectivesSchema",
     "RulesPipeline",        "RulesSchema",
+    "BoardPipeline",        "BoardSchema",
     "BehaviorTreePipeline", "BehaviorTreeSchema",
 ]
 
@@ -91,6 +93,7 @@ REGISTRY: dict[str, type[Any]] = {
     "shader":       ShaderPipeline,
     "objectives":   ObjectivesPipeline,
     "rules":        RulesPipeline,
+    "board":        BoardPipeline,
     "behavior_tree": BehaviorTreePipeline,
 }
 

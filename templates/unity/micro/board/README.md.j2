@@ -1,0 +1,65 @@
+# {{ s.name }} — the domain model and the legal moves
+
+Variant: `{{ variant }}`
+
+`rules` tells the player what to do. This is what makes doing it work: where
+every piece is, whether a move is legal, and — when it is not — why not.
+
+It spawns nothing. `EntitySpawner` has already built one object per entity
+instance under a group named after the entity, so this **adopts** them: the
+icons and cards are pieces, the panels are zones.
+
+## The pieces
+
+| group | one of them is a | instances |
+|---|---|---|
+{% for p in s.pieces %}| `{{ p.id }}` | {{ p.label }} | {{ p.count }} |
+{% endfor %}
+
+## The places
+
+| group | takes | drop? | after |
+|---|---|---|---|
+{% for z in s.zones %}| `{{ z.id }}` ({{ z.label }}) | {{ z.accepts|join(", ") if z.accepts else "anything" }} | {{ "yes" if z.drop_target else "command only" }} | {{ z.requires or "—" }} |
+{% endfor %}
+
+## The commands
+{% if s.commands %}
+
+| type | does |
+|---|---|
+{% for c in s.commands %}| `{{ (s.command_prefix ~ " " if s.command_prefix else "") ~ c.verb }}` | {{ c.help }} |
+{% endfor %}
+{% else %}
+
+None declared, so the parser carries its built-ins only.
+{% endif %}
+
+Always available: `move <piece> <place>`, `move all <place>`, `status`, `zones`,
+`help`.
+
+## The legal move
+
+Both surfaces end in `TryPlace`, so the pointer and the terminal can never
+disagree. A move is refused, **by name**, when:
+
+- the piece is already there
+- the place is a readout and the hand tried to drop into it (a log is produced
+  by a command, not filled in)
+- the place does not accept that kind of piece
+- the place requires the piece to have been somewhere else first
+
+## What it raises
+
+| event | when | what binds to it |
+|---|---|---|
+| `OnPiecePlaced(groupId)` | a piece is legally placed for the FIRST time | a `collect` objective — one count per piece |
+| `OnGroupComplete(groupId)` | every piece of a group is placed | an objective counted once |
+| `OnZoneFilled(zoneId)` | every piece a place accepts is in it | a `reach` objective |
+| `OnCommand(verb)` | a declared command ran and did something | an `interact` objective |
+| `OnRejected(reason)` | an illegal move, with the text the player saw | anything that wants to react to a mistake |
+
+`OnPiecePlaced` fires on first placement only. A mission that counted every
+shuffle back and forth would complete on one piece being dragged in and out.
+
+See SEAM 8 in `src/unity_compose.py` for how these reach the objectives tracker.

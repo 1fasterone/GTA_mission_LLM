@@ -70,6 +70,12 @@ def test_registry_has_all_known():
         # is a mechanism, and this is the layer that tells a human what to do
         # with them.
         "rules",
+        # The domain model and the legal-move logic behind what `rules` tells
+        # the player to do: where every piece is, whether the move it is being
+        # dragged into is legal, and the command parser that reaches the same
+        # move core. UI-first games only — an embodied game's verbs are the
+        # controller's.
+        "board",
     }
 
 
