@@ -162,3 +162,65 @@ class TestReportSafety:
             pass
         rep = check_fidelity(HIPPOS, Bare(), nouns=["Hippo"])
         assert rep.gaps
+
+
+# ── Vibe prompts: the case the metric was silently useless on ─────────────────
+
+class TestVibePromptFallback:
+    def test_a_prose_brief_still_grades(self):
+        # `extract_named_entities` only finds entities in a STRUCTURED brief. On
+        # a vibe prompt it returns none, which gave 0 demands, 0 losses and a
+        # triumphant 100/100 measuring nothing — the silent-default failure this
+        # module exists to catch, reproduced inside the instrument.
+        s = _S([_E(name="Hippo", model_hint="hippo")])
+        rep = check_fidelity(HIPPOS, s)          # no nouns= passed
+        assert rep.checked > 0
+        assert rep.gaps
+
+    def test_pascalcase_entity_binds_to_a_two_word_brief_phrase(self):
+        # "CessnaCaravan" tokenised to one word and never matched the brief's
+        # "Cessna Caravan", so every entity bound zero modifiers and the report
+        # read a confident 100/100. Pre-lowercasing destroyed the case
+        # transition the camel-split depends on.
+        d = {x.noun: x.modifiers
+             for x in extract_demands("The player exits a red Cessna Caravan.",
+                                      ["CessnaCaravan"])}
+        assert "red" in d["CessnaCaravan"]
+
+    def test_nothing_to_check_is_reported_as_zero_not_as_a_pass(self):
+        rep = check_fidelity("...", _S([]))
+        assert rep.checked == 0          # caller must abstain, never print 100
+
+
+# ── The score's denominator ───────────────────────────────────────────────────
+
+class TestScoreAccounting:
+    def test_graded_assets_count_toward_the_denominator(self):
+        # Leaving them out produced "100/100" printed next to a list of losses.
+        s = _S([_E(name="Hippo", model_hint="hippo")])
+        rep = check_fidelity("A hippo.", s,
+                             entity_model_paths={"Hippo": "Models/hippo-low.fbx"})
+        assert rep.assets_checked == 1
+
+    def test_ui_paths_are_not_counted_as_graded_assets(self):
+        s = _S([_E(name="Pad", model_hint="button")])
+        rep = check_fidelity("A pad.", s, entity_model_paths={"Pad": "ui:button"})
+        assert rep.assets_checked == 0
+
+    def test_an_asset_only_loss_never_reports_a_perfect_score(self):
+        s = _S([_E(name="CommitNode", model_hint="commit node")])
+        rep = check_fidelity(
+            "A commit node.", s,
+            entity_model_paths={"CommitNode": "Models/marble-butterfly-low.fbx"})
+        assert rep.gaps and rep.score < 100
+
+    def test_a_brief_that_commits_to_nothing_grades_nothing(self):
+        # "make me a game" against a build full of entities: the schema-entity
+        # fallback bound Player/Camera, every one trivially "survived", and a
+        # brief that committed to NOTHING scored 100/100. A noun the brief never
+        # says is not a demand. (Pinned from the other side by
+        # test_unity_playability's TestConceptFidelity, which requires this case
+        # to come back UNGRADED rather than passed.)
+        s = _S([_E(name="Player", model_hint="player"),
+                _E(name="MainCamera", model_hint="camera")])
+        assert check_fidelity("make me a game", s).checked == 0

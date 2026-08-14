@@ -111,10 +111,16 @@ class Gap:
 class FidelityReport:
     demands: list[Demand] = field(default_factory=list)
     gaps: list[Gap] = field(default_factory=list)
+    # Entities whose resolved model was actually graded. Counted alongside the
+    # demanded words because an entity resolved to an unrelated model is a
+    # failed check, and leaving it out of the denominator produced a report that
+    # said "100/100" next to a list of losses.
+    assets_checked: int = 0
 
     @property
     def checked(self) -> int:
-        return sum(1 + len(d.modifiers) for d in self.demands)
+        return (sum(1 + len(d.modifiers) for d in self.demands)
+                + self.assets_checked)
 
     @property
     def survived(self) -> int:
@@ -129,8 +135,17 @@ class FidelityReport:
 
 # ── Extraction ────────────────────────────────────────────────────────────────
 
+# Entity names are PascalCase and briefs are prose: `CessnaCaravan` tokenised to
+# one word `cessnacaravan`, which never matched the brief's "Cessna Caravan", so
+# every entity bound zero modifiers and the report read a confident 100/100.
+# Split on the case transition BEFORE lowercasing — lowercasing first destroys
+# the signal the split depends on. Same rule and same lookahead as
+# unity_archetypes._CAMEL_BOUNDARY_RE, which keeps "2.5D"/"3D" intact.
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z][a-z])")
+
+
 def _tokens(text: str) -> list[str]:
-    return _TOKEN_RE.findall(text.lower())
+    return _TOKEN_RE.findall(_CAMEL_BOUNDARY_RE.sub(" ", text).lower())
 
 
 _SENTENCE_SPLIT_RE = re.compile(r"[.!?\n]")
@@ -173,7 +188,10 @@ def extract_demands(brief: str, nouns: Iterable[str]) -> list[Demand]:
     # tanks" handed the hats to the tanks and the pies as well.
     forms_by_noun: dict[str, set[str]] = {}
     for raw in nouns:
-        n_toks = _tokens(raw.strip().lower())
+        # NOT .lower() first — _tokens camel-splits then lowercases, and
+        # pre-lowercasing destroys the case transition it splits on, collapsing
+        # "CessnaCaravan" to one token that no prose brief can ever match.
+        n_toks = _tokens(raw.strip())
         if not n_toks:
             continue
         head = n_toks[-1]
@@ -186,7 +204,7 @@ def extract_demands(brief: str, nouns: Iterable[str]) -> list[Demand]:
     sentences = [_tokens(s) for s in _SENTENCE_SPLIT_RE.split(brief.lower())]
 
     for raw, forms in forms_by_noun.items():
-        own_toks = set(_tokens(raw.strip().lower()))
+        own_toks = set(_tokens(raw.strip()))
         mods: list[str] = []
         phrase = ""
         for toks in sentences:
@@ -213,6 +231,17 @@ def extract_demands(brief: str, nouns: Iterable[str]) -> list[Demand]:
                         mods.append(t)
             break
 
+        # A noun the brief never says is not a demand. Without this, the
+        # schema-entity fallback graded "make me a game" against the build's own
+        # Player/Camera entities, every one of them trivially "survived", and a
+        # brief that committed to NOTHING scored 100/100 — the unearned perfect
+        # score this module treats as worse than no score at all.
+        #
+        # Dropping it also avoids double-reporting: "the brief named it and the
+        # build lacks it" is already unity_playability's `brief_entities`, at
+        # ERROR, which outranks anything reported from here.
+        if not phrase:
+            continue
         out.append(Demand(noun=raw, modifiers=tuple(dict.fromkeys(mods)),
                           phrase=phrase))
     return out
@@ -386,6 +415,20 @@ def check_fidelity(brief: str, schema: Any, *,
             nouns = [n["name"] for n in extract_named_entities(brief)]
         except Exception:          # noqa: BLE001 — a report never fails a build
             nouns = []
+        # `extract_named_entities` only finds entities in a STRUCTURED brief.
+        # A vibe prompt — "purple hippos with six legs, hurling custard pies" —
+        # yields none, which produced 0 demands, 0 losses and a triumphant
+        # 100/100 measuring nothing at all. That is the silent-default failure
+        # this module exists to catch, reproduced inside the instrument.
+        #
+        # The schema's own entity names are the honest fallback: they are what
+        # the build actually produced, and asking "did the words the brief
+        # attached to this thing survive" is exactly the question. A build that
+        # dropped the entity outright is already an ERROR under
+        # unity_playability's brief_entities check.
+        if not nouns:
+            nouns = [str(getattr(e, "name", "") or "")
+                     for e in (getattr(schema, "entities", None) or [])]
 
     rep.demands = extract_demands(brief, nouns)
     blob = _schema_blob(schema)
@@ -416,6 +459,9 @@ def check_fidelity(brief: str, schema: Any, *,
             "Step 3 schema-fill / Step 6 model spec"))
 
     if entity_model_paths:
+        rep.assets_checked = sum(
+            1 for p in entity_model_paths.values()
+            if p and not str(p).startswith("ui:"))
         rep.gaps.extend(check_asset_fidelity(schema, entity_model_paths))
     return rep
 

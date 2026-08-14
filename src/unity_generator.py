@@ -1878,6 +1878,17 @@ class UnityProjectGenerator:
             if _m.rig == "humanoid" and (_is_2d or _kind not in _blender_kinds):
                 _m.rig = "generic"
                 _m.clips = {}
+
+        # Stamp the resolved table so Step 7 can grade WHAT each entity became,
+        # not just that it exists. entity_model_paths is a return value consumed
+        # by wiring and never persisted, so `concept_fidelity`'s asset half —
+        # the one that catches "commit node -> marble-center-butterfly-low.fbx",
+        # where the entity name survived and the model is a marble run — had
+        # nothing to read and silently graded only modifiers. Same sidecar
+        # pattern as authored_models / spatial_facts, and it makes a saved
+        # schema replayable through `unity-fidelity` with its assets intact.
+        if isinstance(schema.meta, dict):
+            schema.meta["entity_model_paths"] = dict(entity_model_paths)
         return used_models, entity_model_paths
 
     # ── public entry point ─────────────────────────────────────────────────────
