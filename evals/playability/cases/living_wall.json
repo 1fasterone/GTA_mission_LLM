@@ -3,9 +3,9 @@
   "schema": "tests/fixtures/living_wall_llm.schema.json",
   "input": "captured-llm",
   "provenance": "Schema-fill (Step 3) output captured verbatim from the live living-wall climbing run. Never hand-edited; see tests/fixtures/README.md.",
-  "notes": "VerticalSurface climb: tag='Holdable' holds, a structure/Environment cliff, wall-attached hazards. The contrast case for dropzone_arcade — its player group is character/Player/count=1, so the generator's player-merge fires and the avatar spawns where the layout put it. KNOWN FAILING: objective_targets, because this capture's mission targets an entity named 'SummitView' that the fill never wrote. There is no ground truth to repair it from — no entity resembles a summit — so the check records it rather than guessing, and it is deliberately absent from must_pass. Score 90 is the floor WITH that failure; if a future change makes the schema-fill or a rescue produce the missing entity, re-lock the floor upward.",
+  "notes": "VerticalSurface climb: tag='Holdable' holds, a structure/Environment cliff, wall-attached hazards. The contrast case for dropzone_arcade — its player group is character/Player/count=1, so the generator's player-merge fires and the avatar spawns where the layout put it. KNOWN FAILING: objective_targets, because this capture's mission targets an entity named 'SummitView' that the fill never wrote. There is no ground truth to repair it from — no entity resembles a summit — so the check records it rather than guessing, and it is deliberately absent from must_pass. Score 90 is the floor WITH that failure; if a future change makes the schema-fill or a rescue produce the missing entity, re-lock the floor upward. FLOOR MOVED 90->88 when the custom_script_body check landed: FogBreathSystem carry no body, so each is a component attached to a live object that does nothing. The build did not get worse — a real defect that nothing measured before is now counted. Re-lock upward once Step 3.5a (unity_micro_code.enrich_scripts) authors them.",
   "floor": {
-    "score": 90,
+    "score": 88,
     "must_pass": [
       "avatar",
       "avatar_binding",

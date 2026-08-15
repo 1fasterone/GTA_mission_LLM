@@ -22,7 +22,8 @@ from src.micro.code_fields import (
     CodeExtensibleSchema, CodeField, CodeMethod,
     bind_authored_code, find_unbound_identifiers, harden_against_template,
     sanitize_default, template_method_arities, template_scope_members,
-    template_types, _disable_bad_header, _fragment_declares,
+    template_types, template_members, template_method_params,
+    _disable_bad_header, _fragment_declares,
 )
 
 MICRO = Path("templates/unity/micro")
@@ -336,3 +337,119 @@ def test_named_argument_is_not_treated_as_an_identifier():
 ])
 def test_quoted_default_on_a_non_string_field(declared, default, expected):
     assert sanitize_default(declared, default) == expected
+
+
+# ── CS1503 / CS0103 from CodeBranchSim ───────────────────────────────────────
+#
+# Eight compile errors from one run, all past the two gates that exist. Seven
+# were argument TYPES on a call whose argument COUNT was legal, which the arity
+# check answers "fine" to by construction. The eighth called a template method
+# that this variant does not render.
+#
+# Fixture provenance: TEST DATA, hand-transcribed from the generated .cs at
+# C:\u\CodeBranchSim. They exercise the deterministic lint layer only.
+
+def _typed(kind, variant, body, signature=""):
+    """Every name the real gate would have in scope, so the only thing left to
+    flag is the signature mismatch under test."""
+    known = (set(template_scope_members(str(MICRO / kind), variant))
+             | set(template_types(str(MICRO / kind), variant))
+             | {"node", "file", "_selectedNode", "_autosaveInterval",
+                "_lastSaveTime", "Time", "Debug"})
+    bad = find_unbound_identifiers(
+        body, known=known,
+        arities=template_method_arities(str(MICRO / kind), variant),
+        params=template_method_params(str(MICRO / kind), variant),
+        signature=signature)
+    return sorted({n for names in bad.values() for n in names})
+
+
+@pytest.mark.parametrize("kind,variant,body,signature,needle", [
+    # AudioDirectorAudioManager.cs(113,25) — Play(string, Vector3? = null).
+    # Two arguments is a legal COUNT, which is all anything checked.
+    ("audio", "director", 'Play("success", 1f);', "", "needs vector3?"),
+    # PointerController.cs(253,46) — ApplyHighlight(GameObject), handed the
+    # object's NAME. `.name` is a string on every Unity type.
+    ("controller", "pointer", "ApplyHighlight(node.name);",
+     "private void SelectCommitNode(GameObject node)", "needs gameobject"),
+    # InitializeRepositoryObjectives.cs(134,29) — the event is
+    # Action<string,int,int> and every one of the three arguments is wrong.
+    # The first is only knowable from the enclosing signature.
+    ("objectives", "tracker", 'OnObjectiveProgress(node, 1f, "File Node");',
+     "public void CollectFileNode(GameObject node)", "needs string"),
+])
+def test_a_wrong_argument_type_is_caught(kind, variant, body, signature, needle):
+    assert any(needle in f for f in _typed(kind, variant, body, signature))
+
+
+@pytest.mark.parametrize("kind,variant,body,signature", [
+    ("audio", "director", 'Play("success");', ""),
+    ("audio", "director", 'Play("success", transform.position);', ""),
+    ("objectives", "tracker", 'ReportProgress("obj_1", 2);', ""),
+    # null into a nullable, and an int where a float is wanted (a widening
+    # conversion) — both legal, and both shapes the checker could get wrong.
+    ("audio", "director", 'Play("success", null);', ""),
+    ("objectives", "tracker", 'ReportProgress("obj_1", 2);', ""),
+])
+def test_a_legal_call_is_left_alone(kind, variant, body, signature):
+    """The gate NEUTRALISES what it flags, so a false positive deletes working
+    code — strictly worse than the CS1503 it would have prevented."""
+    assert not [f for f in _typed(kind, variant, body, signature) if "(" in f]
+
+
+def test_two_class_types_are_never_judged():
+    """Inheritance could make it legal and this pass cannot see a base list.
+    `Renderer` where `Component` is wanted must not be touched."""
+    assert not [f for f in _typed(
+        "controller", "pointer", "ApplyHighlight(rend);",
+        "private void Go(Renderer rend)") if "ApplyHighlight(" in f]
+
+
+def test_an_overloaded_name_is_not_type_checked(tmp_path):
+    """Two signatures mean a call could match either, and this pass cannot tell
+    which was meant — so it judges neither, rather than picking one and
+    neutralising every call that matched the other."""
+    (tmp_path / "Over.cs.j2").write_text("""public class Over {
+    public void Ping(string a) {}
+    public void Ping(int a) {}
+    public void Solo(string a) {}
+}
+""", encoding="utf-8")
+    params = template_method_params(str(tmp_path))
+    assert "Ping" not in params
+    assert params["Solo"] == ("string",)
+
+
+# ── The variant decides what the template actually renders ───────────────────
+
+def test_a_member_from_another_variant_is_not_in_scope():
+    """SaveSystem.cs(70,89) CS0103. `SetCheckpoint` really is declared in the
+    saveload template — inside `{% if variant == "checkpoint" %}`. Reading the
+    template as one flat text put it in scope for all three variants, and the
+    emitted file for `slots` does not have it."""
+    assert "SetCheckpoint" in template_members(str(MICRO / "saveload"), "checkpoint")
+    assert "SetCheckpoint" not in template_members(str(MICRO / "saveload"), "slots")
+
+
+def test_the_call_that_shipped_is_now_flagged():
+    assert "SetCheckpoint()" in _typed(
+        "saveload", "slots",
+        "if (_autosaveInterval > 0f) { SetCheckpoint(); _lastSaveTime = Time.time; }")
+
+
+def test_the_same_call_binds_on_the_variant_that_declares_it():
+    assert "SetCheckpoint()" not in _typed(
+        "saveload", "checkpoint",
+        "if (_autosaveInterval > 0f) { SetCheckpoint(); _lastSaveTime = Time.time; }")
+
+
+def test_no_variant_still_reads_the_whole_template():
+    """Callers that cannot say which variant keep the old union — too WIDE is
+    the safe direction here, because too narrow would accuse legal code."""
+    assert "SetCheckpoint" in template_members(str(MICRO / "saveload"))
+
+
+def test_a_condition_that_is_not_about_the_variant_keeps_its_body():
+    from src.micro.code_fields import _drop_dead_variant_branches
+    src = "{% if s.wants_audio %}\npublic void Boom() {}\n{% endif %}"
+    assert "Boom" in _drop_dead_variant_branches(src, "slots")

@@ -96,6 +96,10 @@ _CHECK_SEVERITY: dict[str, str] = {
     # WARN, not ERROR: a lost adjective is degraded fidelity, not a missing
     # entity — brief_entities already owns "the thing isn't in the game".
     "concept_fidelity":  WARN,
+    # A custom script with no body is a component attached to a live object that
+    # does nothing. WARN for the same reason: the mechanic is degraded, not the
+    # game structurally broken.
+    "custom_script_body": WARN,
     "spawn_clear":       ERROR,
     "content_reachable": ERROR,
     "volume_player":     ERROR,
@@ -649,6 +653,52 @@ def _check_concept_fidelity(schema: UnitySchema,
     rep.checks["concept_fidelity"] = not fidelity.gaps
 
 
+# The fields that make a script DO something. Declared fields and usings are
+# not behaviour — a class of fields that does nothing is the defect, not
+# evidence against it. Kept in step with unity_micro_code._BEHAVIOUR_KEYS
+# (tests/test_script_code_enrichment.py pins the two together).
+_SCRIPT_BEHAVIOUR_KEYS = ("awake_extra", "update_extra", "fixed_update_extra",
+                          "extra_methods")
+
+
+def _check_custom_script_bodies(schema: UnitySchema,
+                                rep: PlayabilityReport) -> None:
+    """A `type: custom` script that holds data and does nothing.
+
+    The other script types render a proven baseline template. The custom
+    template (templates/unity/scripts/CustomBehaviour.cs.j2) renders NOTHING but
+    the fields and bodies the schema carries, so a custom script with every body
+    empty compiles to a class of `[SerializeField]` fields with no methods —
+    and `attach_to` still puts it on a live GameObject.
+
+    Nothing reported this. It is not a compile error, not a missing entity, and
+    not a broken seam; the class is there, the component is there, and the
+    behaviour its own `description` promises simply is not. Measured on
+    CodeBranchSim: four custom scripts, 0 authored method blocks between them,
+    against 14 across the composed micros.
+    """
+    scripts = [s for s in (getattr(schema, "scripts", None) or [])
+               if str(getattr(s, "type", "")) == "custom"]
+    if not scripts:
+        _ungraded(rep, "custom_script_body",
+                  "this build declares no type:custom scripts — the other types "
+                  "render a baseline template and carry behaviour without one")
+        return
+
+    empty = [str(getattr(s, "name", "") or "?") for s in scripts
+             if not any(getattr(s, k, None) for k in _SCRIPT_BEHAVIOUR_KEYS)]
+    if empty:
+        rep.findings.append(Finding(
+            "custom_script_body", WARN,
+            f"{len(empty)} of {len(scripts)} custom script(s) have no body "
+            f"({', '.join(empty[:4])}) — each is a component attached to a live "
+            "object that holds data and does nothing, so the behaviour its "
+            "description promises is absent from the build",
+            "Step 3 schema-fill (scripts[].awake_extra/update_extra/"
+            "extra_methods) / Step 3.5a unity_micro_code.enrich_scripts"))
+    rep.checks["custom_script_body"] = not empty
+
+
 def _check_interactables_tagged(schema: UnitySchema,
                                 rep: PlayabilityReport) -> None:
     """EntitySpawner only attaches a collider to a group that carries a tag
@@ -1089,6 +1139,7 @@ _CHECKS = (
     _check_objective_targets,
     _check_brief_entity_coverage,
     _check_concept_fidelity,
+    _check_custom_script_bodies,
     _check_interactables_tagged,
     _check_scene_population,
     _check_spawn_clear,

@@ -3,9 +3,9 @@
   "schema": "tests/fixtures/dropzone_skydive.schema.json",
   "input": "engineer-authored",
   "provenance": "Hand-written layout fixture for the DropZone skydiving brief (tests/fixtures/README.md). Tests Steps 4-7 only — it says nothing about what the schema-fill LLM produces.",
-  "notes": "VerticalCorridor + exit platform: locomotion=fly, altitude-banded content, a Cessna the player exits, a landing pad on the ground. Explicit objective kinds (collectible/goal) and no tags, the mirror image of dropzone_arcade's tag-carried meaning.",
+  "notes": "VerticalCorridor + exit platform: locomotion=fly, altitude-banded content, a Cessna the player exits, a landing pad on the ground. Explicit objective kinds (collectible/goal) and no tags, the mirror image of dropzone_arcade's tag-carried meaning. FLOOR MOVED 98->95 when the custom_script_body check landed: ParachuteSystem and AltimeterManager carry no body, so each is a component attached to a live object that does nothing. The build did not get worse — a real defect that nothing measured before is now counted. Re-lock upward once Step 3.5a (unity_micro_code.enrich_scripts) authors them.",
   "floor": {
-    "score": 98,
+    "score": 95,
     "must_pass": [
       "avatar",
       "avatar_binding",

@@ -194,8 +194,61 @@ The deterministic derivation reads the UI vocabulary the layout and asset passes
 already share (`ui_element_of`): an icon or card is a piece, a panel is a place,
 a **log is a place you cannot drop into** — a history is produced by a command,
 not filled in by hand — and a terminal-shaped window is the command line. So a
-board is playable with no model at all, and the Pipeline LLM authors the verbs,
-the orderings and the per-piece names on top of it.
+board is playable with no model at all.
+
+The **legal move** is derived on top of that, from the mission — deterministically,
+because in the compose path nothing else could: `MicroComposer._resolve` builds a
+micro's schema straight from `Subsystem.options` with no LLM, and
+`enrich_subsystems` may only merge C# fragments, so a field with no producer
+ships empty. `board_domain_for_missions` fills every one of them, from two
+sources, each for what it actually knows — the **mission** carries the rules,
+the **brief** carries the names:
+
+| field | derived from | abstains when |
+|---|---|---|
+| `accepts` | name affinity — a piece and a place that share a word belong together (`RedCards` → `RedSlots`) | any place matches no piece, any piece has nowhere to go, or the result refuses nothing |
+| `commands` | the opening imperative of each objective's description (`"Stage every modified file"` → `stage`), with the description itself as its `help` | the objective is about nothing on the board, or the verb collides with a built-in or with an earlier objective's |
+| `command_prefix` | the word the brief puts in front of one of those verbs (`"git commit"` → `git`), else the console entity's name minus what makes it a console (`GitConsole` → `git`) | the candidate is grammar rather than a name, is itself a verb (`Run` would eat the bare verb and answer with usage), or is part of the cast |
+| `items` | the concrete names a brief lists in a clause that names the group — quoted strings, dotted filenames, alphanumeric codes | the clause is not about that group, or lists fewer than two: one mention in passing is not a roster |
+| `requires` | the order the mission's objectives first reach each place; an objective naming a PIECE reaches the place that alone accepts it | fewer than two places are reached, or the two places share no piece, which would close the second forever rather than sequence it |
+
+All-or-nothing and loud, because one place left taking anything while its
+neighbours are restricted reads to the player as a bug in the game rather than a
+rule of it. The board is also **titled from the same mission the briefing is**,
+so the two player-facing surfaces cannot disagree about what is being played.
+
+`items` earns more than captions: `ResolvePieces` matches on the label, so a
+named piece is a piece the player can type at — `stage README.md` means nothing
+until the roster is read. Clause splitting therefore does **not** break on a
+newline (briefs arrive hard-wrapped, and treating the soft wrap as a boundary
+cut a nine-name roster after the second) nor on the dot inside a filename.
+
+### The `OnCommand` arm  ✅ *bridged*
+
+`RunCommand` raised `OnCommand` from the day it was written — as a signal for a
+verb that moves nothing, and after a move for one that does — and no composed
+build could ever fire it, because `commands` had no producer. The seam could not
+reach it either: `_board_objective_binding` keyed everything off `target_ref`,
+which names a piece or a place, never a verb.
+
+The case that needs it is the **readout**. `TryPlace` refuses a DRAG into one, so
+an objective about a log ("Record what you staged") cannot be satisfied by
+dragging at all; it was binding to `OnZoneFilled`, reachable only through the
+built-in `move` verb that nothing tells the player about. `meta.objective_commands`
+now records the verb derived FOR such an objective, and SEAM 8a consults it
+first:
+
+- readout target → `OnCommand`, filtered on the verb, whole count at once
+- piece target → unchanged `OnPiecePlaced`, one per placement (a verb fires once
+  and would complete a count of nine on the first command)
+- drop-target place → unchanged `OnZoneFilled`
+- nothing on the board → **no verb at all**, so SEAM 8a — which runs before every
+  other source — cannot claim a step away from the trigger volume that really
+  raises it
+
+`harden` reports a verb that collides with one of `Run`'s built-ins: the switch
+answers those before it reads the declared commands, so such a verb is not
+overridden, it is unreachable, and an objective bound to it could never advance.
 
 Its events (`OnPiecePlaced`, `OnGroupComplete`, `OnZoneFilled`, `OnCommand`) are
 the honest event source a UI-first game never had — SEAM 8 could only offer a

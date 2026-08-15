@@ -27,6 +27,18 @@ This module carries that same mechanism into compose. Two suppliers, one sink:
                any subsystem B left empty (B disabled, call failed, or the
                model returned nothing for that kind).
 
+And the same step for the OTHER sink, at the bottom of this file:
+
+  `enrich_scripts` — Step 3.5a, for `schema.scripts`. A `type: custom` script's
+               template is a bare shell (it renders extra_fields and the extra_*
+               bodies and declares nothing else), so with no supplier it emitted
+               a class of fields with no behaviour and attached it to a live
+               GameObject. Measured on CodeBranchSim: 14 authored method blocks
+               across the micros, 0 across its four custom scripts, because
+               everything here only ever walked subsystems. Unlike the two
+               above it runs whether or not `--compose` is on, since scripts are
+               generated either way.
+
 Determinism contract
 --------------------
 Nothing here touches codegen. Both suppliers only ever write into
@@ -54,8 +66,10 @@ from .micro import REGISTRY
 from pathlib import Path
 
 from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
-                                template_members, template_method_arities,
-                                template_usings)
+                                find_unbound_identifiers, template_members,
+                                template_method_arities, template_usings,
+                                _KNOWN_SYMBOLS, _MONO_INHERITED,
+                                _signature_param_names)
 
 # ── What may be written ───────────────────────────────────────────────────────
 
@@ -669,4 +683,287 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
     if skipped_kinds:
         msgs.append("micro-code: no code-field support in "
                     + ", ".join(sorted(set(skipped_kinds))))
+    return msgs
+
+
+# ── Prompt-authored SCRIPTS (schema.scripts) ─────────────────────────────────
+#
+# `enrich_subsystems` above authors bodies for composed MICROS. Nothing ever did
+# the same for `schema.scripts`, and a `type: custom` script's template
+# (templates/unity/scripts/CustomBehaviour.cs.j2) is a bare shell — it renders
+# `extra_fields` and every `extra_*` body and declares nothing else. So a custom
+# script with empty bodies emits a class with fields and NO behaviour, attached
+# to a live GameObject.
+#
+# Measured on CodeBranchSim: 14 prompt-specific method blocks across the micros,
+# 0 across the four custom scripts. Their schema entries came back
+# `"awake_extra": "", "extra_methods": []` — the generator was faithful, the
+# fields simply had no producer. Step 3 declares the class; there was no Step
+# 3.5 for it.
+#
+# Only `custom` is enriched. Every other script type renders a template that
+# already carries its behaviour (GameManager.cs.j2, SceneAudio.cs.j2, ...), and
+# injecting an `update_extra` into a class that has its own Update loop is a
+# different and riskier change than filling an empty shell.
+#
+# Containment is NOT rebuilt here: unity_generator already runs a battery of
+# sanitizers over `script.awake_extra` / `update_extra` / `fixed_update_extra` /
+# `extra_methods[].body` (_sanitize_project_service_calls,
+# _strip_undeclared_foreach, _strip_undeclared_self_reference, ...). This adds
+# the supplier those passes have always been waiting for.
+
+_SCRIPT_SYSTEM = (
+    "You are a senior Unity gameplay engineer. You are handed ONE script from a "
+    "larger generated project — a bare MonoBehaviour with nothing in it but the "
+    "fields listed — and asked for the C# that makes it do its job. "
+    "Output ONLY valid JSON — no explanation, no markdown fences."
+)
+
+
+# BEHAVIOUR, not declarations. `_has_code` tests all of CODE_KEYS, which is
+# right for a micro because its options dict is empty until something authors
+# it. A script is different: Step 3 fills `extra_fields`/`extra_usings` for
+# nearly every custom script and leaves every body empty — the exact shape this
+# step exists to fix — so testing the full vocabulary would skip precisely the
+# scripts that need enriching.
+_BEHAVIOUR_KEYS: tuple[str, ...] = _FRAGMENT_KEYS + ("extra_methods",)
+
+
+def _script_has_code(script) -> bool:
+    """True when this script already has a BODY, so enrichment leaves it alone.
+    Declared fields and usings are not behaviour — a class of fields that does
+    nothing is the defect, not evidence against it."""
+    return any(getattr(script, k, None) for k in _BEHAVIOUR_KEYS)
+
+
+def _script_contract(script, siblings: Sequence[Any] = ()) -> str:
+    """What this script really has, and what it may really reach for.
+
+    The same lesson as `_contract_for`: the compiler has always known this and
+    only ever used it to JUDGE the answer. A custom script's surface is small
+    and exact — MonoBehaviour, its own serialized fields, and the PUBLIC methods
+    of its sibling custom scripts, which is the only cross-script access
+    `unity_generator._sanitize_project_service_calls` lets through (a sibling's
+    extra_fields always render `[SerializeField] private`, so reaching one is
+    CS0122 from anywhere else).
+    """
+    lines = ["", "WHAT THIS CLASS ALREADY HAS"]
+    fields = [f"{getattr(f, 'type', '?')} {getattr(f, 'name', '?')}"
+              for f in (getattr(script, "extra_fields", None) or [])]
+    lines.append("  serialized fields: " + (", ".join(fields) if fields
+                                            else "none — declare what you need"))
+    lines.append("  everything MonoBehaviour gives you (transform, gameObject, "
+                 "GetComponent<T>, StartCoroutine, Instantiate, Destroy, ...)")
+
+    reachable: list[str] = []
+    for sib in siblings:
+        if sib is script or getattr(sib, "type", "") != "custom":
+            continue
+        public = [str(getattr(m, "signature", "") or "").strip()
+                  for m in (getattr(sib, "extra_methods", None) or [])
+                  if str(getattr(m, "signature", "") or "").strip().startswith("public")]
+        if public:
+            reachable.append(f"  GameContext.Instance.Get<{sib.name}>() -> "
+                             + "; ".join(public))
+    if reachable:
+        lines.append("")
+        lines.append("OTHER SCRIPTS YOU MAY CALL (public methods only)")
+        lines.extend(reachable)
+    return "\n".join(lines)
+
+
+def _script_user_prompt(script, *, concept: str, user_prompt: str,
+                        keys: tuple[str, ...], contract: str) -> str:
+    return f"""\
+PROJECT CONCEPT
+{concept.strip()[:1800]}
+
+ORIGINAL BRIEF
+{user_prompt.strip()[:900]}
+
+THE SCRIPT YOU ARE WRITING
+  class name:  {script.name}
+  its job:     {script.description}
+  attached to: {getattr(script, "attach_to", "systems")}
+{contract}
+
+This class is EMPTY apart from the fields above — there is no baseline behaviour
+to avoid restating. Write what the description says it does, and nothing that is
+another script's job.
+
+THE CODE MUST COMPILE. Everything available to you is listed above:
+- Anything not listed you must declare yourself in extra_fields before using it.
+- Every type you name must be a Unity or C# built-in (float, Vector3,
+  AudioSource, Light, List<T>, ...) or a script listed above. A helper class of
+  your own has nothing to define it — model that state with plain fields here.
+- Use only UnityEngine, or name what you need in extra_usings.
+{_EXTRAS_CONTRACT}
+
+Return ONE JSON object containing only these keys: {", ".join(keys)}
+"""
+
+
+def _script_would_not_bind(script, payload: dict) -> list[str]:
+    """Identifiers in this payload the generator's sanitizers would strip.
+
+    A custom script has no micro template to check against, so the scope is
+    built directly: MonoBehaviour, the known-symbol allowlist, the fields it
+    declares (existing and proposed), and its own method names.
+    """
+    def _get(row, key):
+        return str((row or {}).get(key, "") if isinstance(row, dict)
+                   else getattr(row, key, "") or "")
+
+    try:
+        known = set(_MONO_INHERITED) | set(_KNOWN_SYMBOLS) | {script.name}
+        for f in (getattr(script, "extra_fields", None) or []):
+            known.add(str(getattr(f, "name", "") or ""))
+        for f in (payload.get("extra_fields") or []):
+            known.add(_get(f, "name"))
+        methods = payload.get("extra_methods") or []
+        sigs = [_get(m, "signature") for m in methods]
+        for sig in sigs:
+            hit = re.search(r"\b([A-Za-z_]\w*)\s*\(", sig)
+            if hit:
+                known.add(hit.group(1))
+
+        cuts: list[str] = []
+        for key in _FRAGMENT_KEYS:
+            body = str(payload.get(key) or "")
+            if body:
+                for names in find_unbound_identifiers(body, known=known).values():
+                    cuts.extend(names)
+        for row, sig in zip(methods, sigs):
+            body = _get(row, "body")
+            if body:
+                # A method's own parameters are in scope for its own body —
+                # `signature` alone only feeds argument TYPE inference.
+                for names in find_unbound_identifiers(
+                        body, known=known | _signature_param_names(sig),
+                        signature=sig).values():
+                    cuts.extend(names)
+        # Deduplicated and capped: a correction listing forty names teaches the
+        # model less than one listing six.
+        return sorted(set(cuts))[:6]
+    except Exception:                      # noqa: BLE001 — never block authoring
+        return []
+
+
+def _apply_script(script, payload: dict) -> bool:
+    """Assign the surviving payload onto the script.
+
+    Unlike a Subsystem's untyped `options` dict these are real model fields, so
+    pydantic validates on assignment and a malformed method or field is dropped
+    here rather than carried into codegen.
+    """
+    from .unity_schema import CodeField, CodeMethod
+
+    wrote = False
+    for key in _FRAGMENT_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            setattr(script, key, value)
+            wrote = True
+    for key, model in (("extra_fields", CodeField), ("extra_methods", CodeMethod)):
+        rows = payload.get(key)
+        if not isinstance(rows, list) or not rows:
+            continue
+        built = []
+        for row in rows:
+            try:
+                built.append(row if isinstance(row, model) else model(**row))
+            except (ValidationError, TypeError):
+                continue
+        if not built:
+            continue
+        existing = list(getattr(script, key, None) or [])
+        taken = {getattr(x, "name", None) or getattr(x, "signature", None)
+                 for x in existing}
+        fresh = [b for b in built
+                 if (getattr(b, "name", None) or getattr(b, "signature", None))
+                 not in taken]
+        if fresh:
+            setattr(script, key, existing + fresh)
+            wrote = True
+    usings = payload.get("extra_usings")
+    if isinstance(usings, list) and usings:
+        have = list(getattr(script, "extra_usings", None) or [])
+        script.extra_usings = have + [u for u in usings
+                                      if isinstance(u, str) and u not in have]
+    return wrote
+
+
+def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
+                   user_prompt: str = "", temperature: float = 0.35,
+                   attempts: int = 3) -> list[str]:
+    """Author bodies for `type: custom` scripts, one focused call each.
+
+    Same shape as `enrich_subsystems`: a narrow window per script, the real
+    contract shown up front, and one correction round when the answer would not
+    bind. Never raises — a failed script costs that script, not the build.
+
+    MUST be called while the LLM is still warm, for the same reason
+    `enrich_subsystems` must: LM Studio's idle-unload turns every call into a
+    swallowed failure once a Blender/Chromium phase has run.
+    """
+    if not concept:
+        return ["script-code: no concept available — skipped LLM enrichment"]
+
+    targets = [s for s in (scripts or [])
+               if getattr(s, "type", "") == "custom" and not _script_has_code(s)]
+    if not targets:
+        return []
+
+    msgs: list[str] = []
+    enriched = 0
+    for script in targets:
+        contract = _script_contract(script, scripts)
+        payload: dict = {}
+        correction = ""
+        for attempt in range(attempts):
+            try:
+                raw = llm.chat(
+                    system=_SCRIPT_SYSTEM,
+                    user=_script_user_prompt(script, concept=concept,
+                                             user_prompt=user_prompt,
+                                             keys=CODE_KEYS,
+                                             contract=contract) + correction,
+                    temperature=temperature if attempt == 0 else min(temperature, 0.15),
+                    thinking=False,
+                )
+                candidate = {k: v for k, v in (llm.extract_json(raw) or {}).items()
+                             if k in CODE_KEYS and v not in (None, "", [], {})}
+                if not candidate:
+                    continue
+                payload = candidate
+                if attempt + 1 >= attempts:
+                    break
+                cuts = _script_would_not_bind(script, payload)
+                if not cuts:
+                    break
+                correction = (
+                    "\n\nYOUR PREVIOUS ANSWER DOES NOT COMPILE AS WRITTEN.\n"
+                    "These names are not declared anywhere:\n"
+                    + "\n".join("  - " + c for c in cuts) +
+                    "\nRewrite the SAME behaviour so it binds — declare what you "
+                    "need in extra_fields. Do not drop the feature."
+                )
+                msgs.append(f"script-code: {script.name} re-authored after "
+                            f"{len(cuts)} binding error(s)")
+            except Exception as exc:       # noqa: BLE001 — one script must not abort
+                if attempt + 1 >= attempts:
+                    msgs.append(f"script-code: {script.name} enrichment failed "
+                                f"({type(exc).__name__}: {exc}) — stays a shell")
+
+        if payload and _apply_script(script, payload):
+            enriched += 1
+
+    if enriched:
+        msgs.insert(0, f"script-code: LLM authored behaviour for "
+                       f"{enriched}/{len(targets)} custom script(s)")
+    else:
+        # Loud: a custom script with no body is a component attached to a live
+        # GameObject that does nothing, and nothing downstream reports it.
+        msgs.insert(0, f"script-code: LLM authored nothing usable — "
+                       f"{len(targets)} custom script(s) stay empty shells")
     return msgs
