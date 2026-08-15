@@ -124,7 +124,14 @@ Rules + mechanic (UI-first games)
   reach the same move core, so the two surfaces cannot disagree. Adopts the
   plates EntitySpawner built; never spawns its own. Composed for
   locomotion='none' only. Its events are what SEAM 8a binds a mission
-  objective to. docs/PLAYABLE_GAME_GAP.md is the reference.
+  objective to. `board_domain_for_missions` derives the whole domain
+  deterministically from two sources — the MISSION carries the rules
+  (`accepts` from piece/place name affinity, `commands` from each objective's
+  opening imperative, `requires` from the objective order), the BRIEF carries
+  the names (`items` per piece, `command_prefix`) — and abstains loudly rather
+  than half-restricting a board. An objective about a READOUT binds to
+  OnCommand (a drag into one is refused); everything else keeps its piece/zone
+  event. docs/PLAYABLE_GAME_GAP.md is the reference.
 
 Always reference these paths when generating or modifying files. See also
 docs/model-pipeline-architecture.md.

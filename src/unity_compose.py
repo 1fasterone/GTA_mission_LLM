@@ -225,7 +225,16 @@ class MicroComposer:
             # would filter on and the board could never raise.
             board = ({"pieces":   [p.id for p in schema.pieces if p.id],
                       "zones":    [z.id for z in schema.zones if z.id],
-                      "commands": [c.verb for c in schema.commands if c.verb]}
+                      "commands": [c.verb for c in schema.commands if c.verb],
+                      # Intersected with the verbs that SURVIVED default_fix,
+                      # for the same reason the list above is read back late: a
+                      # verb the schema dropped is a key the board can never
+                      # raise, and an objective bound to it would be a dead
+                      # step reported as a live one.
+                      "objective_commands": {
+                          oid: verb for oid, verb
+                          in (schema.meta.get("objective_commands") or {}).items()
+                          if verb in {c.verb for c in schema.commands}}}
                      if sub.kind == "board" else {})
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
@@ -1143,14 +1152,25 @@ def _board_objective_binding(board, objective: dict) -> tuple[str, str, int] | N
     """
     from .micro.board import norm_ref
 
-    ref = norm_ref(objective.get("target_ref") or "")
-    if not ref:
-        return None
     otype = str(objective.get("type") or "").lower()
     try:
         count = max(1, int(objective.get("count") or 1))
     except (TypeError, ValueError):
         count = 1
+
+    # A verb derived FOR this objective outranks its target_ref, because it was
+    # only recorded where a drag cannot do the job: the target is a readout —
+    # `TryPlace` refuses a drag into one, so no amount of dragging could ever
+    # satisfy it — or the objective names nothing on the board at all. Binding
+    # such an objective to OnZoneFilled reports a live step whose only route is
+    # the built-in `move` verb, which nothing ever tells the player about.
+    verb = (board.board.get("objective_commands") or {}).get(objective.get("id"))
+    if verb:
+        return ("OnCommand", verb, count)
+
+    ref = norm_ref(objective.get("target_ref") or "")
+    if not ref:
+        return None
 
     groups   = {norm_ref(g): g for g in (board.board.get("pieces") or [])}
     zones    = {norm_ref(z): z for z in (board.board.get("zones") or [])}
@@ -1395,7 +1415,8 @@ def _bt_options_for_entry(entry) -> dict:
 
 from .micro.lighting import select_variant as _lighting_variant  # noqa: E402
 from .micro.rules import steps_from_mission as _rule_steps_for_mission  # noqa: E402
-from .micro.board import board_options_for_entities as _board_options_for_entities  # noqa: E402
+from .micro.board import (board_domain_for_missions as _board_domain_for_missions,  # noqa: E402
+                          board_options_for_entities as _board_options_for_entities)
 
 
 def _mission_goal(mission) -> str:
@@ -1894,9 +1915,24 @@ def subsystems_for(
     # interactable — otherwise the rules micro states an instruction ("drag
     # every file icon into a folder container") that nothing in the build
     # implements, which is the whole defect it was written to close.
+    #
+    # The mission is read here as well as by the rules layer below, and that is
+    # the point: the order the board ENFORCES and the progression the player is
+    # SHOWN are then two readings of one authored list, so the hint bar can
+    # never name a next action the move core would refuse.
+    _missions_with_objectives = [m for m in (missions or []) if m.objectives]
+    _first_mission = _missions_with_objectives[0] if _missions_with_objectives else None
     if ui_first:
-        _board_opts = _board_options_for_entities(entities or [])
+        # Titled from the same mission the briefing is titled from — a board
+        # captioned "Game Board" under a briefing that calls the game something
+        # else is two surfaces disagreeing about what the player is playing.
+        _board_opts = _board_options_for_entities(
+            entities or [], title=(_first_mission.title if _first_mission else ""))
         if _board_opts:
+            for _ok, _msg in _board_domain_for_missions(
+                    _board_opts, _first_mission, brief=user_prompt):
+                console.print(f"  [green]OK[/]    {_msg}" if _ok
+                              else f"  [yellow]WARN[/]  {_msg}")
             _board_variant = _board_opts.pop("variant")
             subs.append(Subsystem(kind="board", variant=_board_variant,
                                   target="systems", name="GameBoard",
@@ -1924,9 +1960,8 @@ def subsystems_for(
     # IS the objective list: with nothing to sequence there is no game to
     # explain, and a briefing that says "achieve the goal" is the empty
     # scaffolding this exists to replace.
-    _missions_with_objectives = [m for m in (missions or []) if m.objectives]
-    if _missions_with_objectives:
-        _m = _missions_with_objectives[0]
+    if _first_mission is not None:
+        _m = _first_mission
         _steps = _rule_steps_for_mission(_m)
         subs.append(Subsystem(
             kind="rules", variant="guided", target="ui", name="GameRules",

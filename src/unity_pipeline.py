@@ -696,8 +696,12 @@ class UnityPipeline:
         # How many content-gated multimodal IR sections the Step-3 prompt may
         # carry beyond the always-on core. Each section costs ~150 tokens; drop
         # it to 1 or 0 on a model with a tight context window.
+        # No cap by default. The relevance gate (a section the brief never
+        # signals for is never asked for) lives in render_multimodal_block; this
+        # is only a token-budget truncation on top of it, and the budget it was
+        # sized for assumed an 8k window. Set it in config.yaml to re-impose one.
         self.multimodal_max_sections = int(
-            pipe_cfg.get("multimodal_max_sections", 3))
+            pipe_cfg.get("multimodal_max_sections", 0)) or None
         # Unity package cache — see src/unity_package_cache.py.
         self.package_cache_cfg = pipe_cfg.get("package_cache", {}) or {}
 
@@ -1253,6 +1257,24 @@ class UnityPipeline:
             except Exception as exc:  # noqa: BLE001
                 self._warn(f"Sketchfab query translation failed "
                           f"({type(exc).__name__}: {exc}) — mechanical fallback used")
+        # STEP 3.5a — the same code-authoring step, for schema.scripts.
+        #
+        # OUTSIDE the compose block on purpose: a `type: custom` script is
+        # generated whether or not micros are composed, and its template
+        # (templates/unity/scripts/CustomBehaviour.cs.j2) is a bare shell that
+        # renders extra_fields and the extra_* bodies and declares nothing else.
+        # With no supplier for those bodies it emits a class of fields with no
+        # behaviour and attaches it to a live GameObject — measured on
+        # CodeBranchSim as 14 authored method blocks across the micros and 0
+        # across its four custom scripts, because Step 3.5 only ever walked
+        # subsystems. Inside the warm window, ahead of the Blender/Chromium
+        # phases, for the same reason every other llm.chat() step here is.
+        if schema.scripts and micro_code and not no_llm:
+            from .unity_micro_code import enrich_scripts
+            for msg in enrich_scripts(schema.scripts, llm=self.llm,
+                                      concept=concept, user_prompt=user_prompt):
+                self._fix(msg)
+
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
         composed_units = None

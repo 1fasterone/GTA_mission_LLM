@@ -403,23 +403,49 @@ class TestWiringGuidance:
 # ── Token budget ──────────────────────────────────────────────────────────────
 
 class TestTokenBudget:
-    """Local models run at 8k-16k context and the base prompt is already ~3.5k
-    tokens, so the multimodal ask has to stay bounded — that is the whole reason
-    the optional sections are gated instead of all 13 fields shipping every time."""
+    """The multimodal ask has to stay bounded — that is the whole reason the
+    optional sections are gated instead of all 13 fields shipping every time.
+
+    Calibrated to the window this project is actually RUN at, not a guessed one.
+    `lms load qwen3.5-9b --context-length 101678 --parallel 1 --estimate-only`
+    reports **6.10 GiB on the 8 GB card — the same estimate as 32k**, so the KV
+    cache is cheap for this model and ~100k of context is effectively free.
+
+    The ceiling here previously assumed an 8k window and capped the prompt at
+    5500 tokens. That is ~12× tighter than the hardware allows, and it was tight
+    enough to reject a useful line of prompt AND to justify dropping half the
+    multimodal ask (see render_multimodal_block's max_optional).
+
+    Budget arithmetic at 101,678: a schema-fill answer is the whole project JSON,
+    around 5k tokens (CodeBranchSim's was 19 KB). A 36k prompt still leaves ~60k
+    for the answer. The guard exists to stop unbounded growth, not to ration a
+    context that fits.
+    """
 
     @staticmethod
     def _tokens(text: str) -> int:
         return len(text) // 4   # rough chars-per-token, good enough for a guard
 
-    def test_default_block_stays_under_1500_tokens(self):
-        assert self._tokens(block().text) < 1500
+    def test_the_block_stays_under_2500_tokens(self):
+        """The default IS the uncapped block now, so one bound covers both: what
+        the full optional set costs when a brief signals for all of it."""
+        assert block().text == block(max_optional=len(OPTIONAL_SECTIONS)).text
+        assert self._tokens(block().text) < 2500
 
-    def test_uncapped_block_stays_under_2500_tokens(self):
-        assert self._tokens(block(max_optional=len(OPTIONAL_SECTIONS)).text) < 2500
+    def test_the_whole_optional_set_costs_about_a_kilotoken(self):
+        """The size the old cap was buying back. ~940 tokens against a 101,678
+        window is 0.9% — and it was costing half the multimodal ask."""
+        full = self._tokens(block().text)
+        capped = self._tokens(block(max_optional=3).text)
+        assert 0 < full - capped < 1500
 
-    def test_full_prompt_leaves_room_in_an_8k_window(self):
+    def test_a_configured_cap_still_shrinks_the_block(self):
+        """config.yaml can re-impose one; the mechanism is intact."""
+        assert self._tokens(block(max_optional=1).text) < self._tokens(block().text)
+
+    def test_full_prompt_leaves_room_in_a_101k_window(self):
         rendered = full_prompt(block(), concept="x" * 2400)  # ~600-token concept
-        assert self._tokens(rendered) < 5500
+        assert self._tokens(rendered) < 36000
 
     def test_empty_block_leaves_the_base_prompt_intact(self):
         rendered = UNITY_SCHEMA_FILL_USER.format(concept="c", schema_hints="",

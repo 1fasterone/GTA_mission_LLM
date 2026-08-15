@@ -253,8 +253,12 @@ OUTPUT this exact JSON structure, fully populated:
       "type": "one of the script types above",
       "description": "what this script does in plain English",
       "attach_to": "player | camera | game_manager | systems  (custom type only)",
-      "extra_usings": [], "extra_fields": [], "awake_extra": "",
-      "update_extra": "", "fixed_update_extra": "", "extra_methods": []
+      "extra_usings": ["namespaces your fragments need"],
+      "extra_fields": [{{"name": "_timer", "type": "float", "default": "0f"}}],
+      "awake_extra": "C# statements, or \\"\\" if none are needed",
+      "update_extra": "C# statements — for \\"type\\": \\"custom\\" NOTHING ELSE RENDERS, so a script with every body empty ships a class that holds data and does nothing. Write the behavior this script's own description claims.",
+      "fixed_update_extra": "",
+      "extra_methods": [{{"signature": "private void Advance()", "body": "_timer += Time.deltaTime;"}}]
     }}
   ],
   "story_beats": [
@@ -313,10 +317,11 @@ Output ONLY the JSON. No other text."""
 #   CORE      — always emitted. capabilities/characters/missions/audio_specs apply
 #               to every game and drive the composed subsystems directly.
 #   OPTIONAL  — gated on CONTENT (the concept + user prompt text), same convention
-#               unity_compose.subsystems_for uses to gate optional micros. At most
-#               `max_optional` sections ship, ranked by how many distinct signals
-#               the brief hit, so the prompt's size stays bounded no matter how
-#               much the concept describes.
+#               unity_compose.subsystems_for uses to gate optional micros. A
+#               section the brief never signals for is never asked for; that
+#               content gate is what keeps the ask relevant. `max_optional` is a
+#               separate token-budget cap on top and now defaults to off — see
+#               render_multimodal_block for the window arithmetic.
 #   wiring    — compose-only, so it lives in GAMECONTEXT_SCHEMA_GUIDANCE below
 #               (its source/target vocabulary is the micro kinds, which only
 #               exist in --compose mode).
@@ -564,14 +569,27 @@ def _signal_score(text: str, keywords: tuple[str, ...]) -> int:
 def render_multimodal_block(concept: str,
                             user_prompt: str = "",
                             *,
-                            max_optional: int = 3) -> MultimodalBlock:
+                            max_optional: int | None = None) -> MultimodalBlock:
     """Render the Step-3 multimodal ask for one project.
 
-    Core sections always ship. Optional sections are scored against the concept +
-    user prompt and the top `max_optional` are appended, which bounds the prompt
-    growth at roughly +900 tokens no matter how much the brief describes.
+    Core sections always ship. Optional sections ship when the brief actually
+    signals for them — `score > 0` below is the RELEVANCE gate, and a section
+    the concept never hints at is never asked for at any cap.
+
+    `max_optional` is a second, purely budgetary truncation on top of that, and
+    it defaults to no truncation at all. It used to default to 3, which dropped
+    half the multimodal ask on a rich brief — sections the concept HAD signalled
+    for — to save ~940 tokens. That was worth doing against the 8k window the
+    budget was written for; measured against the window this project is actually
+    loaded at (101,678 tokens, which `lms load --estimate-only` puts at 6.10 GiB
+    on the 8 GB card — the same estimate as 32k, so the context is effectively
+    free), the whole block is 6.4% of the window. Losing authored content to
+    save 0.9% of a context that fits is a bad trade.
+
     Deterministic: same text in → same block out, no LLM, no RNG.
     """
+    if max_optional is None:
+        max_optional = len(_OPTIONAL_SECTIONS)
     haystack = f"{concept}\n{user_prompt}".lower()
 
     scores = {sid: _signal_score(haystack, kws)

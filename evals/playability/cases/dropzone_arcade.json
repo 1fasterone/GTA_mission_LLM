@@ -3,9 +3,9 @@
   "schema": "tests/fixtures/dropzone_arcade_llm.schema.json",
   "input": "captured-llm",
   "provenance": "Schema-fill (Step 3) output captured verbatim from a live `unity-create` run. Never hand-edited; see tests/fixtures/README.md.",
-  "notes": "VerticalCorridor descent, 2000 m. The shape hand-written fixtures never reproduced: generic `kind` with the meaning carried in `tag`, and a player group the fill tagged Player on a kind=prop entity. This is the case that exposed the avatar spawning at the world origin while the layout placed it at the corridor top.",
+  "notes": "VerticalCorridor descent, 2000 m. The shape hand-written fixtures never reproduced: generic `kind` with the meaning carried in `tag`, and a player group the fill tagged Player on a kind=prop entity. This is the case that exposed the avatar spawning at the world origin while the layout placed it at the corridor top. FLOOR MOVED 98->96 when the custom_script_body check landed: CameraManager and ParachuteSystem carry no body, so each is a component attached to a live object that does nothing. The build did not get worse — a real defect that nothing measured before is now counted. Re-lock upward once Step 3.5a (unity_micro_code.enrich_scripts) authors them.",
   "floor": {
-    "score": 98,
+    "score": 96,
     "must_pass": [
       "avatar",
       "avatar_binding",

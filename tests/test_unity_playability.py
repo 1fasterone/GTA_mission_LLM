@@ -9,6 +9,8 @@ check the compiler had before it:
 """
 from __future__ import annotations
 
+import pytest
+
 from src.unity_layout import compute_layout
 from src.unity_playability import (ERROR, WARN, evaluate, gate)
 from src.unity_schema import (EntitySpec, MissionObjective, MissionSpec,
@@ -680,3 +682,83 @@ def test_a_swim_descent_never_fails_content_above_the_diver():
 
     s.locomotion = "fly"
     assert not evaluate(s).checks["objective_kinematics"]
+
+
+# ── custom_script_body ───────────────────────────────────────────────────────
+#
+# The custom template renders NOTHING but the fields and bodies the schema
+# carries, so a `type: custom` script with every body empty compiles to a class
+# of [SerializeField] fields with no methods — and `attach_to` still puts it on
+# a live GameObject. Not a compile error, not a missing entity, not a broken
+# seam, and until now not reported by anything.
+#
+# Fixture provenance: the shape below is TEST DATA transcribed from
+# C:\u\CodeBranchSim, where all four custom scripts had empty bodies.
+
+def _custom(name="FileNodeController", **kw):
+    return UnityScript(name=name, type="custom",
+                       description="Handles dragging file nodes.", **kw)
+
+
+def _with_custom(*custom):
+    """`_playable` fixes its own script list, so build the same passing baseline
+    and APPEND — the custom scripts are the subject, not a replacement."""
+    return _schema(
+        [EntitySpec(name="Hero", kind="player", count=1, tag="Player"),
+         EntitySpec(name="Coin", kind="collectible", count=6,
+                    placement="scatter", tag="Collectible")],
+        scripts=[UnityScript(name="PlayerController", type="player", description="d"),
+                 UnityScript(name="CamRig", type="camera", description="d"),
+                 *custom])
+
+
+def test_a_custom_script_with_no_body_is_reported():
+    rep = evaluate(_with_custom(_custom()))
+    finding = next(f for f in rep.findings if f.check == "custom_script_body")
+    assert finding.severity == WARN
+    assert "FileNodeController" in finding.summary
+    assert rep.checks["custom_script_body"] is False
+
+
+def test_declared_fields_are_not_behaviour():
+    """The whole trap: Step 3 fills extra_fields for nearly every custom script
+    and leaves the bodies empty, so grading on "has any code field" would pass
+    exactly the builds this exists to catch."""
+    from src.unity_schema import CodeField
+    rep = evaluate(_with_custom(_custom(extra_usings=["System.Collections.Generic"],
+                extra_fields=[CodeField(name="_nodes", type="int", default="0")])))
+    assert rep.checks["custom_script_body"] is False
+
+
+@pytest.mark.parametrize("kw", [
+    {"update_extra": "transform.Rotate(0f, 1f, 0f);"},
+    {"awake_extra": "_n = 0;"},
+    {"fixed_update_extra": "// physics"},
+])
+def test_any_real_body_passes(kw):
+    rep = evaluate(_with_custom(_custom(**kw)))
+    assert rep.checks["custom_script_body"] is True
+
+
+def test_an_authored_method_counts_as_a_body():
+    from src.unity_schema import CodeMethod
+    rep = evaluate(_with_custom(_custom(extra_methods=[
+        CodeMethod(signature="public void Drop()", body="return;")])))
+    assert rep.checks["custom_script_body"] is True
+
+
+def test_a_typed_script_is_never_graded():
+    """A `player`/`camera`/`game_manager` script renders a proven baseline
+    template, so an empty body list says nothing about it."""
+    rep = evaluate(_playable())
+    assert "custom_script_body" not in rep.checks
+    assert "custom_script_body" in rep.not_graded
+
+
+def test_only_the_empty_ones_are_named():
+    rep = evaluate(_with_custom(
+        _custom("Alive", update_extra="transform.Rotate(0f, 1f, 0f);"),
+        _custom("Dead")))
+    finding = next(f for f in rep.findings if f.check == "custom_script_body")
+    assert "1 of 2" in finding.summary
+    assert "Dead" in finding.summary and "Alive" not in finding.summary

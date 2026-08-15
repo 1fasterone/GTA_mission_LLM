@@ -2451,8 +2451,63 @@ _TEMPLATE_EVENT_DECL_RE = re.compile(
 _JINJA_PLACEHOLDER = "_J_"
 
 
+# ── Variant-aware template reading ───────────────────────────────────────────
+# `_JINJA_TAG_RE` deletes the TAGS and keeps every branch's BODY, so a member
+# declared inside `{% if variant == "checkpoint" %}` counted as in-scope for
+# every saveload variant. Live on CodeBranchSim: an authored `Update()` called
+# `SetCheckpoint()`, which the template really does declare — for one variant
+# out of three — and the emitted file did not have it. CS0103, past a gate
+# whose whole job is CS0103.
+_JINJA_BRANCH_RE = re.compile(r"\{%-?\s*(if|elif|else|endif)\b([^%]*?)-?%\}", re.S)
+_VARIANT_EQ_RE   = re.compile(r"""^\s*variant\s*(==|!=)\s*['"]([^'"]+)['"]\s*$""")
+_VARIANT_IN_RE   = re.compile(r"""^\s*variant\s+(not\s+in|in)\s*[\(\[]([^)\]]*)[\)\]]\s*$""")
+
+
+def _eval_variant_condition(cond: str, variant: str) -> "bool | None":
+    """True/False for a condition that is PURELY about `variant`; None when the
+    condition tests anything else. None means "keep the body" — this pass only
+    ever removes what it can prove this variant will not render."""
+    m = _VARIANT_EQ_RE.match(cond or "")
+    if m:
+        return (variant == m.group(2)) if m.group(1) == "==" else (variant != m.group(2))
+    m = _VARIANT_IN_RE.match(cond or "")
+    if m:
+        options = {v.strip().strip("\"'") for v in m.group(2).split(",") if v.strip()}
+        return (variant not in options) if m.group(1).startswith("not") else (variant in options)
+    return None
+
+
+def _drop_dead_variant_branches(raw: str, variant: str) -> str:
+    """Remove the bodies of `{% if variant == ... %}` branches this variant will
+    not render. Conservative in one direction only: a condition this cannot
+    decide keeps its body, so the scope can still be too WIDE but never too
+    narrow — a narrow scope would accuse legal code."""
+    if not variant or "{%" not in raw:
+        return raw
+    out: list[str] = []
+    pos = 0
+    keep: list[bool] = []
+    for m in _JINJA_BRANCH_RE.finditer(raw):
+        if all(keep):
+            out.append(raw[pos:m.start()])
+        pos = m.end()
+        kind = m.group(1)
+        if kind == "if":
+            keep.append(_eval_variant_condition(m.group(2), variant) is not False)
+        elif kind == "elif" and keep:
+            keep[-1] = _eval_variant_condition(m.group(2), variant) is not False
+        elif kind == "else" and keep:
+            keep[-1] = True
+        elif kind == "endif" and keep:
+            keep.pop()
+    if all(keep):
+        out.append(raw[pos:])
+    return "".join(out)
+
+
 @lru_cache(maxsize=64)
-def _template_files(template_dir: str) -> "tuple[tuple[str, str, str], ...]":
+def _template_files(template_dir: str,
+                    variant: str = "") -> "tuple[tuple[str, str, str], ...]":
     """`((filename, jinja-neutralised C#, raw source), ...)` for the micro's folder.
 
     The raw source is kept because the injection points are Jinja and nothing
@@ -2466,24 +2521,29 @@ def _template_files(template_dir: str) -> "tuple[tuple[str, str, str], ...]":
     out: list[tuple[str, str, str]] = []
     for p in sorted(root.glob("*.cs.j2")):
         raw = p.read_text(encoding="utf-8", errors="replace")
+        live = _drop_dead_variant_branches(raw, variant)
         out.append((p.name,
                     _JINJA_EXPR_RE.sub(_JINJA_PLACEHOLDER,
-                                       _JINJA_TAG_RE.sub("", raw)),
+                                       _JINJA_TAG_RE.sub("", live)),
                     raw))
     return tuple(out)
 
 
 @lru_cache(maxsize=64)
-def _template_text(template_dir: str) -> str:
-    """Every C# template in the micro's own folder, with Jinja neutralised."""
-    return "\n".join(text for _, text, _raw in _template_files(template_dir))
+def _template_text(template_dir: str, variant: str = "") -> str:
+    """Every C# template in the micro's own folder, with Jinja neutralised.
+
+    `variant` drops the branches this variant will not render — without it the
+    scope is the union of every variant, which is how a member that exists in
+    exactly one of them passed as in-scope for all of them."""
+    return "\n".join(text for _, text, _raw in _template_files(template_dir, variant))
 
 
 @lru_cache(maxsize=64)
-def template_members(template_dir: str) -> frozenset[str]:
+def template_members(template_dir: str, variant: str = "") -> frozenset[str]:
     """Member names the micro's template already declares."""
     names: set[str] = set()
-    for line in _template_text(template_dir).splitlines():
+    for line in _template_text(template_dir, variant).splitlines():
         if _TYPE_DECL_RE.search(line):
             continue
         m = _TEMPLATE_MEMBER_RE.match(line)
@@ -2509,14 +2569,14 @@ _INJECTION_MARKERS = ("extra_methods", "extra_fields", "extra_usings",
 
 
 @lru_cache(maxsize=64)
-def template_scope_members(template_dir: str) -> frozenset[str]:
+def template_scope_members(template_dir: str, variant: str = "") -> frozenset[str]:
     """Member names in scope for code injected into this micro's template."""
-    injecting = [text for _name, text, raw in _template_files(template_dir)
+    injecting = [text for _name, text, raw in _template_files(template_dir, variant)
                  if any(mark in raw for mark in _INJECTION_MARKERS)]
     if not injecting:
         # No identifiable injection site — fall back to the folder-wide set
         # rather than claiming an empty scope, which would accuse everything.
-        return template_members(template_dir)
+        return template_members(template_dir, variant)
     names: set[str] = set()
     for text in injecting:
         for line in text.splitlines():
@@ -2529,7 +2589,7 @@ def template_scope_members(template_dir: str) -> frozenset[str]:
 
 
 @lru_cache(maxsize=64)
-def template_types(template_dir: str) -> frozenset[str]:
+def template_types(template_dir: str, variant: str = "") -> frozenset[str]:
     """Type names the micro's own template declares.
 
     `template_members` deliberately skips a `class`/`struct`/`enum` line so a
@@ -2539,11 +2599,11 @@ def template_types(template_dir: str) -> frozenset[str]:
     binding can decide). The unbound-identifier gate needs them or it would
     flag `new SaveSystemData()` as unresolvable.
     """
-    return frozenset(_TEMPLATE_TYPE_RE.findall(_template_text(template_dir)))
+    return frozenset(_TEMPLATE_TYPE_RE.findall(_template_text(template_dir, variant)))
 
 
 @lru_cache(maxsize=64)
-def template_method_arities(template_dir: str) -> "dict[str, tuple[int, int]]":
+def template_method_arities(template_dir: str, variant: str = "") -> "dict[str, tuple[int, int]]":
     """`{method_name: (min_args, max_args)}` for the methods the template declares.
 
     A parameter with a `=` default is optional, so the accepted count is a RANGE.
@@ -2552,7 +2612,7 @@ def template_method_arities(template_dir: str) -> "dict[str, tuple[int, int]]":
     real signatures can only ever under-report, never accuse a legal call.
     """
     out: "dict[str, tuple[int, int]]" = {}
-    for line in _template_text(template_dir).splitlines():
+    for line in _template_text(template_dir, variant).splitlines():
         if _TYPE_DECL_RE.search(line):
             continue
 
@@ -2835,8 +2895,167 @@ def _signature_param_names(signature: str) -> set[str]:
     return out
 
 
+# ── Argument TYPES (CS1503) ──────────────────────────────────────────────────
+# The arity check answers "how many", never "of what", so every one of these
+# passed it and failed at Unity:
+#     Play("success", 1f)                  Play(string, Vector3?)
+#     ApplyHighlight(node.name)            ApplyHighlight(GameObject)
+#     OnObjectiveProgress(node, 1f, "x")   Action<string, int, int>
+# Judged only where the answer is certain: a literal, a `.name`, or an
+# identifier whose type the fragment itself declares. Anything else is unknown
+# and unjudged — a checker that guesses would neutralise working code.
+_PRIMITIVE_TYPES = frozenset({"string", "int", "float", "double", "bool", "char",
+                              "long", "short", "byte", "decimal", "uint"})
+# What a literal of type K may be passed as, beyond its own type.
+_WIDENS_TO: "dict[str, frozenset[str]]" = {
+    "int":    frozenset({"int", "long", "float", "double", "decimal", "short"}),
+    "float":  frozenset({"float", "double"}),
+    "double": frozenset({"double"}),
+    "char":   frozenset({"char", "int", "long", "float", "double", "string"}),
+    "string": frozenset({"string"}),
+    "bool":   frozenset({"bool"}),
+}
+_STRING_LIT_RE = re.compile(r'^@?\$?"(?:[^"\\]|\\.)*"$')
+_CHAR_LIT_RE   = re.compile(r"^'(?:[^'\\]|\\.)+'$")
+_INT_LIT_RE    = re.compile(r"^[+-]?\d+[uUlL]{0,2}$")
+_FLOAT_LIT_RE  = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)[fF]$")
+_DOUBLE_LIT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\.\d+)[dD]?$")
+_DOT_NAME_RE   = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.name$")
+# `GameObject go`, `int count` — a declaration the fragment makes itself, in a
+# signature or a local. The type it states is ground truth for that name.
+_DECL_TYPE_RE = re.compile(
+    r"\b([A-Za-z_]\w*(?:<[^<>()]*>)?\??)\s+([A-Za-z_]\w*)\s*(?=[,)=;])")
+
+
+def _normalise_param_type(raw: str) -> str:
+    """`ref Vector3?` -> `vector3?`; `System.String` -> `string`."""
+    t = (raw or "").strip()
+    for mod in ("ref ", "out ", "in ", "params ", "this "):
+        if t.startswith(mod):
+            t = t[len(mod):].strip()
+    t = t.rsplit(".", 1)[-1]
+    alias = {"String": "string", "Int32": "int", "Single": "float",
+             "Double": "double", "Boolean": "bool", "Char": "char",
+             "Int64": "long"}
+    return alias.get(t, t).lower()
+
+
+def _expression_type(expr: str, locals_: "dict[str, str]") -> str:
+    """The C# type of an argument expression, or "" when it is not certain."""
+    e = (expr or "").strip()
+    if not e:
+        return ""
+    if e == "null":
+        return "null"
+    if e in ("true", "false"):
+        return "bool"
+    if _STRING_LIT_RE.match(e):
+        return "string"
+    if _CHAR_LIT_RE.match(e):
+        return "char"
+    if _FLOAT_LIT_RE.match(e):
+        return "float"
+    if _INT_LIT_RE.match(e):
+        return "int"
+    if _DOUBLE_LIT_RE.match(e):
+        return "double"
+    # UnityEngine.Object.name is a string on every Unity type, and passing it
+    # where the object itself belongs is the single commonest of these.
+    if _DOT_NAME_RE.match(e):
+        return "string"
+    return locals_.get(e, "")
+
+
+def _declared_types(text: str) -> "dict[str, str]":
+    """`{identifier: type}` for names the fragment declares, dropping any name
+    declared twice with different types — an ambiguous name is not evidence."""
+    seen: "dict[str, str]" = {}
+    clash: set[str] = set()
+    for m in _DECL_TYPE_RE.finditer(text or ""):
+        t, name = _normalise_param_type(m.group(1)), m.group(2)
+        if t in _CS_KEYWORDS and t not in _PRIMITIVE_TYPES:
+            continue
+        if name in seen and seen[name] != t:
+            clash.add(name)
+        seen[name] = t
+    for name in clash:
+        seen.pop(name, None)
+    return seen
+
+
+def _arg_conflicts(arg_type: str, param_type: str) -> bool:
+    """True only when this argument provably cannot convert to this parameter.
+
+    Every uncertain case answers False. The gate neutralises what it flags, so
+    a false positive deletes working code — strictly worse than the CS1503 it
+    would have prevented.
+    """
+    a, p = arg_type, _normalise_param_type(param_type)
+    if not a or not p or p in ("object", "var", "dynamic") or "<" in p:
+        return False
+    nullable = p.endswith("?")
+    bare = p.rstrip("?")
+    if a == "null":
+        # A value type that is not nullable cannot take null; everything else can.
+        return bare in _PRIMITIVE_TYPES and not nullable and bare != "string"
+    if a == bare:
+        return False
+    a_prim, p_prim = a in _PRIMITIVE_TYPES, bare in _PRIMITIVE_TYPES
+    if a_prim and p_prim:
+        return bare not in _WIDENS_TO.get(a, frozenset({a}))
+    # One side a primitive and the other a class/struct: no implicit conversion
+    # exists in either direction, whatever the class is.
+    if a_prim != p_prim:
+        return True
+    # Two class types — inheritance could make this legal, and this pass cannot
+    # see a base list. Never judged.
+    return False
+
+
+@lru_cache(maxsize=64)
+def template_method_params(template_dir: str,
+                           variant: str = "") -> "dict[str, tuple[str, ...]]":
+    """`{method_name: (param_type, ...)}` for the methods and events the
+    template declares, with any OVERLOADED name dropped: two signatures mean a
+    call could match either, and this pass cannot tell which was meant."""
+    out: "dict[str, tuple[str, ...]]" = {}
+    dropped: set[str] = set()
+
+    def record(name: str, types: "list[str]") -> None:
+        sig = tuple(_normalise_param_type(t) for t in types)
+        if name in out and out[name] != sig:
+            dropped.add(name)
+        out[name] = sig
+
+    for line in _template_text(template_dir, variant).splitlines():
+        if _TYPE_DECL_RE.search(line):
+            continue
+        e = _TEMPLATE_EVENT_DECL_RE.match(line)
+        if e:
+            raw = (e.group("args") or "").strip()
+            args = [a for a in _split_top_level_args(raw) if a.strip()] if raw else []
+            if e.group("kind") == "Func" and args:
+                args = args[:-1]            # the last type parameter is the RETURN
+            record(e.group("name"), args)
+            continue
+        m = _TEMPLATE_METHOD_DECL_RE.match(line)
+        if m:
+            raw = (m.group("params") or "").strip()
+            types: list[str] = []
+            for part in (_split_top_level_args(raw) if raw else []):
+                decl = part.split("=", 1)[0].strip()
+                tokens = [t for t in re.split(r"\s+", decl) if t]
+                types.append(" ".join(tokens[:-1]) if len(tokens) >= 2 else "")
+            record(m.group("name"), types)
+    for name in dropped:
+        out.pop(name, None)
+    return out
+
+
 def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
-                             arities: "dict[str, tuple[int, int]] | None" = None
+                             arities: "dict[str, tuple[int, int]] | None" = None,
+                             params: "dict[str, tuple[str, ...]] | None" = None,
+                             signature: str = ""
                              ) -> "dict[int, set[str]]":
     """`{line_index: {name, ...}}` for identifiers in `text` that cannot bind.
 
@@ -2875,10 +3094,16 @@ def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
         if mask[m.start()] and m.group(1) not in scope:
             flag(m.start(1), f"this.{m.group(1)}")
 
-    if arities:
+    if arities or params:
+        # The enclosing signature declares the types of the names its body
+        # uses — without it `OnObjectiveProgress(node, ...)` has no idea what
+        # `node` is, and the commonest wrong argument is a parameter passed on.
+        locals_ = _declared_types(signature + "\n" + text) if params else {}
         for m in _BINDABLE_IDENT_RE.finditer(text):
             name = m.group(1)
-            if not mask[m.start(1)] or name not in arities:
+            if not mask[m.start(1)]:
+                continue
+            if name not in (arities or {}) and name not in (params or {}):
                 continue
             paren = re.match(r"\s*\(", text[m.end(1):])
             if not paren:
@@ -2888,10 +3113,24 @@ def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
             if close < 0:
                 continue
             inner = text[open_at + 1:close].strip()
-            count = len([p for p in _split_top_level_args(inner) if p.strip()]) if inner else 0
-            lo, hi = arities[name]
-            if not (lo <= count <= hi):
-                flag(m.start(1), f"{name}({count} args, needs {lo}..{hi})")
+            args = [p for p in _split_top_level_args(inner) if p.strip()] if inner else []
+            count = len(args)
+            if arities and name in arities:
+                lo, hi = arities[name]
+                if not (lo <= count <= hi):
+                    flag(m.start(1), f"{name}({count} args, needs {lo}..{hi})")
+                    continue
+            # Types only once the count fits: reporting both for one call would
+            # name the same defect twice and say neither clearly.
+            wanted = (params or {}).get(name)
+            if not wanted or count > len(wanted):
+                continue
+            for i, arg in enumerate(args):
+                got = _expression_type(arg, locals_)
+                if _arg_conflicts(got, wanted[i]):
+                    flag(m.start(1),
+                         f"{name}(arg {i + 1} is {got}, needs {wanted[i].strip()})")
+                    break
     return bad
 
 
@@ -2912,7 +3151,9 @@ def _find_matching_brace_generic(text: str, open_idx: int, opener: str,
 
 
 def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
-                             arities: "dict[str, tuple[int, int]] | None" = None
+                             arities: "dict[str, tuple[int, int]] | None" = None,
+                             params: "dict[str, tuple[str, ...]] | None" = None,
+                             signature: str = ""
                              ) -> "tuple[str, set[str]]":
     """Neutralize statements referencing an identifier that cannot bind.
 
@@ -2921,7 +3162,8 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
     swap an `if`/`while` condition for `false` when the statement spans lines,
     and leave a line alone entirely when neither is safe.
     """
-    bad = find_unbound_identifiers(text, known=known, arities=arities)
+    bad = find_unbound_identifiers(text, known=known, arities=arities,
+                                   params=params, signature=signature)
     if not bad:
         return text, set()
     out: list[str] = []
@@ -3170,19 +3412,23 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     """Neutralize every authored statement that cannot bind against its own
     micro's class. Mutates `schema` in place; returns fixer-log messages."""
     tdir = str(template_dir)
-    if not template_members(tdir):
+    if not template_members(tdir, str(getattr(schema, "variant", "") or "")):
         return []                          # no parseable template — abstain
     # A template's sibling types are NAMED after the schema — saveload declares
     # `class {{ s.name }}Data`, which neutralises to the placeholder `_J_Data`
     # and matches nothing an authored fragment could write. Expanding it back
     # with the schema's own name is what makes `new SaveSystemData()` bind.
     own = str(getattr(schema, "name", "") or "")
+    # The variant decides which branches of the template actually render, and
+    # therefore which of its members this file will really have.
+    var = str(getattr(schema, "variant", "") or "")
     types = {t.replace(_JINJA_PLACEHOLDER, own) if own else t
-             for t in template_types(tdir)}
-    base = (set(template_scope_members(tdir)) | types
+             for t in template_types(tdir, var)}
+    base = (set(template_scope_members(tdir, var)) | types
             | _MONO_INHERITED | _KNOWN_SYMBOLS)
     base.discard(_JINJA_PLACEHOLDER)
-    arities = template_method_arities(tdir)
+    arities = template_method_arities(tdir, var)
+    params  = template_method_params(tdir, var)
     flagged: set[str] = set()
     dropped: list[str] = []
     returned: list[str] = []
@@ -3208,7 +3454,7 @@ def bind_authored_code(schema, template_dir) -> list[str]:
         blob = _authored_blob(schema)
         wanted: set[str] = set()
         for _line, names in find_unbound_identifiers(
-                blob, known=known, arities=live_arities).items():
+                blob, known=known, arities=live_arities, params=params).items():
             wanted |= names
         made = build_missing_fields(schema, wanted, blob)
         if made:
@@ -3222,7 +3468,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             if not before:
                 continue
             after, names = lint_unbound_identifiers(before, known=known,
-                                                    arities=live_arities)
+                                                    arities=live_arities,
+                                                    params=params)
             if names:
                 setattr(schema, key, after)
                 flagged |= names
@@ -3233,7 +3480,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             body = getattr(m, "body", "") or ""
             after, names = lint_unbound_identifiers(
                 body, known=known | _signature_param_names(getattr(m, "signature", "")),
-                arities=live_arities)
+                arities=live_arities, params=params,
+                signature=getattr(m, "signature", "") or "")
             if names:
                 flagged |= names
                 changed = True
