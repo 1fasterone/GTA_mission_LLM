@@ -510,6 +510,24 @@ def _check_mission_loop(schema: UnitySchema, rep: PlayabilityReport) -> None:
     advanceable = len(bound) + len(self_driven)
     required    = int(wiring.get("objectives_required") or (len(bound) + len(unbound)))
 
+    # A report that declares objectives and then accounts for NONE of them is
+    # not a failing build, it is a report this check cannot read. Wiring
+    # reports written before `objectives_self_driven` existed look exactly like
+    # a build where nothing bound: every list empty, `objectives_total` set. A
+    # `survive`-only mission from that era was correctly self-driven and left
+    # out of `objectives_unbound`, so grading the silence as ERROR accuses an
+    # older project of being unwinnable on evidence that was never recorded.
+    #
+    # Ungraded, with the remedy, rather than passed: absence of evidence is not
+    # evidence of playability either.
+    if total and not (bound or unbound or self_driven or optional):
+        _ungraded(rep, "mission_loop",
+                  f"the wiring report declares {total} objective(s) but lists "
+                  "none of them as bound, unbound or self-driven — it predates "
+                  "`objectives_self_driven` and cannot be read. Re-run the "
+                  "build with --compose to grade the loop")
+        return
+
     ok = advanceable > 0 and not unbound
     if not advanceable:
         rep.findings.append(Finding(
