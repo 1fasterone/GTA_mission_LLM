@@ -1926,8 +1926,12 @@ def subsystems_for(
         # Titled from the same mission the briefing is titled from — a board
         # captioned "Game Board" under a briefing that calls the game something
         # else is two surfaces disagreeing about what the player is playing.
+        # The mission is passed as the FALLBACK classifier, not the primary
+        # one: the UI vocabulary answers the ordinary cases, and the objectives
+        # answer the ones no word list can ("drag the shoes onto the tower").
         _board_opts = _board_options_for_entities(
-            entities or [], title=(_first_mission.title if _first_mission else ""))
+            entities or [], title=(_first_mission.title if _first_mission else ""),
+            mission=_first_mission)
         if _board_opts:
             for _ok, _msg in _board_domain_for_missions(
                     _board_opts, _first_mission, brief=user_prompt):

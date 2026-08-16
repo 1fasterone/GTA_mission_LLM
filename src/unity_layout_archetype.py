@@ -1245,7 +1245,20 @@ _UI_ELEMENT_TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("panel",  ("panel", "panels", "pane", "panes", "board", "boards",
                 "sidebar", "side panel", "toolbar", "palette", "tray",
                 "container", "containers", "folder", "folders", "drawer",
-                "section", "region", "zone", "slot", "slots", "well")),
+                "section", "region", "zone", "slot", "slots", "well",
+                # PLAYING SURFACES. A board game's places are not called
+                # panels — they are areas, mats, racks, piles and lanes — and
+                # without them a cast of pieces has nowhere legal to go, so
+                # board.board_options_for_entities abstained and no legal-move
+                # logic was composed at all. Measured: 27 of 39 ordinary
+                # board-game nouns classified as nothing.
+                "area", "areas", "surface", "surfaces", "tabletop", "table top",
+                "mat", "mats", "playmat", "play mat", "rack", "racks", "bay",
+                "bays", "lane", "lanes", "bin", "bins", "shelf", "shelves",
+                "pile", "piles", "stack", "stacks", "hand", "hands",
+                "grid", "grids", "track", "tracks", "space", "spaces",
+                "station", "stations", "dock", "workbench", "bench", "field",
+                "fields", "square", "squares", "tile grid", "hex", "hexes")),
     ("button", ("button", "buttons", "switch", "switches", "toggle",
                 "toggles", "control", "controls", "key", "keys", "lever",
                 "action", "actions", "command", "commands", "menu item")),
@@ -1257,7 +1270,17 @@ _UI_ELEMENT_TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
                 "commits", "branch", "branches", "ticket", "tickets", "task",
                 "tasks", "note", "notes", "entry", "entries", "record",
                 "records", "row", "rows", "cell", "cells", "chip", "badge",
-                "token", "tokens", "block", "blocks")),
+                "token", "tokens", "block", "blocks",
+                # THE THINGS YOU MOVE. Same gap as the playing surfaces above,
+                # from the other side: a cast of pawns and meeples with no
+                # place to go is the same dead board as a cast of places with
+                # nothing to put in them.
+                "piece", "pieces", "pawn", "pawns", "counter", "counters",
+                "meeple", "meeples", "chips", "disc", "discs", "disk", "disks",
+                "stone", "stones", "die", "dice", "domino", "dominoes",
+                "coin", "coins", "gem", "gems", "cube", "cubes", "bead",
+                "beads", "peg", "pegs", "checker", "checkers", "brick",
+                "bricks", "figurine", "figurines")),
     ("icon",   ("icon", "icons", "glyph", "glyphs", "avatar", "thumbnail",
                 "marker", "markers", "pin", "pins", "dot", "sprite", "symbol",
                 "file", "files", "document", "documents", "cursor")),
@@ -1300,6 +1323,17 @@ _UI_RANK_BY_ELEMENT: dict[str, int] = {
 _UI_RANK_DEFAULT = 3
 
 
+# Phrases that name a PLAYING SURFACE and contain a word an earlier row claims.
+# The table is first-row-wins, so "table top" was resolved by `table` in the
+# `list` row and a surface you drop pieces onto became a read-only log. Checked
+# ahead of the table rather than reordering it: `table` really is a list in a
+# UI, and only the compound says otherwise.
+_UI_SURFACE_OVERRIDES: tuple[str, ...] = (
+    "table top", "tabletop", "game table", "card table", "board surface",
+    "play area", "playing area", "playing field", "game board",
+)
+
+
 def ui_element_of(entity) -> Optional[str]:
     """Which UI element this group reads as — or None when nothing says.
 
@@ -1313,6 +1347,8 @@ def ui_element_of(entity) -> Optional[str]:
     if hit:
         return hit
     words = _entity_words(entity)
+    if _hits(words, _UI_SURFACE_OVERRIDES):
+        return "panel"
     for element, needles in _UI_ELEMENT_TABLE:
         if _hits(words, needles):
             return element

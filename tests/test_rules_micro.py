@@ -116,3 +116,82 @@ def test_hud_only_variant_drops_the_briefing(cfg, mission, tmp_path):
     src = (tmp_path / "Scripts" / f"{s.name}.cs").read_text(encoding="utf-8")
     assert "NEXT:" in src, "the hint bar survives in every variant"
     assert "Briefing" not in src
+
+
+# ── Board: pieces, places and playing surfaces ───────────────────────────────
+
+class TestBoardVocabulary:
+    """A cast of pawns with nowhere to go is the same dead board as a cast of
+    places with nothing to put in them. Measured before this: 27 of 39 ordinary
+    board-game nouns classified as nothing, so the board micro abstained and no
+    legal-move logic was composed at all."""
+
+    @pytest.mark.parametrize("name", [
+        "GamePieces", "Pawns", "Counters", "Meeples", "Chips", "Discs",
+        "Stones", "Dice", "Coins", "Gems", "ChessPieces", "Cubes",
+    ])
+    def test_things_you_move_are_pieces(self, name):
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name=name, kind="prop")) in ("icon", "card")
+
+    @pytest.mark.parametrize("name", [
+        "StagingArea", "PlayingSurface", "PlayMat", "DiscardPile", "DrawPile",
+        "PlayerHand", "ScoreTrack", "StorageRack", "LoadingBay", "BuildLane",
+        "ResourceBin", "TileGrid", "HexGrid", "Shelf", "Workbench",
+    ])
+    def test_playing_surfaces_are_places(self, name):
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name=name, kind="prop")) in ("panel", "list")
+
+    def test_a_table_top_is_a_surface_not_a_log(self):
+        """First-row-wins resolved 'table top' through `table` in the list row,
+        so a surface you drop pieces onto became a read-only readout."""
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name="TableTop", kind="prop")) == "panel"
+        # ...while a bare data table is still a list.
+        assert ui_element_of(EntitySpec(name="CommitTable", kind="prop")) == "list"
+
+
+class TestBoardFromObjectives:
+    """The vocabulary is a closed list and a closed list can never cover every
+    game. The brief does not have that problem."""
+
+    def test_a_cast_no_word_list_can_name_still_makes_a_board(self):
+        from src.micro.board import board_options_for_entities
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec, MissionObjective, MissionSpec
+
+        ents = [EntitySpec(name="HighHeeledShoes", kind="prop", count=18),
+                EntitySpec(name="WobblyTower", kind="prop", count=1)]
+        assert all(ui_element_of(e) is None for e in ents), \
+            "precondition: the vocabulary must NOT know these"
+
+        m = MissionSpec(id="m1", title="Shoe Tower", objectives=[
+            MissionObjective(id="o1", type="collect", target_ref="HighHeeledShoes",
+                             description="Drag the high heeled shoes onto the "
+                                         "wobbly tower without toppling it.")])
+        opts = board_options_for_entities(ents, mission=m)
+        assert opts, "the mission names what moves where — that is a board"
+        assert [p["id"] for p in opts["pieces"]] == ["HighHeeledShoes"]
+        assert [z["id"] for z in opts["zones"]] == ["WobblyTower"]
+        assert opts["pieces"][0]["count"] == 18
+
+    def test_no_mission_still_abstains_when_the_cast_is_unreadable(self):
+        """The fallback must not invent a board out of nothing."""
+        from src.micro.board import board_options_for_entities
+        from src.unity_schema import EntitySpec
+        assert board_options_for_entities(
+            [EntitySpec(name="HighHeeledShoes", kind="prop", count=18)]) is None
+
+    def test_an_objective_with_no_move_verb_contributes_nothing(self):
+        from src.micro.board import board_options_for_entities
+        from src.unity_schema import EntitySpec, MissionObjective, MissionSpec
+        m = MissionSpec(id="m1", title="Watch", objectives=[
+            MissionObjective(id="o1", type="survive",
+                             description="Observe the wobbly tower for 60 seconds.")])
+        assert board_options_for_entities(
+            [EntitySpec(name="HighHeeledShoes", kind="prop"),
+             EntitySpec(name="WobblyTower", kind="prop")], mission=m) is None
