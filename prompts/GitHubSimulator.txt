@@ -1,0 +1,248 @@
+GitHub Simulator Game — Advanced Prompt (CI/CD + Branching + Merge Puzzles)
+TITLE: RepoQuest: Enterprise Edition
+INTENT:
+Generate a fully playable Unity experience that simulates real GitHub workflows, including branching strategies, CI/CD pipelines, merge conflict puzzles, code review interactions, and repository health management.
+All systems must be deterministic, asset‑stable, and compile without missing methods.
+
+1. WORLD STRUCTURE (ADVANCED ZONES)
+Core Zones
+Main Branch Citadel  
+Represents the protected main branch. Only stable builds can enter.
+
+Feature Branch Forest  
+Each branch is a physical path with nodes representing commits.
+
+Hotfix Volcano  
+Urgent patches spawn here; teaches emergency branching.
+
+Merge Conflict Caverns  
+A puzzle dungeon where players resolve file conflicts.
+
+CI/CD Pipeline Factory  
+A conveyor‑based automation system representing GitHub Actions.
+
+Pull Request Arena  
+NPC reviewers, automated checks, and approval gates.
+
+Issue Tracking Observatory  
+Issues orbit like satellites; players assign, prioritize, and close them.
+
+Release Train Station  
+Tags, releases, and versioning visualized as departing trains.
+
+2. ADVANCED GAMEPLAY MECHANICS
+Branching Strategies
+Implement three branching modes the player can switch between:
+
+A. GitHub Flow
+Only main + feature branches
+
+Fast merges
+
+CI must pass before merge
+
+B. Git Flow
+develop, feature/*, release/*, hotfix/*
+
+Release trains require tagging
+
+Hotfix Volcano interacts directly with main
+
+C. Trunk‑Based Development
+Short‑lived branches
+
+Frequent merges
+
+CI/CD pipeline runs constantly
+
+Switching strategies changes:
+
+Branch visuals
+
+NPC reviewer behavior
+
+Merge rules
+
+Release station logic
+
+3. MERGE CONFLICT PUZZLE SYSTEM
+Create a deterministic puzzle engine:
+
+Puzzle Types
+Line‑Mismatch Puzzle  
+Player aligns code blocks to resolve conflicts.
+
+Semantic Conflict Puzzle  
+Player chooses correct logic path based on hints.
+
+Three‑Way Merge Puzzle  
+Player compares base, ours, theirs in a tri‑panel interface.
+
+Conflict Artifacts
+ConflictDebris_Block
+
+BaseVersionRune
+
+OursFragment
+
+TheirsFragment
+
+ResolvedMergeCrystal
+
+Rules
+No randomness
+
+Every puzzle has one deterministic solution
+
+Completing puzzle unlocks merge gate
+
+4. CI/CD PIPELINE SYSTEM (ADVANCED)
+Represent GitHub Actions as a physical automation factory.
+
+Pipeline Modules
+WorkflowModule_Lint
+
+WorkflowModule_Test
+
+WorkflowModule_Build
+
+WorkflowModule_Deploy
+
+WorkflowModule_SecurityScan
+
+WorkflowModule_Cache
+
+WorkflowModule_ArtifactStore
+
+Pipeline Behavior
+Modules connect via conveyor belts
+
+Each module animates when active
+
+Failed modules turn red and block PR merges
+
+Logs appear as floating holograms
+
+Pipeline must be fully deterministic (no random failures)
+
+Pipeline States
+Queued
+
+Running
+
+Failed
+
+Succeeded
+
+Blocked by Missing Checks
+
+5. PULL REQUEST ARENA (ADVANCED)
+NPC Reviewer Types
+Senior Reviewer NPC  
+Strict, checks architecture.
+
+Automated Bot Reviewer  
+Runs CI/CD checks.
+
+Junior Reviewer NPC  
+Gives style feedback.
+
+PR Objects
+PRScroll
+
+ReviewCommentOrb
+
+ApprovalSigil
+
+ChangeRequestRune
+
+PR Flow
+Player submits PRScroll
+
+Reviewers spawn feedback or run checks
+
+Player updates branch
+
+Merge gate opens only when:
+
+All reviewers approve
+
+CI/CD pipeline succeeds
+
+No conflicts remain
+
+6. REPOSITORY HEALTH SYSTEM
+Track repo health with visible indicators:
+
+Code Quality Meter
+
+Branch Drift Meter
+
+CI Stability Meter
+
+Issue Backlog Meter
+
+Bad health triggers:
+
+NPC warnings
+
+Slower pipeline animations
+
+More conflict puzzles
+
+Hotfix Volcano eruptions
+
+7. REQUIRED SCRIPT SET (ADVANCED)
+All scripts must compile cleanly with no missing overrides:
+
+RepositoryStateManager
+
+BranchStrategyController
+
+BranchTreeController
+
+MergeConflictPuzzleSystem
+
+PRGatekeeperAI
+
+ReviewerNPCController
+
+WorkflowPipelineGraph
+
+ReleaseTrainController
+
+IssueBoardUIController
+
+RepoHealthManager
+
+8. DETERMINISTIC CONSTRAINTS
+No randomization
+
+No dynamic asset lookup
+
+All prefabs referenced explicitly
+
+All scripts self‑contained
+
+All naming exact
+
+Scene must run on first Play with zero errors
+
+9. DELIVERABLES
+Generate:
+
+Full Unity scene
+
+All prefabs
+
+All scripts
+
+All animations
+
+All interactions
+
+All puzzle logic
+
+All CI/CD visualizations
+
+All branching strategy behaviors

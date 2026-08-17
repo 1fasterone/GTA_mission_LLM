@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -1312,3 +1313,116 @@ def test_shader_atom_behavior_map_entry_present():
     atoms = microgen_atoms("shader")
     assert atoms
     assert atoms[0].atom == "SetMaterial"
+
+
+# ── CS0592 — an attribute list with no field under it ────────────────────────
+# `[Header]`, `[Tooltip]`, `[SerializeField]` and friends are legal only on a
+# property, indexer or field. A template that prints a header unconditionally
+# above fields that are ALL conditional emits a bare attribute list whenever
+# none of those conditions holds, and the attribute then binds to whatever
+# declaration comes next. Live on a RepoQuestEnterprise build,
+# EnemySpawner.cs(30,6): `[Header("Where to spawn")]` on the `point` shape
+# (which declares no positioning field) landed on the `OnDespawned` EVENT.
+#
+# Roslyn cannot catch this for us — `src/csharp_syntax_gate.py` is a PARSE-only
+# gate by design, and a misplaced attribute parses perfectly. It is an
+# attribute-target rule, decided during binding, so it has to be checked here.
+
+_ATTR_RUN_RE = re.compile(r"^\s*(?:\[[^\]]*\]\s*)+")
+# The head of a declaration: everything before its initializer, body or arrow.
+_DECL_HEAD_RE = re.compile(r"^(.*?)(?:=>|[={;])")
+
+
+def _is_attribute_target(line: str) -> bool:
+    """True when `line` declares something an attribute may legally sit on.
+
+    Fields, properties and indexers qualify; methods, events, types and a bare
+    brace do not. The discriminator is a parameter list in the declaration
+    HEAD — `public int AliveCount => _alive.Count;` has none and is a property,
+    `private void OnEnable() => StartCoroutine(...)` has one and is a method.
+    """
+    s = line.strip()
+    if not s or s[0] in "{}":
+        return False
+    head = (_DECL_HEAD_RE.match(s) or re.match(r"^(.*)$", s)).group(1)
+    if "(" in head:
+        return False                                  # method / constructor
+    tokens = head.replace("\t", " ").split()
+    return not ({"event", "class", "struct", "interface", "enum",
+                 "delegate", "namespace"} & set(tokens))
+
+
+def dangling_attribute_lists(cs: str) -> list[tuple[int, str]]:
+    """`[(line_number, attribute_text), ...]` for every attribute list in `cs`
+    whose target is not a field, property or indexer — i.e. every CS0592."""
+    lines = cs.splitlines()
+    out: list[tuple[int, str]] = []
+    i = 0
+    while i < len(lines):
+        m = _ATTR_RUN_RE.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        first, attrs = i, m.group(0).strip()
+        rest = lines[i][m.end():].strip()
+        # Walk to the declaration this attribute run applies to, stepping over
+        # blank lines, comments, preprocessor lines and any further attribute
+        # lines (which extend the same run rather than starting a new one).
+        while not rest or rest.startswith(("//", "/*", "*", "#")):
+            i += 1
+            if i >= len(lines):
+                rest = ""
+                break
+            nxt = _ATTR_RUN_RE.match(lines[i])
+            rest = lines[i][nxt.end():].strip() if nxt else lines[i].strip()
+        if not _is_attribute_target(rest):
+            out.append((first + 1, attrs))
+        i += 1
+    return out
+
+
+def test_dangling_attribute_detector_reads_csharp_targets():
+    """The detector itself — a check nobody can trust unless it is checked."""
+    assert not dangling_attribute_lists(
+        '[Header("A")]\n[SerializeField] private int x = 1;')
+    assert not dangling_attribute_lists(
+        '[Header("A")]\n\n    // note\n    private float y;')
+    assert not dangling_attribute_lists(
+        "[Header(\"A\")]\npublic int Count => _list.Count;")     # property
+    assert dangling_attribute_lists(
+        '[Header("A")]\npublic event Action<int> OnDone;')       # the live bug
+    assert dangling_attribute_lists(
+        '[Header("A")]\nprivate void Update() { }')
+    assert dangling_attribute_lists('[Header("A")]\n}')
+
+
+@pytest.mark.parametrize("variant", SpawnerPipeline.variants)
+@pytest.mark.parametrize("shape", ["point", "circle", "box", "spawn_points"])
+@pytest.mark.parametrize("pooling", ["instantiate", "pooled"])
+def test_spawner_never_emits_a_headerless_field_block(
+        tmp_path, dummy_config, variant, shape, pooling):
+    p = SpawnerPipeline(dummy_config)
+    s = SpawnerSchema(name="EnemySpawner", variant=variant,
+                      spawn_shape=shape, pooling=pooling)
+    s = p.default_fix(s, variant)
+    p.write_files(s, variant, tmp_path)
+    for f in sorted((tmp_path / "Scripts").glob("*.cs")):
+        bad = dangling_attribute_lists(f.read_text(encoding="utf-8"))
+        assert not bad, f"{f.name} {variant}/{shape}/{pooling}: CS0592 at {bad}"
+
+
+@pytest.mark.parametrize("variant", HUDPipeline.variants)
+@pytest.mark.parametrize("backend", ["uGUI", "UIToolkit"])
+def test_hud_never_emits_a_headerless_field_block(
+        tmp_path, dummy_config, variant, backend):
+    """The uGUI `[Header("uGUI refs")]` is guarded by the BACKEND while every
+    field under it is keyed on the VARIANT, so it stays legal only while the
+    variant chain is total. This is what fails if an eleventh variant is added
+    without a uGUI branch."""
+    p = HUDPipeline(dummy_config)
+    s = HUDSchema(name="TestHUD", variant=variant, backend=backend)
+    s = p.default_fix(s, variant)
+    p.write_files(s, variant, tmp_path)
+    for f in sorted((tmp_path / "Scripts").glob("*.cs")):
+        bad = dangling_attribute_lists(f.read_text(encoding="utf-8"))
+        assert not bad, f"{f.name} {variant}/{backend}: CS0592 at {bad}"

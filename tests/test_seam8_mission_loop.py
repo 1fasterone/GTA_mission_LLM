@@ -212,3 +212,48 @@ def test_objectives_exposes_a_readout_the_hud_can_bind(tmp_path):
     for member in ("public string Title =>", "public int CompletedRequired",
                    "public int TotalRequired", "public Objective ActiveObjective"):
         assert member in src
+
+
+def test_an_unreadable_wiring_report_is_ungraded_not_failed():
+    """A report that declares objectives and accounts for NONE of them predates
+    `objectives_self_driven` — a survive-only mission from that era was
+    correctly self-driven and left out of `objectives_unbound`, so the silence
+    looks identical to a build where nothing bound. Grading it ERROR accuses an
+    older project of being unwinnable on evidence that was never recorded."""
+    from src.unity_playability import evaluate
+    from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
+
+    s = UnitySchema(
+        project_name="Legacy", game_type="3D", platform="pc", render_pipeline="URP",
+        entities=[EntitySpec(name="Hero", kind="player", tag="Player")],
+        missions=[MissionSpec(id="m1", title="Hold", objectives=[
+            MissionObjective(id="o1", type="survive", description="survive")])])
+    s.meta["wiring"] = {                      # the pre-self_driven shape
+        "seams": ["SEAM 7", "SEAM 9"], "objectives_bound": [],
+        "objectives_unbound": [], "objectives_total": 1, "hud_objective": True,
+    }
+    rep = evaluate(s)
+    assert rep.checks.get("mission_loop") is None, "must not be graded"
+    assert "predates" in rep.not_graded.get("mission_loop", "")
+    assert not [f for f in rep.errors if f.check == "mission_loop"]
+
+
+def test_a_current_report_with_nothing_bound_still_fails():
+    """The guard above must not swallow a real unwinnable build: a report that
+    DOES account for its objectives, as unbound, is still an ERROR."""
+    from src.unity_playability import evaluate
+    from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
+
+    s = UnitySchema(
+        project_name="Dead", game_type="3D", platform="pc", render_pipeline="URP",
+        entities=[EntitySpec(name="Hero", kind="player", tag="Player")],
+        missions=[MissionSpec(id="m1", title="Escort", objectives=[
+            MissionObjective(id="o1", type="escort", description="escort")])])
+    s.meta["wiring"] = {
+        "seams": [], "objectives_bound": [], "objectives_unbound": ["Escort.o1 (escort)"],
+        "objectives_self_driven": [], "objectives_total": 1,
+        "objectives_required": 1, "hud_objective": True,
+    }
+    rep = evaluate(s)
+    assert rep.checks.get("mission_loop") is False
+    assert [f for f in rep.errors if f.check == "mission_loop"]

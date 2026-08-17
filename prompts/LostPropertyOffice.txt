@@ -1,0 +1,54 @@
+TITLE: Platform Four Lost Property
+
+CORE PREMISE
+You are the clerk on the late shift at a city railway station's lost property
+office. Nobody walks anywhere in this game and there is no character to steer.
+You stand at the counter for the whole shift and work with the mouse and the
+keyboard: the world of the game is the counter in front of you, the labelled
+shelves behind it, and the claim ledger you write the day into before you go
+home.
+
+GENRE: a calm sorting and paperwork puzzle, played entirely through the
+interface.
+
+STYLE: warm and cluttered, hand-lettered card labels, brown paper tags, a
+green desk lamp, the look of a real back office at eleven at night.
+
+THE SHIFT
+A porter tips the day's finds onto the counter in one heap and leaves. Behind
+the counter are three shelves, each hand-labelled for one kind of thing. On the
+end of the counter sits the claim ledger, which is a running list of everything
+you have booked in tonight. The ledger is a record — it fills itself as you
+write to it, and you cannot drop anything onto it by hand.
+
+WHAT IS ON THE COUNTER
+Lost umbrellas, still wet, several of them.
+Lost suitcases, a few, one of them very heavy.
+Lost phones, a small pile of them, all switched off.
+
+WHAT IS BEHIND THE COUNTER
+The umbrella shelf, a tall narrow rack.
+The suitcase shelf, a deep low rack.
+The phone shelf, a shallow tray of pigeonholes.
+
+HOW THE SHIFT GOES
+The shift has three parts and you work through them in order.
+
+First, clear the counter. Every lost umbrella belongs on the umbrella shelf,
+every lost suitcase on the suitcase shelf, every lost phone on the phone shelf.
+Nothing goes on the wrong shelf — the labels are the whole point of the job.
+
+Second, book the shelved things in. Once a kind of thing is all on its shelf,
+you record it in the claim ledger by typing at the terminal. The ledger is
+written, never dropped into.
+
+Third, close the office. When every kind of thing has been shelved and booked,
+you stamp the night's ledger and the shift is over.
+
+RULES
+There is nothing to fight, nothing to dodge and nothing to time. The only way
+to fail is to put a thing where it does not belong, and the game tells you why
+it refused rather than just snapping the thing back.
+
+Every action is either a drag with the mouse or a word typed at the terminal,
+and both do exactly the same thing to the office.

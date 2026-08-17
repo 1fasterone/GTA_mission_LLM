@@ -113,11 +113,21 @@ Spatial + QA (Unity)
   objective, reachable content, brief-entity coverage). Prints a scorecard,
   writes playability.txt, gated by playability.gate in config.yaml.
   CLI: python main.py unity-playability <schema.json> [--strict]
+- unity_objective_targets.py — Step 5 pass filling every blank
+  `MissionObjective.target_ref` from the objective's own description, scored
+  against entities the schema already declares (shared words, +2 where a
+  locative preposition marks a destination and the entity is a place, +1 where
+  the side matches what the objective TYPE needs). A tie ABSTAINS, naming both
+  candidates. Runs last of the Step 5 content passes, because every pass above
+  can still add an entity. Blank refs are why SEAM 8a, `commands` and
+  `requires` all abstain at once.
 
 Rules + mechanic (UI-first games)
 - micro/rules.py — the briefing, the step the player is on, and the hint bar
-  that names the next action. Composed once per PROJECT from the mission's
-  objectives. Owns what the player is TOLD.
+  that names the next action. Composed once per PROJECT, one progression
+  spanning EVERY mission (`steps_from_missions`) — SEAM 8a binds objectives
+  from all of them, so a step list stopping at the first told the player about
+  a fraction of what was live. Owns what the player is TOLD.
 - micro/board.py — the domain model and the legal-move logic behind it: every
   piece, every zone, where each piece is, and whether a move is legal
   (`TryPlace`, which refuses by name). Drag and a quote-aware command parser
@@ -125,11 +135,13 @@ Rules + mechanic (UI-first games)
   plates EntitySpawner built; never spawns its own. Composed for
   locomotion='none' only. Its events are what SEAM 8a binds a mission
   objective to. `board_domain_for_missions` derives the whole domain
-  deterministically from two sources — the MISSION carries the rules
-  (`accepts` from piece/place name affinity, `commands` from each objective's
-  opening imperative, `requires` from the objective order), the BRIEF carries
-  the names (`items` per piece, `command_prefix`) — and abstains loudly rather
-  than half-restricting a board. An objective about a READOUT binds to
+  deterministically from two sources — the MISSIONS carry the rules (`accepts`
+  from piece/place name affinity, `commands` from each objective's opening
+  imperative, `requires` from the objective order), the BRIEF carries the names
+  (`items` per piece, `command_prefix`) — and abstains loudly rather than
+  half-restricting a board. It reads EVERY mission, in step with
+  micro/rules.py, so what the board enforces and what the player is shown stay
+  two readings of one list. An objective about a READOUT binds to
   OnCommand (a drag into one is refused); everything else keeps its piece/zone
   event. docs/PLAYABLE_GAME_GAP.md is the reference.
 

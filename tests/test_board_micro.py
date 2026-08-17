@@ -407,6 +407,53 @@ def test_the_mission_order_becomes_the_ordering_rule():
     assert any(ok and "CommitPanel after StagingPanel" in m for ok, m in msgs)
 
 
+def test_the_ordering_rule_reads_every_mission():
+    """Split the same two beats across two missions and the rule must be the
+    same rule. SEAM 8a binds the second mission's objective either way, and the
+    step panel now states it — a domain derived from the first mission alone
+    would enforce an order the player was never held to."""
+    opts = board_options_for_entities(_staged(), title="T")
+    msgs = board_domain_for_missions(opts, [
+        MissionSpec(id="m1", title="Stage", objectives=[
+            MissionObjective(id="o1", description="Stage the files", type="reach",
+                             target_ref="StagingPanel")]),
+        MissionSpec(id="m2", title="Commit", objectives=[
+            MissionObjective(id="o2", description="Commit them", type="reach",
+                             target_ref="CommitPanel")]),
+    ])
+    assert _requires(opts, "CommitPanel") == "StagingPanel"
+    assert any(ok and "CommitPanel after StagingPanel" in m for ok, m in msgs)
+
+
+def test_the_verbs_come_from_every_mission():
+    """A verb derived only from the first mission left the parser unable to
+    answer two thirds of the actions the hint bar names."""
+    opts = board_options_for_entities(_staged(), title="T")
+    board_domain_for_missions(opts, [
+        MissionSpec(id="m1", title="Stage", objectives=[
+            MissionObjective(id="o1", description="Stage the files", type="reach",
+                             target_ref="StagingPanel")]),
+        MissionSpec(id="m2", title="Commit", objectives=[
+            MissionObjective(id="o2", description="Commit them", type="reach",
+                             target_ref="CommitPanel")]),
+    ])
+    assert [c["verb"] for c in opts["commands"]] == ["stage", "commit"]
+
+
+def test_one_mission_may_still_be_passed_bare():
+    """A caller holding a single MissionSpec should not have to wrap it."""
+    one = MissionSpec(id="m", title="T", objectives=[
+        MissionObjective(id="o1", description="Stage the files", type="reach",
+                         target_ref="StagingPanel"),
+        MissionObjective(id="o2", description="Commit them", type="reach",
+                         target_ref="CommitPanel")])
+    bare, wrapped = (board_options_for_entities(_staged(), title="T"),
+                     board_options_for_entities(_staged(), title="T"))
+    assert (board_domain_for_missions(bare, one)
+            == board_domain_for_missions(wrapped, [one]))
+    assert bare == wrapped
+
+
 def test_an_objective_naming_a_piece_reaches_the_place_that_alone_takes_it():
     """A mission that never names a zone still orders them, through the piece
     each objective is about — the stage is the place that accepts it. Proven

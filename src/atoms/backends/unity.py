@@ -800,11 +800,18 @@ def _wire_objectives_to_hud(args: dict) -> str:
     ov = _s(args.get("objectives_var", "_objectives"))
     uv = _s(args.get("hud_var",        "_hud"))
     rm = _s(args.get("refresh_method", "RefreshObjectiveHud"))
+    # Created once and shared across every tracker this is emitted for. A
+    # project with three missions has three trackers and ONE readout, so the
+    # atom runs three times: re-assigning the field each time would leave
+    # OnDestroy able to unsubscribe only the last lambda, and the earlier two
+    # would keep firing into a destroyed HUD.
     return (
         f"if ({ov} != null && {uv} != null)\n"
         f"{{\n"
-        f"    _onObjectiveHudProgress = (id, progress, required) => {rm}();\n"
-        f"    _onObjectiveHudComplete = id => {rm}();\n"
+        f"    if (_onObjectiveHudProgress == null)\n"
+        f"        _onObjectiveHudProgress = (id, progress, required) => {rm}();\n"
+        f"    if (_onObjectiveHudComplete == null)\n"
+        f"        _onObjectiveHudComplete = id => {rm}();\n"
         f"    {ov}.OnObjectiveProgress += _onObjectiveHudProgress;\n"
         f"    {ov}.OnObjectiveComplete += _onObjectiveHudComplete;\n"
         f"    {rm}();\n"

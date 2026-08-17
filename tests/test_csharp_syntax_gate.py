@@ -142,6 +142,20 @@ def test_structurally_unsafe_initializers_are_dropped():
     assert sanitize_default("string", '"a;b"') == '"a;b"'
 
 
+def test_collection_default_requires_new_or_null():
+    """Live on the RepoQuest run, BranchStrategyController.cs(11): the model
+    meant `new List<string> { "GitHubFlow", "GitFlow" }` and wrote the bare
+    comma list instead — quotes balanced, no brackets, so the old structural
+    guard alone waved it through as a legal-looking expression."""
+    assert sanitize_default("List<string>", 'GitHubFlow", "GitFlow') is None
+    assert sanitize_default("List<string>", "null") == "null"
+    assert sanitize_default(
+        "List<string>", 'new List<string> { "GitHubFlow", "GitFlow" }'
+    ) == 'new List<string> { "GitHubFlow", "GitFlow" }'
+    assert sanitize_default("Dictionary<string, int>", "new()") == "new()"
+    assert sanitize_default("int[]", "1, 2, 3") is None
+
+
 def test_in_repo_authored_defaults_are_untouched():
     """saveload's default_fix authors these three; the repair must be a no-op
     for values that were already correct."""

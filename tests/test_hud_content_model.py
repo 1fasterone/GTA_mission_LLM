@@ -176,8 +176,65 @@ def test_seam9_wires_objectives_into_the_hud(tmp_path):
     # marks the objective complete — a progress-only binding shows a stale line.
     assert "OnObjectiveProgress += _onObjectiveHudProgress" in wiring
     assert "OnObjectiveComplete += _onObjectiveHudComplete" in wiring
-    assert "SetObjective(active != null ? active.description" in wiring
+    assert "SetObjective(label, done, total)" in wiring
     assert "OnObjectiveProgress -= _onObjectiveHudProgress" in wiring
+
+
+# ── One readout, every tracker ───────────────────────────────────────────────
+
+_MISSIONS_3 = [
+    MissionSpec(id="m1", title="Connect the Forest", objectives=[
+        MissionObjective(id="obj_1", type="collect", target_ref="Crates",
+                         description="Select at least 5 nodes."),
+        MissionObjective(id="obj_2", type="reach", target_ref="Crates",
+                         description="Connect the selected nodes.")]),
+    MissionSpec(id="m2", title="Initialize Pipeline", objectives=[
+        MissionObjective(id="obj_3", type="collect", target_ref="Crates",
+                         description="Place an artifact on the belt.")]),
+    MissionSpec(id="m3", title="Merge Resolution", objectives=[
+        MissionObjective(id="obj_4", type="reach", target_ref="Crates",
+                         description="Align the conflict markers.")]),
+]
+
+
+def test_seam9_binds_every_tracker_not_just_the_first(tmp_path):
+    """One tracker per mission, one readout. Bound to the first alone, the tally
+    froze at that mission's total while the other objectives advanced live —
+    under a rules panel that states every one of them as a step."""
+    wiring = _gamewiring(_project(tmp_path, missions=_MISSIONS_3))
+    for cls in ("_connecttheforestobjectives", "_initializepipelineobjectives",
+                "_mergeresolutionobjectives"):
+        assert f"{cls}.OnObjectiveProgress += _onObjectiveHudProgress" in wiring
+        assert f"{cls}.OnObjectiveComplete += _onObjectiveHudComplete" in wiring
+    assert wiring.count("SEAM 9") == 3
+
+
+def test_the_tally_sums_every_tracker(tmp_path):
+    """`done`/`total` are the whole project's, or the readout counts a third of
+    the progression the step panel walks the player through."""
+    wiring = _gamewiring(_project(tmp_path, missions=_MISSIONS_3))
+    assert wiring.count("done  += ") == 3
+    assert wiring.count("total += ") == 3
+    assert "SetObjective(label, done, total)" in wiring
+
+
+def test_the_label_is_the_first_tracker_still_running(tmp_path):
+    """Schema order — which is the order the rules micro states the steps in, so
+    the hint bar and the HUD name the same action."""
+    wiring = _gamewiring(_project(tmp_path, missions=_MISSIONS_3))
+    assert wiring.count("if (label.Length == 0 && a") == 3
+
+
+def test_every_subscription_is_unsubscribed(tmp_path):
+    """The delegates are created once and shared, so OnDestroy has to remove the
+    same instance from all three events — re-assigning per tracker would leave
+    two live subscriptions firing into a destroyed HUD."""
+    wiring = _gamewiring(_project(tmp_path, missions=_MISSIONS_3))
+    assert wiring.count("OnObjectiveProgress +=") == 3
+    assert wiring.count("OnObjectiveProgress -=") == 3
+    assert wiring.count("OnObjectiveComplete +=") == 3
+    assert wiring.count("OnObjectiveComplete -=") == 3
+    assert wiring.count("private Action<string, int, int> _onObjectiveHudProgress") == 1
 
 
 def test_seam10_wires_inventory_into_the_hud(tmp_path):

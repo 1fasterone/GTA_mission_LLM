@@ -14,7 +14,8 @@ import pytest
 
 from src.csharp_syntax_gate import check_files
 from src.micro import REGISTRY
-from src.micro.rules import RulesPipeline, RulesSchema, steps_from_mission
+from src.micro.rules import (RulesPipeline, RulesSchema, steps_from_mission,
+                             steps_from_missions)
 from src.unity_compose import subsystems_for
 from src.unity_schema import MissionObjective, MissionSpec
 
@@ -68,6 +69,94 @@ def test_no_mission_means_no_rules_unit():
                 if s.kind == "rules"]
 
 
+# ── Every mission, not just the first ────────────────────────────────────────
+
+@pytest.fixture
+def three_missions():
+    """The RepoQuest shape: three missions, six objectives. SEAM 8a binds an
+    objective from any of them, so a progression that stopped at the first told
+    the player about two of the six that were live in the build."""
+    return [
+        MissionSpec(id="m1", title="Connect the Forest",
+                    description="Build a complete path from root to branch.",
+                    objectives=[
+                        MissionObjective(id="obj_1", type="collect",
+                                         description="Select at least 5 nodes."),
+                        MissionObjective(id="obj_2", type="reach",
+                                         description="Connect the selected nodes.")]),
+        MissionSpec(id="m2", title="Initialize Pipeline",
+                    description="Configure the first build station.",
+                    objectives=[
+                        MissionObjective(id="obj_3", type="collect",
+                                         description="Place an artifact on the belt."),
+                        MissionObjective(id="obj_4", type="survive", count=60,
+                                         description="Ensure no errors appear.")]),
+        MissionSpec(id="m3", title="Merge Resolution",
+                    description="Align conflicting code blocks.",
+                    objectives=[
+                        MissionObjective(id="obj_5", type="reach",
+                                         description="Align the conflict markers.")]),
+    ]
+
+
+def test_the_progression_spans_every_mission(three_missions):
+    steps = steps_from_missions(three_missions)
+    assert [s["objective_id"] for s in steps] == ["obj_1", "obj_2", "obj_3",
+                                                  "obj_4", "obj_5"]
+    assert steps[0]["title"].startswith("1 / 5")
+    assert steps[-1]["title"].startswith("5 / 5"), "numbering runs to the total"
+
+
+def test_a_step_names_the_phase_it_belongs_to(three_missions):
+    steps = steps_from_missions(three_missions)
+    assert "CONNECT THE FOREST" in steps[0]["title"]
+    assert "MERGE RESOLUTION" in steps[4]["title"]
+
+
+def test_one_mission_reads_exactly_as_it_did(mission):
+    """No phase label where there is only one phase — the title would say the
+    same thing on every step."""
+    steps = steps_from_missions([mission])
+    assert steps == steps_from_mission(mission)
+    assert "FIRST COMMIT" not in steps[0]["title"]
+    assert steps[0]["title"].startswith("1 / 2")
+
+
+def test_compose_states_every_objective_and_allows_every_id(three_missions):
+    """`harden` reports a step whose id the project does not declare, so the
+    allowed-id list has to widen with the steps — otherwise every step from the
+    second mission onward is reported as one that can never clear."""
+    rules = next(s for s in subsystems_for("3D", [], "walk",
+                                           missions=three_missions)
+                 if s.kind == "rules")
+    assert len(rules.options["steps"]) == 5
+    assert rules.options["meta"]["objective_ids"] == ["obj_1", "obj_2", "obj_3",
+                                                      "obj_4", "obj_5"]
+    p = RulesPipeline({"lm_studio": {}, "unity_pipeline": {}})
+    s = RulesSchema(steps=rules.options["steps"], meta=rules.options["meta"])
+    assert not [m for m in p.harden(p.default_fix(s, "guided"))
+                if "never clear" in m]
+
+
+def test_the_goal_names_the_whole_game_not_the_first_third(three_missions):
+    rules = next(s for s in subsystems_for("3D", [], "walk",
+                                           missions=three_missions)
+                 if s.kind == "rules")
+    goal = rules.options["goal"]
+    assert "root to branch" in goal
+    assert "build station" in goal
+    assert "conflicting code blocks" in goal
+
+
+def test_the_briefing_is_still_titled_after_the_first_mission(three_missions):
+    """The board is captioned from the same place. Two player-facing surfaces
+    calling the game different things is the defect that pinned this."""
+    rules = next(s for s in subsystems_for("3D", [], "walk",
+                                           missions=three_missions)
+                 if s.kind == "rules")
+    assert rules.options["game_title"] == "Connect the Forest"
+
+
 def test_goal_is_never_blank(cfg):
     """'What counts as winning' is the first thing a player needs and the last
     thing any build has ever stated."""
@@ -116,3 +205,118 @@ def test_hud_only_variant_drops_the_briefing(cfg, mission, tmp_path):
     src = (tmp_path / "Scripts" / f"{s.name}.cs").read_text(encoding="utf-8")
     assert "NEXT:" in src, "the hint bar survives in every variant"
     assert "Briefing" not in src
+
+
+# ── Board: pieces, places and playing surfaces ───────────────────────────────
+
+class TestBoardVocabulary:
+    """A cast of pawns with nowhere to go is the same dead board as a cast of
+    places with nothing to put in them. Measured before this: 27 of 39 ordinary
+    board-game nouns classified as nothing, so the board micro abstained and no
+    legal-move logic was composed at all."""
+
+    @pytest.mark.parametrize("name", [
+        "GamePieces", "Pawns", "Counters", "Meeples", "Chips", "Discs",
+        "Stones", "Dice", "Coins", "Gems", "ChessPieces", "Cubes",
+    ])
+    def test_things_you_move_are_pieces(self, name):
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name=name, kind="prop")) in ("icon", "card")
+
+    @pytest.mark.parametrize("name", [
+        "StagingArea", "PlayingSurface", "PlayMat", "DiscardPile", "DrawPile",
+        "PlayerHand", "ScoreTrack", "StorageRack", "LoadingBay", "BuildLane",
+        "ResourceBin", "TileGrid", "HexGrid", "Shelf", "Workbench",
+    ])
+    def test_playing_surfaces_are_places(self, name):
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name=name, kind="prop")) in ("panel", "list")
+
+    def test_a_table_top_is_a_surface_not_a_log(self):
+        """First-row-wins resolved 'table top' through `table` in the list row,
+        so a surface you drop pieces onto became a read-only readout."""
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name="TableTop", kind="prop")) == "panel"
+        # ...while a bare data table is still a list.
+        assert ui_element_of(EntitySpec(name="CommitTable", kind="prop")) == "list"
+
+    @pytest.mark.parametrize("kind", ["pickup", "collectible", "item"])
+    def test_the_kinds_that_mean_a_thing_you_take_are_pieces(self, kind):
+        """Not UI words — the IR's own words for a thing the player TAKES, which
+        on a board is exactly a piece. The kind outranks the name, because the
+        name is where this went wrong."""
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name="Umbrellas", kind=kind)) == "card"
+
+    def test_a_pile_of_pickups_is_the_pieces_not_the_place(self):
+        """Live (Platform Four Lost Property, 2026-08-16): schema-fill wrote the
+        only movable group as kind='pickup', count=12, named `LostPropertyPile`.
+        The kind said nothing, the word table read "pile" as somewhere to stack
+        onto, and a cast of twelve draggable objects came out as two panels with
+        nothing to put in them — so no board composed at all."""
+        from src.micro.board import board_options_for_entities
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+
+        cast = [EntitySpec(name="Shelves", kind="building", count=1),
+                EntitySpec(name="LedgerTerminal", kind="prop", count=1),
+                EntitySpec(name="LostPropertyPile", kind="pickup", count=12)]
+        assert ui_element_of(cast[2]) == "card"
+        opts = board_options_for_entities(cast)
+        assert opts is not None, "this cast was never short of pieces"
+        assert [p["id"] for p in opts["pieces"]] == ["LostPropertyPile"]
+        assert [z["id"] for z in opts["zones"]] == ["Shelves"]
+        assert opts["console_group"] == "LedgerTerminal"
+
+    def test_a_pile_with_no_kind_behind_it_is_still_a_place(self):
+        """The word rule is not wrong — it is just outranked. `DiscardPile` with
+        nothing but its name to go on is still somewhere you stack onto."""
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec
+        assert ui_element_of(EntitySpec(name="DiscardPile", kind="prop")) == "panel"
+
+
+class TestBoardFromObjectives:
+    """The vocabulary is a closed list and a closed list can never cover every
+    game. The brief does not have that problem."""
+
+    def test_a_cast_no_word_list_can_name_still_makes_a_board(self):
+        from src.micro.board import board_options_for_entities
+        from src.unity_layout_archetype import ui_element_of
+        from src.unity_schema import EntitySpec, MissionObjective, MissionSpec
+
+        ents = [EntitySpec(name="HighHeeledShoes", kind="prop", count=18),
+                EntitySpec(name="WobblyTower", kind="prop", count=1)]
+        assert all(ui_element_of(e) is None for e in ents), \
+            "precondition: the vocabulary must NOT know these"
+
+        m = MissionSpec(id="m1", title="Shoe Tower", objectives=[
+            MissionObjective(id="o1", type="collect", target_ref="HighHeeledShoes",
+                             description="Drag the high heeled shoes onto the "
+                                         "wobbly tower without toppling it.")])
+        opts = board_options_for_entities(ents, mission=m)
+        assert opts, "the mission names what moves where — that is a board"
+        assert [p["id"] for p in opts["pieces"]] == ["HighHeeledShoes"]
+        assert [z["id"] for z in opts["zones"]] == ["WobblyTower"]
+        assert opts["pieces"][0]["count"] == 18
+
+    def test_no_mission_still_abstains_when_the_cast_is_unreadable(self):
+        """The fallback must not invent a board out of nothing."""
+        from src.micro.board import board_options_for_entities
+        from src.unity_schema import EntitySpec
+        assert board_options_for_entities(
+            [EntitySpec(name="HighHeeledShoes", kind="prop", count=18)]) is None
+
+    def test_an_objective_with_no_move_verb_contributes_nothing(self):
+        from src.micro.board import board_options_for_entities
+        from src.unity_schema import EntitySpec, MissionObjective, MissionSpec
+        m = MissionSpec(id="m1", title="Watch", objectives=[
+            MissionObjective(id="o1", type="survive",
+                             description="Observe the wobbly tower for 60 seconds.")])
+        assert board_options_for_entities(
+            [EntitySpec(name="HighHeeledShoes", kind="prop"),
+             EntitySpec(name="WobblyTower", kind="prop")], mission=m) is None

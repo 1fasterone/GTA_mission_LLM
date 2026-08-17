@@ -31,7 +31,17 @@ public class {{ s.name }} : MonoBehaviour
     [SerializeField] private int   perWaveCount  = {{ s.per_wave_count }};
 {% endif %}
 
+{# `[Header]` is legal only on a field, property or indexer (CS0592), so it must
+   never outlive the fields it labels. Every field under this one is conditional
+   on the shape, and `point` declares NONE — its position IS `transform.position`
+   — so the bare header fell through to the next declaration, the `OnDespawned`
+   EVENT, and took the build down: EnemySpawner.cs(30,6) CS0592, live on a
+   RepoQuestEnterprise build. Guarded by the shapes that actually declare a
+   field rather than by `!= "point"`, so a shape added to the enum later keeps
+   the header off until it brings a field with it. #}
+{% if s.spawn_shape in ("circle", "box", "spawn_points") %}
     [Header("Where to spawn")]
+{% endif %}
 {% if s.spawn_shape == "circle" or s.spawn_shape == "box" %}
     [SerializeField] private float spawnRadius   = {{ "%.2f"|format(s.spawn_radius) }}f;
 {% endif %}

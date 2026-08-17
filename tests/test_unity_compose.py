@@ -449,6 +449,27 @@ def test_vehicle_controller_wiring_omits_input_and_grounded(tmp_path):
     assert "Transform[] wheelBones = FindWheelBones" in pc
 
 
+def test_enemy_only_fsm_wiring_omits_move_jump(tmp_path):
+    """SetMove/SetJump/SetGrounded are gated `{% if variant == "player_fsm" %}`
+    in StateMachine.cs.j2 -- an enemy_fsm has none of them. `_pick("statemachine",
+    "player")` returns the SOLE statemachine unit even when its target isn't
+    "player" (the single-candidate short-circuit), so a project whose only FSM
+    is an enemy/reviewer AI must not get SEAM 5/6 wired to it. Hit live on the
+    RepoQuest run, GameWiring.cs(136,137,260) CS1061 -- EnemyFSM has no
+    SetJump/SetMove."""
+    from src.unity_compose import Subsystem
+    subs = [
+        Subsystem(kind="controller",   variant="third_person", target="player", name="PlayerController"),
+        Subsystem(kind="statemachine", variant="enemy_fsm",    target="world",  name="EnemyFSM"),
+    ]
+    MicroComposer("EnemyOnlyWire").emit(subs, Path(tmp_path) / "Assets")
+    gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"
+          / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "SetJump" not in gw
+    assert "SetMove" not in gw
+    assert gw.count("{") == gw.count("}")
+
+
 def test_walk_compose_keeps_grounded_bridge(tmp_path):
     MicroComposer("WalkWire").emit(subsystems_for("3D", []), Path(tmp_path) / "Assets")
     gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts"

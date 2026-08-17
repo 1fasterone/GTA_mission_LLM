@@ -494,7 +494,76 @@ def is_console_entity(entity) -> bool:
     return any(w in text for w in _CONSOLE_WORDS)
 
 
-def board_options_for_entities(entities, *, title: str = "") -> dict | None:
+# Verbs whose OBJECT is a thing you move and whose destination is a place.
+# Read off the objective text, which is the one place the brief states the move
+# in the player's own words.
+_MOVE_VERBS: tuple[str, ...] = (
+    "drag", "drop", "place", "put", "move", "stack", "sort", "deal", "play",
+    "slot", "load", "file", "post", "assign", "throw", "toss", "set",
+)
+# What separates the thing moved from the place it goes.
+_DESTINATION_PREPS: tuple[str, ...] = (
+    " into ", " onto ", " on to ", " in to ", " to the ", " in the ", " on the ",
+    " into the ", " onto the ", " across ", " at the ",
+)
+
+
+def _objectives_of(mission) -> list:
+    """The objective sequence of one MissionSpec or a list of them, in schema
+    order. Every caller here reads ALL of them: an objective from the third
+    mission is as real as one from the first, and SEAM 8a binds it either way."""
+    missions = ([m for m in mission if m is not None]
+                if isinstance(mission, (list, tuple)) else
+                ([mission] if mission is not None else []))
+    return [o for m in missions for o in (getattr(m, "objectives", None) or [])]
+
+
+def _roles_from_objectives(mission, names: "set[str]") -> "tuple[set[str], set[str]]":
+    """`(moved, destinations)` — entity names the MISSIONS say move, and where.
+
+    The vocabulary in `ui_element_of` is a closed list, and a closed list can
+    never cover every game: "a Jenga game using high-heeled shoes played by
+    hamsters" has pieces called shoes, and no word table will ever say a shoe
+    is a piece. Measured on ordinary board-game nouns the list missed 27 of 39
+    before it was extended, and extending it only moves the boundary.
+
+    The brief itself does not have that problem. "Drag all file icons into a
+    folder container" names the thing moved and the place it goes, in the
+    player's own words — so when the vocabulary cannot classify a cast, the
+    objectives can. Matching is on the entity NAMES the schema already
+    declares, so nothing here invents a group.
+    """
+    moved: set[str] = set()
+    dest:  set[str] = set()
+    for o in _objectives_of(mission):
+        text = " " + str(getattr(o, "description", "") or "").lower() + " "
+        ref  = str(getattr(o, "target_ref", "") or "").strip()
+        if not any(f" {v}" in text for v in _MOVE_VERBS):
+            continue
+        # Split the sentence at the preposition: what precedes is carried,
+        # what follows is arrived at.
+        head, tail = text, ""
+        for p in _DESTINATION_PREPS:
+            if p in text:
+                head, tail = text.split(p, 1)
+                break
+        for n in names:
+            toks = _id_tokens(n)
+            if not toks:
+                continue
+            if all(t in head for t in toks):
+                moved.add(n)
+            elif tail and all(t in tail for t in toks):
+                dest.add(n)
+        # An objective whose target_ref names a real group and which the text
+        # puts on the carried side is the strongest single signal there is.
+        if ref in names and ref not in dest:
+            moved.add(ref)
+    return moved, dest
+
+
+def board_options_for_entities(entities, *, title: str = "",
+                               mission=None) -> dict | None:
     """A playable board from the cast alone — no LLM.
 
     Returns the `Subsystem.options` for the board micro, or None when this cast
@@ -534,6 +603,24 @@ def board_options_for_entities(entities, *, title: str = "") -> dict | None:
         elif element == "window" and not console and is_console_entity(e):
             console = name
 
+    # ── Structural fallback ──────────────────────────────────────────────────
+    # The vocabulary above could not make a board. Before abstaining, ask the
+    # MISSION what moves where: a cast of shoes and a cast of hippos are
+    # unnameable, but "drag the shoes onto the tower" is not.
+    if (not pieces or not zones) and mission is not None:
+        known  = {p["id"] for p in pieces} | {z["id"] for z in zones}
+        by_name = {str(getattr(e, "name", "") or "").strip(): e
+                   for e in (entities or [])
+                   if str(getattr(e, "name", "") or "").strip()
+                   and ui_board_layer(e) == "board"}
+        moved, dest = _roles_from_objectives(mission, set(by_name))
+        for n in sorted(moved - dest - known):
+            e = by_name[n]
+            pieces.append({"id": n, "label": _singular(n),
+                           "count": int(getattr(e, "count", 1) or 1)})
+        for n in sorted(dest - moved - known):
+            zones.append({"id": n, "label": _prettify(n), "drop_target": True})
+
     if not pieces or not zones:
         return None
     droppable = any(z["drop_target"] for z in zones)
@@ -565,11 +652,16 @@ def board_domain_for_missions(options: dict, mission, *,
     "that is a readout", the parser answers only its own built-ins, and every
     plate is captioned by its index.
 
-    Two sources, each for what it actually knows. The MISSION carries the rules,
-    and it is the same mission the rules micro turns into the step panel — so
-    what the board enforces and what the player is shown are two readings of one
-    authored list, and cannot tell the player different things. The BRIEF
-    carries the names, because that is where a human writes them.
+    `mission` takes one MissionSpec or a list of them. EVERY mission counts:
+    SEAM 8a binds an objective from any of them, so a derivation held to the
+    first left the parser with no verb for two thirds of the live steps and
+    ordered the places by a third of the evidence. `micro/rules.steps_from_missions`
+    spans them for the same reason and in the same order, which is what keeps
+    what the board ENFORCES and what the player is SHOWN two readings of one
+    authored list.
+
+    Two sources, each for what it actually knows. The MISSIONS carry the rules.
+    The BRIEF carries the names, because that is where a human writes them.
 
         accepts         name affinity — a piece and a place that share a word
                         belong together ("RedCards" -> "RedPile"). Applied only
@@ -586,10 +678,10 @@ def board_domain_for_missions(options: dict, mission, *,
         items           the concrete names a brief lists for a group, which are
                         also what `ResolvePieces` lets the player type at a
                         single piece.
-        requires        the order the mission's objectives first reach each
-                        place. An objective naming a PIECE reaches the place
-                        that accepts it, which is how a mission that never names
-                        a zone still orders them.
+        requires        the order the objectives first reach each place, read
+                        across the missions in schema order. An objective naming
+                        a PIECE reaches the place that accepts it, which is how a
+                        mission that never names a zone still orders them.
 
     All-or-nothing, and abstains loudly, because a half-derived rule is worse
     than none: one place left open while its neighbours are restricted reads to
@@ -599,6 +691,9 @@ def board_domain_for_missions(options: dict, mission, *,
     print — no rich markup here, so this stays importable from a test.
     """
     out: list[tuple[bool, str]] = []
+    # Schema order, across every mission — so the ordering rule derived below
+    # and the step list the player works through agree beat for beat.
+    objectives = _objectives_of(mission)
     piece_specs = [p for p in (options.get("pieces") or []) if p.get("id")]
     pieces = [p["id"] for p in piece_specs]
     zones  = [z for z in (options.get("zones") or []) if z.get("id")]
@@ -702,7 +797,7 @@ def board_domain_for_missions(options: dict, mission, *,
     commands: list[dict] = []
     objective_commands: dict[str, str] = {}
     taken: set[str] = set()
-    for obj in (getattr(mission, "objectives", None) or []):
+    for obj in objectives:
         oid  = str(getattr(obj, "id", "") or "")
         verb = _imperative_verb(getattr(obj, "description", ""))
         if not verb:
@@ -795,7 +890,7 @@ def board_domain_for_missions(options: dict, mission, *,
     if not drops:
         return out
     stages: list[str] = []
-    for obj in (getattr(mission, "objectives", None) or []):
+    for obj in objectives:
         ref = norm_ref(getattr(obj, "target_ref", "") or "")
         if not ref:
             continue
@@ -810,11 +905,11 @@ def board_domain_for_missions(options: dict, mission, *,
     if len(stages) < 2:
         if len(drops) < 2:
             why = f"there is only one place to reach ({drops[0]['id']})"
-        elif mission is None:
+        elif not objectives:
             why = ("the project declares no mission objectives to order the "
                    "places by")
         else:
-            why = (f"the mission's objectives name {len(stages)} of the "
+            why = (f"the mission objectives name {len(stages)} of the "
                    f"{len(drops)} places, too few to sequence")
         out.append((False, f"board: no ordering rule derived — {why}; a piece "
                     "may go anywhere it is accepted, in any order"))
