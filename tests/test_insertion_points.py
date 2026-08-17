@@ -1585,6 +1585,26 @@ def test_pointer_event_types_heal_their_using():
     assert "UnityEngine.EventSystems" in schema.extra_usings
 
 
+def test_array_static_call_heals_its_using():
+    """Live on the RepoQuest run, BranchStrategyController.cs(24) CS0103:
+    `Array.IndexOf(_strategies.ToArray(), _currentStrategy);` with only
+    System.Collections.Generic/System.Linq imported — `Array` needs its own
+    `using System;`. templates/unity/scripts/CustomBehaviour.cs.j2 (the
+    `type: custom` template that rendered the live file) has no baseline
+    `using System;`, so template_usings is empty here rather than sourced
+    from a micro template that already carries one."""
+    schema = _FakeSchema(extra_methods=[
+        CodeMethod(signature="public void SetStrategy(string name)",
+                   body="int index = Array.IndexOf(_names, name);"),
+    ])
+    lint_extensible(schema, reserved_fields=set(), template_usings=set())
+    assert "System" in schema.extra_usings
+    # A bare English "array" (no static-call shape) must not false-positive.
+    schema2 = _FakeSchema(awake_extra='Debug.Log("build the array of belts");')
+    lint_extensible(schema2, reserved_fields=set(), template_usings=set())
+    assert "System" not in schema2.extra_usings
+
+
 def test_null_conditional_assignment_becomes_a_null_guard():
     """The live TowerControl PlayerCamera.cs(128,9) CS0131. `?.` reads through a
     null and cannot write through one, but it is what a model reaches for, and

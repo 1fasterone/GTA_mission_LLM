@@ -861,6 +861,15 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
     (r"\b(?:InputSystem|InputAction|InputActionAsset|InputActionMap|"
      r"InputActionReference|Keyboard|Mouse|Gamepad|Touchscreen)\b",   "UnityEngine.InputSystem"),
     (r"\bNavMeshAgent\b",                                  "UnityEngine.AI"),
+    # CS0103: `Array.IndexOf`/`Array.Sort`/etc. without `using System;`. Hit
+    # live on the RepoQuest run, BranchStrategyController.cs(24) —
+    # `int index = Array.IndexOf(_strategies.ToArray(), _currentStrategy);`
+    # with only `System.Collections.Generic`/`System.Linq` imported. Matched
+    # on the static-call shape so the common English word "array" in an
+    # authored comment or string is never mistaken for the type.
+    (r"\bArray\.(?:IndexOf|LastIndexOf|Sort|Reverse|Find|FindAll|FindIndex|"
+     r"FindLast|FindLastIndex|Exists|ForEach|Resize|Copy|Clear|ConvertAll|"
+     r"BinarySearch|TrueForAll|Empty|CreateInstance)\s*\(", "System"),
     (r"\bUnityEvent\b",                                    "UnityEngine.Events"),
     (r"\bSceneManager\s*\.",                               "UnityEngine.SceneManagement"),
     (r"\bTMP_\w+|\bTextMeshPro",                           "TMPro"),
@@ -1836,6 +1845,25 @@ _STRING_LITERAL_PREFIXES = ('"', '@"', '$"', '$@"', '@$"')
 _STRING_SENTINELS = frozenset({"null", "string.empty", "default"})
 _PY_LITERALS = {"none": "null", "true": "true", "false": "false"}
 
+# CS1002/CS1010/CS0246: a collection-typed field's only valid initializers are
+# "null" and a `new ...` construction — anything else (a bare comma list of
+# words, prose) is not an expression a collection type can hold at all, unlike
+# the numeric/bool/string branches below there is no repair that does not
+# invent content, so this is a structural gate rather than a fixer. Hit live
+# on the RepoQuest run, BranchStrategyController.cs(11):
+#
+#     [SerializeField] private List<string> _strategies = GitHubFlow", "GitFlow;
+#
+# — the model meant `new List<string> { "GitHubFlow", "GitFlow" }` and instead
+# emitted the bare comma list. `_initializer_is_structurally_safe` alone let
+# this through: its quotes are balanced (2) and it opens no bracket, so it
+# read as a legal-looking "arbitrary expression" while starting with a bare
+# unquoted identifier that is not one.
+_COLLECTION_TYPE_RE = re.compile(
+    r"^(?:list|dictionary|hashset|queue|stack|linkedlist|"
+    r"ienumerable|icollection|ilist|iset|idictionary|readonlycollection)"
+    r"\s*<|\[\s*\]$")
+
 # A hex colour is the one notation every model reaches for and the one notation
 # C# cannot hold: `Color c = "#FFD700"` is CS0029 however it is quoted, and
 # `'#FFD700'` is CS1012 on top. The declared type makes the intent unambiguous,
@@ -2133,6 +2161,13 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
             return text
         if text in ("1", "0"):                         # CS0029 — int is not bool
             return "true" if text == "1" else "false"
+        return None
+
+    if _COLLECTION_TYPE_RE.search(base):
+        if text == "null":
+            return text
+        if text.startswith("new") and _initializer_is_structurally_safe(text):
+            return text
         return None
 
     if base.rsplit(".", 1)[-1] in _COLOR_TYPES:
@@ -2458,31 +2493,74 @@ _JINJA_PLACEHOLDER = "_J_"
 # `SetCheckpoint()`, which the template really does declare — for one variant
 # out of three — and the emitted file did not have it. CS0103, past a gate
 # whose whole job is CS0103.
+#
+# `variant` is not the only thing a template branches on, and reading only that
+# one left the same hole open for every other enum. Live on a
+# RepoQuestEnterprise build, EnemySpawner.cs: the spawner template declares
+# `spawnPoints` inside `{% if s.spawn_shape == "spawn_points" %}`, the schema
+# said `point`, and the two authored methods that indexed `spawnPoints` sailed
+# through as in-scope. So the schema's own string fields (`s.spawn_shape`,
+# `s.pooling`, `s.backend`, …) are decided here too — same rule, wider reach.
 _JINJA_BRANCH_RE = re.compile(r"\{%-?\s*(if|elif|else|endif)\b([^%]*?)-?%\}", re.S)
-_VARIANT_EQ_RE   = re.compile(r"""^\s*variant\s*(==|!=)\s*['"]([^'"]+)['"]\s*$""")
-_VARIANT_IN_RE   = re.compile(r"""^\s*variant\s+(not\s+in|in)\s*[\(\[]([^)\]]*)[\)\]]\s*$""")
+_ATOM_EQ_RE = re.compile(
+    r"""^\s*(?:s\.)?(?P<name>[A-Za-z_]\w*)\s*(?P<op>==|!=)\s*['"](?P<lit>[^'"]*)['"]\s*$""")
+_ATOM_IN_RE = re.compile(
+    r"""^\s*(?:s\.)?(?P<name>[A-Za-z_]\w*)\s+(?P<op>not\s+in|in)\s*"""
+    r"""[\(\[](?P<opts>[^)\]]*)[\)\]]\s*$""")
+# Split a condition on ONE boolean operator. A condition mixing `and` with `or`
+# is left undecided rather than guessed at — precedence is not worth reasoning
+# about here, and an undecided condition only widens the scope.
+_BOOL_SPLIT_RE = re.compile(r"\s+(and|or)\s+")
 
 
-def _eval_variant_condition(cond: str, variant: str) -> "bool | None":
-    """True/False for a condition that is PURELY about `variant`; None when the
-    condition tests anything else. None means "keep the body" — this pass only
-    ever removes what it can prove this variant will not render."""
-    m = _VARIANT_EQ_RE.match(cond or "")
+def _eval_atom(cond: str, facts: "dict[str, str]") -> "bool | None":
+    """True/False for a single `<field> == "literal"` style test, or None when
+    the field is not one this pass knows the value of."""
+    m = _ATOM_EQ_RE.match(cond or "")
     if m:
-        return (variant == m.group(2)) if m.group(1) == "==" else (variant != m.group(2))
-    m = _VARIANT_IN_RE.match(cond or "")
+        value = facts.get(m.group("name"))
+        if value is None:
+            return None
+        return (value == m.group("lit")) if m.group("op") == "==" else (value != m.group("lit"))
+    m = _ATOM_IN_RE.match(cond or "")
     if m:
-        options = {v.strip().strip("\"'") for v in m.group(2).split(",") if v.strip()}
-        return (variant not in options) if m.group(1).startswith("not") else (variant in options)
+        value = facts.get(m.group("name"))
+        if value is None:
+            return None
+        options = {v.strip().strip("\"'") for v in m.group("opts").split(",") if v.strip()}
+        return (value not in options) if m.group("op").startswith("not") else (value in options)
     return None
 
 
-def _drop_dead_variant_branches(raw: str, variant: str) -> str:
-    """Remove the bodies of `{% if variant == ... %}` branches this variant will
-    not render. Conservative in one direction only: a condition this cannot
-    decide keeps its body, so the scope can still be too WIDE but never too
-    narrow — a narrow scope would accuse legal code."""
-    if not variant or "{%" not in raw:
+def _eval_render_condition(cond: str, facts: "dict[str, str]") -> "bool | None":
+    """True/False for a condition built purely from fields in `facts`; None when
+    any part of it tests something else. None means "keep the body" — this pass
+    only ever removes what it can PROVE this schema will not render."""
+    parts = _BOOL_SPLIT_RE.split(cond or "")
+    ops = {parts[i] for i in range(1, len(parts), 2)}
+    if len(ops) > 1:
+        return None                        # mixed and/or — do not guess precedence
+    values = [_eval_atom(p, facts) for p in parts[0::2]]
+    if any(v is None for v in values):
+        return None
+    return all(values) if ops == {"and"} else any(values)
+
+
+def _drop_dead_variant_branches(raw: str, variant: str,
+                                facts: "tuple[tuple[str, str], ...]" = ()) -> str:
+    """Remove the bodies of branches this render will not produce.
+
+    `facts` carries the schema's own string fields as `((name, value), ...)`;
+    `variant` is folded in under both `variant` and `s.variant`, the two spellings
+    the templates use. Conservative in one direction only: a condition this
+    cannot decide keeps its body, so the scope can still be too WIDE but never
+    too narrow — a narrow scope would accuse legal code."""
+    if "{%" not in raw:
+        return raw
+    known: "dict[str, str]" = dict(facts)
+    if variant:
+        known.setdefault("variant", variant)
+    if not known:
         return raw
     out: list[str] = []
     pos = 0
@@ -2493,9 +2571,9 @@ def _drop_dead_variant_branches(raw: str, variant: str) -> str:
         pos = m.end()
         kind = m.group(1)
         if kind == "if":
-            keep.append(_eval_variant_condition(m.group(2), variant) is not False)
+            keep.append(_eval_render_condition(m.group(2), known) is not False)
         elif kind == "elif" and keep:
-            keep[-1] = _eval_variant_condition(m.group(2), variant) is not False
+            keep[-1] = _eval_render_condition(m.group(2), known) is not False
         elif kind == "else" and keep:
             keep[-1] = True
         elif kind == "endif" and keep:
@@ -2505,9 +2583,34 @@ def _drop_dead_variant_branches(raw: str, variant: str) -> str:
     return "".join(out)
 
 
+# Fields whose VALUE is free-text rather than an enum. A template never branches
+# on them, and feeding prose to the condition evaluator only risks a spurious
+# match, so they are left out of the facts.
+_NON_ENUM_FACTS = frozenset({"name", "description"})
+
+
+def render_facts(schema) -> "tuple[tuple[str, str], ...]":
+    """The schema's string fields as a hashable `((name, value), ...)`.
+
+    These are what a template's `{% if s.<field> == "…" %}` tests, so they are
+    what decides which of its members the produced file will really have. Sorted
+    so the tuple is a stable cache key.
+    """
+    fields = getattr(type(schema), "model_fields", None) or {}
+    out: "dict[str, str]" = {}
+    for fname in fields:
+        if fname in _NON_ENUM_FACTS:
+            continue
+        value = getattr(schema, fname, None)
+        if isinstance(value, str):
+            out[fname] = value
+    return tuple(sorted(out.items()))
+
+
 @lru_cache(maxsize=64)
-def _template_files(template_dir: str,
-                    variant: str = "") -> "tuple[tuple[str, str, str], ...]":
+def _template_files(template_dir: str, variant: str = "",
+                    facts: "tuple[tuple[str, str], ...]" = ()
+                    ) -> "tuple[tuple[str, str, str], ...]":
     """`((filename, jinja-neutralised C#, raw source), ...)` for the micro's folder.
 
     The raw source is kept because the injection points are Jinja and nothing
@@ -2521,7 +2624,7 @@ def _template_files(template_dir: str,
     out: list[tuple[str, str, str]] = []
     for p in sorted(root.glob("*.cs.j2")):
         raw = p.read_text(encoding="utf-8", errors="replace")
-        live = _drop_dead_variant_branches(raw, variant)
+        live = _drop_dead_variant_branches(raw, variant, facts)
         out.append((p.name,
                     _JINJA_EXPR_RE.sub(_JINJA_PLACEHOLDER,
                                        _JINJA_TAG_RE.sub("", live)),
@@ -2530,20 +2633,23 @@ def _template_files(template_dir: str,
 
 
 @lru_cache(maxsize=64)
-def _template_text(template_dir: str, variant: str = "") -> str:
+def _template_text(template_dir: str, variant: str = "",
+                   facts: "tuple[tuple[str, str], ...]" = ()) -> str:
     """Every C# template in the micro's own folder, with Jinja neutralised.
 
-    `variant` drops the branches this variant will not render — without it the
-    scope is the union of every variant, which is how a member that exists in
-    exactly one of them passed as in-scope for all of them."""
-    return "\n".join(text for _, text, _raw in _template_files(template_dir, variant))
+    `variant` and `facts` drop the branches this render will not produce —
+    without them the scope is the union of every variant and every enum value,
+    which is how a member that exists in exactly one of them passed as in-scope
+    for all of them."""
+    return "\n".join(text for _, text, _raw in _template_files(template_dir, variant, facts))
 
 
 @lru_cache(maxsize=64)
-def template_members(template_dir: str, variant: str = "") -> frozenset[str]:
+def template_members(template_dir: str, variant: str = "",
+                     facts: "tuple[tuple[str, str], ...]" = ()) -> frozenset[str]:
     """Member names the micro's template already declares."""
     names: set[str] = set()
-    for line in _template_text(template_dir, variant).splitlines():
+    for line in _template_text(template_dir, variant, facts).splitlines():
         if _TYPE_DECL_RE.search(line):
             continue
         m = _TEMPLATE_MEMBER_RE.match(line)
@@ -2569,14 +2675,15 @@ _INJECTION_MARKERS = ("extra_methods", "extra_fields", "extra_usings",
 
 
 @lru_cache(maxsize=64)
-def template_scope_members(template_dir: str, variant: str = "") -> frozenset[str]:
+def template_scope_members(template_dir: str, variant: str = "",
+                           facts: "tuple[tuple[str, str], ...]" = ()) -> frozenset[str]:
     """Member names in scope for code injected into this micro's template."""
-    injecting = [text for _name, text, raw in _template_files(template_dir, variant)
+    injecting = [text for _name, text, raw in _template_files(template_dir, variant, facts)
                  if any(mark in raw for mark in _INJECTION_MARKERS)]
     if not injecting:
         # No identifiable injection site — fall back to the folder-wide set
         # rather than claiming an empty scope, which would accuse everything.
-        return template_members(template_dir, variant)
+        return template_members(template_dir, variant, facts)
     names: set[str] = set()
     for text in injecting:
         for line in text.splitlines():
@@ -2589,7 +2696,8 @@ def template_scope_members(template_dir: str, variant: str = "") -> frozenset[st
 
 
 @lru_cache(maxsize=64)
-def template_types(template_dir: str, variant: str = "") -> frozenset[str]:
+def template_types(template_dir: str, variant: str = "",
+                   facts: "tuple[tuple[str, str], ...]" = ()) -> frozenset[str]:
     """Type names the micro's own template declares.
 
     `template_members` deliberately skips a `class`/`struct`/`enum` line so a
@@ -2599,11 +2707,13 @@ def template_types(template_dir: str, variant: str = "") -> frozenset[str]:
     binding can decide). The unbound-identifier gate needs them or it would
     flag `new SaveSystemData()` as unresolvable.
     """
-    return frozenset(_TEMPLATE_TYPE_RE.findall(_template_text(template_dir, variant)))
+    return frozenset(_TEMPLATE_TYPE_RE.findall(_template_text(template_dir, variant, facts)))
 
 
 @lru_cache(maxsize=64)
-def template_method_arities(template_dir: str, variant: str = "") -> "dict[str, tuple[int, int]]":
+def template_method_arities(template_dir: str, variant: str = "",
+                            facts: "tuple[tuple[str, str], ...]" = ()
+                            ) -> "dict[str, tuple[int, int]]":
     """`{method_name: (min_args, max_args)}` for the methods the template declares.
 
     A parameter with a `=` default is optional, so the accepted count is a RANGE.
@@ -2612,7 +2722,7 @@ def template_method_arities(template_dir: str, variant: str = "") -> "dict[str, 
     real signatures can only ever under-report, never accuse a legal call.
     """
     out: "dict[str, tuple[int, int]]" = {}
-    for line in _template_text(template_dir, variant).splitlines():
+    for line in _template_text(template_dir, variant, facts).splitlines():
         if _TYPE_DECL_RE.search(line):
             continue
 
@@ -3013,8 +3123,9 @@ def _arg_conflicts(arg_type: str, param_type: str) -> bool:
 
 
 @lru_cache(maxsize=64)
-def template_method_params(template_dir: str,
-                           variant: str = "") -> "dict[str, tuple[str, ...]]":
+def template_method_params(template_dir: str, variant: str = "",
+                           facts: "tuple[tuple[str, str], ...]" = ()
+                           ) -> "dict[str, tuple[str, ...]]":
     """`{method_name: (param_type, ...)}` for the methods and events the
     template declares, with any OVERLOADED name dropped: two signatures mean a
     call could match either, and this pass cannot tell which was meant."""
@@ -3027,7 +3138,7 @@ def template_method_params(template_dir: str,
             dropped.add(name)
         out[name] = sig
 
-    for line in _template_text(template_dir, variant).splitlines():
+    for line in _template_text(template_dir, variant, facts).splitlines():
         if _TYPE_DECL_RE.search(line):
             continue
         e = _TEMPLATE_EVENT_DECL_RE.match(line)
@@ -3150,6 +3261,64 @@ def _find_matching_brace_generic(text: str, open_idx: int, opener: str,
     return -1
 
 
+# A single-line `if (cond) stmt;` is a complete statement, so commenting it out
+# looks safe — and is not, when an `else` follows. The `else` is left with no
+# `if` to attach to (CS1525/CS8641), and a syntax error is a worse trade than
+# the CS0103 being repaired. Hit on the RepoQuestEnterprise spawner the moment
+# `spawnPoints` became correctly unbindable:
+#
+#     if (spawnPoints != null && spawnPoints.Count > 0) _spawnPointIndex = 0;
+#     else if (_spawnPointIndex >= spawnPoints.Length - 1) _spawnPointIndex = 0;
+#     else _spawnPointIndex++;                         <- both heads commented
+#
+# So an `if`/`else if` head is DISABLED rather than deleted: the chain keeps its
+# shape, the guarded statement stops running, and the author's surviving `else`
+# still has its branch. Only these two keywords — a `for`/`foreach`/`while` line
+# leaves nothing dangling behind it and is commented out as before.
+#
+# And only when an `else` really follows. A comment is the better outcome
+# everywhere else, because `if (false) { }` is a LIVE line to every pass that
+# reads one — `_body_is_live` would keep a method whose every statement had just
+# been neutralized, instead of dropping it.
+_IF_HEAD_RE = re.compile(
+    r'^(?P<indent>[ \t]*)(?P<lead>\}[ \t]*)?(?P<kw>else[ \t]+if|if)[ \t]*\(')
+_ELSE_HEAD_RE = re.compile(r'^[ \t]*(?:\}[ \t]*)?else\b')
+
+
+def _stub_if_head(line: str, names: "list[str] | set[str]", *,
+                  followed_by_else: bool) -> "str | None":
+    """`if (cond) stmt;` → `if (false) { }`, keeping the if/else chain intact."""
+    if not followed_by_else:
+        return None
+    m = _IF_HEAD_RE.match(line)
+    if not m:
+        return None
+    kw = re.sub(r"[ \t]+", " ", m.group("kw"))
+    return (f"{m.group('indent')}{m.group('lead') or ''}{kw} (false) {{ }} "
+            f"// AUDIT: removed unbindable reference(s) "
+            f"{', '.join(sorted(names))} -- {line.strip()}")
+
+
+# A braceless header governs the ONE statement after it. `_disable_bad_header`
+# turns the condition into `false` and leaves that statement in place as dead
+# code, which is right — until the statement is itself neutralized, and the
+# header silently adopts the next live one instead:
+#
+#     if (false) /* AUDIT */
+#         // AUDIT: return spawnPoints[_spawnPointIndex].position;
+#     return transform.position + ...;      <- now the if's body; CS0161
+#
+# The method's only unconditional return became conditional on `false`. Giving
+# the header an empty block closes it off — but only when its body really was
+# removed, since a surviving body must stay inside it.
+def _governed_body_line(lines: "list[str]", i: int) -> int:
+    """Index of the statement a braceless header at `i` governs, or -1."""
+    for j in range(i + 1, len(lines)):
+        if lines[j].strip():
+            return j
+    return -1
+
+
 def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                              arities: "dict[str, tuple[int, int]] | None" = None,
                              params: "dict[str, tuple[str, ...]] | None" = None,
@@ -3160,15 +3329,34 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
     Returns `(text, flagged_names)`. Same three-way strategy as every other
     `lint_*` pass here: comment out a complete self-terminating statement,
     swap an `if`/`while` condition for `false` when the statement spans lines,
-    and leave a line alone entirely when neither is safe.
+    and leave a line alone entirely when neither is safe — with the two
+    structure-preserving cases above, because a repair that trades CS0103 for a
+    parse error has not repaired anything.
     """
     bad = find_unbound_identifiers(text, known=known, arities=arities,
                                    params=params, signature=signature)
     if not bad:
         return text, set()
+    lines = text.splitlines()
     out: list[str] = []
     flagged: set[str] = set()
-    for i, line in enumerate(text.splitlines()):
+
+    def _next_is_else(i: int) -> bool:
+        j = _governed_body_line(lines, i)
+        return j != -1 and bool(_ELSE_HEAD_RE.match(lines[j]))
+
+    def _becomes_comment(j: int) -> bool:
+        """True when line `j` will be replaced by a comment — the only outcome
+        that leaves a braceless header above it with nothing to govern."""
+        if j < 0 or j >= len(lines):
+            return True                    # ran off the end: nothing to govern
+        if lines[j].lstrip().startswith("//"):
+            return True
+        return (bool(bad.get(j)) and _safe_to_comment_out(lines[j])
+                and _stub_if_head(lines[j], bad[j],
+                                  followed_by_else=_next_is_else(j)) is None)
+
+    for i, line in enumerate(lines):
         names = bad.get(i)
         if not names or line.lstrip().startswith("//"):
             out.append(line)
@@ -3179,7 +3367,18 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                 out.append(line)           # neither repair is safe — report only
                 continue
             flagged.update(names)
+            # `_disable_bad_header` re-emits the header's own `{` when it had
+            # one; only a BRACELESS header can adopt the statement below it.
+            head = _DISABLEABLE_HEADER_RE.match(line)
+            if head is not None and not head.group("brace") \
+                    and _becomes_comment(_governed_body_line(lines, i)):
+                disabled += " { }"
             out.append(disabled)
+            continue
+        stub = _stub_if_head(line, names, followed_by_else=_next_is_else(i))
+        if stub is not None:
+            flagged.update(names)
+            out.append(stub)
             continue
         flagged.update(names)
         indent = line[: len(line) - len(line.lstrip())]
@@ -3419,16 +3618,20 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     # and matches nothing an authored fragment could write. Expanding it back
     # with the schema's own name is what makes `new SaveSystemData()` bind.
     own = str(getattr(schema, "name", "") or "")
-    # The variant decides which branches of the template actually render, and
-    # therefore which of its members this file will really have.
+    # The variant AND the schema's other enums decide which branches of the
+    # template actually render, and therefore which of its members this file
+    # will really have. Reading the variant alone let `spawnPoints` — declared
+    # only under `{% if s.spawn_shape == "spawn_points" %}` — count as in scope
+    # for a `point` spawner, and the authored methods indexing it shipped.
     var = str(getattr(schema, "variant", "") or "")
+    facts = render_facts(schema)
     types = {t.replace(_JINJA_PLACEHOLDER, own) if own else t
-             for t in template_types(tdir, var)}
-    base = (set(template_scope_members(tdir, var)) | types
+             for t in template_types(tdir, var, facts)}
+    base = (set(template_scope_members(tdir, var, facts)) | types
             | _MONO_INHERITED | _KNOWN_SYMBOLS)
     base.discard(_JINJA_PLACEHOLDER)
-    arities = template_method_arities(tdir, var)
-    params  = template_method_params(tdir, var)
+    arities = template_method_arities(tdir, var, facts)
+    params  = template_method_params(tdir, var, facts)
     flagged: set[str] = set()
     dropped: list[str] = []
     returned: list[str] = []

@@ -371,6 +371,17 @@ class MicroComposer:
         _ctrl_has_input_rd = bool(ctrl) and not _ctrl_self_driven
         _ctrl_has_grounded = _ctrl_has_input_rd and _ctrl_var not in ("swimming", "flying")
 
+        # SetMove/SetJump/SetGrounded are gated `{% if variant == "player_fsm" %}`
+        # in StateMachine.cs.j2 — an enemy_fsm/game_fsm/object_fsm has none of
+        # them. `_pick("statemachine", "player")` above still returns the SOLE
+        # statemachine unit even when its target isn't "player" (the
+        # `len(candidates) == 1` short-circuit), so a project whose only FSM is
+        # an enemy/reviewer AI reaches `fsm` here as if it were the player's.
+        # Hit live on the RepoQuest run, GameWiring.cs(136,137,260) CS1061 —
+        # EnemyFSM has no SetJump/SetMove.
+        _fsm_var           = fsm.variant if fsm else ""
+        _fsm_has_move_jump = _fsm_var == "player_fsm"
+
         # ── Build seam lists (atom-driven) ────────────────────────────────────
         awake_seams:      list[dict] = []
         update_seams:     list[dict] = []
@@ -496,7 +507,7 @@ class MicroComposer:
             # Controller unsubscribes itself in its own OnDisable.
 
         # SEAM 5 — InputReader → FSM (typed move + jump events)
-        if has_input_so and fsm:
+        if has_input_so and fsm and _fsm_has_move_jump:
             fv = _fv(fsm)
             stored_delegates.append({"type": "Action", "name": "_onFSMJump"})
             awake_seams.append({
@@ -517,12 +528,13 @@ class MicroComposer:
         # Only for controllers that expose IsGrounded. Swimming/flying have no
         # ground; vehicle/aircraft read their own input and also omit IsGrounded —
         # emitting the bridge for any of them would be CS1061.
-        if ctrl and (fsm or anim) and _ctrl_has_grounded:
+        _fsm_for_grounded = fsm if (fsm and _fsm_has_move_jump) else None
+        if ctrl and (_fsm_for_grounded or anim) and _ctrl_has_grounded:
             update_seams.append({
                 "label":   "Grounded bridge: controller → FSM + Animator",
                 "snippet": unity_atom_snippet("WireGroundedBridge", {
                     "controller_var":   _fv(ctrl),
-                    "statemachine_var": _fv(fsm)  if fsm  else "_statemachine",
+                    "statemachine_var": _fv(_fsm_for_grounded) if _fsm_for_grounded else "_statemachine",
                     "animator_var":     _fv(anim) if anim else "_animator",
                 }),
             })
@@ -680,43 +692,58 @@ class MicroComposer:
         # BEFORE it sets o.complete (Objectives.cs.j2), so a progress-only binding
         # would show the just-finished objective as still active — the readout
         # would trail the game by one event.
+        # EVERY tracker, not just the first. One mission per tracker, and the
+        # rules micro now states every mission's objectives as steps, so a
+        # readout bound to the first alone displayed a tally that stopped a
+        # third of the way through a progression the player was still being
+        # walked along — and froze on "2 / 2" while four live objectives
+        # advanced behind it.
         if objective_units and hud and "SetObjective" in hud.setters:
-            obj_unit = objective_units[0]
-            ov, uv = _fv(obj_unit), _fv(hud)
+            uv = _fv(hud)
             stored_delegates += [
                 {"type": "Action<string, int, int>", "name": "_onObjectiveHudProgress"},
                 {"type": "Action<string>",           "name": "_onObjectiveHudComplete"},
             ]
-            awake_seams.append({
-                "label": "SEAM 9: objectives → HUD (current objective + tally)",
-                "snippet": unity_atom_snippet("WireObjectivesToHUD", {
-                    "objectives_var": ov, "hud_var": uv,
-                    "refresh_method": "RefreshObjectiveHud",
-                }),
-            })
+            for unit in objective_units:
+                ov = _fv(unit)
+                awake_seams.append({
+                    "label": f"SEAM 9: objectives → HUD "
+                             f"({unit.class_name} → current objective + tally)",
+                    "snippet": unity_atom_snippet("WireObjectivesToHUD", {
+                        "objectives_var": ov, "hud_var": uv,
+                        "refresh_method": "RefreshObjectiveHud",
+                    }),
+                })
+                destroy_cleanups.append(
+                    f"if ({ov} != null)\n"
+                    f"{{\n"
+                    f"    if (_onObjectiveHudProgress != null) {ov}.OnObjectiveProgress -= _onObjectiveHudProgress;\n"
+                    f"    if (_onObjectiveHudComplete != null) {ov}.OnObjectiveComplete -= _onObjectiveHudComplete;\n"
+                    f"}}"
+                )
+            # The tally is the whole project's, summed in the order the steps
+            # are stated. The label is the FIRST tracker still holding a live
+            # objective, which is the step the rules panel is showing — the two
+            # readouts name the same action or the player is told two things.
+            _hud_reads = "\n".join(
+                f"        if ({_fv(u)} != null)\n"
+                f"        {{\n"
+                f"            var a{i} = {_fv(u)}.ActiveObjective;\n"
+                f"            if (label.Length == 0 && a{i} != null) label = a{i}.description;\n"
+                f"            done  += {_fv(u)}.CompletedRequired;\n"
+                f"            total += {_fv(u)}.TotalRequired;\n"
+                f"        }}"
+                for i, u in enumerate(objective_units))
             helper_methods.append(
                 f"private void RefreshObjectiveHud()\n"
                 f"    {{\n"
-                f"        if ({ov} == null || {uv} == null) return;\n"
-                f"        var active = {ov}.ActiveObjective;\n"
-                f"        {uv}.SetObjective(active != null ? active.description : \"\",\n"
-                f"                          {ov}.CompletedRequired, {ov}.TotalRequired);\n"
+                f"        if ({uv} == null) return;\n"
+                f"        string label = \"\";\n"
+                f"        int done = 0, total = 0;\n"
+                f"{_hud_reads}\n"
+                f"        {uv}.SetObjective(label, done, total);\n"
                 f"    }}"
             )
-            destroy_cleanups.append(
-                f"if ({ov} != null)\n"
-                f"{{\n"
-                f"    if (_onObjectiveHudProgress != null) {ov}.OnObjectiveProgress -= _onObjectiveHudProgress;\n"
-                f"    if (_onObjectiveHudComplete != null) {ov}.OnObjectiveComplete -= _onObjectiveHudComplete;\n"
-                f"}}"
-            )
-            if len(objective_units) > 1:
-                console.print(
-                    "  [yellow]WARN[/]  hud: one objective readout exists, so it "
-                    f"tracks {obj_unit.class_name} only — "
-                    + ", ".join(u.class_name for u in objective_units[1:])
-                    + " progress live but is never displayed."
-                )
 
         # SEAM 10 — inventory → HUD (carried count)
         inventory = _pick("inventory", "systems")
@@ -1414,24 +1441,40 @@ def _bt_options_for_entry(entry) -> dict:
 # tests keep a stable import site.
 
 from .micro.lighting import select_variant as _lighting_variant  # noqa: E402
-from .micro.rules import steps_from_mission as _rule_steps_for_mission  # noqa: E402
+from .micro.rules import steps_from_missions as _rule_steps_for_missions  # noqa: E402
 from .micro.board import (board_domain_for_missions as _board_domain_for_missions,  # noqa: E402
                           board_options_for_entities as _board_options_for_entities)
 
 
 def _mission_goal(mission) -> str:
-    """One sentence naming what winning is.
+    """One sentence naming what winning is — across every mission given.
 
-    Built from the mission's own description, or from its objectives when it
+    Built from each mission's own description, or from its objectives when it
     has none — never left blank, because "what counts as winning" is the first
     thing a player needs and the last thing any build has ever stated.
+
+    Takes one MissionSpec or a list. Winning a three-mission project means
+    finishing all three, so a goal quoting only the first would name a third of
+    the game as the whole of it — under a step list that walks the player
+    through every one of them.
     """
-    desc = str(getattr(mission, "description", "") or "").strip()
-    if desc:
-        return desc if len(desc) <= 200 else desc[:197] + "…"
-    n = len(getattr(mission, "objectives", None) or [])
-    return f"Complete all {n} objective(s) of {mission.title}." if n else \
-           "Complete the mission."
+    missions = ([m for m in mission if m is not None]
+                if isinstance(mission, (list, tuple)) else
+                ([mission] if mission is not None else []))
+    parts: list[str] = []
+    for m in missions:
+        desc = str(getattr(m, "description", "") or "").strip()
+        if desc:
+            parts.append(desc)
+            continue
+        n = len(getattr(m, "objectives", None) or [])
+        parts.append(f"Complete all {n} objective(s) of {m.title}." if n else
+                     "Complete the mission.")
+    if not parts:
+        return "Complete the mission."
+    goal = " ".join(parts)
+    # One cap for one string, whether it came from one mission or four.
+    return goal if len(goal) <= 240 else goal[:237] + "…"
 
 
 def subsystems_for(
@@ -1926,15 +1969,21 @@ def subsystems_for(
         # Titled from the same mission the briefing is titled from — a board
         # captioned "Game Board" under a briefing that calls the game something
         # else is two surfaces disagreeing about what the player is playing.
-        # The mission is passed as the FALLBACK classifier, not the primary
+        # The missions are passed as the FALLBACK classifier, not the primary
         # one: the UI vocabulary answers the ordinary cases, and the objectives
         # answer the ones no word list can ("drag the shoes onto the tower").
+        #
+        # ALL of them, in both calls. SEAM 8a binds an objective from any
+        # mission, and the rules micro below now states every one of them as a
+        # step, so a cast classified — or a rule derived — from the first
+        # mission alone would be reading a third of the evidence for a game the
+        # player is being walked through all of.
         _board_opts = _board_options_for_entities(
             entities or [], title=(_first_mission.title if _first_mission else ""),
-            mission=_first_mission)
+            mission=_missions_with_objectives)
         if _board_opts:
             for _ok, _msg in _board_domain_for_missions(
-                    _board_opts, _first_mission, brief=user_prompt):
+                    _board_opts, _missions_with_objectives, brief=user_prompt):
                 console.print(f"  [green]OK[/]    {_msg}" if _ok
                               else f"  [yellow]WARN[/]  {_msg}")
             _board_variant = _board_opts.pop("variant")
@@ -1965,22 +2014,30 @@ def subsystems_for(
     # explain, and a briefing that says "achieve the goal" is the empty
     # scaffolding this exists to replace.
     if _first_mission is not None:
-        _m = _first_mission
-        _steps = _rule_steps_for_mission(_m)
+        _ms = _missions_with_objectives
+        _steps = _rule_steps_for_missions(_ms)
         subs.append(Subsystem(
             kind="rules", variant="guided", target="ui", name="GameRules",
             options={
-                "game_title": _m.title or "This Game",
-                "goal": _mission_goal(_m),
+                # The project's own name for itself is the first mission's
+                # title, which is also what the board is captioned with — two
+                # player-facing surfaces that must not disagree.
+                "game_title": _first_mission.title or "This Game",
+                "goal": _mission_goal(_ms),
                 "steps": _steps,
-                # The ids a step is allowed to reference. `harden` reports any
-                # step pointing at an objective this mission does not declare —
-                # such a step can never clear and strands the player on it.
-                "meta": {"objective_ids": [o.id for o in _m.objectives if o.id]},
+                # The ids a step is allowed to reference — from EVERY mission,
+                # because the steps now come from every mission. `harden`
+                # reports any step pointing at an id the project does not
+                # declare: such a step can never clear and strands the player.
+                "meta": {"objective_ids": [o.id for m in _ms
+                                           for o in m.objectives if o.id]},
             }))
         console.print(
-            f"  [green]OK[/]    rules: {len(_steps)} step(s) from mission "
-            f"{_m.title!r} — briefing, step panel and next-action hint bar")
+            f"  [green]OK[/]    rules: {len(_steps)} step(s) from "
+            + (f"{len(_ms)} missions ("
+               + ", ".join(repr(m.title) for m in _ms) + ")" if len(_ms) > 1
+               else f"mission {_first_mission.title!r}")
+            + " — briefing, step panel and next-action hint bar")
 
     # Behavior trees — one interpreter subsystem per authored AIBehaviorTree
     # entry (schema.behavior_trees). CharacterSpec.npc_brain.behavior_tree (a
