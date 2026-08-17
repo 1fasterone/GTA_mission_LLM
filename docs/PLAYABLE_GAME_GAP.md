@@ -254,6 +254,86 @@ Its events (`OnPiecePlaced`, `OnGroupComplete`, `OnZoneFilled`, `OnCommand`) are
 the honest event source a UI-first game never had — SEAM 8 could only offer a
 trigger volume or an interactable, both of which wait for a body to arrive.
 
+### The blank `target_ref`  ✅ *fixed*
+
+Everything above keys off one string, and Step 3 routinely leaves it empty.
+`target_ref` is what tells the board's `commands` derivation which objective is
+about something on the board, what `requires` orders the places by, and what
+SEAM 8a matches an event against. Blank, all three abstain — correctly, and
+together.
+
+The failure is not proportional to the omission. SEAM 8a binds **per objective**
+because a board event carries the group it happened to; the generic sources
+underneath it bind **one objective each**, because a trigger volume cannot tell
+which objective its event was about. So a blank ref does not cost one binding,
+it collapses the build back to the ceiling SEAM 8a was written to lift.
+
+> **RepoQuest: Enterprise Edition** (2026-08-15) — six objectives, six blank
+> refs. 69/100, NOT PLAYABLE: zero board bindings, three required objectives
+> with no event source, a board with no verbs and no ordering rule.
+
+`src/unity_objective_targets.py` (Step 5, after every pass that can still add an
+entity) resolves the ref from the objective's own sentence, against entities the
+schema already declares:
+
+- **+1 per shared word** — singularised, short and grammar words dropped, the
+  same `_id_tokens` rule the board matches names with
+- **+2 grammatical role** — English marks a destination with a locative
+  preposition, so a word after one is evidence for a PLACE and a word before one
+  for the thing carried. Awarded only when the role and the entity's board side
+  agree ("place a build artifact ON THE conveyor" is about `ConveyorBelts`, not
+  `BuildStations`)
+- **+1 what the type needs** — `collect` advances on a piece being placed and
+  `reach` on a place being filled, so the side the type will look for is worth a
+  point
+
+**A tie abstains, naming both candidates.** "Select at least 5 nodes" against a
+cast holding `GraphNodes` *and* `EmergencyNodes` is genuinely ambiguous, and a
+guess there does double damage: it binds the wrong group forever, and — because
+SEAM 8a runs first — it claims the objective away from the generic source that
+could still have advanced it honestly. Authored refs are never overwritten, and
+`survive` is skipped so the tracker's own clock keeps its objective to itself.
+
+On RepoQuest: three refs resolved, two abstained, and the two abstentions are
+exactly the two the trigger and interactable sources really do bind — **6/6
+advanceable, `objectives_unbound` empty.**
+
+### One mission was the whole game  ✅ *fixed*
+
+Found immediately after the above, and the reason it only got halfway. SEAM 8a
+binds an objective from **any** mission — that is its entire point, since a board
+event carries the group it happened to. Everything else stopped at the first:
+
+| read the first mission only | consequence |
+|---|---|
+| `steps_from_mission` | a 6-objective project told the player about 2 |
+| `board_domain_for_missions` | verbs and ordering derived from a third of the evidence |
+| `board_options_for_entities` fallback | the cast classified from a third of it |
+| `_mission_goal` | "what winning is" named a third of the game |
+| SEAM 9 (`objective_units[0]`) | the tally froze at "2 / 2" while four live objectives advanced |
+
+The constraint behind it was real: what the board ENFORCES and what the player is
+SHOWN must be two readings of one authored list, or the hint bar names an action
+the move core refuses. The answer is to widen both together, not to keep both
+narrow. `steps_from_missions` now spans every mission with continuous numbering
+(`3 / 6`) and the mission title in the step header as a phase label;
+`board_domain_for_missions` and the cast fallback take a mission **list**;
+`meta.objective_ids` widens with the steps, or `harden` would report every step
+past the first mission as one that can never clear.
+
+SEAM 9 now emits once per tracker into one readout: the tally is the sum across
+all of them and the label is the first tracker still holding a live objective —
+which is the step the rules panel is showing, so the hint bar and the HUD name
+the same action. `WireObjectivesToHUD` creates its two delegates **only if null**,
+so several trackers share one pair and `OnDestroy` can unsubscribe every
+subscription instead of just the last.
+
+A single-mission project produces exactly what it did before — no phase label
+where there is only one phase, one SEAM 9 block, one subscription.
+
+On RepoQuest: rules went from 2 steps to 6, the board went from **no verbs at
+all** to `align` and `resolve`, and the HUD from tracking 1 mission to 3.
+
 ### The `mission_loop` bug  ✅ *fixed*
 
 Found while wiring the above. `_check_mission_loop` graded `ok = bool(bound)` —

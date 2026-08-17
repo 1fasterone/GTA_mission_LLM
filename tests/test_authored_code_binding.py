@@ -453,3 +453,80 @@ def test_a_condition_that_is_not_about_the_variant_keeps_its_body():
     from src.micro.code_fields import _drop_dead_variant_branches
     src = "{% if s.wants_audio %}\npublic void Boom() {}\n{% endif %}"
     assert "Boom" in _drop_dead_variant_branches(src, "slots")
+
+
+# ── The schema's OTHER enums decide scope too ────────────────────────────────
+#
+# Provenance: TEST DATA, transcribed from the generated .cs at
+# C:\u\RepoQuestEnterprise\Assets\Micros\spawner\Scripts\EnemySpawner.cs. The
+# spawner template declares `spawnPoints` under
+# `{% if s.spawn_shape == "spawn_points" %}`; the schema said `point`; the two
+# authored methods indexing `spawnPoints` shipped, because the branch pruner
+# read `variant` and nothing else.
+
+def test_a_field_declared_under_another_enum_is_out_of_scope():
+    from src.micro.code_fields import render_facts
+    from src.micro.spawner import SpawnerSchema
+
+    tdir = str(MICRO / "spawner")
+    points = render_facts(SpawnerSchema(spawn_shape="spawn_points"))
+    plain  = render_facts(SpawnerSchema(spawn_shape="point"))
+    assert "spawnPoints" in template_scope_members(tdir, "wave_spawner", points)
+    assert "spawnPoints" not in template_scope_members(tdir, "wave_spawner", plain)
+    # `or`-chained atoms are decided as one condition, so `circle`-only fields
+    # go with them; a caller that supplies no facts keeps the whole union.
+    assert "spawnRadius" not in template_scope_members(tdir, "wave_spawner", plain)
+    assert "spawnPoints" in template_scope_members(tdir, "wave_spawner")
+
+
+def test_an_undecidable_condition_still_keeps_its_body():
+    from src.micro.code_fields import _drop_dead_variant_branches
+    # A field this pass has no value for, and a mixed and/or it will not
+    # untangle — both keep their bodies. Too WIDE is the safe direction.
+    src = '{% if s.mood == "grim" %}\npublic void Boom() {}\n{% endif %}'
+    assert "Boom" in _drop_dead_variant_branches(src, "", (("shape", "point"),))
+    mixed = ('{% if s.shape == "point" and s.pooling == "pooled" '
+             'or s.shape == "box" %}\npublic void Bang() {}\n{% endif %}')
+    assert "Bang" in _drop_dead_variant_branches(
+        mixed, "", (("shape", "point"), ("pooling", "instantiate")))
+
+
+def test_neutralizing_an_if_head_leaves_its_else_attached():
+    """`if (bad) x; else if (bad) y; else z;` — commenting both heads out
+    orphans the author's `else` (CS1525). The chain keeps its shape instead."""
+    from src.micro.spawner import SpawnerSchema
+    s = SpawnerSchema(                      # `point` — so `spawnPoints` is unbindable
+        spawn_shape="point",
+        extra_fields=[CodeField(name="_i", type="int")],
+        update_extra=("if (spawnPoints != null) _i = 0;\n"
+                      "else if (_i >= spawnPoints.Length - 1) _i = 0;\n"
+                      "else _i++;"),
+    )
+    bind_authored_code(s, MICRO / "spawner")
+    body = s.update_extra
+    assert "if (false) { }" in body
+    assert "else if (false) { }" in body
+    assert "else _i++;" in body            # the surviving branch is untouched
+    # Every surviving reference is inside the AUDIT trail, not in live code.
+    assert not [ln for ln in _live_lines(body)
+                if "spawnPoints" in ln.split("// AUDIT:")[0]]
+
+
+def test_a_disabled_braceless_head_does_not_adopt_the_next_statement():
+    """`if (false)` over a removed body swallows the statement below it — which
+    on a typed method is its only unconditional return (CS0161)."""
+    from src.micro.spawner import SpawnerSchema
+    s = SpawnerSchema(
+        spawn_shape="point",
+        extra_fields=[CodeField(name="_i", type="int")],
+        extra_methods=[CodeMethod(
+            signature="private Vector3 GetNextSpawnPosition()",
+            body=("if (spawnPoints != null && _i < spawnPoints.Length)\n"
+                  "    return spawnPoints[_i].position;\n"
+                  "return transform.position;"))],
+    )
+    bind_authored_code(s, MICRO / "spawner")
+    body = s.extra_methods[0].body
+    head = next(ln for ln in body.splitlines() if "if (false)" in ln)
+    assert head.rstrip().endswith("{ }")
+    assert "return transform.position;" in body

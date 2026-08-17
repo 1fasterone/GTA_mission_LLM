@@ -1,0 +1,69 @@
+TITLE: Platform Four Lost Property
+
+GENRE: a calm sorting and paperwork puzzle, played entirely through the
+interface.
+
+STYLE: warm and cluttered, hand-lettered card labels, brown paper tags, a green
+desk lamp, the look of a real back office at eleven at night.
+
+LOCOMOTION: none
+
+GAME TYPE: isometric
+
+PLATFORM: PC
+
+RENDER PIPELINE: URP
+
+CORE PREMISE
+You are the clerk on the late shift at a city railway station's lost property
+office. There is no character to steer and nowhere to walk. The world of the
+game is the counter in front of you, the three labelled shelves behind it, and
+the claim log you write the night into before you go home. Every action is
+either a drag with the mouse or a word typed at the terminal, and both do
+exactly the same thing to the office.
+
+SCENES
+1. NightCounter — the whole game: counter, shelves, terminal and claim log
+   under one green desk lamp.
+
+ENTITIES
+- LostUmbrellas: the umbrellas handed in tonight, still wet, five of them
+  (kind: pickup)
+- LostSuitcases: three suitcases, one of them very heavy (kind: pickup)
+- LostPhones: four phones, all switched off (kind: pickup)
+- UmbrellaShelf: the tall narrow rack the umbrellas belong on (kind: prop)
+- SuitcaseShelf: the deep low rack the suitcases belong on (kind: prop)
+- PhoneShelf: the shallow tray of pigeonholes the phones belong in (kind: prop)
+- ClaimLog: the running record of everything booked in tonight. It is written
+  by typing at the terminal and cannot be dropped into by hand (kind: prop)
+- LedgerTerminal: the keyboard and screen at the end of the counter, where the
+  night's entries are typed (kind: prop)
+
+MISSIONS
+1. Clear the Counter — every lost thing goes on the shelf that matches it.
+   - Shelve the wet umbrellas on the umbrella shelf (collect: LostUmbrellas x5)
+   - Shelve the suitcases on the suitcase shelf (collect: LostSuitcases x3)
+   - Shelve the phones in the phone shelf pigeonholes (collect: LostPhones x4)
+2. Book the Night In — write down what you shelved.
+   - Record every shelved kind in the claim log
+3. Close the Office — stamp the log and go home.
+   - Stamp tonight's claim log and turn off the desk lamp
+
+NARRATIVE
+1. The porter tips the day's finds onto the counter and leaves. (on_start)
+2. Shelve every umbrella, suitcase and phone on the shelf that matches it.
+   Nothing goes on the wrong shelf — the labels are the whole point of the job.
+   (on_collect)
+3. Book the shelved things in: record each kind in the claim log by typing at
+   the terminal. The log is written, never dropped into. (manual)
+4. Stamp the night's claim log and close the office. (manual)
+
+FEATURES
+pointer input, drag and drop, typed commands, save
+
+AUDIO
+- office_hum          ambient  looping  a quiet back office at eleven at night
+- shelf_slot          sfx      oneshot  a thing settling into its labelled place
+- refused_move        sfx      oneshot  the soft thud of a thing that does not
+                                        belong there
+- ledger_keystroke    sfx      oneshot  a key struck on the terminal

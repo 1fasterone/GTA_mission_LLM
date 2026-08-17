@@ -1288,11 +1288,26 @@ _UI_ELEMENT_TABLE: tuple[tuple[str, tuple[str, ...]], ...] = (
 # Kinds that name the element outright. The LLM writes kind="prop" for most of
 # a UI game's content (that is the whole reason the `ui:` route exists), but
 # when it does reach for a UI kind it is the strongest signal available.
+#
+# `pickup`/`collectible`/`item` are not UI words — they are the IR's own words
+# for a thing the player TAKES, and on a board that is exactly a piece. They are
+# here because leaving them out cost a whole board: a lost-property sim filled
+# kind="pickup", count=12 for its only movable group and named it
+# `LostPropertyPile`, so the kind said nothing, the word table read "pile" as a
+# place to stack onto, and a cast of twelve draggable objects classified as two
+# panels with nothing to put in them. `board_options_for_entities` abstained,
+# correctly, from a cast that was never actually short of pieces.
+#
+# Read only for a non-embodied project — `ui_element_of`'s callers are the UI
+# board layout, the board micro (`locomotion='none'` only) and the asset
+# resolver's `if not embodied` branch — so an ordinary 3D game's pickups are
+# untouched and still resolve to real models.
 _UI_ELEMENT_KINDS: dict[str, str] = {
     "ui": "panel", "hud": "label", "menu": "panel", "widget": "panel",
     "panel": "panel", "window": "window", "button": "button",
     "label": "label", "text": "label", "icon": "icon", "card": "card",
     "tile": "card", "list": "list",
+    "pickup": "card", "collectible": "card", "item": "card",
 }
 # Behind everything, filling the frame: not content, backing. Kept apart from
 # the element table because a backdrop takes no cell in the reading flow — it

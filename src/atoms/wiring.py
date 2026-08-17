@@ -225,7 +225,9 @@ WIRING_ATOMS: list[AtomDef] = [
             "because ReportProgress raises OnObjectiveProgress before it marks the "
             "objective complete, so a progress-only binding shows a stale active "
             "objective. Fires once at Awake so the readout is correct before the first "
-            "gameplay event."
+            "gameplay event. Emitted once per tracker — the delegates are created only "
+            "if null, so several trackers share one pair and OnDestroy can unsubscribe "
+            "every subscription rather than just the last."
         ),
         engines=["unity"],
         duration="instant",

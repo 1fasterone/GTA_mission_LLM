@@ -40,6 +40,7 @@ from .unity_concept_entities import (extract_named_entities,
 from .unity_concept_scripts import (extract_named_scripts,
                                     inject_missing_concept_scripts,
                                     render_script_checklist)
+from .unity_concept_missions import inject_missing_concept_missions
 from .unity_layout        import compute_layout
 from .unity_scenebind     import apply_scene
 from .unity_playability   import (PlayabilityGateError,
@@ -47,6 +48,7 @@ from .unity_playability   import (PlayabilityGateError,
                                   gate as playability_gate)
 from .unity_playability_repair import repair_and_regrade
 from .unity_pathnorm      import normalize_paths
+from .unity_objective_targets import resolve_objective_targets
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 
 console = Console()
@@ -248,7 +250,7 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
 # prompt). Three or more = the author already themed it.
 _BRIEF_MARKER_RE = re.compile(
     r"^(TITLE|GENRE|STYLE|CORE PREMISE|SCENES|NARRATIVE|SCRIPTS|ENTITIES"
-    r"|AUDIO|FEATURES|VISUAL STYLE|COLOR PALETTE|PROCEDURAL)\b",
+    r"|MISSIONS|AUDIO|FEATURES|VISUAL STYLE|COLOR PALETTE|PROCEDURAL)\b",
     re.MULTILINE | re.IGNORECASE)
 
 
@@ -1123,6 +1125,21 @@ class UnityPipeline:
         for msg in inject_missing_concept_scripts(schema):
             self._fix(msg)
 
+        # Brief-declared MISSION rescue — the same sibling, one level up: the
+        # entity rescue restores the CAST the schema-fill dropped, this restores
+        # the PROGRESSION it collapsed. Three consecutive live runs of a brief
+        # laying out three ordered phases each came back with one mission, and
+        # everything downstream reads missions plural — the rules micro states
+        # every phase as a step, the board derives its verbs and ordering across
+        # all of them, SEAM 9 sums one readout over every tracker.
+        #
+        # After the entity rescue on purpose: a restored objective's target_ref
+        # names an entity, and `resolve_objective_targets` (further down, after
+        # every pass that can still add one) resolves the ones the brief left
+        # bare — so the cast must be whole before either runs.
+        for msg in inject_missing_concept_missions(schema):
+            self._fix(msg)
+
         # Racing-genre scaffold: a racing project whose entities carry no real
         # vehicle/track content (the LLM wrote a themed prop scatter instead
         # of an actual circuit) gets a deterministic closed-circuit injected —
@@ -1198,6 +1215,17 @@ class UnityPipeline:
         # Microgens: schema.microgens[].atoms → atoms (Step 5b)
         schema, mg_msgs = resolve_microgens(schema)
         for msg in mg_msgs:
+            self._fix(msg)
+
+        # Objective targets: fill every blank `target_ref` the objective's own
+        # sentence answers (src/unity_objective_targets.py). Last of the Step 5
+        # content passes, because it resolves against schema.entities and every
+        # pass above can still ADD one — the concept rescue, the racing
+        # scaffold and an authored scene all inject groups an objective may
+        # well be about. Before the pre-flight below, so the repaired refs are
+        # what gets graded, and before compose, where SEAM 8a and the board's
+        # own `commands`/`requires` derivations all read the field.
+        for msg in resolve_objective_targets(schema):
             self._fix(msg)
 
         # Step 5c — playability pre-flight. Step 7 grades the finished project,

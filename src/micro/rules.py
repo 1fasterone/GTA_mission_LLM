@@ -210,30 +210,63 @@ class RulesPipeline(UnityMicroPipeline):
         return 2
 
 
-def steps_from_mission(mission, concept: str = "") -> list[dict]:
-    """A deterministic step per authored objective, in schema order.
+_OBJECTIVE_VERBS = {
+    "collect": "Collect", "reach": "Get to", "defeat": "Defeat",
+    "eliminate": "Defeat", "survive": "Survive", "timer": "Survive",
+    "escort": "Escort", "interact": "Use",
+}
+
+
+def steps_from_missions(missions, concept: str = "") -> list[dict]:
+    """A deterministic step per authored objective, across EVERY mission that
+    declares one, in schema order.
 
     The fallback when no model authored the prose: every objective still
     becomes a step the player is told to do, using the objective's own
     description. Deliberately not clever — a plain instruction beats a blank
     hint bar, which is what every build shipped with until now.
+
+    ONE progression, not one per mission. SEAM 8a binds objectives from every
+    mission — its whole point is that a board event carries the group it
+    happened to, so each objective can have its own filtered binding — while
+    this list stopped at the first. A three-mission project then ran with six
+    live objectives and told the player about two, and the board's own domain
+    derivation was held to the first mission for the same reason: what the
+    board ENFORCES and what the player is SHOWN have to be two readings of one
+    list. Widening both together keeps that true and stops the progression
+    lying by omission.
+
+    The mission title rides in the step title when there is more than one, so
+    the panel names the phase the step belongs to. A single-mission project
+    produces exactly what it did before.
     """
+    real = [m for m in (missions or []) if getattr(m, "objectives", None)]
+    total = sum(len(m.objectives) for m in real)
+    multi = len(real) > 1
     out: list[dict] = []
-    for i, o in enumerate(getattr(mission, "objectives", None) or []):
-        oid = str(getattr(o, "id", "") or "").strip()
-        desc = str(getattr(o, "description", "") or "").strip()
-        otype = str(getattr(o, "type", "") or "").strip().lower()
-        target = str(getattr(o, "target_ref", "") or "").strip()
-        verb = {
-            "collect": "Collect", "reach": "Get to", "defeat": "Defeat",
-            "eliminate": "Defeat", "survive": "Survive", "timer": "Survive",
-            "escort": "Escort", "interact": "Use",
-        }.get(otype, "Complete")
-        out.append({
-            "objective_id": oid,
-            "title": f"{i + 1} / {len(mission.objectives)}  "
-                     + (desc[:38].upper() if desc else f"OBJECTIVE {i + 1}"),
-            "teaches": desc or f"{verb} {target or 'the objective'}.",
-            "ask": desc or f"{verb} {target or 'the objective'}.",
-        })
+    i = 0
+    for mission in real:
+        phase = " ".join(str(getattr(mission, "title", "") or "").split())
+        for o in mission.objectives:
+            i += 1
+            oid = str(getattr(o, "id", "") or "").strip()
+            desc = str(getattr(o, "description", "") or "").strip()
+            otype = str(getattr(o, "type", "") or "").strip().lower()
+            target = str(getattr(o, "target_ref", "") or "").strip()
+            verb = _OBJECTIVE_VERBS.get(otype, "Complete")
+            head = desc[:38].upper() if desc else f"OBJECTIVE {i}"
+            out.append({
+                "objective_id": oid,
+                "title": f"{i} / {total}  "
+                         + (f"{phase.upper()} — {head}" if multi and phase
+                            else head),
+                "teaches": desc or f"{verb} {target or 'the objective'}.",
+                "ask": desc or f"{verb} {target or 'the objective'}.",
+            })
     return out
+
+
+def steps_from_mission(mission, concept: str = "") -> list[dict]:
+    """One mission's worth of `steps_from_missions`. Kept because a caller with
+    a single mission in hand should not have to wrap it in a list."""
+    return steps_from_missions([mission], concept)
