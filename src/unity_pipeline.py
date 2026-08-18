@@ -1295,7 +1295,11 @@ class UnityPipeline:
         # after Step 3.5's subsystem enrichment.
         composed_units = None
         subsystems = None
-        composer = None
+        # No `composer = None` pre-declaration: it is only ever referenced
+        # inside `if compose:`-guarded code below (never unconditionally), and
+        # giving it an Optional type here would make mypy lose the narrowing
+        # this function's later, separately-gated `if compose ...:` blocks
+        # (composer.plan/module_deps/emit/wiring_report) rely on.
         if compose:
             from .unity_compose import (MicroComposer, subsystems_for,
                                         drop_owned_scripts)
@@ -1348,6 +1352,11 @@ class UnityPipeline:
                 self._fix(msg)
 
         if compose:
+            # mypy can't carry `subsystems`'s narrowing from the first
+            # `if compose:` block above across the intervening Step 3.5a
+            # block — both are gated on the same unchanged `compose`, so
+            # subsystems is always set by the time execution reaches here.
+            assert subsystems is not None
             # STEP 3.5 — LLM authors prompt-specific C# per subsystem. Runs
             # BEFORE plan(): plan/emit must see identical options or their
             # class names and GUIDs would disagree. Only the extras vocabulary
