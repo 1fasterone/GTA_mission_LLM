@@ -191,7 +191,8 @@ def _filter_keys(kind: str, raw: object) -> dict:
 # pass — unlike guessing at undeclared identifiers in general, which the
 # incomplete per-micro `_RESERVED_FIELD_NAMES` sets cannot support.
 from .micro.code_fields import _disable_bad_header, _safe_to_comment_out
-from .unity_generator import _CS_BUILTIN_TYPES, _extract_base_type
+from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
+                              _extract_base_type)
 
 _FRAGMENT_KEYS = ("awake_extra", "update_extra", "fixed_update_extra")
 
@@ -736,16 +737,23 @@ def _script_has_code(script) -> bool:
     return any(getattr(script, k, None) for k in _BEHAVIOUR_KEYS)
 
 
-def _script_contract(script, siblings: Sequence[Any] = ()) -> str:
+def _script_contract(script, siblings: Sequence[Any] = (),
+                     composed_subsystems: Sequence[Any] = ()) -> str:
     """What this script really has, and what it may really reach for.
 
     The same lesson as `_contract_for`: the compiler has always known this and
     only ever used it to JUDGE the answer. A custom script's surface is small
-    and exact — MonoBehaviour, its own serialized fields, and the PUBLIC methods
-    of its sibling custom scripts, which is the only cross-script access
-    `unity_generator._sanitize_project_service_calls` lets through (a sibling's
-    extra_fields always render `[SerializeField] private`, so reaching one is
-    CS0122 from anywhere else).
+    and exact — MonoBehaviour, its own serialized fields, the PUBLIC methods of
+    its sibling custom scripts (the only cross-script access
+    `unity_generator._sanitize_project_service_calls` lets through — a
+    sibling's extra_fields always render `[SerializeField] private`, so
+    reaching one is CS0122 from anywhere else), and the verified public API of
+    whichever composed micros this project actually has (`_COMPOSED_CLASS_API`
+    — the same maximal-per-kind table `_sanitize_project_service_calls` already
+    uses to strip a call it can't verify). Confirmed live: OxygenManager called
+    `Get<PlayerHealth>().Die()` (private, CS0122), InventoryManager called
+    `Get<WorldInteractable>().CanPickup()`/`.ItemName` (neither exists, CS1061
+    x2) — both classes the model could see existed but never the shape of.
     """
     lines = ["", "WHAT THIS CLASS ALREADY HAS"]
     fields = [f"{getattr(f, 'type', '?')} {getattr(f, 'name', '?')}"
@@ -769,6 +777,23 @@ def _script_contract(script, siblings: Sequence[Any] = ()) -> str:
         lines.append("")
         lines.append("OTHER SCRIPTS YOU MAY CALL (public methods only)")
         lines.extend(reachable)
+
+    # Only classes this project actually composes, and only the ones with a
+    # verified table entry — an unlisted composed kind (e.g. LightingDirector,
+    # EnemyAI) has no ground truth here and stays unmentioned rather than
+    # guessed at, same restraint `_composed_member_ok` applies at judge time.
+    composed_names = sorted({str(getattr(s, "name", "") or "")
+                             for s in composed_subsystems} & _COMPOSED_CLASS_API.keys())
+    if composed_names:
+        lines.append("")
+        lines.append("COMPOSED PROJECT SYSTEMS YOU MAY CALL (verified public API "
+                     "only — anything not listed here does not exist on that "
+                     "class and will be stripped)")
+        for name in composed_names:
+            members = sorted(_COMPOSED_CLASS_API[name])
+            surface = ", ".join(members) if members else \
+                "no public members beyond MonoBehaviour basics"
+            lines.append(f"  GameContext.Instance.Get<{name}>() -> {surface}")
     return "\n".join(lines)
 
 
@@ -895,12 +920,17 @@ def _apply_script(script, payload: dict) -> bool:
 
 def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                    user_prompt: str = "", temperature: float = 0.35,
-                   attempts: int = 3) -> list[str]:
+                   attempts: int = 3, subsystems: Sequence[Any] = ()) -> list[str]:
     """Author bodies for `type: custom` scripts, one focused call each.
 
     Same shape as `enrich_subsystems`: a narrow window per script, the real
     contract shown up front, and one correction round when the answer would not
     bind. Never raises — a failed script costs that script, not the build.
+
+    `subsystems` is the project's composed-micro list (empty when --compose is
+    off, or when this runs before it — see unity_pipeline.run() for why it is
+    computed ahead of this call) — only used to tell the contract which
+    composed class names actually exist in THIS project.
 
     MUST be called while the LLM is still warm, for the same reason
     `enrich_subsystems` must: LM Studio's idle-unload turns every call into a
@@ -917,7 +947,7 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
     msgs: list[str] = []
     enriched = 0
     for script in targets:
-        contract = _script_contract(script, scripts)
+        contract = _script_contract(script, scripts, subsystems)
         payload: dict = {}
         correction = ""
         for attempt in range(attempts):
