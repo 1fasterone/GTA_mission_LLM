@@ -138,6 +138,37 @@ def test_only_a_siblings_PUBLIC_methods_are_offered():
     assert "Tick" not in contract
 
 
+def test_composed_micros_offer_only_their_verified_public_api():
+    """The same table `unity_generator._sanitize_project_service_calls` uses to
+    strip a call it can't verify — shown up front instead of only at judge
+    time. Confirmed live: OxygenManager called Get<PlayerHealth>().Die()
+    (private, CS0122); the author never had a reason not to reach for it."""
+    from src.unity_compose import Subsystem
+    subsystems = [Subsystem(kind="health", target="player", name="PlayerHealth"),
+                  Subsystem(kind="camera", target="camera", name="PlayerCamera")]
+    contract = _script_contract(_codebranchsim()[0], [], subsystems)
+    assert "GameContext.Instance.Get<PlayerHealth>()" in contract
+    assert "TakeDamage" in contract
+    assert "Die" not in contract          # private — never offered
+    assert "GameContext.Instance.Get<PlayerCamera>()" in contract
+    assert "no public members beyond MonoBehaviour basics" in contract
+
+
+def test_a_composed_kind_with_no_verified_api_stays_unmentioned():
+    """LightingDirector has no _COMPOSED_CLASS_API entry — no ground truth to
+    show, so (same restraint _composed_member_ok applies at judge time) it is
+    left out rather than guessed at."""
+    from src.unity_compose import Subsystem
+    subsystems = [Subsystem(kind="lighting", target="world", name="LightingDirector")]
+    contract = _script_contract(_codebranchsim()[0], [], subsystems)
+    assert "LightingDirector" not in contract
+
+
+def test_no_compose_means_no_composed_systems_section():
+    contract = _script_contract(_codebranchsim()[0], [])
+    assert "COMPOSED PROJECT SYSTEMS" not in contract
+
+
 def test_the_prompt_carries_the_concept_and_the_scripts_own_job():
     scripts = _codebranchsim()
     llm = _StubLLM()
@@ -146,6 +177,18 @@ def test_the_prompt_carries_the_concept_and_the_scripts_own_job():
     assert "A git teaching sim." in llm.prompts[0]
     assert "nine file icons on a desk" in llm.prompts[0]
     assert "Handles dragging and dropping" in llm.prompts[0]
+
+
+def test_enrich_scripts_passes_subsystems_into_the_contract():
+    """unity_pipeline.run() now computes `subsystems` before this call so the
+    writer can be shown the real composed-micro surface — this pins the plumbing."""
+    from src.unity_compose import Subsystem
+    scripts = _codebranchsim()
+    llm = _StubLLM()
+    enrich_scripts(scripts, llm=llm, concept="A git teaching sim.",
+                   subsystems=[Subsystem(kind="health", target="player",
+                                         name="PlayerHealth")])
+    assert "GameContext.Instance.Get<PlayerHealth>()" in llm.prompts[0]
 
 
 # ── Binding feedback, the same loop the micros get ───────────────────────────

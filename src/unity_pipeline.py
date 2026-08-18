@@ -1285,28 +1285,17 @@ class UnityPipeline:
             except Exception as exc:  # noqa: BLE001
                 self._warn(f"Sketchfab query translation failed "
                           f"({type(exc).__name__}: {exc}) — mechanical fallback used")
-        # STEP 3.5a — the same code-authoring step, for schema.scripts.
-        #
-        # OUTSIDE the compose block on purpose: a `type: custom` script is
-        # generated whether or not micros are composed, and its template
-        # (templates/unity/scripts/CustomBehaviour.cs.j2) is a bare shell that
-        # renders extra_fields and the extra_* bodies and declares nothing else.
-        # With no supplier for those bodies it emits a class of fields with no
-        # behaviour and attaches it to a live GameObject — measured on
-        # CodeBranchSim as 14 authored method blocks across the micros and 0
-        # across its four custom scripts, because Step 3.5 only ever walked
-        # subsystems. Inside the warm window, ahead of the Blender/Chromium
-        # phases, for the same reason every other llm.chat() step here is.
-        if schema.scripts and micro_code and not no_llm:
-            from .unity_micro_code import enrich_scripts
-            for msg in enrich_scripts(schema.scripts, llm=self.llm,
-                                      concept=concept, user_prompt=user_prompt):
-                self._fix(msg)
-
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
+        # Computed BEFORE Step 3.5a (below) so script enrichment can show the
+        # writer which composed-micro class names will actually exist to
+        # GameContext.Instance.Get<T>() — subsystems_for is a pure function of
+        # the schema, so moving the call earlier changes nothing about what it
+        # returns, only when. composer.plan()/emit() still happen further down,
+        # after Step 3.5's subsystem enrichment.
         composed_units = None
         subsystems = None
+        composer = None
         if compose:
             from .unity_compose import (MicroComposer, subsystems_for,
                                         drop_owned_scripts)
@@ -1335,6 +1324,30 @@ class UnityPipeline:
                                         environment=schema.environment,
                                         visual_style=schema.visual_style,
                                         palette_rgb=_compose_palette_rgb(schema))
+
+        # STEP 3.5a — the same code-authoring step, for schema.scripts.
+        #
+        # OUTSIDE the compose-gated ENRICHMENT on purpose: a `type: custom`
+        # script is generated whether or not micros are composed, and its
+        # template (templates/unity/scripts/CustomBehaviour.cs.j2) is a bare
+        # shell that renders extra_fields and the extra_* bodies and declares
+        # nothing else. With no supplier for those bodies it emits a class of
+        # fields with no behaviour and attaches it to a live GameObject —
+        # measured on CodeBranchSim as 14 authored method blocks across the
+        # micros and 0 across its four custom scripts, because Step 3.5 only
+        # ever walked subsystems. Inside the warm window, ahead of the
+        # Blender/Chromium phases, for the same reason every other llm.chat()
+        # step here is. `subsystems` (computed just above, () when compose is
+        # off) lets the writer's contract name the real composed-micro classes
+        # reachable via GameContext instead of staying silent about them.
+        if schema.scripts and micro_code and not no_llm:
+            from .unity_micro_code import enrich_scripts
+            for msg in enrich_scripts(schema.scripts, llm=self.llm,
+                                      concept=concept, user_prompt=user_prompt,
+                                      subsystems=subsystems or ()):
+                self._fix(msg)
+
+        if compose:
             # STEP 3.5 — LLM authors prompt-specific C# per subsystem. Runs
             # BEFORE plan(): plan/emit must see identical options or their
             # class names and GUIDs would disagree. Only the extras vocabulary
