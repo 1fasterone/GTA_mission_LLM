@@ -37,6 +37,7 @@ from .micro.code_fields  import (
     lint_bare_task_static_misuse, lint_function_call_ref_misuse,
     lint_world_get_out_param_misuse, lint_vector3_raw_call_arg,
     lint_vector3_entity_prop_misuse, lint_undeclared_catch_exception_var,
+    lint_function_call_arity,
 )
 
 # Names + namespaces the mission template already emits — LLM extras that
@@ -79,11 +80,13 @@ from .gta_allowlists import (
     load_hash_allowlist as _load_hash_allowlist,
     load_api_surface as _load_api_surface,
     load_enum_allowlist as _load_enum_allowlist,
+    load_native_arity as _load_native_arity,
 )
 
 _GTA_HASH_ALLOWLIST: "frozenset[str] | None" = _load_hash_allowlist()
 _GTA_API_SURFACE:    "dict | None"           = _load_api_surface()
 _GTA_ENUM_ALLOWLIST: "dict | None"           = _load_enum_allowlist()
+_GTA_NATIVE_ARITY:   "dict[str, int] | None" = _load_native_arity()
 
 
 def _lint_mission_extras(schema: MissionSchema) -> None:
@@ -104,7 +107,8 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
     # a known SHVDN3 type, invented enum value, Vector3.Distance/.Dot
     # instance-call misuse, bare Task.X() static misuse, Function.Call(ref
     # ...) misuse, a hallucinated `out` param on World.GetX, a raw Vector3
-    # passed to Function.Call, or an Entity-only property (.Position, ...)
+    # passed to Function.Call, a Function.Call(Hash.X, ...) with the wrong
+    # argument count for X, or an Entity-only property (.Position, ...)
     # accessed on a plain Vector3 — run last, after the other passes have
     # already balanced braces / capped lines. lint_undeclared_catch_exception_var
     # runs first among these since it rewrites (rather than neutralizes) — a
@@ -121,6 +125,7 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
         value = lint_function_call_ref_misuse(value)
         value = lint_world_get_out_param_misuse(value)
         value = lint_vector3_raw_call_arg(value)
+        value = lint_function_call_arity(value, arity=_GTA_NATIVE_ARITY)
         value = lint_vector3_entity_prop_misuse(value)
         setattr(schema, field, value)
     for m in schema.extra_methods:
@@ -133,6 +138,7 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
         m.body = lint_function_call_ref_misuse(m.body)
         m.body = lint_world_get_out_param_misuse(m.body)
         m.body = lint_vector3_raw_call_arg(m.body)
+        m.body = lint_function_call_arity(m.body, arity=_GTA_NATIVE_ARITY)
         m.body = lint_vector3_entity_prop_misuse(m.body)
 
 console = Console()

@@ -22,6 +22,7 @@ from src.micro.code_fields import (
     lint_bare_task_static_misuse, _safe_to_comment_out,
     lint_function_call_ref_misuse, lint_world_get_out_param_misuse,
     lint_vector3_raw_call_arg, find_vector3_raw_call_args,
+    lint_function_call_arity, find_function_call_arity_mismatches,
     lint_undeclared_catch_exception_var, lint_vector3_entity_prop_misuse,
     sanitize_default, _has_malformed_char_literal,
     template_members, template_usings, harden_against_template,
@@ -796,6 +797,68 @@ def test_lint_vector3_raw_call_arg_noop_on_empty_text():
     assert lint_vector3_raw_call_arg("") == ""
 
 
+# ── Function.Call(Hash.X, ...) argument-count mismatch (CS-invisible) ────────
+
+def test_find_function_call_arity_mismatches_catches_wrong_count():
+    src = "Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, \"X\");"
+    assert find_function_call_arity_mismatches(src, arity={"PLAY_SOUND_FRONTEND": 4}) == \
+        [(0, "PLAY_SOUND_FRONTEND", 4, 2)]
+
+
+def test_find_function_call_arity_mismatches_ignores_correct_count():
+    src = "Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, \"X\", \"Y\", true);"
+    assert find_function_call_arity_mismatches(src, arity={"PLAY_SOUND_FRONTEND": 4}) == []
+
+
+def test_find_function_call_arity_mismatches_ignores_unknown_native():
+    src = "Function.Call(Hash.SOME_UNKNOWN_NATIVE, 1, 2);"
+    assert find_function_call_arity_mismatches(src, arity={"PLAY_SOUND_FRONTEND": 4}) == []
+
+
+def test_find_function_call_arity_mismatches_noop_without_arity():
+    src = "Function.Call(Hash.PLAY_SOUND_FRONTEND, -1);"
+    assert find_function_call_arity_mismatches(src, arity=None) == []
+
+
+def test_find_function_call_arity_mismatches_respects_nested_commas():
+    # new Vector3(x, y, z) is one argument, not three — arity is 2 here.
+    src = "Function.Call(Hash.SET_ENTITY_COORDS, ped, new Vector3(1f, 2f, 3f));"
+    assert find_function_call_arity_mismatches(src, arity={"SET_ENTITY_COORDS": 2}) == []
+
+
+def test_lint_function_call_arity_comments_out_bad_call():
+    body = "Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, \"X\");"
+    out = lint_function_call_arity(body, arity={"PLAY_SOUND_FRONTEND": 4})
+    assert "// AUDIT: removed Function.Call with wrong argument count" in out
+    active_lines = [ln for ln in out.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Function.Call" in ln for ln in active_lines)
+
+
+def test_lint_function_call_arity_keeps_correct_call():
+    body = "Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, \"X\", \"Y\", true);"
+    assert lint_function_call_arity(body, arity={"PLAY_SOUND_FRONTEND": 4}) == body
+
+
+def test_lint_function_call_arity_noop_without_arity():
+    body = "Function.Call(Hash.PLAY_SOUND_FRONTEND, -1);"
+    assert lint_function_call_arity(body, arity=None) == body
+
+
+def test_lint_function_call_arity_noop_on_empty_text():
+    assert lint_function_call_arity("", arity={"X": 1}) == ""
+
+
+def test_lint_function_call_arity_disables_control_flow_header():
+    """Same safety rule as the other lint_* passes: a header whose `{` opens on
+    the NEXT line is never commented out (that would leave an always-executing
+    bare block) — the condition is swapped for `false` instead."""
+    body = 'if (Function.Call<bool>(Hash.PLAY_SOUND_FRONTEND, -1, "X"))\n{\n    DoThing();\n}'
+    out = lint_function_call_arity(body, arity={"PLAY_SOUND_FRONTEND": 4})
+    assert "if (false)" in out
+    assert "PLAY_SOUND_FRONTEND" not in out.split("\n")[0].split("/*")[0]  # not in the live condition
+    assert "{\n    DoThing();\n}" in out   # block itself untouched, only the condition changed
+
+
 # ── Entity-only property (.Position, .Rotation, ...) accessed on a Vector3 ───
 # (CS1061 — live regression: SpawnOrigin.Position, SpawnOrigin already being
 # a Vector3 declared by the mission template itself)
@@ -1097,6 +1160,22 @@ def test_gta_lint_keeps_real_native_in_extras():
     s = _programmatic_fix(s)
     cs = CodeGenerator().generate(s)
     assert "Function.Call(Hash.PLAY_SOUND_FRONTEND" in cs
+
+
+def test_gta_lint_neutralizes_wrong_arity_native():
+    """End-to-end, against the REAL lookups/gta_native_arity.json (via
+    _programmatic_fix, not a mock): PLAY_SOUND_FRONTEND takes 4 arguments in
+    every one of the 3,345 real decompiled call sites it was mined from —
+    an LLM dropping two of them compiles clean (InputArgument[] is variadic,
+    so csc can't see the mismatch) but throws at runtime. Must not reach
+    compiled output."""
+    s = _mission(extra_tick='Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, "X");')
+    s = _programmatic_fix(s)
+    cs = CodeGenerator().generate(s)
+    active_lines = [ln for ln in cs.splitlines() if not ln.strip().startswith("//")]
+    assert not any("Function.Call(Hash.PLAY_SOUND_FRONTEND" in ln for ln in active_lines)
+    assert cs.count("{") == cs.count("}")
+    assert cs.count("(") == cs.count(")")
 
 
 def test_gta_lint_neutralizes_invented_members_and_vector3_misuse():
