@@ -792,12 +792,29 @@ def _run_compile_check(
 
     # -- Decide outcome ---------------------------------------------------------
     if not errors:
-        # No structured report AND no log evidence + Unity itself failed to launch
-        if report_ok is None and not log_text:
-            console.print(
-                "[red]No compile report and empty log — Unity may have failed to "
-                "launch (license? another instance open?).[/]"
-            )
+        if report_ok is None:
+            # CompileCheck.Run's Finish() unconditionally writes compile_report.json
+            # before Unity exits (templates/unity/editor/CompileCheck.cs), so a
+            # MISSING report means CompileCheck never ran to completion — Unity
+            # crashed, hit a license prompt, or exited during package resolution.
+            # "0 errors parsed from the log" in that case is not evidence of a
+            # clean compile, it's evidence nothing was actually checked. Hit live
+            # twice: once when the project was already open in another Editor
+            # instance (HandleProjectAlreadyOpenInAnotherInstance), and once when
+            # a git-sourced UPM package failed to resolve — both silently reported
+            # PASS before this check existed.
+            low = log_text.lower()
+            if "alreadyopeninanotherinstance" in low:
+                reason = ("the project is already open in another Unity Editor "
+                          "instance — close it, or point --source at a separate "
+                          "copy of the project, then retry")
+            elif "error occurred while resolving packages" in low or "invalid dependencies" in low:
+                reason = "package resolution failed before compilation started — see compile.log"
+            elif not log_text:
+                reason = "Unity produced no log output — it may have failed to launch (license?)"
+            else:
+                reason = "see compile.log for details"
+            console.print(f"[red]FAIL[/] — no compile report written: {reason}.")
             return 2
         console.print(Panel("[bold green]PASS[/] - compiles clean, 0 errors", style="green"))
         return 0
@@ -888,6 +905,117 @@ def verify(
     console.print("\n[bold cyan]COMPILE CHECK[/]")
     rc = _run_compile_check(project_root, template_dir, unity_version, timeout)
     raise typer.Exit(rc)
+
+
+@app.command("e2e-verify")
+def e2e_verify(
+    source: Path = typer.Argument(
+        ..., help="Generated Unity project directory to verify, e.g. output/unity/MyGame."
+    ),
+    config: str = typer.Option(
+        "config.yaml", "--config", "-c", help="Pipeline config YAML."
+    ),
+    timeout: int = typer.Option(
+        900, "--timeout", help="Max seconds for the Unity batch compile."
+    ),
+    min_score: int = typer.Option(
+        0, "--min-score", help="Playability: exit non-zero below this 0-100 score."
+    ),
+    strict: bool = typer.Option(
+        False, "--strict", help="Playability: exit non-zero on any playability ERROR."
+    ),
+    keep: bool = typer.Option(
+        False, "--keep", help="Keep the isolated verify copy even when everything passes."
+    ),
+) -> None:
+    """
+    [bold]Self-verify an E2E run:[/] real Unity compile + structural playability,
+    in one command, without touching `source`.
+
+    An E2E generation run has been failing silently for a while: the LLM ships
+    a defect (unbalanced braces, a type name where a namespace belongs), it
+    only surfaces as a Unity console error days later, and the only way to
+    catch it has been pasting that error back into a chat session by hand.
+    This closes the loop — run it right after generation and it tells you
+    pass/fail on both axes generation-time checks cannot see:
+
+    \b
+    - COMPILE: the real Unity compiler (binding-level errors like CS0138
+      'X is a type not a namespace', not just parse-level syntax — see
+      src/csharp_syntax_gate.py's own documented boundary for why the two
+      are different gates).
+    - PLAYABILITY: Step 7's structural grade (avatar, objective, reachable
+      content, brief coverage) against the `<name>.schema.json` sidecar
+      `write()` always stamps next to `source`.
+
+    The compile check NEVER runs against `source` itself — only an isolated
+    sibling copy (`_verify_<name>` next to it). Two real failure modes hit
+    live motivated this: a same-path batchmode run collides with `source`
+    open in a live Editor (Unity's own
+    HandleProjectAlreadyOpenInAnotherInstance crash) and *_run_compile_check
+    used to misreport that as PASS* (fixed alongside this command — a
+    missing compile report is now always a failure, never inferred success);
+    and a copy nested deep under a long temp path can blow Windows' path
+    length limit during git-sourced UPM package resolution. A short sibling
+    directory dodges both. The copy is deleted on a full PASS and left in
+    place (path printed) on any FAILURE, for follow-up debugging.
+
+      python unity_cli.py e2e-verify output/unity/RepoFlowSim
+      python unity_cli.py e2e-verify C:/u/RepoFlowSim --min-score 70 --strict
+    """
+    from src.unity_playability import evaluate, gate
+
+    source = source.resolve()
+    if not source.is_dir():
+        console.print(f"[red]Source directory not found:[/] {source}")
+        raise typer.Exit(2)
+
+    schema_candidates = sorted(source.glob("*.schema.json"))
+    if not schema_candidates:
+        console.print(f"[red]No *.schema.json sidecar found in {source} — cannot "
+                      "grade playability (write() always stamps one next to the "
+                      "project).[/]")
+        raise typer.Exit(2)
+    schema_file = schema_candidates[0]
+
+    cfg          = _load_cfg(config)
+    pipe_cfg     = _unity_pipe_cfg(cfg)
+    template_dir = Path(pipe_cfg.get("unity_template_dir", "templates/unity"))
+
+    console.print(Panel(f"[bold]E2E self-verify[/]\n{source}", style="blue"))
+
+    # -- Isolated copy: never batch-compile `source` directly (see docstring) --
+    scratch = source.parent / f"_verify_{source.name}"
+    if scratch.exists():
+        shutil.rmtree(scratch, ignore_errors=True)
+    shutil.copytree(source, scratch, ignore=shutil.ignore_patterns(*_OVERLAY_SKIP))
+
+    console.print("\n[bold cyan]COMPILE CHECK[/]  (isolated copy — safe with source open in the Editor)")
+    unity_version = _read_unity_version(scratch)
+    compile_rc = _run_compile_check(scratch, template_dir, unity_version, timeout)
+
+    console.print("\n[bold cyan]PLAYABILITY[/]")
+    data   = json.loads(schema_file.read_text(encoding="utf-8"))
+    report = evaluate(UnitySchema.model_validate(data))
+    console.print(report.render(), markup=False)   # findings carry field paths rich reads as markup
+    play_reason = gate(report, min_score=min_score, fail_on_error=strict)
+    if play_reason:
+        console.print(f"[red]FAIL[/] {play_reason}")
+
+    ok = compile_rc == 0 and not play_reason
+    if ok and not keep:
+        shutil.rmtree(scratch, ignore_errors=True)
+    elif not ok:
+        console.print(f"\n[dim]Verify copy kept for debugging: {scratch}[/]")
+
+    summary = (f"compile={'OK' if compile_rc == 0 else 'FAIL'}  "
+               f"playability={report.score}/100" +
+               (f"  ({play_reason})" if play_reason else ""))
+    console.print(Panel(
+        f"[bold {'green' if ok else 'red'}]{'PASS' if ok else 'FAIL'}[/]  {summary}",
+        style="green" if ok else "red",
+    ))
+    raise typer.Exit(0 if ok else 1)
 
 
 @app.command("from-schema")
@@ -1264,52 +1392,61 @@ def _read_unity_version(project_root: Path) -> Optional[str]:
 # GTA mission compile gate (SHVDN stub assemblies — no game SDK required)
 # -----------------------------------------------------------------------------
 
-@app.command("gta-verify")
-def gta_verify(
-    mission: Optional[Path] = typer.Argument(
-        None, help="A generated .3.cs mission file to compile-check."),
-    all_missions: bool = typer.Option(
-        False, "--all", help="Verify every *.3.cs under --output-dir."),
-    output_dir: str = typer.Option("output", "--output-dir", "-o"),
-    stubs_dir: str = typer.Option("stubs/shvdn", "--stubs",
-                                  help="SHVDN stub project directory."),
-) -> None:
-    """Compile-check GTA missions against SHVDN3 stubs via `dotnet build`.
+def _gta_verify_real_dll(targets: list[Path]) -> bool:
+    """Compile-check against the real, vendored ScriptHookVDotNet3.dll via
+    Roslyn. Strictly stronger than the stub project: no stub-completeness
+    gap, so it can't false-pass invented members the stub happens to accept
+    or false-fail real ones the stub forgot. Returns True iff every target
+    compiled clean. Caller has already confirmed the toolchain is available."""
+    from src.gta5_compile_check import compile_check, format_findings, gate_available
 
-    The stubs (stubs/shvdn/GtaStubs.cs) cover the API surface the mission
-    template and the extras channel can emit; every member is a no-op. This is
-    the GTA equivalent of the Unity headless verify gate.
+    _, info = gate_available()
+    console.print(Panel(
+        f"[bold]GTA COMPILE GATE (real ScriptHookVDotNet3.dll)[/]\n"
+        f"DLL:      [cyan]{info['dll']}[/]\n"
+        f"Missions: [cyan]{len(targets)}[/]", style="blue"))
 
-    Examples:
-      python unity_cli.py gta-verify output/AirportFigureEight.3.cs
-      python unity_cli.py gta-verify --all
-    """
+    all_ok = True
+    for tgt in targets:
+        ok, findings, _info = compile_check(str(tgt))
+        if ok:
+            console.print(f"  [green]PASS[/] {tgt.name}")
+            continue
+        all_ok = False
+        console.print(f"  [red]FAIL[/] {tgt.name}")
+        console.print(format_findings(findings))
+
+    if not all_ok:
+        console.print(Panel(
+            f"[bold red]FAIL[/] — one or more missions failed to compile "
+            f"against the real SHVDN3 DLL", style="red"))
+        return False
+    console.print(Panel(
+        f"[bold green]PASS[/] — all {len(targets)} mission(s) compile clean "
+        f"against the real ScriptHookVDotNet3.dll", style="green"))
+    return True
+
+
+def _gta_verify_stubs(targets: list[Path], stubs: Path) -> bool:
+    """Compile-check against stubs/shvdn/GtaStubs.cs via `dotnet build`.
+    Fallback path for machines without the real-DLL toolchain (e.g. non-
+    Windows CI, which has no .NET Framework reference assemblies). Every
+    stub member is a no-op, so this can miss a mismatch its author didn't
+    think to stub - the real-DLL gate above doesn't have that gap. Returns
+    True iff every target compiled clean."""
     import tempfile
 
     if shutil.which("dotnet") is None:
         console.print("[red]dotnet SDK not found on PATH — install .NET SDK 8+.[/]")
         raise typer.Exit(2)
-
-    stubs = Path(stubs_dir)
     if not (stubs / "GtaStubs.cs").exists():
         console.print(f"[red]Stubs not found at {stubs} — expected GtaStubs.cs + MissionCheck.csproj.[/]")
         raise typer.Exit(2)
 
-    if all_missions:
-        targets = sorted(Path(output_dir).glob("*.3.cs"))
-    elif mission is not None:
-        targets = [mission]
-    else:
-        console.print("[red]Pass a mission .3.cs file or --all.[/]")
-        raise typer.Exit(2)
-    if not targets:
-        console.print(f"[yellow]No *.3.cs files found under {output_dir}.[/]")
-        raise typer.Exit(2)
-
     console.print(Panel(
-        f"[bold]GTA COMPILE GATE[/]\n"
+        f"[bold]GTA COMPILE GATE (stubs — reduced fidelity)[/]\n"
         f"Stubs:    [cyan]{stubs}[/]\n"
-        f"Missions: [cyan]{len(targets)}[/]", style="blue"))
+        f"Missions: [cyan]{len(targets)}[/]", style="yellow"))
 
     failures: dict[str, list[str]] = {}
     with tempfile.TemporaryDirectory(prefix="gta_gate_") as tmp:
@@ -1343,10 +1480,61 @@ def gta_verify(
         console.print(Panel(
             f"[bold red]FAIL[/] — {len(failures)}/{len(targets)} mission(s) with compile errors",
             style="red"))
-        raise typer.Exit(1)
+        return False
     console.print(Panel(
         f"[bold green]PASS[/] — all {len(targets)} mission(s) compile clean against SHVDN stubs",
         style="green"))
+    return True
+
+
+@app.command("gta-verify")
+def gta_verify(
+    mission: Optional[Path] = typer.Argument(
+        None, help="A generated .3.cs mission file to compile-check."),
+    all_missions: bool = typer.Option(
+        False, "--all", help="Verify every *.3.cs under --output-dir."),
+    output_dir: str = typer.Option("output", "--output-dir", "-o"),
+    stubs_dir: str = typer.Option("stubs/shvdn", "--stubs",
+                                  help="SHVDN stub project directory (fallback gate)."),
+    stubs_only: bool = typer.Option(
+        False, "--stubs-only",
+        help="Skip the real-DLL gate even if available; use the stub "
+             "project directly."),
+) -> None:
+    """Compile-check GTA missions against ScriptHookVDotNet3.
+
+    Prefers the real, vendored ScriptHookVDotNet3.dll (stubs/shvdn/real_dll/)
+    via Roslyn when the toolchain is available — 100% compiler fidelity, no
+    stub-completeness gap. Falls back to the hand-written stub project
+    (stubs/shvdn/GtaStubs.cs, every member a no-op) when it isn't, e.g. on a
+    non-Windows machine with no .NET Framework reference assemblies. This is
+    the GTA equivalent of the Unity headless verify gate.
+
+    Examples:
+      python unity_cli.py gta-verify output/AirportFigureEight.3.cs
+      python unity_cli.py gta-verify --all
+      python unity_cli.py gta-verify --all --stubs-only
+    """
+    if all_missions:
+        targets = sorted(Path(output_dir).glob("*.3.cs"))
+    elif mission is not None:
+        targets = [mission]
+    else:
+        console.print("[red]Pass a mission .3.cs file or --all.[/]")
+        raise typer.Exit(2)
+    if not targets:
+        console.print(f"[yellow]No *.3.cs files found under {output_dir}.[/]")
+        raise typer.Exit(2)
+
+    use_real_dll = False
+    if not stubs_only:
+        from src.gta5_compile_check import gate_available
+        use_real_dll, _info = gate_available()
+
+    ok = (_gta_verify_real_dll(targets) if use_real_dll
+          else _gta_verify_stubs(targets, Path(stubs_dir)))
+    if not ok:
+        raise typer.Exit(1)
 
 
 # -----------------------------------------------------------------------------

@@ -1633,6 +1633,90 @@ def lint_vector3_raw_call_arg(text: str) -> str:
     return "\n".join(out)
 
 
+# CS-invisible — Function.Call(Hash.X, ...) passing the wrong number of
+# arguments. InputArgument[] is variadic, so csc compiles it clean regardless
+# of count; the mismatch only shows up as a runtime SHVDN3 exception. Checked
+# against ground truth mined from real decompiled Rockstar mission scripts
+# (tools/mine_native_arity.py -> lookups/gta_native_arity.json via
+# gta_allowlists.load_native_arity), restricted to natives with a single,
+# unambiguous observed argument count — see that loader's docstring.
+def find_function_call_arity_mismatches(
+    source: str, *, arity: "dict[str, int] | None"
+) -> list[tuple[int, str, int, int]]:
+    """Return [(line_number, native, expected, actual), ...] for every
+    Function.Call(Hash.X, ...) whose argument count doesn't match X's known,
+    unambiguous arity. `arity=None` (or an unknown/ambiguous native) is a
+    no-op. Only fires when Hash.X is exactly the call's first argument —
+    never on a nested Function.Call passed as someone else's argument, and
+    never on the qualified `GTA.Native.Hash.X` form (not used in LLM-authored
+    extras, which rely on the template's `using GTA.Native;`)."""
+    if not source or not arity:
+        return []
+    out: list[tuple[int, str, int, int]] = []
+    for m in _FUNCTION_CALL_ARGS_RE.finditer(source):
+        parts = _split_top_level_args(m.group(1))
+        head = parts[0].strip()
+        hm = _HASH_REF_RE.fullmatch(head)
+        if not hm:
+            continue
+        native = hm.group(1)
+        expected = arity.get(native)
+        if expected is None:
+            continue
+        actual = len(parts) - 1
+        if actual != expected:
+            out.append((source.count("\n", 0, m.start()), native, expected, actual))
+    return out
+
+
+def lint_function_call_arity(text: str, *, arity: "dict[str, int] | None") -> str:
+    """Neutralize a Function.Call(Hash.X, ...) statement whose argument count
+    doesn't match X's known, unambiguous arity. Same comment-out-or-disable-
+    header strategy as the other lint_* passes here."""
+    if not text or not arity:
+        return text
+    bad = find_function_call_arity_mismatches(text, arity=arity)
+    if not bad:
+        return text
+
+    bad_lines: dict[int, list[str]] = {}
+    for line_no, native, expected, actual in bad:
+        bad_lines.setdefault(line_no, []).append(
+            f"{native} (expected {expected} arg(s), got {actual})")
+
+    out: list[str] = []
+    flagged: set[str] = set()
+    skipped: set[str] = set()
+    for i, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            continue
+        names = bad_lines.get(i)
+        if not names:
+            out.append(line)
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, names)
+            if disabled is not None:
+                flagged.update(names)
+                out.append(disabled)
+                continue
+            skipped.update(names)
+            out.append(line)
+            continue
+        flagged.update(names)
+        indent = line[: len(line) - len(line.lstrip())]
+        out.append(f"{indent}// AUDIT: removed Function.Call with wrong argument "
+                   f"count -- {', '.join(sorted(set(names)))} -- {line.strip()}")
+    if flagged:
+        console.print(f"  [yellow]FIX[/]  removed statement(s) calling a native "
+                      f"with the wrong argument count: {', '.join(sorted(flagged))}")
+    if skipped:
+        console.print("  [yellow]WARN[/] could not safely remove a Function.Call "
+                      "arity mismatch on a control-flow or brace-mixed line")
+    return "\n".join(out)
+
+
 # CS1061 — `.Position`/`.Rotation`/etc. accessed on a value confidently known
 # to be a plain GTA.Math.Vector3 (a bare X/Y/Z struct), not an Entity. Live
 # regression: an LLM-authored extra_init wrote `SpawnOrigin.Position + new

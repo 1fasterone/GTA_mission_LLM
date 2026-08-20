@@ -49,3 +49,22 @@ def load_enum_allowlist(lookups_dir: str = "lookups") -> "dict | None":
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+# ── Real native argument counts, mined from 715 decompiled Rockstar mission
+# scripts (tools/mine_native_arity.py) — catches Function.Call(Hash.X, ...)
+# passing the wrong number of arguments, a mistake csc can't see because
+# InputArgument[] is variadic. Only natives with a single argument count
+# observed across the whole corpus are included: a native seen with more
+# than one distinct count is ambiguous ground truth (could be a genuinely
+# variable-shape call site, or a decompiler mis-parse) and is deliberately
+# left out rather than guessed at.
+def load_native_arity(lookups_dir: str = "lookups") -> "dict[str, int] | None":
+    path = Path(lookups_dir) / "gta_native_arity.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return {name: rec["primary_arity"] for name, rec in data.items() if rec.get("consistent")}
