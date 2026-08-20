@@ -16,6 +16,15 @@ Roslyn (the SDK's csc.dll) + real .NET Framework 4.8 assemblies + the vendored
 DLL, then translates each CSxxxx diagnostic into plain guidance the same way
 the regex-based gta_allowlists.py checks do for their own findings.
 
+Roslyn's diagnostics alone can't catch a Function.Call(Hash.X, ...) with the
+wrong argument count -- InputArgument[] is variadic, so it compiles clean
+regardless of count and only fails at runtime. compile_check() synthesizes
+its own "ARITY" findings for that class of bug by scanning the source against
+lookups/gta_native_arity.json (gta_allowlists.load_native_arity /
+micro.code_fields.find_function_call_arity_mismatches -- the same ground
+truth and detector the LLM-extras lint pass in pipeline.py uses), and folds
+them into the same error list so a wrong-arity call fails this gate too.
+
 Auto-detects toolchain; override with env vars:
     SHVDN3_DLL   - path to ScriptHookVDotNet3.dll
     ROSLYN_CSC   - path to csc.dll
@@ -119,6 +128,10 @@ _CS_GUIDANCE = {
     "CS0029": "Cannot implicitly convert - add a cast or use the right type.",
     "CS0012": "A referenced type lives in an assembly this gate didn't reference "
               "(tooling gap, not a mission bug). Add the assembly to _NETFX_REFS.",
+    "ARITY": "Wrong argument count for this native. InputArgument[] is variadic, "
+             "so csc accepts any count and can't catch this on its own -- verified "
+             "instead against lookups/gta_native_arity.json, mined from real "
+             "decompiled Rockstar mission scripts.",
 }
 
 _CS0117_HASH_RE = re.compile(r"'Hash' does not contain a definition for '([A-Z0-9_]+)'")
@@ -168,6 +181,40 @@ def _enrich(diag: dict, hash_sug: dict) -> dict:
     return diag
 
 
+# ── Argument-count ground truth (Roslyn can't see this class of bug) ─────────
+
+def _find_arity_findings(filepath: str) -> list[dict]:
+    """Synthesize diagnostic-shaped findings for Function.Call(Hash.X, ...)
+    argument-count mismatches — the same detector and ground truth
+    (lookups/gta_native_arity.json) the LLM-extras lint pass in pipeline.py
+    runs, applied here to the whole compiled file rather than just the
+    LLM-authored fragment. Returns [] if the arity table isn't available or
+    the file can't be read; never raises."""
+    from .gta_allowlists import load_native_arity
+    from .micro.code_fields import find_function_call_arity_mismatches
+
+    arity = load_native_arity()
+    if not arity:
+        return []
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            source = f.read()
+    except OSError:
+        return []
+
+    out = []
+    for line_no, native, expected, actual in find_function_call_arity_mismatches(source, arity=arity):
+        out.append({
+            "line": line_no + 1,
+            "col": 1,
+            "sev": "error",
+            "code": "ARITY",
+            "msg": f"Function.Call(Hash.{native}, ...) passes {actual} argument(s); "
+                   f"every real decompiled call site mines to {expected}",
+        })
+    return out
+
+
 # ── Compile ───────────────────────────────────────────────────────────────────
 
 def compile_check(filepath: str, include_warnings: bool = False):
@@ -211,6 +258,7 @@ def compile_check(filepath: str, include_warnings: bool = False):
             pass
 
     diags = _parse_diagnostics(proc.stdout + "\n" + proc.stderr)
+    diags += _find_arity_findings(filepath)
     hash_sug = _load_hash_suggestions()
     errors = [d for d in diags if d["sev"] == "error"]
     warns = [d for d in diags if d["sev"] == "warning"]
