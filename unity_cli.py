@@ -1100,7 +1100,6 @@ def from_schema(
     generated_root, file_count = generator.write(
         schema, deps, out_root,
         lookups_dir=pipe_cfg.get("lookups_dir", "lookups"),
-        project_config=cfg,
     )
     console.print(f"  [green]OK[/]   {file_count} files -> {generated_root}")
 

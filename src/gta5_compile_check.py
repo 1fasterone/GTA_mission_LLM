@@ -82,8 +82,8 @@ def _find_dll() -> "str | None":
 
 
 def _find_dotnet() -> str:
-    for d in (r"C:\Program Files\dotnet\dotnet.exe", "dotnet"):
-        return d  # dotnet on PATH is the normal case; muxer runs csc.dll
+    fixed = r"C:\Program Files\dotnet\dotnet.exe"
+    return fixed if os.path.isfile(fixed) else "dotnet"  # PATH is the normal case; muxer runs csc.dll
 
 
 _NETFX_REFS = ["mscorlib", "System", "System.Core", "System.Windows.Forms",
