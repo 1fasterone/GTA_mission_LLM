@@ -409,7 +409,12 @@ def _sanitize_stub_type_usage(script: UnityScript) -> None:
 
     if not stub_fields:
         return
-    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\.\s*\w+\s*\(")
+    # `\??\.` (not `\.`) — a stub field reached through the C# null-conditional
+    # operator (`_activeTimeline?.Play()`) is exactly how the model guards a
+    # SerializeField it expects to be assigned in the inspector, and was the
+    # live failure shape (TimelineController.cs CS1061: stub `Timeline` has no
+    # `Play()`) that a bare `\.` silently let through uncaught.
+    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\??\.\s*\w+\s*\(")
 
     def _strip(body: str) -> str:
         if not body:
@@ -664,6 +669,63 @@ def _sanitize_project_service_calls(script: UnityScript,
             if not bad and var_call_re:
                 bad = any(_member_bad(var_types[m.group(1)], m.group(2))
                           for m in var_call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+def _sanitize_field_typed_member_calls(script: UnityScript,
+                                       custom_api: dict[str, frozenset],
+                                       composed_units: list | None) -> None:
+    """A field DECLARED with a cross-reference type — `[SerializeField]
+    private SaveSystem _saveSystem;` — is typically bound in one method
+    (Awake/OnEnable, via GetComponent<T>()/GameContext.Instance.Get<T>()) and
+    CALLED from a different method later. _sanitize_composed_component_calls
+    and _sanitize_project_service_calls only resolve a Get<T>()/GetComponent
+    binding within the SAME method body they scan, so a field whose binding
+    and use are split across two methods is invisible to both. extra_fields
+    already carries the LLM's own declared type for the field — no getter
+    pattern needed to know it. Hit live: SaveShrineTrigger.cs bound
+    `_saveSystem` in OnEnable(), then called `_saveSystem.SetCheckpoint(
+    transform.position)` in a separate ActivateShrine() method; the project's
+    composed SaveSystem variant (json_file) has no such method — only the
+    checkpoint variant does — CS1061.
+
+    Validates every field whose declared base type resolves to a composed
+    micro class (_COMPOSED_CLASS_API, gated to classes actually composed into
+    this project — same ground-truth table _sanitize_composed_component_calls
+    uses) or another generated custom script (_custom_script_api) — across the
+    WHOLE script, not per-body. Anything else is left untouched."""
+    composed_known = {u.class_name for u in (composed_units or [])
+                       if u.class_name in _COMPOSED_CLASS_API}
+    field_types = {f.name: _extract_base_type(f.type or "") for f in script.extra_fields}
+    composed_fields = {n: t for n, t in field_types.items() if t in composed_known}
+    custom_fields = {n: t for n, t in field_types.items()
+                     if t in custom_api and t != script.name}
+    if not composed_fields and not custom_fields:
+        return
+
+    alt = "|".join(re.escape(n) for n in list(composed_fields) + list(custom_fields))
+    call_re = re.compile(r"\b(" + alt + r")\s*\??\.\s*(\w+)")
+
+    def _bad(field: str, member: str) -> bool:
+        if field in composed_fields:
+            return not _composed_member_ok(composed_fields[field], member)
+        t = custom_fields[field]
+        return member not in custom_api[t] and member not in _MB_COMMON_MEMBERS
+
+    def _strip(body: str) -> str:
+        if not body:
+            return body
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(_bad(m.group(1), m.group(2)) for m in call_re.finditer(line))
             if not bad:
                 out.append(line)
         return "".join(out)
@@ -1942,6 +2004,7 @@ class UnityProjectGenerator:
                 _sanitize_stub_type_usage(s)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
+                _sanitize_field_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
                 _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)

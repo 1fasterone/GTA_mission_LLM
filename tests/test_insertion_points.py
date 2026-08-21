@@ -381,6 +381,20 @@ def test_lint_repairs_value_type_property_member_assign():
         == "bool b = Physics.gravity.x == 0f;"
 
 
+def test_lint_repairs_bang_applied_to_count_comparison():
+    # CS0023: '!' cannot apply to an int. Unary '!' binds tighter than '==', so
+    # `!x.Count == 0` parses as `(!x.Count) == 0` — a De Morgan slip for the
+    # intended `x.Count != 0` (hit live: NPCDialogueManager.cs).
+    out = lint_code_fragment("if (!_dialogueQueue.Count == 0) { Foo(); }", what="x")
+    assert "!_dialogueQueue.Count" not in out
+    assert "_dialogueQueue.Count != 0" in out
+    out2 = lint_code_fragment("if (!items.Length != 0) { Foo(); }", what="x")
+    assert "items.Length == 0" in out2
+    # A legitimate bool negation must be left untouched (no false positive).
+    assert lint_code_fragment("if (!isReady) { Foo(); }", what="x") \
+        == "if (!isReady) { Foo(); }"
+
+
 def test_lint_rejects_prose_fragment():
     # The exact live regression: the LLM wrote an English sentence describing
     # behavior straight into update_extra instead of C# statements ->

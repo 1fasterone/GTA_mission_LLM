@@ -651,6 +651,40 @@ def _repair_struct_member_assign(text: str) -> str:
     return new
 
 
+# CS0023: `!` cannot apply to an int-valued expression. Unary `!` binds tighter
+# than `==`/`!=`, so a model checking "is this collection non-empty" by negating
+# the wrong term — `!x.Count == 0` (meant `x.Count != 0`) — parses as
+# `(!x.Count) == 0`, never as the intended `!(x.Count == 0)`. Hit live,
+# NPCDialogueManager.cs(17): `if (!_isSpeaking && !_dialogueQueue.Count == 0)`.
+# Scoped to `.Count`/`.Length` (the two collection-size members this slip shows
+# up on) compared against a numeric literal — flipping the comparison operator
+# instead of just dropping the `!` preserves the author's intent exactly.
+_BANG_COUNT_COMPARISON_RE = re.compile(
+    r'!\s*([\w.]*?\.(?:Count|Length))\s*(==|!=)\s*(\d+)')
+
+
+def _repair_bang_count_comparison(text: str) -> str:
+    """Rewrite `!x.Count == 0` -> `x.Count != 0` (CS0023)."""
+    if not text or "!" not in text:
+        return text
+    mask = _code_mask(text)
+    changed = False
+
+    def repl(m: "re.Match[str]") -> str:
+        nonlocal changed
+        if not mask[m.start()]:
+            return m.group(0)                       # inside a comment/literal
+        changed = True
+        flipped = "!=" if m.group(2) == "==" else "=="
+        return f"{m.group(1)} {flipped} {m.group(3)}"
+
+    new = _BANG_COUNT_COMPARISON_RE.sub(repl, text)
+    if changed:
+        console.print("  [magenta]FIX[/]  rewrote '!' applied to Count/Length "
+                      "comparison (CS0023)")
+    return new
+
+
 # CS0103: LLMs write the pre-C#7 raycast idiom `Physics.Raycast(ray, out hit, …)`
 # without ever declaring `hit`. Modern C# allows an inline `out var hit`, so
 # declare the out parameter in place. Only lowercase, non-field (`_`-prefixed)
@@ -736,6 +770,7 @@ def lint_code_fragment(text: str, *, what: str,
         hoist_into.extend(nested)
     text = _repair_null_conditional_assign(text)
     text = _repair_struct_member_assign(text)
+    text = _repair_bang_count_comparison(text)
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
     # Two structural defects that CANNOT be repaired from the fragment alone.
