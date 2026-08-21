@@ -1261,6 +1261,7 @@ def _neutralize_lines(text: str, get_bad_names, make_comment) -> tuple[str, set,
                 flagged.update(names)
                 out.append(disabled)
                 m = _DISABLEABLE_HEADER_RE.match(line)
+                assert m is not None  # _disable_bad_header already matched this same line
                 pending_bare_body = not m.group("brace")
                 continue
             skipped.update(names)

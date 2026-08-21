@@ -1073,9 +1073,11 @@ def _apply_script(script, payload: dict) -> bool:
             except (ValidationError, TypeError):
                 continue
             if key == "extra_methods":
-                candidate = lint_method(candidate, taken_names=lint_taken)
-                if candidate is None:
+                assert isinstance(candidate, CodeMethod)  # model was CodeMethod in this branch
+                linted = lint_method(candidate, taken_names=lint_taken)
+                if linted is None:
                     continue
+                candidate = linted
             built.append(candidate)
         if not built:
             continue

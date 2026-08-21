@@ -653,7 +653,7 @@ def _custom_script_api(scripts: list[UnityScript]) -> dict[str, frozenset[str]]:
 
 def _sanitize_project_service_calls(script: UnityScript,
                                     custom_api: dict[str, frozenset],
-                                    opaque_types: set[str]) -> None:
+                                    opaque_types: frozenset[str]) -> None:
     """Strip GameContext.Instance.Get<T>() misuse the composed-API pass can't see:
 
       - T is a phantom type the LLM invented (hit live: TerminalHorizon's
@@ -2050,8 +2050,9 @@ class UnityProjectGenerator:
         # private); canonical/composed/Unity classes are opaque (validated by
         # their own dedicated passes).
         _custom_api = _custom_script_api(schema.scripts)
-        _opaque_types = ({s.name for s in schema.scripts if s.type != "custom"}
-                         | {u.class_name for u in (composed_units or [])})
+        _opaque_types: frozenset[str] = frozenset(
+            {s.name for s in schema.scripts if s.type != "custom"}
+            | {u.class_name for u in (composed_units or [])})
         # Stub-avoidance needs a WIDER set than _opaque_types: a custom script's
         # field can legitimately name ANOTHER custom script as its type (e.g.
         # MuseumMetaProgression referencing GossipHub) -- that name already
@@ -2064,7 +2065,8 @@ class UnityProjectGenerator:
         # script name, custom or not. Confirmed live: MuseumMetaProgression.cs
         # got its own empty `class GossipHub {}` stub alongside the real
         # GossipHub.cs script — CS0101, "already contains a definition".
-        _stub_known_types = _opaque_types | {s.name for s in schema.scripts}
+        _stub_known_types: frozenset[str] = _opaque_types | frozenset(
+            s.name for s in schema.scripts)
         for s in schema.scripts:
             if s.type == "custom":
                 # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra

@@ -930,7 +930,7 @@ def unity_validate(
                             asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
                             project_config=cfg)
 
-    if compose and composer is not None:
+    if compose and composer is not None and composed_units is not None:
         has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
         composer.emit(subsystems, root / "Assets",
                       has_game_manager=has_game_manager, wiring=schema.wiring)
