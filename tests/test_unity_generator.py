@@ -786,6 +786,31 @@ class TestCustomScripts:
         assert "private ClimbStateType currentState;" in cs   # field kept, defaults to null
         assert "[SerializeField] private float transitionTimer = 0f;" in cs   # unrelated field untouched
 
+    def test_stub_type_null_conditional_call_stripped(self, gen):
+        # Live bug (AutomatonCitadel run, TimelineController.cs CS1061): the
+        # LLM reached a stub-typed field through the null-conditional operator
+        # (`_activeTimeline?.Play()`) — the SerializeField-inspector-assigned
+        # idiom — rather than a plain `.`. The old call_re required a bare
+        # `\.` immediately after the field name and missed this shape entirely.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="StubNC", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="TimelineController", type="custom", description="d",
+                extra_fields=[
+                    {"name": "_activeTimeline", "type": "Timeline", "default": None},
+                ],
+                awake_extra="_activeTimeline?.Play();",
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["StubNC/Assets/Scripts/TimelineController.cs"]
+        assert "?.Play()" not in cs
+        assert "public class Timeline" in cs   # stub still emitted (prevents CS0246)
+
     def test_stub_type_field_without_calls_is_untouched(self, gen):
         # A stub-typed field the LLM never calls methods on (pure data holder)
         # must not be mangled — only method-call statements are stripped.
@@ -2272,6 +2297,79 @@ class TestComposedClassApiCoverage:
             "if (pc != null) { float speed = pc.CurrentSpeed; }")
         _sanitize_composed_component_calls(s, [self._unit("PlayerController")])
         assert "pc.CurrentSpeed" in s.update_extra
+
+
+# ── _sanitize_field_typed_member_calls: field-declared cross-reference type ──
+# (binding and call site split across two methods; the per-body getter-chain
+# passes above cannot see across that split)
+
+class TestFieldTypedMemberCalls:
+    def _unit(self, class_name):
+        from src.unity_compose import ComposedUnit
+        return ComposedUnit(kind="x", variant="x", class_name=class_name,
+                            guid="g", target="world")
+
+    def test_composed_field_bound_and_called_in_different_methods(self):
+        # Same shape as the live AutomatonCitadel bug (SaveShrineTrigger.cs
+        # bound `_saveSystem` in OnEnable(), then called a member on it from a
+        # separate ActivateShrine() extra_method) but with an invented member
+        # name that is NOT in _COMPOSED_CLASS_API's cross-variant union for
+        # ANY SaveSystem variant — unlike SetCheckpoint (real on the
+        # "checkpoint" variant, so the union table intentionally still lets it
+        # through as an accepted false negative on other variants; see
+        # _COMPOSED_CLASS_API's own docstring). Neither the GameContext.Get<T>
+        # ()-chain regex nor the var-decl regex in the other sanitizers scans
+        # across method bodies, so a genuinely invented member reached this
+        # split-method shape untouched before this pass existed.
+        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="SaveShrineTrigger", type="custom", description="d",
+            extra_fields=[{"name": "_saveSystem", "type": "SaveSystem", "default": None}],
+            awake_extra="_saveSystem = GameContext.Instance.Get<SaveSystem>();",
+            extra_methods=[{
+                "signature": "public void ActivateShrine()",
+                "body": "if (_saveSystem != null) _saveSystem.ForceReload();",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("SaveSystem")])
+        assert "ForceReload" not in s.extra_methods[0].body
+
+    def test_composed_field_real_member_survives(self):
+        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="SaveShrineTrigger", type="custom", description="d",
+            extra_fields=[{"name": "_saveSystem", "type": "SaveSystem", "default": None}],
+            awake_extra="_saveSystem = GameContext.Instance.Get<SaveSystem>();",
+            extra_methods=[{
+                "signature": "public void ActivateShrine()",
+                "body": "if (_saveSystem != null) _saveSystem.Save();",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("SaveSystem")])
+        assert "_saveSystem.Save()" in s.extra_methods[0].body
+
+    def test_custom_script_field_public_method_validated_across_methods(self):
+        # Same split-method gap, but the field's declared type is ANOTHER
+        # generated custom script rather than a composed micro class.
+        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
+        dialogue = UnityScript(
+            name="NPCDialogueManager", type="custom", description="d",
+            extra_methods=[{"signature": "public void PlayDialogue(string a, string b)", "body": ""}],
+        )
+        shrine = UnityScript(
+            name="SaveShrineTrigger", type="custom", description="d",
+            extra_fields=[{"name": "_npc", "type": "NPCDialogueManager", "default": None}],
+            awake_extra="_npc = GameContext.Instance.Get<NPCDialogueManager>();",
+            extra_methods=[{
+                "signature": "public void ActivateShrine()",
+                "body": "if (_npc != null) _npc.TriggerBeat();",
+            }],
+        )
+        custom_api = _custom_script_api([dialogue, shrine])
+        _sanitize_field_typed_member_calls(shrine, custom_api, [])
+        assert "TriggerBeat" not in shrine.extra_methods[0].body
 
 
 # ── Undeclared self-reference: bare field/method the script never declared ────

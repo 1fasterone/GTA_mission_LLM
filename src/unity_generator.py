@@ -425,7 +425,12 @@ def _sanitize_stub_type_usage(script: UnityScript,
 
     if not stub_fields:
         return
-    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\.\s*\w+\s*\(")
+    # `\??\.` (not `\.`) — a stub field reached through the C# null-conditional
+    # operator (`_activeTimeline?.Play()`) is exactly how the model guards a
+    # SerializeField it expects to be assigned in the inspector, and was the
+    # live failure shape (TimelineController.cs CS1061: stub `Timeline` has no
+    # `Play()`) that a bare `\.` silently let through uncaught.
+    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\??\.\s*\w+\s*\(")
 
     def _strip(body: str) -> str:
         if not body:
@@ -708,30 +713,38 @@ def _sanitize_project_service_calls(script: UnityScript,
         m.body = _strip(m.body)
 
 
-def _sanitize_direct_field_calls(script: UnityScript,
-                                 custom_api: dict[str, frozenset],
-                                 composed_units: list | None) -> None:
-    """Strip calls through a plain `[SerializeField]`-typed reference FIELD
-    whose declared type resolves to a known API surface, when the called
-    member isn't actually on it.
+def _sanitize_field_typed_member_calls(script: UnityScript,
+                                       custom_api: dict[str, frozenset],
+                                       composed_units: list | None) -> None:
+    """A field DECLARED with a cross-reference type — `[SerializeField]
+    private SaveSystem _saveSystem;` — is typically bound in one method
+    (Awake/OnEnable, via GetComponent<T>()/GameContext.Instance.Get<T>()) and
+    CALLED from a different method later. _sanitize_composed_component_calls
+    and _sanitize_project_service_calls only resolve a Get<T>()/GetComponent
+    binding within the SAME method body they scan, so a field whose binding
+    and use are split across two methods is invisible to both. extra_fields
+    already carries the LLM's own declared type for the field — no getter
+    pattern needed to know it. Hit live: SaveShrineTrigger.cs bound
+    `_saveSystem` in OnEnable(), then called `_saveSystem.SetCheckpoint(
+    transform.position)` in a separate ActivateShrine() method; the project's
+    composed SaveSystem variant (json_file) has no such method — only the
+    checkpoint variant does — CS1061. Also catches a plain declared field
+    called in the SAME body it's declared in (hit live: InsuranceAudit.cs and
+    PhotoMode.cs each declare `[SerializeField] private GameHud _hud;` and call
+    `_hud.ShowLine(...)` / `_hud.SetPaused(...)` directly on it, no getter
+    chain in sight for either getter-chain pass to key off).
 
-    `_sanitize_project_service_calls` and `_sanitize_composed_component_calls`
-    both only ever see a call made THROUGH a `GameContext.Instance.Get<T>()` /
-    `GetComponent<T>()` getter chain (or a variable bound from one) — neither
-    one looks at a plain declared field, which is the MORE natural shape once
-    a script already carries the reference as a `[SerializeField]` rather than
-    fetching it on demand. Hit live: InsuranceAudit.cs and PhotoMode.cs each
-    declare `[SerializeField] private GameHud _hud;` and then call
-    `_hud.ShowLine(...)` / `_hud.SetPaused(...)` directly on that field — CS1061
-    x4, GameHud has neither method — and neither getter-chain pass ever
-    touches these lines, since there is no `GameContext.Instance.Get<GameHud>()`
-    anywhere in them.
+    Validates every field whose declared base type resolves to a composed
+    micro class (_COMPOSED_CLASS_API, gated to classes actually composed into
+    this project — same ground-truth table _sanitize_composed_component_calls
+    uses) or another generated custom script (_custom_script_api) — across the
+    WHOLE script, not per-body. Anything else is left untouched.
 
-    Only checked by member NAME, same as the two getter-chain passes: a real
-    member called with the wrong argument count/type (hit live in the same
-    build: `PauseMenu.Activate()` called with none of its 1 required arg) is
-    a narrower, separate defect this pass does not attempt to catch — no
-    arity data exists for composed-class methods to check against.
+    Only checked by member NAME: a real member called with the wrong argument
+    count/type (hit live in the same build: `PauseMenu.Activate()` called
+    with none of its 1 required arg) is a narrower, separate defect this pass
+    does not attempt to catch — no arity data exists for composed-class
+    methods to check against.
 
     `_COMPOSED_CLASS_API` is a STATIC, variant-blind table — it lists the
     union of every variant's public methods, so a class whose real API is
@@ -743,40 +756,40 @@ def _sanitize_direct_field_calls(script: UnityScript,
     it is CS1061 either way, but the static table said both were fine.
     `ComposedUnit.setters` (hud kind only) is computed PER PROJECT from the
     actual variant + widget list (`micro.hud.hud_setters`) and is trusted
-    over the static table wherever it exists."""
-    composed_api: dict[str, frozenset[str]] = {}
-    for u in (composed_units or []):
-        if u.kind == "hud":
-            composed_api[u.class_name] = frozenset(u.setters)
-        elif u.class_name in _COMPOSED_CLASS_API:
-            composed_api[u.class_name] = _COMPOSED_CLASS_API[u.class_name]
-    known_composed = set(composed_api)
-    field_types = {
-        f.name: (getattr(f, "type", "") or "").split("<")[0].strip()
-        for f in (script.extra_fields or []) if getattr(f, "name", None)
+    over the static table wherever it exists — `hud_api` below overrides
+    `_composed_member_ok`'s static-table answer for hud classes specifically."""
+    hud_api: dict[str, frozenset[str]] = {
+        u.class_name: frozenset(u.setters)
+        for u in (composed_units or []) if u.kind == "hud"
     }
-    known_fields = {n: t for n, t in field_types.items()
-                    if t in custom_api or t in known_composed}
-    if not known_fields:
+    composed_known = ({u.class_name for u in (composed_units or [])
+                       if u.class_name in _COMPOSED_CLASS_API}
+                       | set(hud_api))
+    field_types = {f.name: _extract_base_type(f.type or "") for f in script.extra_fields}
+    composed_fields = {n: t for n, t in field_types.items() if t in composed_known}
+    custom_fields = {n: t for n, t in field_types.items()
+                     if t in custom_api and t != script.name}
+    if not composed_fields and not custom_fields:
         return
 
-    def _member_bad(t: str, member: str) -> bool:
-        if member in _MB_COMMON_MEMBERS:
-            return False
-        if t in known_composed:
-            return member not in composed_api[t]
-        return member not in custom_api.get(t, frozenset())
+    alt = "|".join(re.escape(n) for n in list(composed_fields) + list(custom_fields))
+    call_re = re.compile(r"\b(" + alt + r")\s*\??\.\s*(\w+)")
 
-    names_alt = "|".join(re.escape(n) for n in known_fields)
-    call_re = re.compile(r"\b(" + names_alt + r")\s*\??\.\s*(\w+)")
+    def _bad(field: str, member: str) -> bool:
+        if field in composed_fields:
+            t = composed_fields[field]
+            if t in hud_api:
+                return member not in hud_api[t] and member not in _MB_COMMON_MEMBERS
+            return not _composed_member_ok(t, member)
+        t = custom_fields[field]
+        return member not in custom_api[t] and member not in _MB_COMMON_MEMBERS
 
     def _strip(body: str) -> str:
         if not body:
             return body
         out = []
         for line in body.splitlines(keepends=True):
-            bad = any(_member_bad(known_fields[m.group(1)], m.group(2))
-                      for m in call_re.finditer(line))
+            bad = any(_bad(m.group(1), m.group(2)) for m in call_re.finditer(line))
             if not bad:
                 out.append(line)
         return "".join(out)
@@ -2073,7 +2086,7 @@ class UnityProjectGenerator:
                 _sanitize_stub_type_usage(s, _stub_known_types)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
-                _sanitize_direct_field_calls(s, _custom_api, composed_units)
+                _sanitize_field_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
                 _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)
