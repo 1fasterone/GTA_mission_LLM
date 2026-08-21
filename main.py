@@ -822,8 +822,30 @@ def unity_validate(
     blender_models: bool = typer.Option(False, "--blender-models",
                                         help="Build Blender FBX models (player/enemy/vehicle) "
                                              "and wire them into the regenerated project"),
+    compose:        bool = typer.Option(False, "--compose",
+                                        help="Recompile a project that was originally built "
+                                             "with `unity-create --compose`: reconstruct + "
+                                             "rewrite Assets/Micros/** (deterministic — see "
+                                             "the command's own docstring for what this can "
+                                             "and cannot recover)."),
 ) -> None:
-    """Recompile a saved Unity schema to a project folder without re-running the LLM."""
+    """Recompile a saved Unity schema to a project folder without re-running the LLM.
+
+    \b
+    `--compose` note: `subsystems_for()` and `MicroComposer.plan()/emit()` are
+    pure functions of the schema, so this reconstructs Assets/Micros/** and the
+    scene wiring byte-for-byte deterministically — no LLM call. Per-micro C#
+    BODIES are a different story: the original `unity-create --compose` run's
+    `enrich_subsystems` step writes its output into `Subsystem.options` in
+    memory only. Since this schema.json's write, that output round-trips
+    through `schema.microgens[].input` (merge_authored_code reads it back as
+    the no-LLM fallback) — but a schema saved by an OLDER run predates that
+    persistence and only carries whatever the schema-authoring step itself
+    proposed for `schema.microgens`, which is not the same content and does
+    not cover every composed kind. Any subsystem this recompile cannot find
+    code for is reported below and falls back to its deterministic baseline
+    body — still correct, just not concept-specific.
+    """
     cfg      = _cfg(config)
     pipe_cfg = _unity_pipe_cfg(cfg)
     data     = json.loads(Path(schema_file).read_text(encoding="utf-8"))
@@ -839,16 +861,84 @@ def unity_validate(
         from src.unity_pipeline import UnityPipeline
         concept = schema.meta.get("concept", "") if schema.meta else ""
         model_overrides = UnityPipeline(cfg)._blender_model_overrides(schema, concept)
-    gen      = UnityProjectGenerator(
-        template_dir=pipe_cfg.get("unity_template_dir", "templates/unity")
-    )
+
+    if not compose and isinstance(schema.meta, dict) and schema.meta.get("wiring"):
+        console.print(
+            "[yellow]WARN[/]  schema.meta['wiring'] is set — this project looks like it "
+            "was built with `--compose`, but `unity-validate` was run without `--compose`. "
+            "Assets/Micros/** will NOT be regenerated and will go stale/frozen at whatever "
+            "was already on disk. Re-run with --compose to reconstruct them."
+        )
+
+    template_dir = pipe_cfg.get("unity_template_dir", "templates/unity")
+    gen      = UnityProjectGenerator(template_dir=template_dir)
     output_dir = pipe_cfg.get("unity_output_dir", "output/unity")
     _asset_cfg = cfg.get("assets", {}) or {}
     _sketchfab_cfg = cfg.get("sketchfab", {}) or {}
+
+    composed_units = None
+    composer = None
+    subsystems: list = []
+    if compose:
+        from src.unity_compose import (MicroComposer, drop_owned_scripts,
+                                       subsystems_for)
+        from src.unity_micro_code import CODE_KEYS, merge_authored_code
+        from src.unity_pipeline import _compose_palette_rgb
+
+        _meta = schema.meta if isinstance(schema.meta, dict) else {}
+        composer = MicroComposer(schema.project_name, template_dir=template_dir,
+                                 project_config=cfg)
+        subsystems = subsystems_for(
+            schema.game_type, schema.features, locomotion=schema.locomotion,
+            capabilities=schema.capabilities, user_prompt=_meta.get("user_prompt", ""),
+            scenes=schema.scenes, entities=schema.entities, scripts=schema.scripts,
+            genre=_meta.get("genre", "universal"), audio_specs=schema.audio_specs,
+            vfx_specs=schema.vfx, shaders=schema.shaders, animations=schema.animations,
+            characters=schema.characters, missions=schema.missions,
+            behavior_trees=schema.behavior_trees, environment=schema.environment,
+            visual_style=schema.visual_style, palette_rgb=_compose_palette_rgb(schema),
+        )
+        # No-LLM fallback only — see the docstring above for what this can and
+        # cannot recover relative to the original `enrich_subsystems` call.
+        for msg in merge_authored_code(subsystems, schema.microgens):
+            console.print(f"  [magenta]FIX[/]  {msg}")
+        _baseline = sorted(sub.kind for sub in subsystems
+                           if not any(sub.options.get(k) for k in CODE_KEYS))
+        if _baseline:
+            console.print(
+                f"[yellow]WARN[/]  no authored code recovered for: {', '.join(_baseline)} — "
+                "these subsystem(s) will use their deterministic baseline body, not "
+                "whatever the original --compose run's enrich_subsystems authored."
+            )
+
+        composed_units = composer.plan(subsystems)
+        before = len(schema.scripts)
+        schema.scripts = drop_owned_scripts(schema.scripts, composed_units)
+        if before != len(schema.scripts):
+            console.print(f"  [magenta]FIX[/]  composition owns {before - len(schema.scripts)} "
+                          "subsystem(s) — dropped duplicate built-in/name-colliding scripts")
+        deps = {**deps, **composer.module_deps(composed_units)}
+        if any(u.kind in ("input", "controller") for u in composed_units):
+            _pkg_id, _pkg_ver = resolver.resolve_package("input system", schema.unity_version)
+            if _pkg_id and _pkg_id not in deps:
+                deps[_pkg_id] = _pkg_ver or "1.8.2"
+
     root, count = gen.write(schema, deps, output_dir,
+                            composed_units=composed_units,
                             model_overrides=model_overrides or None,
                             strict_assets=bool(_asset_cfg.get("strict", True)),
-                            asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg)
+                            asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
+                            project_config=cfg)
+
+    if compose and composer is not None:
+        has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
+        composer.emit(subsystems, root / "Assets",
+                      has_game_manager=has_game_manager, wiring=schema.wiring)
+        if isinstance(schema.meta, dict):
+            schema.meta["wiring"] = composer.wiring_report
+        console.print(f"[green]OK[/]  composed {len(composed_units)} micro subsystem(s) "
+                     "-> Assets/Micros")
+
     # Write schema sidecar so unity-model --unity-project can find and re-inject models.
     try:
         (root / f"{schema.project_name}.schema.json").write_text(

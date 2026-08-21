@@ -220,8 +220,10 @@ class ShaderPipeline(UnityMicroPipeline):
         elif variant == "uv_scroll" and schema.speed_x == 0.0 and schema.speed_y == 0.0:
             schema.speed_x = 0.5
 
+        from .code_fields import _KNOWN_NAMESPACES
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
+            allowed=_KNOWN_NAMESPACES,
         )
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,

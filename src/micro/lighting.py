@@ -572,8 +572,10 @@ class LightingPipeline(UnityMicroPipeline):
         # variant table, so the branch above no longer needs to set it.
         self._enforce_lit(schema, variant, palette)
 
+        from .code_fields import _KNOWN_NAMESPACES
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
+            allowed=_KNOWN_NAMESPACES,
         )
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,

@@ -66,10 +66,12 @@ from .micro import REGISTRY
 from pathlib import Path
 
 from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
-                                find_unbound_identifiers, template_members,
+                                find_unbound_identifiers, lint_method,
+                                template_members,
                                 template_method_arities, template_usings,
                                 _KNOWN_SYMBOLS, _MONO_INHERITED,
-                                _signature_param_names)
+                                _signature_param_names,
+                                _code_brace_depth, _code_paren_depth)
 
 # ── What may be written ───────────────────────────────────────────────────────
 
@@ -190,7 +192,7 @@ def _filter_keys(kind: str, raw: object) -> dict:
 # no false positives — the identifiers were removed moments earlier in the same
 # pass — unlike guessing at undeclared identifiers in general, which the
 # incomplete per-micro `_RESERVED_FIELD_NAMES` sets cannot support.
-from .micro.code_fields import _disable_bad_header, _safe_to_comment_out
+from .micro.code_fields import _neutralize_lines
 from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
                               _extract_base_type)
 
@@ -199,26 +201,25 @@ _FRAGMENT_KEYS = ("awake_extra", "update_extra", "fixed_update_extra")
 
 def _neutralize_refs(text: str, names: set[str]) -> str:
     """Comment out statements referencing a dropped field. Reuses the lint
-    layer's own safety predicates rather than a second copy: a bare `if (...)`
-    header whose brace opens on a later line must have its CONDITION disabled,
-    never be commented out, or the guarded block silently becomes unconditional.
+    layer's own shared walk (_neutralize_lines) rather than a second copy: a
+    bare `if (...)` header whose brace opens on a later line must have its
+    CONDITION disabled, never be commented out, or the guarded block silently
+    becomes unconditional -- and if that header's body is itself the very
+    next (brace-less) line and also references a dropped name, that body must
+    not be blanked to a bare comment, or the disabled header is left with no
+    statement at all (CS1525/CS1002).
     """
     if not text or not names:
         return text
     pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
-    out: list[str] = []
-    for line in text.splitlines():
-        if line.lstrip().startswith("//") or not pattern.search(line):
-            out.append(line)
-            continue
-        if not _safe_to_comment_out(line):
-            disabled = _disable_bad_header(line, sorted(set(pattern.findall(line))))
-            out.append(disabled if disabled is not None else line)
-            continue
-        indent = line[: len(line) - len(line.lstrip())]
-        out.append(f"{indent}// AUDIT: removed reference to unresolvable "
-                   f"collaborator type -- {line.strip()}")
-    return "\n".join(out)
+
+    def make_comment(_names: list, line: str) -> str:
+        return (f"// AUDIT: removed reference to unresolvable "
+                f"collaborator type -- {line.strip()}")
+
+    result, _flagged, _skipped = _neutralize_lines(
+        text, lambda _i, line: pattern.findall(line), make_comment)
+    return result
 
 
 # A method SIGNATURE names types too, and the field-only check above walked
@@ -464,6 +465,49 @@ def merge_authored_code(subsystems: Sequence[Any],
     return msgs
 
 
+def sync_microgens_from_subsystems(subsystems: Sequence[Any],
+                                   microgens: list) -> list[str]:
+    """Write each subsystem's current CODE_KEYS content back into `microgens`
+    (a `schema.microgens` list), matched by kind — the write half of the loop
+    `merge_authored_code` reads.
+
+    Call this AFTER `enrich_subsystems`/`merge_authored_code` have both run,
+    so whatever code ended up on `Subsystem.options` (LLM-authored this run,
+    or carried over from a prior `schema.microgens[].input`) gets persisted
+    into the schema that `write()` stamps as `<project>.schema.json`.
+    `Subsystem.options` itself is never serialized — `enrich_subsystems`
+    mutates it in memory only (see this module's docstring) — so without this,
+    a later no-LLM recompile (`unity-validate --compose`) can only recover
+    whatever `schema.microgens` held BEFORE this call, which is the
+    schema-authoring step's output, not `enrich_subsystems`'.
+
+    Keyed by kind, same granularity `merge_authored_code`'s own `by_kind`
+    lookup uses — two subsystems that share a kind share one `microgens`
+    entry, same limitation the read side already has.
+    """
+    by_kind = {m.kind: m for m in microgens}
+    msgs: list[str] = []
+    synced = 0
+    for sub in subsystems:
+        code = {k: sub.options[k] for k in CODE_KEYS if sub.options.get(k)}
+        if not code:
+            continue
+        existing = by_kind.get(sub.kind)
+        if existing is not None:
+            existing.input = {**existing.input, **code}
+        else:
+            from .unity_schema import MicrogensSpec
+            entry = MicrogensSpec(kind=sub.kind, input=code)
+            microgens.append(entry)
+            by_kind[sub.kind] = entry
+        synced += 1
+    if synced:
+        msgs.append(f"micro-code: synced {synced} subsystem(s)' authored code "
+                    f"into schema.microgens[].input (round-trip for "
+                    f"unity-validate --compose)")
+    return msgs
+
+
 # ── Supplier B — one focused LLM call per subsystem ───────────────────────────
 
 # UNITY_EXTRA_INSTRUCTIONS is written for str.format() (its JSON braces are
@@ -647,23 +691,39 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                 # as a diagnostic while the author can still fix it — the whole
                 # point being that a mechanic the model meant to write survives
                 # as working code instead of as an AUDIT comment. Only the last
-                # attempt is allowed to reach the binder uncorrected.
+                # attempt is allowed to reach the binder uncorrected. Structural
+                # errors (unbalanced braces/parens) get the same treatment — a
+                # method can be fully bound (every name it uses is declared) and
+                # still fail to parse, which the binder alone never catches.
                 if attempt + 1 >= attempts:
                     break
                 cuts = _would_not_bind(sub, payload)
-                if not cuts:
+                struct_errors = _method_structural_errors(payload)
+                if not cuts and not struct_errors:
                     break
+                sections = []
+                if cuts:
+                    sections.append(
+                        "The compiler reports:\n"
+                        + "\n".join("  - " + c for c in cuts) +
+                        "\nExpress it with the members listed above, declaring "
+                        "anything else you need in extra_fields.")
+                if struct_errors:
+                    sections.append(
+                        "These methods do not parse as valid C# (unbalanced "
+                        "braces/parentheses):\n"
+                        + "\n".join("  - " + e for e in struct_errors) +
+                        "\nRewrite them with EVERY if/else/while/for header you "
+                        "intend, one opening brace per closing brace.")
                 correction = (
                     "\n\nYOUR PREVIOUS ANSWER DOES NOT COMPILE AS WRITTEN.\n"
-                    "The compiler reports:\n"
-                    + "\n".join("  - " + c for c in cuts) +
-                    "\nRewrite the SAME behaviour so it binds — keep what you "
-                    "were trying to do and express it with the members listed "
-                    "above, declaring anything else you need in extra_fields. "
-                    "Do not drop the feature."
+                    + "\n\n".join(sections) +
+                    "\nRewrite the SAME behaviour so it binds and parses — keep "
+                    "what you were trying to do. Do not drop the feature."
                 )
                 msgs.append(f"micro-code: {sub.kind} re-authored after "
-                            f"{len(cuts)} binding error(s)")
+                            f"{len(cuts) + len(struct_errors)} "
+                            f"binding/structural error(s)")
             except Exception as exc:  # noqa: BLE001 — one micro must not abort the build
                 if attempt + 1 >= attempts:
                     msgs.append(f"micro-code: {sub.kind} enrichment failed "
@@ -874,12 +934,52 @@ def _script_would_not_bind(script, payload: dict) -> list[str]:
         return []
 
 
+def _method_structural_errors(payload: dict) -> list[str]:
+    """Candidate `extra_methods` bodies that would fail `lint_method`'s
+    structural checks (unbalanced parens, or more '}' than '{') -- checked
+    here, ahead of the SAME check `_apply_script` runs at the very end, so a
+    structurally broken candidate gets a correction round like a binding
+    error does, instead of going straight to a silent drop. Confirmed live:
+    GossipHub's OnGossipSelected had zero unbound identifiers (every name it
+    used was validly declared) but was missing two `if`/`else if` headers,
+    orphaning their bodies and a closing brace -- `_script_would_not_bind`
+    saw nothing wrong, so the retry loop accepted it on the first try and
+    the only recourse left was `_apply_script` cutting the whole method.
+    """
+    from .unity_schema import CodeMethod
+    errors: list[str] = []
+    for row in payload.get("extra_methods") or []:
+        try:
+            m = row if isinstance(row, CodeMethod) else CodeMethod(**row)
+        except (ValidationError, TypeError):
+            continue
+        body = m.body or ""
+        if not body.strip():
+            continue
+        pdepth = _code_paren_depth(body)
+        if pdepth != 0:
+            errors.append(f"{m.signature}: unbalanced parentheses ({pdepth:+d})")
+            continue
+        bdepth = _code_brace_depth(body)
+        if bdepth < 0:
+            errors.append(f"{m.signature}: more closing '}}' than opening '{{' "
+                          f"— likely a missing if/else/while/for header whose "
+                          f"body and closing brace you kept")
+    return errors[:6]
+
+
 def _apply_script(script, payload: dict) -> bool:
     """Assign the surviving payload onto the script.
 
-    Unlike a Subsystem's untyped `options` dict these are real model fields, so
-    pydantic validates on assignment and a malformed method or field is dropped
-    here rather than carried into codegen.
+    Pydantic validates on assignment, but that only checks field SHAPE (is
+    `body` a string?) — not C# validity. An `extra_methods` body is additionally
+    run through `lint_method`, the same structural lint `bind_authored_code`
+    already applies to every micro subsystem: it rejects an over-closed
+    fragment (more `}` than `{`) outright rather than let it reach codegen,
+    because a surplus `}` closes the enclosing class early and takes every
+    member after it down (CS8803/CS0106/CS1022). Confirmed live: GossipHub.cs
+    on a grandma run shipped exactly that shape — `lint_code_fragment` already
+    rejects it, this script path just never called it, unlike the micro path.
     """
     from .unity_schema import CodeField, CodeMethod
 
@@ -889,6 +989,7 @@ def _apply_script(script, payload: dict) -> bool:
         if isinstance(value, str) and value.strip():
             setattr(script, key, value)
             wrote = True
+    lint_taken: set[str] = set()
     for key, model in (("extra_fields", CodeField), ("extra_methods", CodeMethod)):
         rows = payload.get(key)
         if not isinstance(rows, list) or not rows:
@@ -896,9 +997,14 @@ def _apply_script(script, payload: dict) -> bool:
         built = []
         for row in rows:
             try:
-                built.append(row if isinstance(row, model) else model(**row))
+                candidate = row if isinstance(row, model) else model(**row)
             except (ValidationError, TypeError):
                 continue
+            if key == "extra_methods":
+                candidate = lint_method(candidate, taken_names=lint_taken)
+                if candidate is None:
+                    continue
+            built.append(candidate)
         if not built:
             continue
         existing = list(getattr(script, key, None) or [])
@@ -969,17 +1075,31 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                 if attempt + 1 >= attempts:
                     break
                 cuts = _script_would_not_bind(script, payload)
-                if not cuts:
+                struct_errors = _method_structural_errors(payload)
+                if not cuts and not struct_errors:
                     break
+                sections = []
+                if cuts:
+                    sections.append(
+                        "These names are not declared anywhere:\n"
+                        + "\n".join("  - " + c for c in cuts) +
+                        "\nDeclare what you need in extra_fields.")
+                if struct_errors:
+                    sections.append(
+                        "These methods do not parse as valid C# (unbalanced "
+                        "braces/parentheses):\n"
+                        + "\n".join("  - " + e for e in struct_errors) +
+                        "\nRewrite them with EVERY if/else/while/for header you "
+                        "intend, one opening brace per closing brace.")
                 correction = (
                     "\n\nYOUR PREVIOUS ANSWER DOES NOT COMPILE AS WRITTEN.\n"
-                    "These names are not declared anywhere:\n"
-                    + "\n".join("  - " + c for c in cuts) +
-                    "\nRewrite the SAME behaviour so it binds — declare what you "
-                    "need in extra_fields. Do not drop the feature."
+                    + "\n\n".join(sections) +
+                    "\nRewrite the SAME behaviour so it binds and parses. Do "
+                    "not drop the feature."
                 )
                 msgs.append(f"script-code: {script.name} re-authored after "
-                            f"{len(cuts)} binding error(s)")
+                            f"{len(cuts) + len(struct_errors)} "
+                            f"binding/structural error(s)")
             except Exception as exc:       # noqa: BLE001 — one script must not abort
                 if attempt + 1 >= attempts:
                     msgs.append(f"script-code: {script.name} enrichment failed "

@@ -20,6 +20,7 @@ from src.unity_micro_code import (
     code_keys_for,
     enrich_subsystems,
     merge_authored_code,
+    sync_microgens_from_subsystems,
     _signature_type_names,
 )
 from src.unity_schema import MicrogensSpec
@@ -249,6 +250,61 @@ def test_fallback_ignores_non_subsystem_microgens():
     assert merge_authored_code([sub], [MicrogensSpec(kind="intro_sequence",
                                                      input={"update_extra": "x;"})]) == []
     assert sub.options == {}
+
+
+# ── supplier A write-back — sync_microgens_from_subsystems ───────────────────
+# The other half of the fallback loop: merge_authored_code READS
+# schema.microgens[].input, this WRITES it — so a later no-LLM recompile
+# (`unity-validate --compose`) can recover what enrich_subsystems authored
+# instead of regressing every composed micro to its deterministic baseline.
+
+def test_sync_writes_enrichment_back_to_microgens():
+    sub = _controller_sub()
+    enrich_subsystems([sub], llm=FakeLLM({"controller": _SWIM_CODE}), concept="diving")
+    microgens: list = []
+    msgs = sync_microgens_from_subsystems([sub], microgens)
+    assert any("schema.microgens[].input" in m for m in msgs)
+    assert len(microgens) == 1
+    assert microgens[0].kind == "controller"
+    assert microgens[0].input["update_extra"] == _SWIM_CODE["update_extra"]
+
+
+def test_sync_merges_into_existing_entry_for_same_kind():
+    sub = _controller_sub()
+    enrich_subsystems([sub], llm=FakeLLM({"controller": _SWIM_CODE}), concept="diving")
+    existing = MicrogensSpec(kind="controller", input={"stale_key_not_in_code_keys": "x"})
+    microgens = [existing]
+    sync_microgens_from_subsystems([sub], microgens)
+    assert len(microgens) == 1                       # merged, not duplicated
+    assert microgens[0] is existing
+    assert microgens[0].input["stale_key_not_in_code_keys"] == "x"   # preserved
+    assert microgens[0].input["update_extra"] == _SWIM_CODE["update_extra"]
+
+
+def test_sync_skips_subsystems_with_no_code():
+    sub = _controller_sub()                           # never enriched — options empty
+    microgens: list = []
+    assert sync_microgens_from_subsystems([sub], microgens) == []
+    assert microgens == []
+
+
+def test_sync_then_fallback_round_trips_enrichment():
+    """The property the fix depends on: sync (after an LLM run) followed by
+    merge_authored_code (a later no-LLM `unity-validate --compose` run, on a
+    FRESH Subsystem built the same way subsystems_for() would) recovers the
+    same authored code — not the deterministic baseline."""
+    original = _controller_sub()
+    enrich_subsystems([original], llm=FakeLLM({"controller": _SWIM_CODE}),
+                      concept="diving")
+    microgens: list = []
+    sync_microgens_from_subsystems([original], microgens)
+
+    reconstructed = _controller_sub()                 # fresh options={}, as a
+                                                        # no-LLM recompile would build it
+    assert reconstructed.options == {}
+    merge_authored_code([reconstructed], microgens)
+    assert reconstructed.options["update_extra"] == original.options["update_extra"]
+    assert reconstructed.options["extra_methods"] == original.options["extra_methods"]
 
 
 # ── the wiring invariant ──────────────────────────────────────────────────────

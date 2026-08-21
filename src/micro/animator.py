@@ -171,8 +171,10 @@ class AnimatorPipeline(UnityMicroPipeline):
             schema.params = [AnimParam(**d) for d in _DEFAULT_PARAMS.get(variant, _DEFAULT_PARAMS["humanoid"])]
         if not schema.clips:
             schema.clips = _DEFAULT_CLIPS.get(variant, {})
+        from .code_fields import _KNOWN_NAMESPACES
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
+            allowed=_KNOWN_NAMESPACES,
         )
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,

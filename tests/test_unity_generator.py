@@ -2467,6 +2467,71 @@ def test_stub_types_never_shadow_unity_engine_types():
     assert names == ["BountyContract"]
 
 
+def test_vector2int_field_never_gets_stubbed():
+    # Regression (live Unity, RepoFlowSim run): a field typed Vector2Int
+    # (a real UnityEngine struct, common on grid-based games) got stubbed as
+    # an empty class — new Vector2Int(50, 50) then failed with CS1729 "does
+    # not contain a constructor that takes 2 arguments" because the stub's
+    # parameterless class shadowed UnityEngine.Vector2Int project-wide. The
+    # *Int struct variants were simply missing from _CS_BUILTIN_TYPES.
+    from types import SimpleNamespace as NS
+    from src.unity_generator import _stub_type_names
+    fields = [NS(type="Vector2Int"), NS(type="Vector3Int"),
+              NS(type="BoundsInt"), NS(type="RangeInt"),
+              NS(type="List<BountyContract>")]
+    names = _stub_type_names(fields)
+    assert names == ["BountyContract"]
+
+
+def test_composed_class_name_never_gets_stubbed(gen):
+    """Regression: `unity-validate` (no --compose) used to call generate()
+    with composed_units=None unconditionally, so _opaque_types never included
+    a composed micro's class name — a custom script field typed after one
+    (e.g. TutorialIcon's `WorldInteractable _interactable`, live on a RepoFlow
+    --compose run) got an empty stub class generated for it, colliding
+    (CS0101) with the composed `interactable` micro's real WorldInteractable
+    class. `unity-validate --compose` now reconstructs composed_units the same
+    deterministic way (subsystems_for + MicroComposer.plan) and passes them
+    through to generate() — this locks that reconstruction path in."""
+    from src.unity_compose import MicroComposer, subsystems_for
+    from src.unity_schema import UnitySchema
+
+    subsystems = subsystems_for("3D", ["interactables"], locomotion="walk",
+                                genre="universal")
+    composer = MicroComposer("TutorialProj", project_config={"audio": {"backend": "dsp"}})
+    composed_units = composer.plan(subsystems)
+    assert any(u.class_name == "WorldInteractable" for u in composed_units)
+
+    schema = UnitySchema(
+        project_name="TutorialProj", company_name="C", description="",
+        game_type="3D", platform="pc", render_pipeline="URP",
+        unity_version="6000.0", color_space="Linear",
+        features=[], scenes=["Main"], packages=[],
+        scripts=[
+            UnityScript(name="PlayerController", type="player", description="m"),
+            UnityScript(
+                name="TutorialIcon", type="custom", description="hint icon",
+                attach_to="systems",
+                extra_fields=[{"name": "_interactable", "type": "WorldInteractable"}],
+            ),
+        ],
+    )
+
+    # Without composed_units (the pre-fix `unity-validate` call shape): the
+    # field type resolves nowhere the generator can see, so it gets stubbed.
+    stale = gen.generate(schema, {})
+    cs_stale = stale["TutorialProj/Assets/Scripts/TutorialIcon.cs"]
+    assert "class WorldInteractable" in cs_stale
+
+    # With composed_units (what `unity-validate --compose` now passes): the
+    # generator knows WorldInteractable already exists as a real composed
+    # class, so no colliding stub is emitted.
+    fixed = gen.generate(schema, {}, composed_units=composed_units)
+    cs_fixed = fixed["TutorialProj/Assets/Scripts/TutorialIcon.cs"]
+    assert "class WorldInteractable" not in cs_fixed
+    assert "WorldInteractable _interactable" in cs_fixed   # field itself stays
+
+
 def test_programmatic_fix_renames_engine_type_script_names():
     from src.unity_pipeline import _programmatic_fix
     from src.unity_schema import UnitySchema

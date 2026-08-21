@@ -1366,7 +1366,8 @@ class UnityPipeline:
             # Sketchfab/Blender phase below — for the same reason the NPC
             # dialog pre-extraction is (LM Studio idle-unload would otherwise
             # turn every call into a swallowed failure).
-            from .unity_micro_code import enrich_subsystems, merge_authored_code
+            from .unity_micro_code import (enrich_subsystems, merge_authored_code,
+                                           sync_microgens_from_subsystems)
             if micro_code and not no_llm:
                 # The tags TagManager will actually define. Handed to the author
                 # because GameObject.FindGameObjectWithTag THROWS on an undefined
@@ -1387,6 +1388,11 @@ class UnityPipeline:
             # costs nothing and covers whatever enrichment left empty (disabled,
             # failed, or nothing usable returned for that kind).
             for msg in merge_authored_code(subsystems, schema.microgens):
+                self._fix(msg)
+            # See sync_microgens_from_subsystems' own docstring: this is what lets
+            # a later no-LLM `unity-validate --compose` recover this run's
+            # enrich_subsystems output instead of regressing to baseline bodies.
+            for msg in sync_microgens_from_subsystems(subsystems, schema.microgens):
                 self._fix(msg)
 
             composed_units = composer.plan(subsystems)
@@ -1498,7 +1504,8 @@ class UnityPipeline:
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
-                asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg)
+                asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
+                project_config=self.config)
         except ValueError:
             # FAIL-FAST asset doctrine tripped AFTER the expensive LLM stages —
             # save the filled schema so the run isn't lost: edit the entity

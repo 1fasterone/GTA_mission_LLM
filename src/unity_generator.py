@@ -268,8 +268,10 @@ _CS_BUILTIN_TYPES: frozenset[str] = frozenset({
     "Action", "Func", "Predicate", "EventHandler", "Delegate", "UnityEvent",
     "UnityAction",
     # Unity structs / value types
-    "Vector2", "Vector3", "Vector4", "Quaternion", "Color", "Color32",
-    "Rect", "Bounds", "RectOffset", "Matrix4x4", "Plane", "Ray",
+    "Vector2", "Vector3", "Vector4", "Vector2Int", "Vector3Int",
+    "Quaternion", "Color", "Color32",
+    "Rect", "RectInt", "Bounds", "BoundsInt", "RangeInt", "RectOffset",
+    "Matrix4x4", "Plane", "Ray", "Ray2D",
     "RaycastHit", "RaycastHit2D", "LayerMask", "GUIStyle", "GUIContent",
     "Keyframe", "AnimationCurve",
     # Unity components
@@ -339,11 +341,20 @@ def _extract_base_type(type_str: str) -> str:
     return t.split("<")[0].strip()
 
 
-def _stub_type_names(extra_fields: list) -> list[str]:
+def _stub_type_names(extra_fields: list,
+                     known_types: "frozenset[str]" = frozenset()) -> list[str]:
     """Return base type names for LLM-invented types in extra_fields (first-seen
     order). Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are excluded,
     as are Manager/System/Controller/Handler singletons (those are expected to
-    be separate scripts, not local stub classes)."""
+    be separate scripts, not local stub classes), and as is anything in
+    `known_types` — a name the project already defines elsewhere (a composed
+    micro's class name, or another script). Stubbing one of those is CS0101
+    (duplicate definition), not CS0246: the field's type ALREADY resolves, so
+    no stub is needed at all. Hit live on a RepoFlow `--compose` run —
+    TutorialIcon.cs (a `type: custom` script) declared
+    `[SerializeField] private WorldInteractable _interactable`, and the
+    composed `interactable` micro had already emitted a real
+    `WorldInteractable : MonoBehaviour` class of its own."""
     seen: set[str] = set()
     names: list[str] = []
     for f in extra_fields:
@@ -354,6 +365,7 @@ def _stub_type_names(extra_fields: list) -> list[str]:
             or "<" in base
             or "." in base
             or base in seen
+            or base in known_types
             or base.endswith("Manager")
             or base.endswith("System")
             or base.endswith("Controller")
@@ -365,11 +377,14 @@ def _stub_type_names(extra_fields: list) -> list[str]:
     return names
 
 
-def _collect_custom_type_stubs(extra_fields: list) -> list[str]:
+def _collect_custom_type_stubs(extra_fields: list,
+                               known_types: "frozenset[str]" = frozenset()) -> list[str]:
     """Return [System.Serializable] stub strings for LLM-invented types in extra_fields.
 
     Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are skipped, as are
-    Manager/System/Controller singletons (those are expected to be separate scripts).
+    Manager/System/Controller singletons (those are expected to be separate scripts)
+    and anything in `known_types` (already a real class in this project — see
+    `_stub_type_names`).
     """
     return [
         f"[System.Serializable]\n"
@@ -377,11 +392,12 @@ def _collect_custom_type_stubs(extra_fields: list) -> list[str]:
         f"{{\n"
         f"    // Auto-generated stub — add fields as needed\n"
         f"}}\n"
-        for name in _stub_type_names(extra_fields)
+        for name in _stub_type_names(extra_fields, known_types)
     ]
 
 
-def _sanitize_stub_type_usage(script: UnityScript) -> None:
+def _sanitize_stub_type_usage(script: UnityScript,
+                              known_types: "frozenset[str]" = frozenset()) -> None:
     """LLM-invented field types get an EMPTY auto-generated stub class (see
     _collect_custom_type_stubs) — that alone prevents CS0246 (type not found),
     but the LLM's own code fragments routinely still call methods on that field
@@ -393,7 +409,7 @@ def _sanitize_stub_type_usage(script: UnityScript) -> None:
     strip for undefined singletons) and clear an unresolvable default so the
     field just defaults to null — the same "prefer inert over broken" contract
     _collect_custom_type_stubs already uses for the type itself."""
-    stub_names = set(_stub_type_names(script.extra_fields))
+    stub_names = set(_stub_type_names(script.extra_fields, known_types))
     if not stub_names:
         return
 
@@ -1926,6 +1942,19 @@ class UnityProjectGenerator:
         _custom_api = _custom_script_api(schema.scripts)
         _opaque_types = ({s.name for s in schema.scripts if s.type != "custom"}
                          | {u.class_name for u in (composed_units or [])})
+        # Stub-avoidance needs a WIDER set than _opaque_types: a custom script's
+        # field can legitimately name ANOTHER custom script as its type (e.g.
+        # MuseumMetaProgression referencing GossipHub) -- that name already
+        # resolves to a real class this same loop generates, so stubbing it too
+        # is CS0101 (duplicate definition), not a missing type. _opaque_types
+        # excludes "custom" scripts on purpose for the OTHER two call sites
+        # below (their public surface is validated via the richer _custom_api
+        # instead), but _collect_custom_type_stubs has no such richer path --
+        # it only ever asks "is this name already real," so it needs every
+        # script name, custom or not. Confirmed live: MuseumMetaProgression.cs
+        # got its own empty `class GossipHub {}` stub alongside the real
+        # GossipHub.cs script — CS0101, "already contains a definition".
+        _stub_known_types = _opaque_types | {s.name for s in schema.scripts}
         for s in schema.scripts:
             if s.type == "custom":
                 # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra
@@ -1939,7 +1968,12 @@ class UnityProjectGenerator:
                                 hoist_field_inits=True)
                 # Must run AFTER lint_extensible: it needs the final, cleaned
                 # extra_fields to know which field types are our own stubs.
-                _sanitize_stub_type_usage(s)
+                # _stub_known_types (not _opaque_types): must agree with the
+                # stub-generation call below on what counts as "already real,"
+                # or a field whose type resolves to a REAL sibling script (no
+                # stub emitted for it) gets its method calls stripped here as
+                # if it pointed at an empty stub.
+                _sanitize_stub_type_usage(s, _stub_known_types)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
@@ -2415,7 +2449,8 @@ class UnityProjectGenerator:
         )
 
         for script in schema.scripts:
-            script_content, script_path = self._generate_script(schema, script, base_ctx)
+            script_content, script_path = self._generate_script(
+                schema, script, base_ctx, _stub_known_types)
             if "/_skip_" in script_path:
                 continue  # level_generator handled separately as Editor script
             files[script_path]           = script_content
@@ -2816,7 +2851,8 @@ class UnityProjectGenerator:
               model_overrides: dict[str, str] | None = None,
               strict_assets: bool = False,
               asset_cfg: dict | None = None,
-              sketchfab_cfg: dict | None = None) -> tuple[Path, int]:
+              sketchfab_cfg: dict | None = None,
+              project_config: dict | None = None) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
         files = self.generate(schema, manifest_deps,
                               lookups_dir=lookups_dir,
@@ -2847,6 +2883,21 @@ class UnityProjectGenerator:
             tmp  = dest.with_name(dest.name + ".tmp")
             tmp.write_text(content, encoding="utf-8")
             os.replace(tmp, dest)
+
+        # ── Syntax gate ──────────────────────────────────────────────────────
+        # Every .cs file this call just wrote, through the same Roslyn parser
+        # gate --compose already runs on composed micros (src/csharp_syntax_gate.py).
+        # type="custom" scripts (CustomBehaviour.cs.j2) splice in LLM-authored
+        # method bodies (script.extra_methods[].body) inside braces the template
+        # already supplies — a stray brace in the LLM's own text is enough to
+        # desync the file, and a character-counting check can't tell (see that
+        # module's docstring). Raises CSharpSyntaxError with file/line/column
+        # rather than shipping a script Unity reports CS1022 on days later.
+        from .csharp_syntax_gate import enforce
+        enforce([root / rel for rel in files if rel.endswith(".cs")],
+                enabled=bool((project_config or {}).get("unity_pipeline", {})
+                             .get("syntax_gate", True)),
+                label="generated script(s)")
 
         self._sweep_stale_outputs(root, schema.project_name, set(files))
 
@@ -3005,7 +3056,8 @@ class UnityProjectGenerator:
         return self._env.get_template(template_name).render(**ctx)
 
     def _generate_script(self, schema: UnitySchema, script: UnityScript,
-                         base_ctx: dict) -> tuple[str, str]:
+                         base_ctx: dict,
+                         known_types: "frozenset[str]" = frozenset()) -> tuple[str, str]:
         tpl_file = _SCRIPT_TEMPLATES.get(script.type)
         pn       = schema.project_name
 
@@ -3027,7 +3079,7 @@ class UnityProjectGenerator:
         # like List<BountyContract> cause CS0246 on first open in Unity.
         stub_classes = ""
         if script.type == "custom" and script.extra_fields:
-            stubs = _collect_custom_type_stubs(script.extra_fields)
+            stubs = _collect_custom_type_stubs(script.extra_fields, known_types)
             if stubs:
                 stub_classes = "\n".join(stubs) + "\n"
 
