@@ -520,10 +520,10 @@ def _composed_member_ok(cls: str, member: str) -> bool:
 _COMPOSED_GETTER_ALT = r"(?:GameContext\.Instance\.Get|GetComponent)"
 
 
-def _sanitize_composed_component_calls(script: UnityScript, composed_units: list | None) -> None:
-    """Strip calls to a composed micro class whose verified public API doesn't
-    include the called member — the LLM assumes a method that was never
-    authored on the template. Hit live:
+def _make_composed_call_stripper(composed_units: list | None):
+    """Build a `body -> body` closure that strips any statement calling an
+    invalid member on a composed micro class — the LLM assumes a method that
+    was never authored on the template. Hit live:
       - O2Manager.cs: GetComponent<PlayerController>()?.GetSpeed() — doesn't
         exist, Controller.cs.j2 exposes ForwardSpeed/SpeedKmh instead (CS1061).
       - OxygenManager.cs: `var context = GameContext.Instance.Get<PlayerHealth>();
@@ -543,12 +543,17 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
         never had this gap (no trailing-paren requirement), so the two paths
         must stay symmetric.
     Only checked for classes with a verified entry in _COMPOSED_CLASS_API;
-    anything else is left alone rather than risk a false strip."""
+    anything else is left alone rather than risk a false strip. Returns None
+    when there is nothing to check against, so a caller can skip cheaply
+    instead of building a no-op closure — shared by
+    `_sanitize_composed_component_calls` (schema.scripts, `type: custom`) and
+    `unity_micro_code.sanitize_subsystem_composed_calls` (schema.microgens),
+    the two places generated C# can reach a composed sibling class."""
     if not composed_units:
-        return
+        return None
     known = {u.class_name for u in composed_units if u.class_name in _COMPOSED_CLASS_API}
     if not known:
-        return
+        return None
     names_alt = "|".join(re.escape(n) for n in known)
     chained_call_re = re.compile(
         _COMPOSED_GETTER_ALT + r"<(" + names_alt + r")>\(\)\s*\??\.\s*(\w+)"
@@ -582,11 +587,23 @@ def _sanitize_composed_component_calls(script: UnityScript, composed_units: list
                 out.append(line)
         return "".join(out)
 
-    script.awake_extra        = _strip(script.awake_extra)
-    script.update_extra       = _strip(script.update_extra)
-    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    return _strip
+
+
+def _sanitize_composed_component_calls(script: UnityScript, composed_units: list | None) -> None:
+    """Strip calls to a composed micro class whose verified public API doesn't
+    include the called member — see `_make_composed_call_stripper` for the
+    live bugs this catches. Only ever applied to `schema.scripts` (`type:
+    custom`); `unity_micro_code.sanitize_subsystem_composed_calls` covers the
+    same gap for `schema.microgens`."""
+    strip = _make_composed_call_stripper(composed_units)
+    if strip is None:
+        return
+    script.awake_extra        = strip(script.awake_extra)
+    script.update_extra       = strip(script.update_extra)
+    script.fixed_update_extra = strip(script.fixed_update_extra)
     for m in script.extra_methods:
-        m.body = _strip(m.body)
+        m.body = strip(m.body)
 
 
 # Members every MonoBehaviour/Component/Object instance legitimately has — never
@@ -680,6 +697,86 @@ def _sanitize_project_service_calls(script: UnityScript,
             if not bad and var_call_re:
                 bad = any(_member_bad(var_types[m.group(1)], m.group(2))
                           for m in var_call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        return "".join(out)
+
+    script.awake_extra        = _strip(script.awake_extra)
+    script.update_extra       = _strip(script.update_extra)
+    script.fixed_update_extra = _strip(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip(m.body)
+
+
+def _sanitize_direct_field_calls(script: UnityScript,
+                                 custom_api: dict[str, frozenset],
+                                 composed_units: list | None) -> None:
+    """Strip calls through a plain `[SerializeField]`-typed reference FIELD
+    whose declared type resolves to a known API surface, when the called
+    member isn't actually on it.
+
+    `_sanitize_project_service_calls` and `_sanitize_composed_component_calls`
+    both only ever see a call made THROUGH a `GameContext.Instance.Get<T>()` /
+    `GetComponent<T>()` getter chain (or a variable bound from one) — neither
+    one looks at a plain declared field, which is the MORE natural shape once
+    a script already carries the reference as a `[SerializeField]` rather than
+    fetching it on demand. Hit live: InsuranceAudit.cs and PhotoMode.cs each
+    declare `[SerializeField] private GameHud _hud;` and then call
+    `_hud.ShowLine(...)` / `_hud.SetPaused(...)` directly on that field — CS1061
+    x4, GameHud has neither method — and neither getter-chain pass ever
+    touches these lines, since there is no `GameContext.Instance.Get<GameHud>()`
+    anywhere in them.
+
+    Only checked by member NAME, same as the two getter-chain passes: a real
+    member called with the wrong argument count/type (hit live in the same
+    build: `PauseMenu.Activate()` called with none of its 1 required arg) is
+    a narrower, separate defect this pass does not attempt to catch — no
+    arity data exists for composed-class methods to check against.
+
+    `_COMPOSED_CLASS_API` is a STATIC, variant-blind table — it lists the
+    union of every variant's public methods, so a class whose real API is
+    variant-gated (HUD.cs.j2's `ShowLine`/`SetPaused`/etc. each live behind
+    a mutually-exclusive `{% elif variant == ... %}` branch) looks like it
+    always has all of them, when a given project's HUD only ever compiles
+    ONE variant's worth in. Confirmed live: this project's `hud/health_bar`
+    build genuinely has only `SetHealth` — calling `ShowLine`/`SetPaused` on
+    it is CS1061 either way, but the static table said both were fine.
+    `ComposedUnit.setters` (hud kind only) is computed PER PROJECT from the
+    actual variant + widget list (`micro.hud.hud_setters`) and is trusted
+    over the static table wherever it exists."""
+    composed_api: dict[str, frozenset[str]] = {}
+    for u in (composed_units or []):
+        if u.kind == "hud":
+            composed_api[u.class_name] = frozenset(u.setters)
+        elif u.class_name in _COMPOSED_CLASS_API:
+            composed_api[u.class_name] = _COMPOSED_CLASS_API[u.class_name]
+    known_composed = set(composed_api)
+    field_types = {
+        f.name: (getattr(f, "type", "") or "").split("<")[0].strip()
+        for f in (script.extra_fields or []) if getattr(f, "name", None)
+    }
+    known_fields = {n: t for n, t in field_types.items()
+                    if t in custom_api or t in known_composed}
+    if not known_fields:
+        return
+
+    def _member_bad(t: str, member: str) -> bool:
+        if member in _MB_COMMON_MEMBERS:
+            return False
+        if t in known_composed:
+            return member not in composed_api[t]
+        return member not in custom_api.get(t, frozenset())
+
+    names_alt = "|".join(re.escape(n) for n in known_fields)
+    call_re = re.compile(r"\b(" + names_alt + r")\s*\??\.\s*(\w+)")
+
+    def _strip(body: str) -> str:
+        if not body:
+            return body
+        out = []
+        for line in body.splitlines(keepends=True):
+            bad = any(_member_bad(known_fields[m.group(1)], m.group(2))
+                      for m in call_re.finditer(line))
             if not bad:
                 out.append(line)
         return "".join(out)
@@ -1976,6 +2073,7 @@ class UnityProjectGenerator:
                 _sanitize_stub_type_usage(s, _stub_known_types)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
+                _sanitize_direct_field_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
                 _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)

@@ -194,7 +194,7 @@ def _filter_keys(kind: str, raw: object) -> dict:
 # incomplete per-micro `_RESERVED_FIELD_NAMES` sets cannot support.
 from .micro.code_fields import _neutralize_lines
 from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
-                              _extract_base_type)
+                              _extract_base_type, _make_composed_call_stripper)
 
 _FRAGMENT_KEYS = ("awake_extra", "update_extra", "fixed_update_extra")
 
@@ -505,6 +505,77 @@ def sync_microgens_from_subsystems(subsystems: Sequence[Any],
         msgs.append(f"micro-code: synced {synced} subsystem(s)' authored code "
                     f"into schema.microgens[].input (round-trip for "
                     f"unity-validate --compose)")
+    return msgs
+
+
+def sanitize_subsystem_composed_calls(subsystems: Sequence[Any],
+                                      composed_units: list | None) -> list[str]:
+    """Strip calls a subsystem's authored code makes to an invalid member of a
+    composed sibling class — the same check `_sanitize_composed_component_calls`
+    (src/unity_generator.py) already applies to `schema.scripts` (`type:
+    custom`), extended to cover `schema.microgens`.
+
+    A subsystem's extra_methods/awake_extra/update_extra/fixed_update_extra
+    are authored by `enrich_subsystems` in complete isolation — that LLM call
+    never sees the real generated source of any other micro, only its own
+    kind's prompt. It can still reach a composed sibling exactly like a custom
+    script does (`GameContext.Instance.Get<PlayerHealth>().Die()`), and
+    nothing validated that path before this: `lint_extensible`
+    (src/micro/code_fields.py) checks a subsystem's authored code against its
+    OWN template's members, never against another composed class's verified
+    public API.
+
+    Must run AFTER `composer.plan(subsystems)` produces `composed_units` (the
+    class names are not known before that) and BEFORE
+    `sync_microgens_from_subsystems` persists `Subsystem.options` into
+    `schema.microgens[].input` — otherwise the schema written to disk would
+    disagree with what actually got rendered.
+
+    `Subsystem.options` is a plain dict of JSON-shaped values (not the typed
+    CodeMethod/CodeField models `schema.scripts` uses — see `_apply`/
+    `_validate`'s docstrings), so `extra_methods` here is a list of dicts with
+    a `"body"` key, not objects with a `.body` attribute.
+    """
+    strip = _make_composed_call_stripper(composed_units)
+    if strip is None:
+        return []
+    flagged: set[str] = set()
+    touched = 0
+    for sub in subsystems:
+        opts = sub.options
+        changed = False
+        for key in _FRAGMENT_KEYS:
+            before = opts.get(key)
+            if not isinstance(before, str) or not before:
+                continue
+            after = strip(before)
+            if after != before:
+                opts[key] = after
+                changed = True
+        methods = opts.get("extra_methods")
+        if isinstance(methods, list):
+            new_methods = []
+            for m in methods:
+                if not isinstance(m, dict):
+                    new_methods.append(m)
+                    continue
+                body = m.get("body")
+                if isinstance(body, str) and body:
+                    stripped = strip(body)
+                    if stripped != body:
+                        m = {**m, "body": stripped}
+                        changed = True
+                new_methods.append(m)
+            if changed:
+                opts["extra_methods"] = new_methods
+        if changed:
+            touched += 1
+            flagged.add(sub.kind)
+    msgs: list[str] = []
+    if touched:
+        msgs.append(f"micro-code: stripped statement(s) referencing invalid "
+                    f"composed-sibling-class member(s) from {touched} "
+                    f"subsystem(s) (CS1061/CS0122): {', '.join(sorted(flagged))}")
     return msgs
 
 
