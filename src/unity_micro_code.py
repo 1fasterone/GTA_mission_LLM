@@ -66,10 +66,11 @@ from .micro import REGISTRY
 from pathlib import Path
 
 from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
-                                find_unbound_identifiers, lint_method,
+                                build_missing_fields, find_unbound_identifiers,
+                                lint_method, lint_unbound_identifiers,
                                 template_members,
                                 template_method_arities, template_usings,
-                                _KNOWN_SYMBOLS, _MONO_INHERITED,
+                                _KNOWN_SYMBOLS, _MONO_INHERITED, _method_name,
                                 _signature_param_names,
                                 _code_brace_depth, _code_paren_depth)
 
@@ -1095,6 +1096,90 @@ def _apply_script(script, payload: dict) -> bool:
     return wrote
 
 
+def _bind_script(script) -> list[str]:
+    """Post-apply binding pass for a custom script: DECLARE any identifier the
+    author used but never defined (`build_missing_fields`), then NEUTRALIZE
+    whatever is still unbound after that — the same two-tier "build before you
+    cut" contract `bind_authored_code` already runs for every micro
+    (`schema.microgens`), just never extended to `schema.scripts`.
+
+    The retry loop's own bind-check (`_script_would_not_bind`) only ever runs
+    on attempts BEFORE the last (`if attempt + 1 >= attempts: break` happens
+    first) — there is nowhere left to retry to, so the final attempt is
+    accepted unconditionally, unbound identifiers included. `_apply_script`
+    only checks STRUCTURAL validity (`lint_method`/brace-balance), never
+    identifier binding, so nothing catches this before codegen. Confirmed
+    live: TeaBrewing.cs assigned `_onComplete = onComplete;` in `StartBrew()`
+    — no `_onComplete` field was ever declared (a near-miss of the real one,
+    `_brewCompleteEvent`) — CS0103, silently shipped.
+
+    A custom script's template (`CustomBehaviour.cs.j2`) is a bare shell with
+    no variant branches, so unlike `bind_authored_code` this needs no
+    `template_scope_members` call — the known-symbol universe is just
+    MonoBehaviour + `_KNOWN_SYMBOLS` + the script's own declared fields and
+    method names, the same set `_script_would_not_bind` already computes for
+    the retry loop. Returns fixer-log messages, same shape as
+    `bind_authored_code`'s."""
+    known = set(_MONO_INHERITED) | set(_KNOWN_SYMBOLS) | {script.name}
+    for f in (getattr(script, "extra_fields", None) or []):
+        known.add(str(getattr(f, "name", "") or ""))
+    methods = list(getattr(script, "extra_methods", None) or [])
+    for m in methods:
+        known.add(_method_name(getattr(m, "signature", "") or ""))
+
+    blob = "\n".join(
+        [str(getattr(script, key, "") or "") for key in _FRAGMENT_KEYS]
+        + [str(getattr(m, "body", "") or "") for m in methods]
+    )
+    wanted: set[str] = set()
+    for key in _FRAGMENT_KEYS:
+        for names in find_unbound_identifiers(
+                getattr(script, key, "") or "", known=known).values():
+            wanted |= names
+    for m in methods:
+        sig = getattr(m, "signature", "") or ""
+        for names in find_unbound_identifiers(
+                getattr(m, "body", "") or "",
+                known=known | _signature_param_names(sig),
+                signature=sig).values():
+            wanted |= names
+
+    built = build_missing_fields(script, wanted, blob)
+    if built:
+        known |= {b.split()[-1] for b in built}
+
+    flagged: set[str] = set()
+    for key in _FRAGMENT_KEYS:
+        before = getattr(script, key, "") or ""
+        if not before:
+            continue
+        after, names = lint_unbound_identifiers(before, known=known)
+        if names:
+            setattr(script, key, after)
+            flagged |= names
+    for m in methods:
+        before = getattr(m, "body", "") or ""
+        if not before:
+            continue
+        sig = getattr(m, "signature", "") or ""
+        after, names = lint_unbound_identifiers(
+            before, known=known | _signature_param_names(sig), signature=sig)
+        if names:
+            m.body = after
+            flagged |= names
+
+    msgs: list[str] = []
+    if built:
+        msgs.append(f"script-code: {script.name} — BUILT {len(built)} "
+                    f"field(s) used but not declared: "
+                    f"{', '.join(sorted(set(built)))}")
+    if flagged:
+        msgs.append(f"script-code: {script.name} neutralized "
+                    f"{len(flagged)} unbindable reference(s): "
+                    f"{', '.join(sorted(flagged))}")
+    return msgs
+
+
 def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                    user_prompt: str = "", temperature: float = 0.35,
                    attempts: int = 3, subsystems: Sequence[Any] = ()) -> list[str]:
@@ -1178,6 +1263,7 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
 
         if payload and _apply_script(script, payload):
             enriched += 1
+            msgs.extend(_bind_script(script))
 
     if enriched:
         msgs.insert(0, f"script-code: LLM authored behaviour for "

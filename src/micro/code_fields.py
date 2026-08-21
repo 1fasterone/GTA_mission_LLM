@@ -446,6 +446,36 @@ _NUM_SUFFIX_RE = re.compile(
 )
 
 
+# CS0234 ("The type or namespace name 'X' does not exist in the namespace
+# 'Y'"): a model reaches for a Cinemachine 3.x type but writes it fully
+# qualified under a plausible-but-wrong URP namespace instead of Cinemachine's
+# own. Hit live, GameSequencer.cs(114,86):
+#
+#     Camera.main?.GetComponent<UnityEngine.Rendering.Universal.
+#         CinemachineImpulseSource>()
+#
+# `Unity.Cinemachine` is already a known/healed using (_KNOWN_NAMESPACES,
+# _USING_TRIGGERS below both cover the BARE type name), but that machinery
+# never fires here because the type is fully qualified inline — a `using`
+# statement plays no part in resolving it. A bare find/replace on the wrong
+# prefix is safe: nothing legitimate is ever qualified
+# `UnityEngine.Rendering.Universal.Cinemachine*`, since Cinemachine ships its
+# own separate package/namespace, not a member of URP's.
+_WRONG_CINEMACHINE_FQN_RE = re.compile(
+    r"\bUnityEngine\.Rendering\.Universal\.(Cinemachine\w*)\b")
+
+
+def _repair_wrong_namespace_qualifiers(text: str) -> str:
+    """Fix a small set of confirmed-live wrong fully-qualified type names."""
+    if not text or "Cinemachine" not in text:
+        return text
+    new = _WRONG_CINEMACHINE_FQN_RE.sub(r"Unity.Cinemachine.\1", text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  corrected wrong namespace on "
+                       "Cinemachine type(s) (CS0234)")
+    return new
+
+
 def _repair_numeric_literals(text: str) -> str:
     """Strip numeric-literal suffixes C# does not accept.
 
@@ -806,6 +836,7 @@ def lint_code_fragment(text: str, *, what: str,
     text = _repair_gameobject_component_assign(text, gameobject_fields)
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
+    text = _repair_wrong_namespace_qualifiers(text)
     # Two structural defects that CANNOT be repaired from the fragment alone.
     # Both were live on the grandma run and together took the whole build down
     # (17 of 28 gate errors), because a broken fragment does not fail alone —
