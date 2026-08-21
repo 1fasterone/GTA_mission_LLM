@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -13,6 +14,19 @@ from .code_fields import (
     CodeExtensibleSchema, CodeField, lint_extensible, lint_fields, clamp_enum,
     UNITY_EXTRA_INSTRUCTIONS,
 )
+
+# `Data` is the save payload (SaveSystemData) SaveSystem.cs.j2 always exposes
+# under that exact name (see template: `public {name}Data Data { get; ... }`).
+# Two different Step 3/3.5 outputs describe it — schema.data_fields (Step 3,
+# read by SaveData.cs.j2) and extra_methods/*_extra bodies (Step 3.5, free
+# text) — with no cross-check between them. Hit live (RepoFlowSim run):
+# HasActiveWorkflowData() read Data.CommitHistory/Data.BranchStatus while
+# data_fields was left at its level/score/playerName default — CS1061 x2,
+# both members genuinely didn't exist on the generated class. The negative
+# lookahead excludes `Data.Foo(...)` method calls (Data is a plain
+# [Serializable] POCO with no methods, but debug/logging code sometimes
+# calls ToString()/etc. on it) — those aren't missing fields.
+_DATA_FIELD_REF_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\b(?!\s*\()")
 
 
 SaveLoadVariant = Literal[
@@ -155,6 +169,20 @@ class SaveLoadPipeline(UnityMicroPipeline):
             f.name == "checkpointPosition" for f in schema.data_fields
         ):
             schema.data_fields.append(CodeField(name="checkpointPosition", type="Vector3"))
+
+        # Auto-declare any Data.<Field> the LLM's own extra_* code references
+        # but Step 3's data_fields never listed (see _DATA_FIELD_REF_RE) —
+        # string is the safe default: it satisfies every read pattern hit
+        # live (IsNullOrEmpty, != null) and JsonUtility serializes it as "".
+        declared = {f.name for f in schema.data_fields}
+        bodies = [schema.awake_extra, schema.update_extra, schema.fixed_update_extra]
+        bodies += [m.body for m in schema.extra_methods]
+        for body in bodies:
+            for ref in _DATA_FIELD_REF_RE.findall(body or ""):
+                if ref in declared:
+                    continue
+                declared.add(ref)
+                schema.data_fields.append(CodeField(name=ref, type="string", default='""'))
 
         # Dedupe data-class members (no MonoBehaviour reserved set applies here).
         schema.data_fields = lint_fields(schema.data_fields, reserved=set())

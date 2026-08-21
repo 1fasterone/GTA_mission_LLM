@@ -1366,7 +1366,9 @@ class UnityPipeline:
             # Sketchfab/Blender phase below — for the same reason the NPC
             # dialog pre-extraction is (LM Studio idle-unload would otherwise
             # turn every call into a swallowed failure).
-            from .unity_micro_code import enrich_subsystems, merge_authored_code
+            from .unity_micro_code import (enrich_subsystems, merge_authored_code,
+                                           sync_microgens_from_subsystems,
+                                           sanitize_subsystem_composed_calls)
             if micro_code and not no_llm:
                 # The tags TagManager will actually define. Handed to the author
                 # because GameObject.FindGameObjectWithTag THROWS on an undefined
@@ -1389,7 +1391,29 @@ class UnityPipeline:
             for msg in merge_authored_code(subsystems, schema.microgens):
                 self._fix(msg)
 
+            # plan() only reads Subsystem.options (never schema.microgens), so it
+            # can run here, ahead of the sync below, giving composed_units to the
+            # sanitizer that must run BEFORE the sync — otherwise the persisted
+            # schema.microgens[].input would disagree with what actually got
+            # rendered, and a later no-LLM `unity-validate --compose` recompile
+            # would reintroduce the very calls this pass strips.
             composed_units = composer.plan(subsystems)
+            # Subsystems get the same composed-sibling-class member validation
+            # schema.scripts (`type: custom`) already has via
+            # _sanitize_composed_component_calls — a subsystem's extra_methods/
+            # awake_extra/etc. can reach another composed micro via
+            # GameContext.Instance.Get<T>() exactly like a custom script can, and
+            # nothing about that path was previously checked against the
+            # composed class's verified public API (src/unity_generator.py
+            # _COMPOSED_CLASS_API).
+            for msg in sanitize_subsystem_composed_calls(subsystems, composed_units):
+                self._fix(msg)
+            # See sync_microgens_from_subsystems' own docstring: this is what lets
+            # a later no-LLM `unity-validate --compose` recover this run's
+            # enrich_subsystems output instead of regressing to baseline bodies.
+            for msg in sync_microgens_from_subsystems(subsystems, schema.microgens):
+                self._fix(msg)
+
             # Composer is the source of truth for covered subsystems — drop the
             # duplicate built-in scripts so the project isn't double-wired. Keep
             # only the unique glue (GameManager, mesh/material, editor scripts).
@@ -1498,7 +1522,8 @@ class UnityPipeline:
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
-                asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg)
+                asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
+                project_config=self.config)
         except ValueError:
             # FAIL-FAST asset doctrine tripped AFTER the expensive LLM stages —
             # save the filled schema so the run isn't lost: edit the entity

@@ -446,6 +446,36 @@ _NUM_SUFFIX_RE = re.compile(
 )
 
 
+# CS0234 ("The type or namespace name 'X' does not exist in the namespace
+# 'Y'"): a model reaches for a Cinemachine 3.x type but writes it fully
+# qualified under a plausible-but-wrong URP namespace instead of Cinemachine's
+# own. Hit live, GameSequencer.cs(114,86):
+#
+#     Camera.main?.GetComponent<UnityEngine.Rendering.Universal.
+#         CinemachineImpulseSource>()
+#
+# `Unity.Cinemachine` is already a known/healed using (_KNOWN_NAMESPACES,
+# _USING_TRIGGERS below both cover the BARE type name), but that machinery
+# never fires here because the type is fully qualified inline — a `using`
+# statement plays no part in resolving it. A bare find/replace on the wrong
+# prefix is safe: nothing legitimate is ever qualified
+# `UnityEngine.Rendering.Universal.Cinemachine*`, since Cinemachine ships its
+# own separate package/namespace, not a member of URP's.
+_WRONG_CINEMACHINE_FQN_RE = re.compile(
+    r"\bUnityEngine\.Rendering\.Universal\.(Cinemachine\w*)\b")
+
+
+def _repair_wrong_namespace_qualifiers(text: str) -> str:
+    """Fix a small set of confirmed-live wrong fully-qualified type names."""
+    if not text or "Cinemachine" not in text:
+        return text
+    new = _WRONG_CINEMACHINE_FQN_RE.sub(r"Unity.Cinemachine.\1", text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  corrected wrong namespace on "
+                       "Cinemachine type(s) (CS0234)")
+    return new
+
+
 def _repair_numeric_literals(text: str) -> str:
     """Strip numeric-literal suffixes C# does not accept.
 
@@ -651,6 +681,55 @@ def _repair_struct_member_assign(text: str) -> str:
     return new
 
 
+# CS0029: a Component-returning lookup (GetComponentInChildren<Canvas>(), ...)
+# assigned to a field the model itself declared GameObject. Every Component
+# exposes `.gameObject`, so — unlike the colour repair above — there is
+# exactly one correct fix here, not a guess: append `.gameObject` to the call.
+# Scoped to fields the model declared itself (extra_fields) since that is the
+# only place this module has a field's TYPE to check against; a
+# template-declared field would need a second lookup this pass does not have.
+# Hit live on RepoFlow's `transition` micro, SceneTransition.cs(71):
+# `_fadeCanvas` was declared `GameObject` and then assigned both
+# `GetComponentInChildren<Canvas>()` and `FindObjectOfType<Canvas>()` from the
+# same authored OnEnable().
+_COMPONENT_LOOKUP_CALL_RE = (
+    r"(?:GetComponentInChildren|GetComponentInParent|GetComponent|"
+    r"FindAnyObjectByType|FindFirstObjectByType|FindObjectOfType)"
+    r"\s*<\s*(?P<type>[A-Za-z_]\w*)\s*>\s*\(\s*\)")
+
+
+def _repair_gameobject_component_assign(text: str,
+                                        gameobject_fields: "frozenset[str]") -> str:
+    """`<gameObjectField> = GetComponentInChildren<Canvas>();` -> append
+    `?.gameObject` (CS0029). `?.`, not `.` — the lookup can legitimately
+    return null (no matching component found), and `.gameObject` on a null
+    reference is a NullReferenceException the original code never risked (it
+    was assigning the possibly-null reference itself, not dereferencing it).
+    No-op when there are no GameObject-typed fields to check against, or the
+    looked-up type IS GameObject (already correct)."""
+    if not text or not gameobject_fields:
+        return text
+    names = "|".join(re.escape(n) for n in
+                     sorted(gameobject_fields, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?<![\w.])(?P<field>{names})(?P<sp1>\s*)=(?!=)(?P<sp2>\s*)"
+        rf"(?P<call>{_COMPONENT_LOOKUP_CALL_RE})(?P<term>\s*;)")
+    changed = False
+
+    def repl(m: "re.Match") -> str:
+        nonlocal changed
+        if m["type"] == "GameObject":
+            return m.group(0)               # already the right type
+        changed = True
+        return f"{m['field']}{m['sp1']}={m['sp2']}{m['call']}?.gameObject{m['term']}"
+
+    new = pattern.sub(repl, text)
+    if changed:
+        console.print("  [magenta]FIX[/]  appended ?.gameObject to a Component "
+                     "lookup assigned to a GameObject-typed field (CS0029)")
+    return new
+
+
 # CS0023: `!` cannot apply to an int-valued expression. Unary `!` binds tighter
 # than `==`/`!=`, so a model checking "is this collection non-empty" by negating
 # the wrong term — `!x.Count == 0` (meant `x.Count != 0`) — parses as
@@ -690,7 +769,20 @@ def _repair_bang_count_comparison(text: str) -> str:
 # declare the out parameter in place. Only lowercase, non-field (`_`-prefixed)
 # identifiers that aren't already declared elsewhere in the fragment are
 # touched; a second `out hit` reuses the first's declaration.
-_OUT_UNDECLARED_RE = re.compile(r'\bout\s+(?!var\b|ref\b)([a-z][A-Za-z0-9_]*)\b')
+#
+# The lookahead must also exclude lowercase C# primitive keywords, not just
+# `var`/`ref` -- confirmed live: `float.TryParse(tagText, out float value)` is
+# already a fully explicit, valid declaration, but the old lookahead let
+# `float` itself match as the "undeclared identifier" (it's lowercase, and
+# wasn't `var`/`ref`), rewriting it to `out var float value` — CS1003/CS1525.
+_OUT_PRIMITIVE_KEYWORDS = (
+    "var", "ref", "bool", "byte", "sbyte", "char", "decimal", "double",
+    "float", "int", "uint", "long", "ulong", "short", "ushort", "object",
+    "string", "dynamic",
+)
+_OUT_UNDECLARED_RE = re.compile(
+    r'\bout\s+(?!(?:' + "|".join(_OUT_PRIMITIVE_KEYWORDS) + r')\b)'
+    r'([a-z][A-Za-z0-9_]*)\b')
 
 
 def _declare_inline_out_params(text: str) -> str:
@@ -737,7 +829,8 @@ def _declare_inline_out_params(text: str) -> str:
 
 
 def lint_code_fragment(text: str, *, what: str,
-                       hoist_into: Optional[list[CodeMethod]] = None) -> str:
+                       hoist_into: Optional[list[CodeMethod]] = None,
+                       gameobject_fields: "frozenset[str]" = frozenset()) -> str:
     """
     Clean an LLM-authored C# fragment intended for an injection point.
     Returns "" if the fragment is rejected (caller should skip it).
@@ -746,6 +839,10 @@ def lint_code_fragment(text: str, *, what: str,
     inside the body (CS0106) so the caller can re-home them at class level.
     Callers without a class-level channel omit it and the fragment is left as
     authored for the syntax gate to report.
+
+    `gameobject_fields` names the schema's own GameObject-typed extra_fields,
+    so a `<field> = GetComponentInChildren<Canvas>();` assigned to one of them
+    can be repaired — see `_repair_gameobject_component_assign`.
     """
     if not text:
         return ""
@@ -770,9 +867,11 @@ def lint_code_fragment(text: str, *, what: str,
         hoist_into.extend(nested)
     text = _repair_null_conditional_assign(text)
     text = _repair_struct_member_assign(text)
+    text = _repair_gameobject_component_assign(text, gameobject_fields)
     text = _repair_bang_count_comparison(text)
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
+    text = _repair_wrong_namespace_qualifiers(text)
     # Two structural defects that CANNOT be repaired from the fragment alone.
     # Both were live on the grandma run and together took the whole build down
     # (17 of 28 gate errors), because a broken fragment does not fail alone —
@@ -845,23 +944,78 @@ def _wrap_property_accessor(sig: str, body: str) -> str:
     return f"get\n{{\n{indented}\n}}"
 
 
+# CS0115 ("no suitable method found to override"): every generated MonoBehaviour
+# (and ScriptableObject, e.g. AudioBank.cs.j2) derives directly from a Unity
+# base class that does NOT declare these — Unity invokes them via reflection
+# ("magic methods"), not C# virtual dispatch, so `override` on any of them is a
+# hard compile error. Hit live on a RepoFlow `transition` micro run,
+# SceneTransition.cs(69):
+#
+#     public override void OnEnable()
+#     {
+#         base.OnEnable(); _fadeCanvas = GetComponentInChildren<Canvas>(); ...
+#     }
+#
+# — the model assumed a base-class implementation to specialize. Both the
+# modifier and the now-illegal `base.OnEnable()` call (CS0117: 'MonoBehaviour'
+# does not contain a definition for 'OnEnable') have to go; the rest of the
+# body is exactly the behavior that was wanted.
+_UNITY_MESSAGE_METHODS = frozenset({
+    "Awake", "Start", "OnEnable", "OnDisable", "OnDestroy",
+    "OnApplicationQuit", "OnApplicationPause", "OnApplicationFocus",
+    "Update", "LateUpdate", "FixedUpdate",
+    "OnGUI", "OnDrawGizmos", "OnDrawGizmosSelected", "OnValidate", "Reset",
+    "OnTriggerEnter", "OnTriggerStay", "OnTriggerExit",
+    "OnTriggerEnter2D", "OnTriggerStay2D", "OnTriggerExit2D",
+    "OnCollisionEnter", "OnCollisionStay", "OnCollisionExit",
+    "OnCollisionEnter2D", "OnCollisionStay2D", "OnCollisionExit2D",
+    "OnMouseDown", "OnMouseUp", "OnMouseEnter", "OnMouseExit", "OnMouseOver",
+    "OnMouseDrag", "OnMouseUpAsButton",
+    "OnBecameVisible", "OnBecameInvisible",
+    "OnTransformChildrenChanged", "OnTransformParentChanged",
+})
+_OVERRIDE_MODIFIER_RE = re.compile(r"\b(?:override|sealed)\s+")
+
+
+def _strip_illegal_message_override(sig: str, body: str, name: str) -> tuple[str, str]:
+    """Drop `override`/`sealed` from `sig` and any `base.<name>(...)` call from
+    `body` when `name` is a Unity message method. No-op otherwise."""
+    if name not in _UNITY_MESSAGE_METHODS or not re.search(r"\boverride\b", sig):
+        return sig, body
+    new_sig = _OVERRIDE_MODIFIER_RE.sub("", sig)
+    base_call_re = re.compile(rf"\bbase\s*\.\s*{re.escape(name)}\s*\([^)]*\)\s*;\s*")
+    new_body = base_call_re.sub("", body)
+    console.print(f"  [magenta]FIX[/]  stripped illegal 'override' + base.{name}() "
+                 f"call — Unity message methods are not virtual (CS0115)")
+    return new_sig, new_body
+
+
 def lint_method(m: CodeMethod, *, taken_names: set[str],
-                hoist_into: Optional[list[CodeMethod]] = None) -> Optional[CodeMethod]:
+                hoist_into: Optional[list[CodeMethod]] = None,
+                gameobject_fields: "frozenset[str]" = frozenset()) -> Optional[CodeMethod]:
     """
     Validate + clean a CodeMethod. Returns None if it should be dropped.
     `taken_names` is mutated with the method's lower-cased identifier so
     duplicates are dropped. `hoist_into` collects members the model nested
-    inside this method's body — see `lint_code_fragment`.
+    inside this method's body — see `lint_code_fragment`. `gameobject_fields`
+    is forwarded to it too — see `_repair_gameobject_component_assign`.
     """
     sig  = m.signature.strip()
-    body = lint_code_fragment(m.body, what=f"method {sig!r}", hoist_into=hoist_into)
+    body = lint_code_fragment(m.body, what=f"method {sig!r}", hoist_into=hoist_into,
+                              gameobject_fields=gameobject_fields)
     if not body:
         return None
     body = _wrap_property_accessor(sig, body)
     # Extract method name for dedupe (best-effort; brittle parse is OK here).
     name_match = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", sig)
     if name_match:
-        key = name_match.group(1).lower()
+        name = name_match.group(1)
+        sig, body = _strip_illegal_message_override(sig, body, name)
+        if not body.strip():
+            console.print(f"  [yellow]FIX[/]  dropped method {name!r}: nothing "
+                          f"left after stripping the illegal base call")
+            return None
+        key = name.lower()
         if key in taken_names:
             console.print(f"  [yellow]FIX[/]  dropped duplicate method {key!r}")
             return None
@@ -905,7 +1059,10 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
     (r"\bArray\.(?:IndexOf|LastIndexOf|Sort|Reverse|Find|FindAll|FindIndex|"
      r"FindLast|FindLastIndex|Exists|ForEach|Resize|Copy|Clear|ConvertAll|"
      r"BinarySearch|TrueForAll|Empty|CreateInstance)\s*\(", "System"),
-    (r"\bUnityEvent\b",                                    "UnityEngine.Events"),
+    # UnityAction<T> is the same namespace as UnityEvent and just as easy for a
+    # model to reach for on a `SerializeField` callback field without the
+    # using -- hit live, PauseMenu.cs(18,110) CS0246 on a bare `UnityAction`.
+    (r"\bUnityEvent\b|\bUnityAction\b",                     "UnityEngine.Events"),
     (r"\bSceneManager\s*\.",                               "UnityEngine.SceneManagement"),
     (r"\bTMP_\w+|\bTextMeshPro",                           "TMPro"),
     (r"\bIEnumerator\b",                                   "System.Collections"),
@@ -1066,6 +1223,59 @@ def _disable_bad_header(line: str, names: "list[str] | set[str]") -> "str | None
             f"{', '.join(sorted(set(names)))} */")
 
 
+def _neutralize_lines(text: str, get_bad_names, make_comment) -> tuple[str, set, set]:
+    """Shared line-oriented neutralization walk used by lint_hash_references,
+    lint_member_references, and unity_micro_code._neutralize_refs -- all
+    three comment out (or disable the condition of) any physical line that
+    references a name which turned out to be invalid. Centralized so the one
+    cross-line invariant they all depend on is enforced exactly once: a bare
+    (brace-less) `if`/`while` whose only embedded statement IS the very next
+    line must not be left with no statement at all when that next line also
+    gets blanked to a comment. Confirmed live: an `if (_ref != null)` header
+    with brace-less body `_ref.Foo();` on the next line -- both referencing
+    the same dropped field -- were neutralized independently, leaving
+    `if (false) /* AUDIT */` followed only by a comment (CS1525/CS1002).
+
+    `get_bad_names(line_index, line)` returns the bad names referenced on
+    that physical line (falsy if none). `make_comment(names, line)` returns
+    the full `// AUDIT: ...` replacement text for a line that gets blanked.
+    Returns (text, flagged_names, skipped_names).
+    """
+    out: list[str] = []
+    flagged: set = set()
+    skipped: set = set()
+    pending_bare_body = False
+    for i, line in enumerate(text.splitlines()):
+        if line.lstrip().startswith("//"):
+            out.append(line)
+            pending_bare_body = False
+            continue
+        names = get_bad_names(i, line)
+        if not names:
+            out.append(line)
+            pending_bare_body = False
+            continue
+        if not _safe_to_comment_out(line):
+            disabled = _disable_bad_header(line, names)
+            if disabled is not None:
+                flagged.update(names)
+                out.append(disabled)
+                m = _DISABLEABLE_HEADER_RE.match(line)
+                assert m is not None  # _disable_bad_header already matched this same line
+                pending_bare_body = not m.group("brace")
+                continue
+            skipped.update(names)
+            out.append(line)
+            pending_bare_body = False
+            continue
+        flagged.update(names)
+        indent = line[: len(line) - len(line.lstrip())]
+        prefix = "; " if pending_bare_body else ""
+        out.append(f"{indent}{prefix}{make_comment(names, line)}")
+        pending_bare_body = False
+    return "\n".join(out), flagged, skipped
+
+
 def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | None") -> str:
     """Neutralize any line referencing an unknown GTA.Native.Hash member.
 
@@ -1084,33 +1294,15 @@ def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | Non
     """
     if not text or allowed is None:
         return text
-    out: list[str] = []
-    flagged: set[str] = set()
-    skipped: set[str] = set()
-    for line in text.splitlines():
-        if line.lstrip().startswith("//"):
-            # Already neutralized by an earlier lint pass (its "// AUDIT:"
-            # comment preserves the original text for traceability, which
-            # would otherwise re-trigger this same regex on every later pass).
-            out.append(line)
-            continue
-        bad = [n for n in _HASH_REF_RE.findall(line) if n not in allowed]
-        if not bad:
-            out.append(line)
-            continue
-        if not _safe_to_comment_out(line):
-            disabled = _disable_bad_header(line, bad)
-            if disabled is not None:
-                flagged.update(bad)
-                out.append(disabled)
-                continue
-            skipped.update(bad)
-            out.append(line)
-            continue
-        flagged.update(bad)
-        indent = line[: len(line) - len(line.lstrip())]
-        out.append(f"{indent}// AUDIT: removed invalid Hash member(s) "
-                   f"{', '.join(sorted(set(bad)))} -- {line.strip()}")
+
+    def get_bad_names(_i: int, line: str) -> list[str]:
+        return [n for n in _HASH_REF_RE.findall(line) if n not in allowed]
+
+    def make_comment(names: list, line: str) -> str:
+        return (f"// AUDIT: removed invalid Hash member(s) "
+                f"{', '.join(sorted(set(names)))} -- {line.strip()}")
+
+    result, flagged, skipped = _neutralize_lines(text, get_bad_names, make_comment)
     if flagged:
         console.print(f"  [yellow]FIX[/]  removed statement(s) referencing "
                       f"invalid Hash member(s): {', '.join(sorted(flagged))}")
@@ -1118,7 +1310,7 @@ def lint_hash_references(text: str, *, allowed: "frozenset[str] | set[str] | Non
         console.print(f"  [yellow]WARN[/] could not safely remove invalid Hash "
                       f"member(s) on a control-flow or brace-mixed line: "
                       f"{', '.join(sorted(skipped))}")
-    return "\n".join(out)
+    return result
 
 
 # ── Type-aware member reference checker ───────────────────────────────────────
@@ -1242,30 +1434,12 @@ def lint_member_references(text: str, *, surface: "dict | None") -> str:
         line_no = text.count("\n", 0, pos)
         bad_lines.setdefault(line_no, []).append(f"{type_fqn.split('.')[-1]}.{member}")
 
-    out: list[str] = []
-    flagged: set[str] = set()
-    skipped: set[str] = set()
-    for i, line in enumerate(text.splitlines()):
-        if line.lstrip().startswith("//"):
-            out.append(line)
-            continue
-        names = bad_lines.get(i)
-        if not names:
-            out.append(line)
-            continue
-        if not _safe_to_comment_out(line):
-            disabled = _disable_bad_header(line, names)
-            if disabled is not None:
-                flagged.update(names)
-                out.append(disabled)
-                continue
-            skipped.update(names)
-            out.append(line)
-            continue
-        flagged.update(names)
-        indent = line[: len(line) - len(line.lstrip())]
-        out.append(f"{indent}// AUDIT: removed invalid member reference(s) "
-                   f"{', '.join(sorted(set(names)))} -- {line.strip()}")
+    def make_comment(names: list, line: str) -> str:
+        return (f"// AUDIT: removed invalid member reference(s) "
+                f"{', '.join(sorted(set(names)))} -- {line.strip()}")
+
+    result, flagged, skipped = _neutralize_lines(
+        text, lambda i, _line: bad_lines.get(i), make_comment)
     if flagged:
         console.print(f"  [yellow]FIX[/]  removed statement(s) referencing "
                       f"invalid member(s): {', '.join(sorted(flagged))}")
@@ -1273,7 +1447,7 @@ def lint_member_references(text: str, *, surface: "dict | None") -> str:
         console.print(f"  [yellow]WARN[/] could not safely remove invalid member "
                       f"reference(s) on a control-flow or brace-mixed line: "
                       f"{', '.join(sorted(skipped))}")
-    return "\n".join(out)
+    return result
 
 
 # ── Enum member reference checker ─────────────────────────────────────────────
@@ -2203,6 +2377,30 @@ def _cs_float(value: float) -> str:
     return (text or "0") + "f"
 
 
+# CS1503: Color32's constructor takes `byte`, which has no implicit conversion
+# from `float` (unlike Color32->Color widening, which IS implicit — that
+# direction is fine whatever the declared field type is). `_COLOR_EXPR_RE`
+# above accepts an already-Color32-shaped authored expression uncritically;
+# this catches the one way that shape still fails to compile. Hit live on a
+# RepoFlow custom script, TutorialIcon.cs(10): `new Color32(0, 1f, 1f, 255)`
+# mixed byte-range ints with normalized-float components in the same call —
+# there is no single intended value to recover, so this drops rather than
+# guesses, same as every other branch here.
+_FLOAT_LITERAL_ARG_RE = re.compile(r"^[+-]?(?:\d+\.\d+|\.\d+|\d+[fF])$")
+
+
+def _color32_args_are_bytes(text: str) -> bool:
+    """False when a `Color32(...)` / `new Color32(...)` call's arguments
+    include a float literal. True for everything else (plain-int args,
+    `Color32.member`, `Color(...)`) — this only ever rejects the one broken
+    pattern, never a call it cannot fully parse."""
+    m = re.match(r"^(?:new\s+)?Color32\s*\((.*)\)$", text.strip(), re.DOTALL)
+    if not m:
+        return True
+    args = _split_top_level_args(m.group(1))
+    return not any(_FLOAT_LITERAL_ARG_RE.match(a.strip()) for a in args)
+
+
 def _color_initializer(base: str, text: str) -> Optional[str]:
     """A Color/Color32 initializer, or None to drop it.
 
@@ -2214,7 +2412,8 @@ def _color_initializer(base: str, text: str) -> Optional[str]:
     """
     hexed = _HEX_COLOR_RE.match(_unquote(text))
     if hexed is None:
-        if _COLOR_EXPR_RE.match(text) and _initializer_is_structurally_safe(text):
+        if (_COLOR_EXPR_RE.match(text) and _initializer_is_structurally_safe(text)
+                and _color32_args_are_bytes(text)):
             return text
         return None
     r, g, b, a = _hex_rgba(hexed.group("hex"))
@@ -2459,18 +2658,23 @@ def lint_extensible(schema: _ExtensibleLike, *,
     schema.extra_fields = lint_fields(
         schema.extra_fields, reserved=reserved_fields,
         hoist_into=field_inits if hoist_field_inits else None)
+    # For _repair_gameobject_component_assign — computed AFTER lint_fields so a
+    # field it dropped is never treated as a real GameObject-typed target.
+    gameobject_fields = frozenset(
+        f.name for f in schema.extra_fields
+        if (f.type or "").strip() == "GameObject" and f.name)
     # Members the model nested inside a body (CS0106) are re-homed here, at the
     # one layer that can see both the bodies and the class-level method list.
     hoisted: list[CodeMethod] = []
-    schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body",         hoist_into=hoisted)
+    schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body",         hoist_into=hoisted, gameobject_fields=gameobject_fields)
     # AFTER the fragment lint, and FIRST in the body: these assignments are
     # already valid C# (they must not be re-judged as authored prose), and the
     # author's own Awake() statements may read the fields they initialise.
     if field_inits:
         schema.awake_extra = "\n".join(
             field_inits + ([schema.awake_extra] if schema.awake_extra else []))
-    schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body",       hoist_into=hoisted)
-    schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body",   hoist_into=hoisted)
+    schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body",       hoist_into=hoisted, gameobject_fields=gameobject_fields)
+    schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body",   hoist_into=hoisted, gameobject_fields=gameobject_fields)
     taken: set[str] = set()
     cleaned: list[CodeMethod] = []
     # A queue, not a for-loop: a hoisted method can itself contain a nested
@@ -2481,7 +2685,8 @@ def lint_extensible(schema: _ExtensibleLike, *,
     while queue and budget > 0:
         budget -= 1
         nested: list[CodeMethod] = []
-        m2 = lint_method(queue.pop(0), taken_names=taken, hoist_into=nested)
+        m2 = lint_method(queue.pop(0), taken_names=taken, hoist_into=nested,
+                         gameobject_fields=gameobject_fields)
         if m2 is not None:
             cleaned.append(m2)
         queue.extend(nested)

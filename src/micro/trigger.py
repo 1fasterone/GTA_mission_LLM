@@ -141,8 +141,10 @@ class TriggerPipeline(UnityMicroPipeline):
         schema.name = to_pascal(schema.name, "TriggerZone")
         if not schema.actions:
             schema.actions = [TriggerAction(event_name="OnTriggerActivate", delay=0.0)]
+        from .code_fields import _KNOWN_NAMESPACES
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
+            allowed=_KNOWN_NAMESPACES,
         )
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,

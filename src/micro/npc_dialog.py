@@ -214,6 +214,13 @@ OUTPUT:
   ],
   "description": "One sentence."
 }}
+
+Your extra_fields/extra_methods/awake_extra/update_extra render into ONE class:
+{{"name"}}Player (e.g. "BartenderPlayer") — the scene-attachable component
+DialogTrigger calls into. Inside it, `this` IS the speaker: you already have
+`public event Action OnDialogEnd` (and OnLine/OnLineEnd), plus public
+StartDialog()/StopDialog()/Advance(). There is NO `_player` field to check or
+call through — that field lives on the separate Trigger class, not this one.
 """ + UNITY_EXTRA_INSTRUCTIONS
 
 

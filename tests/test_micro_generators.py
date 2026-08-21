@@ -755,6 +755,34 @@ def test_saveload_fixer_checkpoint_adds_position(dummy_config):
     assert any(f.name == "checkpointPosition" for f in s.data_fields)
 
 
+def test_saveload_auto_declares_data_fields_referenced_by_extra_code(dummy_config):
+    # Regression (live Unity, RepoFlowSim run): an extra_method read
+    # Data.CommitHistory/Data.BranchStatus while data_fields never declared
+    # them (two separate Step 3/3.5 outputs, no cross-check) — CS1061 x2 on
+    # SaveSystemData. default_fix must notice the reference and declare it.
+    from src.micro.code_fields import CodeMethod
+    p = SaveLoadPipeline(dummy_config)
+    s = SaveLoadSchema(
+        name="X", variant="json_file", data_fields=[],
+        extra_methods=[CodeMethod(
+            signature="public bool HasActiveWorkflowData()",
+            body="return !string.IsNullOrEmpty(Data?.CommitHistory) "
+                 "&& Data?.BranchStatus != null;")],
+    )
+    s = p.default_fix(s, "json_file")
+    names = {f.name: f.type for f in s.data_fields}
+    assert names.get("CommitHistory") == "string"
+    assert names.get("BranchStatus") == "string"
+
+    # A Data.Method(...) call is not a missing field — must not get stubbed.
+    s2 = SaveLoadSchema(
+        name="Y", variant="json_file", data_fields=[],
+        awake_extra="Debug.Log(Data.ToString());",
+    )
+    s2 = p.default_fix(s2, "json_file")
+    assert "ToString" not in {f.name for f in s2.data_fields}
+
+
 @pytest.mark.parametrize("variant", SaveLoadPipeline.variants)
 def test_saveload_renders_every_variant(tmp_path, dummy_config, variant):
     p = SaveLoadPipeline(dummy_config)
@@ -1196,6 +1224,43 @@ class TestUsingHardening:
                         awake_extra="var atlas = Resources.Load<SpriteAtlas>(\"Atlas\");")
         lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"})
         assert "UnityEngine.U2D" in s.extra_usings
+
+    def test_type_names_dropped_by_every_micro_generator(self, dummy_config):
+        # Regression (live Unity, RepoFlowSim run): lint_usings' allowlist
+        # filter (tested above) only helps a caller that actually passes
+        # `allowed=_KNOWN_NAMESPACES` — trigger/vfx/statemachine/shader/
+        # lighting/animator each called lint_usings without it, so
+        # `using UnityEngine.AudioSource;` / `using UnityEngine.ParticleSystem;`
+        # (a model naming the TYPE it wants, not a namespace) rode straight
+        # through into SceneTrigger.cs and ImpactVFX.cs — CS0138, 3 compile
+        # errors, invisible to the syntax gate because it's a binding-level
+        # error. Only controller.py wired the allowlist through; this locks
+        # in that every generator touching LLM-authored extra_usings does.
+        from src.micro.vfx import VfxPipeline, VfxSchema
+        from src.micro.lighting import LightingPipeline, LightingSchema
+        from src.micro import AnimatorPipeline, AnimatorSchema, StateMachinePipeline, StateMachineSchema
+
+        bad = ["UnityEngine.AudioSource", "UnityEngine.ParticleSystem"]
+        cases = [
+            (TriggerPipeline(dummy_config),
+             TriggerSchema(name="Zone", extra_usings=list(bad)), "zone_enter"),
+            (VfxPipeline(dummy_config),
+             VfxSchema(name="Impact", extra_usings=list(bad)), "particle_system"),
+            (StateMachinePipeline(dummy_config),
+             StateMachineSchema(name="Fsm", extra_usings=list(bad)), "player_fsm"),
+            (ShaderPipeline(dummy_config),
+             ShaderSchema(name="Shade", extra_usings=list(bad)), "color_cycle"),
+            (LightingPipeline(dummy_config),
+             LightingSchema(name="Lights", extra_usings=list(bad)), "three_point"),
+            (AnimatorPipeline(dummy_config),
+             AnimatorSchema(name="Anim", extra_usings=list(bad)), "humanoid"),
+        ]
+        for pipeline, schema, variant in cases:
+            fixed = pipeline.default_fix(schema, variant)
+            for u in bad:
+                assert u not in fixed.extra_usings, (
+                    f"{type(pipeline).__name__} let a type-as-namespace "
+                    f"using ({u!r}) through — would raise CS0138")
 
 
 class TestBehaviorReconciliation:

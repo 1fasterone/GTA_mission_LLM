@@ -14,12 +14,14 @@ from pathlib import Path
 
 import pytest
 
-from src.unity_compose import MicroComposer, Subsystem, subsystems_for
+from src.unity_compose import ComposedUnit, MicroComposer, Subsystem, subsystems_for
 from src.unity_micro_code import (
     CODE_KEYS,
     code_keys_for,
     enrich_subsystems,
     merge_authored_code,
+    sanitize_subsystem_composed_calls,
+    sync_microgens_from_subsystems,
     _signature_type_names,
 )
 from src.unity_schema import MicrogensSpec
@@ -249,6 +251,130 @@ def test_fallback_ignores_non_subsystem_microgens():
     assert merge_authored_code([sub], [MicrogensSpec(kind="intro_sequence",
                                                      input={"update_extra": "x;"})]) == []
     assert sub.options == {}
+
+
+# ── supplier A write-back — sync_microgens_from_subsystems ───────────────────
+# The other half of the fallback loop: merge_authored_code READS
+# schema.microgens[].input, this WRITES it — so a later no-LLM recompile
+# (`unity-validate --compose`) can recover what enrich_subsystems authored
+# instead of regressing every composed micro to its deterministic baseline.
+
+def test_sync_writes_enrichment_back_to_microgens():
+    sub = _controller_sub()
+    enrich_subsystems([sub], llm=FakeLLM({"controller": _SWIM_CODE}), concept="diving")
+    microgens: list = []
+    msgs = sync_microgens_from_subsystems([sub], microgens)
+    assert any("schema.microgens[].input" in m for m in msgs)
+    assert len(microgens) == 1
+    assert microgens[0].kind == "controller"
+    assert microgens[0].input["update_extra"] == _SWIM_CODE["update_extra"]
+
+
+def test_sync_merges_into_existing_entry_for_same_kind():
+    sub = _controller_sub()
+    enrich_subsystems([sub], llm=FakeLLM({"controller": _SWIM_CODE}), concept="diving")
+    existing = MicrogensSpec(kind="controller", input={"stale_key_not_in_code_keys": "x"})
+    microgens = [existing]
+    sync_microgens_from_subsystems([sub], microgens)
+    assert len(microgens) == 1                       # merged, not duplicated
+    assert microgens[0] is existing
+    assert microgens[0].input["stale_key_not_in_code_keys"] == "x"   # preserved
+    assert microgens[0].input["update_extra"] == _SWIM_CODE["update_extra"]
+
+
+def test_sync_skips_subsystems_with_no_code():
+    sub = _controller_sub()                           # never enriched — options empty
+    microgens: list = []
+    assert sync_microgens_from_subsystems([sub], microgens) == []
+    assert microgens == []
+
+
+def test_sync_then_fallback_round_trips_enrichment():
+    """The property the fix depends on: sync (after an LLM run) followed by
+    merge_authored_code (a later no-LLM `unity-validate --compose` run, on a
+    FRESH Subsystem built the same way subsystems_for() would) recovers the
+    same authored code — not the deterministic baseline."""
+    original = _controller_sub()
+    enrich_subsystems([original], llm=FakeLLM({"controller": _SWIM_CODE}),
+                      concept="diving")
+    microgens: list = []
+    sync_microgens_from_subsystems([original], microgens)
+
+    reconstructed = _controller_sub()                 # fresh options={}, as a
+                                                        # no-LLM recompile would build it
+    assert reconstructed.options == {}
+    merge_authored_code([reconstructed], microgens)
+    assert reconstructed.options["update_extra"] == original.options["update_extra"]
+    assert reconstructed.options["extra_methods"] == original.options["extra_methods"]
+
+
+# ── composed-sibling-class member validation — sanitize_subsystem_composed_calls
+# The same check schema.scripts (`type: custom`) already gets from
+# _sanitize_composed_component_calls (src/unity_generator.py), extended to
+# schema.microgens: a subsystem's authored extras are written by an LLM call
+# that never sees another subsystem's real generated source, yet can still
+# reach one via GameContext.Instance.Get<T>() exactly like a custom script
+# can — nothing validated that path before this.
+
+def _trigger_sub(**opts) -> Subsystem:
+    return Subsystem(kind="trigger", target="world", name="ExitTrigger",
+                     options=dict(opts))
+
+
+def _health_unit() -> ComposedUnit:
+    # PlayerHealth is a real _COMPOSED_CLASS_API entry (Health.cs.j2's public
+    # surface): CurrentHealth/MaxHealth/TakeDamage/Heal/OnHealthChanged/
+    # OnDamaged/OnHealed/OnDeath. Die() is real but PRIVATE — only reachable
+    # indirectly via TakeDamage — so it is not in the verified set.
+    return ComposedUnit(kind="health", variant="simple", class_name="PlayerHealth",
+                        guid="g", target="player")
+
+
+def test_composed_call_to_invented_member_is_stripped():
+    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
+    msgs = sanitize_subsystem_composed_calls([sub], [_health_unit()])
+    assert any("trigger" in m for m in msgs)
+    assert "Die" not in sub.options["update_extra"]
+
+
+def test_composed_call_to_real_member_survives():
+    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>()?.TakeDamage(5f);")
+    msgs = sanitize_subsystem_composed_calls([sub], [_health_unit()])
+    assert msgs == []
+    assert "TakeDamage" in sub.options["update_extra"]
+
+
+def test_composed_call_checked_inside_extra_methods_dict_shape():
+    """Subsystem.options stores extra_methods as plain JSON dicts (see
+    _apply/_validate), never CodeMethod objects — unlike the schema.scripts
+    path this mirrors, so the sanitizer must handle dict shape directly."""
+    sub = _trigger_sub(extra_methods=[
+        {"signature": "private void OnEnter()",
+         "body": "GameContext.Instance.Get<PlayerHealth>().Die();"},
+    ])
+    sanitize_subsystem_composed_calls([sub], [_health_unit()])
+    assert "Die" not in sub.options["extra_methods"][0]["body"]
+
+
+def test_composed_call_sanitizer_noop_without_composed_units():
+    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
+    assert sanitize_subsystem_composed_calls([sub], None) == []
+    assert sanitize_subsystem_composed_calls([sub], []) == []
+    assert "Die" in sub.options["update_extra"]       # untouched
+
+
+def test_composed_call_sanitization_reaches_the_rendered_cs(tmp_path):
+    """End-to-end, wired the same order unity_pipeline.py uses: composer.plan()
+    (which is what names the class PlayerHealth) BEFORE emit() — the stripped
+    call must never reach the .cs file the trigger micro actually writes."""
+    health = Subsystem(kind="health", target="player", name="PlayerHealth")
+    trigger = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
+    subs = [health, trigger]
+    composer = MicroComposer("ProbeProj", project_config={"audio": {"backend": "dsp"}})
+    units = composer.plan(subs)
+    sanitize_subsystem_composed_calls(subs, units)
+    src = _emit(tmp_path, subs)["Micros/trigger/Scripts/ExitTrigger.cs"]
+    assert "Die()" not in src
 
 
 # ── the wiring invariant ──────────────────────────────────────────────────────
