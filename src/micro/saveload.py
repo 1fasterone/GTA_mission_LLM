@@ -40,7 +40,6 @@ _DATA_FIELD_REF_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\b(?!\s*\()")
 _DATA_METHOD_CALL_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\s*\(")
 _OBJECT_METHODS = frozenset({"ToString", "GetHashCode", "Equals", "GetType"})
 
-
 SaveLoadVariant = Literal[
     "json_file", "playerprefs_kv", "save_slots",
     "checkpoint", "autosave", "encrypted_json",

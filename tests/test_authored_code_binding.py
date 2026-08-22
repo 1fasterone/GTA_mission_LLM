@@ -420,6 +420,90 @@ def test_an_overloaded_name_is_not_type_checked(tmp_path):
     assert params["Solo"] == ("string",)
 
 
+# ── Template-field type misuse (CS1061 / CS1503) ─────────────────────────────
+#
+# Three compile errors from one compose build (AutomatonCitadel), all the same
+# shape: an authored statement uses a TEMPLATE-declared field as if it had a
+# different type than the template actually gives it. The unbound-identifier
+# pass above proves the field NAME binds; it never asks what binding to it
+# means, so `_music.PickClip(...)` shipped — `_music` really is a field.
+#
+# Fixture provenance: TEST DATA, hand-transcribed from the generated .cs.
+
+def test_audio_member_call_on_the_wrong_builtin_type_is_neutralized():
+    """AudioDirectorAudioManager.cs(119) CS1061 — `_music.PickClip(...)`.
+    `_music` is the template's own `private AudioSource _music;`; `PickClip()`
+    is a real, zero-argument method — on the unrelated `AudioCue` class the
+    same template folder also declares."""
+    s = _schema(methods=[
+        ("private void PlaySpark()",
+         '_music.Stop();\n_music.PickClip("brass_spark");'),
+    ])
+    msgs = bind_authored_code(s, MICRO / "audio")
+    live = "\n".join(ln for m in s.extra_methods for ln in _live_lines(m.body))
+    assert "PickClip" not in live
+    assert "_music.Stop();" in live             # the legal call is not collateral
+    assert any("_music" in m and "PickClip" in m for m in msgs)
+
+
+def test_health_primitive_field_called_as_if_it_were_an_object():
+    """PlayerHealth.cs(62) CS1061 — `_lastHit.CompareTag(...)`. `_lastHit` is
+    the template's own invulnerability-timer float, used correctly elsewhere
+    as `Time.time - _lastHit`."""
+    s = _schema(methods=[
+        ("private void OnHit(Collider other)",
+         'if (_lastHit != null && _lastHit.CompareTag("Cog")) { _current -= 1f; }'),
+    ])
+    bind_authored_code(s, MICRO / "health")
+    assert not [m for m in s.extra_methods if _live_lines(m.body)]
+
+
+def test_lighting_struct_field_assigned_a_numeric_expression():
+    """LightingDirector.cs(242) CS1503 — `ambientGround = Mathf.Lerp(...)`.
+    `ambientGround` is `[SerializeField] private Color ambientGround`, and
+    `Mathf.Lerp` always returns float."""
+    s = _schema(methods=[
+        ("private void SetCoalPalette(float darkness)",
+         "ambientGround = Mathf.Lerp(ambientGround, darkness * 0.2f, "
+         "Time.deltaTime * 3f);"),
+    ])
+    bind_authored_code(s, MICRO / "lighting")
+    assert not [m for m in s.extra_methods if _live_lines(m.body)]
+
+
+def test_a_legitimate_call_on_a_known_builtin_field_survives():
+    """A false positive here deletes WORKING code — strictly worse than the
+    CS1061 it would have prevented. Every member `_music` really has on
+    AudioSource must stay untouched."""
+    s = _schema(methods=[
+        ("private void DuckMusic()",
+         "_music.volume = 0.2f; _music.Pause(); _music.UnPause();"),
+    ])
+    bind_authored_code(s, MICRO / "audio")
+    live = "\n".join(ln for m in s.extra_methods for ln in _live_lines(m.body))
+    assert "_music.volume = 0.2f;" in live
+    assert "_music.Pause();" in live
+    assert "_music.UnPause();" in live
+
+
+def test_numeric_assignment_to_a_numeric_field_is_not_judged():
+    """Only struct fields (Color, Vector3, ...) are guarded against a numeric
+    RHS — a float field taking a float value is exactly what should happen."""
+    s = _schema(methods=[("private void ResetTimer()", "_lastHit = Time.time;")])
+    bind_authored_code(s, MICRO / "health")
+    assert "_lastHit = Time.time;" in s.extra_methods[0].body
+
+
+def test_a_local_shadowing_a_template_field_name_is_not_judged():
+    """A local re-declared with its own type is not the template's field, so a
+    call against it must never be judged by the field's declared type."""
+    from src.micro.code_fields import find_field_type_misuse, template_field_types
+    field_types = template_field_types(str(MICRO / "audio"))
+    assert field_types.get("_music") == "AudioSource"
+    body = 'AudioCue _music = someBank.Find("x"); _music.PickClip();'
+    assert not find_field_type_misuse(body, field_types=field_types)
+
+
 # ── The variant decides what the template actually renders ───────────────────
 
 def test_a_member_from_another_variant_is_not_in_scope():

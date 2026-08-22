@@ -3396,6 +3396,14 @@ _INT_LIT_RE    = re.compile(r"^[+-]?\d+[uUlL]{0,2}$")
 _FLOAT_LIT_RE  = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)[fF]$")
 _DOUBLE_LIT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\.\d+)[dD]?$")
 _DOT_NAME_RE   = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.name$")
+# Mathf statics with exactly one, always-float overload. Min/Max/Abs/Clamp are
+# excluded on purpose: those are also overloaded on int in the real API, so
+# their result type depends on the arguments and this pass cannot see that.
+_MATHF_NUMERIC_RE = re.compile(
+    r"^Mathf\.(?:Lerp(?:Angle|Unclamped)?|Clamp01|MoveTowards(?:Angle)?|"
+    r"PingPong|Repeat|SmoothStep|InverseLerp|DeltaAngle|Sign|"
+    r"Pow|Sqrt|Exp|Log(?:10)?|Sin|Cos|Tan|Asin|Acos|Atan2?|Round|Floor|Ceil)"
+    r"\s*\(")
 # `GameObject go`, `int count` — a declaration the fragment makes itself, in a
 # signature or a local. The type it states is ground truth for that name.
 _DECL_TYPE_RE = re.compile(
@@ -3438,6 +3446,8 @@ def _expression_type(expr: str, locals_: "dict[str, str]") -> str:
     # where the object itself belongs is the single commonest of these.
     if _DOT_NAME_RE.match(e):
         return "string"
+    if _MATHF_NUMERIC_RE.match(e):
+        return "float"
     return locals_.get(e, "")
 
 
@@ -3526,6 +3536,56 @@ def template_method_params(template_dir: str, variant: str = "",
     for name in dropped:
         out.pop(name, None)
     return out
+
+
+# `[SerializeField] private Color ambientGround = ...;` / `private float
+# _lastHit = -999f;` — a FIELD declaration, captured with its type. Same
+# anchor as `_TEMPLATE_MEMBER_RE` (a member always carries an access
+# modifier here), narrowed to the shape with no `(` before the terminator —
+# that is exactly what tells a field apart from `_TEMPLATE_METHOD_DECL_RE`.
+_TEMPLATE_FIELD_DECL_RE = re.compile(
+    r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"
+    r"(?:public|private|protected|internal)\b"
+    r"(?:[ \t]+(?:static|readonly|const|new))*"
+    r"[ \t]+(?P<type>[A-Za-z_][\w.]*\??)"
+    r"[ \t]+(?P<name>[A-Za-z_]\w*)[ \t]*(?:=[^=]|;)")
+
+
+def _field_type_norm(raw: str) -> str:
+    """`UnityEngine.AudioSource` -> `AudioSource`; drops a nullable `?`."""
+    t = (raw or "").strip().rstrip("?")
+    return t.rsplit(".", 1)[-1]
+
+
+@lru_cache(maxsize=64)
+def template_field_types(template_dir: str, variant: str = "",
+                         facts: "tuple[tuple[str, str], ...]" = ()
+                         ) -> "dict[str, str]":
+    """`{field_name: declared_type}` for fields the micro's templates declare.
+
+    Ground truth for `find_field_type_misuse` below, the same way
+    `template_method_arities` is ground truth for a call's argument count. A
+    name declared twice with two different types (two sibling classes in the
+    same micro folder reusing a field name) is dropped — ambiguous, so never
+    grounds to accuse either type.
+    """
+    seen: "dict[str, str]" = {}
+    clash: set[str] = set()
+    for line in _template_text(template_dir, variant, facts).splitlines():
+        if _TYPE_DECL_RE.search(line):
+            continue
+        m = _TEMPLATE_FIELD_DECL_RE.match(line)
+        if not m:
+            continue
+        t = _field_type_norm(m.group("type"))
+        name = m.group("name")
+        if name in seen and seen[name] != t:
+            clash.add(name)
+        else:
+            seen[name] = t
+    for name in clash:
+        seen.pop(name, None)
+    return seen
 
 
 def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
@@ -3651,7 +3711,8 @@ _ELSE_HEAD_RE = re.compile(r'^[ \t]*(?:\}[ \t]*)?else\b')
 
 
 def _stub_if_head(line: str, names: "list[str] | set[str]", *,
-                  followed_by_else: bool) -> "str | None":
+                  followed_by_else: bool,
+                  reason: str = "unbindable reference(s)") -> "str | None":
     """`if (cond) stmt;` → `if (false) { }`, keeping the if/else chain intact."""
     if not followed_by_else:
         return None
@@ -3660,7 +3721,7 @@ def _stub_if_head(line: str, names: "list[str] | set[str]", *,
         return None
     kw = re.sub(r"[ \t]+", " ", m.group("kw"))
     return (f"{m.group('indent')}{m.group('lead') or ''}{kw} (false) {{ }} "
-            f"// AUDIT: removed unbindable reference(s) "
+            f"// AUDIT: removed {reason} "
             f"{', '.join(sorted(names))} -- {line.strip()}")
 
 
@@ -3684,24 +3745,21 @@ def _governed_body_line(lines: "list[str]", i: int) -> int:
     return -1
 
 
-def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
-                             arities: "dict[str, tuple[int, int]] | None" = None,
-                             params: "dict[str, tuple[str, ...]] | None" = None,
-                             signature: str = ""
-                             ) -> "tuple[str, set[str]]":
-    """Neutralize statements referencing an identifier that cannot bind.
+def _neutralize_flagged_lines(text: str, bad: "dict[int, set[str]]", *,
+                              reason: str = "unbindable reference(s)"
+                              ) -> "tuple[str, set[str]]":
+    """Apply the shared three-way repair to every line `bad` names: comment
+    out a complete self-terminating statement, swap an `if`/`while`
+    condition for `false` when the statement spans lines, or leave the line
+    alone entirely when neither is safe — because a repair that trades one
+    compile error for a parse error has not repaired anything.
 
-    Returns `(text, flagged_names)`. Same three-way strategy as every other
-    `lint_*` pass here: comment out a complete self-terminating statement,
-    swap an `if`/`while` condition for `false` when the statement spans lines,
-    and leave a line alone entirely when neither is safe — with the two
-    structure-preserving cases above, because a repair that trades CS0103 for a
-    parse error has not repaired anything.
+    Shared by every `lint_*` pass in this module that flags whole LINES
+    rather than proposing its own rewrite: unbound identifiers (CS0103/
+    CS1061/CS7036) and template-field type misuse (CS1061/CS1503) both
+    reduce to this same problem once they've located the bad line. `reason`
+    only changes the wording of the AUDIT comment left behind.
     """
-    bad = find_unbound_identifiers(text, known=known, arities=arities,
-                                   params=params, signature=signature)
-    if not bad:
-        return text, set()
     lines = text.splitlines()
     out: list[str] = []
     flagged: set[str] = set()
@@ -3719,7 +3777,8 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
             return True
         return (bool(bad.get(j)) and _safe_to_comment_out(lines[j])
                 and _stub_if_head(lines[j], bad[j],
-                                  followed_by_else=_next_is_else(j)) is None)
+                                  followed_by_else=_next_is_else(j),
+                                  reason=reason) is None)
 
     for i, line in enumerate(lines):
         names = bad.get(i)
@@ -3740,16 +3799,169 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                 disabled += " { }"
             out.append(disabled)
             continue
-        stub = _stub_if_head(line, names, followed_by_else=_next_is_else(i))
+        stub = _stub_if_head(line, names, followed_by_else=_next_is_else(i),
+                             reason=reason)
         if stub is not None:
             flagged.update(names)
             out.append(stub)
             continue
         flagged.update(names)
         indent = line[: len(line) - len(line.lstrip())]
-        out.append(f"{indent}// AUDIT: removed unbindable reference(s) "
+        out.append(f"{indent}// AUDIT: removed {reason} "
                    f"{', '.join(sorted(names))} -- {line.strip()}")
     return "\n".join(out), flagged
+
+
+def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
+                             arities: "dict[str, tuple[int, int]] | None" = None,
+                             params: "dict[str, tuple[str, ...]] | None" = None,
+                             signature: str = ""
+                             ) -> "tuple[str, set[str]]":
+    """Neutralize statements referencing an identifier that cannot bind.
+
+    Returns `(text, flagged_names)`. Same three-way strategy as every other
+    `lint_*` pass here: comment out a complete self-terminating statement,
+    swap an `if`/`while` condition for `false` when the statement spans lines,
+    and leave a line alone entirely when neither is safe — with the two
+    structure-preserving cases above, because a repair that trades CS0103 for a
+    parse error has not repaired anything.
+    """
+    bad = find_unbound_identifiers(text, known=known, arities=arities,
+                                   params=params, signature=signature)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(text, bad)
+
+
+# ── Template-field type misuse (CS1061 / CS1503) ─────────────────────────────
+# The unbound-identifier pass above proves an identifier BINDS; it never asks
+# what binding to it actually means. `_music.PickClip(...)` binds — `_music`
+# is a real template field — and ships anyway, because `_music`'s own
+# declared type (AudioSource) is never consulted. Same failure shape as the
+# GTA member checker earlier in this module (`find_invalid_member_refs`), on
+# the Unity side: an authored fragment invents a member call or an assignment
+# the RECEIVER's own declared type cannot support. Hit live on a compose
+# build (AutomatonCitadel), three separate micros, all the same shape:
+#
+#   AudioManager.cs(119)  _sparkSource.Play(_music.PickClip("brass_spark"))
+#       — `_music` is the template's OWN `private AudioSource _music;`;
+#       `PickClip()` is a real, zero-argument method — on `AudioCue`, an
+#       unrelated class the same template folder also declares. CS1061.
+#   PlayerHealth.cs(62)   if (_lastHit != null && _lastHit.CompareTag("Cog"))
+#       — `_lastHit` is the template's own invulnerability-timer float, used
+#       correctly elsewhere as `Time.time - _lastHit`. CS1061.
+#   LightingDirector.cs(242)  ambientGround = Mathf.Lerp(ambientGround, ...);
+#       — `ambientGround` is `[SerializeField] private Color ambientGround`.
+#       Mathf.Lerp always returns float. CS1503.
+#
+# Three cases are judged, each requiring the field's type to be read straight
+# off the template (never guessed):
+#
+#   (a) MEMBER CALL on a primitive-typed field. A float/int/bool/... field has
+#       no members beyond the handful every value type carries
+#       (`_MEMBER_ALWAYS_OK`) plus `CompareTo` — calling anything else on one
+#       is unconditionally wrong, whatever the name.
+#   (b) MEMBER CALL against a small, hand-verified Unity component surface
+#       (`_UNITY_FIELD_TYPE_SURFACE`) — never a guess at the rest of a type's
+#       real API. AudioSource is the only entry today, because it is the one
+#       that shipped a real build; add another type here only once its listed
+#       surface has been checked against the real Unity API, the same
+#       discipline `_MEMBER_VAR_TYPES` follows for GTA types above.
+#   (c) ASSIGNMENT of a provably numeric expression into a struct field with
+#       no implicit numeric conversion (Color, Vector2/3/4, Quaternion).
+_NUMERIC_BOOL_TYPES = _PRIMITIVE_TYPES - {"string"}
+_STRUCT_NO_NUMERIC_CONVERSION = frozenset({
+    "color", "color32", "vector2", "vector3", "vector4", "quaternion",
+})
+_UNITY_FIELD_TYPE_SURFACE: "dict[str, frozenset[str]]" = {
+    "audiosource": frozenset({
+        "Play", "PlayOneShot", "PlayDelayed", "PlayScheduled", "Stop", "Pause",
+        "UnPause", "Mute", "SetScheduledStartTime", "SetScheduledEndTime",
+        "clip", "volume", "pitch", "loop", "mute", "playOnAwake", "isPlaying",
+        "time", "timeSamples", "outputAudioMixerGroup", "spatialBlend",
+        "spatialize", "priority", "panStereo", "reverbZoneMix", "bypassEffects",
+        "bypassListenerEffects", "bypassReverbZones", "dopplerLevel", "spread",
+        "minDistance", "maxDistance", "rolloffMode", "ignoreListenerVolume",
+        "ignoreListenerPause", "velocityUpdateMode",
+    }),
+}
+
+_FIELD_MEMBER_CALL_RE = re.compile(
+    r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)\.(?P<member>[A-Za-z_]\w*)\s*\(")
+_FIELD_ASSIGN_RE = re.compile(
+    r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)[ \t]*"
+    r"(?P<op>\+=|-=|\*=|/=|(?<![=!<>])=(?!=))"
+    r"[ \t]*(?P<rhs>[^;\n]+);")
+
+
+def find_field_type_misuse(text: str, *, field_types: "dict[str, str]",
+                           signature: str = "") -> "dict[int, set[str]]":
+    """`{line_index: {description, ...}}` for statements that use a
+    TEMPLATE-declared field in a way its own declared type cannot support —
+    see the module comment above for the three cases judged.
+
+    `field_types` maps field name -> declared type, read off the micro's own
+    template (`template_field_types`). A name the fragment or its own
+    signature redeclares (a local/parameter shadowing the field) is never
+    judged here — that binding is not the template's field at all.
+    """
+    if not text or not field_types:
+        return {}
+    mask = _code_mask(text)
+    shadowed = _fragment_declares(text) | _signature_param_names(signature)
+    bad: "dict[int, set[str]]" = {}
+
+    def flag(pos: int, msg: str) -> None:
+        bad.setdefault(text.count("\n", 0, pos), set()).add(msg)
+
+    for m in _FIELD_MEMBER_CALL_RE.finditer(text):
+        if not mask[m.start("recv")]:
+            continue
+        recv, member = m.group("recv"), m.group("member")
+        if recv in shadowed or member in _MEMBER_ALWAYS_OK:
+            continue
+        ftype = field_types.get(recv)
+        if ftype is None:
+            continue
+        base = ftype.lower()
+        if base in _NUMERIC_BOOL_TYPES:
+            if member != "CompareTo":
+                flag(m.start("recv"), f"{recv}.{member}() -- {recv} is "
+                                      f"{ftype}, which has no such member")
+            continue
+        surface = _UNITY_FIELD_TYPE_SURFACE.get(base)
+        if surface is not None and member not in surface:
+            flag(m.start("recv"), f"{recv}.{member}() -- {recv} is "
+                                  f"{ftype}, which has no such member")
+
+    locals_: "dict[str, str] | None" = None
+    for m in _FIELD_ASSIGN_RE.finditer(text):
+        if not mask[m.start("recv")]:
+            continue
+        recv = m.group("recv")
+        if recv in shadowed:
+            continue
+        ftype = field_types.get(recv)
+        if ftype is None or ftype.lower() not in _STRUCT_NO_NUMERIC_CONVERSION:
+            continue
+        if locals_ is None:
+            locals_ = _declared_types(signature + "\n" + text)
+        got = _expression_type(m.group("rhs").strip(), locals_)
+        if got in ("int", "float", "double", "bool"):
+            flag(m.start("recv"), f"{recv} {m.group('op')} ... -- {recv} is "
+                                  f"{ftype}, value is {got}")
+    return bad
+
+
+def lint_field_type_misuse(text: str, *, field_types: "dict[str, str]",
+                           signature: str = "") -> "tuple[str, set[str]]":
+    """Neutralize statements that use a template field in a way its declared
+    type cannot support. Same three-way repair strategy as every other
+    `lint_*` pass here — see `_neutralize_flagged_lines`."""
+    bad = find_field_type_misuse(text, field_types=field_types, signature=signature)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(text, bad, reason="type-incompatible use(s)")
 
 
 def _body_is_live(body: str) -> bool:
@@ -3997,6 +4209,7 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     base.discard(_JINJA_PLACEHOLDER)
     arities = template_method_arities(tdir, var, facts)
     params  = template_method_params(tdir, var, facts)
+    field_types = template_field_types(tdir, var, facts)
     flagged: set[str] = set()
     dropped: list[str] = []
     returned: list[str] = []
@@ -4038,6 +4251,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             after, names = lint_unbound_identifiers(before, known=known,
                                                     arities=live_arities,
                                                     params=params)
+            after, names2 = lint_field_type_misuse(after, field_types=field_types)
+            names = names | names2
             if names:
                 setattr(schema, key, after)
                 flagged |= names
@@ -4046,10 +4261,13 @@ def bind_authored_code(schema, template_dir) -> list[str]:
         surviving: list = []
         for m in methods:
             body = getattr(m, "body", "") or ""
+            sig = getattr(m, "signature", "") or ""
             after, names = lint_unbound_identifiers(
-                body, known=known | _signature_param_names(getattr(m, "signature", "")),
-                arities=live_arities, params=params,
-                signature=getattr(m, "signature", "") or "")
+                body, known=known | _signature_param_names(sig),
+                arities=live_arities, params=params, signature=sig)
+            after, names2 = lint_field_type_misuse(after, field_types=field_types,
+                                                   signature=sig)
+            names = names | names2
             if names:
                 flagged |= names
                 changed = True
@@ -4077,8 +4295,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
 
     msgs: list[str] = []
     if flagged:
-        msgs.append(f"neutralized {len(flagged)} unbindable reference(s) in "
-                    f"authored C# (CS0103/CS1061/CS7036): "
+        msgs.append(f"neutralized {len(flagged)} unbindable/type-incompatible "
+                    f"reference(s) in authored C# (CS0103/CS1061/CS7036/CS1503): "
                     f"{', '.join(sorted(flagged))}")
     if dropped:
         msgs.append(f"dropped {len(dropped)} authored method(s) left with no "
@@ -4114,6 +4332,22 @@ def harden_against_template(schema, template_dir, *, engine: str = "unity") -> l
     judging its identifiers against Unity's scope would accuse `Tick` and
     `Interval` of not existing. It abstains there rather than guessing; the GTA
     path keeps its own `lint_hash_references`/`lint_member_references` passes.
+
+    `_KNOWN_SYMBOLS` deliberately excludes "GameContext" and every composed
+    sibling class name (PlayerHealth, PauseMenu, ...): this pass only ever
+    sees ONE micro's own template, never the composed project around it, so it
+    has no ground truth for what `GameContext.Instance.Get<T>()` may legally
+    resolve to here. That is not a gap to close — `enrich_subsystems`
+    (src/unity_micro_code.py, the Step 3.5 prompt for hud/menu/saveload/etc.)
+    never tells a micro-generator kind that GameContext exists; that guidance
+    (`GAMECONTEXT_SCHEMA_GUIDANCE` in src/unity_prompts.py, and the sibling
+    lookup table built by `_script_contract`) is shown only to `type: custom`
+    scripts via `enrich_scripts`. So a micro-generator's authored code should
+    never legitimately contain a GameContext call, and this pass is correct to
+    strip one on sight. If a future prompt change ever offers GameContext to
+    micro-generator kinds too, this set — and the composed-project context
+    `harden()` would need threaded in to validate the call instead of just
+    admitting it — must grow to match.
     """
     reserved = {n.lower() for n in template_members(str(template_dir))}
     msgs: list[str] = []
