@@ -4291,6 +4291,22 @@ def harden_against_template(schema, template_dir, *, engine: str = "unity") -> l
     judging its identifiers against Unity's scope would accuse `Tick` and
     `Interval` of not existing. It abstains there rather than guessing; the GTA
     path keeps its own `lint_hash_references`/`lint_member_references` passes.
+
+    `_KNOWN_SYMBOLS` deliberately excludes "GameContext" and every composed
+    sibling class name (PlayerHealth, PauseMenu, ...): this pass only ever
+    sees ONE micro's own template, never the composed project around it, so it
+    has no ground truth for what `GameContext.Instance.Get<T>()` may legally
+    resolve to here. That is not a gap to close — `enrich_subsystems`
+    (src/unity_micro_code.py, the Step 3.5 prompt for hud/menu/saveload/etc.)
+    never tells a micro-generator kind that GameContext exists; that guidance
+    (`GAMECONTEXT_SCHEMA_GUIDANCE` in src/unity_prompts.py, and the sibling
+    lookup table built by `_script_contract`) is shown only to `type: custom`
+    scripts via `enrich_scripts`. So a micro-generator's authored code should
+    never legitimately contain a GameContext call, and this pass is correct to
+    strip one on sight. If a future prompt change ever offers GameContext to
+    micro-generator kinds too, this set — and the composed-project context
+    `harden()` would need threaded in to validate the call instead of just
+    admitting it — must grow to match.
     """
     reserved = {n.lower() for n in template_members(str(template_dir))}
     msgs: list[str] = []
