@@ -12,7 +12,7 @@ from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, csharp_ident, lint_extensible, clamp_enum,
-    UNITY_EXTRA_INSTRUCTIONS,
+    neutralize_unavailable_names, UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -246,8 +246,18 @@ class HUDPipeline(UnityMicroPipeline):
         "full_hud_bundle":    {"healthbar", "ammotext", "scoretext",
                                "mapimage", "mapcamera"},
     }
-    # Declared on every variant, both backends.
-    _ALWAYS_FIELDS = {"document", "_root"}
+    # Declared ONLY when backend == "UIToolkit" (HUD.cs.j2's UI Toolkit
+    # branch is a sibling of the uGUI branch that owns _VARIANT_FIELDS below,
+    # never both at once — the name used to claim "every variant, both
+    # backends", which was backwards: under backend == "uGUI" neither
+    # `document` nor `_root` is declared at all. See default_fix, which now
+    # also strips any LLM-authored reference to whichever set the schema's
+    # actual backend didn't pick — the collision check below predates that
+    # fix and is not itself what caught the live bug (widget field names
+    # always carry a Bar/Label/... suffix, so they can never equal these
+    # bare names; kept for the variant-field half of the union, which does
+    # matter).
+    _UITOOLKIT_FIELDS = {"document", "_root"}
 
     def _lint_widgets(self, schema, variant) -> list[str]:
         """Drop widgets that cannot compile alongside the variant baseline, and
@@ -255,7 +265,10 @@ class HUDPipeline(UnityMicroPipeline):
         caller can report exactly what was dropped instead of silently shrinking
         the HUD."""
         owned_setters = self._VARIANT_SETTERS.get(variant, set())
-        owned_fields = self._ALWAYS_FIELDS | self._VARIANT_FIELDS.get(variant, set())
+        # uGUI and UI Toolkit fields are mutually exclusive in the template —
+        # union them only for whichever backend the schema actually resolved to.
+        owned_fields = (self._UITOOLKIT_FIELDS if schema.backend == "UIToolkit"
+                        else self._VARIANT_FIELDS.get(variant, set()))
         kept: list[HudWidget] = []
         seen_fields: set[str] = set()
         seen_setters: set[str] = set()
@@ -295,6 +308,16 @@ class HUDPipeline(UnityMicroPipeline):
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
+        # `reserved_fields` above only ever guarded against the LLM DECLARING
+        # a colliding field name — it never guaranteed `document`/`_root` (or
+        # a uGUI variant's own refs) actually EXIST for the backend this
+        # schema resolved to. Strip whichever half the LLM wasn't entitled to
+        # (hit live: a uGUI-backend HUD whose awake_extra/extra_methods
+        # referenced `_root` — CS0103, since HUD.cs.j2 only declares it under
+        # backend == "UIToolkit").
+        unavailable = (self._VARIANT_FIELDS.get(variant, set())
+                       if schema.backend == "UIToolkit" else self._UITOOLKIT_FIELDS)
+        neutralize_unavailable_names(schema, unavailable)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

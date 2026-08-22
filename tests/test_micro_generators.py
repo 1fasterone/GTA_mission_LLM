@@ -783,6 +783,31 @@ def test_saveload_auto_declares_data_fields_referenced_by_extra_code(dummy_confi
     assert "ToString" not in {f.name for f in s2.data_fields}
 
 
+def test_saveload_strips_invented_data_method_call(dummy_config):
+    # Live shape: SaveData.cs.j2 emits Data as a plain [Serializable] POCO —
+    # fields only, never a method — but the LLM sometimes treats it like
+    # PlayerPrefs and calls Data.GetFloat("volume"): CS1061, since GetFloat
+    # is not a real System.Object member and Data has no methods of its own.
+    p = SaveLoadPipeline(dummy_config)
+    s = SaveLoadSchema(
+        name="X", variant="json_file", data_fields=[],
+        awake_extra='float v = Data.GetFloat("volume");',
+    )
+    s = p.default_fix(s, "json_file")
+    assert "GetFloat" not in s.awake_extra.split("// AUDIT:")[0]
+    assert "GetFloat" not in {f.name for f in s.data_fields}
+
+
+def test_saveload_real_object_method_on_data_survives(dummy_config):
+    p = SaveLoadPipeline(dummy_config)
+    s = SaveLoadSchema(
+        name="X", variant="json_file", data_fields=[],
+        awake_extra="Debug.Log(Data.Equals(null));",
+    )
+    s = p.default_fix(s, "json_file")
+    assert "Data.Equals(null)" in s.awake_extra
+
+
 @pytest.mark.parametrize("variant", SaveLoadPipeline.variants)
 def test_saveload_renders_every_variant(tmp_path, dummy_config, variant):
     p = SaveLoadPipeline(dummy_config)
@@ -938,6 +963,34 @@ def test_menu_fixer_injects_default_items(dummy_config):
     p = MenuPipeline(dummy_config)
     s = p.default_fix(MenuSchema(name="X", variant="main_menu", items=[]), "main_menu")
     assert s.items, "fixer should inject default menu items"
+
+
+def test_menu_root_reference_stripped_on_ugui_backend(dummy_config):
+    # Menu.cs.j2 declares `_root` only under backend == "UIToolkit" — same
+    # mutually-exclusive-branches shape as HUD.cs.j2. A uGUI-backend reference
+    # is a guaranteed CS0103; only the "// AUDIT:" trail may still mention it.
+    p = MenuPipeline(dummy_config)
+    s = p.default_fix(MenuSchema(
+        name="X", variant="pause_menu", backend="uGUI",
+        update_extra="if (_root != null) _root.style.opacity = 1f;"), "pause_menu")
+    assert "_root" not in s.update_extra.split("// AUDIT:")[0]
+
+
+def test_menu_root_reference_survives_on_uitoolkit_backend(dummy_config):
+    p = MenuPipeline(dummy_config)
+    s = p.default_fix(MenuSchema(
+        name="X", variant="pause_menu", backend="UIToolkit",
+        update_extra="if (_root != null) _root.style.opacity = 1f;"), "pause_menu")
+    assert "_root.style.opacity = 1f" in s.update_extra
+    assert "AUDIT" not in s.update_extra
+
+
+def test_menu_ugui_field_reference_stripped_on_uitoolkit_backend(dummy_config):
+    p = MenuPipeline(dummy_config)
+    s = p.default_fix(MenuSchema(
+        name="X", variant="pause_menu", backend="UIToolkit",
+        update_extra="if (panel != null) panel.alpha = 1f;"), "pause_menu")
+    assert "panel.alpha" not in s.update_extra.split("// AUDIT:")[0]
 
 
 @pytest.mark.parametrize("variant", MenuPipeline.variants)

@@ -377,6 +377,80 @@ def test_composed_call_sanitization_reaches_the_rendered_cs(tmp_path):
     assert "Die()" not in src
 
 
+# ── invented-type construction — sanitize_subsystem_invented_constructors ─────
+# Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) — ShaderPass
+# is not a real Unity/URP type, invisible to every existing check because it
+# never touches a declared field (that's _sanitize_stub_type_usage's job).
+
+def test_invented_constructor_call_is_stripped():
+    from src.unity_micro_code import sanitize_subsystem_invented_constructors
+    sub = _trigger_sub(
+        update_extra="Graphics.Blit(source, dest, new ShaderPass(profile), 0);")
+    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
+    assert any("trigger" in m for m in msgs)
+    assert "ShaderPass" not in sub.options["update_extra"]
+
+
+def test_real_unity_constructor_survives():
+    from src.unity_micro_code import sanitize_subsystem_invented_constructors
+    sub = _trigger_sub(update_extra="var v = new Vector3(1f, 2f, 3f);")
+    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
+    assert msgs == []
+    assert "new Vector3" in sub.options["update_extra"]
+
+
+def test_composed_class_constructor_survives():
+    # A subsystem constructing a POCO whose type name happens to match a real
+    # composed sibling class must not be flagged — it already resolves.
+    from src.unity_micro_code import sanitize_subsystem_invented_constructors
+    sub = _trigger_sub(update_extra="var h = new PlayerHealth();")
+    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
+    assert msgs == []
+    assert "new PlayerHealth" in sub.options["update_extra"]
+
+
+def test_invented_constructor_checked_inside_extra_methods_dict_shape():
+    from src.unity_micro_code import sanitize_subsystem_invented_constructors
+    sub = _trigger_sub(extra_methods=[
+        {"signature": "private void OnEnter()",
+         "body": "Graphics.Blit(source, dest, new ShaderPass(profile), 0);"},
+    ])
+    sanitize_subsystem_invented_constructors([sub], [_health_unit()])
+    assert "ShaderPass" not in sub.options["extra_methods"][0]["body"]
+
+
+# ── GetComponent-family arity — sanitize_subsystem_builtin_call_arity ─────────
+# Live shape: TeaBreakObjectives called GetComponent<T>() with an argument
+# count that overload doesn't have — CS1501, invisible to every other check
+# since GetComponent is always exempted as a legitimate name.
+
+def test_get_component_wrong_arity_is_stripped():
+    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
+    sub = _trigger_sub(
+        update_extra="var rb = GetComponent<Rigidbody>(gameObject, true);")
+    msgs = sanitize_subsystem_builtin_call_arity([sub])
+    assert any("trigger" in m for m in msgs)
+    assert "GetComponent" not in sub.options["update_extra"]
+
+
+def test_get_component_valid_arity_survives():
+    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
+    sub = _trigger_sub(update_extra="var rb = GetComponent<Rigidbody>();")
+    msgs = sanitize_subsystem_builtin_call_arity([sub])
+    assert msgs == []
+    assert "GetComponent<Rigidbody>()" in sub.options["update_extra"]
+
+
+def test_get_component_wrong_arity_checked_inside_extra_methods_dict_shape():
+    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
+    sub = _trigger_sub(extra_methods=[
+        {"signature": "private void OnEnter()",
+         "body": "var rb = GetComponent<Rigidbody>(gameObject, true);"},
+    ])
+    sanitize_subsystem_builtin_call_arity([sub])
+    assert "GetComponent" not in sub.options["extra_methods"][0]["body"]
+
+
 # ── the wiring invariant ──────────────────────────────────────────────────────
 
 def test_enrichment_cannot_move_a_guid_class_name_or_file_id():

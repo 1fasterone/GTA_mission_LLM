@@ -1368,7 +1368,9 @@ class UnityPipeline:
             # turn every call into a swallowed failure).
             from .unity_micro_code import (enrich_subsystems, merge_authored_code,
                                            sync_microgens_from_subsystems,
-                                           sanitize_subsystem_composed_calls)
+                                           sanitize_subsystem_composed_calls,
+                                           sanitize_subsystem_invented_constructors,
+                                           sanitize_subsystem_builtin_call_arity)
             if micro_code and not no_llm:
                 # The tags TagManager will actually define. Handed to the author
                 # because GameObject.FindGameObjectWithTag THROWS on an undefined
@@ -1407,6 +1409,15 @@ class UnityPipeline:
             # composed class's verified public API (src/unity_generator.py
             # _COMPOSED_CLASS_API).
             for msg in sanitize_subsystem_composed_calls(subsystems, composed_units):
+                self._fix(msg)
+            # Same isolation gap as above, for a type the subsystem invented
+            # outright (`new ShaderPass(...)`) rather than a bad member on a
+            # real composed class — see _sanitize_invented_constructor_calls.
+            for msg in sanitize_subsystem_invented_constructors(subsystems, composed_units):
+                self._fix(msg)
+            # Same isolation gap, for GetComponent-family calls made with an
+            # argument count their real overloads don't have.
+            for msg in sanitize_subsystem_builtin_call_arity(subsystems):
                 self._fix(msg)
             # See sync_microgens_from_subsystems' own docstring: this is what lets
             # a later no-LLM `unity-validate --compose` recover this run's

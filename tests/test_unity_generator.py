@@ -2298,6 +2298,71 @@ class TestComposedClassApiCoverage:
         _sanitize_composed_component_calls(s, [self._unit("PlayerController")])
         assert "pc.CurrentSpeed" in s.update_extra
 
+    def test_lighting_director_member_validated(self):
+        # LightingDirector was advertised in GAMECONTEXT_SCHEMA_GUIDANCE as
+        # Get<T>()-able with no entry in _COMPOSED_CLASS_API — any invented
+        # member on it was invisible to every check.
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<LightingDirector>()?.SetTimeOfDay(0.5f);")
+        _sanitize_composed_component_calls(s, [self._unit("LightingDirector")])
+        assert "SetTimeOfDay" not in s.update_extra
+
+    def test_lighting_director_real_member_kept(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<LightingDirector>()?.Apply();")
+        _sanitize_composed_component_calls(s, [self._unit("LightingDirector")])
+        assert "Apply()" in s.update_extra
+
+    def test_composed_class_api_covers_every_gamecontext_advertised_type(self):
+        # Regression guard for exactly the drift LightingDirector hit: every
+        # class name GAMECONTEXT_SCHEMA_GUIDANCE tells the LLM it may Get<T>()
+        # must have a _COMPOSED_CLASS_API entry, or an invented member on it
+        # silently reaches Unity untouched. GameManager is advertised via a
+        # separate sentence/mechanism (GameManager.Instance, validated by
+        # _sanitize_singleton_calls) and is deliberately excluded here.
+        import re
+        from src.unity_generator import _COMPOSED_CLASS_API
+        from src.unity_prompts import GAMECONTEXT_SCHEMA_GUIDANCE
+        m = re.search(
+            r"Composed subsystem types you may Get<T>\(\):\s*(.+?)\.\s*\n",
+            GAMECONTEXT_SCHEMA_GUIDANCE, re.DOTALL)
+        assert m, "GAMECONTEXT_SCHEMA_GUIDANCE's advertised-types sentence moved or was reworded"
+        listed = m.group(1).replace("\n", " ")
+        listed = re.sub(r"\(plus\s+GameManager\)", "", listed)
+        names = {n.strip() for n in listed.split(",") if n.strip()}
+        missing = names - set(_COMPOSED_CLASS_API)
+        assert not missing, f"advertised but unverified in _COMPOSED_CLASS_API: {missing}"
+
+    def test_arity_mismatch_zero_args_stripped(self):
+        # Live bug: PauseMenu.Activate() called with none of its 1 required
+        # arg — a real member, wrong arity, invisible to a name-only check.
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<PauseMenu>()?.Activate();")
+        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
+        assert "Activate" not in s.update_extra
+
+    def test_arity_match_survives(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script('GameContext.Instance.Get<PauseMenu>()?.Activate("Play");')
+        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
+        assert 'Activate("Play")' in s.update_extra
+
+    def test_var_bound_arity_mismatch_stripped(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            "var menu = GameContext.Instance.Get<PauseMenu>(); "
+            "if (menu != null) { menu.Activate(); }")
+        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
+        assert "Activate" not in s.update_extra
+
+    def test_var_bound_arity_match_survives(self):
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            "var menu = GameContext.Instance.Get<PauseMenu>(); "
+            'if (menu != null) { menu.Activate("Resume"); }')
+        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
+        assert 'Activate("Resume")' in s.update_extra
+
 
 # ── _sanitize_field_typed_member_calls: field-declared cross-reference type ──
 # (binding and call site split across two methods; the per-body getter-chain
@@ -2370,6 +2435,127 @@ class TestFieldTypedMemberCalls:
         custom_api = _custom_script_api([dialogue, shrine])
         _sanitize_field_typed_member_calls(shrine, custom_api, [])
         assert "TriggerBeat" not in shrine.extra_methods[0].body
+
+    def test_field_typed_arity_mismatch_stripped(self):
+        # Same split-method shape as the SaveShrineTrigger cases above, but
+        # the member IS real on PauseMenu (Activate) — only the argument
+        # count is wrong, the defect _COMPOSED_METHOD_ARITY exists to catch.
+        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="ShrineMenuTrigger", type="custom", description="d",
+            extra_fields=[{"name": "_menu", "type": "PauseMenu", "default": None}],
+            awake_extra="_menu = GameContext.Instance.Get<PauseMenu>();",
+            extra_methods=[{
+                "signature": "public void ActivateShrine()",
+                "body": "if (_menu != null) _menu.Activate();",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("PauseMenu")])
+        assert "Activate" not in s.extra_methods[0].body
+
+    def test_field_typed_arity_match_survives(self):
+        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="ShrineMenuTrigger", type="custom", description="d",
+            extra_fields=[{"name": "_menu", "type": "PauseMenu", "default": None}],
+            awake_extra="_menu = GameContext.Instance.Get<PauseMenu>();",
+            extra_methods=[{
+                "signature": "public void ActivateShrine()",
+                "body": '_menu.Activate("Resume");',
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("PauseMenu")])
+        assert 'Activate("Resume")' in s.extra_methods[0].body
+
+    def test_invented_constructor_call_is_stripped(self):
+        # Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) —
+        # ShaderPass is not a real Unity/URP type, and it never touches a
+        # declared field so _sanitize_stub_type_usage never sees it.
+        from src.unity_generator import _sanitize_invented_constructor_calls
+        s = UnityScript(
+            name="PostFxTrigger", type="custom", description="d",
+            update_extra="Graphics.Blit(source, dest, new ShaderPass(profile), 0);",
+        )
+        _sanitize_invented_constructor_calls(s)
+        assert "ShaderPass" not in s.update_extra
+
+    def test_invented_constructor_survives_when_builtin(self):
+        from src.unity_generator import _sanitize_invented_constructor_calls
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="transform.position = new Vector3(1f, 0f, 0f);")
+        _sanitize_invented_constructor_calls(s)
+        assert "new Vector3" in s.update_extra
+
+    def test_invented_constructor_survives_when_known_project_type(self):
+        from src.unity_generator import _sanitize_invented_constructor_calls
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var log = new AuditLog();")
+        _sanitize_invented_constructor_calls(s, known_types=frozenset({"AuditLog"}))
+        assert "new AuditLog" in s.update_extra
+
+    def test_invented_constructor_survives_manager_suffix(self):
+        # Same exemption _stub_type_names applies: *Manager/*System/
+        # *Controller/*Handler are expected separate scripts this pass
+        # cannot see the full project roster of.
+        from src.unity_generator import _sanitize_invented_constructor_calls
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var mgr = new OxygenManager();")
+        _sanitize_invented_constructor_calls(s)
+        assert "new OxygenManager" in s.update_extra
+
+    def test_get_component_wrong_arity_stripped(self):
+        # Live shape: GetComponent<T>() called with an extra argument that
+        # overload doesn't have — CS1501, invisible to every other check
+        # because GetComponent is always exempted as a legitimate name.
+        from src.unity_generator import _sanitize_builtin_component_call_arity
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var rb = GetComponent<Rigidbody>(gameObject, true);")
+        _sanitize_builtin_component_call_arity(s)
+        assert "GetComponent" not in s.update_extra
+
+    def test_get_component_zero_args_survives(self):
+        from src.unity_generator import _sanitize_builtin_component_call_arity
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var rb = GetComponent<Rigidbody>();")
+        _sanitize_builtin_component_call_arity(s)
+        assert "GetComponent<Rigidbody>()" in s.update_extra
+
+    def test_get_component_in_children_bool_arg_survives(self):
+        from src.unity_generator import _sanitize_builtin_component_call_arity
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var rb = GetComponentInChildren<Rigidbody>(true);")
+        _sanitize_builtin_component_call_arity(s)
+        assert "GetComponentInChildren<Rigidbody>(true)" in s.update_extra
+
+    def test_try_get_component_out_param_survives(self):
+        from src.unity_generator import _sanitize_builtin_component_call_arity
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="if (TryGetComponent<Rigidbody>(out var rb)) { }")
+        _sanitize_builtin_component_call_arity(s)
+        assert "TryGetComponent<Rigidbody>(out var rb)" in s.update_extra
+
+    def test_field_typed_hud_arity_mismatch_stripped(self):
+        # Same defect through the hud_api branch (per-project setter list
+        # overrides the static membership table for hud kind, but arity
+        # still comes from _COMPOSED_METHOD_ARITY either way).
+        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
+        from src.unity_compose import ComposedUnit
+        hud_unit = ComposedUnit(kind="hud", variant="health_bar", class_name="GameHud",
+                                 guid="g", target="world", setters=["SetHealth"])
+        s = UnityScript(
+            name="ArenaHudTrigger", type="custom", description="d",
+            extra_fields=[{"name": "_hud", "type": "GameHud", "default": None}],
+            awake_extra="_hud = GameContext.Instance.Get<GameHud>();",
+            extra_methods=[{
+                "signature": "public void OnHit()",
+                "body": "if (_hud != null) _hud.SetHealth(50f);",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_field_typed_member_calls(s, custom_api, [hud_unit])
+        assert "SetHealth" not in s.extra_methods[0].body
 
 
 # ── Undeclared self-reference: bare field/method the script never declared ────

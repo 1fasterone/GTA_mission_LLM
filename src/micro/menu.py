@@ -10,7 +10,8 @@ from pydantic import Field, field_validator
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, lint_extensible, clamp_enum,
+    neutralize_unavailable_names, UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -119,6 +120,14 @@ class MenuPipeline(UnityMicroPipeline):
     _RESERVED_FIELD_NAMES = {
         "buttons", "panel", "document", "_root", "title", "firstscene",
     }
+    # Menu.cs.j2's `buttons`/`panel` (uGUI refs) and `document`/`_root` (UI
+    # Toolkit refs) are declared in mutually exclusive branches of the same
+    # backend if/else — never both. `_RESERVED_FIELD_NAMES` above only ever
+    # blocked the LLM from DECLARING a new field with a colliding name; it
+    # was never a claim that either pair actually exists. See default_fix's
+    # neutralize_unavailable_names call.
+    _UGUI_FIELDS      = {"buttons", "panel"}
+    _UITOOLKIT_FIELDS = {"document", "_root"}
     _TEMPLATE_USINGS = {
         "UnityEngine", "UnityEngine.UI", "UnityEngine.SceneManagement",
         "UnityEngine.UIElements", "System",
@@ -141,6 +150,13 @@ class MenuPipeline(UnityMicroPipeline):
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
+        # Strip whichever half of the backend split the LLM wasn't entitled
+        # to (hit live on HUD's identical shape: a uGUI-backend script
+        # referencing `_root` — CS0103, since Menu.cs.j2 only declares it
+        # under backend == "UIToolkit").
+        unavailable = (self._UGUI_FIELDS if schema.backend == "UIToolkit"
+                       else self._UITOOLKIT_FIELDS)
+        neutralize_unavailable_names(schema, unavailable)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:
