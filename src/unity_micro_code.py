@@ -195,7 +195,8 @@ def _filter_keys(kind: str, raw: object) -> dict:
 # incomplete per-micro `_RESERVED_FIELD_NAMES` sets cannot support.
 from .micro.code_fields import _neutralize_lines
 from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
-                              _extract_base_type, _make_composed_call_stripper)
+                              _extract_base_type, _make_composed_call_stripper,
+                              _strip_invented_constructors, _strip_builtin_call_arity)
 
 _FRAGMENT_KEYS = ("awake_extra", "update_extra", "fixed_update_extra")
 
@@ -580,6 +581,113 @@ def sanitize_subsystem_composed_calls(subsystems: Sequence[Any],
     return msgs
 
 
+def sanitize_subsystem_invented_constructors(subsystems: Sequence[Any],
+                                             composed_units: list | None) -> list[str]:
+    """Strip a subsystem's `new T(...)` construction of a type nobody
+    declares anywhere — the same check `_sanitize_invented_constructor_calls`
+    (src/unity_generator.py) already applies to `schema.scripts` (`type:
+    custom`), extended to cover `schema.microgens` for the same reason
+    `sanitize_subsystem_composed_calls` does: `enrich_subsystems` authors each
+    subsystem's extra_* fields in isolation, with no upstream check against
+    what types actually exist in this project.
+
+    `known_types` here is deliberately narrower than the custom-script call
+    site's (composed micro class names only, no sibling `schema.scripts`
+    names) — the same scope `sanitize_subsystem_composed_calls` already uses
+    for the identical reason: a subsystem cannot address a custom script by
+    name any other way either.
+    """
+    known_types = frozenset(u.class_name for u in (composed_units or []))
+    flagged: set[str] = set()
+    touched = 0
+    for sub in subsystems:
+        opts = sub.options
+        changed = False
+        for key in _FRAGMENT_KEYS:
+            before = opts.get(key)
+            if not isinstance(before, str) or not before:
+                continue
+            after = _strip_invented_constructors(before, known_types)
+            if after != before:
+                opts[key] = after
+                changed = True
+        methods = opts.get("extra_methods")
+        if isinstance(methods, list):
+            new_methods = []
+            for m in methods:
+                if not isinstance(m, dict):
+                    new_methods.append(m)
+                    continue
+                body = m.get("body")
+                if isinstance(body, str) and body:
+                    stripped = _strip_invented_constructors(body, known_types)
+                    if stripped != body:
+                        m = {**m, "body": stripped}
+                        changed = True
+                new_methods.append(m)
+            if changed:
+                opts["extra_methods"] = new_methods
+        if changed:
+            touched += 1
+            flagged.add(sub.kind)
+    msgs: list[str] = []
+    if touched:
+        msgs.append(f"micro-code: stripped statement(s) constructing an invented "
+                    f"type from {touched} subsystem(s) (CS0246): "
+                    f"{', '.join(sorted(flagged))}")
+    return msgs
+
+
+def sanitize_subsystem_builtin_call_arity(subsystems: Sequence[Any]) -> list[str]:
+    """Strip a subsystem's GetComponent-family call (or a sibling —
+    GetComponents/*InChildren/*InParent/TryGetComponent) made with an
+    argument count that method's real overloads don't have — the same check
+    `_sanitize_builtin_component_call_arity` (src/unity_generator.py) already
+    applies to `schema.scripts` (`type: custom`), extended to cover
+    `schema.microgens` for the same isolation reason
+    `sanitize_subsystem_composed_calls` documents: `enrich_subsystems`
+    authors each subsystem in isolation, so nothing upstream ever checked
+    this path either. See `_MB_METHOD_ARITY` for the overload shapes."""
+    flagged: set[str] = set()
+    touched = 0
+    for sub in subsystems:
+        opts = sub.options
+        changed = False
+        for key in _FRAGMENT_KEYS:
+            before = opts.get(key)
+            if not isinstance(before, str) or not before:
+                continue
+            after = _strip_builtin_call_arity(before)
+            if after != before:
+                opts[key] = after
+                changed = True
+        methods = opts.get("extra_methods")
+        if isinstance(methods, list):
+            new_methods = []
+            for m in methods:
+                if not isinstance(m, dict):
+                    new_methods.append(m)
+                    continue
+                body = m.get("body")
+                if isinstance(body, str) and body:
+                    stripped = _strip_builtin_call_arity(body)
+                    if stripped != body:
+                        m = {**m, "body": stripped}
+                        changed = True
+                new_methods.append(m)
+            if changed:
+                opts["extra_methods"] = new_methods
+        if changed:
+            touched += 1
+            flagged.add(sub.kind)
+    msgs: list[str] = []
+    if touched:
+        msgs.append(f"micro-code: stripped GetComponent-family call(s) with an "
+                    f"invalid argument count from {touched} subsystem(s) "
+                    f"(CS1501): {', '.join(sorted(flagged))}")
+    return msgs
+
+
 # ── Supplier B — one focused LLM call per subsystem ───────────────────────────
 
 # UNITY_EXTRA_INSTRUCTIONS is written for str.format() (its JSON braces are
@@ -911,9 +1019,9 @@ def _script_contract(script, siblings: Sequence[Any] = (),
         lines.extend(reachable)
 
     # Only classes this project actually composes, and only the ones with a
-    # verified table entry — an unlisted composed kind (e.g. LightingDirector,
-    # EnemyAI) has no ground truth here and stays unmentioned rather than
-    # guessed at, same restraint `_composed_member_ok` applies at judge time.
+    # verified table entry — an unlisted composed kind (e.g. EnemyAI, VFX) has
+    # no ground truth here and stays unmentioned rather than guessed at, same
+    # restraint `_composed_member_ok` applies at judge time.
     composed_names = sorted({str(getattr(s, "name", "") or "")
                              for s in composed_subsystems} & _COMPOSED_CLASS_API.keys())
     if composed_names:

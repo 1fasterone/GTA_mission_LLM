@@ -12,7 +12,7 @@ from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, CodeField, lint_extensible, lint_fields, clamp_enum,
-    UNITY_EXTRA_INSTRUCTIONS,
+    _neutralize_lines, UNITY_EXTRA_INSTRUCTIONS,
 )
 
 # `Data` is the save payload (SaveSystemData) SaveSystem.cs.j2 always exposes
@@ -27,6 +27,18 @@ from .code_fields import (
 # [Serializable] POCO with no methods, but debug/logging code sometimes
 # calls ToString()/etc. on it) — those aren't missing fields.
 _DATA_FIELD_REF_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\b(?!\s*\()")
+
+# The mirror image of the field-read case above: `Data.Foo(...)` CALL syntax.
+# SaveData.cs.j2 emits ONLY fields, never a method — the class is closed by
+# construction (Step 6 renders it straight from `data_fields`, nothing else
+# ever adds a member) — so every legitimate `Data.<method>(...)` call is one
+# of the four inherited System.Object methods; anything else is invented.
+# Hit-live shape: the LLM treats `Data` like PlayerPrefs and calls
+# `Data.GetFloat("volume")` — a guaranteed CS1061 the negative lookahead
+# above deliberately steps around (by design: it must not mistake a real
+# `Data.ToString()` for a missing field).
+_DATA_METHOD_CALL_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\s*\(")
+_OBJECT_METHODS = frozenset({"ToString", "GetHashCode", "Equals", "GetType"})
 
 
 SaveLoadVariant = Literal[
@@ -183,6 +195,24 @@ class SaveLoadPipeline(UnityMicroPipeline):
                     continue
                 declared.add(ref)
                 schema.data_fields.append(CodeField(name=ref, type="string", default='""'))
+
+        # Strip any `Data.<invented method>(...)` call — see _DATA_METHOD_CALL_RE.
+        # No auto-declare is possible here (unlike a missing field, there is no
+        # safe type/default to invent for a phantom method), so the statement
+        # goes rather than being half-repaired.
+        def _bad_data_methods(_i, line):
+            return [m.group(1) for m in _DATA_METHOD_CALL_RE.finditer(line)
+                    if m.group(1) not in _OBJECT_METHODS]
+
+        def _make_comment(names, line):
+            return (f"// AUDIT: removed call to invented Data method(s) "
+                    f"{', '.join(sorted(set(names)))} -- {line.strip()}")
+
+        schema.awake_extra, _, _ = _neutralize_lines(schema.awake_extra, _bad_data_methods, _make_comment)
+        schema.update_extra, _, _ = _neutralize_lines(schema.update_extra, _bad_data_methods, _make_comment)
+        schema.fixed_update_extra, _, _ = _neutralize_lines(schema.fixed_update_extra, _bad_data_methods, _make_comment)
+        for m in schema.extra_methods:
+            m.body, _, _ = _neutralize_lines(m.body, _bad_data_methods, _make_comment)
 
         # Dedupe data-class members (no MonoBehaviour reserved set applies here).
         schema.data_fields = lint_fields(schema.data_fields, reserved=set())

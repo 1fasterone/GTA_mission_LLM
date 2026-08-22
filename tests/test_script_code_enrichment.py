@@ -155,13 +155,15 @@ def test_composed_micros_offer_only_their_verified_public_api():
 
 
 def test_a_composed_kind_with_no_verified_api_stays_unmentioned():
-    """LightingDirector has no _COMPOSED_CLASS_API entry — no ground truth to
-    show, so (same restraint _composed_member_ok applies at judge time) it is
-    left out rather than guessed at."""
+    """VFX has no _COMPOSED_CLASS_API entry — no ground truth to show, so
+    (same restraint _composed_member_ok applies at judge time) it is left
+    out rather than guessed at. (LightingDirector used to be this example —
+    it moved once LightingDirector got a verified entry; see
+    _COMPOSED_CLASS_API's own docstring for why that was a live gap.)"""
     from src.unity_compose import Subsystem
-    subsystems = [Subsystem(kind="lighting", target="world", name="LightingDirector")]
+    subsystems = [Subsystem(kind="vfx", target="world", name="VFX")]
     contract = _script_contract(_codebranchsim()[0], [], subsystems)
-    assert "LightingDirector" not in contract
+    assert "VFX" not in contract
 
 
 def test_no_compose_means_no_composed_systems_section():

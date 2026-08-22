@@ -396,6 +396,140 @@ def _collect_custom_type_stubs(extra_fields: list,
     ]
 
 
+# ── Invented type via inline `new T(...)` (never touches a declared field) ───
+# _collect_custom_type_stubs/_sanitize_stub_type_usage only ever see an
+# invented type reached through a DECLARED field -- a constructor call used
+# inline, as a bare statement or buried in an argument list, never appears in
+# extra_fields at all and is invisible to every check above. Hit live:
+#   Graphics.Blit(source, dest, new ShaderPass(profile), 0);
+# `ShaderPass` is not a real Unity or URP type -- not a missing `using`, a
+# type that does not exist anywhere in the engine. (Graphics.Blit also has no
+# overload matching those arguments, but overload resolution is out of reach
+# for a regex pass; the invented TYPE is the part checked here.)
+#
+# `_EXPRESSION_BUILTIN_TYPES` widens `_CS_BUILTIN_TYPES` with common BCL
+# utility/exception types that legitimately appear in a `new T(...)`
+# EXPRESSION but would never be the declared TYPE of a `[SerializeField]`
+# field -- so they were never candidates for the narrower, field-oriented list.
+_EXPRESSION_BUILTIN_TYPES: frozenset[str] = _CS_BUILTIN_TYPES | frozenset({
+    "Exception", "ArgumentException", "ArgumentNullException",
+    "InvalidOperationException", "NotImplementedException",
+    "NotSupportedException", "IndexOutOfRangeException", "NullReferenceException",
+    "StringBuilder", "Regex", "TimeSpan", "DateTime", "Random",
+    "WaitUntil", "WaitWhile", "GUILayoutOption", "Tuple", "ValueTuple",
+    "Guid", "Uri",
+})
+_NEW_EXPR_RE = re.compile(r"\bnew\s+([A-Za-z_]\w*)\s*(?:<[^>()]*>)?\s*\(")
+
+
+def _invented_constructor_type(name: str, known_types: "frozenset[str]") -> bool:
+    """True if `name` (the type argument of a `new name(...)` expression) is
+    not `_EXPRESSION_BUILTIN_TYPES`, not in `known_types` (every sibling
+    script and composed micro class name -- same ground truth
+    `_sanitize_stub_type_usage` uses), and not a Manager/System/Controller/
+    Handler-suffixed name (those are expected to be separate scripts this
+    check cannot see the full project roster of -- same exemption
+    `_stub_type_names` applies)."""
+    return not (
+        name in _EXPRESSION_BUILTIN_TYPES
+        or name in known_types
+        or name.endswith("Manager")
+        or name.endswith("System")
+        or name.endswith("Controller")
+        or name.endswith("Handler")
+    )
+
+
+def _strip_invented_constructors(body: str, known_types: "frozenset[str]") -> str:
+    """Drop any physical line constructing a type nobody declares anywhere —
+    see `_sanitize_invented_constructor_calls` for the live bug this exists
+    for. There is no field to null out here and no stub that would make the
+    call meaningful in place, so the whole statement goes."""
+    if not body or "new " not in body:
+        return body
+    out = []
+    for line in body.splitlines(keepends=True):
+        bad = any(_invented_constructor_type(m.group(1), known_types)
+                  for m in _NEW_EXPR_RE.finditer(line))
+        if not bad:
+            out.append(line)
+    return "".join(out)
+
+
+def _sanitize_invented_constructor_calls(script: UnityScript,
+                                         known_types: "frozenset[str]" = frozenset()) -> None:
+    """Strip any statement that constructs a type nobody declares anywhere:
+    not `_EXPRESSION_BUILTIN_TYPES`, not `known_types` (every sibling script
+    and composed micro class name -- same ground truth `_sanitize_stub_type_
+    usage` uses), and not a Manager/System/Controller/Handler-suffixed name
+    (those are expected to be separate scripts this pass cannot see the full
+    project roster of -- same exemption `_stub_type_names` applies). There is
+    no field to null out here and no stub that would make the call
+    meaningful in place, so the statement is dropped outright rather than
+    half-repaired."""
+    script.awake_extra        = _strip_invented_constructors(script.awake_extra, known_types)
+    script.update_extra       = _strip_invented_constructors(script.update_extra, known_types)
+    script.fixed_update_extra = _strip_invented_constructors(script.fixed_update_extra, known_types)
+    for m in script.extra_methods:
+        m.body = _strip_invented_constructors(m.body, known_types)
+
+
+# ── Built-in Component-lookup call, wrong argument count ──────────────────────
+# GetComponent and its siblings are exempted from every other check in this
+# module (_BARE_CALLABLE_ALLOW, _MB_COMMON_MEMBERS) because they legitimately
+# exist on every MonoBehaviour/Component/GameObject -- but "exists" was never
+# "called with a valid argument count." Hit-live shape: a script calling
+# GetComponent<T>() with an extra argument that overload doesn't have
+# (CS1501) -- the built-in-API twin of _COMPOSED_METHOD_ARITY, scoped to the
+# fixed, well-known Component-lookup family rather than attempting general
+# Unity API arity checking (unbounded, no closed set to check against).
+_MB_METHOD_ARITY: dict[str, frozenset[int]] = {
+    "GetComponent":             frozenset({0, 1}),   # <T>() | (Type) | (string)
+    "GetComponents":            frozenset({0, 1}),   # <T>() | <T>(List<T> results)
+    "GetComponentInChildren":   frozenset({0, 1}),   # <T>() | <T>(bool includeInactive)
+    "GetComponentsInChildren":  frozenset({0, 1}),   # <T>() | <T>(bool) | <T>(List<T>)
+    "GetComponentInParent":     frozenset({0, 1}),   # <T>() | <T>(bool includeInactive)
+    "GetComponentsInParent":    frozenset({0, 1}),   # <T>() | <T>(bool) | <T>(List<T>)
+    "TryGetComponent":          frozenset({1, 2}),   # <T>(out T) | (Type, out Component)
+}
+_MB_METHOD_CALL_RE = re.compile(
+    r"\b(" + "|".join(_MB_METHOD_ARITY) + r")\s*(?:<[^<>()]*>)?\s*\("
+)
+
+
+def _strip_builtin_call_arity(body: str) -> str:
+    """Drop any physical line calling a GetComponent-family method with an
+    argument count that method's overloads don't have. See `_MB_METHOD_ARITY`
+    for the real overload shapes this validates against."""
+    if not body:
+        return body
+    out = []
+    for line in body.splitlines(keepends=True):
+        bad = False
+        for m in _MB_METHOD_CALL_RE.finditer(line):
+            allowed = _MB_METHOD_ARITY[m.group(1)]
+            count = _call_arg_count(line, m.end() - 1)
+            if count is not None and count not in allowed:
+                bad = True
+                break
+        if not bad:
+            out.append(line)
+    return "".join(out)
+
+
+def _sanitize_builtin_component_call_arity(script: UnityScript) -> None:
+    """Strip a statement calling GetComponent<T>() (or a sibling —
+    GetComponents/*InChildren/*InParent/TryGetComponent) with an argument
+    count that method's real overloads don't have — CS1501, a real member,
+    wrong arity, invisible to every other check here since these names are
+    always exempted as legitimate (see `_MB_METHOD_ARITY`'s docstring)."""
+    script.awake_extra        = _strip_builtin_call_arity(script.awake_extra)
+    script.update_extra       = _strip_builtin_call_arity(script.update_extra)
+    script.fixed_update_extra = _strip_builtin_call_arity(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _strip_builtin_call_arity(m.body)
+
+
 def _sanitize_stub_type_usage(script: UnityScript,
                               known_types: "frozenset[str]" = frozenset()) -> None:
     """LLM-invented field types get an EMPTY auto-generated stub class (see
@@ -450,9 +584,12 @@ def _sanitize_stub_type_usage(script: UnityScript,
 # active one survives unstripped (acceptable false-negative); a member that is
 # never real on ANY variant (the actual failure mode) never does. Extend this
 # table as more of these calls get hit live; an unlisted composed class is left
-# untouched (nothing to validate against). Covers all 10 types GAMECONTEXT_
-# SCHEMA_GUIDANCE (src/unity_prompts.py) tells the LLM it may Get<T>() (plus
-# GameManager, validated separately by _sanitize_singleton_calls).
+# untouched (nothing to validate against) — this drifted out of sync with
+# GAMECONTEXT_SCHEMA_GUIDANCE (src/unity_prompts.py) once already: LightingDirector
+# was advertised there as Get<T>()-able with no entry here, so any invented member
+# on it went uncaught silently rather than getting stripped. Covers every type
+# GAMECONTEXT_SCHEMA_GUIDANCE tells the LLM it may Get<T>() (plus GameManager,
+# validated separately by _sanitize_singleton_calls) — keep the two lists in sync.
 _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
     # Controller.cs.j2 PUBLIC PROPERTIES section.
     "PlayerController": frozenset({
@@ -502,11 +639,117 @@ _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
     # at this point in the pipeline, so they're matched by shape instead of
     # name (see _ANIMATOR_DYNAMIC_MEMBER_RE / _composed_member_ok).
     "PlayerAnimator": frozenset({"SetGrounded", "CrossFade"}),
+    # LightingDirector.cs.j2 public surface — constant across every variant.
+    "LightingDirector": frozenset({"Apply", "ApplyEnvironment", "BuildRig",
+                                   "RepairMaterials", "KeyLight"}),
 }
 
 # PlayerAnimator's per-project dynamic parameter setters/triggers — real names
 # aren't known until scene composition, well after this sanitizer runs.
 _ANIMATOR_DYNAMIC_MEMBER_RE = re.compile(r"^(?:Play|Set)[A-Z]\w*$")
+
+# Required argument counts for members of _COMPOSED_CLASS_API whose signature
+# is the SAME across every variant of the class — the arity companion to the
+# membership table above (hit live: `PauseMenu.Activate()` called with none
+# of its 1 required arg — a real member, wrong arity, invisible to a
+# name-only check). A method is listed here only when every variant that
+# has it agrees on its parameter count; anything variant-gated is left out
+# on purpose rather than risk a false strip:
+#   - SaveSystem's Save/Load/HasSave/DeleteSave take 1 arg (int slot) on the
+#     save_slots variant and 0 on every other storage variant — no per-
+#     project override exists for SaveSystem the way `hud_api` overrides
+#     GameHud's variant-gated membership, so arity here would be a guess.
+#   - Widget setters on GameHud (Set<WidgetId>) are per-project dynamic
+#     names outside this static table entirely — never reached here.
+_COMPOSED_METHOD_ARITY: dict[str, dict[str, frozenset[int]]] = {
+    "PlayerHealth": {"TakeDamage": frozenset({1}), "Heal": frozenset({1})},
+    "PlayerFSM": {
+        "IsIn": frozenset({1}), "SetMove": frozenset({1}),
+        "SetJump": frozenset({1}), "SetGrounded": frozenset({1}),
+        "Kill": frozenset({0}),
+    },
+    "GameHud": {
+        "SetHealth": frozenset({2}), "SetAmmo": frozenset({2}),
+        "SetScore": frozenset({1}), "Show": frozenset({1}),
+        "Hide": frozenset({0}), "ShowLine": frozenset({2}),
+        "SetPaused": frozenset({1}),
+    },
+    "PauseMenu": {
+        "Select": frozenset({1}), "Activate": frozenset({1}),
+        "Show": frozenset({0}), "Hide": frozenset({0}),
+    },
+    # SetCheckpoint/Respawn exist only on the checkpoint variant, always at
+    # this arity — the variant-gated storage methods above are excluded.
+    "SaveSystem": {"SetCheckpoint": frozenset({0}), "Respawn": frozenset({0})},
+    "WorldInteractable": {"Interact": frozenset({0})},
+    "SceneTrigger": {"Reset": frozenset({0})},
+    "PlayerAnimator": {
+        "SetGrounded": frozenset({1}),
+        "CrossFade": frozenset({1, 2}),   # transitionDuration defaults
+    },
+}
+
+
+def _call_arg_count(line: str, idx: int) -> "int | None":
+    """Argument count for the call whose '(' should appear at-or-after
+    `idx` (the position right after a matched member name). Returns None
+    for a property/field read (no '(' there) or a call whose parens don't
+    balance on this single line (e.g. a multi-line argument list) — both
+    left unchecked rather than guessed at, matching every other pass in
+    this module's false-negatives-over-false-positives stance."""
+    n = len(line)
+    while idx < n and line[idx] in " \t":
+        idx += 1
+    if idx >= n or line[idx] != "(":
+        return None
+    depth = 0
+    args = 0
+    seen_token = False
+    in_str = False
+    i = idx
+    while i < n:
+        c = line[i]
+        if in_str:
+            if c == "\\":
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            seen_token = True
+        elif c in "([{":
+            depth += 1
+            if depth > 1:
+                seen_token = True
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0 and c == ")":
+                if seen_token:
+                    args += 1
+                return args
+        elif depth == 1 and c == ",":
+            args += 1
+            seen_token = False
+        elif not c.isspace():
+            seen_token = True
+        i += 1
+    return None   # unbalanced on this line — don't guess
+
+
+def _composed_arity_ok(cls: str, member: str, line: str, after_idx: int) -> bool:
+    """True unless `_COMPOSED_METHOD_ARITY` has a fixed arity for cls.member
+    AND the call on this line was parsed with a different argument count.
+    No entry, or an unparsable call, means "nothing to check" — this is a
+    secondary check layered on top of `_composed_member_ok`, never a
+    replacement for it."""
+    allowed = _COMPOSED_METHOD_ARITY.get(cls, {}).get(member)
+    if allowed is None:
+        return True
+    count = _call_arg_count(line, after_idx)
+    if count is None:
+        return True
+    return count in allowed
 
 
 def _composed_member_ok(cls: str, member: str) -> bool:
@@ -584,9 +827,11 @@ def _make_composed_call_stripper(composed_units: list | None):
         out = []
         for line in body.splitlines(keepends=True):
             bad = any(not _composed_member_ok(m.group(1), m.group(2))
+                      or not _composed_arity_ok(m.group(1), m.group(2), line, m.end())
                       for m in chained_call_re.finditer(line))
             if not bad and var_call_re:
                 bad = any(not _composed_member_ok(var_types[m.group(1)], m.group(2))
+                          or not _composed_arity_ok(var_types[m.group(1)], m.group(2), line, m.end())
                           for m in var_call_re.finditer(line))
             if not bad:
                 out.append(line)
@@ -740,11 +985,13 @@ def _sanitize_field_typed_member_calls(script: UnityScript,
     uses) or another generated custom script (_custom_script_api) — across the
     WHOLE script, not per-body. Anything else is left untouched.
 
-    Only checked by member NAME: a real member called with the wrong argument
-    count/type (hit live in the same build: `PauseMenu.Activate()` called
-    with none of its 1 required arg) is a narrower, separate defect this pass
-    does not attempt to catch — no arity data exists for composed-class
-    methods to check against.
+    Checked by member NAME, and by argument COUNT wherever `_COMPOSED_METHOD_
+    ARITY` has an entry for that member (hit live: `PauseMenu.Activate()`
+    called with none of its 1 required arg — a real member, wrong arity,
+    invisible to a name-only check). Arity data only covers methods whose
+    signature is constant across every variant of the class — see
+    `_COMPOSED_METHOD_ARITY`'s docstring for what's deliberately excluded.
+    Argument TYPE mismatches remain uncaught.
 
     `_COMPOSED_CLASS_API` is a STATIC, variant-blind table — it lists the
     union of every variant's public methods, so a class whose real API is
@@ -775,12 +1022,15 @@ def _sanitize_field_typed_member_calls(script: UnityScript,
     alt = "|".join(re.escape(n) for n in list(composed_fields) + list(custom_fields))
     call_re = re.compile(r"\b(" + alt + r")\s*\??\.\s*(\w+)")
 
-    def _bad(field: str, member: str) -> bool:
+    def _bad(field: str, member: str, line: str, after_idx: int) -> bool:
         if field in composed_fields:
             t = composed_fields[field]
             if t in hud_api:
-                return member not in hud_api[t] and member not in _MB_COMMON_MEMBERS
-            return not _composed_member_ok(t, member)
+                if member not in hud_api[t] and member not in _MB_COMMON_MEMBERS:
+                    return True
+                return not _composed_arity_ok(t, member, line, after_idx)
+            return (not _composed_member_ok(t, member)
+                    or not _composed_arity_ok(t, member, line, after_idx))
         t = custom_fields[field]
         return member not in custom_api[t] and member not in _MB_COMMON_MEMBERS
 
@@ -789,7 +1039,8 @@ def _sanitize_field_typed_member_calls(script: UnityScript,
             return body
         out = []
         for line in body.splitlines(keepends=True):
-            bad = any(_bad(m.group(1), m.group(2)) for m in call_re.finditer(line))
+            bad = any(_bad(m.group(1), m.group(2), line, m.end())
+                      for m in call_re.finditer(line))
             if not bad:
                 out.append(line)
         return "".join(out)
@@ -2086,6 +2337,8 @@ class UnityProjectGenerator:
                 # stub emitted for it) gets its method calls stripped here as
                 # if it pointed at an empty stub.
                 _sanitize_stub_type_usage(s, _stub_known_types)
+                _sanitize_invented_constructor_calls(s, _stub_known_types)
+                _sanitize_builtin_component_call_arity(s)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
                 _sanitize_field_typed_member_calls(s, _custom_api, composed_units)

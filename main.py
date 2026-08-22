@@ -671,6 +671,48 @@ def unity_playability(
         raise typer.Exit(1)
 
 
+@app.command("micro-stress-test")
+def micro_stress_test(
+    kind:   list[str] = typer.Option(None, "--kind",
+                                     help="Stress only this micro kind (repeatable). "
+                                          "Default: every kind in the registry."),
+    strict: bool = typer.Option(False, "--strict",
+                                help="Exit non-zero if any kind found live poison "
+                                     "or errored."),
+) -> None:
+    """Depth-test every micro-generator's sanitizer stack, one kind at a time.
+
+    Builds a single-subsystem composed project per (kind, variant, backend)
+    combination with an adversarial payload aimed at every sanitizer layer
+    this project has — an invented constructor, a composed-sibling call with
+    the wrong arity, an invented member on a real composed class, a
+    GetComponent-family call with the wrong argument count, a backend-
+    mismatched field reference, and extra_fields colliding with that kind's
+    own reserved names — then renders through the real pipeline
+    (MicroComposer.plan -> sanitize_subsystem_* -> emit, the same order
+    unity_pipeline.py runs in --compose mode) and checks whether any of it
+    survived as LIVE code. Every variant the kind declares, both backends
+    where its schema has one.
+
+    Deterministic and offline — no LLM, no Unity. See src/micro_stress.py's
+    module docstring for what this can and cannot prove (in particular:
+    harden_against_template already wholesale-strips any GameContext
+    reference from micro-generator content, so the composed-sibling poison
+    lines mostly confirm that net rather than uniquely prove this project's
+    own arity-aware checks fired).
+
+      python main.py micro-stress-test
+      python main.py micro-stress-test --kind hud --kind saveload
+      python main.py micro-stress-test --strict
+    """
+    from src.micro_stress import render_scorecard, run_all
+
+    results = run_all(only=list(kind) if kind else None)
+    console.print(render_scorecard(results))
+    if strict and any(not r.ok for r in results):
+        raise typer.Exit(1)
+
+
 @app.command("unity-fidelity")
 def unity_fidelity(
     schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),

@@ -2700,6 +2700,47 @@ def lint_extensible(schema: _ExtensibleLike, *,
     return schema
 
 
+def neutralize_unavailable_names(schema: _ExtensibleLike, names: "set[str]") -> None:
+    """Comment out (or disable the condition of) any line in awake_extra/
+    update_extra/fixed_update_extra/extra_methods that references one of
+    `names` — template fields that exist for SOME configuration of this
+    micro but not the one `schema` actually resolved to (e.g. UI Toolkit's
+    `document`/`_root` are declared only when `backend == "UIToolkit"`; a
+    variant's own uGUI refs only when it's the active variant).
+
+    `lint_extensible`'s `reserved_fields` only ever prevented the LLM from
+    DECLARING a new field with a colliding name — it was never a "these
+    names already exist and are safe to read" allowlist, and nothing
+    upstream validates extra_* content against template-declared fields at
+    all (see unity_micro_code.py's `_neutralize_refs` docstring: the
+    per-micro reserved-name sets are known too incomplete to support a
+    general undeclared-identifier scan). This closes that gap only where a
+    caller can hand over an exact, backend/variant-resolved name set —
+    never a guess.
+    """
+    if not names:
+        return
+    pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
+
+    def get_bad_names(_i: int, line: str) -> list[str]:
+        return pattern.findall(line)
+
+    def make_comment(_names: list, line: str) -> str:
+        return f"// AUDIT: removed reference to unavailable field -- {line.strip()}"
+
+    schema.awake_extra, flagged1, _ = _neutralize_lines(schema.awake_extra, get_bad_names, make_comment)
+    schema.update_extra, flagged2, _ = _neutralize_lines(schema.update_extra, get_bad_names, make_comment)
+    schema.fixed_update_extra, flagged3, _ = _neutralize_lines(schema.fixed_update_extra, get_bad_names, make_comment)
+    flagged = flagged1 | flagged2 | flagged3
+    for m in schema.extra_methods:
+        m.body, f4, _ = _neutralize_lines(m.body, get_bad_names, make_comment)
+        flagged |= f4
+    if flagged:
+        console.print(f"  [yellow]FIX[/]  removed statement(s) referencing "
+                      f"field(s) not declared for this backend/variant: "
+                      f"{', '.join(sorted(flagged))}")
+
+
 def _authored_blob(schema) -> str:
     """Everything the model authored into a schema, as one searchable string."""
     return "\n".join(

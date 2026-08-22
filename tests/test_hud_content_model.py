@@ -138,6 +138,40 @@ def test_unknown_kind_clamps_to_text():
     assert HudWidget(id="X", kind="hologram").kind == "text"
 
 
+# ── Backend-mismatched field references (CS0103) ───────────────────────────────
+# HUD.cs.j2 declares `document`/`_root` ONLY when backend == "UIToolkit", and a
+# uGUI variant's own refs (bar/label/group/...) only when backend == "uGUI" —
+# mutually exclusive branches of the same if/else, never both. `reserved_fields`
+# only ever blocked the LLM from DECLARING a new field with a colliding name; it
+# was never a claim that either half actually exists for this schema.
+
+def test_root_reference_stripped_on_ugui_backend():
+    # Live shape: HUD.cs.j2 declares `_root` only under backend == "UIToolkit"
+    # — an LLM-authored reference on the uGUI backend is a guaranteed CS0103.
+    # The original line survives only inside the "// AUDIT:" trail, never as
+    # live code (same convention as lint_hash_references etc.).
+    s = HUDSchema(name="Arena", variant="health_bar", backend="uGUI",
+                  update_extra="if (_root != null) _root.style.opacity = 1f;")
+    s = _fixed(s, "health_bar")
+    assert "_root" not in s.update_extra.split("// AUDIT:")[0]
+    assert "// AUDIT: removed reference to unavailable field" in s.update_extra
+
+
+def test_root_reference_survives_on_uitoolkit_backend():
+    s = HUDSchema(name="Arena", variant="health_bar", backend="UIToolkit",
+                  update_extra="if (_root != null) _root.style.opacity = 1f;")
+    s = _fixed(s, "health_bar")
+    assert "_root.style.opacity = 1f" in s.update_extra
+    assert "AUDIT" not in s.update_extra
+
+
+def test_ugui_variant_field_reference_stripped_on_uitoolkit_backend():
+    s = HUDSchema(name="Arena", variant="health_bar", backend="UIToolkit",
+                  update_extra="if (bar != null) bar.value = 1f;")
+    s = _fixed(s, "health_bar")
+    assert "bar.value" not in s.update_extra.split("// AUDIT:")[0]
+
+
 def test_hud_setters_reports_the_whole_class_surface():
     s = _fixed(HUDSchema(variant="racing_hud",
                          widgets=[HudWidget(id="Objective", kind="objective")]),
