@@ -641,7 +641,7 @@ class MicroComposer:
         needs_scene_var = False
         for scene_key in scene_keys:
             scoped = [(u, o) for u in objective_units for o in u.objectives
-                     if objective_scenes.get(o.get("id")) == scene_key]
+                     if o.get("id") and objective_scenes.get(str(o["id"])) == scene_key]
             if not scoped:
                 continue
             for types, source, atom, source_arg, delegate, delegate_type in _OBJECTIVE_SOURCES:
