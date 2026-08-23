@@ -811,6 +811,81 @@ class TestCustomScripts:
         assert "?.Play()" not in cs
         assert "public class Timeline" in cs   # stub still emitted (prevents CS0246)
 
+    def test_dotted_invented_namespace_field_type_flattened(self, gen):
+        # Live bug (this run, TimelineController.cs CS0246): the LLM typed a
+        # field as `Timeline.TimelineClip` — dotted, so _stub_type_names
+        # unconditionally treated it as "already qualified" and never stubbed
+        # it. Unity's real namespace is `UnityEngine.Timeline`, not a bare
+        # `Timeline`, so the field failed to resolve on the DECLARATION line
+        # itself, before the CS1061 stub-call sanitizer above ever runs.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="StubNS", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="TimelineController", type="custom", description="d",
+                extra_fields=[
+                    {"name": "_timelineClip", "type": "Timeline.TimelineClip", "default": None},
+                ],
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["StubNS/Assets/Scripts/TimelineController.cs"]
+        assert "Timeline.TimelineClip" not in cs                      # invented namespace gone
+        assert "[SerializeField] private TimelineClip _timelineClip;" in cs  # flattened to bare leaf
+        assert "public class TimelineClip" in cs                      # stub emitted (prevents CS0246)
+
+    def test_dotted_trusted_namespace_field_type_survives(self, gen):
+        # A genuinely qualified UnityEngine type must NOT be flattened or
+        # stubbed — it already resolves via the real engine assembly.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="StubTrust", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="AudioRouter", type="custom", description="d",
+                extra_fields=[
+                    {"name": "_mixerGroup", "type": "UnityEngine.Audio.AudioMixerGroup", "default": None},
+                ],
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["StubTrust/Assets/Scripts/AudioRouter.cs"]
+        assert "[SerializeField] private UnityEngine.Audio.AudioMixerGroup _mixerGroup;" in cs
+        assert "public class AudioMixerGroup" not in cs   # never stubbed — already real
+
+    def test_coroutine_field_wrong_type_retyped(self, gen):
+        # Live bug (this run, TimelineController.cs CS0029): the field meant
+        # to hold a cancel-able coroutine handle was declared as IEnumerator
+        # (the routine's OWN return type) rather than Coroutine (what
+        # StartCoroutine actually hands back) — assigning the call result
+        # into it is an unconditional CS0029 regardless of engine version.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="CoroT", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[UnityScript(
+                name="TimelineController", type="custom", description="d",
+                extra_fields=[
+                    {"name": "_transitionCoroutine", "type": "System.Collections.IEnumerator", "default": None},
+                ],
+                extra_methods=[{
+                    "signature": "public void TriggerSceneTransition()",
+                    "body": "_transitionCoroutine = StartCoroutine(FadeToBlack(1.5f));",
+                }],
+            )],
+        )
+        files = gen.generate(schema, {})
+        cs = files["CoroT/Assets/Scripts/TimelineController.cs"]
+        assert "IEnumerator _transitionCoroutine" not in cs
+        assert "[SerializeField] private Coroutine _transitionCoroutine;" in cs
+
     def test_stub_type_field_without_calls_is_untouched(self, gen):
         # A stub-typed field the LLM never calls methods on (pure data holder)
         # must not be mangled — only method-call statements are stripped.
@@ -2248,6 +2323,28 @@ class TestComposedClassApiCoverage:
         _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
         assert "Interact()" in s.update_extra
 
+    def test_world_interactable_event_called_as_method_stripped(self):
+        # OnToggled IS a real, listed member of WorldInteractable's verified
+        # API (_COMPOSED_CLASS_API) — but it's a C# EVENT
+        # (`public event Action<bool> OnToggled;`, Interactable.cs.j2), only
+        # invocable with parens from WITHIN its own declaring class. A
+        # membership-only check (the pre-fix `_composed_member_ok`) waved
+        # this through as a real, real-arity call; live it is CS1061.
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script("GameContext.Instance.Get<WorldInteractable>().OnToggled();")
+        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
+        assert "OnToggled()" not in s.update_extra
+
+    def test_world_interactable_event_subscription_kept(self):
+        # The legal shape (`+=`) must survive — only a paren-CALL of an event
+        # is illegal from outside the declaring class.
+        from src.unity_generator import _sanitize_composed_component_calls
+        s = self._script(
+            "GameContext.Instance.Get<WorldInteractable>().OnToggled += "
+            "on => Debug.Log(on);")
+        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
+        assert "OnToggled +=" in s.update_extra
+
     def test_player_camera_has_zero_public_members(self):
         from src.unity_generator import _sanitize_composed_component_calls
         s = self._script("GameContext.Instance.Get<PlayerCamera>()?.Shake(1f);")
@@ -2556,6 +2653,82 @@ class TestFieldTypedMemberCalls:
         custom_api = _custom_script_api([s])
         _sanitize_field_typed_member_calls(s, custom_api, [hud_unit])
         assert "SetHealth" not in s.extra_methods[0].body
+
+
+# ── _sanitize_param_typed_member_calls: cross-reference type on a PARAMETER ──
+# (not a field — a parameter's scope is its own method only)
+
+class TestParamTypedMemberCalls:
+    def _unit(self, class_name):
+        from src.unity_compose import ComposedUnit
+        return ComposedUnit(kind="x", variant="x", class_name=class_name,
+                            guid="g", target="world")
+
+    def test_param_typed_event_called_as_method_stripped(self):
+        # Live bug: InventoryManager.cs — TryUnlockGate(WorldInteractable gate)
+        # and TryUnlockGateWithCog(WorldInteractable gate) both called
+        # gate.OnToggled() on the PARAMETER, never a field or a
+        # GameContext.Get<T>() chain, so _sanitize_field_typed_member_calls
+        # (fields only) and _sanitize_composed_component_calls (getter chains
+        # only) both missed it entirely. OnToggled is a real, listed member
+        # (_COMPOSED_CLASS_API) but an EVENT — CS1061 either way.
+        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="InventoryManager", type="custom", description="d",
+            extra_methods=[{
+                "signature": "public bool TryUnlockGate(WorldInteractable gate)",
+                "body": "if (gate == null) return false;\ngate.OnToggled();\nreturn true;",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
+        assert "OnToggled()" not in s.extra_methods[0].body
+        assert "return false;" in s.extra_methods[0].body   # unrelated code untouched
+        assert "return true;" in s.extra_methods[0].body
+
+    def test_param_typed_real_method_survives(self):
+        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="InventoryManager", type="custom", description="d",
+            extra_methods=[{
+                "signature": "public bool TryUnlockGate(WorldInteractable gate)",
+                "body": "if (gate == null) return false; gate.Interact(); return true;",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
+        assert "gate.Interact();" in s.extra_methods[0].body
+
+    def test_param_typed_invented_member_stripped(self):
+        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="InventoryManager", type="custom", description="d",
+            extra_methods=[{
+                "signature": "public bool TryUnlockGate(WorldInteractable gate)",
+                "body": "if (gate.CanPickup()) return true; return false;",
+            }],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
+        assert "CanPickup" not in s.extra_methods[0].body
+
+    def test_param_typed_call_in_other_method_untouched(self):
+        # A parameter's scope is its OWN method only — a same-named
+        # identifier in a DIFFERENT method (not typed the same way there)
+        # must not be checked against WorldInteractable's API at all.
+        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
+        s = UnityScript(
+            name="InventoryManager", type="custom", description="d",
+            extra_methods=[
+                {"signature": "public bool TryUnlockGate(WorldInteractable gate)",
+                 "body": "gate.Interact(); return true;"},
+                {"signature": "public void Reset()",
+                 "body": "var gate = 0; gate = gate + 1;"},
+            ],
+        )
+        custom_api = _custom_script_api([s])
+        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
+        assert "gate = gate + 1;" in s.extra_methods[1].body
 
 
 # ── Undeclared self-reference: bare field/method the script never declared ────

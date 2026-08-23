@@ -530,6 +530,75 @@ def _sanitize_builtin_component_call_arity(script: UnityScript) -> None:
         m.body = _strip_builtin_call_arity(m.body)
 
 
+# ── Field holding a StartCoroutine() result, declared with the wrong type ───
+# StartCoroutine's return type is fixed by the engine API -- always
+# `UnityEngine.Coroutine`, never `IEnumerator` -- so a field the LLM declared
+# as anything else and then assigned that call's result into is an
+# unconditional CS0029 regardless of what the field was meant to represent.
+# Hit live: TimelineController.cs declared `_transitionCoroutine` as
+# `System.Collections.IEnumerator` (its own Tooltip called it "the coroutine
+# reference to cancel if needed" -- the LLM confused the routine's BODY type
+# with the handle StartCoroutine hands back) then assigned
+# `_transitionCoroutine = StartCoroutine(FadeToBlack(_fadeDuration));`.
+_START_COROUTINE_ASSIGN_RE = re.compile(
+    r"^\s*(\w+)\s*=\s*StartCoroutine\s*\(.*\)\s*;\s*$", re.MULTILINE)
+
+
+def _sanitize_coroutine_field_type(script: UnityScript) -> None:
+    """Retype any field directly assigned a `StartCoroutine(...)` result to
+    `Coroutine` -- the only type that call ever actually returns."""
+    if not script.extra_fields:
+        return
+    bodies = [script.awake_extra, script.update_extra, script.fixed_update_extra]
+    bodies += [m.body for m in script.extra_methods]
+    blob = "\n".join(b for b in bodies if b)
+    if "StartCoroutine" not in blob:
+        return
+    assigned = {m.group(1) for m in _START_COROUTINE_ASSIGN_RE.finditer(blob)}
+    if not assigned:
+        return
+    for f in script.extra_fields:
+        if f.name in assigned and (f.type or "").strip() != "Coroutine":
+            f.type = "Coroutine"
+
+
+# ── Field type qualified with an invented namespace (never resolves) ─────────
+# `_stub_type_names` exempts any field type containing a "." on the assumption
+# a dot always means "already fully qualified, will resolve" -- true for a
+# genuine `UnityEngine.X` / `System.X` spelling, false for a wholesale
+# invented root. Hit live: TimelineController.cs declared
+# `[SerializeField] private Timeline.TimelineClip _timelineClip` -- Unity's
+# real namespace is `UnityEngine.Timeline`, not a bare `Timeline`, so this was
+# CS0246 on the FIELD DECLARATION itself, one step before
+# `_sanitize_stub_type_usage` (CS1061) ever gets a chance to run.
+_TRUSTED_NAMESPACE_ROOTS: frozenset[str] = frozenset({
+    "UnityEngine", "UnityEditor", "System", "TMPro", "Unity", "Cinemachine",
+})
+
+
+def _sanitize_invented_namespace_field_types(script: UnityScript,
+                                             known_types: "frozenset[str]" = frozenset()) -> None:
+    """Flatten a field's dotted type to its bare leaf name when the dotted
+    prefix is neither a real namespace root (`_TRUSTED_NAMESPACE_ROOTS`) nor a
+    class this project already defines (`known_types`) -- the same "prefer
+    inert over broken" repair `_collect_custom_type_stubs` applies to a bare
+    invented name, extended to a dotted one so it reaches that stub machinery
+    at all instead of being waved through as already-qualified. Must run
+    BEFORE `_sanitize_stub_type_usage`/`_collect_custom_type_stubs`: both key
+    off `_extract_base_type(f.type)`, which only sees the invented type once
+    it is flat."""
+    for f in script.extra_fields:
+        raw = getattr(f, "type", "") or ""
+        base = _extract_base_type(raw)
+        if "." not in base:
+            continue
+        prefix = base.split(".", 1)[0]
+        if prefix in known_types or prefix in _TRUSTED_NAMESPACE_ROOTS:
+            continue
+        leaf = base.rsplit(".", 1)[-1]
+        f.type = raw.replace(base, leaf, 1)
+
+
 def _sanitize_stub_type_usage(script: UnityScript,
                               known_types: "frozenset[str]" = frozenset()) -> None:
     """LLM-invented field types get an EMPTY auto-generated stub class (see
@@ -689,6 +758,20 @@ _COMPOSED_METHOD_ARITY: dict[str, dict[str, frozenset[int]]] = {
     },
 }
 
+# Members of _COMPOSED_CLASS_API that are C# EVENTS, not callable methods —
+# real per the membership table (so _composed_member_ok correctly says they
+# exist), but a field-like event's backing delegate is only ever directly
+# INVOKABLE from within its OWN declaring class; every other class may only
+# subscribe (`+=`/`-=`). Populated only for classes with a CONFIRMED live
+# misuse, same discipline as _COMPOSED_METHOD_ARITY above. Hit live,
+# InventoryManager.cs(27,112)/(32,112): `gate.OnToggled()` on a
+# WorldInteractable parameter — OnToggled is real (Interactable.cs.j2:
+# `public event Action<bool> OnToggled;`), just never callable with parens
+# from outside (CS1061; see _composed_event_call_ok).
+_COMPOSED_CLASS_EVENTS: dict[str, frozenset[str]] = {
+    "WorldInteractable": frozenset({"OnPrompt", "OnInteract", "OnToggled"}),
+}
+
 
 def _call_arg_count(line: str, idx: int) -> "int | None":
     """Argument count for the call whose '(' should appear at-or-after
@@ -762,6 +845,37 @@ def _composed_member_ok(cls: str, member: str) -> bool:
             or (cls == "PlayerAnimator" and bool(_ANIMATOR_DYNAMIC_MEMBER_RE.match(member))))
 
 
+def _composed_event_call_ok(cls: str, member: str, line: str, after_idx: int) -> bool:
+    """False when `member` is a known EVENT on the composed class `cls`
+    (`_COMPOSED_CLASS_EVENTS`) and this call site invokes it with parens —
+    `gate.OnToggled()` — rather than subscribing (`+=`/`-=`) or reading it
+    bare. An event's backing delegate is only directly invocable from WITHIN
+    its declaring class; from any other class (the only kind of call this
+    module ever sanitizes) a paren-call is illegal regardless of the member's
+    real existence. True (nothing to flag) for every non-event member, and
+    for an event referenced any way OTHER than a call — narrow on purpose,
+    matching this module's false-negatives-over-false-positives stance."""
+    events = _COMPOSED_CLASS_EVENTS.get(cls)
+    if not events or member not in events:
+        return True
+    n = len(line)
+    i = after_idx
+    while i < n and line[i] in " \t":
+        i += 1
+    return not (i < n and line[i] == "(")
+
+
+def _composed_call_invalid(cls: str, member: str, line: str, after_idx: int) -> bool:
+    """True when a call to `cls.member` on this line must be stripped: the
+    member doesn't exist, exists at the wrong arity, or is an event invoked
+    like a method. The one predicate every composed-call call site below
+    shares, so the event check added for `_COMPOSED_CLASS_EVENTS` protects
+    all of them at once rather than needing to be repeated at each."""
+    return (not _composed_member_ok(cls, member)
+            or not _composed_arity_ok(cls, member, line, after_idx)
+            or not _composed_event_call_ok(cls, member, line, after_idx))
+
+
 # How a custom script reaches a composed micro class instance: a MonoBehaviour
 # sibling via GetComponent<T>(), or any composed system via the GameContext
 # service locator (the --compose bridge micros<->prompt-authored scripts use).
@@ -826,12 +940,10 @@ def _make_composed_call_stripper(composed_units: list | None):
             var_call_re = re.compile(r"\b(" + var_alt + r")\s*\??\.\s*(\w+)")
         out = []
         for line in body.splitlines(keepends=True):
-            bad = any(not _composed_member_ok(m.group(1), m.group(2))
-                      or not _composed_arity_ok(m.group(1), m.group(2), line, m.end())
+            bad = any(_composed_call_invalid(m.group(1), m.group(2), line, m.end())
                       for m in chained_call_re.finditer(line))
             if not bad and var_call_re:
-                bad = any(not _composed_member_ok(var_types[m.group(1)], m.group(2))
-                          or not _composed_arity_ok(var_types[m.group(1)], m.group(2), line, m.end())
+                bad = any(_composed_call_invalid(var_types[m.group(1)], m.group(2), line, m.end())
                           for m in var_call_re.finditer(line))
             if not bad:
                 out.append(line)
@@ -1029,8 +1141,7 @@ def _sanitize_field_typed_member_calls(script: UnityScript,
                 if member not in hud_api[t] and member not in _MB_COMMON_MEMBERS:
                     return True
                 return not _composed_arity_ok(t, member, line, after_idx)
-            return (not _composed_member_ok(t, member)
-                    or not _composed_arity_ok(t, member, line, after_idx))
+            return _composed_call_invalid(t, member, line, after_idx)
         t = custom_fields[field]
         return member not in custom_api[t] and member not in _MB_COMMON_MEMBERS
 
@@ -1050,6 +1161,98 @@ def _sanitize_field_typed_member_calls(script: UnityScript,
     script.fixed_update_extra = _strip(script.fixed_update_extra)
     for m in script.extra_methods:
         m.body = _strip(m.body)
+
+
+_SIG_PARAMLIST_RE = re.compile(r"\((.*)\)", re.DOTALL)
+_PARAM_MODIFIERS = frozenset({"ref", "out", "in", "params", "this"})
+
+
+def _method_param_types(signature: str) -> dict[str, str]:
+    """`{param_name: base_type}` for a method signature's parameter list —
+    the identifiers `_sanitize_param_typed_member_calls` may treat as typed
+    locals, scoped to that one method (a parameter's scope, unlike a field's,
+    never extends past its own method's body)."""
+    if not signature:
+        return {}
+    m = _SIG_PARAMLIST_RE.search(signature)
+    if not m:
+        return {}
+    parts: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in m.group(1):
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            parts.append("".join(current))
+            current = []
+            continue
+        current.append(ch)
+    parts.append("".join(current))
+
+    out: dict[str, str] = {}
+    for raw in parts:
+        part = raw.split("=", 1)[0].strip()          # drop a default value
+        tokens = [t for t in re.split(r"\s+", part) if t
+                  and t not in _PARAM_MODIFIERS]
+        if len(tokens) >= 2:                          # "<type> <name>"
+            out[tokens[-1]] = _extract_base_type(" ".join(tokens[:-1]))
+    return out
+
+
+def _sanitize_param_typed_member_calls(script: UnityScript,
+                                       custom_api: dict[str, frozenset],
+                                       composed_units: list | None) -> None:
+    """Strip an invalid composed/custom-class member call reached through a
+    METHOD PARAMETER rather than a field — `_sanitize_field_typed_member_calls`
+    only ever indexed `script.extra_fields`, so a class typed as a parameter
+    (a helper method taking `WorldInteractable gate` and calling
+    `gate.OnToggled()`) was invisible to every existing composed-call check.
+    A parameter's scope is its own method only, unlike a field's whole-script
+    scope, so each method is checked against its own signature alone. Hit
+    live: InventoryManager.cs `TryUnlockGate(WorldInteractable gate)` /
+    `TryUnlockGateWithCog(WorldInteractable gate)` both called
+    `gate.OnToggled()` — a real member (`_COMPOSED_CLASS_API`), but an EVENT,
+    not a callable method (CS1061; see `_composed_event_call_ok`)."""
+    hud_api: dict[str, frozenset[str]] = {
+        u.class_name: frozenset(u.setters)
+        for u in (composed_units or []) if u.kind == "hud"
+    }
+    composed_known = ({u.class_name for u in (composed_units or [])
+                       if u.class_name in _COMPOSED_CLASS_API}
+                       | set(hud_api))
+    if not composed_known and not custom_api:
+        return
+
+    def _bad(t: str, member: str, line: str, after_idx: int) -> bool:
+        if t in hud_api:
+            if member not in hud_api[t] and member not in _MB_COMMON_MEMBERS:
+                return True
+            return not _composed_arity_ok(t, member, line, after_idx)
+        if t in composed_known:
+            return _composed_call_invalid(t, member, line, after_idx)
+        return (member not in custom_api.get(t, frozenset())
+                and member not in _MB_COMMON_MEMBERS)
+
+    for m in script.extra_methods:
+        if not m.body:
+            continue
+        params = _method_param_types(m.signature)
+        typed = {n: t for n, t in params.items()
+                 if t in composed_known or (t in custom_api and t != script.name)}
+        if not typed:
+            continue
+        alt = "|".join(re.escape(n) for n in typed)
+        call_re = re.compile(r"\b(" + alt + r")\s*\??\.\s*(\w+)")
+        out = []
+        for line in m.body.splitlines(keepends=True):
+            bad = any(_bad(typed[mm.group(1)], mm.group(2), line, mm.end())
+                      for mm in call_re.finditer(line))
+            if not bad:
+                out.append(line)
+        m.body = "".join(out)
 
 
 _FOREACH_BARE_RE = re.compile(
@@ -2336,12 +2539,16 @@ class UnityProjectGenerator:
                 # or a field whose type resolves to a REAL sibling script (no
                 # stub emitted for it) gets its method calls stripped here as
                 # if it pointed at an empty stub.
+                # Must run BEFORE _sanitize_stub_type_usage: see its docstring.
+                _sanitize_invented_namespace_field_types(s, _stub_known_types)
                 _sanitize_stub_type_usage(s, _stub_known_types)
                 _sanitize_invented_constructor_calls(s, _stub_known_types)
                 _sanitize_builtin_component_call_arity(s)
+                _sanitize_coroutine_field_type(s)
                 _sanitize_composed_component_calls(s, composed_units)
                 _sanitize_project_service_calls(s, _custom_api, _opaque_types)
                 _sanitize_field_typed_member_calls(s, _custom_api, composed_units)
+                _sanitize_param_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
                 _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)

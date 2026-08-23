@@ -25,7 +25,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.unity_pipeline import UnityPipeline, _programmatic_fix, _check_consistency
+from src.unity_pipeline import (UnityPipeline, _programmatic_fix, _check_consistency,
+                                _infer_mission_scenes, _objective_scene_map,
+                                _reconcile_scene_specs)
 from src.unity_schema import UnityPackage, UnitySchema, UnityScript
 
 
@@ -565,6 +567,185 @@ class TestUnityConsistencyChecks:
         fixed, fixes = _check_consistency(schema)
         e = next(e for e in fixed.entities if e.name == "Road")
         assert e.placement == "path"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Mission -> scene inference (_infer_mission_scenes) and the entity-
+# restoration it feeds in _reconcile_scene_specs.
+#
+# Regression fixture: a live GearCitadel run (3 missions across 4 hall
+# scenes) had "NOT PLAYABLE" playability — 2 of 5 required objectives could
+# never advance (SEAM 8 bound only the first mission's `reach`/`collect`
+# project-wide) — and even the correctly-wired first mission's own targets
+# were scoped only to an unrelated "Main" scene, absent from the hall the
+# player actually plays. These tests use the real mission titles/scene
+# names/entity names from that run.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestMissionSceneInference:
+    def _schema(self, **overrides) -> UnitySchema:
+        from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, SceneSpec
+        defaults = dict(
+            project_name="GearCitadel", company_name="TestCo", game_type="2D",
+            platform="PC", render_pipeline="URP", unity_version="6000.0",
+            color_space="Linear", description="test", features=[], packages=[],
+            scenes=["Main", "MainMenu", "HallOne", "HallTwo", "HallThree", "BossArena"],
+            entities=[
+                EntitySpec(name="GearGate", kind="prop", count=1),
+                EntitySpec(name="SaveCogShrine", kind="prop", count=1),
+                EntitySpec(name="WallClingPoint", kind="prop", count=1),
+                EntitySpec(name="BossTinkerGhost", kind="enemy", count=1),
+            ],
+        )
+        defaults.update(overrides)
+        return UnitySchema(**defaults)
+
+    def _mission(self, mission_id, title, objectives):
+        from src.unity_schema import MissionObjective, MissionSpec
+        return MissionSpec(id=mission_id, title=title, objectives=[
+            MissionObjective(id=oid, description=desc, type=typ, target_ref=ref)
+            for oid, desc, typ, ref in objectives
+        ])
+
+    def test_name_match_resolves_mission_to_scene(self):
+        mission = self._mission("m1", "Hall One Clearance", [
+            ("obj_reach_gate_1", "Reach Gear Gate 1", "reach", "GearGate"),
+        ])
+        schema = self._schema(missions=[mission])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["HallOne"]}
+        assert unresolved == []
+
+    def test_boss_mission_name_matches_boss_arena(self):
+        mission = self._mission("m3", "Boss Battle: Tinker Ghost", [
+            ("obj_defeat_boss", "Defeat the Tinker Ghost boss", "defeat", "BossTinkerGhost"),
+        ])
+        schema = self._schema(missions=[mission])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m3": ["BossArena"]}
+        assert unresolved == []
+
+    def test_sibling_agreement_resolves_mission_when_no_name_match(self):
+        # "Vertical Ascent" shares no token with "HallTwo" — tier 1 (name
+        # match) finds nothing. Tier 2 must fall back to the fact that
+        # WallClingPoint (this mission's OTHER objective's target) is already
+        # correctly scoped to HallTwo in scene_specs.
+        from src.unity_schema import SceneSpec
+        mission = self._mission("m2", "Vertical Ascent", [
+            ("obj_reach_gate_2", "Reach Gear Gate 2 via wall-cling points",
+             "reach", "WallClingPoint"),
+            ("obj_collect_cogs_2", "Collect gear-cogs to unlock the gate",
+             "collect", "SaveCogShrine"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scene_specs=[
+                SceneSpec(name="HallTwo", entities=["WallClingPoint", "BossTinkerGhost"]),
+            ])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m2": ["HallTwo"]}
+        assert unresolved == []
+
+    def test_sibling_agreement_tie_is_abstained_not_guessed(self):
+        # Both scenes have exactly ONE of this mission's two targets already
+        # scoped to them -- a genuine tie, not a resolvable case.
+        from src.unity_schema import SceneSpec
+        mission = self._mission("m2", "Vertical Ascent", [
+            ("obj_reach_gate_2", "Reach Gear Gate 2", "reach", "WallClingPoint"),
+            ("obj_collect_cogs_2", "Collect gear-cogs", "collect", "SaveCogShrine"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scene_specs=[
+                SceneSpec(name="HallTwo", entities=["WallClingPoint"]),
+                SceneSpec(name="Main", entities=["SaveCogShrine"]),
+            ])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {}
+        assert unresolved == ["m2"]
+
+    def test_unresolvable_mission_is_abstained_not_guessed(self):
+        mission = self._mission("m9", "Sideways Interlude", [
+            ("obj_x", "Do the thing", "reach", "GearGate"),
+        ])
+        schema = self._schema(missions=[mission], scene_specs=[])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {}
+        assert unresolved == ["m9"]
+
+    def test_name_match_tie_falls_through_to_sibling_tier(self):
+        # "Hall" is a substring of BOTH "HallOne" and "HallTwo" -- tier 1
+        # must not guess between them; falls through to tier 2, which finds
+        # GearGate already uniquely scoped to HallOne.
+        from src.unity_schema import SceneSpec
+        mission = self._mission("m1", "Hall", [
+            ("o1", "Reach the gate", "reach", "GearGate"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scenes=["HallOne", "HallTwo"],
+            scene_specs=[SceneSpec(name="HallOne", entities=["GearGate"])])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["HallOne"]}
+
+    def test_objective_scene_map_flattens_mission_scenes_per_objective(self):
+        mission = self._mission("m1", "Hall One Clearance", [
+            ("obj_reach_gate_1", "Reach Gear Gate 1", "reach", "GearGate"),
+            ("obj_collect_cogs_1", "Collect gear-cogs", "collect", "SaveCogShrine"),
+        ])
+        schema = self._schema(missions=[mission])
+        resolved, _ = _infer_mission_scenes(schema)
+        obj_scenes = _objective_scene_map(schema, resolved)
+        assert obj_scenes == {"obj_reach_gate_1": "HallOne",
+                              "obj_collect_cogs_1": "HallOne"}
+
+    def test_reconcile_scene_specs_restores_mission_target_entities(self):
+        # The exact live GearCitadel shape: HallOne's own subset lists its
+        # hazard flavor entities but not the mission's own targets.
+        from src.unity_schema import SceneSpec
+        mission = self._mission("m1", "Hall One Clearance", [
+            ("obj_reach_gate_1", "Reach Gear Gate 1", "reach", "GearGate"),
+            ("obj_collect_cogs_1", "Collect gear-cogs", "collect", "SaveCogShrine"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scene_specs=[SceneSpec(name="HallOne", entities=["BossTinkerGhost"])])
+        resolved, _ = _infer_mission_scenes(schema)
+        schema.meta["mission_scenes"] = resolved
+        fixed, fixes = _reconcile_scene_specs(schema)
+        spec = next(s for s in fixed.scene_specs if s.name == "HallOne")
+        assert "GearGate" in spec.entities
+        assert "SaveCogShrine" in spec.entities
+        assert "BossTinkerGhost" in spec.entities   # untouched, not dropped
+        assert any("GearGate" in f and "Hall One Clearance" in f for f in fixes)
+
+    def test_reconcile_scene_specs_is_a_noop_without_mission_scenes(self):
+        # No meta["mission_scenes"] set at all -- must behave exactly as it
+        # did before this feature existed (backward compatibility).
+        from src.unity_schema import SceneSpec
+        mission = self._mission("m1", "Hall One Clearance", [
+            ("obj_reach_gate_1", "Reach Gear Gate 1", "reach", "GearGate"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scene_specs=[SceneSpec(name="HallOne", entities=["BossTinkerGhost"])])
+        fixed, fixes = _reconcile_scene_specs(schema)
+        spec = next(s for s in fixed.scene_specs if s.name == "HallOne")
+        assert spec.entities == ["BossTinkerGhost"]
+        assert not any("GearGate" in f for f in fixes)
+
+    def test_menu_scenes_are_never_matched(self):
+        # The mission title textually contains "Menu", but that scene is
+        # explicitly non-gameplay and must never be inferred as home to a
+        # real mission, even when nothing else matches.
+        mission = self._mission("m1", "Menu Interlude", [
+            ("o1", "Reach the gate", "reach", "GearGate"),
+        ])
+        schema = self._schema(
+            missions=[mission], scenes=["MainMenu", "HallOne"], scene_specs=[])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert "m1" not in resolved
+        assert unresolved == ["m1"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════

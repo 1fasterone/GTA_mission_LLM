@@ -148,9 +148,17 @@ def _camera_look_at(args: dict) -> str:
 def _camera_shake(args: dict) -> str:
     intensity = _f(args.get("intensity", 1))
     duration  = _f(args.get("duration", 0.3))
+    # CinemachineImpulseSource lives in the Cinemachine package's OWN
+    # namespace (Unity.Cinemachine, 3.x — the version this project's Unity
+    # 6000.x pin resolves to), never UnityEngine.Rendering.Universal. Hit
+    # live, GameSequencer.cs(102,86): CS0234. `src/micro/code_fields.py`'s
+    # `_repair_wrong_namespace_qualifiers` already heals this exact wrong
+    # qualifier for LLM-authored fragments, but this snippet is emitted by
+    # the deterministic atom backend (never touched by that LLM-fragment
+    # pass) — so it must be correct at the source instead.
     return (
         f"// CameraShake — requires CinemachineImpulseSource on Camera or a shake script\n"
-        f"var _impulse = Camera.main?.GetComponent<UnityEngine.Rendering.Universal.CinemachineImpulseSource>();\n"
+        f"var _impulse = Camera.main?.GetComponent<Unity.Cinemachine.CinemachineImpulseSource>();\n"
         f"if (_impulse != null) _impulse.GenerateImpulse({intensity});\n"
         f"yield return new WaitForSeconds({duration});"
     )
@@ -891,6 +899,32 @@ def _wire_board_to_objectives(args: dict) -> str:
     )
 
 
+def _scatter_terrain_details(args: dict) -> str:
+    prefab = _s(args.get("prefab", "Rock"))
+    count  = int(args.get("count", 20) or 0)
+    xmin, zmin = _f(args.get("xmin", 0)), _f(args.get("zmin", 0))
+    xmax, zmax = _f(args.get("xmax", 100)), _f(args.get("zmax", 100))
+    seed   = int(args.get("seed", 0) or 0)
+    terrain_name = _s(args.get("terrain_name", ""))
+    terrain_lookup = (
+        f"GameObject.Find(\"{terrain_name}\")?.GetComponent<Terrain>()"
+        if terrain_name else "Terrain.activeTerrain"
+    )
+    return (
+        f"var _terrain = {terrain_lookup};\n"
+        f"var _detailPrefab = Resources.Load<GameObject>(\"Terrain/{prefab}\");\n"
+        f"if (_terrain != null && _detailPrefab != null) {{\n"
+        f"    var _rng = new System.Random({seed});\n"
+        f"    for (int i = 0; i < {count}; i++) {{\n"
+        f"        float _dx = (float)(_rng.NextDouble() * ({xmax} - {xmin}) + {xmin});\n"
+        f"        float _dz = (float)(_rng.NextDouble() * ({zmax} - {zmin}) + {zmin});\n"
+        f"        float _dy = _terrain.SampleHeight(new Vector3(_dx, 0f, _dz));\n"
+        f"        Instantiate(_detailPrefab, new Vector3(_dx, _dy, _dz), Quaternion.identity);\n"
+        f"    }}\n"
+        f"}}"
+    )
+
+
 def _wire_trigger_to_save(args: dict) -> str:
     tv = _s(args.get("trigger_var",  "_trigger"))
     sv = _s(args.get("saveload_var", "_saveload"))
@@ -985,6 +1019,8 @@ _SNIPPETS: dict[str, Any] = {
     "WireBoardToObjectives":        _wire_board_to_objectives,
     "WireObjectivesToHUD":          _wire_objectives_to_hud,
     "WireInventoryToHUD":           _wire_inventory_to_hud,
+    # terrain (Unity-only)
+    "ScatterTerrainDetails":  _scatter_terrain_details,
 }
 
 
