@@ -476,6 +476,34 @@ def _repair_wrong_namespace_qualifiers(text: str) -> str:
     return new
 
 
+# CS0176 ("Member 'X' cannot be accessed with an instance reference; qualify
+# it with a type name instead"): a model calls a STATIC-only Unity API member
+# through an instance variable, as if it were an instance method. Hit live,
+# AudioDirectorAudioManager.cs(115,9) and (124,9):
+#
+#     var source = GetFreeSource();      // returns an AudioSource instance
+#     source.PlayClipAtPoint(null, transform.position);
+#
+# `AudioSource.PlayClipAtPoint(AudioClip, Vector3, float)` is `static` on the
+# real API — there is no instance overload — so the fix is to re-qualify the
+# call with the type name rather than strip it: the intent (play a one-shot
+# clip at a point) survives unchanged, only the receiver does not. Deliberately
+# narrow to this one confirmed-live static member; a bare find/replace is safe
+# because nothing legitimate calls `PlayClipAtPoint` any other way.
+_STATIC_CALLED_AS_INSTANCE_RE = re.compile(r"\b(?!AudioSource\b)\w+\.(PlayClipAtPoint)\(")
+
+
+def _repair_static_called_as_instance(text: str) -> str:
+    """Re-qualify a call to a known STATIC-only member made via an instance."""
+    if not text or "PlayClipAtPoint" not in text:
+        return text
+    new = _STATIC_CALLED_AS_INSTANCE_RE.sub(r"AudioSource.\1(", text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  re-qualified static-only member "
+                       "call with its type name (CS0176)")
+    return new
+
+
 def _repair_numeric_literals(text: str) -> str:
     """Strip numeric-literal suffixes C# does not accept.
 
@@ -872,6 +900,7 @@ def lint_code_fragment(text: str, *, what: str,
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
     text = _repair_wrong_namespace_qualifiers(text)
+    text = _repair_static_called_as_instance(text)
     # Two structural defects that CANNOT be repaired from the fragment alone.
     # Both were live on the grandma run and together took the whole build down
     # (17 of 28 gate errors), because a broken fragment does not fail alone —
@@ -3396,6 +3425,17 @@ _INT_LIT_RE    = re.compile(r"^[+-]?\d+[uUlL]{0,2}$")
 _FLOAT_LIT_RE  = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)[fF]$")
 _DOUBLE_LIT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\.\d+)[dD]?$")
 _DOT_NAME_RE   = re.compile(r"^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\.name$")
+# `<chain>.text` is a string on every mainstream Unity UI text component
+# (Text.text, TMP_Text.text, InputField.text, TMP_InputField.text) — the same
+# "trust the property name" reasoning _DOT_NAME_RE applies to `.name`. Unlike
+# `.name`, the chain leading to `.text` commonly runs through a generic method
+# call (`GetComponentInChildren<Text>().text`), which _DOT_NAME_RE's pure
+# dotted-identifier pattern cannot match at all — so only the trailing member
+# access is checked, not the whole expression's shape. Hit live,
+# NpcDialogPlayer.cs(152,160): `_tinkerGhostRef.gameObject.
+# GetComponentInChildren<Text>().text` (a string) was passed where
+# PlayOneLine(NpcDialogLineData) expects the line object itself (CS1503).
+_DOT_TEXT_RE   = re.compile(r"\.text$")
 # Mathf statics with exactly one, always-float overload. Min/Max/Abs/Clamp are
 # excluded on purpose: those are also overloaded on int in the real API, so
 # their result type depends on the arguments and this pass cannot see that.
@@ -3446,9 +3486,14 @@ def _expression_type(expr: str, locals_: "dict[str, str]") -> str:
     # where the object itself belongs is the single commonest of these.
     if _DOT_NAME_RE.match(e):
         return "string"
+    if _DOT_TEXT_RE.search(e):
+        return "string"
     if _MATHF_NUMERIC_RE.match(e):
         return "float"
     return locals_.get(e, "")
+
+
+_VAR_INIT_RE = re.compile(r"\bvar\s+([A-Za-z_]\w*)\s*=\s*([^;]+);")
 
 
 def _declared_types(text: str) -> "dict[str, str]":
@@ -3463,6 +3508,22 @@ def _declared_types(text: str) -> "dict[str, str]":
         if name in seen and seen[name] != t:
             clash.add(name)
         seen[name] = t
+    # `var x = <expr>;` names no type directly, so the scan above skips it
+    # ("var" is a keyword, not a type) — anything `_expression_type` can
+    # otherwise prove about the INITIALIZER is recovered here instead, using
+    # whatever locals are already known. Only the same small set of certain
+    # shapes counts (literals, `.name`, `.text`, a known Mathf static);
+    # anything else stays unresolved rather than guessed at. Hit live,
+    # NpcDialogPlayer.cs(152,160): `var line = _tinkerGhostRef.gameObject.
+    # GetComponentInChildren<Text>().text;` then `PlayOneLine(line)` — CS1503
+    # (a string passed where NpcDialogLineData is expected).
+    for m in _VAR_INIT_RE.finditer(text or ""):
+        name, init = m.group(1), m.group(2).strip()
+        if name in seen:
+            continue
+        t = _expression_type(init, seen)
+        if t and t != "null":
+            seen[name] = t
     for name in clash:
         seen.pop(name, None)
     return seen
@@ -3591,7 +3652,8 @@ def template_field_types(template_dir: str, variant: str = "",
 def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                              arities: "dict[str, tuple[int, int]] | None" = None,
                              params: "dict[str, tuple[str, ...]] | None" = None,
-                             signature: str = ""
+                             signature: str = "",
+                             field_types: "dict[str, str] | None" = None
                              ) -> "dict[int, set[str]]":
     """`{line_index: {name, ...}}` for identifiers in `text` that cannot bind.
 
@@ -3600,6 +3662,14 @@ def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
     allowlist, and whatever the fragment declares locally (added here).
     `arities` additionally checks the argument COUNT of a call against a
     template-declared method (CS7036).
+    `field_types` seeds the argument-TYPE check (see `params` below) with the
+    class's OWN field types — a field is used, never declared, inside the one
+    fragment being scanned, so `_declared_types` alone never sees it. Hit
+    live, BossBattleTinkerGhostObjectives.cs(131): `ReportProgress(_bossHealth,
+    _maxBossHealth)` passed two `[SerializeField] private float` fields where
+    `ReportProgress(string, int)` needs a string and an int (CS1503 x2) — both
+    fields are declared elsewhere in the class (`extra_fields`), invisible to
+    a check that only reads the fragment's own text.
     """
     if not text:
         return {}
@@ -3634,7 +3704,12 @@ def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
         # The enclosing signature declares the types of the names its body
         # uses — without it `OnObjectiveProgress(node, ...)` has no idea what
         # `node` is, and the commonest wrong argument is a parameter passed on.
-        locals_ = _declared_types(signature + "\n" + text) if params else {}
+        # `field_types` is seeded FIRST so a local/parameter declared with the
+        # same name in this fragment (shadowing) wins, same precedence a real
+        # compiler gives the closer scope.
+        locals_ = dict(field_types or {})
+        if params:
+            locals_.update(_declared_types(signature + "\n" + text))
         for m in _BINDABLE_IDENT_RE.finditer(text):
             name = m.group(1)
             if not mask[m.start(1)]:
@@ -3815,7 +3890,8 @@ def _neutralize_flagged_lines(text: str, bad: "dict[int, set[str]]", *,
 def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                              arities: "dict[str, tuple[int, int]] | None" = None,
                              params: "dict[str, tuple[str, ...]] | None" = None,
-                             signature: str = ""
+                             signature: str = "",
+                             field_types: "dict[str, str] | None" = None
                              ) -> "tuple[str, set[str]]":
     """Neutralize statements referencing an identifier that cannot bind.
 
@@ -3827,7 +3903,8 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
     parse error has not repaired anything.
     """
     bad = find_unbound_identifiers(text, known=known, arities=arities,
-                                   params=params, signature=signature)
+                                   params=params, signature=signature,
+                                   field_types=field_types)
     if not bad:
         return text, set()
     return _neutralize_flagged_lines(text, bad)
@@ -4210,6 +4287,19 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     arities = template_method_arities(tdir, var, facts)
     params  = template_method_params(tdir, var, facts)
     field_types = template_field_types(tdir, var, facts)
+    # `find_unbound_identifiers`'s argument-TYPE check (its own `field_types`
+    # param) additionally needs the SCHEMA'S OWN authored fields — a field the
+    # LLM itself declared (`extra_fields`) is USED, never declared, inside the
+    # one fragment being scanned, so `_declared_types` alone never sees it
+    # either. Kept separate from `field_types` above (which `lint_field_type_
+    # misuse` uses unchanged) so this stays scoped to argument checking only.
+    # `template_field_types` is `@lru_cache`d — copy before extending it.
+    arg_field_types = dict(field_types)
+    for f in (getattr(schema, "extra_fields", None) or []):
+        fname = str(getattr(f, "name", "") or "")
+        ftype = _field_type_norm(str(getattr(f, "type", "") or ""))
+        if fname and ftype:
+            arg_field_types.setdefault(fname, ftype)
     flagged: set[str] = set()
     dropped: list[str] = []
     returned: list[str] = []
@@ -4235,7 +4325,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
         blob = _authored_blob(schema)
         wanted: set[str] = set()
         for _line, names in find_unbound_identifiers(
-                blob, known=known, arities=live_arities, params=params).items():
+                blob, known=known, arities=live_arities, params=params,
+                field_types=arg_field_types).items():
             wanted |= names
         made = build_missing_fields(schema, wanted, blob)
         if made:
@@ -4250,7 +4341,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
                 continue
             after, names = lint_unbound_identifiers(before, known=known,
                                                     arities=live_arities,
-                                                    params=params)
+                                                    params=params,
+                                                    field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types)
             names = names | names2
             if names:
@@ -4264,7 +4356,8 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             sig = getattr(m, "signature", "") or ""
             after, names = lint_unbound_identifiers(
                 body, known=known | _signature_param_names(sig),
-                arities=live_arities, params=params, signature=sig)
+                arities=live_arities, params=params, signature=sig,
+                field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types,
                                                    signature=sig)
             names = names | names2

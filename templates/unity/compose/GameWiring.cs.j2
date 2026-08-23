@@ -4,6 +4,8 @@
 // Regenerate with: unity-create --compose
 using System;
 using UnityEngine;
+{% if needs_scene_var %}using UnityEngine.SceneManagement;
+{% endif %}
 
 /// <summary>
 /// Wires all composed subsystems together at startup.
@@ -38,6 +40,9 @@ public class GameWiring : MonoBehaviour
 {% for u in units %}
         _{{ u.class_name | lower }} = FindFirstObjectByType<{{ u.class_name }}>();
 {% endfor %}
+{% if needs_scene_var %}
+        var _scene = SceneManager.GetActiveScene().name;
+{% endif %}
 {% for seam in awake_seams %}
 
         // ── {{ seam.label }} {{ "─" * [58 - seam.label | length, 0] | max }}

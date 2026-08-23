@@ -778,6 +778,49 @@ def _check_scene_population(schema: UnitySchema,
     rep.checks["scene_population"] = not empty
 
 
+def _check_objective_scene_reachability(schema: UnitySchema,
+                                        rep: PlayabilityReport) -> None:
+    """A mission's objective target must actually spawn in the scene that
+    mission runs in, or SEAM 8's wiring (unity_compose.py) has nothing to
+    bind to no matter how correctly it is scoped. Confirmed live
+    (GearCitadel): HallOne's entity subset omitted GearGate/SaveCogShrine —
+    the exact two entities Hall One Clearance's own objectives target — so a
+    correctly-wired mission still had nothing to interact with.
+    `_check_scene_population` only asks "does this scene host SOME content";
+    this asks the sharper question a passing `scene_population` grade can
+    still hide: is THIS mission's specific target among it.
+
+    Graded only for missions `_infer_mission_scenes` (src/unity_pipeline.py)
+    could actually resolve to a scene (`schema.meta["mission_scenes"]`) — a
+    mission it could not place is not this check's to judge; that gap is
+    reported separately, as a WARN, when `mission_scenes` was computed."""
+    mission_scenes = (schema.meta.get("mission_scenes")
+                      if isinstance(schema.meta, dict) else None) or {}
+    if not mission_scenes:
+        _ungraded(rep, "objective_scene_reachability",
+                  "no mission could be matched to a scene — nothing to "
+                  "cross-check")
+        return
+    by_spec = {s.name: s for s in (schema.scene_specs or [])}
+    missing: list[str] = []
+    for mission in (schema.missions or []):
+        for scene_name in mission_scenes.get(mission.id, ()):
+            spec = by_spec.get(scene_name)
+            if spec is None or spec.entities is None:
+                continue   # unrestricted scene already hosts everything
+            for o in (mission.objectives or []):
+                if o.target_ref and o.target_ref not in spec.entities:
+                    missing.append(f"{mission.title}.{o.id} (target "
+                                   f"'{o.target_ref}' not in scene '{scene_name}')")
+    if missing:
+        rep.findings.append(Finding(
+            "objective_scene_reachability", ERROR,
+            f"{len(missing)} objective target(s) do not spawn in the scene "
+            f"their own mission runs in: {', '.join(missing[:6])}",
+            "schema.scene_specs.entities / schema.missions.objectives.target_ref"))
+    rep.checks["objective_scene_reachability"] = not missing
+
+
 def _instances(e: EntitySpec) -> list[list[float]]:
     return e.instance_positions or []
 
@@ -1160,6 +1203,7 @@ _CHECKS = (
     _check_custom_script_bodies,
     _check_interactables_tagged,
     _check_scene_population,
+    _check_objective_scene_reachability,
     _check_spawn_clear,
     _check_content_reachable,
     _check_unbaked_gameplay,

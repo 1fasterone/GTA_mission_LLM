@@ -538,6 +538,56 @@ class TestObjectiveIdentity:
         assert "objective_targets" in rep.not_graded
 
 
+class TestObjectiveSceneReachability:
+    """A mission's objective target must actually spawn in the scene that
+    mission runs in, or SEAM 8's wiring has nothing to bind to no matter how
+    correctly it is scoped — confirmed live (GearCitadel): a hall's own
+    entity subset omitted the exact entity its own mission's objective
+    targeted. `schema.meta["mission_scenes"]` is what
+    `_infer_mission_scenes` (src/unity_pipeline.py) would have stamped."""
+
+    def _mission_schema(self, *, scene_entities, target_ref="GearGate"):
+        s = _schema(
+            [EntitySpec(name="Hero", kind="player", tag="Player"),
+             EntitySpec(name="GearGate", kind="prop", count=1)])
+        s.scenes = ["Main", "HallOne"]
+        s.scene_specs = [SceneSpec(name="HallOne", entities=scene_entities)]
+        s.missions = [MissionSpec(
+            id="m1", title="Hall One Clearance", description="d",
+            objectives=[MissionObjective(id="o1", description="reach it",
+                                         type="reach", target_ref=target_ref)])]
+        s.meta["mission_scenes"] = {"m1": ["HallOne"]}
+        return s
+
+    def test_ungraded_when_no_mission_scenes_were_ever_inferred(self):
+        rep = evaluate(_playable())
+        assert "objective_scene_reachability" not in rep.checks
+        assert "objective_scene_reachability" in rep.not_graded
+
+    def test_error_when_target_missing_from_its_own_missions_scene(self):
+        s = self._mission_schema(scene_entities=["SteamJet"])   # GearGate absent
+        rep, checks = _checks(s)
+        assert "objective_scene_reachability" in checks
+        assert not rep.checks["objective_scene_reachability"]
+        f = next(f for f in rep.findings if f.check == "objective_scene_reachability")
+        assert f.severity == ERROR
+        assert "GearGate" in f.summary and "HallOne" in f.summary
+
+    def test_passes_when_target_present_in_its_own_missions_scene(self):
+        s = self._mission_schema(scene_entities=["SteamJet", "GearGate"])
+        rep, checks = _checks(s)
+        assert "objective_scene_reachability" not in checks
+        assert rep.checks["objective_scene_reachability"]
+
+    def test_unrestricted_scene_is_not_graded_against(self):
+        # entities=None means "hosts everything" -- nothing to flag.
+        s = self._mission_schema(scene_entities=["SteamJet"])
+        s.scene_specs = [SceneSpec(name="HallOne", entities=None)]
+        rep, checks = _checks(s)
+        assert "objective_scene_reachability" not in checks
+        assert rep.checks["objective_scene_reachability"]
+
+
 # -- the avatar chain ---------------------------------------------------------
 
 class TestAvatarBinding:
