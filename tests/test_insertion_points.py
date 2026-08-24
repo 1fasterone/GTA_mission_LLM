@@ -395,6 +395,20 @@ def test_lint_repairs_bang_applied_to_count_comparison():
         == "if (!isReady) { Foo(); }"
 
 
+def test_lint_repairs_static_method_called_as_instance():
+    # CS0176: AudioSource.PlayClipAtPoint is `static` on the real Unity API —
+    # there is no instance overload — so calling it through an instance
+    # variable does not compile. Hit live, AudioDirectorAudioManager.cs(115,9)
+    # and (124,9): `var source = GetFreeSource(); source.PlayClipAtPoint(...)`.
+    out = lint_code_fragment(
+        "var source = GetFreeSource(); source.PlayClipAtPoint(clip, pos);", what="x")
+    assert "source.PlayClipAtPoint" not in out
+    assert "AudioSource.PlayClipAtPoint(clip, pos);" in out
+    # Already correctly qualified — must be left alone (idempotent).
+    same = "AudioSource.PlayClipAtPoint(clip, pos);"
+    assert lint_code_fragment(same, what="x") == same
+
+
 def test_lint_rejects_prose_fragment():
     # The exact live regression: the LLM wrote an English sentence describing
     # behavior straight into update_extra instead of C# statements ->

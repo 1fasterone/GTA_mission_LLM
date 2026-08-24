@@ -35,6 +35,21 @@ def _mission_project(tmp_path, project="Seam8Proof", *, objectives, triggers=(),
     return assets
 
 
+def _multi_mission_project(tmp_path, project="Seam8Scenes", *, missions,
+                           objective_scenes=None, entities=None,
+                           game_type="3D") -> Path:
+    """Compose a project around several authored missions, optionally with a
+    resolved {objective.id: scene_name} map (what `_objective_scene_map`,
+    src/unity_pipeline.py, would hand to `compose()` in the real pipeline)."""
+    ents = entities if entities is not None else [
+        EntitySpec(name="Sentry Drone", kind="enemy", count=8)]
+    subs = subsystems_for(game_type, [], missions=missions, entities=ents)
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer(project, project_config={"audio": {"backend": "dsp"}}).compose(
+        subs, assets, objective_scenes=objective_scenes)
+    return assets
+
+
 def _micro_cs(assets: Path, kind: str) -> str:
     """Concatenated source of every script a composed micro emitted."""
     d = assets / "Micros" / kind / "Scripts"
@@ -132,6 +147,83 @@ def test_one_source_binds_exactly_one_objective(tmp_path):
     gw = _gamewiring(_mission_project(tmp_path, objectives=objs))
     assert 'ReportProgress("cull_drones")' in gw
     assert 'ReportProgress("kill_boss")' not in gw
+
+
+# ── Scene-scoped binding (multi-mission, multi-scene projects) ────────────────
+# Live bug (GearCitadel, 3 missions across 3 hall scenes): the single global
+# trigger/interactable meant only the FIRST mission's `reach`/`collect`
+# objectives could ever bind — every other mission's were permanently
+# unadvanceable, and playability.txt marked the build NOT PLAYABLE. Passing
+# `objective_scenes` (what src/unity_pipeline.py's `_objective_scene_map`
+# derives from `_infer_mission_scenes`) lets each scene's own local trigger/
+# interactable instance bind its OWN mission's objectives, gated at runtime
+# on `_scene == "..."` — the same idiom EntitySpawner.cs.j2 already uses.
+
+def test_two_missions_scoped_to_different_scenes_each_get_gated_binding(tmp_path):
+    m1 = MissionSpec(id="m1", title="Hall One Clearance", objectives=[
+        MissionObjective(id="reach_gate_1", description="Reach the gate", type="reach"),
+    ])
+    m2 = MissionSpec(id="m2", title="Vertical Ascent", objectives=[
+        MissionObjective(id="reach_gate_2", description="Reach the other gate", type="reach"),
+    ])
+    gw = _gamewiring(_multi_mission_project(
+        tmp_path, missions=[m1, m2],
+        objective_scenes={"reach_gate_1": "HallOne", "reach_gate_2": "HallTwo"}))
+    assert 'if (_scene == "HallOne")' in gw
+    assert 'if (_scene == "HallTwo")' in gw
+    assert 'ReportProgress("reach_gate_1")' in gw
+    assert 'ReportProgress("reach_gate_2")' in gw
+    # Both are real bindings, not just named/abstained.
+    assert "no event source for reach_gate_2" not in gw
+
+
+def test_scene_gated_delegates_get_distinct_field_names(tmp_path):
+    """Two scene buckets binding the SAME objective type must not both
+    declare `_onReachObjective` — a duplicate C# field (CS0102)."""
+    m1 = MissionSpec(id="m1", title="Hall One Clearance", objectives=[
+        MissionObjective(id="reach_gate_1", description="Reach the gate", type="reach"),
+    ])
+    m2 = MissionSpec(id="m2", title="Vertical Ascent", objectives=[
+        MissionObjective(id="reach_gate_2", description="Reach the other gate", type="reach"),
+    ])
+    gw = _gamewiring(_multi_mission_project(
+        tmp_path, missions=[m1, m2],
+        objective_scenes={"reach_gate_1": "HallOne", "reach_gate_2": "HallTwo"}))
+    assert "private Action _onReachObjective;" not in gw   # bare/unqualified — would be a duplicate
+    assert "private Action _onReachObjective_HallOne;" in gw
+    assert "private Action _onReachObjective_HallTwo;" in gw
+    # OnDestroy unsubscribes the SAME qualified delegate it subscribed.
+    destroy = gw.split("private void OnDestroy()")[1]
+    assert "_onReachObjective_HallOne" in destroy
+    assert "_onReachObjective_HallTwo" in destroy
+
+
+def test_unmapped_mission_keeps_todays_global_ungated_binding(tmp_path):
+    """A mission `_infer_mission_scenes` could not resolve (absent from
+    `objective_scenes`) must bind exactly as it did before this feature
+    existed — no scene gate, no behavior change."""
+    objs = [MissionObjective(id="reach_it", description="Reach it", type="reach")]
+    gated   = _gamewiring(_multi_mission_project(
+        tmp_path, project="Gated", missions=[MissionSpec(id="m1", title="X", objectives=objs)],
+        objective_scenes=None))
+    ungated_baseline = _gamewiring(_mission_project(tmp_path, project="Baseline", objectives=objs))
+    assert 'if (_scene ==' not in gated
+    assert 'ReportProgress("reach_it")' in gated
+    # Same shape as the pre-existing single-mission path (module-level
+    # regression guard, not a byte-diff — field ordering/comments can differ
+    # with a different project name).
+    assert ('if (_scene ==' not in ungated_baseline
+            and 'ReportProgress("reach_it")' in ungated_baseline)
+
+
+def test_no_scene_var_declared_when_nothing_needs_it(tmp_path):
+    """The common case (single mission, or every project before this
+    feature) must not gain the SceneManager using/`_scene` local at all."""
+    gw = _gamewiring(_mission_project(tmp_path, objectives=[
+        MissionObjective(id="reach_it", description="Reach it", type="reach"),
+    ]))
+    assert "SceneManager" not in gw
+    assert "_scene =" not in gw
 
 
 def test_no_mission_means_no_seam(tmp_path):

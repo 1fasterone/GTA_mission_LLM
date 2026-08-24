@@ -349,7 +349,7 @@ def test_quoted_default_on_a_non_string_field(declared, default, expected):
 # Fixture provenance: TEST DATA, hand-transcribed from the generated .cs at
 # C:\u\CodeBranchSim. They exercise the deterministic lint layer only.
 
-def _typed(kind, variant, body, signature=""):
+def _typed(kind, variant, body, signature="", field_types=None):
     """Every name the real gate would have in scope, so the only thing left to
     flag is the signature mismatch under test."""
     known = (set(template_scope_members(str(MICRO / kind), variant))
@@ -360,7 +360,7 @@ def _typed(kind, variant, body, signature=""):
         body, known=known,
         arities=template_method_arities(str(MICRO / kind), variant),
         params=template_method_params(str(MICRO / kind), variant),
-        signature=signature)
+        signature=signature, field_types=field_types)
     return sorted({n for names in bad.values() for n in names})
 
 
@@ -380,6 +380,52 @@ def _typed(kind, variant, body, signature=""):
 ])
 def test_a_wrong_argument_type_is_caught(kind, variant, body, signature, needle):
     assert any(needle in f for f in _typed(kind, variant, body, signature))
+
+
+def test_a_wrong_argument_type_from_a_schema_field_is_caught():
+    # BossBattleTinkerGhostObjectives.cs(131,24)/(131,37) —
+    # ReportProgress(_bossHealth, _maxBossHealth): both arguments are
+    # [SerializeField] private float fields declared elsewhere in the class
+    # (extra_fields), not inside this fragment's own text, so
+    # `_declared_types` alone can never see their type — only the schema's
+    # OWN field types (the new `field_types` param) close this. ReportProgress
+    # wants (string, int); two floats satisfy neither.
+    flagged = _typed(
+        "objectives", "tracker", "ReportProgress(_bossHealth, _maxBossHealth);",
+        "private void OnBossDamageTaken(float damage)",
+        field_types={"_bossHealth": "float", "_maxBossHealth": "float"})
+    assert any("reportprogress" in f.lower() and "needs string" in f for f in flagged)
+
+
+def test_a_legal_call_with_schema_field_args_is_left_alone():
+    flagged = _typed(
+        "objectives", "tracker", 'ReportProgress(_objectiveId, _amount);',
+        "private void OnBossDamageTaken(float damage)",
+        field_types={"_objectiveId": "string", "_amount": "int"})
+    assert not [f for f in flagged if "ReportProgress(" in f]
+
+
+def test_a_wrong_argument_type_from_a_var_declared_dot_text_is_caught():
+    # NpcDialogPlayer.cs(152,160): `var line = _tinkerGhostRef.gameObject.
+    # GetComponentInChildren<Text>().text; ... PlayOneLine(line);` — `.text`
+    # is a string on every mainstream Unity UI text component, and
+    # `_declared_types` must resolve the `var` local to THAT inferred type
+    # rather than the literal "var" keyword (which is never itself treated as
+    # a real type). PlayOneLine wants the line data object, not a string.
+    flagged = _typed(
+        "npc_dialog", "quest_giver",
+        "var line = _tinkerGhostRef.gameObject.GetComponentInChildren<Text>()"
+        ".text; PlayOneLine(line);",
+        "private void OnShrineEnter()")
+    assert any("playoneline" in f.lower() for f in flagged)
+
+
+def test_a_legal_dot_text_call_is_left_alone():
+    flagged = _typed(
+        "npc_dialog", "quest_giver",
+        "var t = label.text; Debug.Log(t);",
+        "private void OnShrineEnter()")
+    assert not [f for f in flagged if "(" in f]
 
 
 @pytest.mark.parametrize("kind,variant,body,signature", [

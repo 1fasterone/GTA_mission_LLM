@@ -570,6 +570,117 @@ _MOOD_FOG = ("storm", "thunder", "fog", "mist", "cloud", "haze", "smoke",
 _MENU_SCENE_WORDS = ("menu", "title", "splash", "credits", "options",
                      "settings", "lobby", "gameover", "game_over", "pause")
 
+_MATCH_TOKEN_RE = re.compile(r"[A-Z][a-z0-9]*|[a-z0-9]+")
+_MATCH_STOPWORDS = frozenset({"the", "a", "an", "of", "in", "on", "at", "to", "and"})
+
+
+def _match_tokens(s: str) -> frozenset[str]:
+    """Lowercase word tokens for comparing a mission title against a scene
+    name — splits PascalCase/camelCase scene names ('HallOne' ->
+    {'hall','one'}) and punctuation/space-separated titles alike ('Hall One
+    Clearance' -> {'hall','one','clearance'}) with the SAME regex, dropping a
+    short stoplist of filler words that would otherwise "match" anything."""
+    return frozenset(t.lower() for t in _MATCH_TOKEN_RE.findall(s or "")
+                     if t.lower() not in _MATCH_STOPWORDS)
+
+
+def _infer_mission_scenes(schema: UnitySchema) -> tuple[dict[str, list[str]], list[str]]:
+    """Best-effort, deterministic {mission.id: [scene_name]} inference.
+
+    Nothing in the schema says which scene a mission's objectives belong to
+    (`MissionSpec` has no scene field, and `SceneSpec.entities` — the only
+    per-scene concept that exists — has never been cross-checked against
+    `missions[].objectives[].target_ref`). Confirmed live on a 3-mission,
+    4-hall metroidvania (GearCitadel): SEAM 8 (src/unity_compose.py) binds
+    ONE global event source per objective TYPE project-wide, so only the
+    first mission's objectives could ever advance; and the second mission's
+    objective targets were scoped only to an unrelated scene, so even a
+    correctly-wired mission had nothing to interact with. Both defects trace
+    to this same missing fact, so it is computed once here and consumed by
+    both `_reconcile_scene_specs` (below) and SEAM 8
+    (`unity_compose.py`, via `schema.meta["mission_scenes"]`).
+
+    Two-tier match, first hit wins per mission; ties abstain rather than
+    guess:
+      1. Name match — the mission title and the scene name share word
+         tokens (case-insensitive, PascalCase-aware — "HallOne" <-> "Hall
+         One Clearance" share {"hall","one"}; "BossArena" <-> "Boss Battle:
+         Tinker Ghost" share {"boss"}). Accepted only when exactly one scene
+         has the strict-maximum token overlap (a tie, e.g. both "HallOne"
+         and "HallTwo" sharing just "hall", falls through to tier 2).
+      2. Sibling-objective agreement — when no scene name matches, check
+         which non-`None` `SceneSpec.entities` subset already contains the
+         MOST of this mission's own objective target_refs (e.g. "Vertical
+         Ascent" shares no words with "HallTwo", but its `obj_reach_gate_2`
+         target `WallClingPoint` is already correctly scoped to HallTwo).
+         Accepted only when exactly one scene has the strict maximum.
+
+    A mission that matches neither tier is returned in `unresolved` and
+    forced into no scene — its objectives keep today's global, ungated SEAM 8
+    behavior and its targets are not restored into any scene's subset. That
+    is a pure abstention, not a regression: unresolved missions behave
+    exactly as they did before this function existed.
+    """
+    gameplay_scenes = [s for s in schema.scenes
+                       if s and not any(w in s.lower() for w in _MENU_SCENE_WORDS)]
+    scene_tokens = {s: _match_tokens(s) for s in gameplay_scenes}
+
+    resolved: dict[str, list[str]] = {}
+    unresolved: list[str] = []
+    for mission in schema.missions:
+        if not mission.objectives or not mission.id:
+            continue
+
+        title_tokens = _match_tokens(mission.title)
+        name_hits = {s: len(title_tokens & toks)
+                    for s, toks in scene_tokens.items() if title_tokens & toks}
+        if name_hits:
+            best = max(name_hits.values())
+            winners = [s for s, c in name_hits.items() if c == best]
+            if len(winners) == 1:
+                resolved[mission.id] = winners
+                continue
+
+        target_names = {o.target_ref for o in mission.objectives if o.target_ref}
+        if target_names:
+            hits: dict[str, int] = {}
+            for spec in schema.scene_specs:
+                if spec.entities is None or spec.name not in scene_tokens:
+                    continue
+                overlap = target_names & set(spec.entities)
+                if overlap:
+                    hits[spec.name] = len(overlap)
+            if hits:
+                best = max(hits.values())
+                winners = [s for s, c in hits.items() if c == best]
+                if len(winners) == 1:
+                    resolved[mission.id] = winners
+                    continue
+
+        unresolved.append(mission.id)
+    return resolved, unresolved
+
+
+def _objective_scene_map(schema: UnitySchema,
+                         mission_scenes: "dict[str, list[str]] | None") -> dict[str, str]:
+    """Flatten `{mission.id: [scene, ...]}` (from `_infer_mission_scenes`) to
+    `{objective.id: scene}` — what SEAM 8 (`unity_compose.py`) needs to gate
+    each objective's event-source wiring to the scene it can actually fire
+    in. A mission resolved to more than one scene (not produced by
+    `_infer_mission_scenes` today, but tolerated) contributes its first scene
+    only, rather than guessing which objective belongs to which."""
+    if not mission_scenes:
+        return {}
+    out: dict[str, str] = {}
+    for mission in schema.missions:
+        scenes = mission_scenes.get(mission.id)
+        if not scenes:
+            continue
+        for o in mission.objectives:
+            if o.id:
+                out[o.id] = scenes[0]
+    return out
+
 
 def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     fixes: list[str] = []
@@ -630,6 +741,33 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
                     fixes.append(f"Scene '{spec.name}': restored player/weapon/"
                                  f"enemy group(s) {missing} — a gameplay scene "
                                  f"cannot omit them")
+            # A mission's objective targets must be reachable in the scene
+            # that mission is actually FOR, or the objective can never be
+            # completed no matter how SEAM 8 (unity_compose.py) wires it —
+            # confirmed live: HallOne's own entity subset omitted GearGate
+            # and SaveCogShrine, the exact two entities Hall One Clearance's
+            # objectives target, so even a correctly-wired mission had
+            # nothing to interact with. `mission_scenes` is populated by
+            # `_infer_mission_scenes` (best-effort, may be empty/absent —
+            # this restoration is a no-op for any mission it could not
+            # resolve, same abstain-rather-than-guess rule as everywhere
+            # else in this function).
+            _mission_scenes = (schema.meta.get("mission_scenes") or {}) \
+                if isinstance(schema.meta, dict) else {}
+            if spec.entities and _mission_scenes:
+                for mission in schema.missions:
+                    if spec.name not in (_mission_scenes.get(mission.id) or ()):
+                        continue
+                    targets = [o.target_ref for o in mission.objectives
+                              if o.target_ref and o.target_ref in entity_names]
+                    missing_targets = [n for n in targets if n not in spec.entities]
+                    if missing_targets:
+                        spec.entities = list(spec.entities) + missing_targets
+                        fixes.append(
+                            f"Scene '{spec.name}': restored objective target "
+                            f"entity group(s) {missing_targets} for mission "
+                            f"'{mission.title}' — an objective's target must "
+                            f"be reachable where its mission runs")
         desc = (spec.description or "").lower()
         if desc and not spec.time_of_day:
             for words, tod in _MOOD_TOD:
@@ -1228,6 +1366,30 @@ class UnityPipeline:
         for msg in resolve_objective_targets(schema):
             self._fix(msg)
 
+        # Mission -> scene inference (src/unity_pipeline.py:_infer_mission_scenes).
+        # Deliberately AFTER resolve_objective_targets: the inference's tier-2
+        # sibling-objective-agreement match reads target_ref, so it needs every
+        # objective's target filled in first. Deliberately BEFORE the
+        # playability pre-flight below, so that check grades the schema with
+        # objective targets already reachable in their mission's scene, and
+        # BEFORE compose (further down), which reads schema.meta["mission_scenes"]
+        # to scope SEAM 8's event-source wiring per scene instead of binding
+        # one global trigger/interactable to only the first mission project-wide.
+        _mission_scenes, _unmapped_missions = _infer_mission_scenes(schema)
+        if isinstance(schema.meta, dict):
+            schema.meta["mission_scenes"] = _mission_scenes
+        if _unmapped_missions:
+            _titles = {m.id: m.title for m in schema.missions}
+            self._warn(
+                "mission_scenes: could not infer a scene for mission(s) "
+                + ", ".join(_titles.get(mid, mid) for mid in _unmapped_missions)
+                + " — their objectives keep today's global (ungated) SEAM 8 "
+                  "binding and their targets are not restored into any scene")
+        if _mission_scenes:
+            schema, _mission_scene_fixes = _reconcile_scene_specs(schema)
+            for msg in _mission_scene_fixes:
+                self._fix(msg)
+
         # Step 5c — playability pre-flight. Step 7 grades the finished project,
         # which is too late to change it: a build the evaluator knows cannot be
         # completed still shipped, with a score next to it. This grades the
@@ -1587,7 +1749,10 @@ class UnityPipeline:
             # concept script survived so GameContext can wire micro↔concept seams.
             has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
             composer.emit(subsystems, project_root / "Assets",
-                          has_game_manager=has_game_manager, wiring=schema.wiring)
+                          has_game_manager=has_game_manager, wiring=schema.wiring,
+                          objective_scenes=_objective_scene_map(
+                              schema, schema.meta.get("mission_scenes")
+                              if isinstance(schema.meta, dict) else None))
             # Hand the wiring pass's own decisions to Step 7. Whether a mission
             # can actually be completed is a COMPOSE-time fact (which seams
             # fired, which objectives found an event source), and the evaluator

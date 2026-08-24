@@ -263,7 +263,8 @@ class MicroComposer:
         return Path(self._cfg["unity_pipeline"]["unity_template_dir"]) / "compose"
 
     def compose(self, subsystems: list[Subsystem], assets_root: Path,
-                has_game_manager: bool = False, wiring=None) -> list[ComposedUnit]:
+                has_game_manager: bool = False, wiring=None,
+                objective_scenes: "dict[str, str] | None" = None) -> list[ComposedUnit]:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
@@ -293,7 +294,7 @@ class MicroComposer:
             by_kind[sub.kind].scripts = rel_scripts
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
-        self._emit_wiring(units, micros_root, wiring)
+        self._emit_wiring(units, micros_root, wiring, objective_scenes)
         # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
         self._emit_context(units, micros_root, has_game_manager)
 
@@ -310,7 +311,8 @@ class MicroComposer:
                 label="composed script(s)")
         return units
 
-    def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None) -> None:
+    def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None,
+                     objective_scenes: "dict[str, str] | None" = None) -> None:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
         from .atoms.backends.unity import unity_atom_snippet
 
@@ -619,32 +621,67 @@ class MicroComposer:
                     )
                     bound_ids.add(f"{unit.class_name}.{obj['id']}")
 
-        for types, source, atom, source_arg, delegate, delegate_type in _OBJECTIVE_SOURCES:
-            if source is None:
+        # Bucket objectives by the scene their mission resolves to
+        # (`objective_scenes`: {objective.id: scene_name}, flattened by the
+        # caller from schema.meta["mission_scenes"] — see
+        # `_infer_mission_scenes`/`_objective_scene_map`,
+        # src/unity_pipeline.py). Each bucket runs the SAME one-source-per-
+        # type-wins algorithm independently, so a project with N missions
+        # across N scenes gets up to N bindings per type instead of one
+        # project-wide — confirmed live (GearCitadel): a single global
+        # trigger/interactable meant only the FIRST mission's `reach`/
+        # `collect` objectives could ever bind; every other mission's were
+        # permanently unadvanceable. Objectives whose mission could not be
+        # resolved to a scene fall into the `None` bucket and keep today's
+        # global, ungated behavior byte-for-byte — a project with no
+        # `objective_scenes` (single mission/scene, or every project before
+        # this feature) is unaffected.
+        objective_scenes = objective_scenes or {}
+        scene_keys = sorted({s for s in objective_scenes.values() if s}) + [None]
+        needs_scene_var = False
+        for scene_key in scene_keys:
+            scoped = [(u, o) for u in objective_units for o in u.objectives
+                     if o.get("id") and objective_scenes.get(str(o["id"])) == scene_key]
+            if not scoped:
                 continue
-            match = next(
-                ((u, o) for u in objective_units for o in u.objectives
-                 if o.get("type") in types and o.get("id")
-                 and f"{u.class_name}.{o['id']}" not in bound_ids),
-                None,
-            )
-            if match is None:
-                continue
-            unit, obj = match
-            ov = _fv(unit)
-            stored_delegates.append({"type": delegate_type, "name": delegate})
-            awake_seams.append({
-                "label": f"SEAM 8: {source.kind} → objectives ({obj['type']}: {obj['id']})",
-                "snippet": unity_atom_snippet(atom, {
+            for types, source, atom, source_arg, delegate, delegate_type in _OBJECTIVE_SOURCES:
+                if source is None:
+                    continue
+                match = next(
+                    ((u, o) for u, o in scoped
+                     if o.get("type") in types and o.get("id")
+                     and f"{u.class_name}.{o['id']}" not in bound_ids),
+                    None,
+                )
+                if match is None:
+                    continue
+                unit, obj = match
+                ov = _fv(unit)
+                # The delegate FIELD is declared once per name — two scene
+                # buckets binding the same objective TYPE (e.g. two `reach`
+                # objectives, one per hall) would otherwise both try to
+                # declare `_onReachObjective`, a duplicate member (CS0102).
+                # Scene-qualify the name whenever this binding is scene-gated.
+                delegate_name = delegate if scene_key is None else (
+                    f"{delegate}_{re.sub(r'[^A-Za-z0-9]', '', scene_key)}")
+                stored_delegates.append({"type": delegate_type, "name": delegate_name})
+                snippet = unity_atom_snippet(atom, {
                     source_arg: _fv(source), "objectives_var": ov,
-                    "delegate_var": delegate, "objective_id": obj["id"],
-                }),
-            })
-            destroy_cleanups.append(
-                f"if ({_fv(source)} != null && {delegate} != null)\n"
-                f"    {_fv(source)}.{_OBJECTIVE_EVENTS[atom]} -= {delegate};"
-            )
-            bound_ids.add(f"{unit.class_name}.{obj['id']}")
+                    "delegate_var": delegate_name, "objective_id": obj["id"],
+                })
+                label = f"SEAM 8: {source.kind} → objectives ({obj['type']}: {obj['id']})"
+                if scene_key is not None:
+                    needs_scene_var = True
+                    label += f" [scene: {scene_key}]"
+                    indented = "\n".join(f"    {line}" if line else line
+                                         for line in snippet.splitlines())
+                    snippet = f'if (_scene == "{scene_key}")\n{{\n{indented}\n}}'
+                awake_seams.append({"label": label, "snippet": snippet})
+                destroy_cleanups.append(
+                    f"if ({_fv(source)} != null && {delegate_name} != null)\n"
+                    f"    {_fv(source)}.{_OBJECTIVE_EVENTS[atom]} -= {delegate_name};"
+                )
+                bound_ids.add(f"{unit.class_name}.{obj['id']}")
 
         # Abstain loudly: name every authored objective this build cannot advance.
         #
@@ -843,6 +880,7 @@ class MicroComposer:
             helper_methods=helper_methods,
             destroy_cleanups=destroy_cleanups,
             has_trigger_save=has_trigger_save,
+            needs_scene_var=needs_scene_var,
         )
         (sdir / "GameWiring.cs").write_text(content, encoding="utf-8")
         (sdir / "GameWiring.cs.meta").write_text(_meta_file(wiring.guid), encoding="utf-8")

@@ -898,6 +898,30 @@ def unity_validate(
     deps     = resolver.build_manifest_deps(
         schema, inject_mcp_bridge=pipe_cfg.get("inject_mcp_bridge", True)
     )
+
+    # Mission -> scene inference (see _infer_mission_scenes's docstring).
+    # `unity-validate` skips `_check_consistency`/Step 5 entirely, so this
+    # deterministic, LLM-free pass must be re-run here too or a saved schema
+    # recompiled through this command would never get the fix a fresh
+    # `unity-create` run already applies — SEAM 8's per-scene wiring (below,
+    # only when --compose) and EntitySpawner's per-scene entity groups both
+    # depend on schema.meta["mission_scenes"] being set.
+    from src.unity_pipeline import (_infer_mission_scenes, _objective_scene_map,
+                                    _reconcile_scene_specs)
+    _mission_scenes, _unmapped_missions = _infer_mission_scenes(schema)
+    if isinstance(schema.meta, dict):
+        schema.meta["mission_scenes"] = _mission_scenes
+    if _unmapped_missions:
+        _titles = {m.id: m.title for m in schema.missions}
+        console.print(
+            "[yellow]WARN[/]  mission_scenes: could not infer a scene for "
+            "mission(s) " + ", ".join(_titles.get(mid, mid) for mid in _unmapped_missions)
+            + " — their objectives keep the global (ungated) SEAM 8 binding")
+    if _mission_scenes:
+        schema, _mission_scene_fixes = _reconcile_scene_specs(schema)
+        for msg in _mission_scene_fixes:
+            console.print(f"  [magenta]FIX[/]  {msg}")
+
     model_overrides: dict = {}
     if blender_models:
         from src.unity_pipeline import UnityPipeline
@@ -975,7 +999,10 @@ def unity_validate(
     if compose and composer is not None and composed_units is not None:
         has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
         composer.emit(subsystems, root / "Assets",
-                      has_game_manager=has_game_manager, wiring=schema.wiring)
+                      has_game_manager=has_game_manager, wiring=schema.wiring,
+                      objective_scenes=_objective_scene_map(
+                          schema, schema.meta.get("mission_scenes")
+                          if isinstance(schema.meta, dict) else None))
         if isinstance(schema.meta, dict):
             schema.meta["wiring"] = composer.wiring_report
         console.print(f"[green]OK[/]  composed {len(composed_units)} micro subsystem(s) "
