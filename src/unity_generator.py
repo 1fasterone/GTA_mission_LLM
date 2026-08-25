@@ -1261,6 +1261,19 @@ def _sanitize_param_typed_member_calls(script: UnityScript,
 _FOREACH_BARE_RE = re.compile(
     r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+\w+\s+in\s+([A-Za-z_]\w*)\s*\)")
 _LOCAL_DECL_RE = re.compile(r"\b(?:var|[\w<>\[\],.]+)\s+(\w+)\s*=")
+# A bare declaration with no initializer -- `RaycastHit hit;` ahead of
+# `Physics.Raycast(..., out hit, ...)` -- never matched _LOCAL_DECL_RE (it
+# requires a trailing `=`), so `hit` never entered `declared` and a later
+# condition reading it (`if (hit.collider...)`) got misread as an undeclared
+# value read. Restricted to a PascalCase/primitive-keyword "type" token so
+# `return x;`/`throw e;`/`yield x;`/`break;` (a statement keyword, not a
+# type, immediately followed by its own value/nothing) can never match —
+# those lowercase keywords are neither PascalCase nor in the primitive set.
+# Confirmed live: VectorCore's SurfaceTypeDetector.cs.
+_LOCAL_DECL_NO_INIT_RE = re.compile(
+    r"\b((?:[A-Z]\w*(?:<[^<>()]*>)?"
+    r"|int|float|bool|string|double|long|byte|short|char|uint|ulong|var))"
+    r"\s+(\w+)\s*;")
 _FOREACH_VAR_RE = re.compile(r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+(\w+)\s+in\b")
 
 
@@ -1277,6 +1290,7 @@ def _strip_undeclared_foreach(script: UnityScript) -> None:
             return body
         declared = set(fields)
         declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(body))
         declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
         out = []
         for line in body.splitlines(keepends=True):
@@ -1443,6 +1457,7 @@ def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
             return body
         declared = set(own_fields) | set(extra_declared)
         declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(body))
         declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
         for m in _IS_PATTERN_RE.finditer(body):
             declared.add(m.group(1))
@@ -1582,6 +1597,7 @@ def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
 
     declared: set[str] = {f.name for f in script.extra_fields}
     declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(combined))
+    declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(combined))
     declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(combined))
     for m in _IS_PATTERN_RE.finditer(combined):
         declared.add(m.group(1))

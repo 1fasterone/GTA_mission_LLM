@@ -2890,6 +2890,31 @@ class TestUndeclaredSelfReferenceSanitizers:
         _sanitize_undeclared_condition_reads(s)
         assert "healthThreshold" not in s.update_extra
 
+    # ── regression: bare no-initializer declaration ahead of an out-param ──
+    # (VectorCore's SurfaceTypeDetector.cs) — `RaycastHit hit;` followed by
+    # `Physics.Raycast(..., out hit, ...)` never registered `hit` as declared
+    # (the declared-locals scan required a trailing `=`), so a later
+    # `if (hit.collider != null)` read `hit` as an undeclared bare value and
+    # the whole line — including its opening `{` — was dropped.
+    def test_bare_out_param_declaration_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script(
+            "RaycastHit hit;\n"
+            "Physics.Raycast(transform.position, Vector3.down, out hit, 1f);\n"
+            "if (hit.collider != null) { enabled = false; }")
+        _sanitize_undeclared_condition_reads(s)
+        assert "if (hit.collider != null)" in s.update_extra
+        assert s.update_extra.count("{") == s.update_extra.count("}")
+
+    def test_bare_declaration_regex_ignores_statement_keywords(self):
+        # `return x;`/`throw e;`/`yield return x;` must never be misread as
+        # declaring a local named after the keyword's own value — none of
+        # "return"/"throw"/"yield" is PascalCase or a primitive keyword.
+        from src.unity_generator import _LOCAL_DECL_NO_INIT_RE
+        for line in ("return someValue;", "throw myException;",
+                     "yield return x;", "break;", "continue;"):
+            assert not _LOCAL_DECL_NO_INIT_RE.search(line), line
+
 
 # ── SceneAudio emission + data-driven README ────────────────────────────────────
 
