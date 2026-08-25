@@ -124,10 +124,40 @@ a new mode macro in `_controller_modes.j2`, and the `has_<kind>` gates in
   a configurable key (`mode_switch_key`, default `Tab`) cycling through the
   registry — not "walk up to the car and press F to get in." That needs
   `interactable`/`trigger` micro coupling the controller doesn't have.
-- **Explicit declaration only.** `locomotion_modes` is populated by Step 3
-  schema-fill (or hand-authored test fixtures), never inferred from prompt
-  keywords — `unity_archetypes.classify()`'s locomotion scorer stays
-  single-winner, unchanged.
+- ~~Explicit declaration only~~ — **now also deterministically inferred.**
+  `locomotion_modes` was originally Step 3-only, confirmed empirically to not
+  reliably get set even with explicit schema-prompt guidance (VectorCore
+  stress prompt, 2 different local models, 4 straight runs, 0 detections).
+  `unity_archetypes.classify()`/`apply_intent()` now also detect it
+  deterministically — a runtime-switch-signal phrase table AND 2+ distinct
+  `ControllerModeKind`s each independently clearing the same confidence bar
+  every other axis uses (`_score_multi_mode`). FILL-only, never override: it
+  only ever writes `schema.locomotion_modes` when Step 3 left it empty, so an
+  author's explicit registry (even a single entry) always wins. See
+  "Multi-mode detection" below.
+
+## Multi-mode detection (`unity_archetypes.py`)
+
+Mirrors the `game_type`/`locomotion`/`genre` keyword-classifier backstop
+that already existed for every other schema axis, extended to the one
+field this doc used to call LLM-only:
+
+- `_MULTI_MODE_SWITCH_SIGNAL` — phrases like "switch between", "mode
+  manager", "get in and out of" that signal RUNTIME switching specifically,
+  not just a brief that happens to mention more than one body in passing.
+- `_MULTI_MODE_KIND_TABLE` — per-kind keyword lists for `on_foot` (new),
+  `vehicle_car`/`flying` (reused from `_LOCOMOTION`'s own `drive`/`fly`
+  entries, no second copy to drift out of sync).
+- `_score_multi_mode` gates on BOTH halves independently (conjunctive, not
+  additive keyword volume) — a racing-game brief whose flavour text says
+  "hop out and check the engine" once must not become a Control Surface
+  Stack project on that alone.
+- Reaches the LLM two ways before the deterministic fill ever runs:
+  `concept_hint()` plants it in Step 2's prose (Step 3 only ever sees the
+  concept, never the raw brief — same reasoning as `locomotion="none"`'s
+  concept-hint line), and `structure_hint()` emits a Step-3 schema-prompt
+  MUST line. `apply_intent()` is the guaranteed backstop regardless of
+  whether the LLM acts on either hint.
 
 ## Phasing
 
@@ -145,5 +175,6 @@ a new mode macro in `_controller_modes.j2`, and the `has_<kind>` gates in
   trick/momentum physics), riding a mount (needs a live cross-entity
   reference — the composer has no dependency-declaration mechanism between
   micros at all today), true per-zone spatial layout, per-mode camera/
-  animator retuning, contextual enter/exit, LLM auto-classification of "this
-  prompt wants multi-mode."
+  animator retuning, contextual enter/exit. (Deterministic keyword
+  classification of "this prompt wants multi-mode" — the other kind of
+  auto-classification — shipped; see "Multi-mode detection" above.)

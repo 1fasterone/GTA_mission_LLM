@@ -67,10 +67,17 @@ class UnityIntent:
     game_type:  Optional[str] = None      # None = no confident signal, leave the LLM's choice alone
     locomotion: Optional[str] = None
     genre:      str           = "universal"
+    # Control Surface Stack (docs/CONTROL_SURFACE_STACK.md) — 2+ entries only
+    # when BOTH a runtime-switch signal AND 2+ distinct kinds were confidently
+    # detected; empty means "no opinion", same contract as game_type/locomotion
+    # being None. Ordered on_foot-first (if present), then by descending
+    # per-kind score — see `_score_multi_mode`.
+    locomotion_modes: list[str] = field(default_factory=list)
 
     game_type_confidence:  int = 0        # raw keyword score — 3+ means a real prompt hit fired
     locomotion_confidence: int = 0
     genre_confidence:      int = 0
+    locomotion_modes_confidence: int = 0  # the SWITCH-SIGNAL score, not a per-kind score
 
     matched: dict[str, list[str]] = field(default_factory=dict)  # axis -> matched keywords, for logging
 
@@ -92,6 +99,17 @@ class UnityIntent:
         elif self.locomotion and self.locomotion != "walk":
             parts.append(f"The player primarily gets around by {self.locomotion}ing "
                           f"({_LOCOMOTION_LABEL[self.locomotion]}).")
+        if self.locomotion_modes and self.locomotion_modes_confidence >= 3:
+            # Same "gone for good if it doesn't survive into the prose" logic
+            # as locomotion='none' above — Step 3's schema_hints MUST line
+            # (structure_hint) is the deterministic backstop regardless, but
+            # planting it here too gives Step 3's own reasoning a fighting
+            # chance to justify the field instead of just copying an
+            # instruction it may not act on.
+            kinds = " / ".join(self.locomotion_modes)
+            parts.append(f"The player runs a Control Surface Stack: ONE body that "
+                          f"switches at runtime between {kinds} — set "
+                          f"locomotion_modes to exactly this list.")
         if self.genre != "universal":
             parts.append(f"Genre: {self.genre.replace('_', ' ')}. "
                           f"Lean into what makes a {self.genre.replace('_', ' ')} game feel "
@@ -129,6 +147,13 @@ class UnityIntent:
         elif self.locomotion and self.locomotion_confidence >= min_confidence:
             hits = ", ".join(self.matched.get("locomotion", []))
             lines.append(f'  "locomotion" MUST be "{self.locomotion}" — matched: {hits}.')
+        if self.locomotion_modes and self.locomotion_modes_confidence >= min_confidence:
+            hits = ", ".join(self.matched.get("locomotion_modes_switch_signal", []))
+            kinds = ", ".join(f'"{k}"' for k in self.locomotion_modes)
+            lines.append(
+                f'  "locomotion_modes" MUST be [{kinds}] — the brief asks the '
+                f'player to switch between these locomotion modes at runtime '
+                f'(matched: {hits}).')
         if self.genre != "universal":
             lines.append(f'  Bias entities/features/scripts toward a {self.genre.replace("_", " ")} game.')
             req = _GENRE_SCHEMA_REQUIREMENTS.get(self.genre)
@@ -222,6 +247,59 @@ _LOCOMOTION: list[tuple[str, list[str]]] = [
     ("swim", [
         "swimming", "underwater", "diving", "scuba", "submarine", "ocean exploration", "deep sea",
     ]),
+]
+
+# ── Control Surface Stack (multi-mode) catalogue ───────────────────────────────
+#
+# `locomotion` above is single-winner: exactly one axis value for the whole
+# project. A brief can ALSO ask for several of those bodies to coexist on one
+# player, runtime-switchable (docs/CONTROL_SURFACE_STACK.md) — a brief this
+# module previously had no way to detect at all, so it was 100% LLM-decided at
+# Step 3 (src/micro/controller.py's ControllerSchema.modes) with no
+# deterministic backstop, unlike every other axis here. Confirmed empirically
+# (VectorCore full-surface-control-stack stress prompt, 2 different local
+# models, 4 consecutive runs): a brief listing eight switchable locomotion
+# modes across several paragraphs did not reliably make the LLM set
+# `locomotion_modes`, even with explicit schema-prompt guidance — this is a
+# structured-extraction task, the same class of gap every other axis in this
+# module exists to backstop.
+#
+# Reuses _LOCOMOTION's own keyword lists for the two kinds it already scores
+# (drive -> vehicle_car, fly -> flying) rather than a second copy that could
+# drift out of sync — only on_foot needs its own vocabulary, since
+# `_LOCOMOTION` has no "walk" entry (walk is the fallback default, never
+# scored there). Labelled with `ControllerModeKind`'s OWN vocabulary
+# (src/micro/controller.py) rather than `_LOCOMOTION`'s "drive"/"fly", so a
+# detected kind is directly usable as a `locomotion_modes` entry with no
+# translation step to keep in sync.
+_ON_FOOT_KEYWORDS: list[str] = [
+    "on-foot", "on foot", "walking", "parkour", "wall-run", "wall run",
+    "vault", "mantle", "melee combat", "hand-to-hand", "third-person combat",
+]
+
+_MULTI_MODE_KIND_TABLE: list[tuple[str, list[str]]] = [
+    ("on_foot", _ON_FOOT_KEYWORDS),
+    ("vehicle_car", next(kws for name, kws in _LOCOMOTION if name == "drive")),
+    ("flying", next(kws for name, kws in _LOCOMOTION if name == "fly")),
+]
+
+# Phrases signalling the player switches between several of the above AT
+# RUNTIME, on one avatar — the thing that actually makes `locomotion_modes`
+# apply, as opposed to a single-locomotion brief that just happens to mention
+# more than one body in passing (a racing game whose flavour text says "hop
+# out and check the engine" is not a Control Surface Stack). Required as an
+# independent, conjunctive signal alongside 2+ kind hits — see
+# `_score_multi_mode` — specifically so a passing mention of a second body
+# can never be enough on its own; strictly opt-in, matching
+# docs/CONTROL_SURFACE_STACK.md's "strictly additive" contract.
+_MULTI_MODE_SWITCH_SIGNAL: list[str] = [
+    "switch between", "switching between", "switches between",
+    "get in and out of", "get in and out", "hop in and out",
+    "enter and exit a vehicle", "mode manager", "control surface stack",
+    "runtime-switchable", "runtime switchable",
+    "multiple locomotion modes", "several locomotion modes",
+    "multiple control modes", "switch locomotion", "switch modes",
+    "transitions between locomotion", "locomotion modes at runtime",
 ]
 
 # ── Non-embodiment — a DECLARATION, read before the movement vocabulary ───────
@@ -447,6 +525,65 @@ def _score(prompt_low: str, concept_low: str, table: list[tuple[str, list[str]]]
     return best_name, best_score, best_hits
 
 
+def _score_all(prompt_low: str, concept_low: str, table: list[tuple[str, list[str]]]
+              ) -> dict[str, tuple[int, list[str]]]:
+    """Like `_score`, but every table entry that scores at all is kept, not
+    just the winner — the Control Surface Stack table needs to know EVERY
+    kind the brief names (on_foot AND vehicle_car AND flying can all be
+    live at once), where every other table here answers a single-winner
+    "which ONE axis value" question."""
+    p_denied = _denied_spans(prompt_low)
+    c_denied = _denied_spans(concept_low) if concept_low else ()
+    out: dict[str, tuple[int, list[str]]] = {}
+    for name, keywords in table:
+        score = 0
+        hits: list[str] = []
+        for kw in keywords:
+            pat = _kw_pattern(kw)
+            if _live_match(pat, prompt_low, p_denied):
+                score += 3
+                hits.append(kw)
+            elif concept_low and _live_match(pat, concept_low, c_denied):
+                score += 1
+                hits.append(kw)
+        if score:
+            out[name] = (score, hits)
+    return out
+
+
+def _score_multi_mode(prompt_low: str, concept_low: str, min_confidence: int
+                      ) -> tuple[list[str], int, list[str], dict[str, list[str]]]:
+    """Control Surface Stack detection — CONJUNCTIVE, not just a keyword
+    count: a runtime-switch signal AND 2+ distinct kinds must each
+    independently clear `min_confidence`, so a single-locomotion brief that
+    just mentions a second body in passing (flavour text, not a real
+    switchable mode) can never trigger this on its own. Either half missing
+    means "no opinion" (empty list), the same contract as every other axis.
+
+    Returns (kinds, switch_signal_score, switch_signal_hits, per_kind_hits).
+    `kinds` is ordered on_foot-first (if present), then by descending
+    per-kind score — a reasonable `default_mode` guess when the brief
+    doesn't say which mode the player starts in.
+    """
+    switch_name, switch_score, switch_hits = _score(
+        prompt_low, concept_low, [("multi_mode", _MULTI_MODE_SWITCH_SIGNAL)])
+    if switch_score < min_confidence:
+        return [], switch_score, switch_hits, {}
+
+    per_kind = _score_all(prompt_low, concept_low, _MULTI_MODE_KIND_TABLE)
+    confident = {name: hits for name, (score, hits) in per_kind.items()
+                 if score >= min_confidence}
+    if len(confident) < 2:
+        return [], switch_score, switch_hits, {}
+
+    ordered = sorted(
+        (name for name in confident if name != "on_foot"),
+        key=lambda name: per_kind[name][0], reverse=True)
+    if "on_foot" in confident:
+        ordered.insert(0, "on_foot")
+    return ordered, switch_score, switch_hits, confident
+
+
 def classify(prompt: str, concept: str = "") -> UnityIntent:
     """
     Detect game_type + locomotion + genre from a vibe prompt (and optionally the
@@ -478,13 +615,22 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
         suppressed = loco_hits
         loco_name, loco_score, loco_hits = "none", ne_score, ne_hits
 
+    # Bakes its own min_confidence gate in (3, matching apply_intent's/
+    # structure_hint's shared default) rather than returning a raw score for
+    # the caller to threshold, unlike every axis above — this is a
+    # conjunctive TWO-part gate (switch signal AND 2+ kinds), not a single
+    # best-value comparison, so "no opinion" is the empty list itself.
+    mm_kinds, mm_score, mm_hits, mm_per_kind = _score_multi_mode(p, c, 3)
+
     intent = UnityIntent(
         game_type              = gt_name,
         locomotion              = loco_name,
         genre                   = genre_name or "universal",
+        locomotion_modes        = mm_kinds,
         game_type_confidence    = gt_score,
         locomotion_confidence    = loco_score,
         genre_confidence         = genre_score,
+        locomotion_modes_confidence = mm_score,
     )
     if gt_hits:
         intent.matched["game_type"] = gt_hits
@@ -492,6 +638,10 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
         intent.matched["locomotion"] = loco_hits
     if genre_hits:
         intent.matched["genre"] = genre_hits
+    if mm_kinds:
+        intent.matched["locomotion_modes_switch_signal"] = mm_hits
+        for kind, hits in mm_per_kind.items():
+            intent.matched[f"locomotion_modes:{kind}"] = hits
     # Never drop a signal silently — the movement words the declaration outranked
     # are NAMED, so a wrong call is legible in the log instead of invisible.
     if suppressed:
@@ -546,5 +696,26 @@ def apply_intent(schema, intent: UnityIntent, *, min_confidence: int = 3) -> lis
     if intent.genre_confidence >= min_confidence:
         hits = ", ".join(intent.matched.get("genre", []))
         msgs.append(f"Intent classifier: genre = '{intent.genre}' (prompt said: {hits})")
+
+    # Control Surface Stack (docs/CONTROL_SURFACE_STACK.md) — FILL only, never
+    # override. Every other field above overwrites a disagreeing LLM answer,
+    # but `intent.locomotion_modes` is only ever a fallback for the "Step 3
+    # never mentions it at all" case (the gap this exists to close — the LLM
+    # left this a same-shape empty list across 4 consecutive live runs, 2
+    # different local models, despite explicit schema-prompt guidance). A
+    # schema that already carries an explicit registry — even a single entry,
+    # even one `_check_multi_mode_registry` will WARN on — keeps it: an
+    # author who wrote something here made a real call this classifier's
+    # keyword scoring cannot see (per-mode abilities, a specific
+    # default_mode, deliberately excluding a kind the brief also mentions).
+    if (intent.locomotion_modes and intent.locomotion_modes_confidence >= min_confidence
+            and not schema.locomotion_modes):
+        schema.locomotion_modes = list(intent.locomotion_modes)
+        hits = ", ".join(intent.matched.get("locomotion_modes_switch_signal", []))
+        kinds = ", ".join(intent.locomotion_modes)
+        msgs.append(
+            f"Intent classifier: locomotion_modes [] -> [{kinds}] "
+            f"(prompt said: {hits})"
+        )
 
     return msgs
