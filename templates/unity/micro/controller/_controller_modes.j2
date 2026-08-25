@@ -1,0 +1,215 @@
+{# Per-mode C# fragments for ControllerMultiMode.cs.j2. Each macro emits a
+   self-contained block (fields / Awake lines / a movement statement block /
+   a full method) adapted from the matching single-variant block in
+   Controller.cs.j2 (on_foot ~= "third_person", vehicle_car ~= "vehicle_car").
+   Controller.cs.j2 itself is NOT refactored to call these yet — see
+   docs/CONTROL_SURFACE_STACK.md "Known limitations" — so keep any future edit
+   to one of those blocks in step with its macro here by hand until that
+   follow-up lands.
+
+   Every macro is a plain function of its explicit arguments (no ambient
+   template context) — call sites are responsible for declaring whatever
+   local each macro's comment says it expects. #}
+
+{# ── on_foot ─────────────────────────────────────────────────────────────── #}
+
+{% macro on_foot_awake() -%}
+        _cc = GetComponent<CharacterController>();
+        if (_cc == null) _cc = gameObject.AddComponent<CharacterController>();
+{%- endmacro %}
+
+{# Expects `h`, `v`, `jumpPressed`, `speed` locals already declared by the
+   caller (see ControllerMultiMode.cs.j2's Update()). `mode` is the on_foot
+   ControllerMode — only its `.abilities` are read (mirrors vehicle_car_
+   movement's `mode` param; NOT the schema's own top-level `abilities`, which
+   multi_mode leaves unused in favour of each ControllerMode's own list). #}
+{% macro on_foot_movement(mode) -%}
+        Vector3 input3 = transform.right * h + transform.forward * v;
+        _velocity.x = input3.x * speed;
+        _velocity.z = input3.z * speed;
+        _grounded = CheckGroundedOnFoot();
+        if (_grounded && _velocity.y < 0f) _velocity.y = -2f;
+{% if mode and "jump" in mode.abilities %}
+        if (jumpPressed && _grounded) _velocity.y = jumpForce;
+{% endif %}
+        _velocity.y += Physics.gravity.y * Time.deltaTime;
+        _cc.Move(_velocity * Time.deltaTime);
+{%- endmacro %}
+
+{% macro on_foot_ground_check(s) -%}
+    private bool CheckGroundedOnFoot()
+    {
+{% if s.ground_check == "spherecast" %}
+        return Physics.SphereCast(transform.position + Vector3.up * 0.5f, 0.4f,
+                                   Vector3.down, out _, groundRayLen, groundMask);
+{% else %}
+        return Physics.Raycast(transform.position, Vector3.down, groundRayLen, groundMask);
+{% endif %}
+    }
+{%- endmacro %}
+
+{# ── vehicle_car ─────────────────────────────────────────────────────────── #}
+
+{% macro vehicle_car_awake() -%}
+        _rb = GetComponent<Rigidbody>();
+        if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();
+        _rb.mass         = 1200f;
+        _rb.centerOfMass = new Vector3(0f, -0.4f, 0f);
+        BuildCarMode();
+{%- endmacro %}
+
+{# Expects `kb`/`mouse` (input_system) already declared by the caller. `mode`
+   is the ControllerMode for vehicle_car (or None) — only its `.abilities`
+   are read, to gate the nitro block the same way default_fix's per-mode
+   pruning gates which abilities can even reach here. #}
+{% macro vehicle_car_movement(s, mode) -%}
+{% if s.input_backend == "input_system" %}
+        float carH = kb != null ? (kb.dKey.isPressed ? 1f : 0f) - (kb.aKey.isPressed ? 1f : 0f) : 0f;
+        float carV = kb != null ? (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f) : 0f;
+        bool  carHandbrake = kb != null && kb.spaceKey.isPressed;
+{% else %}
+        float carH = Input.GetAxisRaw("Horizontal");
+        float carV = Input.GetAxisRaw("Vertical");
+        bool  carHandbrake = Input.GetKey(KeyCode.Space);
+{% endif %}
+        float motor = carV * maxMotorTorque;
+        float steer = carH * maxSteerAngle;
+        _steerInput    = carH;
+        _throttleInput = Mathf.Clamp01(Mathf.Abs(carV));
+
+        if (carHandbrake && _rb.linearVelocity.sqrMagnitude > 1f)
+        {
+            float slip = Vector3.SignedAngle(transform.forward,
+                                             _rb.linearVelocity.normalized, Vector3.up);
+            steer = Mathf.Clamp(steer + slip * 0.5f, -maxSteerAngle * 1.5f, maxSteerAngle * 1.5f);
+        }
+
+{% if mode and "nitro" in mode.abilities %}
+{% if s.input_backend == "input_system" %}
+        bool nitroDown = kb != null && kb.nKey.wasPressedThisFrame;
+{% else %}
+        bool nitroDown = Input.GetKeyDown(KeyCode.N);
+{% endif %}
+        if (nitroDown && !_nitroActive && _nitroCooldown <= 0f)
+            StartCoroutine(NitroRoutine());
+        if (_nitroCooldown > 0f) _nitroCooldown -= Time.deltaTime;
+        if (_nitroActive) motor *= nitroMultiplier;
+{% endif %}
+
+        for (int i = 0; i < 4; i++)
+        {
+            var wc = _wheels[i];
+            if (wc == null) continue;
+            if (i < 2) wc.steerAngle = steer;
+            wc.motorTorque = i >= 2 ? motor : 0f;
+            wc.brakeTorque = carHandbrake && i >= 2 ? handbrakeTorque : 0f;
+            var sf = wc.sidewaysFriction;
+            sf.stiffness = (carHandbrake && i >= 2) ? _baseSideStiffness * driftSlipMultiplier : _baseSideStiffness;
+            wc.sidewaysFriction = sf;
+            if (_wheelVisuals[i] != null)
+            {
+                wc.GetWorldPose(out Vector3 wPos, out Quaternion wRot);
+                _wheelVisuals[i].SetPositionAndRotation(wPos, wRot * Quaternion.Euler(0f, 0f, 90f));
+            }
+        }
+{%- endmacro %}
+
+{% macro vehicle_car_build_car() -%}
+    private void BuildCarMode()
+    {
+        var root = new GameObject("CarVisual");
+        root.transform.SetParent(transform, false);
+        _carVisualRoot = root;
+
+        GameObject body;
+        var carPrefab = Resources.Load<GameObject>("Models/Default/Vehicle/Car");
+        if (carPrefab != null)
+        {
+            body = Instantiate(carPrefab, root.transform);
+            body.name = "Body";
+            body.transform.localPosition = new Vector3(0f, 0.1f, 0f);
+        }
+        else
+        {
+            body = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            body.name = "Body";
+            Destroy(body.GetComponent<BoxCollider>());
+            body.transform.SetParent(root.transform, false);
+            body.transform.localScale    = new Vector3(1.7f, 0.5f, 4.0f);
+            body.transform.localPosition = new Vector3(0f, 0.45f, 0f);
+        }
+
+        _carBodyCollider        = gameObject.AddComponent<BoxCollider>();
+        _carBodyCollider.size   = new Vector3(1.7f, 0.5f, 4.0f);
+        _carBodyCollider.center = new Vector3(0f, 0.45f, 0f);
+
+        Transform[] wheelBones = FindCarWheelBones(transform);
+        bool boneWheels = wheelBones != null;
+        Vector3[] offsets = boneWheels
+            ? System.Array.ConvertAll(wheelBones, t => transform.InverseTransformPoint(t.position))
+            : new Vector3[]
+            {
+                new Vector3(-0.8f, 0.15f,  1.4f), new Vector3(0.8f, 0.15f,  1.4f),
+                new Vector3(-0.8f, 0.15f, -1.4f), new Vector3(0.8f, 0.15f, -1.4f),
+            };
+
+        for (int i = 0; i < 4; i++)
+        {
+            var wgo = new GameObject((i < 2 ? "WheelF" : "WheelR") + i);
+            wgo.transform.SetParent(root.transform, false);
+            wgo.transform.localPosition = offsets[i];
+            var wc = wgo.AddComponent<WheelCollider>();
+            wc.radius             = wheelRadius;
+            wc.suspensionDistance = suspensionDistance;
+            var spring = wc.suspensionSpring;
+            spring.spring   = suspensionSpring;
+            spring.damper   = suspensionDamper;
+            wc.suspensionSpring = spring;
+            var fwd = wc.forwardFriction;   fwd.stiffness  = 1.4f; wc.forwardFriction  = fwd;
+            var side = wc.sidewaysFriction; side.stiffness = _baseSideStiffness; wc.sidewaysFriction = side;
+            _wheels[i] = wc;
+            if (boneWheels)
+            {
+                _wheelVisuals[i] = null;
+            }
+            else
+            {
+                var vis = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                vis.name = "WheelMesh";
+                Destroy(vis.GetComponent<CapsuleCollider>());
+                vis.transform.SetParent(wgo.transform, false);
+                vis.transform.localScale    = new Vector3(wheelRadius * 2f, 0.12f, wheelRadius * 2f);
+                vis.transform.localRotation = Quaternion.Euler(0f, 0f, 90f);
+                _wheelVisuals[i] = vis.transform;
+            }
+        }
+        if (boneWheels && GetComponent<VehicleBoneDriver>() == null)
+            gameObject.AddComponent<VehicleBoneDriver>();
+
+        // Dormant until ApplyMode() activates it — Awake() builds every mode's
+        // rig up front so switching never re-instantiates geometry.
+        root.SetActive(false);
+        _carBodyCollider.enabled = false;
+    }
+{%- endmacro %}
+
+{% macro vehicle_car_find_wheel_bones() -%}
+    private Transform[] FindCarWheelBones(Transform root)
+    {
+        Transform fl = null, fr = null, rl = null, rr = null;
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.GetComponent<Renderer>() != null) continue;
+            string n = t.name.ToLowerInvariant();
+            if (!n.StartsWith("wheel")) continue;
+            bool front = n.Contains(".f") || n.Contains("front");
+            bool left  = n.EndsWith("l")  || n.Contains("left");
+            if (front && left)  fl = t;
+            else if (front)     fr = t;
+            else if (left)      rl = t;
+            else                rr = t;
+        }
+        return (fl != null && fr != null && rl != null && rr != null)
+            ? new[] { fl, fr, rl, rr } : null;
+    }
+{%- endmacro %}

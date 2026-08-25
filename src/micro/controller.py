@@ -38,9 +38,41 @@ ControllerVariant = Literal[
     # variant above answers "how does the player's body move"; this one answers
     # "what is the pointer over, what did it pick up, where did that land".
     "pointer",
+    # Control Surface Stack — one player, several runtime-switchable modes
+    # (see `ControllerMode`/`ControllerSchema.modes` below). Emitted from its
+    # own template, ControllerMultiMode.cs.j2 — see docs/CONTROL_SURFACE_STACK.md.
+    "multi_mode",
 ]
 
 VARIANTS = list(ControllerVariant.__args__)   # type: ignore[attr-defined]
+
+# The vocabulary a `ControllerMode` inside a multi_mode controller can be.
+# Deliberately narrower than ControllerVariant — excludes 2D variants (dimension
+# mismatch with a runtime-switchable 3D stack), `pointer` (bodiless) and
+# `multi_mode` itself. Grows in later phases (docs/CONTROL_SURFACE_STACK.md):
+# Phase 1 ships exactly these two; flying/swimming/vehicle_bike/vehicle_hover
+# are Phase 1b/2, not yet wired into ControllerMultiMode.cs.j2.
+ControllerModeKind = Literal["on_foot", "vehicle_car"]
+
+_MODE_KINDS: list[str] = list(ControllerModeKind.__args__)  # type: ignore[attr-defined]
+
+# Which modes physically CANNOT coexist in one registry — at most one mode per
+# family, so `default_fix` can hard-error a duplicate-family registry instead
+# of silently keeping only the first. Extend alongside ControllerModeKind.
+_MODE_FAMILY: dict[str, str] = {
+    "on_foot":    "on_foot",
+    "vehicle_car": "vehicle",
+}
+
+# Mode-switch key: whitelisted to names that mean the SAME physical key in both
+# UnityEngine.KeyCode (legacy Input) and UnityEngine.InputSystem.Key (Input
+# System) — the two enums disagree on several names (KeyCode.LeftControl vs.
+# Key.LeftCtrl), so only names that are spelled identically in both are safe to
+# emit into either backend's branch of ControllerMultiMode.cs.j2.
+VALID_MODE_SWITCH_KEYS: frozenset[str] = frozenset({
+    "Tab", "Q", "W", "E", "R", "F", "G", "H", "J", "K", "L", "M", "N",
+    "V", "X", "Z", "C", "B", "Escape",
+})
 
 # Full atom vocabulary — maps to template sections.
 # Locomotion extras beyond WASD:
@@ -75,6 +107,42 @@ CameraCoupling = Literal["none", "standard", "cinemachine"]
 GroundCheck   = Literal["raycast", "spherecast", "collider"]
 
 _ALL_ABILITIES: set[str] = set(Ability.__args__)  # type: ignore[attr-defined]
+
+
+def _clamp_ability_list(v: object) -> list[str]:
+    """Shared by ControllerSchema.abilities and ControllerMode.abilities —
+    unknown/duplicate entries are dropped, never raised on."""
+    if not isinstance(v, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in v:
+        s = str(item).strip().lower()
+        if s in _ALL_ABILITIES and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+class ControllerMode(BaseModel):
+    """One entry in a multi_mode controller's `modes` registry — see
+    docs/CONTROL_SURFACE_STACK.md. `abilities` here are per-mode (e.g. `nitro`
+    only means something while `kind == "vehicle_car"`), pruned the same way
+    ControllerSchema.default_fix prunes the single-variant abilities list."""
+    kind:      str       = "on_foot"
+    label:     str       = ""
+    abilities: list[str] = Field(default_factory=list)
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def _clamp_kind(cls, v: str) -> str:
+        s = str(v).strip().lower()
+        return s if s in _MODE_KINDS else "on_foot"
+
+    @field_validator("abilities", mode="before")
+    @classmethod
+    def _clamp_mode_abilities(cls, v: object) -> list:
+        return _clamp_ability_list(v)
 
 
 class ControllerSchema(BaseModel):
@@ -128,6 +196,14 @@ class ControllerSchema(BaseModel):
     drift_slip_multiplier: float = 0.5
     wheel_radius:          float = 0.35
 
+    # ── Bike params (vehicle_bike variant only) ───────────────────────────────
+    # Two WheelColliders give a rigidbody no inherent roll stability, so the
+    # rig freezes physical roll/pitch (Controller.cs.j2 Awake()) and fakes the
+    # bank into a turn purely visually — these two fields are that lean, not a
+    # physics quantity.
+    max_lean_angle: float = 35.0   # degrees, full lean at speed
+    lean_speed:     float = 180.0  # deg/s the visual lean can rotate toward target
+
     # ── Hover params (vehicle_hover variant only) ─────────────────────────────
     # Ride height is held by a 4-point raycast spring-damper, so the craft
     # floats over the road surface instead of resting on wheel contacts.
@@ -165,6 +241,16 @@ class ControllerSchema(BaseModel):
     # ── Interaction params (interact ability) ──────────────────────────────────
     interact_range: float = 2.5
 
+    # ── Control Surface Stack (multi_mode variant only) ────────────────────────
+    # A runtime-switchable registry of modes riding ONE player GameObject — see
+    # docs/CONTROL_SURFACE_STACK.md. Every other field above (move_speed,
+    # max_motor_torque, wheel_radius, ...) is still the tuning for whichever
+    # mode uses it; `modes` only says which mode families are present and which
+    # abilities apply to each.
+    modes:           list[ControllerMode] = Field(default_factory=list)
+    default_mode:    str                  = ""      # falls back to modes[0].kind
+    mode_switch_key: str                  = "Tab"    # see VALID_MODE_SWITCH_KEYS
+
     # ── Prompt-specific extras (LLM authors from concept) ─────────────────────
     extra_usings:       list[str]        = Field(default_factory=list)
     extra_fields:       list[CodeField]  = Field(default_factory=list)
@@ -184,16 +270,7 @@ class ControllerSchema(BaseModel):
     @field_validator("abilities", mode="before")
     @classmethod
     def _clamp_abilities(cls, v: object) -> list:
-        if not isinstance(v, list):
-            return []
-        out: list[str] = []
-        seen: set[str] = set()
-        for item in v:
-            s = str(item).strip().lower()
-            if s in _ALL_ABILITIES and s not in seen:
-                seen.add(s)
-                out.append(s)
-        return out
+        return _clamp_ability_list(v)
 
 
 # ── Prompts ───────────────────────────────────────────────────────────────────
@@ -222,6 +299,11 @@ VARIANT OPTIONS:
   flying, swimming                            — free 3D locomotion
   aircraft                                    — Rigidbody pitch/roll/yaw/throttle
   fighting                                    — third_person movement + melee atoms
+  multi_mode                                  — ONE player switching at runtime between
+                                                several of the modes above (e.g. on-foot +
+                                                a drivable car); only pick this when the
+                                                brief explicitly asks to get in/out of a
+                                                vehicle or switch locomotion mid-game
 
 ABILITIES — choose any that match the game concept:
   LOCOMOTION: jump, double_jump, sprint, crouch, dash, wall_jump, glide, fly, ascend, descend, boost
@@ -253,6 +335,19 @@ SCHEMA FIELD GUIDE:
     roll_speed / yaw_speed / throttle_rate / stall_speed / max_air_speed
   Vehicle keys (vehicle_car / vehicle_bike only): max_motor_torque / max_steer_angle /
     suspension_distance / suspension_spring / suspension_damper / drift_slip_multiplier / wheel_radius
+  Bike keys (vehicle_bike only): max_lean_angle (degrees, how far it banks into a turn) /
+    lean_speed (deg/s the bank angle catches up to the target)
+  Multi-mode keys (multi_mode variant ONLY):
+    modes — list of {"kind": "on_foot"|"vehicle_car", "label": str, "abilities": [...]},
+      one entry per mode the player can switch into. Must have at least 2 entries with
+      DIFFERENT kinds (a one-entry or duplicate-kind list is not a stack).
+      on_foot abilities: jump, sprint only. vehicle_car abilities: nitro only.
+      (other ability words are pruned — this is Phase 1's supported set, see
+      docs/CONTROL_SURFACE_STACK.md)
+    default_mode — which entry's "kind" the player starts in
+    mode_switch_key — one of: Tab, Q, W, E, R, F, G, H, J, K, L, M, N, V, X, Z, C, B, Escape
+    (move_speed/sprint_speed/jump_force tune the on_foot entry; max_motor_torque/
+    max_steer_angle/etc. tune the vehicle_car entry — same fields every other variant uses)
 
 extra_* fields (LLM-authored prompt-specific extras):
   extra_fields       — extra [SerializeField] declarations (oxygen meter, grip level, …)
@@ -322,6 +417,35 @@ C# RULES for extra_* bodies:
   "fixed_update_extra": "", "extra_methods": []
 }}
 
+────────── FEW-SHOT: on-foot exploration with a drivable car ──────────
+{{
+  "name": "PlayerController",
+  "variant": "multi_mode",
+  "input_backend": "input_system",
+  "camera_coupling": "standard",
+  "abilities": [],
+  "ground_check": "raycast",
+  "move_speed": 6.0,
+  "sprint_speed": 10.0,
+  "jump_force": 8.0,
+  "max_motor_torque": 1400.0,
+  "max_steer_angle": 30.0,
+  "suspension_distance": 0.25,
+  "suspension_spring": 35000.0,
+  "suspension_damper": 4500.0,
+  "drift_slip_multiplier": 0.5,
+  "wheel_radius": 0.35,
+  "description": "GTA-style player that walks on foot and can drive a car.",
+  "modes": [
+    {{"kind": "on_foot",    "label": "On Foot", "abilities": ["jump", "sprint"]}},
+    {{"kind": "vehicle_car", "label": "Driving", "abilities": ["nitro"]}}
+  ],
+  "default_mode": "on_foot",
+  "mode_switch_key": "Tab",
+  "extra_usings": [], "extra_fields": [], "awake_extra": "", "update_extra": "",
+  "fixed_update_extra": "", "extra_methods": []
+}}
+
 ────────── NOW DO IT FOR THE BRIEF BELOW ──────────
 
 BRIEF:
@@ -354,6 +478,8 @@ OUTPUT this JSON (omit no keys):
   "suspension_damper": 4500.0,
   "drift_slip_multiplier": 0.5,
   "wheel_radius": 0.35,
+  "max_lean_angle": 35.0,
+  "lean_speed": 180.0,
   "fire_rate": 0.15,
   "magazine_size": 30,
   "reload_time": 2.0,
@@ -369,6 +495,9 @@ OUTPUT this JSON (omit no keys):
   "dodge_cooldown": 1.0,
   "dodge_i_frames": 0.15,
   "interact_range": 2.5,
+  "modes": [],
+  "default_mode": "",
+  "mode_switch_key": "Tab",
   "extra_usings": [],
   "extra_fields": [],
   "awake_extra": "",
@@ -411,6 +540,8 @@ class ControllerPipeline(UnityMicroPipeline):
         "wheelradius", "handbraketorque", "_wheels", "_wheelvisuals",
         "_headlights", "_brakelight", "_smoke", "_basesidestiffness",
         "_lightson", "_steerinput", "_throttleinput",
+        # bike lean
+        "maxleanangle", "leanspeed", "_currentlean", "_leanpivot",
         # shooting
         "firerate", "magazinesize", "reloadtime", "shootrange",
         "_lastfiretime", "_currentammo", "_isreloading", "_isaiming",
@@ -427,6 +558,9 @@ class ControllerPipeline(UnityMicroPipeline):
         "interactrange", "_inventoryopen", "_mapopen", "_ispaused",
         # vehicle nitro/brake
         "_nitroCooldown", "_nitroActive",
+        # multi_mode (ControllerMultiMode.cs.j2)
+        "defaultmode", "modeswitchkey", "_modes", "_currentmode",
+        "_carvisualroot", "_carbodycollider",
     }
 
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.InputSystem", "System.Collections"}
@@ -473,6 +607,9 @@ class ControllerPipeline(UnityMicroPipeline):
             if "drag" not in schema.abilities:
                 schema.abilities.append("drag")
 
+        if variant == "multi_mode":
+            schema = self._fix_multi_mode(schema)
+
         # fly binds Shift; drop sprint to avoid key conflict
         if "fly" in schema.abilities and "sprint" in schema.abilities:
             schema.abilities = [a for a in schema.abilities if a != "sprint"]
@@ -503,6 +640,10 @@ class ControllerPipeline(UnityMicroPipeline):
         schema.suspension_damper     = max(500.0,   min(20000.0,  schema.suspension_damper))
         schema.drift_slip_multiplier = max(0.1,     min(1.0,      schema.drift_slip_multiplier))
         schema.wheel_radius          = max(0.1,     min(1.5,      schema.wheel_radius))
+
+        # Bike param clamping
+        schema.max_lean_angle = max(5.0,  min(70.0,  schema.max_lean_angle))
+        schema.lean_speed     = max(30.0, min(720.0, schema.lean_speed))
 
         # Shooter clamping
         schema.fire_rate     = max(0.0,  min(5.0,   schema.fire_rate))
@@ -553,6 +694,54 @@ class ControllerPipeline(UnityMicroPipeline):
 
         return schema
 
+    def _fix_multi_mode(self, schema: ControllerSchema) -> ControllerSchema:
+        """Per-mode repair for the multi_mode variant — de-dupes the registry,
+        prunes each mode's abilities the same way default_fix prunes the
+        single-variant list above, and resolves default_mode/mode_switch_key.
+        Never raises: an unresolvable registry is recorded in schema.meta for
+        the playability gate (`_check_multi_mode_registry`) to surface loudly,
+        not silently discarded.
+        """
+        seen_kinds: set[str] = set()
+        deduped: list[ControllerMode] = []
+        dropped_dupes: list[str] = []
+        for m in schema.modes:
+            if m.kind in seen_kinds:
+                dropped_dupes.append(m.kind)
+                continue
+            seen_kinds.add(m.kind)
+            deduped.append(m)
+        schema.modes = deduped
+
+        # Pruned to exactly what ControllerMultiMode.cs.j2 (Phase 1) renders —
+        # an ability that survived here but had no template section would be a
+        # silent gap (present in the schema, absent from the build). Grows in
+        # step with the template as later phases add mode kinds/abilities.
+        for m in schema.modes:
+            if m.kind == "vehicle_car":
+                m.abilities = [a for a in m.abilities if a == "nitro"]
+            else:  # on_foot
+                m.abilities = [a for a in m.abilities if a in ("jump", "sprint")]
+
+        notes: dict = {}
+        if dropped_dupes:
+            notes["dropped_duplicate_kinds"] = dropped_dupes
+        if schema.default_mode not in seen_kinds:
+            prior = schema.default_mode
+            schema.default_mode = schema.modes[0].kind if schema.modes else "on_foot"
+            notes["default_mode_fallback"] = (
+                f"default_mode {prior!r} not in registered modes "
+                f"{sorted(seen_kinds)!r} — fell back to {schema.default_mode!r}")
+        if schema.mode_switch_key not in VALID_MODE_SWITCH_KEYS:
+            notes["mode_switch_key_fallback"] = (
+                f"mode_switch_key {schema.mode_switch_key!r} is not usable "
+                "identically in both input backends — fell back to 'Tab'")
+            schema.mode_switch_key = "Tab"
+        if notes:
+            schema.meta["multi_mode"] = notes
+
+        return schema
+
     def write_files(self, schema, variant, out_dir: Path) -> int:
         env = self.jinja()
         scripts_dir = out_dir / "Scripts"
@@ -560,8 +749,12 @@ class ControllerPipeline(UnityMicroPipeline):
 
         # The pointer variant has its own template: Controller.cs.j2 is a
         # movement rig branching on which KIND of body it drives, and a game
-        # with no body belongs in none of those branches.
+        # with no body belongs in none of those branches. multi_mode is the
+        # same reasoning in the other direction — MORE than one body kind on
+        # the same class — so it also gets its own template rather than a
+        # second full branch bolted onto Controller.cs.j2.
         tpl = ("PointerController.cs.j2" if variant == "pointer"
+               else "ControllerMultiMode.cs.j2" if variant == "multi_mode"
                else "Controller.cs.j2")
         (scripts_dir / f"{schema.name}.cs").write_text(
             env.get_template(tpl).render(s=schema, variant=variant),

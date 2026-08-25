@@ -72,6 +72,10 @@ desktop.ini
 tools/csharp_syntax_gate/bin/
 tools/csharp_syntax_gate/obj/
 
+# ── Diagnostic tool output (regenerable — each has a matching tools/*.py
+# script with an OUT_PATH that (re)writes it; nothing reads them back) ──
+tools/out/
+
 # ── Personal/experimental drops (not repo content) ───────────────────
 Models/FBX format/cromulon/
 Models/FBX format/molnia-track/
@@ -85,6 +89,11 @@ prompts/molnia-drag-race.txt
 prompts/newring.txt
 reviews/
 routes/molnia_drag_strip.json
+routes.json
+routes_spring_creek.json
+scuba_preview.cs
+spring_creek_track.png
+config.granite.yaml
 
 # Session scratch (A/B run captures, generated project copies)
 SCRATCH/

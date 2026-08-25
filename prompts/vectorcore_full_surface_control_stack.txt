@@ -1,0 +1,112 @@
+TITLE
+VectorCore: Full-Surface Control Stack
+
+GENRE
+A 3D hyper-reactive physics sandbox / control-testing simulation. There is no
+single objective genre like racing or platforming — the point of the game is
+testing controller scripts, input action maps, mode switching, and physics
+blending across every locomotion type the player can occupy: on-foot running
+and parkour, driving cars/bikes/off-road vehicles, flying planes/VTOL/
+hovercraft, swimming and underwater propulsion, zero-G EVA movement, riding
+animal mounts, skateboarding with a trick system, and piloting a boat or
+submersible. The world exists to exercise the controller; the controller is
+the centerpiece of the project, not the world.
+
+STYLE
+HDRP pipeline. Open-zone, high-fidelity, physically simulated. Every vehicle,
+creature, and player form uses one unified "Control Surface Stack" that
+dynamically remaps inputs based on the current mode (ground, air, water,
+zero-G, riding, driving, flying, swimming, skating, climbing). Visually
+grounded, mechanically dense — the aesthetic is secondary to the feel of each
+mode's physics.
+
+CORE PREMISE
+The player seamlessly switches between many locomotion modes inside one large
+open-zone test environment: mountain road, open field, a lake with an
+underwater cave, open airspace, a zero-G test chamber, a skate park, a
+vehicle garage, and a combat arena. Every mode must have full logic, not a
+stub: input reading, a state machine, movement vectors, physics forces,
+animation parameters, camera rig binding, mode transitions, and sub-mode
+transitions (for example a plane's landing gear, flaps, and rudder).
+
+PLAYER
+The player occupies one of several controller modes at a time, switching
+through a shared Mode Manager and a unified Input Action Map:
+
+- On-Foot Controller: WASD/analog-stick movement, sprint, crouch, slide,
+  vault, wall-run, parkour auto-mantle, a combo-based melee system, a ranged
+  weapon with ADS/recoil/reload/fire-modes, free-look camera with a
+  shoulder-swap.
+- Driving Controller (cars, bikes, off-road): torque-curve acceleration,
+  suspension compression, traction control, a drifting system with angle
+  detection and counter-steer, handbrake, headlights/signals/hazards, a
+  chase cam and a hood cam.
+- Flying Controller (planes, VTOL, hovercraft): pitch/yaw/roll, flaps,
+  rudder, landing gear, a throttle curve, stall detection, a VTOL hover
+  mode, cockpit and chase cameras.
+- Swimming/Underwater Controller: buoyancy, drag, six-axis movement, swim
+  strokes versus underwater thrusters, a free-float camera.
+- Zero-G EVA Controller: full 6DOF thruster movement, rotational inertia, a
+  stabilization toggle, a free-orbit camera.
+- Riding Controller (animal mounts): an acceleration curve, jump and double
+  jump, mount stamina, and attack modes while mounted.
+- Skateboard Controller: a trick system (ollie/kickflip/grind-style inputs),
+  grinding rails, manual balance, flip tricks, a dynamic follow camera.
+- Boat/Submersible Controller: water displacement, wake simulation, rudder
+  steering, and dive planes for the submersible.
+
+Every mode shares one Input Action Map (movement in 2D and 3D, look, mode
+switch, sub-mode switch, ten general action slots, trick combos, vehicle
+subsystem inputs, weapon subsystem inputs, camera subsystem inputs), one
+multi-mode camera rig (mode-specific follow logic, dynamic FOV, shake
+profiles, auto-targeting in combat, vehicle-specific damping), and one set of
+physics helpers shared across modes: Rigidbody or CharacterController logic,
+forces/impulses/drag/damping, ground detection, water detection, air
+detection, and zero-G detection, each applying surface-type modifiers.
+
+ENTITIES
+- PlayerAvatar: the on-foot human form, parkour and combat capable (kind:
+  player, model: player avatar).
+- OffRoadCar: the player-drivable off-road car with torque-curve acceleration
+  and traction control (kind: vehicle, model: off-road car).
+- TrailBike: the player-drivable dirt bike with a drift/counter-steer system
+  (kind: vehicle, model: trail bike).
+- VTOLCraft: the player-flyable VTOL aircraft with flaps, rudder, landing
+  gear, and a hover mode (kind: vehicle, model: vtol aircraft).
+- Hovercraft: the player-flyable hovercraft (kind: vehicle, model:
+  hovercraft).
+- PatrolBoat: the player-drivable surface boat with wake simulation (kind:
+  vehicle, model: patrol boat).
+- Submersible: the player-drivable submersible with dive planes (kind:
+  vehicle, model: submersible).
+- MountBeast: the rideable animal mount with a stamina system (kind: npc,
+  model: mount beast).
+- Skateboard: the player's skateboard with a trick and grind system (kind:
+  vehicle, model: skateboard).
+- MountainRoad: the mountain road driving section of the test zone (kind:
+  terrain, model: mountain road).
+- OpenField: the open-field on-foot and parkour section (kind: terrain,
+  model: open field).
+- UnderwaterCave: the lake and underwater cave swimming section (kind:
+  terrain, model: underwater cave).
+- ZeroGChamber: the zero-G EVA test chamber (kind: terrain, model: zero-g
+  chamber).
+- SkatePark: the skate park trick section (kind: terrain, model: skate
+  park).
+- VehicleGarage: the vehicle garage where the player switches between
+  drivable vehicles (kind: prop, model: vehicle garage).
+- CombatArena: the combat arena for melee, ranged, and mounted combat
+  testing (kind: terrain, model: combat arena).
+- GrindRail: a grindable rail in the skate park (kind: prop, model: grind
+  rail).
+
+OBJECTIVE
+There is no win/lose condition — the objective is full mode coverage. The
+player must be able to enter every one of the eight locomotion modes (on
+foot, driving, flying, swimming, zero-G, riding, skateboarding, boating),
+switch between them through the Mode Manager without breaking physics state,
+and exercise every listed subsystem (parkour, combat, vehicle handling,
+flight subsystems, buoyancy, thrusters, mount stamina, trick scoring, wake
+simulation) at least once across the test zone's eight areas (mountain road,
+open field, lake/underwater cave, airspace, zero-G chamber, skate park,
+vehicle garage, combat arena).

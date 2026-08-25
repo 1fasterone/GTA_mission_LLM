@@ -666,6 +666,9 @@ _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
         "ThrottleNormalized", "WheelRadius", "ThrottleLevel", "AirSpeedKmh",
         "IsBlocking", "IsInvincible", "IsAiming", "CurrentAmmo", "IsReloading",
         "CurrentSpeed",
+        # ControllerMultiMode.cs.j2 (variant "multi_mode") — Control Surface
+        # Stack, see docs/CONTROL_SURFACE_STACK.md.
+        "CurrentMode", "SwitchMode", "CycleMode", "OnModeChanged",
     }),
     # Health.cs.j2 public surface — Die() is `private void Die()`, only reachable
     # indirectly via TakeDamage driving _current to 0 (hit live: OxygenManager.cs

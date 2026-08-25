@@ -1519,6 +1519,7 @@ def subsystems_for(
     game_type:    str,
     features:     list[str] | None = None,
     locomotion:   str               = "walk",
+    locomotion_modes: list[str] | None = None,   # Control Surface Stack — see below
     capabilities  = None,            # Optional[ProjectCapabilities] — avoids import cycle
     user_prompt:  str               = "",
     *,
@@ -1599,6 +1600,18 @@ def subsystems_for(
                     "levitat", "floats above", "floating above")
     is_hover = any(w in prompt_low for w in _hover_words)
 
+    # A two-wheeled vehicle still has locomotion "drive", but the 4-WheelCollider
+    # car rig is the wrong archetype for it — no lean, four contact patches
+    # instead of two, a steering-wheel-shaped input model for something the
+    # brief explicitly says has none. Content-gated the same way as is_hover:
+    # a brief this specific about "motocross"/"lean angle" deserves the variant
+    # that actually exists for it (src/micro/controller.py's vehicle_bike).
+    _bike_words = ("motocross", "motorcycle", "dirt bike", "dirtbike",
+                   "mx bike", "quad bike", "moped", "scooter", "chopper",
+                   "sportbike", "sport bike", "two-wheeler", "two wheeler",
+                   "lean angle", "leaning into", "countersteer")
+    is_bike = any(w in prompt_low for w in _bike_words)
+
     if gt in ("3d", "top_down", "isometric", "vr"):
         loco_ctrl = {"drive": "vehicle_car", "fly": "flying", "swim": "swimming"}
         loco_cam  = {"drive": "vehicle_chase"}
@@ -1606,7 +1619,22 @@ def subsystems_for(
             ctrl = loco_ctrl[locomotion]
             if locomotion == "drive" and is_hover:
                 ctrl = "vehicle_hover"
+            elif locomotion == "drive" and is_bike:
+                ctrl = "vehicle_bike"
             cam  = loco_cam.get(locomotion, "follow")
+
+    # Control Surface Stack — a runtime-switchable multi-mode controller
+    # (docs/CONTROL_SURFACE_STACK.md). Below 2 distinct modes this whole
+    # branch is skipped and every line above/below behaves exactly as it did
+    # before this feature existed — that skip IS the backward-compatibility
+    # guarantee, not just a claim about one. `_multi_mode_kinds` stays a
+    # locals-only set the mass/kinematic logic below reads; it does not touch
+    # `ctrl_opts["modes"]` here — ControllerSchema.modes wants
+    # {"kind": ...} dicts, built below once ctrl_opts exists.
+    _multi_mode_kinds: set[str] = set()
+    if len(locomotion_modes or []) >= 2:
+        _multi_mode_kinds = set(locomotion_modes or [])
+        ctrl, cam = "multi_mode", "follow"
 
     # No avatar: the cursor is the controller and the camera frames the board.
     # Overrides the game_type table above rather than sitting inside it — a
@@ -1633,6 +1661,15 @@ def subsystems_for(
             "jump_force":   c.jump_force,
             "abilities":    abilities,
         })
+
+    # Control Surface Stack registry — ControllerSchema.modes wants
+    # {"kind": ...} dicts; default_mode is the FIRST registered kind (the
+    # order locomotion_modes was declared in). ControllerMode.default_fix
+    # (src/micro/controller.py) is what actually validates/prunes this —
+    # here it's just a deterministic {kind} list, no per-mode tuning.
+    if ctrl == "multi_mode":
+        ctrl_opts["modes"] = [{"kind": k} for k in (locomotion_modes or [])]
+        ctrl_opts["default_mode"] = (locomotion_modes or [""])[0]
 
     # A shooter needs the shoot ability or the whole weapon half of the
     # controller (fire, ammo, reload, the aim raycast) is templated out and the
@@ -1677,7 +1714,14 @@ def subsystems_for(
     # the map on the very first ground contact. Matches Controller.cs.j2's
     # own `variant.startswith("vehicle_")` mass (1200f); not a general
     # cross-micro mass resolver, just this one already-known collision.
-    phys_opts: dict = {"mass": 1200.0} if ctrl.startswith("vehicle_") else {}
+    # A multi_mode registry with a vehicle family present needs the same
+    # 1200kg agreement as a plain vehicle_* controller (see the comment
+    # above) — the multi_mode class builds and drives its own Rigidbody for
+    # that mode exactly like vehicle_car does.
+    _multi_mode_has_vehicle = bool(_multi_mode_kinds & {"vehicle_car"})
+    phys_opts: dict = ({"mass": 1200.0}
+                       if ctrl.startswith("vehicle_") or _multi_mode_has_vehicle
+                       else {})
 
     # A CharacterController-based controller does its OWN swept-collision movement
     # via CharacterController.Move() and adds its own CharacterController in Awake
@@ -1693,6 +1737,13 @@ def subsystems_for(
     # 2D controllers use a Rigidbody2D (rigidbody_2d) and never a CharacterController.
     _ctrl_is_character_controller = not (
         ctrl.startswith("2d_") or ctrl.startswith("vehicle_") or ctrl == "aircraft")
+    if ctrl == "multi_mode":
+        # multi_mode's OWN Awake() re-asserts _rb.isKinematic on every switch
+        # (ControllerMultiMode.cs.j2's ApplyMode) — only the INITIAL agreement
+        # with the physics micro's own Awake() matters here, so this mirrors
+        # whichever mode the registry actually starts in.
+        _default_mode = (locomotion_modes or [""])[0]
+        _ctrl_is_character_controller = _default_mode not in ("vehicle_car",)
     if phys_variant == "rigidbody_3d" and _ctrl_is_character_controller:
         phys_opts["is_kinematic"] = True
 

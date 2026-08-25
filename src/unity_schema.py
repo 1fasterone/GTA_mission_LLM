@@ -1130,6 +1130,15 @@ class UnitySchema(BaseModel):
     # exactly the builds they exist to catch — the ToyRacer and DropZone runs
     # that lost their avatar to schema-fill and still looked structurally fine.
     locomotion:      Literal["walk", "drive", "fly", "swim", "none"] = "walk"
+    # Control Surface Stack (docs/CONTROL_SURFACE_STACK.md) — an OPTIONAL,
+    # ADDITIVE declaration of a runtime-switchable multi-mode controller
+    # (e.g. ["on_foot", "vehicle_car"]). `locomotion` above remains the sole
+    # source of truth for embodiment/layout (is_embodied, select_archetype,
+    # _primitive_of all keep reading it unchanged) — this field is read only
+    # by subsystems_for's controller-variant selection, and only takes effect
+    # at 2+ distinct entries; 0 or 1 leaves every existing single-mode project
+    # byte-identical to today.
+    locomotion_modes: list[str] = Field(default_factory=list)
     render_pipeline: RenderPipeline
     unity_version:   UnityVersion  = "6000.0"
     color_space:     Literal["Linear", "Gamma"] = "Linear"
@@ -1210,6 +1219,18 @@ class UnitySchema(BaseModel):
         s = synonyms.get(s, s)
         return s if s in ("walk", "drive", "fly", "swim", "none") else "walk"
 
+    @field_validator("locomotion_modes", mode="before")
+    @classmethod
+    def normalise_locomotion_modes(cls, v: object) -> list:
+        """Lowercase/strip only — vocabulary filtering + de-dupe happens in
+        enforce_locomotion_modes below (a model validator, so it can RECORD
+        what it drops into schema.meta instead of discarding it silently;
+        unlike normalise_locomotion's all-or-nothing scalar clamp, a
+        partially-valid multi-mode list still means something)."""
+        if not isinstance(v, list):
+            return []
+        return [str(item).lower().strip() for item in v if str(item).strip()]
+
     @field_validator("render_pipeline", mode="before")
     @classmethod
     def normalise_pipeline(cls, v: str) -> str:
@@ -1270,6 +1291,39 @@ class UnitySchema(BaseModel):
             pal_data = _DEFAULT_PALETTES.get(self.visual_style,
                                              _DEFAULT_PALETTES["stylized"])
             self.color_palette = ColorPalette(**pal_data)
+        return self
+
+    @model_validator(mode="after")
+    def enforce_locomotion_modes(self) -> "UnitySchema":
+        """Control Surface Stack (docs/CONTROL_SURFACE_STACK.md): drop entries
+        outside the current vocabulary and de-dupe by kind, RECORDING what
+        changed in schema.meta rather than discarding it silently — an entry
+        vanishing between the brief and the build with no trace is exactly
+        what this repo's abstain-loudly doctrine (CLAUDE.md) exists to
+        prevent. `_check_multi_mode_registry` (unity_playability.py) is what
+        turns this record into a graded finding."""
+        if not self.locomotion_modes:
+            return self
+        valid = ("on_foot", "vehicle_car")   # grows with the template vocabulary
+        seen: set[str] = set()
+        kept: list[str] = []
+        dropped_unknown: list[str] = []
+        dropped_dupe: list[str] = []
+        for kind in self.locomotion_modes:
+            if kind not in valid:
+                dropped_unknown.append(kind)
+                continue
+            if kind in seen:
+                dropped_dupe.append(kind)
+                continue
+            seen.add(kind)
+            kept.append(kind)
+        self.locomotion_modes = kept
+        if dropped_unknown or dropped_dupe:
+            self.meta["locomotion_modes_lint"] = {
+                "dropped_unknown_kind":   dropped_unknown,
+                "dropped_duplicate_kind": dropped_dupe,
+            }
         return self
 
     # -- Role-graph invariants (cross-field; runs after per-entity guards) -----

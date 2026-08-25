@@ -177,12 +177,18 @@ public class ScubaExplorerController : MonoBehaviour
 
 | Kind | CLI | Variants |
 |---|---|---|
-| `controller` | `unity-controller` | first_person, third_person, top_down, 2d_platformer, 2d_topdown, vehicle_car, vehicle_bike, flying, swimming, pointer |
+| `controller` | `unity-controller` | first_person, third_person, top_down, 2d_platformer, 2d_topdown, vehicle_car, vehicle_bike, flying, swimming, pointer, multi_mode |
 | `camera` | `unity-camera` | follow, orbit, first_person, cinemachine_3p, cinemachine_topdown, rts_pan_zoom, vehicle_chase, cinematic_dolly, board_framing |
 | `physics` | `unity-physics` | rigidbody_2d, rigidbody_3d, kinematic_character, ragdoll, vehicle_wheels, soft_body_stub, trigger_zone, destructible_object, buoyancy |
 | `hud` | `unity-hud` | health_bar, ammo_counter, minimap, crosshair, interaction_prompt, score_panel, pause_menu, dialogue_box, full_hud_bundle |
 | `input` | `unity-input` | keyboard_mouse, gamepad, touch, dual_stick, racing_wheel, vr_xr, pointer |
 | `audio` | `unity-audio` | 2d_simple, 3d_spatial, music_layers, crossfade_zones, categorical_mixer |
+
+> `controller`'s `multi_mode` variant is a runtime-switchable "Control Surface
+> Stack" — one player, several coexisting locomotion modes on one schema
+> instance — rather than a normal one-mode-per-project variant. See
+> [`CONTROL_SURFACE_STACK.md`](CONTROL_SURFACE_STACK.md) for the mode
+> vocabulary, the architecture, and its named v1 limitations.
 | `ai` | `unity-ai` | navmesh_patrol, chase_player, fsm_guard, behaviour_tree_lite, flocking, cover_shooter, flying_swarm |
 | `spawner` | `unity-spawner` | wave_spawner, continuous_spawner, object_pool, trigger_spawner, point_spawner, radial_spawner |
 | `saveload` | `unity-saveload` | json_file, playerprefs_kv, save_slots, checkpoint, autosave, encrypted_json |
@@ -513,3 +519,28 @@ python main.py unity-loot "a glowing chest that bursts into coins" --variant che
 > and lint pass — prefer the `physics` generator (`src/micro/physics.py`) as the template for
 > new ones: it uses `CodeExtensibleSchema`, `lint_extensible`, `UNITY_EXTRA_INSTRUCTIONS`, and
 > the `_inject.j2` macros end-to-end.
+
+### When NOT to follow this checklist: `terrain`
+
+`src/micro/terrain.py` (`unity-terrain-gen`) is a deliberate exception to everything
+above, not an oversight:
+
+- It is **world/region-scale**, not per-entity — one bake per `WorldRegion`
+  (`schema.world_spec.regions`), not one instance per prompt.
+- Its artifact is **data**, not a `MonoBehaviour` — a heightmap/splatmap PNG pair, read
+  by a fixed runtime builder script (`TerrainBuilder.cs.j2`) that is never
+  LLM-authored.
+- It is **not registered in `micro.REGISTRY`**, never goes through `enrich_subsystems`
+  (there is no `extra_*` C# surface to enrich — see
+  `src/unity_terraingen.py`'s module docstring), and is not covered by
+  `src/micro_stress.py`'s generic per-kind harness for the same reason `model` isn't
+  (`_NO_SCHEMA`): it has its own dedicated tests instead
+  (`tests/test_unity_terraingen.py`, `tests/test_terrain_pipeline_files.py`).
+- It still wires into `unity-create --compose` — see the `schema.world_spec` block in
+  `src/unity_pipeline.py`, right after `composer.emit(...)` — just outside the
+  `Subsystem`/`MicroComposer` model entirely, because terrain doesn't attach to a
+  GameObject or participate in any `GameWiring` seam.
+
+If a future micro is similarly world-scale or data-artifact-shaped rather than
+per-entity-and-C#-shaped, follow `terrain`'s pattern instead of forcing it through
+`MicroPipeline`.

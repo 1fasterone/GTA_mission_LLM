@@ -15,7 +15,7 @@ from src.unity_layout import compute_layout
 from src.unity_playability import (ERROR, WARN, evaluate, gate)
 from src.unity_schema import (EntitySpec, MissionObjective, MissionSpec,
                               SceneSpec, StoryBeat, UnitySchema,
-                              UnityScript)
+                              UnityScript, WorldRegion, WorldSpec)
 
 
 def _schema(entities=None, *, scripts=None, locomotion="walk",
@@ -472,6 +472,52 @@ class TestUngradedChecks:
         rep = evaluate(_playable())
         assert "scene_population" in rep.not_graded          # WARN class
         assert "scene_population" not in rep.ungraded_errors
+
+
+class TestWorldTerrain:
+    """schema.world_spec.regions -> src/unity_terraingen.py's terrain bake,
+    graded by `_check_world_terrain`. WARN class: a world with no ground
+    underfoot is degraded (like `audio` shipping silent), not the ERROR-class
+    line between "a game" and "a scene"."""
+
+    def test_no_world_spec_is_ungraded_not_failed(self):
+        rep = evaluate(_playable())
+        assert "world_terrain" not in rep.checks
+        assert "world_terrain" in rep.not_graded
+        assert rep.playable
+
+    def test_a_ground_biome_region_passes(self):
+        rep = evaluate(_playable(
+            world_spec=WorldSpec(regions=[
+                WorldRegion(name="Alpha", biome="forest", bounds=[0, 0, 100, 100]),
+            ])))
+        assert rep.checks["world_terrain"] is True
+        assert not [f for f in rep.findings if f.check == "world_terrain"]
+
+    def test_every_region_a_no_ground_biome_warns(self):
+        rep = evaluate(_playable(
+            world_spec=WorldSpec(regions=[
+                WorldRegion(name="Alpha", biome="interior", bounds=[0, 0, 100, 100]),
+            ])))
+        assert rep.checks["world_terrain"] is False
+        findings = [f for f in rep.findings if f.check == "world_terrain"]
+        assert len(findings) == 1 and findings[0].severity == WARN
+        assert rep.playable   # WARN never fails the gate
+
+    def test_a_degenerate_bounds_region_warns(self):
+        rep = evaluate(_playable(
+            world_spec=WorldSpec(regions=[
+                WorldRegion(name="Alpha", biome="forest", bounds=[5, 5, 5, 5]),
+            ])))
+        assert rep.checks["world_terrain"] is False
+
+    def test_one_good_region_among_bad_ones_still_passes(self):
+        rep = evaluate(_playable(
+            world_spec=WorldSpec(regions=[
+                WorldRegion(name="Inside", biome="interior", bounds=[0, 0, 10, 10]),
+                WorldRegion(name="Outside", biome="forest", bounds=[0, 0, 100, 100]),
+            ])))
+        assert rep.checks["world_terrain"] is True
 
 
 # -- objectives the fill expressed through tags and missions -------------------

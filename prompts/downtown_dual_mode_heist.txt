@@ -1,0 +1,40 @@
+TITLE
+Downtown Dual-Mode Heist
+
+GENRE
+A 3D open-zone crime game. The player explores a small downtown district on
+foot and can get into a parked car to drive, switching between the two
+locomotion modes at will through a shared control surface stack.
+
+STYLE
+Gritty modern city at dusk — concrete, neon signage, wet asphalt reflecting
+streetlights. Grounded and a little run-down.
+
+CORE PREMISE
+The player starts on foot in a downtown district. A getaway car is parked
+near the start. The player can walk around the district on foot, or get into
+the car and drive, switching between the on-foot and driving locomotion modes
+at any time with a single key press. Both modes are fully playable: on foot
+the player can sprint; in the car the player can drive with a working nitro
+boost. The objective is to reach a rooftop parking garage across town —
+walking or driving both work, but driving is faster.
+
+PLAYER
+The player has ONE unified controller that switches between two locomotion
+modes at runtime: on-foot (walking and sprinting) and driving (a real
+physics car with a nitro boost). This is a "Control Surface Stack" —
+locomotion_modes should be set to both on_foot and vehicle_car, with the
+player starting on foot.
+
+ENTITIES
+- PlayerAvatar: the on-foot human form (kind: player, model: player avatar).
+- GetawayCar: the parked car the player can drive (kind: vehicle, model:
+  getaway car).
+- ParkingGarage: the rooftop parking garage that is the destination (kind:
+  building, model: parking garage).
+- StreetBlock: a downtown street block making up the district (kind:
+  terrain, model: city street block).
+
+OBJECTIVE
+Reach the rooftop parking garage across downtown, on foot or by driving the
+getaway car. The player can switch between on-foot and driving at any time.

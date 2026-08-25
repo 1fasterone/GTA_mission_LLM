@@ -75,7 +75,6 @@ Unity/GTA backends. Atoms are the foundation of all microgens.
 - Prefer deterministic, reproducible transformations
 - Never invent new schema fields or change schema structure; the Pipeline
   LLM's outputs must stay concise, unambiguous schema fills
-- Use Artifacts for diagrams, schema visualizations, and file edits
 - When editing files, produce full-file replacements, not patches
 - Repair deterministically where ground truth exists; record where it does
   not; never raise in a way that discards an otherwise valid schema
@@ -85,7 +84,10 @@ Unity/GTA backends. Atoms are the foundation of all microgens.
 # Where Things Live (For Cowork Navigation)
 
 Core
-- main.py — all commands; new features must be added here
+- main.py — thin entry point (banner + command registration only)
+- cli/ — every command's implementation, one topic module per file
+  (cli/common.py holds the shared Typer app/console/config helpers); new
+  commands are added to the matching cli/*.py module, not main.py
 - config.yaml — model, RAG, Blender, Unity paths
 
 Backends

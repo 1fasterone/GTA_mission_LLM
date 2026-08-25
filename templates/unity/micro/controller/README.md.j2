@@ -15,7 +15,21 @@
    (`com.unity.inputsystem`) if it isn't already installed.
 {% endif %}
 3. Add the `{{ s.name }}` component to any GameObject you want the player to control.
-{% if variant == "vehicle_hover" %}
+{% if variant == "multi_mode" %}
+4. Builds every registered mode's rig on Awake (`CharacterController` for
+   on_foot, a 4-wheel `WheelCollider` rig for vehicle_car) — both exist on the
+   GameObject at once, only one enabled at a time. Press **{{ s.mode_switch_key }}**
+   to cycle modes (`CycleMode()`/`SwitchMode(kind)` are also callable directly).
+
+**Control Surface Stack — known v1 limitations** (see docs/CONTROL_SURFACE_STACK.md):
+- No velocity/momentum carries across a mode switch — `SwitchMode` zeroes it.
+- One spatial layout for the whole project (the *starting* mode's — see
+  `select_archetype` in `src/unity_layout_archetype.py`), not one per mode.
+- The camera and animator subsystems are tuned for the starting mode only,
+  not re-tuned per mode.
+- Mode registry: {{ s.modes | map(attribute='kind') | join(', ') }}
+  (default: `{{ s.default_mode }}`)
+{% elif variant == "vehicle_hover" %}
 4. Builds a raycast spring-damper hover rig on Awake (no WheelColliders — for
    craft with no wheel bones). `Rigidbody` + collider are added automatically if missing.
 {% elif variant.startswith("vehicle_") %}

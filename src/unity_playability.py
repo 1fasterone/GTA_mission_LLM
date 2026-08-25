@@ -121,6 +121,11 @@ _CHECK_SEVERITY: dict[str, str] = {
     # cannot get to is content that is not in the game. On a board "cannot get
     # to" means "cannot click".
     "pointer_targets":   ERROR,
+    # WARN, not ERROR: floating entities with no ground underfoot are a
+    # polish defect (like silence from `audio`), not the difference between
+    # "a game" and "a scene" — the avatar/objective/reachability checks
+    # already own that bar.
+    "world_terrain":     WARN,
 }
 
 # Kinds that are scenery: present in a scene without being something the
@@ -418,6 +423,58 @@ def _check_controllable(schema: UnitySchema, rep: PlayabilityReport) -> None:
             "no player controller — the avatar does not respond to input",
             "schema.scripts.type == player"))
     rep.checks["controllable"] = ok
+
+
+def _check_multi_mode_registry(schema: UnitySchema, rep: PlayabilityReport) -> None:
+    """Control Surface Stack (docs/CONTROL_SURFACE_STACK.md): does the
+    declared `locomotion_modes` registry actually mean what the brief asked
+    for? Ungraded for every project that doesn't declare one — this only
+    means something once a schema opts in.
+
+    Two distinct failure shapes, both ERROR because both are silent-content-
+    loss otherwise: `UnitySchema.enforce_locomotion_modes` already dropped
+    anything outside the current vocabulary or duplicated by kind, recording
+    what it dropped in schema.meta — this check is what turns that record
+    into a graded finding instead of a fact only visible in a JSON blob. A
+    single surviving entry is a WARN, not an ERROR: `subsystems_for` only
+    activates multi_mode at 2+ modes (below that it silently composes as an
+    ordinary single-variant project), so a 1-entry registry is not wrong,
+    just inert — worth telling the author, not worth failing the build over.
+    """
+    if not schema.locomotion_modes:
+        _ungraded(rep, "multi_mode_registry",
+                  "schema.locomotion_modes is empty — this project does not "
+                  "declare a Control Surface Stack")
+        return
+
+    lint = schema.meta.get("locomotion_modes_lint") if isinstance(schema.meta, dict) else None
+    ok = True
+    if isinstance(lint, dict) and (lint.get("dropped_unknown_kind") or lint.get("dropped_duplicate_kind")):
+        unknown = lint.get("dropped_unknown_kind") or []
+        dupe    = lint.get("dropped_duplicate_kind") or []
+        detail = []
+        if unknown:
+            detail.append(f"unrecognized: {', '.join(unknown)}")
+        if dupe:
+            detail.append(f"duplicate: {', '.join(dupe)}")
+        rep.findings.append(Finding(
+            "multi_mode_registry", ERROR,
+            f"locomotion_modes dropped entries the schema asked for "
+            f"({'; '.join(detail)}) — the build has fewer runtime-switchable "
+            "modes than the brief declared",
+            "schema.locomotion_modes / UnitySchema.enforce_locomotion_modes"))
+        ok = False
+
+    if len(schema.locomotion_modes) == 1:
+        rep.findings.append(Finding(
+            "multi_mode_registry", WARN,
+            f"locomotion_modes has exactly 1 entry ({schema.locomotion_modes[0]!r}) "
+            "— a Control Surface Stack needs 2+ to switch between, so this "
+            "project composes as an ordinary single-variant controller "
+            "instead",
+            "src/unity_compose.py subsystems_for"))
+
+    rep.checks["multi_mode_registry"] = ok
 
 
 def _check_camera(schema: UnitySchema, rep: PlayabilityReport) -> None:
@@ -997,6 +1054,33 @@ def _check_audio_coverage(schema: UnitySchema, rep: PlayabilityReport) -> None:
     rep.checks["audio"] = ok
 
 
+def _check_world_terrain(schema: UnitySchema, rep: PlayabilityReport) -> None:
+    """A `schema.world_spec` with regions declares intent to have real ground
+    under the player. If EVERY region opts out of terrain generation (a
+    no-ground biome or a degenerate bounds rect — see
+    src/unity_terraingen.py's NO_GROUND_BIOMES / abstain rules), that is
+    usually a typo'd biome or bounds rect, not a deliberate interior-only
+    world, and the compose pass (src/unity_pipeline.py) will have baked no
+    terrain at all — abstain loudly here rather than let it pass silently as
+    floating entities with nothing underfoot."""
+    world = schema.world_spec
+    if not world or not getattr(world, "regions", None):
+        _ungraded(rep, "world_terrain",
+                  "schema.world_spec has no regions — nothing to bake ground for")
+        return
+    from .unity_terraingen import terrain_jobs_for_world
+    ok = bool(terrain_jobs_for_world(world))
+    if not ok:
+        rep.findings.append(Finding(
+            "world_terrain", WARN,
+            f"schema.world_spec declares {len(world.regions)} region(s) but none "
+            f"got a terrain baked — every region has a no-ground biome or a "
+            f"degenerate bounds rect. Check for a typo'd biome/bounds, or set "
+            f"biome to a NO_GROUND_BIOMES value explicitly if that's intended",
+            "schema.world_spec.regions"))
+    rep.checks["world_terrain"] = ok
+
+
 def _check_enemy_wiring(schema: UnitySchema, rep: PlayabilityReport) -> None:
     """An enemy script with nothing tagged Enemy has no one to drive; enemies
     tagged with no AI anywhere are inert models. Either way the encounter the
@@ -1194,6 +1278,7 @@ _CHECKS = (
     _check_avatar_binding,
     _check_avatar_cardinality,
     _check_controllable,
+    _check_multi_mode_registry,
     _check_camera,
     _check_objective,
     _check_mission_loop,
@@ -1209,6 +1294,7 @@ _CHECKS = (
     _check_unbaked_gameplay,
     _check_volume_player,
     _check_audio_coverage,
+    _check_world_terrain,
     _check_enemy_wiring,
     _check_role_graph,
     _check_objective_kinematics,
