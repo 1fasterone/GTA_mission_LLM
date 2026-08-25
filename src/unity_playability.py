@@ -736,6 +736,22 @@ _SCRIPT_BEHAVIOUR_KEYS = ("awake_extra", "update_extra", "fixed_update_extra",
                           "extra_methods")
 
 
+def _script_body_is_live(script) -> bool:
+    """True when this script's declared behaviour fields carry real content —
+    not just a truthy container. A Step 3 schema-fill that hands a script
+    `extra_methods=[{"body": ""}]` (a signature with an empty/whitespace
+    body) reads as "has a body" under a plain truthiness check, letting a
+    hollow script pass this grade. Content check, same field vocabulary as
+    `_SCRIPT_BEHAVIOUR_KEYS` (kept in step with
+    unity_micro_code._script_has_code — tests/test_script_code_enrichment.py
+    pins the two together)."""
+    for key in ("awake_extra", "update_extra", "fixed_update_extra"):
+        if (getattr(script, key, "") or "").strip():
+            return True
+    return any((getattr(m, "body", "") or "").strip()
+               for m in (getattr(script, "extra_methods", None) or []))
+
+
 def _check_custom_script_bodies(schema: UnitySchema,
                                 rep: PlayabilityReport) -> None:
     """A `type: custom` script that holds data and does nothing.
@@ -761,7 +777,7 @@ def _check_custom_script_bodies(schema: UnitySchema,
         return
 
     empty = [str(getattr(s, "name", "") or "?") for s in scripts
-             if not any(getattr(s, k, None) for k in _SCRIPT_BEHAVIOUR_KEYS)]
+             if not _script_body_is_live(s)]
     if empty:
         rep.findings.append(Finding(
             "custom_script_body", WARN,

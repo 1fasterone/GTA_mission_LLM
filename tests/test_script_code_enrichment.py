@@ -79,6 +79,24 @@ def test_an_empty_custom_script_is_a_target():
     assert all(not _script_has_code(s) for s in _codebranchsim())
 
 
+def test_a_method_with_a_blank_body_is_not_code():
+    """Live: VectorCore's SurfaceModifier came back from Step 3 with
+    `extra_methods=[{"body": ""}]` — a signature and no body. A plain
+    truthiness check over `extra_methods` reads that as "already has code"
+    (a non-empty list), so this pass skipped it entirely; nothing else ever
+    gave it real behaviour, and it reached codegen as a hollow shell."""
+    s = UnityScript(name="SurfaceModifier", type="custom",
+                    description="d",
+                    extra_methods=[CodeMethod(signature="void Foo()", body="")])
+    assert not _script_has_code(s)
+
+
+def test_a_whitespace_only_fragment_is_not_code():
+    s = UnityScript(name="X", type="custom", description="d",
+                    update_extra="   \n  ")
+    assert not _script_has_code(s)
+
+
 def test_bodies_are_authored_for_every_empty_custom_script():
     scripts = _codebranchsim()
     msgs = enrich_scripts(scripts, llm=_StubLLM(), concept="A git teaching sim.")

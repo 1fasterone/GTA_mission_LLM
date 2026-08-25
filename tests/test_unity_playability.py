@@ -843,6 +843,17 @@ def test_an_authored_method_counts_as_a_body():
     assert rep.checks["custom_script_body"] is True
 
 
+def test_a_method_with_a_blank_body_does_not_count_as_a_body():
+    """Live: VectorCore's SurfaceModifier came back from Step 3 with
+    `extra_methods=[{"body": ""}]` — a signature, no body. A plain
+    truthiness check over `extra_methods` (a non-empty list) would grade
+    this as having a body when the class does nothing."""
+    from src.unity_schema import CodeMethod
+    rep = evaluate(_with_custom(_custom(extra_methods=[
+        CodeMethod(signature="void Foo()", body="")])))
+    assert rep.checks["custom_script_body"] is False
+
+
 def test_a_typed_script_is_never_graded():
     """A `player`/`camera`/`game_manager` script renders a proven baseline
     template, so an empty body list says nothing about it."""
