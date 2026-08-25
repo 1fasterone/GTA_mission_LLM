@@ -95,9 +95,11 @@ LOCOMOTION_MODES — Control Surface Stack. ONLY set this (to 2+ of the values
   A ONE-locomotion brief (a pure racer, a pure walking game) must leave this
   an empty list — "locomotion" above is already how those are expressed.
   Current vocabulary (more limited than it may sound — anything else is
-  dropped): "on_foot" | "vehicle_car"
+  dropped): "on_foot" | "vehicle_car" | "flying"
   e.g. an open-world game with both on-foot exploration and a drivable car:
   "locomotion": "walk", "locomotion_modes": ["on_foot", "vehicle_car"]
+  e.g. a game where the player walks around AND pilots a plane/VTOL:
+  "locomotion": "walk", "locomotion_modes": ["on_foot", "flying"]
 
 ENVIRONMENT — scene mood. If the prompt names a time of day or weather feel, set:
   time_of_day: dawn | day | sunset | night   (drives the sun's angle and color)

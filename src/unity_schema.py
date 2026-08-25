@@ -1304,7 +1304,7 @@ class UnitySchema(BaseModel):
         turns this record into a graded finding."""
         if not self.locomotion_modes:
             return self
-        valid = ("on_foot", "vehicle_car")   # grows with the template vocabulary
+        valid = ("on_foot", "vehicle_car", "flying")   # grows with the template vocabulary
         seen: set[str] = set()
         kept: list[str] = []
         dropped_unknown: list[str] = []

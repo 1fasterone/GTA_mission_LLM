@@ -17,7 +17,8 @@
 3. Add the `{{ s.name }}` component to any GameObject you want the player to control.
 {% if variant == "multi_mode" %}
 4. Builds every registered mode's rig on Awake (`CharacterController` for
-   on_foot, a 4-wheel `WheelCollider` rig for vehicle_car) — both exist on the
+   on_foot, a 4-wheel `WheelCollider` rig for vehicle_car, a thrust/lift
+   `Rigidbody` rig with pitch/roll/rudder for flying) — all exist on the
    GameObject at once, only one enabled at a time. Press **{{ s.mode_switch_key }}**
    to cycle modes (`CycleMode()`/`SwitchMode(kind)` are also callable directly).
 

@@ -103,6 +103,25 @@ class TestFixer:
         ))
         assert fixed.mode_switch_key == "Tab"
 
+    def test_prunes_flying_abilities_to_flaps_and_landing_gear_only(self):
+        fixed = _fixed(_multi_schema([
+            {"kind": "on_foot"},
+            {"kind": "flying", "abilities": ["flaps", "landing_gear", "nitro", "jump"]},
+        ]))
+        flying = next(m for m in fixed.modes if m.kind == "flying")
+        assert set(flying.abilities) == {"flaps", "landing_gear"}
+
+    def test_flaps_and_landing_gear_stripped_outside_multi_mode(self):
+        # No template section for them anywhere but ControllerMultiMode.cs.j2's
+        # flying macros — surviving into a single-variant schema.abilities
+        # would be a silent gap.
+        pipe = ControllerPipeline(_cfg())
+        schema = ControllerSchema(name="X", variant="aircraft",
+                                  abilities=["flaps", "landing_gear", "pitch"])
+        fixed = pipe.default_fix(schema, "aircraft")
+        assert "flaps" not in fixed.abilities
+        assert "landing_gear" not in fixed.abilities
+
 
 # ── Template (ControllerMultiMode.cs.j2) ─────────────────────────────────────
 
@@ -146,6 +165,70 @@ class TestRender:
             [{"kind": "on_foot", "abilities": ["jump", "sprint"]},
              {"kind": "vehicle_car", "abilities": ["nitro"]}]))
         path = tmp_path / "TestCtrlMultiMode.cs"
+        path.write_text(out, encoding="utf-8")
+        result = check_files([str(path)])
+        if result.skipped_reason:
+            return  # no .NET SDK on this machine
+        assert not result.diagnostics, result.diagnostics
+
+    def test_flying_renders_its_own_rigidbody_rig_not_ivehiclestate(self):
+        # flying drives a Rigidbody like vehicle_car does, but it is not a
+        # wheeled vehicle — IVehicleState (SteerNormalized/WheelRadius/...)
+        # stays vehicle_car-only.
+        out = _render(_multi_schema(
+            [{"kind": "on_foot"}, {"kind": "flying"}]))
+        assert "Rigidbody _rb" in out
+        assert ", IVehicleState" not in out
+        assert "public const string ModeFlying" in out
+        assert "float pitchInput" in out
+        assert "public float RudderNormalized" in out
+        assert out.count("{") == out.count("}")
+
+    def test_flaps_and_landing_gear_only_render_when_requested(self):
+        bare = _render(_multi_schema([{"kind": "on_foot"}, {"kind": "flying"}]))
+        assert "_flapsDown" not in bare
+        assert "_gearDown" not in bare
+        assert "FlapsDown" not in bare
+        assert "GearDown" not in bare
+
+        full = _render(_multi_schema(
+            [{"kind": "on_foot"},
+             {"kind": "flying", "abilities": ["flaps", "landing_gear"]}]))
+        assert "_flapsDown" in full
+        assert "_gearDown" in full
+        assert "public bool  FlapsDown" in full
+        assert "public bool  GearDown" in full
+        assert full.count("{") == full.count("}")
+
+    def test_vehicle_car_and_flying_share_one_rigidbody_no_double_mass(self):
+        # Both modes drive the same shared _rb — flying_awake must defer mass
+        # to vehicle_car's 1200f agreement with the physics micro rather than
+        # stomping it with its own 2000f.
+        out = _render(_multi_schema(
+            [{"kind": "vehicle_car"}, {"kind": "flying"}]))
+        assert out.count("private Rigidbody _rb;") == 1
+        assert "_rb.mass" in out and "1200f" in out
+        assert "2000f" not in out
+        assert out.count("{") == out.count("}")
+
+    def test_flying_alone_with_on_foot_sets_its_own_mass(self):
+        out = _render(_multi_schema([{"kind": "on_foot"}, {"kind": "flying"}]))
+        assert "_rb.mass = 2000f;" in out
+
+    def test_three_way_registry_renders_all_three_dispatch_branches(self):
+        out = _render(_multi_schema(
+            [{"kind": "on_foot"}, {"kind": "vehicle_car"}, {"kind": "flying"}]))
+        assert "if (_currentMode == ModeOnFoot)" in out
+        assert "else if (_currentMode == ModeVehicleCar)" in out
+        assert "else if (_currentMode == ModeFlying)" in out
+        assert out.count("{") == out.count("}")
+
+    def test_passes_the_real_csharp_syntax_gate_with_flying(self, tmp_path):
+        out = _render(_multi_schema(
+            [{"kind": "on_foot", "abilities": ["jump", "sprint"]},
+             {"kind": "vehicle_car", "abilities": ["nitro"]},
+             {"kind": "flying", "abilities": ["flaps", "landing_gear"]}]))
+        path = tmp_path / "TestCtrlMultiModeFlying.cs"
         path.write_text(out, encoding="utf-8")
         result = check_files([str(path)])
         if result.skipped_reason:
@@ -197,6 +280,27 @@ class TestRouting:
         phys = next(s for s in subs if s.kind == "physics")
         assert phys.options.get("is_kinematic") is True
 
+    def test_physics_mass_is_aircraft_when_flying_present_without_vehicle(self):
+        _, subs = self._controller(locomotion="fly",
+                                   locomotion_modes=["on_foot", "flying"])
+        phys = next(s for s in subs if s.kind == "physics")
+        assert phys.options.get("mass") == 2000.0
+
+    def test_physics_mass_prefers_vehicle_car_over_flying(self):
+        # Both share one Rigidbody — the car's tuned suspension mass wins,
+        # matching flying_awake's own "only set mass when no vehicle_car"
+        # deferral (see _controller_modes.j2).
+        _, subs = self._controller(locomotion="drive",
+                                   locomotion_modes=["vehicle_car", "flying"])
+        phys = next(s for s in subs if s.kind == "physics")
+        assert phys.options.get("mass") == 1200.0
+
+    def test_physics_is_dynamic_when_default_mode_is_flying(self):
+        _, subs = self._controller(locomotion="fly",
+                                   locomotion_modes=["flying", "on_foot"])
+        phys = next(s for s in subs if s.kind == "physics")
+        assert phys.options.get("is_kinematic") is not True
+
 
 # ── Schema-level validation (src/unity_schema.py) ────────────────────────────
 
@@ -207,9 +311,14 @@ class TestSchemaValidation:
         assert "locomotion_modes_lint" not in schema.meta
 
     def test_drops_unknown_kind_and_records_it(self):
-        schema = _unity_schema(locomotion_modes=["on_foot", "flying", "vehicle_car"])
+        schema = _unity_schema(locomotion_modes=["on_foot", "swimming", "vehicle_car"])
         assert schema.locomotion_modes == ["on_foot", "vehicle_car"]
-        assert schema.meta["locomotion_modes_lint"]["dropped_unknown_kind"] == ["flying"]
+        assert schema.meta["locomotion_modes_lint"]["dropped_unknown_kind"] == ["swimming"]
+
+    def test_flying_is_a_recognized_kind(self):
+        schema = _unity_schema(locomotion_modes=["on_foot", "flying"])
+        assert schema.locomotion_modes == ["on_foot", "flying"]
+        assert "locomotion_modes_lint" not in schema.meta
 
     def test_dedupes_and_records_it(self):
         schema = _unity_schema(locomotion_modes=["on_foot", "on_foot", "vehicle_car"])
@@ -225,7 +334,7 @@ class TestPlayability:
         assert "multi_mode_registry" in rep.not_graded
 
     def test_errors_when_entries_were_dropped(self):
-        rep = evaluate(_unity_schema(locomotion_modes=["on_foot", "flying"],
+        rep = evaluate(_unity_schema(locomotion_modes=["on_foot", "swimming"],
                                      **_playable_avatar()))
         finding = next(f for f in rep.findings if f.check == "multi_mode_registry")
         assert finding.severity == ERROR
@@ -248,3 +357,8 @@ class TestPlayability:
                                      **_playable_avatar()))
         assert rep.checks.get("avatar") is True
         assert rep.checks.get("controllable") is True
+
+    def test_passes_with_on_foot_and_flying(self):
+        rep = evaluate(_unity_schema(locomotion_modes=["on_foot", "flying"],
+                                     **_playable_avatar()))
+        assert rep.checks["multi_mode_registry"] is True

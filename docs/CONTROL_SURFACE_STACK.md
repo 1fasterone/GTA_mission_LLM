@@ -7,15 +7,15 @@ project rule. Emitted as `ControllerVariant = "multi_mode"`
 (`src/micro/controller.py`), its own template
 (`templates/unity/micro/controller/ControllerMultiMode.cs.j2`).
 
-This is Phase 1 of a multi-phase plan — see "Phasing" below. It ships exactly
-two mode kinds. Everything here is strictly additive: a project that never
-sets `locomotion_modes` compiles and composes exactly as it did before this
-feature existed.
+This is a multi-phase plan — see "Phasing" below. Phase 1 (`on_foot` +
+`vehicle_car`) and Phase 1b's `flying` kind are shipped. Everything here is
+strictly additive: a project that never sets `locomotion_modes` compiles and
+composes exactly as it did before this feature existed.
 
 ## How to opt in
 
 Set `UnitySchema.locomotion_modes` to 2+ distinct kinds (currently
-`"on_foot"` and `"vehicle_car"` — the full vocabulary, see below):
+`"on_foot"`, `"vehicle_car"`, `"flying"` — the full vocabulary, see below):
 
 ```json
 "locomotion_modes": ["on_foot", "vehicle_car"]
@@ -41,9 +41,24 @@ fields the Pipeline LLM can fill directly in Step 3 (see the
 |-------|------|-------|
 | 1 (shipped) | `on_foot` | `CharacterController`-based; abilities: `jump`, `sprint` |
 | 1 (shipped) | `vehicle_car` | 4-`WheelCollider` rig; abilities: `nitro` |
-| 1b (planned) | `flying`, `swimming` | already share `on_foot`'s `_cc` backing store in the single-variant template |
+| 1b (shipped) | `flying` | `Rigidbody` pitch/roll/rudder/throttle rig ported from the single-variant `aircraft` section — **not** the single-variant `flying` variant. See "Why `flying` isn't `on_foot`'s `_cc`" below. Abilities: `flaps`, `landing_gear` (pitch/roll/rudder/throttle are always on, not ability-gated). |
+| 1b (remaining, planned) | `swimming` | still shares `on_foot`'s `_cc` backing store in the single-variant template |
 | 2 (planned) | `zero_g_eva`, `boating` | delta off `flying`/`vehicle_hover` |
 | out of scope | `skateboarding`, riding a mount | no template precedent (trick physics / needs a live cross-entity reference the composer has no mechanism for) |
+
+### Why `flying` isn't `on_foot`'s `_cc`
+
+The original plan for Phase 1b's `flying` kind was a simple ascend/descend
+free-fly sharing `on_foot`'s `CharacterController`, mirroring the
+single-variant `flying` variant. That has no room for flaps, a rudder, or
+landing gear — a drivable aircraft/VTOL entity's brief asks for fixed-wing
+controls, not a hovering drone. Shipped `flying` is instead a `Rigidbody`
+rig ported from the single-variant **`aircraft`** section (pitch/roll/yaw/
+throttle via `AddForce`), extended with two optional per-mode abilities.
+It shares its `Rigidbody` with `vehicle_car` when both are registered — see
+"Shared physical backing store" below for how `Awake()`/`ApplyMode()`
+reconcile one Rigidbody wanting ground gravity and WheelColliders while the
+other wants free flight and thrust.
 
 Extending the vocabulary means updating, together: `ControllerModeKind` +
 `_MODE_FAMILY` (`src/micro/controller.py`), `UnitySchema.
@@ -69,15 +84,25 @@ a new mode macro in `_controller_modes.j2`, and the `has_<kind>` gates in
   carries across a switch** — `SwitchMode` zeroes it before applying the new
   mode. Modeling carryover (e.g. exiting a moving car at speed) is a later
   refinement, not a Phase 1 correctness requirement.
+  `vehicle_car` and `flying` share ONE `Rigidbody` (there is only ever one on
+  the GameObject) rather than each owning their own — `ApplyMode` computes
+  `isKinematic` from whichever of the two is active, and additionally
+  toggles `useGravity`/`linearDamping` off/on around `flying` specifically
+  (ground driving wants normal gravity, free flight doesn't). Mass is set
+  once: `flying_awake` only assigns its own 2000f when no `vehicle_car`
+  entry is present, deferring to the car's tuned 1200f otherwise — the
+  physics micro's own mass (`unity_compose.py`'s `phys_opts`) makes the same
+  choice, or the two `Awake()`s race for `Rigidbody.mass` exactly like the
+  vehicle-only case this pattern was already guarding against.
 - **Macros, not a second copy.** `_controller_modes.j2` holds each mode's
   field/Awake/movement/build logic as Jinja macros, adapted from the matching
   block in the single-variant `Controller.cs.j2` (on_foot ≈ `third_person`,
-  vehicle_car ≈ `vehicle_car`). **`Controller.cs.j2` itself is NOT yet
-  refactored to call these same macros** — that mechanical, output-preserving
-  refactor (verified by the existing 14-variant test suite) is deferred to a
-  follow-up pass, since it adds no new capability on its own, only a
-  drift-prevention guarantee. Until it lands, an edit to `vehicle_car`'s
-  logic in `Controller.cs.j2` and an edit to `vehicle_car_movement` in
+  vehicle_car ≈ `vehicle_car`, flying ≈ `aircraft`). **`Controller.cs.j2`
+  itself is NOT yet refactored to call these same macros** — that mechanical,
+  output-preserving refactor (verified by the existing variant test suite) is
+  deferred to a follow-up pass, since it adds no new capability on its own,
+  only a drift-prevention guarantee. Until it lands, an edit to a mode's
+  logic in `Controller.cs.j2` and an edit to its matching macro in
   `_controller_modes.j2` are two places, not one — keep them in step by hand.
 
 ## Known v1 limitations (named, not silent)
@@ -107,9 +132,12 @@ a new mode macro in `_controller_modes.j2`, and the `has_<kind>` gates in
 ## Phasing
 
 - **Phase 1 (shipped):** `on_foot` + `vehicle_car`.
-- **Phase 1b:** fold in `flying`/`swimming` — both already share `on_foot`'s
-  `_cc` backing store in the single-variant template, so this is mostly
-  proving the macro pattern generalizes.
+- **Phase 1b (`flying` shipped, `swimming` remaining):** `flying` is a
+  `Rigidbody` pitch/roll/rudder/throttle rig ported from the single-variant
+  `aircraft` section, not the CC-based free-fly originally sketched for this
+  phase — see "Why `flying` isn't `on_foot`'s `_cc`" above. `swimming` still
+  shares `on_foot`'s `_cc` backing store in the single-variant template, so
+  that piece is mostly proving the macro pattern generalizes a second way.
 - **Phase 2:** `zero_g_eva` (delta off `flying`) and `boating` (delta off
   `vehicle_hover`'s raycast-spring pattern — also needs the `hover_*` param
   clamp block `default_fix` is currently missing, fixed as a prerequisite).

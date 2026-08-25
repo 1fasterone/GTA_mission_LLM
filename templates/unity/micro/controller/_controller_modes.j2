@@ -213,3 +213,93 @@
             ? new[] { fl, fr, rl, rr } : null;
     }
 {%- endmacro %}
+
+{# ── flying ──────────────────────────────────────────────────────────────── #}
+{# Rigidbody pitch/roll/rudder/throttle rig ported from Controller.cs.j2's
+   single-variant "aircraft" section — NOT the single-variant "flying"
+   variant (a CharacterController ascend/descend free-fly with no room for
+   flaps/rudder/landing gear). Shares `_rb` with vehicle_car when both are
+   registered (see ControllerMultiMode.cs.j2's ApplyMode for how useGravity/
+   isKinematic reconcile the two), same as vehicle_car_awake shares it with
+   on_foot's separate CharacterController. #}
+
+{% macro flying_awake(has_vehicle_car) -%}
+        _rb = GetComponent<Rigidbody>();
+        if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();
+{% if not has_vehicle_car %}
+        // Only set mass when no vehicle_car entry owns this Rigidbody too —
+        // see unity_compose.py's phys_opts comment for why the two must
+        // agree on whichever one wins.
+        _rb.mass = 2000f;
+{% endif %}
+        _rb.angularDamping = 2.5f;
+{%- endmacro %}
+
+{# Expects `kb`/`mouse` (input_system) already declared by the caller. `mode`
+   is the ControllerMode for flying (or None) — its `.abilities` gate the
+   optional flaps/landing_gear blocks, mirroring vehicle_car_movement's
+   `mode` param. Pitch/roll/rudder/throttle are base flight controls, always
+   present for a flying entry — no ability needed for those (same reasoning
+   as vehicle_car's steering). #}
+{% macro flying_movement(s, mode) -%}
+{% set has_flaps = mode and ("flaps" in mode.abilities) -%}
+{% set has_gear = mode and ("landing_gear" in mode.abilities) -%}
+{% if s.input_backend == "input_system" %}
+        float pitchInput  = kb != null ? (kb.sKey.isPressed ? -1f : 0f) + (kb.wKey.isPressed ? 1f : 0f) : 0f;
+        float rollInput   = kb != null ? (kb.dKey.isPressed ?  1f : 0f) + (kb.aKey.isPressed ? -1f : 0f) : 0f;
+        float rudderInput = kb != null ? (kb.eKey.isPressed ?  1f : 0f) + (kb.qKey.isPressed ? -1f : 0f) : 0f;
+        bool  throtUp     = kb != null && kb.leftShiftKey.isPressed;
+        bool  throtDown   = kb != null && kb.leftCtrlKey.isPressed;
+{% else %}
+        float pitchInput  = -Input.GetAxisRaw("Vertical");
+        float rollInput   = Input.GetAxisRaw("Horizontal");
+        float rudderInput = (Input.GetKey(KeyCode.E) ? 1f : 0f) - (Input.GetKey(KeyCode.Q) ? 1f : 0f);
+        bool  throtUp     = Input.GetKey(KeyCode.LeftShift);
+        bool  throtDown   = Input.GetKey(KeyCode.LeftControl);
+{% endif %}
+        _rudderInput = rudderInput;
+        _throttle = Mathf.Clamp01(_throttle + (throtUp ? 1f : throtDown ? -1f : 0f) * throttleRate * Time.deltaTime);
+        transform.Rotate(
+            pitchInput  * pitchSpeed * Time.deltaTime,
+            rudderInput * yawSpeed   * Time.deltaTime,
+            -rollInput  * rollSpeed  * Time.deltaTime,
+            Space.Self
+        );
+{% if has_flaps %}
+{% if s.input_backend == "input_system" %}
+        if (kb != null && kb.fKey.wasPressedThisFrame) _flapsDown = !_flapsDown;
+{% else %}
+        if (Input.GetKeyDown(KeyCode.F)) _flapsDown = !_flapsDown;
+{% endif %}
+{% endif %}
+{% if has_gear %}
+{% if s.input_backend == "input_system" %}
+        if (kb != null && kb.gKey.wasPressedThisFrame) _gearDown = !_gearDown;
+{% else %}
+        if (Input.GetKeyDown(KeyCode.G)) _gearDown = !_gearDown;
+{% endif %}
+{% endif %}
+        if (_rb != null)
+        {
+            _rb.AddForce(transform.forward * (_throttle * maxThrust), ForceMode.Force);
+            float spd = _rb.linearVelocity.magnitude;
+{% if has_flaps %}
+            // Flaps trade top speed for low-speed lift — deployed, the craft
+            // generates more lift per m/s but its speed cap drops.
+            float liftMul   = _flapsDown ? flapsLiftMultiplier : 1f;
+            float speedCap  = _flapsDown ? maxAirSpeed * 0.6f   : maxAirSpeed;
+{% else %}
+            float liftMul   = 1f;
+            float speedCap  = maxAirSpeed;
+{% endif %}
+            if (spd > stallSpeed)
+                _rb.AddForce(Vector3.up * liftCoefficient * liftMul * Mathf.Clamp01(spd / speedCap), ForceMode.Force);
+            if (spd > speedCap)
+                _rb.linearVelocity = _rb.linearVelocity.normalized * speedCap;
+{% if has_gear %}
+            // Gear down adds aerodynamic drag — real aircraft retract it in
+            // flight for exactly this reason.
+            _rb.linearDamping = _gearDown ? gearDragMultiplier : 0f;
+{% endif %}
+        }
+{%- endmacro %}

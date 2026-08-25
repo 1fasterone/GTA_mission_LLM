@@ -50,9 +50,16 @@ VARIANTS = list(ControllerVariant.__args__)   # type: ignore[attr-defined]
 # Deliberately narrower than ControllerVariant — excludes 2D variants (dimension
 # mismatch with a runtime-switchable 3D stack), `pointer` (bodiless) and
 # `multi_mode` itself. Grows in later phases (docs/CONTROL_SURFACE_STACK.md):
-# Phase 1 ships exactly these two; flying/swimming/vehicle_bike/vehicle_hover
-# are Phase 1b/2, not yet wired into ControllerMultiMode.cs.j2.
-ControllerModeKind = Literal["on_foot", "vehicle_car"]
+# Phase 1 shipped on_foot + vehicle_car. Phase 1b adds "flying" — NOT the
+# single-variant "flying" CharacterController free-fly (ascend/descend on
+# _cc), which has no room for the fixed-wing controls a drivable
+# aircraft/VTOL entity actually needs. It is a Rigidbody pitch/roll/rudder/
+# throttle rig ported from the single-variant "aircraft" section instead, so
+# an aircraft-family entity in a multi_mode registry gets real flight
+# behaviour (plus optional flaps/landing_gear abilities), not a hover drone.
+# swimming/vehicle_bike/vehicle_hover/zero_g_eva/boating are still Phase
+# 1b(remainder)/2, not yet wired into ControllerMultiMode.cs.j2.
+ControllerModeKind = Literal["on_foot", "vehicle_car", "flying"]
 
 _MODE_KINDS: list[str] = list(ControllerModeKind.__args__)  # type: ignore[attr-defined]
 
@@ -62,6 +69,7 @@ _MODE_KINDS: list[str] = list(ControllerModeKind.__args__)  # type: ignore[attr-
 _MODE_FAMILY: dict[str, str] = {
     "on_foot":    "on_foot",
     "vehicle_car": "vehicle",
+    "flying":      "flying",
 }
 
 # Mode-switch key: whitelisted to names that mean the SAME physical key in both
@@ -83,6 +91,10 @@ VALID_MODE_SWITCH_KEYS: frozenset[str] = frozenset({
 # Fighting:  primary_attack / secondary_attack / block / dodge / grab
 # Interaction: interact / use_item / open_inventory / open_map / pause
 # Vehicle:   nitro / brake
+# Flying (multi_mode "flying" kind only — see ControllerModeKind): flaps /
+#   landing_gear. Rudder is NOT here — like vehicle_car's steering, it is a
+#   base flight control every "flying" mode gets for free, not an optional
+#   ability to gate a template section behind.
 Ability = Literal[
     # locomotion
     "jump", "double_jump", "sprint", "crouch", "dash", "wall_jump", "glide", "fly",
@@ -97,6 +109,8 @@ Ability = Literal[
     "interact", "use_item", "open_inventory", "open_map", "pause",
     # vehicle
     "nitro", "brake",
+    # flying (multi_mode "flying" kind only)
+    "flaps", "landing_gear",
     # pointer (the `pointer` variant) — the verbs of a game with no avatar.
     # "grab" above is a brawler's grapple, not picking a card up off a board.
     "drag",
@@ -338,12 +352,17 @@ SCHEMA FIELD GUIDE:
   Bike keys (vehicle_bike only): max_lean_angle (degrees, how far it banks into a turn) /
     lean_speed (deg/s the bank angle catches up to the target)
   Multi-mode keys (multi_mode variant ONLY):
-    modes — list of {"kind": "on_foot"|"vehicle_car", "label": str, "abilities": [...]},
+    modes — list of {"kind": "on_foot"|"vehicle_car"|"flying", "label": str, "abilities": [...]},
       one entry per mode the player can switch into. Must have at least 2 entries with
       DIFFERENT kinds (a one-entry or duplicate-kind list is not a stack).
       on_foot abilities: jump, sprint only. vehicle_car abilities: nitro only.
-      (other ability words are pruned — this is Phase 1's supported set, see
+      flying abilities: flaps, landing_gear only (pitch/roll/rudder/throttle are
+      always on for a flying entry — no ability needed for those).
+      (other ability words are pruned — this is the currently supported set, see
       docs/CONTROL_SURFACE_STACK.md)
+      A "flying" entry reuses max_thrust/lift_coefficient/pitch_speed/roll_speed/
+      yaw_speed/throttle_rate/stall_speed/max_air_speed (same fields the aircraft
+      variant tunes) — set those to fit the flying entry's craft.
     default_mode — which entry's "kind" the player starts in
     mode_switch_key — one of: Tab, Q, W, E, R, F, G, H, J, K, L, M, N, V, X, Z, C, B, Escape
     (move_speed/sprint_speed/jump_force tune the on_foot entry; max_motor_torque/
@@ -561,12 +580,25 @@ class ControllerPipeline(UnityMicroPipeline):
         # multi_mode (ControllerMultiMode.cs.j2)
         "defaultmode", "modeswitchkey", "_modes", "_currentmode",
         "_carvisualroot", "_carbodycollider",
+        # multi_mode "flying" kind (max/lift/pitch/roll/yaw/throttle/stall/
+        # air-speed fields and "_throttle" are already reserved above)
+        "_rudderinput", "_flapsdown", "_geardown",
+        "flapsliftmultiplier", "geardragmultiplier",
     }
 
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.InputSystem", "System.Collections"}
 
     def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "MovementController")
+
+        # flaps/landing_gear only render inside a multi_mode "flying" entry
+        # (ControllerMultiMode.cs.j2's flying macros) — every other variant,
+        # including the single-variant "aircraft"/"flying", has no template
+        # section for them, so surviving into schema.abilities there would be
+        # a silent gap (present in the schema, absent from the build).
+        if variant != "multi_mode":
+            schema.abilities = [a for a in schema.abilities
+                                if a not in ("flaps", "landing_gear")]
 
         # Variant-specific ability pruning
         if variant.startswith("2d_") or variant == "platformer_2_5d":
@@ -720,6 +752,8 @@ class ControllerPipeline(UnityMicroPipeline):
         for m in schema.modes:
             if m.kind == "vehicle_car":
                 m.abilities = [a for a in m.abilities if a == "nitro"]
+            elif m.kind == "flying":
+                m.abilities = [a for a in m.abilities if a in ("flaps", "landing_gear")]
             else:  # on_foot
                 m.abilities = [a for a in m.abilities if a in ("jump", "sprint")]
 

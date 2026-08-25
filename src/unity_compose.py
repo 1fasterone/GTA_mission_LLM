@@ -1717,11 +1717,20 @@ def subsystems_for(
     # A multi_mode registry with a vehicle family present needs the same
     # 1200kg agreement as a plain vehicle_* controller (see the comment
     # above) — the multi_mode class builds and drives its own Rigidbody for
-    # that mode exactly like vehicle_car does.
+    # that mode exactly like vehicle_car does. A "flying" entry drives that
+    # same shared Rigidbody too (AddForce, not WheelColliders) — its own
+    # Awake() (ControllerMultiMode.cs.j2/flying_awake) only sets mass itself
+    # when NO vehicle_car entry is present, deferring to the car's tuned
+    # 1200kg otherwise, so the physics micro must mirror that same choice or
+    # the two Awake()s race exactly like the vehicle-only case above.
     _multi_mode_has_vehicle = bool(_multi_mode_kinds & {"vehicle_car"})
-    phys_opts: dict = ({"mass": 1200.0}
-                       if ctrl.startswith("vehicle_") or _multi_mode_has_vehicle
-                       else {})
+    _multi_mode_has_flying  = bool(_multi_mode_kinds & {"flying"})
+    if ctrl.startswith("vehicle_") or _multi_mode_has_vehicle:
+        phys_opts: dict = {"mass": 1200.0}
+    elif _multi_mode_has_flying:
+        phys_opts = {"mass": 2000.0}
+    else:
+        phys_opts = {}
 
     # A CharacterController-based controller does its OWN swept-collision movement
     # via CharacterController.Move() and adds its own CharacterController in Awake
@@ -1743,7 +1752,7 @@ def subsystems_for(
         # with the physics micro's own Awake() matters here, so this mirrors
         # whichever mode the registry actually starts in.
         _default_mode = (locomotion_modes or [""])[0]
-        _ctrl_is_character_controller = _default_mode not in ("vehicle_car",)
+        _ctrl_is_character_controller = _default_mode not in ("vehicle_car", "flying")
     if phys_variant == "rigidbody_3d" and _ctrl_is_character_controller:
         phys_opts["is_kinematic"] = True
 
