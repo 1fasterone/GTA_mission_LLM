@@ -639,6 +639,7 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
     if genre_hits:
         intent.matched["genre"] = genre_hits
     if mm_kinds:
+        intent.matched["locomotion_modes"] = mm_kinds
         intent.matched["locomotion_modes_switch_signal"] = mm_hits
         for kind, hits in mm_per_kind.items():
             intent.matched[f"locomotion_modes:{kind}"] = hits

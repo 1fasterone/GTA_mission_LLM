@@ -1071,9 +1071,17 @@ class UnityPipeline:
                 "checklist"
             )
         if intent.matched:
+            # Not every intent.matched key is a top-level UnityIntent field —
+            # some (locomotion_suppressed, locomotion_modes_switch_signal,
+            # locomotion_modes:<kind>) are sub-detail keys a caller reads
+            # directly (structure_hint/apply_intent), not a value this
+            # one-line summary can show. AttributeError on any of those
+            # crashed this line outright — hit live once
+            # `_score_multi_mode` started adding its own sub-detail keys.
             self._ok(
                 "Intent: "
-                + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched)
+                + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched
+                            if hasattr(intent, axis))
             )
 
         # Spatial facts: the brief's own numeric distances, extracted here —

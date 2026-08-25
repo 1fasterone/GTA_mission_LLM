@@ -316,6 +316,26 @@ class TestHintHonesty:
 # runs). This mirrors the OTHER three axes' keyword-classifier backstop.
 
 class TestControlSurfaceStackDetection:
+    # ── regression: every `intent.matched` key must be safe for the
+    # generic `getattr(intent, axis)` summary line in unity_pipeline.py
+    # (line ~1075) — it assumes every matched-dict key names a real
+    # UnityIntent field. `locomotion_modes_switch_signal` and
+    # `locomotion_modes:<kind>` are sub-detail keys, not fields, and hit
+    # this live: AttributeError on the first real pipeline run after this
+    # feature landed. hasattr()-guards the loop instead of requiring every
+    # future matched-dict key to double as a field name.
+    def test_every_matched_key_is_hasattr_safe_for_the_pipeline_summary_line(self):
+        intent = classify(
+            "Switch between on-foot parkour and driving a car — a Control "
+            "Surface Stack testbed.")
+        assert intent.matched  # a real signal fired — otherwise this proves nothing
+        # Mirrors unity_pipeline.py's own summary-line construction verbatim —
+        # must not raise AttributeError for any key intent.matched carries.
+        line = "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched
+                         if hasattr(intent, axis))
+        assert "locomotion_modes" in intent.matched
+        assert "locomotion_modes=" in line
+
     def test_switch_signal_plus_two_kinds_detected(self):
         intent = classify(
             "The player switches between on-foot parkour and driving a car "
