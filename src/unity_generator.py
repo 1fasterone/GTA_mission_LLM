@@ -22,7 +22,7 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
-from .micro.code_fields import CodeField, lint_extensible
+from .micro.code_fields import CodeField, lint_extensible, _code_mask
 
 _log = logging.getLogger(__name__)
 
@@ -1387,8 +1387,15 @@ _LAMBDA_PARAM_RE = re.compile(r"(\w+)\s*=>")
 _COND_HEADER_RE  = re.compile(r"\b(?:if|while)\s*\(")
 # Bare identifier not preceded by `.`/word-char (collapses dotted chains like
 # `transform.position.y` to just the root `transform`) and not immediately
-# followed by `(` (that's Part A's job, a method call, not a value read).
-_COND_TOKEN_RE   = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\b(?!\s*\()")
+# followed by `(` — OR by a generic type-argument list then `(`, e.g.
+# `ReadValue<Vector2>(...)` (that's Part A's job, a method call, not a value
+# read). Missing the generic case here misread InputActionReference.
+# ReadValue<Vector2>(...) inside an `if (...)` as a bare undeclared VALUE,
+# stripping the whole condition line -- if that line also carried the
+# block's own opening `{` (K&R `if (cond) {` style), the strip took the
+# brace with it, orphaning the body and its closer (CS1022/CS8803/CS0106).
+# Confirmed live: VectorCore's InputMapper.cs.
+_COND_TOKEN_RE   = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\b(?!\s*(?:<[^<>()]*>)?\s*\()")
 _METHOD_PARAM_LIST_RE = re.compile(r"\(([^)]*)\)")
 
 
@@ -1447,7 +1454,13 @@ def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
         for line in body.splitlines(keepends=True):
             bad = False
             for cond in _extract_conditions(line):
+                # String/char literal content ("Fire1", "Horizontal", ...) is
+                # not a value read — Input.GetButtonDown("Jump")-shaped calls
+                # are common, real Unity API, not an undeclared identifier.
+                mask = _code_mask(cond)
                 for m in _COND_TOKEN_RE.finditer(cond):
+                    if not mask[m.start(1)]:
+                        continue
                     tok = m.group(1)
                     if (tok in declared or tok in _COND_KEYWORD_ALLOW
                             or tok in _STATIC_CLASS_ALLOW or tok in _MB_COMMON_MEMBERS):
