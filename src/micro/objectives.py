@@ -48,6 +48,14 @@ class ObjectiveEntry(BaseModel):
     target_ref:  str = ""
     count:       int = 1
     optional:    bool = False
+    # The id of an objective that must COMPLETE before this one can accept any
+    # progress — the tracker's own analogue of board.py's zone `requires`.
+    # Empty means "no prerequisite" (today's fully-parallel behaviour, still the
+    # default). Fill-only in default_fix: a value the LLM/schema already set is
+    # never overridden, matching every other deterministic backstop in this repo
+    # (locomotion_modes, flying_abilities, ...). See ObjectivesPipeline.default_fix
+    # and ObjectivesPipeline.harden.
+    after:       str = ""
 
     @field_validator("type", mode="before")
     @classmethod
@@ -103,6 +111,11 @@ Convert the brief into JSON. Output JSON only.
 
 VARIANT MUST BE: {variant}
 OBJECTIVE TYPE — reach | collect | eliminate | escort | survive | interact
+"after" — the id of an objective that must complete FIRST, or "" if this
+  objective is available from the start / runs in parallel with others.
+  Leave "" unless the brief explicitly describes an order ("first ... then ...",
+  "once you've ... you can ...") — a deterministic pass fills the ordinary
+  step-by-step case for you, so guessing here is not required.
 
 BRIEF:
 {concept}
@@ -114,7 +127,7 @@ OUTPUT:
   "title": "Mission title",
   "objectives": [
     {{"id": "obj1", "description": "One sentence.", "type": "reach",
-      "target_ref": "", "count": 1, "optional": false}}
+      "target_ref": "", "count": 1, "optional": false, "after": ""}}
   ],
   "rewards": {{}},
   "description": "One sentence."
@@ -158,12 +171,68 @@ class ObjectivesPipeline(UnityMicroPipeline):
                 obj.id = f"{base}_{n}"
                 n += 1
             seen.add(obj.id)
+        # Deterministic step order: a blank `after` on a required objective
+        # chains onto the PREVIOUS required objective in list order — the same
+        # sequence `ActiveObjective` (Objectives.cs.j2) already implies by
+        # returning "the first incomplete required objective". Before this,
+        # ActiveObjective's display and ReportProgress's actual gating
+        # disagreed: the HUD named a current step but any objective could
+        # bank progress at any time. Fill-only — an explicit `after` (LLM- or
+        # hand-authored, including one naming a non-adjacent id, or one set
+        # on an optional objective) is never touched. Optional objectives are
+        # skipped by the chain itself (they were never part of "the required
+        # sequence") but may still carry their own explicit `after`.
+        prev_required_id = ""
+        for obj in schema.objectives:
+            if obj.optional:
+                continue
+            if not obj.after:
+                obj.after = prev_required_id
+            prev_required_id = obj.id
         # hoist_field_inits: this generator's template renders awake_extra,
         # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
         return schema
+
+    def harden(self, schema) -> list[str]:
+        msgs: list[str] = []
+        ids = {o.id for o in schema.objectives if o.id}
+
+        for o in schema.objectives:
+            if not o.after:
+                continue
+            if o.after == o.id:
+                msgs.append(f"objectives: {o.id} is after itself — it can "
+                            f"never unlock")
+            elif o.after not in ids:
+                msgs.append(f"objectives: {o.id} is after {o.after!r}, which "
+                            f"is not an objective — it can never unlock")
+
+        # Cycle check: walk each objective's `after` chain; a repeat within
+        # one walk means every id revisited before the repeat can never
+        # unlock (each waits on the next, forever). Same defect class as a
+        # self-reference, just longer. Reported once per distinct cycle.
+        by_id = {o.id: o for o in schema.objectives if o.id}
+        reported: set[frozenset] = set()
+        for start in by_id:
+            path: list[str] = []
+            seen: set[str] = set()
+            cur = start
+            while cur and cur in by_id and cur not in seen:
+                seen.add(cur)
+                path.append(cur)
+                cur = by_id[cur].after
+            if cur and cur in seen:
+                cycle = path[path.index(cur):]
+                key = frozenset(cycle)
+                if key not in reported:
+                    reported.add(key)
+                    msgs.append("objectives: " + " -> ".join(cycle + [cur])
+                                + " forms a cycle — none of these can ever "
+                                  "unlock")
+        return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:
         env = self.jinja()

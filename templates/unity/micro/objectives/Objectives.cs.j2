@@ -23,6 +23,10 @@ public class {{ s.name }} : MonoBehaviour
         public string targetRef;
         public int    requiredCount;
         public bool   optional;
+        // Id of an objective that must complete first, or "" for none. Set by
+        // the deterministic step-order fixer unless the brief itself named an
+        // order (see ObjectivesPipeline.default_fix in src/micro/objectives.py).
+        public string after;
         [NonSerialized] public int progress;
         [NonSerialized] public bool complete;
     }
@@ -33,7 +37,8 @@ public class {{ s.name }} : MonoBehaviour
 {% for o in s.objectives %}
         new Objective { id = "{{ o.id }}", description = "{{ o.description | replace('"', '\\"') }}",
                         type = "{{ o.type }}", targetRef = "{{ o.target_ref }}",
-                        requiredCount = {{ o.count }}, optional = {{ "true" if o.optional else "false" }} },
+                        requiredCount = {{ o.count }}, optional = {{ "true" if o.optional else "false" }},
+                        after = "{{ o.after }}" },
 {% endfor %}
     };
 
@@ -41,6 +46,11 @@ public class {{ s.name }} : MonoBehaviour
     public event Action<string, int, int> OnObjectiveProgress;
     public event Action<string> OnObjectiveComplete;
     public event Action OnMissionComplete;
+    /// <summary>(objectiveId, afterId) — progress was refused because `after`
+    /// has not completed (or names no known objective; an unresolved
+    /// prerequisite blocks rather than silently passing, same as an
+    /// unresolved board.py zone `requires`).</summary>
+    public event Action<string, string> OnObjectiveBlocked;
 
     private Dictionary<string, Objective> _byId;
     private bool _missionComplete;
@@ -115,10 +125,23 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 
     /// <summary>Advance an objective's progress by `amount` (default 1). Safe to call
-    /// via SendMessage("ReportProgress", objectiveId) from any other script.</summary>
-    public void ReportProgress(string objectiveId, int amount = 1)
+    /// via SendMessage("ReportProgress", objectiveId) from any other script.
+    /// Returns false and fires OnObjectiveBlocked instead of advancing when
+    /// `after` has not completed — a source wired to an event that fires early
+    /// (SEAM 8: an eliminate objective's spawner, say) loses that progress
+    /// rather than banking it out of order.</summary>
+    public bool ReportProgress(string objectiveId, int amount = 1)
     {
-        if (_missionComplete || !_byId.TryGetValue(objectiveId, out var o) || o.complete) return;
+        if (_missionComplete || !_byId.TryGetValue(objectiveId, out var o) || o.complete) return false;
+        if (!string.IsNullOrEmpty(o.after))
+        {
+            bool prereqDone = _byId.TryGetValue(o.after, out var prereq) && prereq.complete;
+            if (!prereqDone)
+            {
+                OnObjectiveBlocked?.Invoke(o.id, o.after);
+                return false;
+            }
+        }
         o.progress = Mathf.Min(o.requiredCount, o.progress + amount);
         OnObjectiveProgress?.Invoke(o.id, o.progress, o.requiredCount);
         if (o.progress >= o.requiredCount)
@@ -127,6 +150,7 @@ public class {{ s.name }} : MonoBehaviour
             OnObjectiveComplete?.Invoke(o.id);
             CheckMissionComplete();
         }
+        return true;
     }
 
     private void CheckMissionComplete()
