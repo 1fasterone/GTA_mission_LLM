@@ -63,7 +63,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..micro_pipeline import to_pascal
 from .code_fields import (UNITY_EXTRA_INSTRUCTIONS, CodeExtensibleSchema,
-                          clamp_enum, lint_extensible)
+                          clamp_enum, lint_extensible, harden_against_template)
 from .unity_base import UnityMicroPipeline
 
 # "drag"              pointer only — pick a piece up, drop it on a zone
@@ -468,6 +468,10 @@ class BoardPipeline(UnityMicroPipeline):
 
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
+        # This override REPLACES MicroPipeline.harden's own body, the only thing
+        # that normally calls harden_against_template — see rules.py's harden()
+        # for the live GameRules.cs CS0111 this same gap caused elsewhere.
+        msgs += harden_against_template(schema, self.template_root, engine=self.engine)
         return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

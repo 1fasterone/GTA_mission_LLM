@@ -182,6 +182,25 @@ def test_step_pointing_at_an_unknown_objective_is_reported(cfg):
     assert any("never clear" in m for m in msgs), msgs
 
 
+def test_harden_drops_an_authored_method_colliding_with_the_template(cfg):
+    """Live: GameRules.cs(262,18) CS0111 -- an LLM-authored `extra_method`
+    named BindObjectives() (matching the template's own private method of
+    the same name/arity) shipped as a duplicate. RulesPipeline.harden()
+    overrides MicroPipeline.harden() wholesale, which is the only thing that
+    normally calls harden_against_template -- every custom harden() override
+    in the repo had the same gap (board.py, objectives.py too)."""
+    p = RulesPipeline(cfg)
+    s = RulesSchema(extra_methods=[
+        {"signature": "private void BindObjectives()", "body": "Debug.Log(\"dup\");"},
+    ])
+    s = p.default_fix(s, "guided")
+    msgs = p.harden(s)
+    assert not any(m.signature == "private void BindObjectives()"
+                   for m in s.extra_methods), \
+        "the duplicate must be dropped before render, not just reported"
+    assert any("BindObjectives" in m and "already defines" in m for m in msgs), msgs
+
+
 def test_emitted_csharp_parses_and_carries_the_player_facing_text(cfg, mission, tmp_path):
     p = RulesPipeline(cfg)
     s = RulesSchema(game_title="CodeVault", goal="Push a commit.",
