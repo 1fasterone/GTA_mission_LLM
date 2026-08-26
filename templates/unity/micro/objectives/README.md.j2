@@ -17,14 +17,26 @@
 var tracker = GetComponent<{{ s.name }}>();
 tracker.OnObjectiveProgress += (id, cur, req) => Debug.Log($"{id}: {cur}/{req}");
 tracker.OnObjectiveComplete += id => Debug.Log($"Objective complete: {id}");
+tracker.OnObjectiveBlocked  += (id, after) => Debug.Log($"{id} is locked until {after} completes");
 tracker.OnMissionComplete   += () => Debug.Log("Mission complete!");
 ```
 
 ## Objectives
 
 {% for o in s.objectives %}
-- **{{ o.id }}** ({{ o.type }}{% if o.optional %}, optional{% endif %}) — {{ o.description }} (×{{ o.count }})
+- **{{ o.id }}** ({{ o.type }}{% if o.optional %}, optional{% endif %}{% if o.after %}, after **{{ o.after }}**{% endif %}) — {{ o.description }} (×{{ o.count }})
 {% endfor %}
+
+## Step order
+
+Each required objective only accepts progress once the objective it is `after`
+has completed — `ReportProgress` returns `false` and fires `OnObjectiveBlocked`
+instead of advancing until then. By default this is filled in deterministically
+from the list order above (objective *N* is after objective *N-1*), the same
+sequence `ActiveObjective` already shows as "the current step"; the brief can
+override individual objectives with a different — or no — prerequisite.
+Optional objectives are never auto-chained, so they stay available any time
+unless the brief explicitly gives one an `after` of its own.
 
 {% if s.rewards %}
 ## Rewards

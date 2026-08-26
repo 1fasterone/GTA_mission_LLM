@@ -1,0 +1,57 @@
+TITLE
+Dead Reckoning Protocol
+
+GENRE
+A 3D third-person infiltration-and-extraction mission. Open-world action game.
+
+STYLE
+URP pipeline, grounded modern-military aesthetic, moody dusk lighting over an
+industrial coastal fuel depot.
+
+CORE PREMISE
+The player is a lone operative who switches between three locomotion modes at
+runtime through a shared mode manager: on-foot infiltration, driving a
+getaway car between compound sections, and flying a VTOL aircraft out through
+hostile airspace at the end. The player can get in and out of the car and the
+VTOL freely; each mode has its own full controller — on-foot movement and
+combat, driving physics, and flight physics with flaps, rudder, and
+retractable landing gear for a tight rooftop touchdown.
+
+PLAYER
+An on-foot infiltration specialist trained in parkour, wall-run traversal,
+vault and mantle movement, and melee combat with guards. Once inside the
+depot, the operative gets into the getaway car to cross to the hangar. At the
+hangar, the operative switches into the VTOL Interceptor to fly out, using
+flaps and landing gear for a precision landing on the extraction rooftop
+before final takeoff.
+
+ENTITIES
+- Operative: the on-foot player form, parkour and combat capable (kind:
+  player, model: operative).
+- GetawaySedan: the player-drivable getaway car (kind: vehicle, model:
+  sedan).
+- VTOLInterceptor: the player-flyable VTOL aircraft with flaps, rudder, and
+  retractable landing gear (kind: vehicle, model: vtol aircraft).
+- PatrolGuard: armed guards defending the depot (kind: enemy, count: 6,
+  model: patrol guard).
+- FuelDepotYard: the industrial fuel depot's inner yard (kind: terrain,
+  model: fuel depot).
+- SupplyCrate: a crate holding a fuel cell the player must collect (kind:
+  pickup, count: 3, model: supply crate).
+- Engineer: the stranded engineer the player must escort to the extraction
+  pad (kind: npc, model: engineer).
+- ExtractionPad: the rooftop landing zone (kind: terrain, model: extraction
+  pad).
+- IntelDocument: an optional intel document hidden in a side office (kind:
+  pickup, model: intel document).
+
+OBJECTIVE
+First, reach the depot's inner yard on foot past the loading dock. Then
+collect the three fuel cells from the supply crates scattered around the
+yard. Next, eliminate the six patrol guards defending the hangar. After that,
+hold the extraction rooftop for 60 seconds while the VTOL's engines spin up —
+reinforcements are inbound and the player must survive the assault. Finally,
+escort the engineer aboard the VTOL and take off. Optionally, and only once
+inside the yard, the player may collect the intel document hidden in the
+depot's side office for a bonus reward — it is not required to complete the
+mission.

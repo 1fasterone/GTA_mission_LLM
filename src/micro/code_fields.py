@@ -1246,6 +1246,23 @@ def _disable_bad_header(line: str, names: "list[str] | set[str]") -> "str | None
     m = _DISABLEABLE_HEADER_RE.match(line)
     if not m:
         return None
+    # `cond`'s `.*` is greedy: given a NESTED `if (...) { ... }` on the same
+    # physical line (own header + brace + trailing comment, same shape as the
+    # TurboToys case above but one level deeper), it walks past the outer
+    # header's own `)` and swallows the inner if's header AND brace into
+    # `cond`, then re-emits only ONE `{` for what were really two real opens.
+    # Both original closes survive untouched further down the file, so the
+    # rewrite quietly drops one open brace -- an extra `}` overflows the
+    # method/class scope (CS8803/CS0106/CS1022). Confirmed live: EnemySpawner
+    # .cs's OnGuardDetected/OnVehicleDetected, both
+    # `if (x.CompareTag(...)) { ...; if (y) { // comment } }`. A genuine
+    # if/while condition expression never contains a raw brace, so `cond`
+    # holding one is proof the match walked into a nested structure it can't
+    # safely collapse to `false` -- decline, matching every other case this
+    # function already treats as "neither repair is safe: leave the line
+    # alone for the compiler to report."
+    if "{" in m.group("cond") or "}" in m.group("cond"):
+        return None
     brace = f" {m.group('brace')}" if m.group("brace") else ""
     return (f"{m.group('indent')}{m.group('prefix')} (false){brace} "
             f"/* AUDIT: condition removed, referenced invalid "

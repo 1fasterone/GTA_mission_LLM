@@ -109,7 +109,7 @@ def test_every_subscribed_member_is_declared_by_its_micro(tmp_path):
     for kind, member in (("trigger", "public event Action OnActivated;"),
                          ("interactable", "public event Action OnInteract;"),
                          ("spawner", "public event Action<GameObject> OnDespawned;"),
-                         ("objectives", "public void ReportProgress(string objectiveId")):
+                         ("objectives", "public bool ReportProgress(string objectiveId")):
         assert member in _micro_cs(assets, kind), f"{kind} does not declare: {member}"
 
 
