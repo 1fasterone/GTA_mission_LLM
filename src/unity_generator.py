@@ -22,7 +22,7 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
-from .micro.code_fields import CodeField, lint_extensible
+from .micro.code_fields import CodeField, lint_extensible, _code_mask
 
 _log = logging.getLogger(__name__)
 
@@ -666,6 +666,9 @@ _COMPOSED_CLASS_API: dict[str, frozenset[str]] = {
         "ThrottleNormalized", "WheelRadius", "ThrottleLevel", "AirSpeedKmh",
         "IsBlocking", "IsInvincible", "IsAiming", "CurrentAmmo", "IsReloading",
         "CurrentSpeed",
+        # ControllerMultiMode.cs.j2 (variant "multi_mode") — Control Surface
+        # Stack, see docs/CONTROL_SURFACE_STACK.md.
+        "CurrentMode", "SwitchMode", "CycleMode", "OnModeChanged",
     }),
     # Health.cs.j2 public surface — Die() is `private void Die()`, only reachable
     # indirectly via TakeDamage driving _current to 0 (hit live: OxygenManager.cs
@@ -1258,6 +1261,19 @@ def _sanitize_param_typed_member_calls(script: UnityScript,
 _FOREACH_BARE_RE = re.compile(
     r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+\w+\s+in\s+([A-Za-z_]\w*)\s*\)")
 _LOCAL_DECL_RE = re.compile(r"\b(?:var|[\w<>\[\],.]+)\s+(\w+)\s*=")
+# A bare declaration with no initializer -- `RaycastHit hit;` ahead of
+# `Physics.Raycast(..., out hit, ...)` -- never matched _LOCAL_DECL_RE (it
+# requires a trailing `=`), so `hit` never entered `declared` and a later
+# condition reading it (`if (hit.collider...)`) got misread as an undeclared
+# value read. Restricted to a PascalCase/primitive-keyword "type" token so
+# `return x;`/`throw e;`/`yield x;`/`break;` (a statement keyword, not a
+# type, immediately followed by its own value/nothing) can never match —
+# those lowercase keywords are neither PascalCase nor in the primitive set.
+# Confirmed live: VectorCore's SurfaceTypeDetector.cs.
+_LOCAL_DECL_NO_INIT_RE = re.compile(
+    r"\b((?:[A-Z]\w*(?:<[^<>()]*>)?"
+    r"|int|float|bool|string|double|long|byte|short|char|uint|ulong|var))"
+    r"\s+(\w+)\s*;")
 _FOREACH_VAR_RE = re.compile(r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+(\w+)\s+in\b")
 
 
@@ -1274,6 +1290,7 @@ def _strip_undeclared_foreach(script: UnityScript) -> None:
             return body
         declared = set(fields)
         declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(body))
         declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
         out = []
         for line in body.splitlines(keepends=True):
@@ -1384,8 +1401,15 @@ _LAMBDA_PARAM_RE = re.compile(r"(\w+)\s*=>")
 _COND_HEADER_RE  = re.compile(r"\b(?:if|while)\s*\(")
 # Bare identifier not preceded by `.`/word-char (collapses dotted chains like
 # `transform.position.y` to just the root `transform`) and not immediately
-# followed by `(` (that's Part A's job, a method call, not a value read).
-_COND_TOKEN_RE   = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\b(?!\s*\()")
+# followed by `(` — OR by a generic type-argument list then `(`, e.g.
+# `ReadValue<Vector2>(...)` (that's Part A's job, a method call, not a value
+# read). Missing the generic case here misread InputActionReference.
+# ReadValue<Vector2>(...) inside an `if (...)` as a bare undeclared VALUE,
+# stripping the whole condition line -- if that line also carried the
+# block's own opening `{` (K&R `if (cond) {` style), the strip took the
+# brace with it, orphaning the body and its closer (CS1022/CS8803/CS0106).
+# Confirmed live: VectorCore's InputMapper.cs.
+_COND_TOKEN_RE   = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\b(?!\s*(?:<[^<>()]*>)?\s*\()")
 _METHOD_PARAM_LIST_RE = re.compile(r"\(([^)]*)\)")
 
 
@@ -1433,6 +1457,7 @@ def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
             return body
         declared = set(own_fields) | set(extra_declared)
         declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
+        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(body))
         declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
         for m in _IS_PATTERN_RE.finditer(body):
             declared.add(m.group(1))
@@ -1444,7 +1469,13 @@ def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
         for line in body.splitlines(keepends=True):
             bad = False
             for cond in _extract_conditions(line):
+                # String/char literal content ("Fire1", "Horizontal", ...) is
+                # not a value read — Input.GetButtonDown("Jump")-shaped calls
+                # are common, real Unity API, not an undeclared identifier.
+                mask = _code_mask(cond)
                 for m in _COND_TOKEN_RE.finditer(cond):
+                    if not mask[m.start(1)]:
+                        continue
                     tok = m.group(1)
                     if (tok in declared or tok in _COND_KEYWORD_ALLOW
                             or tok in _STATIC_CLASS_ALLOW or tok in _MB_COMMON_MEMBERS):
@@ -1566,6 +1597,7 @@ def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
 
     declared: set[str] = {f.name for f in script.extra_fields}
     declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(combined))
+    declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(combined))
     declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(combined))
     for m in _IS_PATTERN_RE.finditer(combined):
         declared.add(m.group(1))

@@ -2,6 +2,8 @@
 // Generator: controller  |  Variant: {{ variant }}
 // {{ s.description }}
 {% import "_inject.j2" as inject -%}
+{% set is_bike = variant == "vehicle_bike" -%}
+{% set wheel_count = 2 if is_bike else 4 -%}
 using System.Collections;
 using UnityEngine;
 using UnityEngine.Events;
@@ -100,6 +102,12 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private float driftSlipMultiplier = {{ "%.2f"|format(s.drift_slip_multiplier) }}f;
     [SerializeField] private float wheelRadius         = {{ "%.2f"|format(s.wheel_radius) }}f;
     [SerializeField] private float handbrakeTorque     = 6000f;
+{% if is_bike %}
+    [Header("Lean")]
+    [Tooltip("Full bank angle at speed — visual only, the rigidbody itself stays upright.")]
+    [SerializeField] private float maxLeanAngle = {{ "%.1f"|format(s.max_lean_angle) }}f;
+    [SerializeField] private float leanSpeed    = {{ "%.1f"|format(s.lean_speed) }}f;
+{% endif %}
 {% if "nitro" in s.abilities %}
     [Header("Nitro")]
     [SerializeField] private float nitroMultiplier = 2.0f;
@@ -241,8 +249,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private bool  _brakeHeld;
 {% elif variant.startswith("vehicle_") %}
     private Rigidbody _rb;
-    private readonly WheelCollider[] _wheels      = new WheelCollider[4];
-    private readonly Transform[]     _wheelVisuals = new Transform[4];
+    private readonly WheelCollider[] _wheels      = new WheelCollider[{{ wheel_count }}];
+    private readonly Transform[]     _wheelVisuals = new Transform[{{ wheel_count }}];
     private readonly System.Collections.Generic.List<Light> _headlights =
         new System.Collections.Generic.List<Light>();
     private Light          _brakeLight;
@@ -251,6 +259,12 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private bool  _lightsOn;
     private float _steerInput;
     private float _throttleInput;
+{% if is_bike %}
+    // The visual body pivot BuildCar() instantiates — leaned each frame, never
+    // the rigidbody itself (that stays roll/pitch-frozen; see Awake()).
+    private Transform _leanPivot;
+    private float     _currentLean;
+{% endif %}
 {% if "nitro" in s.abilities %}
     private bool  _nitroActive;
     private float _nitroCooldown;
@@ -403,8 +417,17 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% elif variant.startswith("vehicle_") %}
         _rb = GetComponent<Rigidbody>();
         if (_rb == null) _rb = gameObject.AddComponent<Rigidbody>();
+{% if is_bike %}
+        _rb.mass = 180f;
+        _rb.centerOfMass = new Vector3(0f, -0.3f, 0f);
+        // Two WheelColliders give a rigidbody no inherent roll/pitch
+        // stability — freeze those axes here so the bike cannot topple, and
+        // fake the bank into a turn purely visually (below) instead.
+        _rb.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
+{% else %}
         _rb.mass = 1200f;
         _rb.centerOfMass = new Vector3(0f, -0.4f, 0f);
+{% endif %}
         BuildCar();
 {% elif variant == "aircraft" %}
         _rb = GetComponent<Rigidbody>();
@@ -803,15 +826,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         if (_nitroActive) motor *= nitroMultiplier;
 {% endif %}
 
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < {{ wheel_count }}; i++)
         {
             var wc = _wheels[i];
             if (wc == null) continue;
-            if (i < 2) wc.steerAngle  = steer;
-            wc.motorTorque  = i >= 2 ? motor : 0f;
-            wc.brakeTorque  = handbrake && i >= 2 ? handbrakeTorque : 0f;
+            if (i < {{ wheel_count // 2 }}) wc.steerAngle  = steer;
+            wc.motorTorque  = i >= {{ wheel_count // 2 }} ? motor : 0f;
+            wc.brakeTorque  = handbrake && i >= {{ wheel_count // 2 }} ? handbrakeTorque : 0f;
             var sf = wc.sidewaysFriction;
-            sf.stiffness = (handbrake && i >= 2) ? _baseSideStiffness * driftSlipMultiplier : _baseSideStiffness;
+            sf.stiffness = (handbrake && i >= {{ wheel_count // 2 }}) ? _baseSideStiffness * driftSlipMultiplier : _baseSideStiffness;
             wc.sidewaysFriction = sf;
             if (_wheelVisuals[i] != null)
             {
@@ -819,6 +842,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
                 _wheelVisuals[i].SetPositionAndRotation(wPos, wRot * Quaternion.Euler(0f, 0f, 90f));
             }
         }
+{% if is_bike %}
+        // ── Lean (visual only — the rigidbody stays upright via the Awake()
+        // rotation freeze; nothing here touches physics) ──────────────────
+        float _leanSpeedFactor = Mathf.Clamp01(Mathf.Abs(ForwardSpeed) / 6f);
+        float _targetLean = -_steerInput * maxLeanAngle * _leanSpeedFactor;
+        _currentLean = Mathf.MoveTowards(_currentLean, _targetLean, leanSpeed * Time.deltaTime);
+        if (_leanPivot != null)
+            _leanPivot.localRotation = Quaternion.Euler(0f, 0f, _currentLean);
+{% endif %}
         if (lightsToggle)
         {
             _lightsOn = !_lightsOn;
@@ -1331,12 +1363,20 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private void BuildCar()
     {
         GameObject body;
+{% if is_bike %}
+        var carPrefab = Resources.Load<GameObject>("Models/Default/Vehicle/Bike");
+{% else %}
         var carPrefab = Resources.Load<GameObject>("Models/Default/Vehicle/Car");
+{% endif %}
         if (carPrefab != null)
         {
             body = Instantiate(carPrefab, transform);
             body.name = "Body";
+{% if is_bike %}
+            body.transform.localPosition = new Vector3(0f, 0.3f, 0f);
+{% else %}
             body.transform.localPosition = new Vector3(0f, 0.1f, 0f);
+{% endif %}
         }
         else
         {
@@ -1344,15 +1384,38 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
             body.name = "Body";
             Destroy(body.GetComponent<BoxCollider>());
             body.transform.SetParent(transform, false);
+{% if is_bike %}
+            // Narrow, tall-ish placeholder along the centerline — a bike has
+            // no left/right straddle the way a car's four-corner box does.
+            body.transform.localScale    = new Vector3(0.4f, 0.9f, 1.7f);
+            body.transform.localPosition = new Vector3(0f, 0.55f, 0f);
+{% else %}
             body.transform.localScale    = new Vector3(1.7f, 0.5f, 4.0f);
             body.transform.localPosition = new Vector3(0f, 0.45f, 0f);
+{% endif %}
         }
+{% if is_bike %}
+        // The lean below rotates this body pivot, never the rigidbody.
+        _leanPivot = body.transform;
+        var col    = gameObject.AddComponent<BoxCollider>();
+        col.size   = new Vector3(0.5f, 1.1f, 1.9f);
+        col.center = new Vector3(0f, 0.55f, 0f);
+{% else %}
         var col    = gameObject.AddComponent<BoxCollider>();
         col.size   = new Vector3(1.7f, 0.5f, 4.0f);
         col.center = new Vector3(0f, 0.45f, 0f);
+{% endif %}
 
         Transform[] wheelBones = FindWheelBones(transform);
         bool boneWheels = wheelBones != null;
+{% if is_bike %}
+        Vector3[] offsets = boneWheels
+            ? System.Array.ConvertAll(wheelBones, t => transform.InverseTransformPoint(t.position))
+            : new Vector3[]
+            {
+                new Vector3(0f, 0.15f,  0.75f), new Vector3(0f, 0.15f, -0.75f),
+            };
+{% else %}
         Vector3[] offsets = boneWheels
             ? System.Array.ConvertAll(wheelBones, t => transform.InverseTransformPoint(t.position))
             : new Vector3[]
@@ -1360,10 +1423,11 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
                 new Vector3(-0.8f, 0.15f,  1.4f), new Vector3(0.8f, 0.15f,  1.4f),
                 new Vector3(-0.8f, 0.15f, -1.4f), new Vector3(0.8f, 0.15f, -1.4f),
             };
+{% endif %}
 
-        for (int i = 0; i < 4; i++)
+        for (int i = 0; i < {{ wheel_count }}; i++)
         {
-            var wgo = new GameObject((i < 2 ? "WheelF" : "WheelR") + i);
+            var wgo = new GameObject((i < {{ wheel_count // 2 }} ? "WheelF" : "WheelR") + i);
             wgo.transform.SetParent(transform, false);
             wgo.transform.localPosition = offsets[i];
             var wc = wgo.AddComponent<WheelCollider>();
@@ -1421,6 +1485,23 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         var em = _smoke.emission; em.rateOverTime = 0f;
     }
 
+{% if is_bike %}
+    private Transform[] FindWheelBones(Transform root)
+    {
+        // Front/rear only — a bike has no left/right wheel pair to disambiguate.
+        Transform f = null, r = null;
+        foreach (var t in root.GetComponentsInChildren<Transform>(true))
+        {
+            if (t.GetComponent<Renderer>() != null) continue;
+            string n = t.name.ToLowerInvariant();
+            if (!n.StartsWith("wheel")) continue;
+            bool front = n.Contains(".f") || n.Contains("front");
+            if (front) { if (f == null) f = t; }
+            else       { if (r == null) r = t; }
+        }
+        return (f != null && r != null) ? new[] { f, r } : null;
+    }
+{% else %}
     private Transform[] FindWheelBones(Transform root)
     {
         Transform fl = null, fr = null, rl = null, rr = null;
@@ -1439,6 +1520,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         return (fl != null && fr != null && rl != null && rr != null)
             ? new[] { fl, fr, rl, rr } : null;
     }
+{% endif %}
 {% endif %}
 
     // ═══ EXTRA METHODS (LLM-authored) ════════════════════════════════════════

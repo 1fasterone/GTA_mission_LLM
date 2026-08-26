@@ -28,6 +28,7 @@ from .physics    import PHYSICS_ATOMS
 from .input      import INPUT_ATOMS
 from .model      import MODEL_ATOMS
 from .wiring     import WIRING_ATOMS          # Unity-only seam primitives
+from .terrain    import TERRAIN_ATOMS         # Unity-only terrain primitives
 
 ALL_ATOMS: list[AtomDef] = (
     MOVEMENT_ATOMS
@@ -43,6 +44,7 @@ ALL_ATOMS: list[AtomDef] = (
     + INPUT_ATOMS
     + MODEL_ATOMS
     + WIRING_ATOMS
+    + TERRAIN_ATOMS
 )
 
 # Primary lookup by canonical name ("MoveTo")
@@ -58,6 +60,7 @@ CATEGORIES: list[str] = [
     "movement", "animation", "camera", "audio", "fx", "logic", "entity",
     "controller", "hud", "physics", "input", "model",
     "wiring",   # Unity-only seam atoms — domain-isolated from GTA5
+    "terrain",  # Unity-only terrain atoms — domain-isolated from GTA5
 ]
 
 

@@ -306,3 +306,235 @@ class TestHintHonesty:
         # f"{locomotion}ing" — the declaration must not reach that branch.
         hint = classify("A board game about trains.").concept_hint()
         assert "noneing" not in hint
+
+
+# ── Control Surface Stack (multi-mode) detection ────────────────────────────
+# docs/CONTROL_SURFACE_STACK.md — `locomotion_modes` had no deterministic
+# backstop at all before this: 100% LLM-decided at Step 3, and confirmed
+# empirically to not reliably get set even with explicit schema-prompt
+# guidance (VectorCore stress prompt, 2 different local models, 4 straight
+# runs). This mirrors the OTHER three axes' keyword-classifier backstop.
+
+class TestControlSurfaceStackDetection:
+    # ── regression: every `intent.matched` key must be safe for the
+    # generic `getattr(intent, axis)` summary line in unity_pipeline.py
+    # (line ~1075) — it assumes every matched-dict key names a real
+    # UnityIntent field. `locomotion_modes_switch_signal` and
+    # `locomotion_modes:<kind>` are sub-detail keys, not fields, and hit
+    # this live: AttributeError on the first real pipeline run after this
+    # feature landed. hasattr()-guards the loop instead of requiring every
+    # future matched-dict key to double as a field name.
+    def test_every_matched_key_is_hasattr_safe_for_the_pipeline_summary_line(self):
+        intent = classify(
+            "Switch between on-foot parkour and driving a car — a Control "
+            "Surface Stack testbed.")
+        assert intent.matched  # a real signal fired — otherwise this proves nothing
+        # Mirrors unity_pipeline.py's own summary-line construction verbatim —
+        # must not raise AttributeError for any key intent.matched carries.
+        line = "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched
+                         if hasattr(intent, axis))
+        assert "locomotion_modes" in intent.matched
+        assert "locomotion_modes=" in line
+
+    def test_switch_signal_plus_two_kinds_detected(self):
+        intent = classify(
+            "The player switches between on-foot parkour and driving a car "
+            "through a shared Mode Manager.")
+        assert set(intent.locomotion_modes) == {"on_foot", "vehicle_car"}
+
+    def test_on_foot_leads_the_ordering_when_present(self):
+        intent = classify(
+            "Switch between on-foot parkour, driving a car, and flying a "
+            "jet — a Control Surface Stack testbed.")
+        assert intent.locomotion_modes[0] == "on_foot"
+        assert set(intent.locomotion_modes) == {"on_foot", "vehicle_car", "flying"}
+
+    def test_no_switch_signal_stays_empty_even_with_two_kinds_named(self):
+        # A brief that just HAPPENS to mention driving and flying somewhere
+        # (a garage next to an airstrip, say) is not a Control Surface
+        # Stack — the runtime-switch phrase is a required, independent half
+        # of the gate, not just more keyword volume.
+        intent = classify(
+            "A story about a pilot who also loves classic cars. He drives "
+            "to the airfield and flies his plane on weekends.")
+        assert intent.locomotion_modes == []
+
+    def test_switch_signal_with_only_one_kind_stays_empty(self):
+        # "switch between" fires, but only ONE mode kind is actually named —
+        # 2+ is required, a registry of one is not a stack (matches
+        # _check_multi_mode_registry's own single-entry WARN).
+        intent = classify("The player switches between different driving "
+                          "styles in this rally game.")
+        assert intent.locomotion_modes == []
+
+    def test_denied_kind_does_not_count_toward_the_two(self):
+        # Same denial-aware matching every other axis gets — a brief that
+        # explicitly rules OUT flying must not still count it as one of the
+        # two required kinds.
+        intent = classify(
+            "Switch between on-foot exploration and driving a car through "
+            "the city. There is no flying in this game.")
+        assert intent.locomotion_modes == ["on_foot", "vehicle_car"]
+
+    def test_concept_hint_names_the_stack(self):
+        intent = classify(
+            "Switch between on-foot parkour and driving a car — a Control "
+            "Surface Stack testbed.")
+        hint = intent.concept_hint()
+        assert "Control Surface Stack" in hint
+        assert "on_foot" in hint and "vehicle_car" in hint
+
+    def test_structure_hint_emits_a_must_line(self):
+        intent = classify(
+            "Switch between on-foot parkour and driving a car — a Control "
+            "Surface Stack testbed.")
+        hint = intent.structure_hint()
+        assert '"locomotion_modes" MUST be' in hint
+        assert '"on_foot"' in hint and '"vehicle_car"' in hint
+
+    def test_apply_intent_fills_an_empty_registry(self):
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="X", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+        )
+        assert schema.locomotion_modes == []
+        intent = classify(
+            "Switch between on-foot parkour and driving a car — a Control "
+            "Surface Stack testbed.")
+        msgs = apply_intent(schema, intent)
+        assert schema.locomotion_modes == ["on_foot", "vehicle_car"]
+        assert any("locomotion_modes" in m for m in msgs)
+
+    def test_apply_intent_never_overrides_an_explicit_registry(self):
+        # Strictly additive (docs/CONTROL_SURFACE_STACK.md) — an author who
+        # wrote SOMETHING here, even a single entry, made a real call this
+        # keyword scorer cannot see. Fill-only, never override.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="X", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            locomotion_modes=["vehicle_car"],
+        )
+        intent = classify(
+            "Switch between on-foot parkour and driving a car — a Control "
+            "Surface Stack testbed.")
+        apply_intent(schema, intent)
+        assert schema.locomotion_modes == ["vehicle_car"]
+
+    def test_low_confidence_never_fills(self):
+        # A concept-only echo (worth 1 per axis) must not clear the
+        # min_confidence=3 gate _score_multi_mode bakes in.
+        intent = classify(
+            "", concept="you can switch between on-foot and driving")
+        assert intent.locomotion_modes == []
+
+    def test_real_vectorcore_prompt_now_detected(self):
+        # The exact live gap this whole feature exists to close: the brief
+        # that took 4 straight pipeline runs (2 different local models)
+        # without the LLM ever setting locomotion_modes.
+        from pathlib import Path
+        text = Path("prompts/vectorcore_full_surface_control_stack.txt").read_text(
+            encoding="utf-8")
+        intent = classify(text)
+        assert "on_foot" in intent.locomotion_modes
+        assert "vehicle_car" in intent.locomotion_modes
+        assert "flying" in intent.locomotion_modes
+
+
+# ── Flying-mode abilities (flaps / landing_gear) ────────────────────────────
+# The next lever past locomotion_modes itself: once "flying" is a detected
+# kind, a brief that also names its control surfaces in so many words
+# ("flaps", "landing gear") should default those straight onto the flying
+# ControllerMode entry — same conjunctive discipline as locomotion_modes
+# (_score_multi_mode) above: an ability keyword with no confidently-detected
+# flying kind to attach to stays silent, the same way a lone second-body
+# mention can't trigger multi_mode by itself.
+
+class TestFlyingAbilityDetection:
+    _STACK_WITH_SURFACES = (
+        "Switch between on-foot parkour, driving a car, and flying a jet "
+        "with retractable landing gear and wing flaps — a Control Surface "
+        "Stack testbed.")
+
+    def test_flaps_and_landing_gear_detected_alongside_flying(self):
+        intent = classify(self._STACK_WITH_SURFACES)
+        assert "flying" in intent.locomotion_modes
+        assert set(intent.flying_abilities) == {"flaps", "landing_gear"}
+
+    def test_no_ability_language_stays_empty(self):
+        intent = classify(
+            "Switch between on-foot parkour, driving a car, and flying a "
+            "jet — a Control Surface Stack testbed.")
+        assert "flying" in intent.locomotion_modes
+        assert intent.flying_abilities == []
+
+    def test_ability_language_without_flying_kind_stays_empty(self):
+        # "flaps"/"landing gear" mentioned, but the brief's Control Surface
+        # Stack only ever names on_foot + vehicle_car — "flying" never clears
+        # its own confidence bar, so there is no flying entry to attach to.
+        intent = classify(
+            "Switch between on-foot parkour and driving a car through a "
+            "hangar full of retired planes with landing gear and flaps on "
+            "static display.")
+        assert "flying" not in intent.locomotion_modes
+        assert intent.flying_abilities == []
+
+    def test_ability_language_without_multi_mode_signal_stays_empty(self):
+        # No runtime-switch signal at all — a single-locomotion flight sim
+        # that happens to mention flaps/landing gear is not a Control
+        # Surface Stack, so `flying` never enters locomotion_modes and the
+        # ability gate has nothing to key off.
+        intent = classify(
+            "A flight sim where you fly a plane with flaps and retractable "
+            "landing gear.")
+        assert intent.locomotion_modes == []
+        assert intent.flying_abilities == []
+
+    def test_concept_hint_names_the_abilities(self):
+        hint = classify(self._STACK_WITH_SURFACES).concept_hint()
+        assert "flaps" in hint and "landing_gear" in hint
+
+    def test_structure_hint_emits_a_must_line(self):
+        hint = classify(self._STACK_WITH_SURFACES).structure_hint()
+        assert '"flaps"' in hint and '"landing_gear"' in hint
+
+    def test_apply_intent_fills_schema_meta(self):
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="X", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+        )
+        assert schema.meta.get("flying_abilities") is None
+        intent = classify(self._STACK_WITH_SURFACES)
+        msgs = apply_intent(schema, intent)
+        assert set(schema.meta["flying_abilities"]) == {"flaps", "landing_gear"}
+        assert any("flying_abilities" in m for m in msgs)
+
+    def test_apply_intent_never_overrides_an_explicit_value(self):
+        # Fill-only, same rule as locomotion_modes: an author who wrote
+        # SOMETHING here (even a deliberately empty list meaning "no extra
+        # surfaces") made a real call this keyword scorer cannot see.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="X", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            meta={"flying_abilities": ["flaps"]},
+        )
+        intent = classify(self._STACK_WITH_SURFACES)
+        apply_intent(schema, intent)
+        assert schema.meta["flying_abilities"] == ["flaps"]
+
+    def test_real_vectorcore_prompt_detects_both_abilities(self):
+        # prompts/vectorcore_full_surface_control_stack.txt names both
+        # "flaps" and "landing gear" explicitly for its VTOLCraft entity.
+        from pathlib import Path
+        text = Path("prompts/vectorcore_full_surface_control_stack.txt").read_text(
+            encoding="utf-8")
+        intent = classify(text)
+        assert "flying" in intent.locomotion_modes
+        assert set(intent.flying_abilities) == {"flaps", "landing_gear"}

@@ -18,6 +18,9 @@
 {% if "dash" in s.abilities %}
        ,{ "name": "Dash", "type": "Button", "id": "00000000-0000-0000-0000-000000000014" }
 {% endif %}
+{% if variant == "multi_mode" %}
+       ,{ "name": "SwitchMode", "type": "Button", "id": "00000000-0000-0000-0000-000000000015" }
+{% endif %}
       ],
       "bindings": []
     }

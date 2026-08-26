@@ -800,6 +800,50 @@ _ATOMS: list[dict] = [
         "audio": ["build_sfx"],
         "complexity": "medium",
     },
+    # ── World / Terrain ──────────────────────────────────────────────────────
+    # These three ground the CONCEPT of terrain authoring for Step 2/3 (brief +
+    # schema-fill) vocabulary. Only the third (detail scattering) has a
+    # matching runtime AtomDef (src/atoms/terrain.py::ScatterTerrainDetails) —
+    # heightmap/splatmap generation is an editor-time asset bake
+    # (src/unity_terraingen.py), not a runtime coroutine, so it deliberately
+    # has no AtomDef of its own. See src/atoms/terrain.py's module docstring.
+    {
+        "id": "atom_terrain_generate_heightmap",
+        "label": "Generate Terrain Heightmap",
+        "genre": "universal",
+        "action_type": "world_gen",
+        "description": "Bake a region's ground elevation into a Unity Terrain's heightmap from seeded fractal noise, so the ground isn't flat.",
+        "aliases": ["rolling hills", "generate terrain", "elevation", "heightmap", "procedural landscape"],
+        "requires_components": ["Terrain", "TerrainCollider"],
+        "vfx": [],
+        "audio": [],
+        "complexity": "medium",
+    },
+    {
+        "id": "atom_terrain_paint_splatmap",
+        "label": "Paint Terrain Splatmap",
+        "genre": "universal",
+        "action_type": "world_gen",
+        "description": "Blend ground texture layers (e.g. grass/rock/sand) across a Terrain by height and slope, so elevation reads visually instead of one flat material.",
+        "aliases": ["texture terrain", "splatmap", "blend ground textures", "paint terrain layers"],
+        "requires_components": ["Terrain"],
+        "vfx": [],
+        "audio": [],
+        "complexity": "medium",
+    },
+    {
+        "id": "atom_terrain_scatter_details",
+        "label": "Scatter Terrain Details",
+        "genre": "universal",
+        "action_type": "world_gen",
+        "description": "Instantiate a prefab (rocks, foliage, debris) at seeded-random positions across a Terrain region, each snapped to the sampled ground height.",
+        "aliases": ["scatter rocks", "scatter foliage", "populate terrain", "detail props"],
+        "requires_components": ["Terrain"],
+        "vfx": [],
+        "audio": [],
+        "template": "ScatterTerrainDetails",
+        "complexity": "simple",
+    },
 ]
 # fmt: on
 

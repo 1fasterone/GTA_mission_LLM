@@ -966,15 +966,31 @@ _SCRIPT_SYSTEM = (
 # it. A script is different: Step 3 fills `extra_fields`/`extra_usings` for
 # nearly every custom script and leaves every body empty — the exact shape this
 # step exists to fix — so testing the full vocabulary would skip precisely the
-# scripts that need enriching.
+# scripts that need enriching. Kept in step with
+# unity_playability._SCRIPT_BEHAVIOUR_KEYS
+# (tests/test_script_code_enrichment.py pins the two together).
 _BEHAVIOUR_KEYS: tuple[str, ...] = _FRAGMENT_KEYS + ("extra_methods",)
 
 
 def _script_has_code(script) -> bool:
     """True when this script already has a BODY, so enrichment leaves it alone.
     Declared fields and usings are not behaviour — a class of fields that does
-    nothing is the defect, not evidence against it."""
-    return any(getattr(script, k, None) for k in _BEHAVIOUR_KEYS)
+    nothing is the defect, not evidence against it.
+
+    Checks for actual non-whitespace content, not just a truthy container —
+    a Step 3 schema-fill that hands a script `extra_methods=[{"body": ""}]`
+    (a signature with an empty/whitespace body) reads as "has code" under a
+    plain truthiness check even though it authors nothing. That script then
+    skips this pass's LLM-authoring + bind-retry loop entirely, and if a
+    downstream dead-method sweep later drops the empty method, the script
+    reaches codegen as a silent hollow shell — enrichment never got the
+    chance to give it real behaviour, and nothing named it on the way there.
+    Live: VectorCore's SurfaceModifier (locomotion-mode stress prompt)."""
+    for key in _FRAGMENT_KEYS:
+        if (getattr(script, key, "") or "").strip():
+            return True
+    return any((getattr(m, "body", "") or "").strip()
+               for m in (getattr(script, "extra_methods", None) or []))
 
 
 def _script_contract(script, siblings: Sequence[Any] = (),

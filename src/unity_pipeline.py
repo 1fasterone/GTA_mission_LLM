@@ -1071,9 +1071,17 @@ class UnityPipeline:
                 "checklist"
             )
         if intent.matched:
+            # Not every intent.matched key is a top-level UnityIntent field —
+            # some (locomotion_suppressed, locomotion_modes_switch_signal,
+            # locomotion_modes:<kind>) are sub-detail keys a caller reads
+            # directly (structure_hint/apply_intent), not a value this
+            # one-line summary can show. AttributeError on any of those
+            # crashed this line outright — hit live once
+            # `_score_multi_mode` started adding its own sub-detail keys.
             self._ok(
                 "Intent: "
-                + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched)
+                + "  ".join(f"{axis}={getattr(intent, axis)!r}" for axis in intent.matched
+                            if hasattr(intent, axis))
             )
 
         # Spatial facts: the brief's own numeric distances, extracted here —
@@ -1474,6 +1482,8 @@ class UnityPipeline:
                 self._fix("compose: injected 'audio' feature for SA3 clip generation")
             subsystems = subsystems_for(schema.game_type, schema.features,
                                         locomotion=schema.locomotion,
+                                        locomotion_modes=schema.locomotion_modes,
+                                        flying_abilities=schema.meta.get("flying_abilities"),
                                         capabilities=schema.capabilities,
                                         user_prompt=user_prompt,
                                         scenes=schema.scenes,
@@ -1762,6 +1772,31 @@ class UnityPipeline:
                 schema.meta["wiring"] = composer.wiring_report
             self._ok("Micro subsystems emitted to Assets/Micros + wired into scenes "
                      "(GameContext bridges micros ↔ prompt-authored scripts)")
+
+            # World terrain — NOT a Subsystem/MicroComposer unit. Every kind
+            # composer.plan()/emit() handles is a per-entity MonoBehaviour
+            # that attaches to one GameObject and can participate in
+            # GameWiring's cross-micro seams; terrain is world/region-scale
+            # (one bake per schema.world_spec.region, not per entity) and
+            # wires into nothing — see src/unity_terraingen.py's module
+            # docstring for why it deliberately sits outside that model.
+            if schema.world_spec and schema.world_spec.regions:
+                from .unity_terraingen import project_seed_from_name
+                from .micro.terrain import write_world_terrain
+                terrain_results = write_world_terrain(
+                    schema.world_spec, project_root / "Assets",
+                    project_name=schema.project_name,
+                    project_seed=project_seed_from_name(schema.project_name),
+                )
+                if terrain_results:
+                    self._ok(f"Terrain baked for {len(terrain_results)} region(s) -> "
+                             f"Assets/Terrain/<region>/ "
+                             f"({', '.join(sorted(terrain_results))})")
+                else:
+                    self._warn("schema.world_spec declared region(s) but none had a "
+                               "ground biome / non-degenerate bounds — no terrain baked "
+                               "(see src/unity_terraingen.py NO_GROUND_BIOMES)")
+
             # Overlay audio clips:
             #   1. Assets/Audio/           — canonical user-visible folder
             #   2. Assets/Resources/Audio/ — for Resources.LoadAll<AudioClip> at runtime

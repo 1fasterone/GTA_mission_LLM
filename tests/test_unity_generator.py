@@ -2850,6 +2850,71 @@ class TestUndeclaredSelfReferenceSanitizers:
         _sanitize_undeclared_condition_reads(s)
         assert "speed > walkSpeed" in s.update_extra
 
+    # ── regression: exact live bug string (VectorCore's InputMapper.cs) ──
+    # A generic method call in a K&R-style `if (cond) {` condition was
+    # misread as a bare undeclared VALUE read (the type-argument list
+    # confused the "not a method call" exclusion), so the whole line —
+    # including its opening `{` — was dropped, orphaning the block body and
+    # its closer (CS1022/CS8803/CS0106 downstream).
+    def test_generic_method_call_in_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script(
+            "if (_groundInputAction.ReadValue<Vector2>().magnitude > 0.1f) { "
+            "SetGrounded(); }",
+            extra_fields=[{"name": "_groundInputAction", "type": "InputActionReference"}],
+            extra_methods=[{"signature": "private void SetGrounded()", "body": ""}],
+        )
+        _sanitize_undeclared_condition_reads(s)
+        assert "ReadValue<Vector2>()" in s.update_extra
+        assert s.update_extra.count("{") == s.update_extra.count("}")
+
+    # ── regression: string-literal content misread as a bare identifier ──
+    # "Fire1" inside Input.GetButtonDown("Fire1") was extracted as if it
+    # were an undeclared identifier `Fire1` and the whole condition line
+    # dropped — Input.GetButtonDown("Jump")/GetAxis("Horizontal")-shaped
+    # calls are common, real Unity API, not a value read.
+    def test_string_literal_argument_in_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script('if (Input.GetButtonDown("Fire1")) { Shoot(); }',
+                         extra_methods=[{"signature": "private void Shoot()", "body": ""}])
+        _sanitize_undeclared_condition_reads(s)
+        assert 'Input.GetButtonDown("Fire1")' in s.update_extra
+
+    def test_string_literal_argument_does_not_hide_a_real_undeclared_name(self):
+        # The string-literal fix must not become a blanket exemption — an
+        # actually-undeclared bare identifier alongside a string literal in
+        # the same condition still gets caught.
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script('if (Input.GetButtonDown("Fire1") && healthThreshold < 0.2f) '
+                         '{ enabled = false; }')
+        _sanitize_undeclared_condition_reads(s)
+        assert "healthThreshold" not in s.update_extra
+
+    # ── regression: bare no-initializer declaration ahead of an out-param ──
+    # (VectorCore's SurfaceTypeDetector.cs) — `RaycastHit hit;` followed by
+    # `Physics.Raycast(..., out hit, ...)` never registered `hit` as declared
+    # (the declared-locals scan required a trailing `=`), so a later
+    # `if (hit.collider != null)` read `hit` as an undeclared bare value and
+    # the whole line — including its opening `{` — was dropped.
+    def test_bare_out_param_declaration_condition_kept(self):
+        from src.unity_generator import _sanitize_undeclared_condition_reads
+        s = self._script(
+            "RaycastHit hit;\n"
+            "Physics.Raycast(transform.position, Vector3.down, out hit, 1f);\n"
+            "if (hit.collider != null) { enabled = false; }")
+        _sanitize_undeclared_condition_reads(s)
+        assert "if (hit.collider != null)" in s.update_extra
+        assert s.update_extra.count("{") == s.update_extra.count("}")
+
+    def test_bare_declaration_regex_ignores_statement_keywords(self):
+        # `return x;`/`throw e;`/`yield return x;` must never be misread as
+        # declaring a local named after the keyword's own value — none of
+        # "return"/"throw"/"yield" is PascalCase or a primitive keyword.
+        from src.unity_generator import _LOCAL_DECL_NO_INIT_RE
+        for line in ("return someValue;", "throw myException;",
+                     "yield return x;", "break;", "continue;"):
+            assert not _LOCAL_DECL_NO_INIT_RE.search(line), line
+
 
 # ── SceneAudio emission + data-driven README ────────────────────────────────────
 
