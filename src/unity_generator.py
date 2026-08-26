@@ -178,6 +178,18 @@ def _world_spec_env_fallback(world_spec) -> tuple:
     return world_spec.time_of_day, world_spec.weather in _WEATHER_FOG_ON, None, None
 
 
+def entity_behavior_class_name(entity_name: str) -> str:
+    """The class name an atom-driven entity's generated MonoBehaviour gets —
+    single source of truth, since EntitySpawner resolves it at runtime via
+    Type.GetType(entity.behavior) (case-sensitive): the entity-behavior
+    reconciliation pass below, the file-generation pass further down, and
+    any deterministic fixer that pre-assigns `entity.behavior` (e.g.
+    src/unity_escort_follow.py) must all agree on the exact same string, or
+    AddComponent silently no-ops."""
+    parts = re.sub(r"[^a-zA-Z0-9]+", " ", entity_name or "").split()
+    return ("".join(p.capitalize() for p in parts) or "Entity") + "Behavior"
+
+
 # ── GUID generation ────────────────────────────────────────────────────────────
 # Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
 
@@ -2607,8 +2619,7 @@ class UnityProjectGenerator:
             # class names to `known` so the reconciliation below does not clear them.
             for e in schema.entities:
                 if e.atoms:
-                    parts = re.sub(r"[^a-zA-Z0-9]+", " ", e.name or "").split()
-                    known.add(("".join(p.capitalize() for p in parts) or "Entity") + "Behavior")
+                    known.add(entity_behavior_class_name(e.name))
             for e in schema.entities:
                 if e.behavior and e.behavior not in known:
                     e.behavior = ai_fallback if e.kind == "enemy" else ""
@@ -3200,13 +3211,8 @@ class UnityProjectGenerator:
             from .atoms.backends.unity import unity_coroutine_body as _ucb
             from .atoms.behavior_map import behavior_loops
 
-            def _class(entity_name: str) -> str:
-                import re
-                parts = re.sub(r"[^a-zA-Z0-9]+", " ", entity_name or "").split()
-                return ("".join(p.capitalize() for p in parts) or "Entity") + "Behavior"
-
             for e in entities_with_atoms:
-                cls       = _class(e.name)
+                cls       = entity_behavior_class_name(e.name)
                 atom_dicts = [inv.model_dump() for inv in e.atoms]
                 body      = _ucb(atom_dicts)
                 eb_path   = f"{pn}/Assets/Scripts/{cls}.cs"

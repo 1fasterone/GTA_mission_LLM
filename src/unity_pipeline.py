@@ -49,6 +49,7 @@ from .unity_playability   import (PlayabilityGateError,
 from .unity_playability_repair import repair_and_regrade
 from .unity_pathnorm      import normalize_paths
 from .unity_objective_targets import resolve_objective_targets
+from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 
 console = Console()
@@ -1374,6 +1375,14 @@ class UnityPipeline:
         for msg in resolve_objective_targets(schema):
             self._fix(msg)
 
+        # Escort -> Follow atom (src/unity_escort_follow.py). AFTER
+        # resolve_objective_targets, whose fill this pass depends on to find
+        # the entity an escort objective actually names. BEFORE compose,
+        # where SEAM 8's WireTriggerToEscortObjective reads the entity.atoms/
+        # .behavior this pass sets.
+        for msg in resolve_escort_follow(schema):
+            self._fix(msg)
+
         # Mission -> scene inference (src/unity_pipeline.py:_infer_mission_scenes).
         # Deliberately AFTER resolve_objective_targets: the inference's tier-2
         # sibling-objective-agreement match reads target_ref, so it needs every
@@ -1758,11 +1767,21 @@ class UnityPipeline:
             # Bridge the two islands: tell the composer whether a GameManager
             # concept script survived so GameContext can wire micro↔concept seams.
             has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
+            # Names entities resolve_escort_follow (Step 5) gave a real
+            # Follow-atom behavior to — SEAM 8b's honest signal that this
+            # entity actually walks toward the player, not just a name an
+            # escort objective happens to mention.
+            escort_followed_entities = {
+                e.name for e in schema.entities
+                if e.name and e.behavior
+                and any(getattr(a, "atom", "") == "Follow" for a in (e.atoms or []))
+            }
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,
                           objective_scenes=_objective_scene_map(
                               schema, schema.meta.get("mission_scenes")
-                              if isinstance(schema.meta, dict) else None))
+                              if isinstance(schema.meta, dict) else None),
+                          escort_followed_entities=escort_followed_entities)
             # Hand the wiring pass's own decisions to Step 7. Whether a mission
             # can actually be completed is a COMPOSE-time fact (which seams
             # fired, which objectives found an event source), and the evaluator

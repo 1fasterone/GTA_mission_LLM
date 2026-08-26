@@ -264,7 +264,8 @@ class MicroComposer:
 
     def compose(self, subsystems: list[Subsystem], assets_root: Path,
                 has_game_manager: bool = False, wiring=None,
-                objective_scenes: "dict[str, str] | None" = None) -> list[ComposedUnit]:
+                objective_scenes: "dict[str, str] | None" = None,
+                escort_followed_entities: "set[str] | None" = None) -> list[ComposedUnit]:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
@@ -294,7 +295,8 @@ class MicroComposer:
             by_kind[sub.kind].scripts = rel_scripts
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
-        self._emit_wiring(units, micros_root, wiring, objective_scenes)
+        self._emit_wiring(units, micros_root, wiring, objective_scenes,
+                          escort_followed_entities)
         # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
         self._emit_context(units, micros_root, has_game_manager)
 
@@ -312,10 +314,12 @@ class MicroComposer:
         return units
 
     def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None,
-                     objective_scenes: "dict[str, str] | None" = None) -> None:
+                     objective_scenes: "dict[str, str] | None" = None,
+                     escort_followed_entities: "set[str] | None" = None) -> None:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
         from .atoms.backends.unity import unity_atom_snippet
 
+        escort_followed_entities = escort_followed_entities or set()
         wiring     = next(u for u in units if u.kind == "wiring")
         real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
 
@@ -620,6 +624,46 @@ class MicroComposer:
                         f"    {bv}.{event} -= {delegate};"
                     )
                     bound_ids.add(f"{unit.class_name}.{obj['id']}")
+
+        # SEAM 8b — trigger → escort objectives, gated on the escorted
+        # entity's OWN live position. src/unity_escort_follow.py gives the
+        # entity a real Follow-atom behavior before this runs; without that,
+        # wiring straight to the trigger would be dishonest — the player
+        # alone reaching a zone proves nothing about whether the NPC actually
+        # made the trip. `escort_followed_entities` names only entities that
+        # pass has one, so a project where the fixer abstained (a
+        # multi-instance escort target, say) stays correctly unbound here
+        # too rather than wiring a check that can structurally never pass.
+        # No source is consumed from `_OBJECTIVE_SOURCES` below — the same
+        # trigger.OnActivated a `reach` objective binds to can carry more
+        # than one subscriber.
+        if trigger is not None and escort_followed_entities:
+            n = 0
+            for unit in objective_units:
+                for obj in unit.objectives:
+                    oid = obj.get("id")
+                    ref = obj.get("target_ref") or ""
+                    if (obj.get("type") != "escort" or not oid
+                            or ref not in escort_followed_entities
+                            or f"{unit.class_name}.{oid}" in bound_ids):
+                        continue
+                    delegate = f"_onEscortObjective{n}"
+                    n += 1
+                    stored_delegates.append({"type": "Action", "name": delegate})
+                    awake_seams.append({
+                        "label": f"SEAM 8b: trigger → escort objectives "
+                                 f"(escort: {oid} ← {ref})",
+                        "snippet": unity_atom_snippet("WireTriggerToEscortObjective", {
+                            "trigger_var": _fv(trigger), "objectives_var": _fv(unit),
+                            "delegate_var": delegate, "objective_id": oid,
+                            "entity_go_name": f"{ref}_0",
+                        }),
+                    })
+                    destroy_cleanups.append(
+                        f"if ({_fv(trigger)} != null && {delegate} != null)\n"
+                        f"    {_fv(trigger)}.OnActivated -= {delegate};"
+                    )
+                    bound_ids.add(f"{unit.class_name}.{oid}")
 
         # Bucket objectives by the scene their mission resolves to
         # (`objective_scenes`: {objective.id: scene_name}, flattened by the
