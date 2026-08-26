@@ -442,3 +442,99 @@ class TestControlSurfaceStackDetection:
         assert "on_foot" in intent.locomotion_modes
         assert "vehicle_car" in intent.locomotion_modes
         assert "flying" in intent.locomotion_modes
+
+
+# ── Flying-mode abilities (flaps / landing_gear) ────────────────────────────
+# The next lever past locomotion_modes itself: once "flying" is a detected
+# kind, a brief that also names its control surfaces in so many words
+# ("flaps", "landing gear") should default those straight onto the flying
+# ControllerMode entry — same conjunctive discipline as locomotion_modes
+# (_score_multi_mode) above: an ability keyword with no confidently-detected
+# flying kind to attach to stays silent, the same way a lone second-body
+# mention can't trigger multi_mode by itself.
+
+class TestFlyingAbilityDetection:
+    _STACK_WITH_SURFACES = (
+        "Switch between on-foot parkour, driving a car, and flying a jet "
+        "with retractable landing gear and wing flaps — a Control Surface "
+        "Stack testbed.")
+
+    def test_flaps_and_landing_gear_detected_alongside_flying(self):
+        intent = classify(self._STACK_WITH_SURFACES)
+        assert "flying" in intent.locomotion_modes
+        assert set(intent.flying_abilities) == {"flaps", "landing_gear"}
+
+    def test_no_ability_language_stays_empty(self):
+        intent = classify(
+            "Switch between on-foot parkour, driving a car, and flying a "
+            "jet — a Control Surface Stack testbed.")
+        assert "flying" in intent.locomotion_modes
+        assert intent.flying_abilities == []
+
+    def test_ability_language_without_flying_kind_stays_empty(self):
+        # "flaps"/"landing gear" mentioned, but the brief's Control Surface
+        # Stack only ever names on_foot + vehicle_car — "flying" never clears
+        # its own confidence bar, so there is no flying entry to attach to.
+        intent = classify(
+            "Switch between on-foot parkour and driving a car through a "
+            "hangar full of retired planes with landing gear and flaps on "
+            "static display.")
+        assert "flying" not in intent.locomotion_modes
+        assert intent.flying_abilities == []
+
+    def test_ability_language_without_multi_mode_signal_stays_empty(self):
+        # No runtime-switch signal at all — a single-locomotion flight sim
+        # that happens to mention flaps/landing gear is not a Control
+        # Surface Stack, so `flying` never enters locomotion_modes and the
+        # ability gate has nothing to key off.
+        intent = classify(
+            "A flight sim where you fly a plane with flaps and retractable "
+            "landing gear.")
+        assert intent.locomotion_modes == []
+        assert intent.flying_abilities == []
+
+    def test_concept_hint_names_the_abilities(self):
+        hint = classify(self._STACK_WITH_SURFACES).concept_hint()
+        assert "flaps" in hint and "landing_gear" in hint
+
+    def test_structure_hint_emits_a_must_line(self):
+        hint = classify(self._STACK_WITH_SURFACES).structure_hint()
+        assert '"flaps"' in hint and '"landing_gear"' in hint
+
+    def test_apply_intent_fills_schema_meta(self):
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="X", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+        )
+        assert schema.meta.get("flying_abilities") is None
+        intent = classify(self._STACK_WITH_SURFACES)
+        msgs = apply_intent(schema, intent)
+        assert set(schema.meta["flying_abilities"]) == {"flaps", "landing_gear"}
+        assert any("flying_abilities" in m for m in msgs)
+
+    def test_apply_intent_never_overrides_an_explicit_value(self):
+        # Fill-only, same rule as locomotion_modes: an author who wrote
+        # SOMETHING here (even a deliberately empty list meaning "no extra
+        # surfaces") made a real call this keyword scorer cannot see.
+        from src.unity_schema import UnitySchema
+        schema = UnitySchema(
+            project_name="X", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            meta={"flying_abilities": ["flaps"]},
+        )
+        intent = classify(self._STACK_WITH_SURFACES)
+        apply_intent(schema, intent)
+        assert schema.meta["flying_abilities"] == ["flaps"]
+
+    def test_real_vectorcore_prompt_detects_both_abilities(self):
+        # prompts/vectorcore_full_surface_control_stack.txt names both
+        # "flaps" and "landing gear" explicitly for its VTOLCraft entity.
+        from pathlib import Path
+        text = Path("prompts/vectorcore_full_surface_control_stack.txt").read_text(
+            encoding="utf-8")
+        intent = classify(text)
+        assert "flying" in intent.locomotion_modes
+        assert set(intent.flying_abilities) == {"flaps", "landing_gear"}

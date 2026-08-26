@@ -1520,6 +1520,7 @@ def subsystems_for(
     features:     list[str] | None = None,
     locomotion:   str               = "walk",
     locomotion_modes: list[str] | None = None,   # Control Surface Stack — see below
+    flying_abilities: list[str] | None = None,   # schema.meta["flying_abilities"] — see unity_archetypes.py
     capabilities  = None,            # Optional[ProjectCapabilities] — avoids import cycle
     user_prompt:  str               = "",
     *,
@@ -1668,7 +1669,16 @@ def subsystems_for(
     # (src/micro/controller.py) is what actually validates/prunes this —
     # here it's just a deterministic {kind} list, no per-mode tuning.
     if ctrl == "multi_mode":
-        ctrl_opts["modes"] = [{"kind": k} for k in (locomotion_modes or [])]
+        # flying_abilities defaults onto the "flying" entry specifically —
+        # src/unity_archetypes.py._score_flying_abilities already gated this
+        # on "flying" having independently cleared the multi_mode kind bar,
+        # so no further condition is needed here; every other kind's dict
+        # stays the bare {"kind": ...} it always was.
+        ctrl_opts["modes"] = [
+            {"kind": k, "abilities": list(flying_abilities or [])}
+            if k == "flying" else {"kind": k}
+            for k in (locomotion_modes or [])
+        ]
         ctrl_opts["default_mode"] = (locomotion_modes or [""])[0]
 
     # A shooter needs the shoot ability or the whole weapon half of the

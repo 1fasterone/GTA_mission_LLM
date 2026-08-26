@@ -73,6 +73,10 @@ class UnityIntent:
     # being None. Ordered on_foot-first (if present), then by descending
     # per-kind score — see `_score_multi_mode`.
     locomotion_modes: list[str] = field(default_factory=list)
+    # Optional abilities for the "flying" entry specifically (flaps/
+    # landing_gear) — only ever non-empty when "flying" is also present in
+    # locomotion_modes above; see `_score_flying_abilities`.
+    flying_abilities: list[str] = field(default_factory=list)
 
     game_type_confidence:  int = 0        # raw keyword score — 3+ means a real prompt hit fired
     locomotion_confidence: int = 0
@@ -110,6 +114,10 @@ class UnityIntent:
             parts.append(f"The player runs a Control Surface Stack: ONE body that "
                           f"switches at runtime between {kinds} — set "
                           f"locomotion_modes to exactly this list.")
+        if self.flying_abilities:
+            abils = " and ".join(self.flying_abilities)
+            parts.append(f"The flying mode has {abils} — give its ControllerMode "
+                          f"entry an abilities list including {abils}.")
         if self.genre != "universal":
             parts.append(f"Genre: {self.genre.replace('_', ' ')}. "
                           f"Lean into what makes a {self.genre.replace('_', ' ')} game feel "
@@ -154,6 +162,11 @@ class UnityIntent:
                 f'  "locomotion_modes" MUST be [{kinds}] — the brief asks the '
                 f'player to switch between these locomotion modes at runtime '
                 f'(matched: {hits}).')
+        if self.flying_abilities:
+            abils = ", ".join(f'"{a}"' for a in self.flying_abilities)
+            lines.append(
+                f'  The "flying" entry in "locomotion_modes" (or ControllerMode '
+                f'registry) MUST include {abils} in its abilities.')
         if self.genre != "universal":
             lines.append(f'  Bias entities/features/scripts toward a {self.genre.replace("_", " ")} game.')
             req = _GENRE_SCHEMA_REQUIREMENTS.get(self.genre)
@@ -301,6 +314,38 @@ _MULTI_MODE_SWITCH_SIGNAL: list[str] = [
     "multiple control modes", "switch locomotion", "switch modes",
     "transitions between locomotion", "locomotion modes at runtime",
 ]
+
+# Optional abilities on the "flying" ControllerMode entry specifically —
+# src/micro/controller.py's Ability vocabulary ("flaps", "landing_gear"),
+# narrow and mechanical on purpose the same way _MULTI_MODE_SWITCH_SIGNAL is:
+# these name the literal control surface, not the general "flying" locomotion
+# word _MULTI_MODE_KIND_TABLE already scores separately.
+_FLYING_ABILITY_TABLE: list[tuple[str, list[str]]] = [
+    ("flaps",        ["flaps", "wing flaps", "flap controls", "flap control"]),
+    ("landing_gear", ["landing gear", "retractable gear",
+                      "retractable landing gear", "undercarriage"]),
+]
+
+
+def _score_flying_abilities(prompt_low: str, concept_low: str, min_confidence: int,
+                            flying_present: bool
+                            ) -> tuple[list[str], dict[str, list[str]]]:
+    """flaps/landing_gear default onto the flying entry — CONJUNCTIVE with
+    `_score_multi_mode` above, same discipline: `flying_present` (whether
+    "flying" already cleared ITS OWN confidence bar as a Control Surface Stack
+    kind) is required alongside the ability keyword independently clearing
+    `min_confidence`. A brief that says "retractable landing gear" without a
+    runtime-switchable flying mode has no flying entry to attach the ability
+    to and stays silent — the same reason a lone second-body mention can't
+    trigger multi_mode by itself.
+    """
+    if not flying_present:
+        return [], {}
+    per_ability = _score_all(prompt_low, concept_low, _FLYING_ABILITY_TABLE)
+    confident = {name: hits for name, (score, hits) in per_ability.items()
+                if score >= min_confidence}
+    return list(confident.keys()), confident
+
 
 # ── Non-embodiment — a DECLARATION, read before the movement vocabulary ───────
 #
@@ -621,12 +666,15 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
     # conjunctive TWO-part gate (switch signal AND 2+ kinds), not a single
     # best-value comparison, so "no opinion" is the empty list itself.
     mm_kinds, mm_score, mm_hits, mm_per_kind = _score_multi_mode(p, c, 3)
+    flying_abilities, flying_ability_hits = _score_flying_abilities(
+        p, c, 3, flying_present="flying" in mm_kinds)
 
     intent = UnityIntent(
         game_type              = gt_name,
         locomotion              = loco_name,
         genre                   = genre_name or "universal",
         locomotion_modes        = mm_kinds,
+        flying_abilities        = flying_abilities,
         game_type_confidence    = gt_score,
         locomotion_confidence    = loco_score,
         genre_confidence         = genre_score,
@@ -643,6 +691,10 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
         intent.matched["locomotion_modes_switch_signal"] = mm_hits
         for kind, hits in mm_per_kind.items():
             intent.matched[f"locomotion_modes:{kind}"] = hits
+    if flying_abilities:
+        intent.matched["flying_abilities"] = flying_abilities
+        for ability, hits in flying_ability_hits.items():
+            intent.matched[f"flying_abilities:{ability}"] = hits
     # Never drop a signal silently — the movement words the declaration outranked
     # are NAMED, so a wrong call is legible in the log instead of invisible.
     if suppressed:
@@ -716,6 +768,21 @@ def apply_intent(schema, intent: UnityIntent, *, min_confidence: int = 3) -> lis
         kinds = ", ".join(intent.locomotion_modes)
         msgs.append(
             f"Intent classifier: locomotion_modes [] -> [{kinds}] "
+            f"(prompt said: {hits})"
+        )
+
+    # flaps/landing_gear on the flying entry — same FILL-only discipline as
+    # locomotion_modes just above (never overrides an author's own call), and
+    # the same reason it lands in schema.meta rather than a typed field: the
+    # actual ControllerMode registry is a compose-time construct
+    # (unity_compose.py's ctrl_opts["modes"]), not something that exists on
+    # UnitySchema yet at this point in the pipeline — genre is the precedent
+    # for stashing a classifier annotation there.
+    if intent.flying_abilities and not schema.meta.get("flying_abilities"):
+        schema.meta["flying_abilities"] = list(intent.flying_abilities)
+        hits = ", ".join(intent.matched.get("flying_abilities", []))
+        msgs.append(
+            f"Intent classifier: flying_abilities [] -> {intent.flying_abilities} "
             f"(prompt said: {hits})"
         )
 

@@ -256,6 +256,25 @@ class TestRouting:
         assert [m["kind"] for m in ctrl.options["modes"]] == ["on_foot", "vehicle_car"]
         assert ctrl.options["default_mode"] == "on_foot"
 
+    def test_flying_abilities_land_only_on_the_flying_entry(self):
+        # src/unity_archetypes.py._score_flying_abilities is the producer
+        # (gated on "flying" already clearing locomotion_modes); this is the
+        # consumer side — flying_abilities must attach to the "flying" dict
+        # specifically and leave every other kind's dict bare.
+        ctrl, _ = self._controller(
+            locomotion="fly",
+            locomotion_modes=["on_foot", "vehicle_car", "flying"],
+            flying_abilities=["flaps", "landing_gear"])
+        by_kind = {m["kind"]: m for m in ctrl.options["modes"]}
+        assert by_kind["flying"]["abilities"] == ["flaps", "landing_gear"]
+        assert "abilities" not in by_kind["on_foot"]
+        assert "abilities" not in by_kind["vehicle_car"]
+
+    def test_no_flying_abilities_keeps_bare_kind_dicts(self):
+        ctrl, _ = self._controller(locomotion="walk",
+                                   locomotion_modes=["on_foot", "vehicle_car"])
+        assert ctrl.options["modes"] == [{"kind": "on_foot"}, {"kind": "vehicle_car"}]
+
     def test_does_not_add_a_second_controller_subsystem(self):
         _, subs = self._controller(locomotion="walk",
                                    locomotion_modes=["on_foot", "vehicle_car"])

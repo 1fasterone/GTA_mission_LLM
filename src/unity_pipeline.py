@@ -1483,6 +1483,7 @@ class UnityPipeline:
             subsystems = subsystems_for(schema.game_type, schema.features,
                                         locomotion=schema.locomotion,
                                         locomotion_modes=schema.locomotion_modes,
+                                        flying_abilities=schema.meta.get("flying_abilities"),
                                         capabilities=schema.capabilities,
                                         user_prompt=user_prompt,
                                         scenes=schema.scenes,
