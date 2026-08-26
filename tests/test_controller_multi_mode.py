@@ -10,7 +10,7 @@ and the golden/vehicle_bike suites, which this file does not touch).
 """
 from __future__ import annotations
 
-import yaml
+from pathlib import Path
 
 from src.csharp_syntax_gate import check_files
 from src.micro.controller import ControllerMode, ControllerPipeline, ControllerSchema
@@ -18,9 +18,25 @@ from src.unity_compose import subsystems_for
 from src.unity_playability import ERROR, WARN, evaluate
 from src.unity_schema import EntitySpec, UnitySchema, UnityScript
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
 
 def _cfg() -> dict:
-    return yaml.safe_load(open("config.yaml", encoding="utf-8"))
+    """Pipeline ctor needs LMStudio config, but this suite never calls the LLM.
+
+    config.yaml is gitignored (machine-specific — see .gitignore) and does
+    not exist in a fresh CI checkout; a real read here failed every test in
+    this file in CI while passing locally. Mirrors the `dummy_config`
+    fixture used the same way across tests/test_micro_generators.py and
+    friends, inlined here since this file has only one pipeline to build.
+    """
+    return {
+        "lm_studio":      {"base_url": "http://localhost:1234/v1", "model": "test"},
+        "unity_pipeline": {
+            "unity_output_dir":  str(REPO_ROOT / "output" / "unity"),
+            "unity_template_dir": str(REPO_ROOT / "templates" / "unity"),
+        },
+    }
 
 
 def _multi_schema(modes, **kw) -> ControllerSchema:
