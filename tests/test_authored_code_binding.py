@@ -314,6 +314,41 @@ def test_disable_bad_header_preserves_a_trailing_brace():
     assert "nope" not in out.split("AUDIT")[0]
 
 
+def test_disable_bad_header_declines_a_nested_if_on_one_line():
+    """EnemySpawner.cs(69) (Dead Reckoning Protocol live run): a NESTED
+    `if (...) { ...; if (...) { // comment } }`, same trailing-comment-
+    swallows-the-closer shape as the single-if TurboToys case above, one
+    level deeper. `cond`'s greedy `.*` walked past the outer header's own
+    `)` and swallowed the inner if's header AND brace, so the rewrite kept
+    only ONE `{` for what were really two real opens -- both original
+    closes survive untouched further down the file, so the file gained one
+    extra `}` and every declaration after it misparsed (CS8803/CS0106/
+    CS1022). Declining (None) and leaving the line alone is the existing,
+    tested fallback for "neither repair is safe" -- a stray CS0103 on this
+    one line beats a corrupted file."""
+    line = ('    if (Player.something) { float x = 1f; '
+            'if (x > 0f) { // Trigger stealth alert state } }')
+    assert _disable_bad_header(line, ["Player"]) is None
+
+
+def test_neutralize_flagged_lines_leaves_a_nested_if_line_untouched():
+    """End-to-end: `_neutralize_flagged_lines` must fall through to "leave
+    the line alone" for the same nested shape, not silently corrupt brace
+    balance across the whole method."""
+    from src.micro.code_fields import _neutralize_flagged_lines
+
+    text = (
+        "private void Update()\n"
+        "{\n"
+        "    if (Player.something) { float x = 1f; "
+        "if (x > 0f) { // Trigger stealth alert state } }\n"
+        "}\n"
+    )
+    out, flagged = _neutralize_flagged_lines(text, {2: {"Player"}})
+    assert out.count("{") == out.count("}")
+    assert "Player.something" in out   # left alone, not silently mangled
+
+
 def test_find_unbound_identifiers_skips_strings_and_comments():
     text = 'Debug.Log("driftIntensity is high"); // zoomFactor unused'
     assert find_unbound_identifiers(text, known={"Debug"}) == {}
