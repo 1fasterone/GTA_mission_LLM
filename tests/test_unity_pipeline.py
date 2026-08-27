@@ -699,6 +699,61 @@ class TestMissionSceneInference:
         assert obj_scenes == {"obj_reach_gate_1": "HallOne",
                               "obj_collect_cogs_1": "HallOne"}
 
+    def test_objective_scene_map_refines_per_objective_by_own_description(self):
+        # Regression fixture: a live DeadReckoningProtocol run. Mission
+        # "Engineer Extraction" title-matches scene "ExtractionPad" alone
+        # (tier 1), so the mission-level map has only that one scene for
+        # every objective. Two of its three objectives are BOTH `reach` —
+        # one for the Engineer (met in the depot yard), one for the pad
+        # itself — and SEAM 8 can bind only ONE `reach` objective per scene,
+        # so lumping both under "ExtractionPad" left one permanently
+        # unadvanceable even though DepotYard had its own unused trigger.
+        # Each objective's own description must be checked before falling
+        # back to the mission's scene, so "in the depot yard" sends the
+        # first objective to DepotYard while the second stays on
+        # ExtractionPad, and the two no longer collide.
+        mission = self._mission("m1", "Engineer Extraction", [
+            ("obj_escort_engineer", "Reach the Engineer in the depot yard.",
+             "reach", "Engineer"),
+            ("obj_collect_fuel", "Collect all SupplyCrate fuel cells for the VTOL.",
+             "collect", "SupplyCrate"),
+            ("obj_reach_pad", "Reach the ExtractionPad with the Engineer.",
+             "reach", "ExtractionPad"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scenes=["Main", "ExtractionPad", "DepotYard", "HangarBay"])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["ExtractionPad"]}
+        assert unresolved == []
+        obj_scenes = _objective_scene_map(schema, resolved)
+        assert obj_scenes == {
+            "obj_escort_engineer": "DepotYard",
+            "obj_collect_fuel":    "ExtractionPad",  # no scene named -> mission default
+            "obj_reach_pad":       "ExtractionPad",
+        }
+
+    def test_objective_scene_map_requires_the_full_scene_name_not_one_word(self):
+        # A single generic shared word must NOT reroute an objective: only an
+        # objective that names a scene IN FULL (every one of its tokens) is
+        # strong enough evidence to override the mission's own resolved
+        # scene. "the supply yard" shares "yard" with "DepotYard" but not
+        # "depot" -- one word of a two-word scene name is exactly the false
+        # -positive shape a generic noun (yard, hallway, gate...) could
+        # trigger by coincidence, so it must fall back to the mission
+        # default instead of misrouting to DepotYard.
+        mission = self._mission("m1", "Engineer Extraction", [
+            ("obj_collect_fuel", "Collect fuel cells from the supply yard.",
+             "collect", "SupplyCrate"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scenes=["Main", "ExtractionPad", "DepotYard", "HangarBay"])
+        resolved, _ = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["ExtractionPad"]}
+        obj_scenes = _objective_scene_map(schema, resolved)
+        assert obj_scenes == {"obj_collect_fuel": "ExtractionPad"}
+
     def test_reconcile_scene_specs_restores_mission_target_entities(self):
         # The exact live GearCitadel shape: HallOne's own subset lists its
         # hazard flavor entities but not the mission's own targets.

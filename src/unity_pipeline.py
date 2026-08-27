@@ -667,11 +667,55 @@ def _objective_scene_map(schema: UnitySchema,
     """Flatten `{mission.id: [scene, ...]}` (from `_infer_mission_scenes`) to
     `{objective.id: scene}` — what SEAM 8 (`unity_compose.py`) needs to gate
     each objective's event-source wiring to the scene it can actually fire
-    in. A mission resolved to more than one scene (not produced by
-    `_infer_mission_scenes` today, but tolerated) contributes its first scene
-    only, rather than guessing which objective belongs to which."""
+    in.
+
+    Refined per objective, not just per mission: a single mission can
+    legitimately span more than one scene (an extraction runs from a start
+    point to an end point), but `_infer_mission_scenes` only ever resolves
+    ONE scene for the whole mission. Confirmed live (DeadReckoningProtocol):
+    mission "Engineer Extraction" title-matched to scene "ExtractionPad", so
+    BOTH its `reach` objectives — "Reach the Engineer in the depot yard" and
+    "Reach the ExtractionPad with the Engineer" — were scoped to that one
+    scene, and SEAM 8 (one trigger source per scene) could bind only the
+    first; the second stayed permanently unadvanceable even though
+    DepotYard's own SceneTrigger sat unused in the composed project.
+
+    Each objective's OWN description is checked first, word-matched against
+    scene names with the same `_match_tokens` a mission title is matched
+    with — "in the depot yard" uniquely names DepotYard regardless of what
+    the mission as a whole resolved to. The bar is deliberately stricter
+    than the mission-title tier's "most shared words wins": a scene only
+    qualifies when its ENTIRE token set is contained in the objective's
+    description, not merely overlapping it. A single generic shared word
+    (a "Hallway" scene and an unrelated objective that happens to mention a
+    hallway) is not enough to reroute an objective away from its mission —
+    only an objective that names the scene in full is. Multiple qualifying
+    scenes (one a subset of another, e.g. "Hall" and "HallOne") resolve to
+    the more specific (larger) one; an outright tie, or no scene named at
+    all, is not a signal: fall back to the mission's own resolved scene
+    exactly as before, so an objective whose description says nothing about
+    scenes keeps today's behavior byte for byte. A mission resolved to more
+    than one scene (not produced by `_infer_mission_scenes` today, but
+    tolerated) still contributes its first scene as that fallback, rather
+    than guessing."""
     if not mission_scenes:
         return {}
+    gameplay_scenes = [s for s in schema.scenes
+                       if s and not any(w in s.lower() for w in _MENU_SCENE_WORDS)]
+    scene_tokens = {s: _match_tokens(s) for s in gameplay_scenes}
+
+    def _own_scene(description: str) -> "str | None":
+        tokens = _match_tokens(description)
+        if not tokens:
+            return None
+        hits = {s: len(toks) for s, toks in scene_tokens.items()
+               if toks and toks <= tokens}
+        if not hits:
+            return None
+        best = max(hits.values())
+        winners = [s for s, c in hits.items() if c == best]
+        return winners[0] if len(winners) == 1 else None
+
     out: dict[str, str] = {}
     for mission in schema.missions:
         scenes = mission_scenes.get(mission.id)
@@ -679,7 +723,7 @@ def _objective_scene_map(schema: UnitySchema,
             continue
         for o in mission.objectives:
             if o.id:
-                out[o.id] = scenes[0]
+                out[o.id] = _own_scene(o.description) or scenes[0]
     return out
 
 
