@@ -19,7 +19,7 @@ public class {{ s.name }} : MonoBehaviour
 {
     public enum BTStatus { Success, Failure, Running }
 
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Serializable]
     public class BTNodeDef
     {
@@ -108,5 +108,5 @@ public class {{ s.name }} : MonoBehaviour
         }
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

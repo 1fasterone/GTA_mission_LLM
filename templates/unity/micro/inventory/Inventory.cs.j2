@@ -20,7 +20,7 @@ public class {{ s.name }}Stack
 /// <summary>{{ s.description }}</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     /// <summary>Raised after any change (add/remove/equip) — hook your UI here.</summary>
     public event Action OnChanged;
 
@@ -205,5 +205,5 @@ public class {{ s.name }} : MonoBehaviour
     }
 {% endif %}
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

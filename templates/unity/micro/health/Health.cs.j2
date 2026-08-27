@@ -10,7 +10,7 @@ using UnityEngine;
 /// Subscribe to OnHealthChanged (e.g. a HUD health bar), OnDamaged, OnHealed, OnDeath.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [SerializeField] private float maxHealth   = {{ "%.1f"|format(s.max_health) }}f;
     [SerializeField] private float startHealth = {{ "%.1f"|format(s.start_health) }}f;
 {% if variant == "regenerating" %}
@@ -132,5 +132,5 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

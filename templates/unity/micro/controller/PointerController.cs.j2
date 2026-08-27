@@ -23,7 +23,7 @@ using {{ u }};
 /// object, because there is no player object to attach to.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("Board")]
     [Tooltip("Layers the pointer can pick out. Default: everything.")]
     [SerializeField] private LayerMask pickMask = ~0;
@@ -251,5 +251,5 @@ public class {{ s.name }} : MonoBehaviour
     private void OnDisable() => ClearHighlight();
 {% endif %}
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

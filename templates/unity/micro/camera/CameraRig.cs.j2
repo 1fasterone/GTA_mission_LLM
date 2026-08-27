@@ -9,7 +9,7 @@ using UnityEngine;
 [RequireComponent(typeof(Camera))]
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("Target")]
     [SerializeField] private string followTag = "{{ s.follow_target_tag }}";
     [SerializeField] private Vector3 offset = new Vector3({{ "%.2f"|format(s.offset_x) }}f, {{ "%.2f"|format(s.offset_y) }}f, {{ "%.2f"|format(s.offset_z) }}f);
@@ -231,5 +231,5 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

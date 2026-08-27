@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field, field_validator
 from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, csharp_ident, lint_extensible, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, csharp_ident, lint_extensible, apply_extensions_safe_block,
+    UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -323,6 +324,7 @@ class AIPipeline(UnityMicroPipeline):
         schema.alert_seconds = max(0.0, min(30.0, schema.alert_seconds))
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         return schema
 
     # ── FSM repair ────────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ using UnityEngine.Audio;
 public class {{ s.name }}AudioManager : MonoBehaviour
 {
     public static {{ s.name }}AudioManager Instance { get; private set; }
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
 
     [SerializeField] private {{ s.name }} bank;
     [SerializeField] private int poolSize = {{ s.pool_size }};
@@ -94,5 +94,5 @@ public class {{ s.name }}AudioManager : MonoBehaviour
 
     public void StopMusic() => _music.Stop();
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

@@ -196,6 +196,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% for f in s.extra_fields %}
     {{ "    " }}{{ inject.field(f) }}
 {% endfor %}
+{{ inject.extensions_fields(s) }}
 
     // ═══ GROUND CHECK ════════════════════════════════════════════════════════
 {% if s.ground_check == "raycast" and not variant.startswith("vehicle_") and not variant.startswith("2d_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
@@ -1530,4 +1531,5 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {{ m.body | indent(8, True) }}
     }
 {% endfor %}
+{{ inject.extensions_methods(s) }}
 }

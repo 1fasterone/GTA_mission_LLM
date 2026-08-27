@@ -19,7 +19,7 @@ using UnityEngine;
 /// </summary>
 public class {{ s.name }}Player : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("Audio")]
     [SerializeField] private AudioSource _audioSource;
 
@@ -151,7 +151,7 @@ public class {{ s.name }}Player : MonoBehaviour
         OnDialogEnd?.Invoke();
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }
 
 // ── Data structs (inlined; split to own file for larger projects) ─────────────

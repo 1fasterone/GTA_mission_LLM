@@ -16,7 +16,7 @@ using UnityEngine;
 {% endif %}
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("Body")]
     [SerializeField] private float mass        = {{ "%.3f"|format(s.mass) }}f;
     [SerializeField] private float linearDrag  = {{ "%.3f"|format(s.drag) }}f;
@@ -106,5 +106,5 @@ public class {{ s.name }} : MonoBehaviour
     private void OnCollisionEnter(Collision c) { OnImpact?.Invoke(c); }
     private void OnTriggerEnter(Collider c)    { OnTriggerEnterEvent?.Invoke(c); }
 {% endif %}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

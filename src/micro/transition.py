@@ -10,7 +10,8 @@ from pydantic import Field, field_validator
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, lint_extensible, clamp_enum, apply_extensions_safe_block,
+    UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -127,6 +128,7 @@ class TransitionPipeline(UnityMicroPipeline):
             schema.fade_duration = 0.0
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

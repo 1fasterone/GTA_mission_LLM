@@ -22,7 +22,7 @@ using {{ u }};
 /// disagree about whether the player has finished.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Serializable]
     public class Step
     {
@@ -255,5 +255,5 @@ public class {{ s.name }} : MonoBehaviour
         return t;
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

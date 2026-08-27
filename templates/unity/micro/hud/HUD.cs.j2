@@ -14,7 +14,7 @@ using UnityEngine.UIElements;
 /// <summary>{{ s.description }}</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
 {% if s.backend == "uGUI" %}
     [Header("uGUI refs")]
 {% if variant == "health_bar" %}
@@ -334,5 +334,5 @@ public class {{ s.name }} : MonoBehaviour
 {%- endfor %}
 {% endif %}
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

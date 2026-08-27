@@ -12,7 +12,8 @@ from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, csharp_ident, lint_extensible, clamp_enum,
-    neutralize_unavailable_names, UNITY_EXTRA_INSTRUCTIONS,
+    neutralize_unavailable_names, apply_extensions_safe_block,
+    UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -308,6 +309,7 @@ class HUDPipeline(UnityMicroPipeline):
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         # `reserved_fields` above only ever guarded against the LLM DECLARING
         # a colliding field name — it never guaranteed `document`/`_root` (or
         # a uGUI variant's own refs) actually EXIST for the backend this

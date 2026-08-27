@@ -16,7 +16,7 @@ using UnityEngine.UIElements;
 /// Subscribe to OnItemSelected for custom handling; common items act by default.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     /// <summary>Fires with the button label whenever an item is chosen.</summary>
     public event Action<string> OnItemSelected;
 
@@ -160,5 +160,5 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

@@ -41,10 +41,36 @@ fields the Pipeline LLM can fill directly in Step 3 (see the
 |-------|------|-------|
 | 1 (shipped) | `on_foot` | `CharacterController`-based; abilities: `jump`, `sprint` |
 | 1 (shipped) | `vehicle_car` | 4-`WheelCollider` rig; abilities: `nitro` |
-| 1b (shipped) | `flying` | `Rigidbody` pitch/roll/rudder/throttle rig ported from the single-variant `aircraft` section — **not** the single-variant `flying` variant. See "Why `flying` isn't `on_foot`'s `_cc`" below. Abilities: `flaps`, `landing_gear` (pitch/roll/rudder/throttle are always on, not ability-gated). |
-| 1b (remaining, planned) | `swimming` | still shares `on_foot`'s `_cc` backing store in the single-variant template |
-| 2 (planned) | `zero_g_eva`, `boating` | delta off `flying`/`vehicle_hover` |
+| 1b (shipped) | `flying` | `Rigidbody` pitch/roll/rudder/throttle rig ported from the single-variant `aircraft` section — **not** the single-variant `flying` variant. See "Why `flying` isn't `on_foot`'s `_cc`" below. Abilities: `flaps`, `landing_gear` (pitch/roll/rudder/throttle are always on, not ability-gated). Also means the single-variant **`aircraft`** kind needs no separate stack entry — it's already covered here. |
+| 1c (**selected, not yet built** — see "Next three" below) | `swimming` | still shares `on_foot`'s `_cc` backing store in the single-variant template |
+| 1c (**selected, not yet built**) | `vehicle_bike` | shares `vehicle_car`'s WheelCollider backing store + the `_MODE_FAMILY: "vehicle"` slot; adds the lean-only visual bank, no new physical components |
+| 1c (**selected, not yet built**) | `fighting` | delta off `on_foot`'s `_cc` rig + melee atoms (primary/secondary/block/dodge) — same backing store, no new components |
+| 2 (planned, blocked) | `boating` | delta off `vehicle_hover`'s raycast-spring pattern — blocked on a pre-existing bug: `default_fix` is missing the `hover_*` param clamp block (fix that first) |
+| 2 (planned) | `zero_g_eva` | delta off `flying` |
+| out of scope | `2D` kinds (`2d_platformer`, `2d_topdown`, `platformer_2_5d`) | dimension mismatch — a project's world is fixed 3D or 2D, the stack can't switch that at runtime |
+| out of scope | `pointer` | bodiless (`locomotion='none'`) — the stack's whole mechanism is a shared physical backing store on one GameObject; there is no body to share it |
 | out of scope | `skateboarding`, riding a mount | no template precedent (trick physics / needs a live cross-entity reference the composer has no mechanism for) |
+
+### Next three (note for whoever picks this up)
+
+Of the 7 candidate kinds on the table (`swimming`, `vehicle_hover`, `vehicle_bike`,
+`fighting`, `aircraft`, 2D, `pointer`), the three selected for the next stack
+addition are **`swimming`, `vehicle_bike`, `fighting`** — chosen because each
+reuses an existing backing store (CC or WheelCollider) with no new physical
+components and no prerequisite bugs to fix first. `aircraft` needs nothing
+(already `flying`); `vehicle_hover`/`boating` is blocked on the clamp-block bug
+above; 2D and `pointer` are architectural non-fits, not backlog items.
+
+**Not implemented yet.** Adding these three requires, together (per "Extending
+the vocabulary" above): `ControllerModeKind` + `_MODE_FAMILY`
+(`src/micro/controller.py`), `UnitySchema.enforce_locomotion_modes`'s `valid`
+tuple (`src/unity_schema.py`), a mode macro each in `_controller_modes.j2`,
+and the matching `has_<kind>` gates in `ControllerMultiMode.cs.j2` — plus
+ability pruning in `_fix_multi_mode` and `_check_multi_mode_registry` coverage
+in `unity_playability.py`. Do NOT add these to the `ControllerModeKind` Literal
+piecemeal without the template macros — an accepted kind with no render
+section is a silent present-in-schema/absent-in-build gap, exactly what this
+doc's other sections warn against.
 
 ### Why `flying` isn't `on_foot`'s `_cc`
 
@@ -162,19 +188,23 @@ field this doc used to call LLM-only:
 ## Phasing
 
 - **Phase 1 (shipped):** `on_foot` + `vehicle_car`.
-- **Phase 1b (`flying` shipped, `swimming` remaining):** `flying` is a
-  `Rigidbody` pitch/roll/rudder/throttle rig ported from the single-variant
-  `aircraft` section, not the CC-based free-fly originally sketched for this
-  phase — see "Why `flying` isn't `on_foot`'s `_cc`" above. `swimming` still
-  shares `on_foot`'s `_cc` backing store in the single-variant template, so
-  that piece is mostly proving the macro pattern generalizes a second way.
-- **Phase 2:** `zero_g_eva` (delta off `flying`) and `boating` (delta off
-  `vehicle_hover`'s raycast-spring pattern — also needs the `hover_*` param
-  clamp block `default_fix` is currently missing, fixed as a prerequisite).
+- **Phase 1b (shipped):** `flying` is a `Rigidbody` pitch/roll/rudder/throttle
+  rig ported from the single-variant `aircraft` section, not the CC-based
+  free-fly originally sketched for this phase — see "Why `flying` isn't
+  `on_foot`'s `_cc`" above.
+- **Phase 1c (selected, not yet built — see "Next three" above):**
+  `swimming`, `vehicle_bike`, `fighting`. Each reuses an existing backing
+  store (CC or WheelCollider), no new prerequisite bugs. Picked over
+  `vehicle_hover`/2D/`pointer`/`aircraft` — see rationale above.
+- **Phase 2 (planned, blocked):** `zero_g_eva` (delta off `flying`) and
+  `boating` (delta off `vehicle_hover`'s raycast-spring pattern — also needs
+  the `hover_*` param clamp block `default_fix` is currently missing, fixed
+  as a prerequisite).
 - **Explicitly out of scope:** `skateboarding` (no template precedent, new
   trick/momentum physics), riding a mount (needs a live cross-entity
   reference — the composer has no dependency-declaration mechanism between
-  micros at all today), true per-zone spatial layout, per-mode camera/
-  animator retuning, contextual enter/exit. (Deterministic keyword
-  classification of "this prompt wants multi-mode" — the other kind of
-  auto-classification — shipped; see "Multi-mode detection" above.)
+  micros at all today), 2D kinds (dimension mismatch), `pointer` (bodiless),
+  true per-zone spatial layout, per-mode camera/animator retuning,
+  contextual enter/exit. (Deterministic keyword classification of "this
+  prompt wants multi-mode" — the other kind of auto-classification —
+  shipped; see "Multi-mode detection" above.)

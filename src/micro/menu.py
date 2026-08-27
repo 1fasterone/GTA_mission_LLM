@@ -11,7 +11,8 @@ from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum,
-    neutralize_unavailable_names, UNITY_EXTRA_INSTRUCTIONS,
+    neutralize_unavailable_names, apply_extensions_safe_block,
+    UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -150,6 +151,7 @@ class MenuPipeline(UnityMicroPipeline):
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         # Strip whichever half of the backend split the LLM wasn't entitled
         # to (hit live on HUD's identical shape: a uGUI-backend script
         # referencing `_root` — CS0103, since Menu.cs.j2 only declares it
