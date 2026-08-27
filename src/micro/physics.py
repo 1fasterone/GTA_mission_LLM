@@ -10,7 +10,8 @@ from pydantic import Field, field_validator
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, lint_extensible, apply_extensions_safe_block,
+    UNITY_EXTRA_INSTRUCTIONS,
 )
 
 
@@ -129,6 +130,7 @@ class PhysicsPipeline(UnityMicroPipeline):
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

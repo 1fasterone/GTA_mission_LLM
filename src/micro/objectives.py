@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field, field_validator
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
+    CodeExtensibleSchema, lint_extensible, clamp_enum, apply_extensions_safe_block,
+    UNITY_EXTRA_INSTRUCTIONS, harden_against_template,
 )
 
 
@@ -194,6 +195,7 @@ class ObjectivesPipeline(UnityMicroPipeline):
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
                         hoist_field_inits=True)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         return schema
 
     def harden(self, schema) -> list[str]:
@@ -232,6 +234,13 @@ class ObjectivesPipeline(UnityMicroPipeline):
                     msgs.append("objectives: " + " -> ".join(cycle + [cur])
                                 + " forms a cycle — none of these can ever "
                                   "unlock")
+        # This override REPLACES MicroPipeline.harden's own body, the only
+        # thing that normally calls harden_against_template — see rules.py's
+        # harden() for the live GameRules.cs CS0111 this same gap caused
+        # elsewhere (an authored extra_method colliding with a template
+        # method, e.g. ReportProgress itself, would otherwise ship as a
+        # duplicate unchecked).
+        msgs += harden_against_template(schema, self.template_root, engine=self.engine)
         return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

@@ -55,3 +55,14 @@
 {% if s.ground_check != "collider" %}
 | `groundRayLen` | 1.05 | downward ground-check ray length |
 {% endif %}
+{% if s.extensions_metadata %}
+
+## Extensions (experimental)
+
+Non-code notes the Pipeline LLM authored into the sandboxed `extensions`
+namespace (see docs/SCHEMA_EXTENSIONS.md) — informational only, never compiled.
+
+{% for k, v in s.extensions_metadata.items() %}
+- **{{ k }}**: {{ v }}
+{% endfor %}
+{% endif %}

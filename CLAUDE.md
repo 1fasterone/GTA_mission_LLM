@@ -58,9 +58,10 @@ Never add LLM calls to Steps 4-7. Never introduce nondeterminism.
 # Atoms (Required Mental Model)
 
 Atoms are the smallest deterministic actions the compiler can execute:
-primitive verbs, engine-valid, schema-valid, RAG-grounded, indivisible (no
-branching, loops, or multi-step logic), safe building blocks for
-micro-generators and scenes.
+primitive verbs, engine-valid, schema-valid, RAG-grounded, safe building
+blocks for micro-generators and scenes. Atoms may contain branching, loops,
+and multi-step logic — determinism and engine/schema validity are the only
+hard requirements left.
 
 Atoms live in atoms/ (definitions + registry) and micro/ (compositions).
 
@@ -71,15 +72,53 @@ Unity/GTA backends. Atoms are the foundation of all microgens.
 # How the Engineer Should Behave
 
 - Treat the repo as a compiler, not a chat chain
-- Never modify code unless explicitly asked
+- Modify code proactively; do not wait for explicit instruction before
+  making a change
 - Prefer deterministic, reproducible transformations
-- Never invent new schema fields or change schema structure; the Pipeline
-  LLM's outputs must stay concise, unambiguous schema fills
+- Never invent new schema fields or change schema structure — except inside
+  a schema's `extensions` namespace, the one sandboxed place field
+  invention is allowed (see Schema Extensions below); everywhere else, the
+  Pipeline LLM's outputs must stay concise, unambiguous schema fills
 - When editing files, produce full-file replacements, not patches
 - Repair deterministically where ground truth exists; record where it does
   not; never raise in a way that discards an otherwise valid schema
 - Abstain loudly, never silently default: a wrong silent fallback is harder
   to diagnose than a loud refusal with an explicit remedy
+
+# Schema Extensions (LLM Field Invention)
+
+Every schema exposes one sandboxed `extensions` namespace — the ONLY place
+the Pipeline LLM is allowed to invent fields. Everywhere else in the schema,
+"never invent new schema fields" (above) still holds without exception.
+
+Step 3 prompts must tell the Pipeline LLM: "If you need new fields, put
+them inside extensions."
+
+Three sub-blocks, split by what they become in codegen:
+- `extensions_fields`   — new C# fields
+- `extensions_methods`  — new C# methods
+- `extensions_metadata` — non-code metadata
+
+**Fixer safe block.** The fixer must sandbox `extensions` content instead
+of running it through the normal repair passes:
+- no pruning
+- no clamping
+- no renaming
+- a name that collides with a reserved field or another schema field is a
+  loud abstain (flag it; never silently rename or drop it, and never let
+  it silently overwrite something else)
+
+**Migration path.** When an extension field proves useful, promote it out
+of the sandbox in one pass: move it from `extensions_*` to a real named
+schema field, and update templates, fixers, and prompts together — the
+same "grows in step, together" discipline already used elsewhere in this
+repo for extending atom/mode vocabularies.
+
+`extensions` is the experimental zone by design — free-form LLM invention
+lives there and nowhere else in the schema. docs/SCHEMA_EXTENSIONS.md is the
+implementation reference and phased-rollout tracker (which generators have
+this fully wired vs. schema-only vs. not yet touched — see it before
+assuming a given micro's `extensions_fields` actually renders anywhere).
 
 # Where Things Live (For Cowork Navigation)
 
@@ -215,7 +254,8 @@ internals unless asked.
 - Config-driven behavior (config.yaml)
 - Unity canonical script names must not change
 - Never break template references
-- Atoms remain single-action, deterministic, engine-valid
+- Atoms remain deterministic, engine-valid (branching/loops/multi-step logic
+  allowed — see Atoms above)
 
 # Required Workflow Rule
 

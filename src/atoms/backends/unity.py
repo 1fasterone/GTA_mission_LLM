@@ -848,6 +848,47 @@ def _wire_trigger_to_objectives(args: dict) -> str:
         delegate_default="_onReachObjective")
 
 
+def _wire_trigger_to_escort_objective(args: dict) -> str:
+    """Escort's honest signal: the SAME trigger a `reach` objective would use,
+    gated on the escorted entity's OWN live position being near it when it
+    fires -- proof the NPC actually made the trip (it has a real Follow-atom
+    behavior driving it there, src/micro objectives.py's compose-time
+    fixer), not merely assumed to be alongside the player. Distinct from
+    `_objective_seam`'s shape (every other seam there fires unconditionally
+    on the source event) because this one can't honestly be unconditional --
+    the player reaching a zone alone proves nothing about the NPC.
+
+    `entity_go_name` is the spawned instance's own GameObject name
+    (EntitySpawner.cs.j2 names it "<entity.name>_0" for a singleton group,
+    the only shape this seam is offered for -- see unity_compose.py). Omitted
+    with a comment, not guessed, when no such pairing was matched."""
+    tv  = _s(args.get("trigger_var", "_trigger"))
+    ov  = _s(args.get("objectives_var", "_objectives"))
+    dv  = _s(args.get("delegate_var", "_onEscortObjective"))
+    oid = args.get("objective_id")
+    entity_go = args.get("entity_go_name")
+    if not oid or not entity_go:
+        return ("// No authored escort objective matched a followed entity - "
+                "trigger -> escort objective seam omitted.")
+    try:
+        tol = max(0.1, float(args.get("tolerance", 6.0)))
+    except (TypeError, ValueError):
+        tol = 6.0
+    return (
+        f"if ({tv} != null && {ov} != null)\n"
+        f"{{\n"
+        f"    {dv} = () =>\n"
+        f"    {{\n"
+        f"        var _escortGo = GameObject.Find(\"{_s(entity_go)}\");\n"
+        f"        if (_escortGo != null && Vector3.Distance(_escortGo.transform.position, "
+        f"{tv}.transform.position) <= {tol}f)\n"
+        f"            {ov}.ReportProgress(\"{_s(oid)}\");\n"
+        f"    }};\n"
+        f"    {tv}.OnActivated += {dv};\n"
+        f"}}"
+    )
+
+
 def _wire_interactable_to_objectives(args: dict) -> str:
     return _objective_seam(
         args, source_key="interactable_var", source_default="_interactable",
@@ -1014,6 +1055,7 @@ _SNIPPETS: dict[str, Any] = {
     "WireGroundedBridge":     _wire_grounded_bridge,
     "WireTriggerToSave":      _wire_trigger_to_save,
     "WireTriggerToObjectives":      _wire_trigger_to_objectives,
+    "WireTriggerToEscortObjective": _wire_trigger_to_escort_objective,
     "WireInteractableToObjectives": _wire_interactable_to_objectives,
     "WireSpawnerToObjectives":      _wire_spawner_to_objectives,
     "WireBoardToObjectives":        _wire_board_to_objectives,

@@ -58,3 +58,28 @@ using {{ u }};
     }
 {%- endfor %}
 {%- endmacro %}
+
+{# Schema Extensions (docs/SCHEMA_EXTENSIONS.md) — the LLM's sandboxed field-
+   invention namespace. Kept visually distinct from the extra_* injection
+   above: this content passed through apply_extensions_safe_block, NOT
+   lint_extensible, so it is collision-checked but not repair-hardened. #}
+{% macro extensions_fields(s) -%}
+{% if s.extensions_fields %}
+
+    // ═══ EXPERIMENTAL EXTENSIONS (sandboxed — see docs/SCHEMA_EXTENSIONS.md) ═
+{% for f in s.extensions_fields %}
+{{ "    " }}{{ field(f) }}
+{%- endfor %}
+{%- endif %}
+{%- endmacro %}
+
+{% macro extensions_methods(s) -%}
+{% for m in s.extensions_methods %}
+
+    // ── EXPERIMENTAL EXTENSION (sandboxed — see docs/SCHEMA_EXTENSIONS.md) ──
+    {{ m.signature }}
+    {
+{{ m.body | indent(8, True) }}
+    }
+{%- endfor %}
+{%- endmacro %}

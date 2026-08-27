@@ -19,7 +19,7 @@ using UnityEngine;
 {% endif %}
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [SerializeField] private float  radius     = {{ "%.2f"|format(s.radius) }}f;
     [SerializeField] private string promptText = {{ s.prompt_text|tojson }};
 {% if s.detection == "pointer" %}
@@ -167,5 +167,5 @@ public class {{ s.name }} : MonoBehaviour
         Gizmos.DrawWireSphere(transform.position, radius);
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

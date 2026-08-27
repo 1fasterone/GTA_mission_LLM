@@ -11,7 +11,7 @@ using System.IO;
 /// <summary>{{ s.description }}</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     public {{ s.name }}Data Data { get; private set; } = new {{ s.name }}Data();
 
 {% if s.storage == "file" %}
@@ -175,5 +175,5 @@ public class {{ s.name }} : MonoBehaviour
     }
 {% endif %}
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

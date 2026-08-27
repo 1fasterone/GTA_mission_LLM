@@ -17,7 +17,7 @@ using System.Collections.Generic;
 {% endif %}
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("Detection")]
     [SerializeField] private float detectionRadius = {{ "%.2f"|format(s.detection_radius) }}f;
     [SerializeField] private float attackRadius    = {{ "%.2f"|format(s.attack_radius) }}f;
@@ -397,5 +397,5 @@ public class {{ s.name }} : MonoBehaviour
         Gizmos.color = Color.red;    Gizmos.DrawWireSphere(transform.position, attackRadius);
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

@@ -44,7 +44,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..micro_pipeline import to_pascal
 from .code_fields import (UNITY_EXTRA_INSTRUCTIONS, CodeExtensibleSchema,
-                          clamp_enum, lint_extensible)
+                          clamp_enum, lint_extensible, harden_against_template,
+                          apply_extensions_safe_block)
 from .unity_base import UnityMicroPipeline
 
 # "guided"  — briefing modal + step panel + hint bar (the full teaching shape)
@@ -195,6 +196,15 @@ class RulesPipeline(UnityMicroPipeline):
                         "nothing about how to reach it")
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
+        apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
+        # This override REPLACES MicroPipeline.harden's own body, which is the
+        # only thing that normally calls harden_against_template — every other
+        # `harden()` override in this repo has the same gap. Confirmed live:
+        # GameRules.cs(262,18) CS0111, an LLM-authored `extra_method` named
+        # `BindObjectives()` (matching the template's own private method)
+        # shipped as a duplicate, because nothing here ever checks authored
+        # members against what GameRules.cs.j2 itself already defines.
+        msgs += harden_against_template(schema, self.template_root, engine=self.engine)
         return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

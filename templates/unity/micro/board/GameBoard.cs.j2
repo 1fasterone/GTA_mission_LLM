@@ -30,7 +30,7 @@ using {{ u }};
 /// silence.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     // ── The declared domain ──────────────────────────────────────────────────
 
     [Serializable]
@@ -968,5 +968,5 @@ public class {{ s.name }} : MonoBehaviour
         return t;
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

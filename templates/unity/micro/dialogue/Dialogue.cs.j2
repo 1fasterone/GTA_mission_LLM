@@ -13,7 +13,7 @@ using System.Collections.Generic;
 /// Subscribe to the events to drive your UI; call StartDialogue() to begin.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     /// <summary>(speaker, text) — fired for each line (repeatedly while typing).</summary>
     public event Action<string, string> OnLine;
 {% if variant == "branching" %}
@@ -167,5 +167,5 @@ public class {{ s.name }} : MonoBehaviour
 
     private void End() => OnDialogueEnd?.Invoke();
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

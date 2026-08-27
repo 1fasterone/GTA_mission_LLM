@@ -11,7 +11,7 @@ using UnityEngine.UI;
 /// <summary>{{ s.description }} Call Go() to start the transition.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [SerializeField] private string targetScene = {{ s.target_scene|tojson }};
 {% if variant in ("fade", "trigger_door") %}
     [SerializeField] private float fadeDuration = {{ "%.2f"|format(s.fade_duration) }}f;
@@ -92,5 +92,5 @@ public class {{ s.name }} : MonoBehaviour
     }
 {% endif %}
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

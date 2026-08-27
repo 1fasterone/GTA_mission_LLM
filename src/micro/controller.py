@@ -12,6 +12,7 @@ from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeField, CodeMethod,
     lint_code_fragment, lint_method, lint_usings, lint_fields,
+    apply_extensions_safe_block,
 )
 
 
@@ -59,6 +60,14 @@ VARIANTS = list(ControllerVariant.__args__)   # type: ignore[attr-defined]
 # behaviour (plus optional flaps/landing_gear abilities), not a hover drone.
 # swimming/vehicle_bike/vehicle_hover/zero_g_eva/boating are still Phase
 # 1b(remainder)/2, not yet wired into ControllerMultiMode.cs.j2.
+# NOTE (Phase 1c, selected/not yet built): swimming, vehicle_bike, fighting
+# are next up — each reuses an existing backing store (CC or WheelCollider),
+# no new components. vehicle_hover is blocked on a pre-existing default_fix
+# bug (missing hover_* clamp block); aircraft needs nothing new (already
+# covered by "flying" above); 2D kinds and "pointer" are architectural
+# non-fits, not backlog items. Do NOT add these to this Literal without also
+# adding their _controller_modes.j2 macro + ControllerMultiMode.cs.j2
+# has_<kind> gate — see docs/CONTROL_SURFACE_STACK.md "Next three".
 ControllerModeKind = Literal["on_foot", "vehicle_car", "flying"]
 
 _MODE_KINDS: list[str] = list(ControllerModeKind.__args__)  # type: ignore[attr-defined]
@@ -273,6 +282,15 @@ class ControllerSchema(BaseModel):
     fixed_update_extra: str              = ""
     extra_methods:      list[CodeMethod] = Field(default_factory=list)
 
+    # ── Schema Extensions (LLM field invention sandbox) ───────────────────────
+    # See docs/SCHEMA_EXTENSIONS.md / CLAUDE.md "Schema Extensions" — the ONLY
+    # place the LLM may invent a field outside the fixed surface above.
+    # Sandboxed by apply_extensions_safe_block, not lint_extensible/lint_fields:
+    # no pruning, no clamping, no renaming — a name collision is a loud abstain.
+    extensions_fields:   list[CodeField]  = Field(default_factory=list)
+    extensions_methods:  list[CodeMethod] = Field(default_factory=list)
+    extensions_metadata: dict             = Field(default_factory=dict)
+
     meta: dict = Field(default_factory=dict)
 
     @field_validator("variant", mode="before")
@@ -375,6 +393,15 @@ extra_* fields (LLM-authored prompt-specific extras):
   fixed_update_extra — C# appended inside FixedUpdate()
   extra_methods      — helper methods appended at end of class
   extra_usings       — extra namespaces
+
+extensions (only if extra_* above genuinely isn't enough — most prompts need
+none of this; leave all three empty):
+  extensions_fields   — new [SerializeField] declarations, same shape as extra_fields
+  extensions_methods  — new helper methods, same shape as extra_methods
+  extensions_metadata — flat {"key": "value"} of NON-CODE notes, never C#
+  If you need new fields, put them inside extensions. It is sandboxed, not
+  lint-hardened the way extra_* is — a name colliding with another field
+  anywhere in the schema is dropped rather than repaired.
 
 C# RULES for extra_* bodies:
   Reference baseline fields directly: moveSpeed, sprintSpeed, jumpForce, _grounded,
@@ -522,7 +549,10 @@ OUTPUT this JSON (omit no keys):
   "awake_extra": "",
   "update_extra": "",
   "fixed_update_extra": "",
-  "extra_methods": []
+  "extra_methods": [],
+  "extensions_fields": [],
+  "extensions_methods": [],
+  "extensions_metadata": {{}}
 }}
 
 Author REAL prompt-specific behavior in the extras. Output ONLY the JSON.
@@ -723,6 +753,8 @@ class ControllerPipeline(UnityMicroPipeline):
             m2 for m in schema.extra_methods
             if (m2 := lint_method(m, taken_names=taken)) is not None
         ]
+
+        schema = apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
 
         return schema
 

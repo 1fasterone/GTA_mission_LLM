@@ -11,7 +11,7 @@ using UnityEngine;
 /// <summary>{{ s.description }}</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}
+{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("What to spawn")]
     [SerializeField] private GameObject prefab;
 {% if s.pooling == "pooled" %}
@@ -207,5 +207,5 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 {{ inject.fixed_update(s) }}
-{{ inject.methods(s) }}
+{{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

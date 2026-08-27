@@ -2468,6 +2468,31 @@ def _color_initializer(base: str, text: str) -> Optional[str]:
     return ("new Color(" + ", ".join(_cs_float(c / 255) for c in (r, g, b, a)) + ")")
 
 
+_VECTOR_ARITY = {"vector2": 2, "vector3": 3, "vector4": 4}
+_VECTOR_CTOR  = {"vector2": "Vector2", "vector3": "Vector3", "vector4": "Vector4"}
+# A bare tuple literal is valid C# (a ValueTuple) but has no implicit
+# conversion to UnityEngine.Vector2/3/4 (CS0029) — the model's habitual
+# shorthand for "three numbers", confirmed live, PlayerCamera.cs(14,141):
+#     [SerializeField] private Vector3 _offset = (0f, 2f, 0f);
+_TUPLE_LITERAL_RE = re.compile(r"^\((?P<items>[^()]+)\)$")
+
+
+def _vector_initializer(base: str, text: str) -> Optional[str]:
+    """A Vector2/3/4 initializer, or None to drop it.
+
+    A tuple literal whose arity matches the declared type is rewritten to the
+    real constructor call; anything else is already an expression (`new
+    Vector3(...)`, `Vector3.zero`) and only the structural guard applies.
+    """
+    m = _TUPLE_LITERAL_RE.match(text)
+    if m:
+        items = [p.strip() for p in _split_top_level_args(m.group("items"))]
+        if len(items) == _VECTOR_ARITY[base] and all(items):
+            return f"new {_VECTOR_CTOR[base]}({', '.join(items)})"
+        return None
+    return text if _initializer_is_structurally_safe(text) else None
+
+
 def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     """Coerce an LLM-authored initializer into a literal that parses as
     `= <default>;` for the declared type. Returns None to drop the initializer.
@@ -2536,6 +2561,9 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
 
     if base.rsplit(".", 1)[-1] in _COLOR_TYPES:
         return _color_initializer(base.rsplit(".", 1)[-1], text)
+
+    if base.rsplit(".", 1)[-1] in _VECTOR_ARITY:
+        return _vector_initializer(base.rsplit(".", 1)[-1], text)
 
     # Hex/binary must be tried FIRST: in `0xFF` a decimal-shaped match would
     # read the digits as an invented suffix and "repair" the value to 0.
@@ -2667,6 +2695,16 @@ class CodeExtensibleSchema(BaseModel):
     fixed_update_extra: str              = ""
     extra_methods:      list[CodeMethod] = Field(default_factory=list)
 
+    # ── Schema Extensions (LLM field invention sandbox) ──────────────────────
+    # See docs/SCHEMA_EXTENSIONS.md / CLAUDE.md "Schema Extensions" — the ONLY
+    # place the Pipeline LLM may invent fields outside the fixed schema surface
+    # above. Sandboxed by `apply_extensions_safe_block`, NOT `lint_extensible`:
+    # no pruning, no clamping, no renaming — a name collision is a loud
+    # abstain (see that function), never a silent fix.
+    extensions_fields:   list[CodeField]  = Field(default_factory=list)
+    extensions_methods:  list[CodeMethod] = Field(default_factory=list)
+    extensions_metadata: dict             = Field(default_factory=dict)
+
 
 class _ExtensibleLike(Protocol):
     """Structural shape lint_extensible needs. CodeExtensibleSchema satisfies
@@ -2738,11 +2776,117 @@ def lint_extensible(schema: _ExtensibleLike, *,
         queue.extend(nested)
     schema.extra_methods = cleaned
 
+    # AFTER every body is in its final linted form — this reads the actual
+    # call sites, not an intermediate draft of them.
+    schema.extra_fields = retype_string_fields_used_as_audioclip(
+        schema.extra_fields, blob=_authored_blob(schema))
+
+    # Self-field-type misuse: `lint_extensible` never had `bind_authored_code`'s
+    # cross-check against a TEMPLATE's field types (that pass needs a .cs.j2 to
+    # read, which a `type: custom` script never has) — but the SCHEMA'S OWN
+    # extra_fields are ground truth regardless. Confirmed live,
+    # StealthAudioManager.cs(20,38): two `object`-typed extra_fields (cross-
+    # script references with no sanctioned real type — see
+    # docs/model-pipeline-architecture.md) had real-sounding methods called on
+    # them (`RetractGear`, `OnEscortComplete`), which can never exist on
+    # `object`. Every `lint_extensible` caller gets this for free, not only
+    # custom scripts.
+    own_field_types = {f.name: f.type for f in schema.extra_fields if f.name}
+    if own_field_types:
+        schema.awake_extra, _ = lint_field_type_misuse(
+            schema.awake_extra, field_types=own_field_types)
+        schema.update_extra, _ = lint_field_type_misuse(
+            schema.update_extra, field_types=own_field_types)
+        schema.fixed_update_extra, _ = lint_field_type_misuse(
+            schema.fixed_update_extra, field_types=own_field_types)
+        schema.extra_methods = [
+            m.model_copy(update={"body": lint_field_type_misuse(
+                m.body, field_types=own_field_types, signature=m.signature)[0]})
+            for m in schema.extra_methods
+        ]
+
     # This caller has no fixer-log channel of its own, so it prints. The other
     # caller (`harden_against_template`) returns its messages to a pipeline that
     # logs them, and printing here too would double every line.
     for msg in heal_missing_usings(schema, template_usings=template_usings):
         console.print(f"  [magenta]FIX[/]  {msg}")
+    return schema
+
+
+class _ExtensionsLike(Protocol):
+    """Structural shape apply_extensions_safe_block needs. CodeExtensibleSchema
+    satisfies this nominally (see its extensions_* fields above); a schema
+    that hand-rolls extra_* the way ControllerSchema does must hand-roll
+    these three too rather than inherit them."""
+    extensions_fields:   list[CodeField]
+    extensions_methods:  list[CodeMethod]
+    extensions_metadata: dict
+    meta:                dict
+
+
+def apply_extensions_safe_block(schema: _ExtensionsLike, *,
+                                reserved: set[str]) -> _ExtensionsLike:
+    """
+    Sandbox `extensions_fields`/`extensions_methods` — see
+    docs/SCHEMA_EXTENSIONS.md. Deliberately NOT `lint_extensible`'s repair
+    pass: this is the one place in the schema the Pipeline LLM may invent a
+    field, and the whole point of that sandbox is that it is NOT run through
+    the same defensive machinery as extra_*:
+      - no pruning of malformed content
+      - no clamping/repair of default values or bodies
+      - no silent auto-rename to dodge a name collision
+
+    The one thing this function DOES do is collision detection, because an
+    unexcluded collision would silently corrupt the build (CS0102 duplicate
+    member) rather than just fail to compile the author's own intent. A name
+    colliding with `reserved`, another schema field, a sibling extra_field/
+    extra_method, or another entry in extensions_fields/extensions_methods
+    itself is a LOUD abstain: the colliding entry is excluded from what
+    renders, and the exclusion is recorded by name in
+    `schema.meta["extensions_conflicts"]` — never just dropped quietly.
+    """
+    known: set[str] = {n.lower() for n in reserved}
+    known |= {n.lower() for n in type(schema).model_fields.keys()}
+    known |= {f.name.lower() for f in getattr(schema, "extra_fields", [])}
+    known |= {name.lower() for m in getattr(schema, "extra_methods", [])
+             if (name := _method_name(m.signature))}
+
+    def _abstain(what: str, name: str) -> None:
+        console.print(f"  [red]ABSTAIN[/]  {what} {name!r} collides with a "
+                      f"reserved/existing name — excluded from output, not "
+                      f"renamed (see extensions_conflicts)")
+        schema.meta.setdefault("extensions_conflicts", []).append(
+            f"{what} {name!r} collides with an existing name")
+
+    kept_fields: list[CodeField] = []
+    seen: set[str] = set()
+    for f in schema.extensions_fields:
+        key = f.name.lower()
+        if key in known or key in seen:
+            _abstain("extensions_fields", f.name)
+            continue
+        seen.add(key)
+        kept_fields.append(f)
+    schema.extensions_fields = kept_fields
+
+    kept_methods: list[CodeMethod] = []
+    seen_methods = set(seen)   # a method sharing a kept field's name collides too
+    for m in schema.extensions_methods:
+        name = _method_name(m.signature)
+        key = name.lower()
+        if not key:
+            # No parseable name to sandbox against — signature normalization
+            # already ran in CodeMethod's own validator; leave it alone
+            # rather than guess.
+            kept_methods.append(m)
+            continue
+        if key in known or key in seen_methods:
+            _abstain("extensions_methods", name)
+            continue
+        seen_methods.add(key)
+        kept_methods.append(m)
+    schema.extensions_methods = kept_methods
+
     return schema
 
 
@@ -2799,6 +2943,46 @@ def _authored_blob(schema) -> str:
         + [f"{m.signature}\n{m.body}"
            for m in (getattr(schema, "extra_methods", None) or [])]
     )
+
+
+# CS1503 — a field the model typed `string` (its habitual notation for "the
+# name of an asset") passed where an AudioClip is required. There is no
+# built-in "load an AudioClip by name" convention in this codebase, so the
+# only ground-truth fix is the field's OWN declared type: retype it to
+# AudioClip (default -> "null", assignable from the Inspector) rather than
+# guess at a Resources.Load path this project never establishes. Confirmed
+# live, AudioDirectorAudioManager.cs(59):
+#     [SerializeField] private string _exhaustClip = "Exhaust_Heavy";
+#     ...
+#     _engineSource.PlayOneShot(_exhaustClip, VolumeFor("Engine"));
+_AUDIOCLIP_ARG_CALLS = ("PlayOneShot", "PlayClipAtPoint")
+_AUDIOCLIP_ARG_RE = re.compile(
+    r"\b(?:" + "|".join(_AUDIOCLIP_ARG_CALLS) + r")\s*\(\s*(?P<name>[A-Za-z_]\w*)\b")
+
+
+def retype_string_fields_used_as_audioclip(fields: list[CodeField], *,
+                                           blob: str) -> list[CodeField]:
+    """Retype a `string` extra_field to `AudioClip` when the authored blob
+    passes it as the clip argument to a known AudioSource call — see above.
+    """
+    if not fields or not blob:
+        return fields
+    mask = _code_mask(blob)
+    wanted: set[str] = set()
+    for m in _AUDIOCLIP_ARG_RE.finditer(blob):
+        if mask[m.start()]:
+            wanted.add(m.group("name"))
+    if not wanted:
+        return fields
+    out: list[CodeField] = []
+    for f in fields:
+        if f.name in wanted and (f.type or "").strip().lower() == "string":
+            console.print(f"  [magenta]FIX[/]  retyped `{f.name}` from string to "
+                          f"AudioClip — passed to PlayOneShot/PlayClipAtPoint "
+                          f"(CS1503); assign the clip via the Inspector")
+            f = f.model_copy(update={"type": "AudioClip", "default": "null"})
+        out.append(f)
+    return out
 
 
 def heal_missing_usings(schema, *, template_usings: "set[str] | frozenset[str]") -> list[str]:
@@ -3018,6 +3202,27 @@ def render_facts(schema) -> "tuple[tuple[str, str], ...]":
     return tuple(sorted(out.items()))
 
 
+# Some micro folders hold WHOLE-FILE variant alternatives instead of the
+# usual always-co-existing sibling classes (SaveData.cs.j2 alongside
+# SaveSystem.cs.j2, AIState.cs.j2 alongside AI.cs.j2, ...) — write_files picks
+# exactly ONE of these per variant (see e.g. ControllerPipeline.write_files).
+# Scanning every file in the folder unconditionally, the way the sibling-class
+# case correctly does, falsely puts a pointer-only method like ApplyHighlight
+# (PointerController.cs.j2) "in scope" for a multi_mode-variant fragment,
+# which never sees that file at all. Confirmed live, PlayerController.cs(565)
+# CS0103 that survived `bind_authored_code` entirely because the scan folded
+# PointerController.cs.j2's members into scope for every variant. Keyed by the
+# directory's own name (== the micro `kind`) since this table only needs to
+# name the one directory it's true for.
+_VARIANT_ALTERNATIVE_TEMPLATES: dict[str, dict[str, str]] = {
+    "controller": {
+        "default":    "Controller.cs.j2",
+        "pointer":    "PointerController.cs.j2",
+        "multi_mode": "ControllerMultiMode.cs.j2",
+    },
+}
+
+
 @lru_cache(maxsize=64)
 def _template_files(template_dir: str, variant: str = "",
                     facts: "tuple[tuple[str, str], ...]" = ()
@@ -3032,8 +3237,13 @@ def _template_files(template_dir: str, variant: str = "",
     root = Path(template_dir)
     if not root.is_dir():
         return ()
+    alt = _VARIANT_ALTERNATIVE_TEMPLATES.get(root.name)
+    selected = alt.get(variant, alt.get("default")) if alt else None
+    alt_filenames = set(alt.values()) if alt else set()
     out: list[tuple[str, str, str]] = []
     for p in sorted(root.glob("*.cs.j2")):
+        if p.name in alt_filenames and p.name != selected:
+            continue
         raw = p.read_text(encoding="utf-8", errors="replace")
         live = _drop_dead_variant_branches(raw, variant, facts)
         out.append((p.name,
@@ -3085,12 +3295,40 @@ _INJECTION_MARKERS = ("extra_methods", "extra_fields", "extra_usings",
                       "inject.")
 
 
+def _has_injection_marker(raw: str) -> bool:
+    """True if `raw` genuinely RENDERS one of `_INJECTION_MARKERS` — i.e. the
+    marker text appears outside a `//`/`///`/`/* */` comment.
+
+    A plain substring search over `raw` self-defeats the moment a file's OWN
+    comment explains that it does NOT render extras: DialogTrigger.cs.j2 says
+    so in exactly those words ("This class is intentionally NOT an extras
+    injection point: extra_fields/extra_methods/extra_usings render only into
+    DialogPlayer.cs.j2..."), which made the substring search treat it as an
+    injection site anyway. `template_scope_members` then folded DialogTrigger's
+    own `_player` field into scope for DialogPlayer's authored code — confirmed
+    live, NpcDialogPlayer.cs(150) CS0103, `_player` does not exist on that
+    class at all. `_code_mask` already answers "is this position code, not a
+    comment or string?" for exactly this reason.
+    """
+    mask = _code_mask(raw)
+    for mark in _INJECTION_MARKERS:
+        start = 0
+        while True:
+            idx = raw.find(mark, start)
+            if idx < 0:
+                break
+            if mask[idx]:
+                return True
+            start = idx + 1
+    return False
+
+
 @lru_cache(maxsize=64)
 def template_scope_members(template_dir: str, variant: str = "",
                            facts: "tuple[tuple[str, str], ...]" = ()) -> frozenset[str]:
     """Member names in scope for code injected into this micro's template."""
     injecting = [text for _name, text, raw in _template_files(template_dir, variant, facts)
-                 if any(mark in raw for mark in _INJECTION_MARKERS)]
+                 if _has_injection_marker(raw)]
     if not injecting:
         # No identifiable injection site — fall back to the folder-wide set
         # rather than claiming an empty scope, which would accuse everything.
@@ -3666,6 +3904,67 @@ def template_field_types(template_dir: str, variant: str = "",
     return seen
 
 
+# CS0200 — authored code assigns directly to a template-declared GET-ONLY,
+# expression-bodied property (`GearDown = true;`) instead of its backing
+# field. The property's own expression body names that field with complete
+# ground truth. Confirmed live, PlayerController.cs(554,555):
+# ControllerMultiMode.cs.j2 declares
+#     public bool  GearDown => _gearDown;
+# and the model, needing to SET gear-down state from an authored method,
+# assigned the read-only property itself. `find_unbound_identifiers` does not
+# catch this — `GearDown` genuinely IS a known, bound name; the defect is
+# that it isn't an assignable one, a check that pass never performs.
+_READONLY_PROPERTY_RE = re.compile(
+    r"^\s*(?:public|private|protected|internal)\s+[A-Za-z_][\w<>,\[\].?]*\s+"
+    r"(?P<name>[A-Za-z_]\w*)\s*=>\s*(?P<backing>[A-Za-z_]\w*)\s*;\s*$",
+    re.MULTILINE)
+# Bare (non-dotted — same-instance, implicit `this.`) simple assignment to a
+# name. Deliberately excludes `==`/`+=`/etc. and a dotted receiver: rewriting
+# `other.GearDown = x` would presume `_gearDown` is accessible off `other`,
+# which a private backing field never is.
+_ASSIGN_TO_NAME_RE = re.compile(
+    r"(?<!\.)\b(?P<name>[A-Za-z_]\w*)\b(?P<sp1>[ \t]*)=(?!=)(?P<sp2>[ \t]*)"
+    r"(?P<rhs>[^;=\s][^;]*;)")
+
+
+@lru_cache(maxsize=64)
+def template_readonly_property_backing(template_dir: str, variant: str = "",
+                                       facts: "tuple[tuple[str, str], ...]" = ()
+                                       ) -> "dict[str, str]":
+    """`{PropertyName: backing_field_name}` for every get-only, expression-
+    bodied property (`public T Name => _field;`) the template declares."""
+    out: dict[str, str] = {}
+    for line in _template_text(template_dir, variant, facts).splitlines():
+        m = _READONLY_PROPERTY_RE.match(line)
+        if m:
+            out[m.group("name")] = m.group("backing")
+    return out
+
+
+def _repair_readonly_property_assign(text: str, *, backing: "dict[str, str]") -> str:
+    """Rewrite `<Prop> = v;` -> `<backing> = v;` for a known get-only property."""
+    if not text or not backing:
+        return text
+    mask = _code_mask(text)
+    changed = False
+
+    def repl(m: "re.Match") -> str:
+        nonlocal changed
+        if not mask[m.start()]:
+            return m.group(0)
+        field = backing.get(m.group("name"))
+        if field is None:
+            return m.group(0)
+        changed = True
+        return f"{field}{m.group('sp1')}={m.group('sp2')}{m.group('rhs')}"
+
+    new = _ASSIGN_TO_NAME_RE.sub(repl, text)
+    if changed:
+        console.print("  [magenta]FIX[/]  rewrote assignment to a get-only "
+                      "template property as its backing field (CS0200)")
+    return new
+
+
 def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                              arities: "dict[str, tuple[int, int]] | None" = None,
                              params: "dict[str, tuple[str, ...]] | None" = None,
@@ -4018,6 +4317,18 @@ def find_field_type_misuse(text: str, *, field_types: "dict[str, str]",
         if ftype is None:
             continue
         base = ftype.lower()
+        if base == "object":
+            # `object` has no members beyond `_MEMBER_ALWAYS_OK` (already
+            # excluded above) — unlike a primitive, not even `CompareTo`.
+            # Confirmed live, StealthAudioManager.cs(20,38): a cross-script
+            # reference the LLM could not type (no sanctioned pattern exists
+            # for one custom script to reference ANOTHER — see
+            # docs/model-pipeline-architecture.md) typed as `object` and then
+            # called real-sounding methods (`RetractGear`, `OnEscortComplete`)
+            # that can never exist on it. CS1061 every time, unconditionally.
+            flag(m.start("recv"), f"{recv}.{member}() -- {recv} is object, "
+                                  f"which has no such member")
+            continue
         if base in _NUMERIC_BOOL_TYPES:
             if member != "CompareTo":
                 flag(m.start("recv"), f"{recv}.{member}() -- {recv} is "
@@ -4304,6 +4615,7 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     arities = template_method_arities(tdir, var, facts)
     params  = template_method_params(tdir, var, facts)
     field_types = template_field_types(tdir, var, facts)
+    readonly_backing = template_readonly_property_backing(tdir, var, facts)
     # `find_unbound_identifiers`'s argument-TYPE check (its own `field_types`
     # param) additionally needs the SCHEMA'S OWN authored fields — a field the
     # LLM itself declared (`extra_fields`) is USED, never declared, inside the
@@ -4356,13 +4668,14 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             before = getattr(schema, key, "") or ""
             if not before:
                 continue
-            after, names = lint_unbound_identifiers(before, known=known,
+            fixed_ro = _repair_readonly_property_assign(before, backing=readonly_backing)
+            after, names = lint_unbound_identifiers(fixed_ro, known=known,
                                                     arities=live_arities,
                                                     params=params,
                                                     field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types)
             names = names | names2
-            if names:
+            if names or fixed_ro != before:
                 setattr(schema, key, after)
                 flagged |= names
                 changed = True
@@ -4371,14 +4684,15 @@ def bind_authored_code(schema, template_dir) -> list[str]:
         for m in methods:
             body = getattr(m, "body", "") or ""
             sig = getattr(m, "signature", "") or ""
+            fixed_ro = _repair_readonly_property_assign(body, backing=readonly_backing)
             after, names = lint_unbound_identifiers(
-                body, known=known | _signature_param_names(sig),
+                fixed_ro, known=known | _signature_param_names(sig),
                 arities=live_arities, params=params, signature=sig,
                 field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types,
                                                    signature=sig)
             names = names | names2
-            if names:
+            if names or fixed_ro != body:
                 flagged |= names
                 changed = True
                 m = m.model_copy(update={"body": after}) if hasattr(m, "model_copy") else m
@@ -4564,6 +4878,23 @@ to copy verbatim:
   "extra_methods": [
     {{"signature": "private bool IsReady()", "body": "return _cooldown <= 0f;"}}
   ]
+
+────────── SCHEMA EXTENSIONS (only if the structural + extra_* fields above genuinely aren't enough) ──────────
+If you need a field or method that doesn't fit anywhere above, put it inside
+extensions instead of adding a key that doesn't exist on the schema:
+
+  extensions_fields:   new [SerializeField] declarations, same shape as extra_fields
+  extensions_methods:  new helper methods, same shape as extra_methods
+  extensions_metadata: a flat {{"key": "value"}} object of NON-CODE notes (design
+                       rationale, a tuning value you couldn't fit elsewhere) —
+                       never C#, never rendered into the script
+
+extensions is sandboxed, not lint-hardened the way extra_* is — a name that
+collides with another field anywhere in the schema is dropped rather than
+repaired, so give extensions_fields/extensions_methods names that don't
+already appear above. Most prompts need none of this; leave all three empty
+unless the brief genuinely needs a field the schema has no other place for.
+  "extensions_fields": [], "extensions_methods": [], "extensions_metadata": {{}}
 """
 
 
