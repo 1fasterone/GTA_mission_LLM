@@ -199,6 +199,7 @@ from .micro.code_fields import lint_underscore_alias_references
 from .micro.code_fields import required_usings_for
 from .micro.code_fields import jagged_rank_corrections
 from .micro.code_fields import correct_qualified_type
+from .micro.code_fields import lint_invalid_member_uses
 from .micro.code_fields import (template_method_params,
                                 template_field_types)
 from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
@@ -1372,12 +1373,23 @@ def _bind_script(script) -> list[str]:
     if built:
         known |= {b.split()[-1] for b in built}
 
+    # Invented members on real engine types (CS0117/CS1061). A custom script
+    # has no template to check against, but its own extra_fields declare the
+    # types, which is all this needs. No surface built -> no opinion.
+    from .unity_api_surface import default_api_surface
+    api_surface = default_api_surface()
+    declared_types = {str(getattr(f, "name", "") or ""): str(getattr(f, "type", "") or "")
+                      for f in (getattr(script, "extra_fields", None) or [])}
+
     flagged: set[str] = set()
     for key in _FRAGMENT_KEYS:
         before = getattr(script, key, "") or ""
         if not before:
             continue
         after, names = lint_unbound_identifiers(before, known=known)
+        after, mnames = lint_invalid_member_uses(
+            after, field_types=declared_types, surface=api_surface)
+        names |= mnames
         if names:
             setattr(script, key, after)
             flagged |= names
@@ -1388,6 +1400,9 @@ def _bind_script(script) -> list[str]:
         sig = getattr(m, "signature", "") or ""
         after, names = lint_unbound_identifiers(
             before, known=known | _signature_param_names(sig), signature=sig)
+        after, mnames = lint_invalid_member_uses(
+            after, field_types=declared_types, surface=api_surface)
+        names |= mnames
         if names:
             m.body = after
             flagged |= names

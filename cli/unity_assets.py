@@ -6,7 +6,9 @@ import shutil
 from pathlib import Path
 
 import typer
+from rich.panel import Panel
 from rich.table import Table
+from typing import Optional
 
 from .common import app, console, _cfg
 
@@ -276,3 +278,55 @@ def sketchfab_fetch(
     console.print(f"[green]Written[/] → {entry['relpath']} "
                   f"(license={entry['license']}, author={entry['author']!r}) "
                   f"→ {Path(lookups) / 'unity' / 'sketchfab_catalog.json'}")
+
+
+@app.command("unity-api-surface")
+def unity_api_surface(
+    managed_dir: Optional[Path] = typer.Option(
+        None, "--managed-dir", "-m",
+        help="Editor/Data/Managed/UnityEngine of an installed Unity. "
+             "Default: auto-detect the newest install."),
+    lookups_dir: str = typer.Option(
+        "lookups", "--lookups-dir", help="Where to freeze api_surface.json."),
+) -> None:
+    """[bold]Freeze the Unity API member surface[/] — ground truth for
+    "does this member exist on this type".
+
+    \b
+    Reads the installed Editor's own XML documentation (one file beside every
+    managed module DLL) and writes lookups/unity/api_surface.json. That frozen
+    artifact is what the authored-code linters read; nothing in Steps 4-7 ever
+    touches a Unity install.
+
+    Rebuild it after upgrading the Editor — the file stamps the version it came
+    from. Without it the member check simply abstains, so a missing artifact
+    degrades to the previous behaviour rather than breaking a build.
+
+      python main.py unity-api-surface
+      python main.py unity-api-surface --managed-dir "C:/.../Managed/UnityEngine"
+    """
+    from src.unity_api_surface import (build_surface, discover_managed_dir,
+                                       write_api_surface)
+
+    d = Path(managed_dir) if managed_dir else discover_managed_dir()
+    if d is None or not Path(d).is_dir():
+        console.print(
+            "[red]No Unity managed directory found.[/] Install a Unity Editor, "
+            "or pass --managed-dir pointing at "
+            "<Editor>/Data/Managed/UnityEngine.")
+        raise typer.Exit(2)
+
+    version = next((p for p in Path(d).parts if p and p[0].isdigit()), "")
+    console.print(f"  [dim]Reading:[/] {d}")
+    surface = build_surface(d)
+    if not surface:
+        console.print("[red]No documented types found.[/] That directory has no "
+                      "UnityEngine*.xml documentation beside its DLLs.")
+        raise typer.Exit(2)
+
+    path = write_api_surface(surface, lookups_dir, unity_version=version)
+    members = sum(len(v) for v in surface.values())
+    console.print(Panel(
+        f"[bold green]Wrote[/] {path}\n"
+        f"{len(surface)} types, {members} members, Unity {version or 'unknown'}",
+        style="green"))

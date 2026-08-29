@@ -5262,6 +5262,72 @@ def lint_field_type_misuse(text: str, *, field_types: "dict[str, str]",
     return _neutralize_flagged_lines(text, bad, reason="type-incompatible use(s)")
 
 
+# ── Invented members on real Unity types (CS0117 / CS1061) ───────────────────
+#
+# The pass above proves a field is not used as the wrong KIND of thing; this
+# one asks the next question a compiler asks: does the member actually exist on
+# that type? Live in one build:
+#
+#     CS0117  'Material' does not contain a definition for 'mainTextureMode'
+#     CS1061  'Touchscreen' does not contain a definition for ...
+#
+# The GTA backend has had this check since its own corpus study
+# (`lint_member_references` against `lookups/gta_api_surface.json`); Unity had
+# no equivalent because nothing supplied the surface. `src/unity_api_surface.py`
+# now does, extracted from the installed Editor's own XML documentation.
+#
+# Unlike the GTA checker, which must INFER a variable's type from declaration
+# patterns, this one is keyed off types the schema already DECLARES — the same
+# `field_types` map `find_field_type_misuse` above consumes. A field whose type
+# is unknown, ambiguous, or too thinly documented to judge is skipped outright:
+# the pass abstains rather than guesses, so a missing surface changes nothing.
+_MEMBER_ACCESS_TAIL = r"\s*\.\s*([A-Za-z_]\w*)"
+
+
+def find_invalid_member_uses(text: str, *, field_types: "dict[str, str]",
+                             surface: "dict | None") -> "dict[int, set[str]]":
+    """`{line_index: {"Type.member", ...}}` for members that do not exist on
+    the declared type of the field they are reached through.
+
+    `surface=None` (never built) or an unknown/ambiguous type is a no-op.
+    """
+    if not text or not field_types or not surface:
+        return {}
+    from ..unity_api_surface import members_for, resolve_type
+
+    bad: "dict[int, set[str]]" = {}
+    for fname, declared in field_types.items():
+        if not fname or not declared:
+            continue
+        fqn = resolve_type(str(declared), surface)
+        if not fqn:
+            continue                       # unknown or ambiguous type — no opinion
+        valid = members_for(fqn, surface)
+        if valid is None:
+            continue                       # extraction too thin to judge against
+        pattern = re.compile(r"(?<![\w.])" + re.escape(fname) + _MEMBER_ACCESS_TAIL)
+        for m in pattern.finditer(text):
+            member = m.group(1)
+            if member in valid:
+                continue
+            line = text.count("\n", 0, m.start(1))
+            bad.setdefault(line, set()).add(f"{fqn.rsplit('.', 1)[-1]}.{member}")
+    return bad
+
+
+def lint_invalid_member_uses(text: str, *, field_types: "dict[str, str]",
+                             surface: "dict | None"
+                             ) -> "tuple[str, set[str]]":
+    """Neutralize statements reaching for a member that does not exist on the
+    field's declared type. Same three-way repair as every other `lint_*` pass
+    here — never guesses a replacement member, because the right one is not
+    recoverable from a wrong one."""
+    bad = find_invalid_member_uses(text, field_types=field_types, surface=surface)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(
+        text, bad, reason="member(s) that do not exist on the declared type")
+
 def _body_is_live(body: str) -> bool:
     """True if a method body still has a statement (not only AUDIT comments)."""
     return any(ln.strip() and not ln.lstrip().startswith("//")
@@ -5510,6 +5576,11 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     field_types = template_field_types(tdir, var, facts)
     readonly_backing = template_readonly_property_backing(tdir, var, facts)
     readonly_names = template_readonly_property_names(tdir, var, facts)
+    # Invented members on real engine types (CS0117/CS1061) — the one
+    # question none of the passes above ask. None when the surface has
+    # never been built, which every consumer treats as no opinion.
+    from ..unity_api_surface import default_api_surface
+    api_surface = default_api_surface()
     # `find_unbound_identifiers`'s argument-TYPE check (its own `field_types`
     # param) additionally needs the SCHEMA'S OWN authored fields — a field the
     # LLM itself declared (`extra_fields`) is USED, never declared, inside the
@@ -5570,7 +5641,9 @@ def bind_authored_code(schema, template_dir) -> list[str]:
                                                     params=params,
                                                     field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types)
-            names = names | names2 | names3
+            after, names4 = lint_invalid_member_uses(
+                after, field_types=field_types, surface=api_surface)
+            names = names | names2 | names3 | names4
             if names or fixed_ro != before:
                 setattr(schema, key, after)
                 flagged |= names
@@ -5589,7 +5662,9 @@ def bind_authored_code(schema, template_dir) -> list[str]:
                 field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types,
                                                    signature=sig)
-            names = names | names2 | names3
+            after, names4 = lint_invalid_member_uses(
+                after, field_types=field_types, surface=api_surface)
+            names = names | names2 | names3 | names4
             if names or fixed_ro != body:
                 flagged |= names
                 changed = True
