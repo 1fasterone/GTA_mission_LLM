@@ -3394,6 +3394,21 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Assets/{folder}"), folder=True
             )
 
+        # ── Active build target (mobile only) ────────────────────────────────
+        # The Android PLAYER settings written above say how this builds FOR
+        # Android; they do not SELECT Android. The active target lives in
+        # Library/EditorUserBuildSettings.asset, a binary artifact Unity owns,
+        # so it cannot be emitted next to ProjectSettings — a generated mobile
+        # project opened on whatever the editor last used (Standalone) and read
+        # as a desktop game. An editor script is the supported way to set it.
+        if schema.platform == "mobile":
+            bt_path = f"{pn}/Assets/Editor/SetupBuildTarget.cs"
+            files[bt_path] = self._render("editor/SetupBuildTarget.cs.j2", base_ctx)
+            files[f"{bt_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Editor/SetupBuildTarget"))
+            files[f"{pn}/Assets/Editor.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Editor"), folder=True)
+
         # ── Editor setup script (URP / HDRP only) ────────────────────────────
         if schema.render_pipeline in ("URP", "HDRP"):
             editor_tpl = "editor/SetupRenderPipeline.cs.j2"

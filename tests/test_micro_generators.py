@@ -1731,3 +1731,42 @@ class TestMisqualifiedTypes:
 
     def test_an_unknown_qualified_type_is_left_alone(self):
         assert self._f("MyNs.Thing") == ("MyNs.Thing", "")
+
+
+class TestRunawayBodyCapLeavesParseableCode:
+    """A line-count cap knows nothing about brace depth.
+
+    Live regression (Gridfall/GridLogic): the model degenerated into repeating
+    one `for` block, the 60-line cap landed inside the last copy, and the file
+    ended mid-block — CS1022, and the syntax gate then rejected the ENTIRE
+    build. One runaway method cost every other script in it.
+    """
+
+    def _cap(self, text, what="public void ApplyGravity()"):
+        from src.micro.code_fields import _cap_lines
+        return _cap_lines(text, what=what)
+
+    def _depth(self, text):
+        from src.micro.code_fields import _unclosed_braces
+        return _unclosed_braces(text)
+
+    def test_a_cut_inside_a_block_is_closed(self):
+        body = "\n".join(["for (int r = 0; r < n; r++) {\n    cells[i] = 2;\n}"] * 30)
+        assert self._depth("\n".join(body.splitlines()[:59])) > 0   # naive slice breaks
+        assert self._depth(self._cap(body)) == 0                     # cap does not
+
+    def test_a_short_body_is_untouched(self):
+        assert self._cap("int a = 0;") == "int a = 0;"
+
+    def test_the_truncation_notice_survives(self):
+        body = "\n".join(["x();"] * 200)
+        assert "truncated at" in self._cap(body)
+
+    def test_braces_in_strings_and_comments_are_not_counted(self):
+        assert self._depth('var s = "{";') == 0
+        assert self._depth("// {") == 0
+        assert self._depth("/* { */") == 0
+        assert self._depth("var c = '{';") == 0
+
+    def test_escaped_quote_does_not_swallow_the_rest(self):
+        assert self._depth('var s = "he said \\"hi\\""; {') == 1

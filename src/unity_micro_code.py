@@ -1101,8 +1101,38 @@ def _script_contract(script, siblings: Sequence[Any] = (),
     return "\n".join(lines)
 
 
+def _brief_job_for(script, user_prompt: str) -> str:
+    """The brief's OWN description of this script, in full.
+
+    `script.description` is a twice-shortened echo by the time it reaches here:
+    the Step-3 checklist showed a capped slice of the brief, and Step 3 then
+    wrote its own paraphrase of that. Meanwhile the "ORIGINAL BRIEF" block below
+    is a blind head-slice of the prompt, and a brief states its SCRIPTS near the
+    END — so on the Gridfall brief the author saw the title and part of the
+    style guide and never the section describing the mechanic it was told to
+    implement. It wrote nothing, and the built game had no game in it.
+
+    Returns "" when the brief declares no such script (a vibe prompt), leaving
+    the schema's description as the only spec, exactly as before.
+    """
+    try:
+        from .unity_concept_scripts import extract_named_scripts
+        name = str(getattr(script, "name", "") or "").strip().lower()
+        for s in extract_named_scripts(user_prompt or ""):
+            if str(s.get("name", "")).strip().lower() == name:
+                text = " ".join(str(s.get("description") or "").split())
+                # The bullet's own title/description separator survives the
+                # parse, and "its job: - owns the grid" reads as a fragment.
+                return text.lstrip("-–— ").strip()
+    except Exception:                      # noqa: BLE001 — never block authoring
+        pass
+    return ""
+
+
 def _script_user_prompt(script, *, concept: str, user_prompt: str,
                         keys: tuple[str, ...], contract: str) -> str:
+    brief_job = _brief_job_for(script, user_prompt)
+    job = brief_job or script.description
     return f"""\
 PROJECT CONCEPT
 {concept.strip()[:1800]}
@@ -1112,7 +1142,7 @@ ORIGINAL BRIEF
 
 THE SCRIPT YOU ARE WRITING
   class name:  {script.name}
-  its job:     {script.description}
+  its job:     {job}
   attached to: {getattr(script, "attach_to", "systems")}
 {contract}
 
