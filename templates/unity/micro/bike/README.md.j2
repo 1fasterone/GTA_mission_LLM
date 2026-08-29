@@ -1,0 +1,36 @@
+# {{ s.name }} — Unity Mountable Bike
+
+**Variant:** `{{ variant }}`
+**Max speed:** `{{ "%.1f"|format(s.max_speed) }}`
+**Mount key:** `{{ s.mount_key }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to the bike GameObject — needs a
+   `Rigidbody2D` (added automatically via `[RequireComponent]`) and a
+   `Collider2D` so it sits on the ground/ramps.
+3. Tag your player `{{ s.target_tag }}`. Its own controller must expose a
+   `SetMovementLocked(bool)` method (Controller.cs.j2's `2d_platformer`/
+   `2d_fighting` variants already do) — this component calls it via
+   `SendMessage`, so no compile-time reference is needed either direction.
+
+## Behaviour
+
+Walk within **{{ "%.1f"|format(s.mount_range) }}m** and press **{{ s.mount_key }}**
+to mount: the rider is parented onto the bike (its own `Rigidbody2D` goes
+kinematic and its controller's movement locks) and horizontal input now
+drives the bike itself, up to **{{ "%.1f"|format(s.max_speed) }} m/s**.
+{% if s.jump_impulse > 0 %}
+Jump applies a **{{ "%.1f"|format(s.jump_impulse) }}** impulse while
+grounded — enough for a hop, or to clear a gap after a ramp launch.
+{% endif %}
+Press **{{ s.mount_key }}** again to dismount: the rider unparents, its
+controller unlocks, and the bike sits still until mounted again.
+
+A ramp (an ordinary prop entity whose name/model_hint mentions "ramp" — see
+`unity_pipeline.py`'s `_apply_ramp_tilts`) needs no special handling here:
+ordinary 2D physics launches a fast-moving bike off an angled collider on
+its own.

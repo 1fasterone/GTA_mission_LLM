@@ -35,7 +35,7 @@ NavBackend = Literal["navmesh", "kinematic", "transform_step", "kinematic_2d"]
 # Sweep, Bail) while the generator emits real code from a fixed, engine-valid set
 # of behaviours. A name it invents is variety; the role it maps to is what makes
 # that variety compile and act.
-AIRole = Literal["idle", "patrol", "alert", "chase", "attack", "flee", "dead"]
+AIRole = Literal["idle", "patrol", "alert", "chase", "attack", "flee", "dead", "hurt"]
 _VALID_ROLES = frozenset(AIRole.__args__)   # type: ignore[attr-defined]
 
 # Name -> role. Ordered longest-first within each role so "retreat" cannot be
@@ -64,6 +64,8 @@ _ROLE_KEYWORDS: tuple[tuple[str, str], ...] = (
     ("run", "flee"), ("scatter", "flee"), ("cover", "flee"),
     ("dead", "dead"), ("die", "dead"), ("death", "dead"),
     ("destroy", "dead"), ("disable", "dead"), ("expire", "dead"),
+    ("stagger", "hurt"), ("flinch", "hurt"), ("stunned", "hurt"),
+    ("stun", "hurt"), ("recoil", "hurt"), ("hurt", "hurt"), ("hit react", "hurt"),
     ("idle", "idle"), ("wait", "idle"), ("rest", "idle"),
     ("stand", "idle"), ("hold", "idle"), ("dormant", "idle"),
 )
@@ -82,7 +84,7 @@ _KEYWORD_DISPLAY: dict[str, str] = {
 # the build. The `when` vocabulary is the safe surface it gets instead.
 TransitionWhen = Literal[
     "target_detected", "target_lost", "in_attack_range",
-    "out_of_attack_range", "alert_elapsed", "always",
+    "out_of_attack_range", "alert_elapsed", "always", "took_damage",
 ]
 _VALID_WHEN = frozenset(TransitionWhen.__args__)   # type: ignore[attr-defined]
 
@@ -91,8 +93,15 @@ _WHEN_EXPR: dict[str, str] = {
     "target_lost":         "_target == null || dist > detectionRadius * 1.5f",
     "in_attack_range":     "_target != null && dist < attackRadius",
     "out_of_attack_range": "_target == null || dist > attackRadius",
+    # "Time in the current state has elapsed" — generic despite the name (any
+    # state can use it as a timeout exit, not only literal "alert" states; a
+    # "hurt" stagger state reuses it the same way).
     "alert_elapsed":       "_stateTime >= alertSeconds",
     "always":              "true",
+    # Edge-triggered: true for exactly the one Update() after OnHurt() fires
+    # (Health.cs.j2's TakeDamage calls it via SendMessage), then AI.cs.j2's
+    # Update() clears it right after CheckTransitions evaluates — see AI.cs.j2.
+    "took_damage":         "_tookDamage",
 }
 
 def _state_ident(s: str, fallback: str = "State") -> str:
@@ -218,12 +227,19 @@ the generator emits code for:
   attack  — strike while in range
   flee    — move away from the target
   dead    — terminal; disables the behaviour
+  hurt    — brief stagger/flinch after taking damage; holds position, then
+            resumes chasing (needs a "took_damage" transition into it — see
+            below — or omit it entirely if the brief has no hit-react beat)
 A state whose role is omitted gets one inferred from its name.
 
 TRANSITIONS — the graph between those states. `when` MUST be one of these exact
 values; it is not free-form code:
   target_detected | target_lost | in_attack_range | out_of_attack_range
-  alert_elapsed   | always
+  alert_elapsed   | always      | took_damage
+took_damage fires for one frame whenever this AI's Health component takes
+damage (wired automatically, no field needed) — use it for transitions INTO a
+"hurt" state. alert_elapsed also works as a generic state-timeout for hurt's
+way back out (not just literal "alert" states).
 Omit transitions entirely to get a default graph built from the roles.
 
 BRIEF:
@@ -282,7 +298,7 @@ class AIPipeline(UnityMicroPipeline):
         "cohesionweight", "_flock", "_velocity",
         "waypointparentname", "slowdownangle", "rubberbandstrength",
         "_waypoints", "_wpindex",
-        "_statetime", "alertseconds",
+        "_statetime", "alertseconds", "_tookdamage",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.AI", "System.Collections.Generic"}
 
@@ -445,6 +461,7 @@ class AIPipeline(UnityMicroPipeline):
         chase  = first.get("chase")
         attack = first.get("attack")
         flee   = first.get("flee")
+        hurt   = first.get("hurt")
 
         out: list[AITransition] = []
         def add(a, b, when):
@@ -467,6 +484,15 @@ class AIPipeline(UnityMicroPipeline):
         # Reachability is reported by the caller rather than faked here.
         if flee:
             add(flee, home, "target_lost")
+        # A hurt/stagger state DOES have an honest sensor (Health.cs.j2's
+        # TakeDamage calls OnHurt() via SendMessage — see AI.cs.j2) — any state
+        # that can plausibly be hit interrupts into it, and it times out back to
+        # chase (or home, if there's no chase state) via the same "elapsed"
+        # timer alert uses.
+        if hurt:
+            for src in (home, alert, chase, attack):
+                add(src, hurt, "took_damage")
+            add(hurt, chase or home, "alert_elapsed")
         return out
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

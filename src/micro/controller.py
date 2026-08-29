@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -21,6 +22,11 @@ ControllerVariant = Literal[
     "first_person", "third_person", "top_down",
     # 2D
     "2d_platformer", "2d_topdown",
+    # 2D side-scrolling brawler — 2d_platformer's Rigidbody2D movement base
+    # (side-scroll run + jump) plus the fighting ability set below, with
+    # Physics2D hit-detection (see Controller.cs.j2's variant.startswith("2d_")
+    # branches on every OverlapSphere call site).
+    "2d_fighting",
     # 2.5D — real 3D CharacterController + models, lateral-plane-locked input
     "platformer_2_5d",
     # Vehicles
@@ -113,7 +119,7 @@ Ability = Literal[
     # shooting
     "shoot", "aim_down_sights", "reload", "cycle_weapon", "throw_grenade", "melee_attack",
     # fighting / brawler
-    "primary_attack", "secondary_attack", "block", "dodge", "grab",
+    "primary_attack", "secondary_attack", "block", "dodge", "grab", "throw",
     # interaction
     "interact", "use_item", "open_inventory", "open_map", "pause",
     # vehicle
@@ -260,6 +266,10 @@ class ControllerSchema(BaseModel):
     dodge_force:      float = 12.0
     dodge_cooldown:   float = 1.0
     dodge_i_frames:   float = 0.15  # invincibility window in seconds
+    throw_damage:     float = 20.0
+    throw_range:      float = 1.8   # pickup-detection radius for a nearby "Throwable"
+    throw_force:      float = 12.0
+    throw_cooldown:   float = 0.6
 
     # ── Interaction params (interact ability) ──────────────────────────────────
     interact_range: float = 2.5
@@ -330,7 +340,11 @@ VARIANT OPTIONS:
   vehicle_car, vehicle_bike                   — WheelCollider rig
   flying, swimming                            — free 3D locomotion
   aircraft                                    — Rigidbody pitch/roll/yaw/throttle
-  fighting                                    — third_person movement + melee atoms
+  fighting                                    — third_person movement + melee atoms (3D)
+  2d_fighting                                 — 2D side-scrolling brawler: 2d_platformer's
+                                                Rigidbody2D run+jump plus the fighting atoms
+                                                below (Cuphead/beat-em-up style — pick this,
+                                                not "fighting", for a 2D brawler)
   multi_mode                                  — ONE player switching at runtime between
                                                 several of the modes above (e.g. on-foot +
                                                 a drivable car); only pick this when the
@@ -341,7 +355,10 @@ ABILITIES — choose any that match the game concept:
   LOCOMOTION: jump, double_jump, sprint, crouch, dash, wall_jump, glide, fly, ascend, descend, boost
   AIRCRAFT:   pitch, roll_plane, throttle
   SHOOTING:   shoot, aim_down_sights, reload, cycle_weapon, throw_grenade, melee_attack
-  FIGHTING:   primary_attack, secondary_attack, block, dodge, grab
+  FIGHTING:   primary_attack, secondary_attack, block, dodge, grab, throw
+    throw: pick up a nearby object tagged "Throwable" and launch it as a weapon
+    (crate/bottle/barrel-style thrown props) — works for both "fighting" and
+    "2d_fighting" variants.
   INTERACTION: interact, use_item, open_inventory, open_map, pause
   VEHICLE:    nitro, brake
 
@@ -362,6 +379,8 @@ SCHEMA FIELD GUIDE:
   secondary_damage / secondary_range / secondary_cooldown — "secondary_attack" (kick / heavy)
   block_reduction (0–1 fraction) — "block" ability
   dodge_force / dodge_cooldown / dodge_i_frames — "dodge" ability
+  throw_damage / throw_range / throw_force / throw_cooldown — "throw" ability
+    (throw_range is the pickup-detection radius for a nearby Throwable-tagged object)
   interact_range — "interact" ability sphere radius
   Aircraft keys (aircraft variant only): max_thrust / lift_coefficient / pitch_speed /
     roll_speed / yaw_speed / throttle_rate / stall_speed / max_air_speed
@@ -463,6 +482,32 @@ C# RULES for extra_* bodies:
   "fixed_update_extra": "", "extra_methods": []
 }}
 
+────────── FEW-SHOT: 2D side-scrolling brawler (Cuphead-style) ──────────
+{{
+  "name": "PlayerBrawlerController",
+  "variant": "2d_fighting",
+  "abilities": ["jump", "primary_attack", "secondary_attack", "throw"],
+  "move_speed": 5.5,
+  "sprint_speed": 5.5,
+  "jump_force": 9.0,
+  "primary_damage": 12.0,
+  "primary_range": 1.0,
+  "primary_cooldown": 0.25,
+  "secondary_damage": 22.0,
+  "secondary_range": 1.3,
+  "secondary_cooldown": 0.55,
+  "throw_damage": 20.0,
+  "throw_range": 1.8,
+  "throw_force": 12.0,
+  "throw_cooldown": 0.6,
+  "description": "2D side-scrolling brawler: light/heavy punch plus throwing crates and bottles at enemies.",
+  "input_backend": "input_system",
+  "camera_coupling": "standard",
+  "ground_check": "raycast",
+  "extra_usings": [], "extra_fields": [], "awake_extra": "", "update_extra": "",
+  "fixed_update_extra": "", "extra_methods": []
+}}
+
 ────────── FEW-SHOT: on-foot exploration with a drivable car ──────────
 {{
   "name": "PlayerController",
@@ -540,6 +585,10 @@ OUTPUT this JSON (omit no keys):
   "dodge_force": 12.0,
   "dodge_cooldown": 1.0,
   "dodge_i_frames": 0.15,
+  "throw_damage": 20.0,
+  "throw_range": 1.8,
+  "throw_force": 12.0,
+  "throw_cooldown": 0.6,
   "interact_range": 2.5,
   "modes": [],
   "default_mode": "",
@@ -603,6 +652,8 @@ class ControllerPipeline(UnityMicroPipeline):
         "blockreduction", "dodgeforce", "dodgecooldown", "dodgeiframes",
         "_primarycooldown", "_secondarycooldown", "_isblocking",
         "_isdodging", "_isinvincible", "_dodgecooldown", "_grabcooldown",
+        "throwdamage", "throwrange", "throwforce", "throwcooldown",
+        "_throwcooldown", "_carriedobject", "_facing",
         # interaction
         "interactrange", "_inventoryopen", "_mapopen", "_ispaused",
         # vehicle nitro/brake
@@ -672,6 +723,38 @@ class ControllerPipeline(UnityMicroPipeline):
         if variant == "multi_mode":
             schema = self._fix_multi_mode(schema)
 
+        # The LLM sometimes authors extra_*/extra_methods code that calls a
+        # fighting ability's own method/fields (TryThrow(), _throwCooldown, ...)
+        # without also adding that ability to `abilities`. The base harden()'s
+        # binding check (bind_authored_code, template_field_types) does a
+        # STATIC scan of Controller.cs.j2's source text — it finds
+        # `_throwCooldown` declared somewhere under the "throw" ability's own
+        # {% if %} block and treats it as a permanently known symbol, so it
+        # never flags the reference as unbound even when THIS schema's
+        # abilities list would never actually render that declaration.
+        # Confirmed live, StreetBeat2D: TryThrowObject() called
+        # TryThrow()/_carriedObject/_throwCooldown with "throw" absent from
+        # abilities — 4 x CS0103. Same "build, don't delete" philosophy as
+        # build_missing_fields (code_fields.py): the LLM's own code is
+        # evidence of real intent, so add the missing ability rather than
+        # neutralizing every reference to it.
+        _fighting_ability_signals: dict[str, tuple[str, ...]] = {
+            "throw":           ("trythrow", "_throwcooldown", "_carriedobject"),
+            "grab":            ("trygrab", "_grabcooldown"),
+            "primary_attack":  ("tryprimaryattack", "_primarycooldown"),
+            "secondary_attack": ("trysecondaryattack", "_secondarycooldown"),
+            "block":           ("_isblocking",),
+            "dodge":           ("dodgeroutine", "_isdodging", "_isinvincible"),
+        }
+        _authored_blob = "\n".join([
+            schema.awake_extra or "", schema.update_extra or "", schema.fixed_update_extra or "",
+        ] + [m.body or "" for m in schema.extra_methods]).lower()
+        for _ability, _signals in _fighting_ability_signals.items():
+            if _ability in schema.abilities:
+                continue
+            if any(re.search(rf"\b{re.escape(s)}\b", _authored_blob) for s in _signals):
+                schema.abilities.append(_ability)
+
         # fly binds Shift; drop sprint to avoid key conflict
         if "fly" in schema.abilities and "sprint" in schema.abilities:
             schema.abilities = [a for a in schema.abilities if a != "sprint"]
@@ -724,6 +807,10 @@ class ControllerPipeline(UnityMicroPipeline):
         schema.dodge_force       = max(0.0,  min(100.0,  schema.dodge_force))
         schema.dodge_cooldown    = max(0.1,  min(10.0,   schema.dodge_cooldown))
         schema.dodge_i_frames    = max(0.0,  min(1.0,    schema.dodge_i_frames))
+        schema.throw_damage      = max(0.0,  min(9999.0, schema.throw_damage))
+        schema.throw_range       = max(0.3,  min(10.0,   schema.throw_range))
+        schema.throw_force       = max(0.0,  min(100.0,  schema.throw_force))
+        schema.throw_cooldown    = max(0.05, min(5.0,    schema.throw_cooldown))
 
         schema.interact_range = max(0.1, min(20.0, schema.interact_range))
 
@@ -833,6 +920,18 @@ class ControllerPipeline(UnityMicroPipeline):
             input_dir.mkdir(parents=True, exist_ok=True)
             (input_dir / f"{schema.name}.inputactions").write_text(
                 env.get_template("InputActions.inputactions.j2").render(s=schema, variant=variant),
+                encoding="utf-8",
+            )
+            count += 1
+
+        if "throw" in schema.abilities:
+            # Shared, unparametrized helper for whatever gets thrown — see
+            # ThrownObject.cs.j2's own header comment for the (narrow, accepted)
+            # duplicate-class risk if a project ever composed two throw-capable
+            # controllers, which the current compose graph never does (one
+            # player controller per project).
+            (scripts_dir / "ThrownObject.cs").write_text(
+                env.get_template("ThrownObject.cs.j2").render(),
                 encoding="utf-8",
             )
             count += 1

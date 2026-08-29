@@ -640,6 +640,10 @@ WIRING_MICRO_KINDS: tuple[str, ...] = (
     # bar. Composed once per project from the mission's own objectives, so it
     # is a legitimate wiring target (rules↔objectives is how a step clears).
     "rules",
+    # sprite_animator — auto-composed for 2D projects (player + per-enemy-type,
+    # see unity_compose.py); a legitimate wiring target for the same reason
+    # animator is (e.g. a hurt/death trigger driving PlayAction).
+    "sprite_animator",
 )
 
 # Pairs unity_compose already wires with a named seam — declaring them again

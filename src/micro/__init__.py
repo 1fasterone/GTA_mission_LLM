@@ -20,6 +20,9 @@ from .health        import HealthPipeline,        HealthSchema
 from .model         import ModelPipeline
 from .statemachine  import StateMachinePipeline,  StateMachineSchema
 from .trigger       import TriggerPipeline,       TriggerSchema
+from .platform      import PlatformPipeline,      PlatformSchema
+from .bike          import BikePipeline,          BikeSchema
+from .sprite_animator import SpriteAnimatorPipeline, SpriteAnimatorSchema
 from .animator      import AnimatorPipeline,      AnimatorSchema
 from .npc_dialog    import NpcDialogPipeline,     NpcDialogSchema,   DialogLine
 from .vfx           import VfxPipeline,           VfxSchema
@@ -49,6 +52,9 @@ __all__ = [
     "HealthPipeline",       "HealthSchema",
     "StateMachinePipeline", "StateMachineSchema",
     "TriggerPipeline",      "TriggerSchema",
+    "PlatformPipeline",     "PlatformSchema",
+    "BikePipeline",         "BikeSchema",
+    "SpriteAnimatorPipeline", "SpriteAnimatorSchema",
     "AnimatorPipeline",     "AnimatorSchema",
     "NpcDialogPipeline",    "NpcDialogSchema",    "DialogLine",
     "VfxPipeline",          "VfxSchema",
@@ -86,6 +92,9 @@ REGISTRY: dict[str, type[Any]] = {
     "model":        ModelPipeline,
     "statemachine": StateMachinePipeline,
     "trigger":      TriggerPipeline,
+    "platform":     PlatformPipeline,
+    "bike":         BikePipeline,
+    "sprite_animator": SpriteAnimatorPipeline,
     "animator":     AnimatorPipeline,
     "npc_dialog":   NpcDialogPipeline,
     "vfx":          VfxPipeline,

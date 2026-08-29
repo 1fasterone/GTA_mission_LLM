@@ -11,7 +11,7 @@ from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, apply_extensions_safe_block,
-    UNITY_EXTRA_INSTRUCTIONS,
+    UNITY_EXTRA_INSTRUCTIONS, template_field_types,
 )
 
 
@@ -161,9 +161,18 @@ class SpawnerPipeline(UnityMicroPipeline):
 
         # hoist_field_inits: this generator's template renders awake_extra,
         # so a CS0236 initializer can be re-homed there instead of dropped.
+        # template_field_types: without it, the template's OWN fields (e.g.
+        # `private readonly List<GameObject> _alive`) are invisible to the
+        # misuse checks — only schema.extra_fields were ground truth before.
+        # Confirmed live (2026-08-28), EnemySpawner.cs(161): `_alive <
+        # maxAlive` (CS0019) went uncaught for exactly this reason — see
+        # _repair_collection_compared_as_scalar's own docstring. Same
+        # convention rules.py already uses for GameRules.cs's fields.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS,
-                        hoist_field_inits=True)
+                        hoist_field_inits=True,
+                        template_field_types=template_field_types(
+                            str(self.template_root), variant))
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         return schema
 

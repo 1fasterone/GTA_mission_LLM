@@ -484,7 +484,10 @@ class TestInputActions:
         assert "Gamepad" in scheme_names
 
     def test_mobile_adds_touch_scheme(self, gen, full_3d_schema):
-        full_3d_schema.platform = "Android"
+        # "mobile" is the real Platform literal. Assigning "Android" here used
+        # to pass only because assignment skips the field validator — a
+        # validated schema can never hold a store name (see normalise_platform).
+        full_3d_schema.platform = "mobile"
         files = gen.generate(full_3d_schema, {})
         ia_path = "FullProject/Assets/Settings/FullProjectInputActions.inputactions"
         data = json.loads(files[ia_path])
@@ -714,6 +717,45 @@ class TestCustomScripts:
         s = scene(files_custom, "CustomT", "MainMenu")
         assert "9000030" not in s
         assert "_CustomScripts" not in s
+
+    def test_rejects_body_left_unbalanced_by_a_later_sanitize_pass(self, gen):
+        """Confirmed live (2026-08-28): ObjectThrow.cs, CS1022 — an LLM's
+        update_extra was balanced going IN (lint_extensible's own
+        reject-on-surplus-brace check passed it), but came out with a
+        surplus `}` after the ~10 regex-rewrite _sanitize_* passes that run
+        between there and here, none of which had re-verified balance.
+        _reject_unbalanced_custom_bodies (the fix) must catch that and clear
+        the body rather than let a syntax error reach the generated file."""
+        from src.unity_schema import UnitySchema
+        from src.unity_generator import _reject_unbalanced_custom_bodies
+
+        script = UnityScript(
+            name="ObjectThrow", type="custom", description="d", attach_to="systems",
+            update_extra=(
+                "if (hit != null) {\n"
+                "    var objRb = held.GetComponent<Rigidbody2D>();\n"
+                "    if (objRb != null) {\n"
+                "    }\n"
+                "    held.transform.SetParent(null);\n"
+                "}\n"
+                "held = null;\n"
+                "}"   # the surplus closer — everything above this line is balanced on its own
+            ),
+        )
+        _reject_unbalanced_custom_bodies(script)
+        assert script.update_extra == ""
+
+    def test_balanced_body_passes_through_unchanged(self, gen):
+        from src.unity_generator import _reject_unbalanced_custom_bodies
+
+        script = UnityScript(
+            name="Fine", type="custom", description="d", attach_to="systems",
+            update_extra="if (x != null) { x.Do(); }",
+            extra_methods=[{"signature": "public void Lap()", "body": "count++;"}],
+        )
+        _reject_unbalanced_custom_bodies(script)
+        assert script.update_extra == "if (x != null) { x.Do(); }"
+        assert script.extra_methods[0].body == "count++;"
 
     def test_player_attach_falls_back_to_systems_without_player(self, gen):
         from src.unity_schema import UnitySchema
@@ -3324,3 +3366,43 @@ class TestEntityInstanceColliders:
                            path_points=[[0, 0, 0], [0, 0, 40]])])
             return gen.generate(schema, {})["ColT/Assets/Scripts/EntitySpawner.cs"]
         assert _build() == _build()
+
+
+class TestSignatureTypeStubs:
+    """A type named only in a method SIGNATURE still needs its stub.
+
+    Live regression (BlockWell/GridLogic): `GridPiece` appeared as a field type
+    and was stubbed; `GridCell` appeared only as the return type of
+    `RotateGrid` and was not, so the script shipped one CS0246.
+    """
+
+    class _M:
+        def __init__(self, sig): self.signature = sig
+
+    class _F:
+        def __init__(self, ty): self.type = ty
+
+    def _names(self, fields, methods):
+        from src.unity_generator import (_stub_type_names, _signature_type_names,
+                                         _TypeCarrier)
+        sig = [_TypeCarrier(t) for t in _signature_type_names(methods)]
+        return _stub_type_names(list(fields) + sig, frozenset())
+
+    def test_return_type_is_stubbed(self):
+        names = self._names(
+            [self._F("GridPiece")],
+            [self._M("private GridCell[,] RotateGrid(GridPiece piece)")])
+        assert "GridCell" in names and "GridPiece" in names
+
+    def test_parameter_type_is_stubbed(self):
+        assert "Tetromino" in self._names(
+            [], [self._M("public void Place(Tetromino piece)")])
+
+    def test_builtins_are_not_stubbed(self):
+        assert self._names([], [self._M("public bool Try(int x, float y)")]) == []
+
+    def test_multidim_array_suffix_is_stripped(self):
+        from src.unity_generator import _extract_base_type
+        # rstrip("[]") alone stopped at the comma and yielded "GridCell[,".
+        assert _extract_base_type("GridCell[,]") == "GridCell"
+        assert _extract_base_type("GridCell[,,]") == "GridCell"

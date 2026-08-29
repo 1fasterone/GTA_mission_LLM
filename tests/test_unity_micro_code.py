@@ -37,7 +37,8 @@ class FakeLLM:
         self.raises = raises
         self.calls: list[str] = []
 
-    def chat(self, *, system, user, temperature, thinking):  # noqa: ARG002
+    def chat(self, *, system, user, temperature, thinking,
+             max_tokens=None):  # noqa: ARG002
         if self.raises:
             raise RuntimeError("model offline")
         # Recover the kind from the prompt body the module builds.
@@ -587,7 +588,9 @@ def test_contract_states_event_arity():
     from src.unity_micro_code import _contract_for
     sub = type("S", (), {"kind": "objectives", "variant": "tracker",
                          "name": "MissionObjectives", "options": {}})()
-    assert "OnObjectiveComplete(1 arg)" in _contract_for(sub)
+    # The contract states the exact SIGNATURE now, not just the count:
+    # arity alone left every argument TYPE to be guessed.
+    assert "OnObjectiveComplete(string)" in _contract_for(sub)
 
 
 def test_contract_names_only_the_projects_own_tags():

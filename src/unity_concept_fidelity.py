@@ -378,13 +378,25 @@ def check_asset_fidelity(schema: Any,
     marble run is not a commit node.
 
     `ui:` paths are built to spec by EntitySpawner rather than matched, and are
-    never scored here.
+    never scored here. Neither is a `Models/Default/` path (unity_generator.py
+    `_RES_ROOT`): that tier is Tier B of unity_entity_asset_resolver.py's
+    chain, the curated animation-rigged pack a `player`/`npc`/`prop` kind
+    resolves to by ROLE rather than by name — it never claimed a semantic
+    match to the entity's own name in the first place (a brief calling its
+    hero "Operative" still needs the one rigged default player body, not a
+    Sketchfab search for "operative"), so judging it against the entity's
+    name vocabulary is grading a promise this tier never made. Confirmed live
+    (DeadReckoningProtocol): `Operative -> Models/Default/Player/Player` and
+    `Engineer -> Models/Default/Npc/Spectator` both flagged here alongside
+    genuine catalog-tier misses, mislabeling two correct, by-design
+    assignments as "Step 6 unity_entity_asset_resolver (catalog tier)"
+    defects.
     """
     gaps: list[Gap] = []
     by_name = {str(getattr(e, "name", "")): e
                for e in (getattr(schema, "entities", None) or [])}
     for name, path in sorted(entity_model_paths.items()):
-        if not path or path.startswith("ui:"):
+        if not path or path.startswith("ui:") or path.startswith("Models/Default/"):
             continue
         ent = by_name.get(name)
         want = {t for t in _ASSET_TOKEN_RE.findall(

@@ -68,16 +68,35 @@ public class {{ s.name }} : MonoBehaviour
     private bool _started;
 {% endif %}
 
+{% set _has_rate = variant in ("wave_spawner", "continuous_spawner", "trigger_spawner") %}
 {% if s.pooling == "pooled" %}
     private void Awake()
     {
         if (pool != null) pool.Prewarm({{ s.warmup_count }});
+{% if _has_rate %}
+        ApplyDifficulty();
+{% endif %}
 {{ inject.lifecycle(s.awake_extra) }}
     }
-{% elif s.awake_extra %}
+{% elif _has_rate or s.awake_extra %}
     private void Awake()
     {
+{% if _has_rate %}
+        ApplyDifficulty();
+{% endif %}
 {{ inject.lifecycle(s.awake_extra) }}
+    }
+{% endif %}
+{% if _has_rate %}
+
+    /// <summary>Scales spawn pacing by the main menu's difficulty selection
+    /// (PlayerPrefs "Difficulty": Easy | Medium | Hard).</summary>
+    private void ApplyDifficulty()
+    {
+        string diff = PlayerPrefs.GetString("Difficulty", "Medium");
+        spawnInterval *= diff == "Easy" ? 1.4f : diff == "Hard" ? 0.6f : 1f;
+        if (diff == "Hard") maxAlive = Mathf.CeilToInt(maxAlive * 1.5f);
+        else if (diff == "Easy") maxAlive = Mathf.Max(1, Mathf.FloorToInt(maxAlive * 0.7f));
     }
 {% endif %}
 

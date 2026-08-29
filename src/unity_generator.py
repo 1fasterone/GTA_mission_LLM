@@ -22,7 +22,8 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
-from .micro.code_fields import CodeField, lint_extensible, _code_mask
+from .micro.code_fields import (CodeField, lint_extensible, _code_mask,
+                                _code_brace_depth, _code_paren_depth)
 
 _log = logging.getLogger(__name__)
 
@@ -343,7 +344,11 @@ _DICT_RE = re.compile(r"^Dictionary<([^,]+),\s*(.+)>$")
 
 def _extract_base_type(type_str: str) -> str:
     """Strip generics/arrays to return the innermost concrete type name."""
-    t = type_str.strip().rstrip("[]").strip()
+    # A MULTI-dimensional suffix has commas in it — `GridCell[,]`. rstrip("[]")
+    # alone stops at the comma and returns "GridCell[," , a name that matches
+    # nothing and stubs nothing.
+    t = re.sub(r"(?:\s*\[[,\s]*\])+\s*$", "", type_str.strip()).strip()
+    t = t.rstrip("[]").strip()
     m = _DICT_RE.match(t)
     if m:
         return _extract_base_type(m.group(2))   # value type is more often custom
@@ -351,6 +356,44 @@ def _extract_base_type(type_str: str) -> str:
     if m:
         return _extract_base_type(m.group(1))
     return t.split("<")[0].strip()
+
+
+# `private GridCell[,] RotateGrid(GridPiece piece)` — the declared return type
+# and each parameter type. A type the author only ever names in a SIGNATURE was
+# invisible to the stub collector, which read `extra_fields` alone: hit live in
+# BlockWell's GridLogic, where `GridPiece` (a field type) got its stub and
+# `GridCell` (a return type) did not, so the script shipped one CS0246.
+_SIGNATURE_RE = re.compile(
+    r"^\s*(?:(?:public|private|protected|internal|static|virtual|override|async|sealed|new)\s+)*"
+    r"(?P<ret>[A-Za-z_][\w.]*(?:\s*<[^>]*>)?(?:\s*\[[,\s]*\])*)"
+    r"\s+[A-Za-z_]\w*\s*\((?P<args>[^)]*)\)"
+)
+
+
+class _TypeCarrier:
+    """Minimal `.type` holder so a signature-derived type can go
+    through the same filter `_stub_type_names` applies to fields."""
+    __slots__ = ("type",)
+
+    def __init__(self, ty: str) -> None:
+        self.type = ty
+
+
+def _signature_type_names(extra_methods: list) -> list[str]:
+    """Every type named in a method signature — the return type and each
+    parameter type, in source order."""
+    out: list[str] = []
+    for m in (extra_methods or []):
+        sig = str(getattr(m, "signature", "") or "")
+        hit = _SIGNATURE_RE.match(sig)
+        if not hit:
+            continue
+        out.append(hit.group("ret"))
+        for arg in (hit.group("args") or "").split(","):
+            parts = arg.strip().split()
+            if len(parts) >= 2:
+                out.append(" ".join(parts[:-1]))
+    return [t for t in out if t]
 
 
 def _stub_type_names(extra_fields: list,
@@ -1571,6 +1614,51 @@ def _sanitize_nullable_valuetype_access(script: UnityScript) -> None:
         m.body = _fix(m.body)
 
 
+def _reject_unbalanced_custom_bodies(script: UnityScript) -> None:
+    """Final safety net for custom (schema.scripts, type="custom") bodies —
+    the equivalent of code_fields.py's lint_extensible reject-on-surplus-
+    brace check (see its module comment: dropping a surplus `}` merges two
+    blocks that were meant to be separate, so REJECT rather than guess-repair),
+    but re-run AFTER every _sanitize_* pass above instead of only once before
+    them.
+
+    lint_extensible already runs first in the per-script loop this is called
+    from (`if s.type == "custom": lint_extensible(s, ...)`), so an LLM body
+    that was ALREADY unbalanced gets rejected there. Confirmed live
+    (2026-08-28, ObjectThrow.cs, CS1022): that first check passed — the LLM's
+    own text was balanced — but the body ended up with a surplus `}` anyway
+    after the ~10 regex-rewrite sanitize passes between here and there, none
+    of which re-verify brace balance afterward. A regex substitution that
+    trims/drops a matched span can change brace count as a side effect even
+    when that was never its intent. Clearing (not guessing) here is the
+    identical trade-off lint_extensible already made for the same reason —
+    a generic/incomplete custom script still builds; a poisoned one is
+    dropped and the syntax gate never sees it, instead of failing the whole
+    project days later in Unity.
+    """
+    def _check(body: str, where: str) -> str:
+        # Silent like every sibling _sanitize_* pass above (this file has no
+        # console/message-return channel of its own — unlike code_fields.py,
+        # whose reject-on-surplus-brace message this mirrors). Discoverable
+        # via this function's docstring, not a runtime print.
+        if not body:
+            return body
+        if _code_paren_depth(body) != 0 or _code_brace_depth(body) != 0:
+            return ""
+        return body
+
+    script.awake_extra        = _check(script.awake_extra,        "awake_extra")
+    script.update_extra       = _check(script.update_extra,       "update_extra")
+    script.fixed_update_extra = _check(script.fixed_update_extra, "fixed_update_extra")
+    for m in script.extra_methods:
+        # Body cleared, signature kept (not dropped whole): another body in
+        # this same script (awake_extra, update_extra, a sibling method) may
+        # already call this method by name — removing the definition entirely
+        # would trade one compile error for a new CS0103 elsewhere. An empty
+        # body is always valid C#, so this is the safe end-state either way.
+        m.body = _check(m.body, f"extra_methods[{m.signature}]")
+
+
 # ── Undeclared persisted scalars (auto-declare, don't strip) ──────────────────
 # Unlike the strip passes above (self-calls, condition reads — genuinely unsafe
 # to guess a fix for), a bare assignment target the LLM never gave a field
@@ -2119,7 +2207,12 @@ def _generate_input_actions(schema: UnitySchema, pn: str) -> str:
     gt     = schema.game_type
     is_2d  = gt in ("2D", "2.5D", "2d_topdown")
     is_vr  = gt == "VR"
-    mobile = schema.platform in ("Android", "iOS")
+    # `Platform` is the closed literal pc|mobile|console|webgl|all — never a
+    # store name. This read against ("Android", "iOS") could not fire on any
+    # VALIDATED schema, so the touch bindings below were unreachable in every
+    # real run; the one test covering it assigned `platform = "Android"` after
+    # construction, which skips the field validator (no validate_assignment).
+    mobile = schema.platform == "mobile"
 
     # ── Player map ────────────────────────────────────────────────────────────
     p_acts:  list[dict] = [act("Move", "Value", "Vector2", initial=True)]
@@ -2563,8 +2656,24 @@ class UnityProjectGenerator:
         # script name, custom or not. Confirmed live: MuseumMetaProgression.cs
         # got its own empty `class GossipHub {}` stub alongside the real
         # GossipHub.cs script — CS0101, "already contains a definition".
+        # Also every AUXILIARY class a composed micro's template declares. A
+        # micro emits more than its own class: the board micro's GameBoard.cs
+        # declares `Piece`, `Zone`, `CommandSpec`. Those were invisible here —
+        # `composed_units` carries each unit's own `class_name` and nothing
+        # else — so a custom script with a `Piece` field got its own empty stub
+        # beside the real one: CS0101. Live in PuzzleWell, twice in one build.
+        _micro_types: set[str] = set()
+        for _u in (composed_units or []):
+            try:
+                from .unity_micro_code import _template_dir_for
+                from .micro.code_fields import template_types
+                _tdir = _template_dir_for(_u)
+                if _tdir is not None:
+                    _micro_types |= set(template_types(str(_tdir)))
+            except Exception:              # noqa: BLE001 — never block codegen
+                continue
         _stub_known_types: frozenset[str] = _opaque_types | frozenset(
-            s.name for s in schema.scripts)
+            s.name for s in schema.scripts) | frozenset(_micro_types)
         for s in schema.scripts:
             if s.type == "custom":
                 # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra
@@ -2598,6 +2707,12 @@ class UnityProjectGenerator:
                 _strip_undeclared_foreach(s)
                 _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver
                 _sanitize_undeclared_condition_reads(s)   # bare if/while value read
+                # Must run LAST: a final brace/paren-balance check over the
+                # cumulative effect of every pass above (see its own
+                # docstring — lint_extensible's check at the top of this loop
+                # only catches an already-unbalanced LLM body, not one a
+                # later regex rewrite unbalances as a side effect).
+                _reject_unbalanced_custom_bodies(s)
                 # A custom script can only attach to the Player if one exists.
                 if s.attach_to == "player" and not any(
                         x.type == "player" for x in schema.scripts):
@@ -3064,6 +3179,11 @@ class UnityProjectGenerator:
             _make_guid(f"{pn}/Assets/Scenes"), folder=True
         )
 
+        # A type stubbed for ONE custom script must not be stubbed again for
+        # the next: two scripts naming the same invented type emitted two
+        # definitions of it (CS0101). _generate_script runs once per script, so
+        # the accumulator has to outlive a single call.
+        self._stubbed_types: set[str] = set()
         for script in schema.scripts:
             script_content, script_path = self._generate_script(
                 schema, script, base_ctx, _stub_known_types)
@@ -3689,10 +3809,27 @@ class UnityProjectGenerator:
         # invented that aren't standard Unity/C# types.  Without this, references
         # like List<BountyContract> cause CS0246 on first open in Unity.
         stub_classes = ""
-        if script.type == "custom" and script.extra_fields:
-            stubs = _collect_custom_type_stubs(script.extra_fields, known_types)
-            if stubs:
-                stub_classes = "\n".join(stubs) + "\n"
+        if script.type == "custom":
+            # Method SIGNATURES name types too. Reading extra_fields alone
+            # left a type used only as a return type or a parameter
+            # unstubbed: live in BlockWell's GridLogic, `GridPiece` (a
+            # field) was stubbed and `GridCell` (the return type of
+            # RotateGrid) was not — one CS0246 on first open.
+            sig_types = [_TypeCarrier(ty) for ty in _signature_type_names(
+                getattr(script, "extra_methods", None) or [])]
+            candidates = list(script.extra_fields or []) + sig_types
+            if candidates:
+                stubbed = getattr(self, "_stubbed_types", None)
+                if stubbed is None:
+                    stubbed = self._stubbed_types = set()
+                names = _stub_type_names(
+                    candidates, known_types | frozenset(stubbed))
+                if names:
+                    stubbed.update(names)
+                    stub_classes = "\n".join(
+                        f"[System.Serializable]\npublic class {n}\n{{\n"
+                        f"    // Auto-generated stub — add fields as needed\n}}\n"
+                        for n in names) + "\n"
 
         # Auto-declare a Rigidbody when the LLM-authored update/awake/fixed code
         # references `rb` but never declares it. Without this the raw fragment

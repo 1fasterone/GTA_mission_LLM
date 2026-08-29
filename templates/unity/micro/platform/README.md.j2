@@ -1,0 +1,46 @@
+# {{ s.name }} — Unity Moving Platform
+
+**Variant:** `{{ variant }}`
+**Speed:** `{{ "%.1f"|format(s.speed) }}`
+**Carries rider:** `{{ s.carries_rider }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/`.
+2. Add the `{{ s.name }}` component to the platform GameObject (it needs a
+   physical, non-trigger collider so a rider can actually stand on it).
+{% if variant in ("waypoint_pingpong", "waypoint_loop") %}
+3. Create an empty GameObject named `{{ s.waypoint_parent_name }}` with one
+   empty child per stop, in order (EntitySpawner emits one of these
+   automatically when the schema names a waypoint container).
+{% elif variant == "oscillate" %}
+3. No extra setup — it oscillates around its own starting position.
+{% elif variant == "falling" %}
+3. Tag your player `{{ s.target_tag }}`.
+{% endif %}
+
+## Behaviour
+
+{% if variant == "waypoint_pingpong" %}
+Travels to each child of `{{ s.waypoint_parent_name }}` in order at
+**{{ "%.1f"|format(s.speed) }} m/s**, then reverses direction at the ends
+(optionally pausing **{{ "%.1f"|format(s.wait_time) }}s** at each stop).
+{% elif variant == "waypoint_loop" %}
+Travels to each child of `{{ s.waypoint_parent_name }}` in order at
+**{{ "%.1f"|format(s.speed) }} m/s**, then wraps back to the first
+(optionally pausing **{{ "%.1f"|format(s.wait_time) }}s** at each stop).
+{% elif variant == "oscillate" %}
+Slides back and forth **{{ "%.1f"|format(s.oscillate_distance) }}m** along its
+own **{{ s.oscillate_axis|upper }}** axis, no waypoints needed.
+{% elif variant == "falling" %}
+Static until a `{{ s.target_tag }}` stands on it; drops (collider + renderer
+disabled) after **{{ "%.1f"|format(s.fall_delay) }}s**, then resets to its
+start position after **{{ "%.1f"|format(s.respawn_delay) }}s**.
+{% endif %}
+{% if s.carries_rider %}
+Whatever is tagged `{{ s.target_tag }}` and standing on it moves with it
+(parented by delta-position, not Transform re-parenting, so it works the same
+whether the platform uses 2D or 3D physics).
+{% endif %}

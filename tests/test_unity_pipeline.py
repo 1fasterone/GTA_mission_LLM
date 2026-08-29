@@ -1108,3 +1108,38 @@ class TestBriefAndFeatureReconciliation:
         assert _is_structured_brief(brief)
         assert not _is_structured_brief("a cozy skydiving game over the desert")
         assert not _is_structured_brief("")
+
+    def test_structured_brief_detection_arbitrary_headers(self):
+        """Confirmed live (2026-08-28): a real 10-section brief using headers
+        outside the original fixed vocabulary (GOAL/CORE GAMEPLAY/LEVEL &
+        PLATFORMS/...) matched only 2 markers under the old closed-list regex
+        — below the 3-marker floor — so resolve_theme() ran its autodetect
+        path on already-fully-themed content and grafted an unrelated
+        "Superhero Flying Mechanics" theme onto a ground-based brawler brief.
+        _BRIEF_MARKER_RE must recognize ANY all-caps section header, not just
+        the specific words in the original list."""
+        from src.unity_pipeline import _is_structured_brief
+        brief = (
+            "GOAL:\nGenerate a colourful 2D beat 'em up.\n\n"
+            "CORE GAMEPLAY:\n- Punch and throw.\n\n"
+            "LEVEL & PLATFORMS:\n- Moving platforms.\n\n"
+            "PLAYER STATS & LIVES:\n- 3 lives.\n\n"
+            "UI & HUD:\n- Score counter.\n\n"
+            "AUDIO (Stable Audio 3):\nUse Stable Audio 3.\n\n"
+            "UNITY IMPLEMENTATION:\n- 2D character controller.\n\n"
+            "STYLE & TONE:\n- Cartoonish.\n"
+        )
+        assert _is_structured_brief(brief)
+
+    def test_structured_brief_detection_still_rejects_prose(self):
+        """The broadened regex must not start matching normal sentence-case
+        text just because it drops the fixed vocabulary — Title Case and
+        sentence-case words (only the first letter capitalized) still fail
+        the per-word ALL-CAPS requirement."""
+        from src.unity_pipeline import _is_structured_brief
+        brief = (
+            "Make A Cozy Skydiving Game Over The Desert.\n"
+            "The Player Wears A Bright Red Jumpsuit.\n"
+            "Enemies Are Friendly Clouds.\n"
+        )
+        assert not _is_structured_brief(brief)

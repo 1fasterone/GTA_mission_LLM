@@ -572,7 +572,12 @@ class LightingPipeline(UnityMicroPipeline):
         # variant table, so the branch above no longer needs to set it.
         self._enforce_lit(schema, variant, palette)
 
-        from .code_fields import _KNOWN_NAMESPACES
+        from .code_fields import (
+            _KNOWN_NAMESPACES, template_field_types, lint_field_type_misuse,
+            _repair_collection_compared_as_scalar, _repair_animator_play_layer_arg,
+            _repair_self_class_static_call, _repair_struct_return_type_mismatch,
+            _body_is_live,
+        )
         schema.extra_usings = lint_usings(
             schema.extra_usings, already_in_template=self._TEMPLATE_USINGS,
             allowed=_KNOWN_NAMESPACES,
@@ -580,8 +585,34 @@ class LightingPipeline(UnityMicroPipeline):
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,
         )
-        for i, m in enumerate(schema.extra_methods):
-            schema.extra_methods[i].body = lint_code_fragment(m.body, what="method body")
+        # template_field_types: this micro predates lint_extensible (same gap
+        # animator.py/spawner.py had — see their own comments) so the
+        # TEMPLATE's own fields (ambientSky: Color, etc.) were invisible to
+        # every misuse check below until now. Confirmed live (2026-08-28),
+        # LightingDirector.cs: GetSkyboxColor() returned a Vector3-typed
+        # extra_field where Color was declared (CS0029) — see
+        # _repair_struct_return_type_mismatch's own docstring.
+        field_types = {**template_field_types(str(self.template_root), variant),
+                       **{f.name: f.type for f in schema.extra_fields if f.name}}
+        kept_methods = []
+        for m in schema.extra_methods:
+            body = lint_code_fragment(m.body, what="method body")
+            if field_types:
+                body, _ = lint_field_type_misuse(body, field_types=field_types,
+                                                 signature=m.signature)
+                body = _repair_collection_compared_as_scalar(body, field_types)
+                body = _repair_animator_play_layer_arg(body, field_types)
+                body = _repair_struct_return_type_mismatch(
+                    body, field_types, signature=m.signature)
+            body = _repair_self_class_static_call(body, schema.name)
+            # Not lint_method (this micro predates it, same reason it calls
+            # lint_code_fragment directly above) — but its OWN dead-body drop
+            # is still needed: a neutralized return leaves a non-void method
+            # with no return on any path (CS0161), a NEW error the fixes
+            # above alone would trade for the ones they just removed.
+            if _body_is_live(body):
+                kept_methods.append(m.model_copy(update={"body": body}))
+        schema.extra_methods = kept_methods
         return schema
 
     # ── project-derived light character ──────────────────────────────────────

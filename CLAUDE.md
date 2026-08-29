@@ -63,7 +63,8 @@ blocks for micro-generators and scenes. Atoms may contain branching, loops,
 and multi-step logic — determinism and engine/schema validity are the only
 hard requirements left.
 
-Atoms live in atoms/ (definitions + registry) and micro/ (compositions).
+Atoms live in src/atoms/ (definitions + registry) and src/micro/
+(compositions).
 
 Both roles must: never invent new atom types, only use atoms defined in the
 schema, keep atom outputs deterministic, keep atom sequences valid for the
@@ -121,6 +122,9 @@ this fully wired vs. schema-only vs. not yet touched — see it before
 assuming a given micro's `extensions_fields` actually renders anywhere).
 
 # Where Things Live (For Cowork Navigation)
+
+Paths are repo-relative. The Core entries below sit at the repo root; every
+other .py file named in this section lives under src/.
 
 Core
 - main.py — thin entry point (banner + command registration only)
@@ -193,10 +197,10 @@ docs/model-pipeline-architecture.md.
 
 Preserve this chain:
 
-1. default_models.json — catalog (explicit kinds)
-2. asset_catalog.json — full-library catalog (generated:
+1. lookups/unity/default_models.json — catalog (explicit kinds)
+2. lookups/unity/asset_catalog.json — full-library catalog (generated:
    python main.py unity-catalog; scans config assets.roots, merges
-   kenney_catalog.json curated overrides)
+   lookups/unity/kenney_catalog.json curated overrides)
 3. unity_model_resolver.py — resolves to Models/Defaults/<kind>/
 4. unity_entity_asset_resolver.py — per-entity tiering: Tier A authored
    (a Scene Compiler layout, see Authored Scenes below), then explicit kind,

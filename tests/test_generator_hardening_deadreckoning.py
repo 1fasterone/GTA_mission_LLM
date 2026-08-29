@@ -1,11 +1,13 @@
-"""Regression coverage for six confirmed-live generator bugs found in a real
-`unity-create` run (project "DeadReckoningProtocol") that shipped 15 C# compile
-errors. Each test reproduces the exact authored-content shape that produced one
-error (reconstructed from the emitted .cs, since the true Step 3.5 draft is not
-persisted anywhere — see docs/model-pipeline-architecture.md on `microgens`)
-and asserts the current pipeline no longer lets it through.
+"""Regression coverage for confirmed-live generator bugs found in real
+`unity-create`/`unity-validate --compose` runs of project "DeadReckoningProtocol"
+(first batch: 15 C# compile errors; second batch, item 7 below: a real Unity
+batchmode compile via `unity_cli.py e2e-verify` after the first batch's fixes
+landed). Each test reproduces the exact authored-content shape that produced
+one error (reconstructed from the emitted .cs, since the true Step 3.5 draft is
+not persisted anywhere — see docs/model-pipeline-architecture.md on
+`microgens`) and asserts the current pipeline no longer lets it through.
 
-Two of the original 15 errors are NOT covered here on purpose:
+Two of the first batch's 15 errors are NOT covered here on purpose:
   - ExtractionProtocolObjectives.cs(163) `ReportProgress(1, 2)` — reproducing
     this exact shape against the current codebase shows it is ALREADY caught
     and neutralized (see `find_field_type_misuse`'s existing argument-type
@@ -19,6 +21,47 @@ Two of the original 15 errors are NOT covered here on purpose:
     schema's own extra_fields); validating arbitrary UnityEngine API surface
     would need a full API knowledge base, a different and much larger
     undertaking than the fixes below.
+
+The second batch's real compile turned up six errors total, four of which
+are now generator-hardened:
+  - An `override void OnSpawned()` with no base method (CS0115) is covered by
+    `test_spawner_invented_override_hook_is_stripped_not_left_illegal` in
+    tests/test_micro_generators.py, alongside the sibling test that locks in
+    Dialogue.cs.j2's one genuine override target (`Resolve`) so the fix
+    cannot regress it.
+  - `MonoBehaviour.TriggerEvent()` (CS1061) is item 7 below.
+  - `Animator.CrossFade(_vehicleModeHash, modeName)` (CS1503, a wrong-typed
+    second argument — originally filed under "BCL-API misuse, out of scope"
+    alongside KeyLight.distance/Vector3.Lerp above, then narrowed: unlike
+    those two, this is ONE specific, fully-enumerable method family, not
+    arbitrary API surface, so a hand-verified check for just it — never a
+    general Animator knowledge base — was in scope after all) is item 8.
+  - `_objectives.Count`/`_objectives[i]` (property/indexer access, not a
+    `.Method()` call — `find_field_type_misuse` originally only checked
+    calls) and `CurrentStep += 1` (a read-only property whose body is a
+    ternary, not the simple `Name => _field;` shape
+    `_repair_readonly_property_assign` can rewrite — narrowed the same way
+    Animator was: a NAME-only "is this read-only" check doesn't need the
+    body's shape, only a value-preserving REWRITE does) are item 9.
+The remaining two were fixed live in the project only (not generator-hardened
+this pass — each is a genuinely uncertain root cause not worth patching
+blind; see their own citations for why):
+  - SaveSystemData.cs `string Length` — an author-declared extra_field with a
+    plausible-sounding name and a type that happened to be wrong for how the
+    author then used it (`Data.Length > 0`); no ground truth this system owns
+    says a field named "Length" should be numeric.
+  - StealthSystem.cs(17,27) `speed` referenced twice inside an already-
+    neutralized `if (false)` block — the unbound-identifier pass caught the
+    condition's own bad reference (`CurrentMode`) but not these two.
+
+Fixing item 9 also surfaced a THIRD, unrelated bug, spun off as its own
+follow-up task rather than fixed here: `template_scope_members`/
+`template_field_types` (code_fields.py) do not see GameRules.cs.j2's
+`_currentStepIndex` field at all (confirmed independent of every change in
+this file — `'_currentStepIndex' in template_scope_members(...)` is False
+while the sibling field `_objectives` a few lines later IS found), so a
+perfectly legitimate `_currentStepIndex++;` reference in authored code gets
+wrongly neutralized as "unbindable". Out of scope for item 9's own tests.
 """
 from __future__ import annotations
 
@@ -202,3 +245,167 @@ def test_object_typed_field_null_check_survives():
     lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"},
                     hoist_field_inits=True)
     assert "_vtolController != null" in s.extra_methods[0].body
+
+
+# ── 7. Member call on a `MonoBehaviour`-typed field (CS1061) ────────────────
+# Same shape as #6, one type up: when the unresolvable cross-script reference
+# is instead typed `MonoBehaviour` (rather than `object`), _UNITY_FIELD_TYPE_
+# SURFACE had no entry for it, so every check fell through silently — unlike
+# `object`, which the object-branch above has always covered. Confirmed live,
+# DeadReckoningProtocol EngineerEscort.cs(17): `[SerializeField] private
+# MonoBehaviour _engineerDialogueManager;` then `_engineerDialogueManager.
+# TriggerEvent("StartEscortDialogue");` — TriggerEvent is not a member of
+# MonoBehaviour or anything it inherits from (CS1061).
+
+def test_method_call_on_monobehaviour_typed_field_is_neutralized():
+    s = _DummyExtensible(
+        extra_fields=[CodeField(name="_engineerDialogueManager", type="MonoBehaviour",
+                                default="null")],
+        extra_methods=[CodeMethod(
+            signature="public void StartEscort()",
+            body='if (_engineerDialogueManager != null) {\n'
+                 '    _engineerDialogueManager.TriggerEvent("StartEscortDialogue");\n}')],
+    )
+    lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"},
+                    hoist_field_inits=True)
+    assert not _has_live_call(s.extra_methods, "_engineerDialogueManager.TriggerEvent(")
+    assert "AUDIT" in s.extra_methods[0].body
+
+
+# ── 8. Animator.CrossFade with a string second argument (CS1503) ───────────
+
+def test_animator_crossfade_with_string_second_arg_is_neutralized():
+    # `_anim` is the ANIMATOR TEMPLATE'S OWN field (Animator.cs.j2's `private
+    # Animator _anim;`) — AnimatorPipeline.default_fix predates lint_extensible
+    # and never read its own template's field types until now, so a misuse of
+    # `_anim` went uncaught the same way #7's MonoBehaviour case did for a
+    # SCHEMA-owned field. Confirmed live, DeadReckoningProtocol
+    # PlayerAnimator.cs(109): `_anim.CrossFade(_vehicleModeHash, modeName)` —
+    # `modeName` is this METHOD'S OWN string parameter, passed where
+    # CrossFade's second argument (a transition duration) belongs.
+    from src.micro.animator import AnimatorPipeline, AnimatorSchema
+    pipe = AnimatorPipeline(_cfg())
+    schema = AnimatorSchema(
+        name="PlayerAnimator", variant="vehicle",
+        extra_fields=[CodeField(name="_vehicleModeHash", type="int", default="0")],
+        extra_methods=[CodeMethod(
+            signature="public void SetVehicleMode(string modeName)",
+            body="_anim.CrossFade(_vehicleModeHash, modeName);")],
+    )
+    fixed = pipe.default_fix(schema, "vehicle")
+    assert not _has_live_call(
+        fixed.extra_methods, "_anim.CrossFade(_vehicleModeHash, modeName)")
+    assert "AUDIT" in fixed.extra_methods[0].body
+
+
+def test_animator_crossfade_with_numeric_second_arg_survives():
+    """The check must not over-fire on CrossFade's real, correct shape."""
+    from src.micro.animator import AnimatorPipeline, AnimatorSchema
+    pipe = AnimatorPipeline(_cfg())
+    schema = AnimatorSchema(
+        name="PlayerAnimator", variant="vehicle",
+        extra_methods=[CodeMethod(
+            signature="public void SetVehicleMode(string modeName)",
+            body="_anim.CrossFade(modeName, 0.1f);")],
+    )
+    fixed = pipe.default_fix(schema, "vehicle")
+    assert _has_live_call(fixed.extra_methods, "_anim.CrossFade(modeName, 0.1f)")
+
+
+def test_monobehaviour_real_members_are_never_flagged():
+    """The surface must not be so narrow it flags MonoBehaviour's OWN real
+    API — GetComponent/StartCoroutine/CompareTag etc. are always legal."""
+    s = _DummyExtensible(
+        extra_fields=[CodeField(name="_relay", type="MonoBehaviour", default="null")],
+        extra_methods=[CodeMethod(
+            signature="private void Relay()",
+            body='if (_relay != null) {\n'
+                 '    _relay.CompareTag("Player");\n'
+                 '    _relay.StartCoroutine(null);\n}')],
+    )
+    lint_extensible(s, reserved_fields=set(), template_usings={"UnityEngine"},
+                    hoist_field_inits=True)
+    body = s.extra_methods[0].body
+    assert "AUDIT" not in body
+    assert '_relay.CompareTag("Player")' in body
+    assert "_relay.StartCoroutine(null)" in body
+
+
+# ── 9. `_objectives.Count`/`_objectives[i]` and `CurrentStep += 1` on
+# GameRules' own template fields (CS1061 / CS0200) ──────────────────────────
+# `_objectives` is Rules.cs.j2's own `private MonoBehaviour _objectives;` (a
+# duck-typed reflection binding to whichever objectives tracker the project
+# has — see BindObjectives() — never a collection); `CurrentStep` is a
+# ternary-bodied get-only property (`Finished || steps.Count == 0 ? null :
+# steps[_step]`). Confirmed live, DeadReckoningProtocol GameRules.cs:
+#     265: if (_currentStepIndex < _objectives.Count - 1) {
+#     266:     CurrentStep += 1;
+#     277: if (... && _currentStepIndex < _objectives.Count) {
+#     278:     return _objectives[_currentStepIndex];
+# `_objectives.Count`/`_objectives[i]` are bare property/indexer access, not
+# a `.Method()` call — item 7's MonoBehaviour surface only ever checked
+# calls. `CurrentStep += 1` also went undetected twice over: its ternary body
+# has no single backing field `_repair_readonly_property_assign` could
+# rewrite into, AND `_ASSIGN_TO_NAME_RE` only ever matched a bare `=`, so
+# `+=` was invisible to that pass regardless of body shape.
+
+def test_gamerules_objectives_property_and_index_misuse_is_neutralized():
+    from src.micro.rules import RulesPipeline, RulesSchema
+    pipe = RulesPipeline(_cfg())
+    schema = RulesSchema(
+        name="GameRules", variant="guided",
+        extra_methods=[
+            CodeMethod(
+                signature="private bool HasMoreObjectives()",
+                body="if (_objectives.Count > 0) return true;\nreturn false;"),
+            CodeMethod(
+                signature="private string PeekObjective()",
+                body='if (_objectives.Count > 0) return _objectives[0];\nreturn "";'),
+        ],
+    )
+    pipe.harden(schema)
+    assert len(schema.extra_methods) == 2, "a real surviving return must not be dropped"
+    assert not _has_live_call(schema.extra_methods, "_objectives.Count")
+    assert not _has_live_call(schema.extra_methods, "_objectives[0]")
+    assert "AUDIT" in schema.extra_methods[0].body
+    assert "AUDIT" in schema.extra_methods[1].body
+    assert 'return false;' in schema.extra_methods[0].body
+    assert 'return "";' in schema.extra_methods[1].body
+
+
+def test_gamerules_currentstep_assignment_is_neutralized():
+    from src.micro.rules import RulesPipeline, RulesSchema
+    pipe = RulesPipeline(_cfg())
+    schema = RulesSchema(
+        name="GameRules", variant="guided",
+        extra_methods=[CodeMethod(
+            signature="private void AdvanceManually()",
+            body="if (Finished) { }\nelse CurrentStep += 1;")],
+    )
+    pipe.harden(schema)
+    assert len(schema.extra_methods) == 1
+    assert not _has_live_call(schema.extra_methods, "CurrentStep += 1")
+    assert "AUDIT" in schema.extra_methods[0].body
+    assert "is a read-only property" in schema.extra_methods[0].body
+
+
+def test_gamerules_stepindex_and_finished_reads_survive():
+    """The check must not over-fire on GameRules' own real, correct members —
+    `_step`-adjacent reads (`StepIndex`, `Finished`) are always legal, and
+    `_objectives == null` (a bare null check, not a method call/property/
+    index) must survive untouched, same discipline as item 6's null-check
+    test."""
+    from src.micro.rules import RulesPipeline, RulesSchema
+    pipe = RulesPipeline(_cfg())
+    schema = RulesSchema(
+        name="GameRules", variant="guided",
+        extra_methods=[CodeMethod(
+            signature="private string DebugLabel()",
+            body='if (_objectives == null) return "none";\n'
+                 'return Finished ? "done" : StepIndex.ToString();')],
+    )
+    pipe.harden(schema)
+    body = schema.extra_methods[0].body
+    assert "AUDIT" not in body
+    assert "_objectives == null" in body
+    assert "StepIndex.ToString()" in body

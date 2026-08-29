@@ -137,7 +137,8 @@ UNITY_SCENE_RULE = {
 
 UNITY_GENRE_ATOM = {
     "genre":       ["universal", "fps", "rpg", "platformer", "horror",
-                    "racing", "tower_defence", "puzzle", "stealth", "strategy"],
+                    "racing", "tower_defence", "puzzle", "stealth", "strategy",
+                    "fighting"],
     "action_type": ["spawn", "destroy", "trigger", "timer", "cutscene", "visual",
                     "ui", "save", "audio", "combat", "movement", "pickup", "ai",
                     "dialogue", "quest", "progression", "interaction", "mechanic",

@@ -1,6 +1,15 @@
 """
-LM Studio client — synchronous, OpenAI-compatible local API.
+LM Studio client — synchronous, OpenAI-compatible chat client.
 LM Studio exposes: POST /v1/chat/completions
+
+Also serves Ollama and OpenRouter (src/backends.py's active_chat_cfg/
+make_chat_client select between all three) — all three speak the same
+OpenAI-compatible chat-completions contract, differing only in base_url,
+model, and (OpenRouter only) an API key. LM Studio/Ollama are local servers
+needing no auth; `api_key`, when set, adds the Authorization: Bearer header
+OpenRouter requires. The class keeps its original name since every existing
+call site and test imports it as LMStudioClient — renaming for the added
+generality would be a repo-wide rename with no behavioral upside.
 
 Debug output (--debug / -d flag):
   Set log level to DEBUG before creating the client; all request payloads and
@@ -156,12 +165,17 @@ def _drop_surplus_closers(text: str, start: int) -> str:
 _REASONING_OFF = "none"
 _REASONING_ON  = "high"
 
+# Models already caught ignoring reasoning_effort=none — warn once each, not
+# once per call.
+_REASONING_IGNORED: set[str] = set()
+
 
 class LMStudioClient:
     def __init__(self, base_url: str, model: str = "local-model",
                  temperature: float = 0.7, max_tokens: int = 8192,
                  timeout: float = 600.0, seed: int | None = None,
-                 reasoning_effort: str | None = None):
+                 reasoning_effort: str | None = None,
+                 api_key: str | None = None):
         self.base_url    = base_url.rstrip("/")
         self.model       = model
         self.temperature = temperature
@@ -176,10 +190,14 @@ class LMStudioClient:
         # same (prompt, seed) yields the same output — the upstream half of the
         # pipeline's determinism story. None → server picks a random seed.
         self.seed        = seed
+        # Only OpenRouter needs this — a local LM Studio/Ollama server takes
+        # no auth. None -> no Authorization header sent (unchanged behaviour
+        # for the two local backends).
+        self.api_key     = api_key
 
     def _build_payload(self, system: str, user: str,
                        temperature: float | None, thinking: bool,
-                       seed: int | None) -> dict:
+                       seed: int | None, max_tokens: int | None = None) -> dict:
         """Assemble the chat-completions request body. Split out so the seed/
         temperature/reasoning wiring is unit-testable without a live server."""
         # Kept as a fallback for Qwen3 builds served by something that does not
@@ -195,7 +213,15 @@ class LMStudioClient:
             # Qwen3 (and several other local models) return an empty response at
             # temperature=0.0.  Clamp to 0.05 as the effective greedy minimum.
             "temperature": max(0.05, temperature if temperature is not None else self.temperature),
-            "max_tokens":  self.max_tokens,
+            # Per-call ceiling, defaulting to the client-wide budget. A step
+            # whose whole answer is a handful of small fragments has no use for
+            # the schema step's 50k budget, and letting it inherit one is not
+            # free: a model that runs away instead of stopping generates until
+            # the CLIENT timeout (2600s) rather than until a sane cap, and a
+            # caller that retries pays that in full, per attempt. Hit live —
+            # one micro-code subsystem burned 1h54m as three silent 43-minute
+            # timeouts before anything was logged.
+            "max_tokens":  int(max_tokens or self.max_tokens),
             # Always explicit — see _REASONING_OFF/_REASONING_ON above.
             "reasoning_effort": (self.reasoning_effort if thinking
                                  else _REASONING_OFF),
@@ -208,7 +234,8 @@ class LMStudioClient:
     def chat(self, system: str, user: str,
              temperature: float | None = None,
              thinking: bool = True,
-             seed: int | None = None) -> str:
+             seed: int | None = None,
+             max_tokens: int | None = None) -> str:
         """
         thinking=False → reasoning_effort="none": no chain-of-thought. Use for
                          every mechanical step (schema fill, cue resolution,
@@ -217,8 +244,11 @@ class LMStudioClient:
         thinking=True  → reasoning_effort=self.reasoning_effort ("high" unless
                          config says otherwise) — the story/concept steps.
         seed           → per-call override of the client's reproducibility seed.
+        max_tokens     → per-call completion ceiling. Omit to inherit the
+                         client-wide budget (config lm_studio.max_tokens).
         """
-        payload = self._build_payload(system, user, temperature, thinking, seed)
+        payload = self._build_payload(system, user, temperature, thinking, seed,
+                                      max_tokens)
         user_msg = payload["messages"][1]["content"]
         log.debug(
             "→ LLM REQUEST  model=%s  temperature=%.2f  max_tokens=%d\n"
@@ -231,22 +261,64 @@ class LMStudioClient:
             user_msg[:300] + ("…" if len(user_msg) > 300 else ""),
         )
 
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
             with httpx.Client(timeout=self.timeout) as client:
-                r = client.post(f"{self.base_url}/chat/completions", json=payload)
+                r = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
                 r.raise_for_status()
         except httpx.TimeoutException as e:
             # Raised as TimeoutError (not ValueError) so callers don't burn another
             # full timeout retrying. Reasoning models / CPU-offloaded models hit this.
             raise TimeoutError(
-                f"LM Studio did not respond within {self.timeout:.0f}s for model "
+                f"{self.base_url} did not respond within {self.timeout:.0f}s for model "
                 f"'{self.model}'. Reasoning models, or models partly offloaded to "
                 f"CPU/RAM, can exceed this — raise lm_studio.timeout in config.yaml, "
-                f"fit the model fully in VRAM, or pick a smaller / non-reasoning model."
+                f"fit the model fully in VRAM, or pick a smaller / non-reasoning model. "
+                f"A model that RUNS AWAY (never emitting a stop token) also lands "
+                f"here, having generated up to max_tokens={payload['max_tokens']} "
+                f"first; lower the caller's per-call max_tokens to fail fast."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            # Surfaces the provider's own structured error (rate limits, quota,
+            # bad model id) instead of a bare "Client error '429 ...'" — this is
+            # the only backend of the three where the request can fail for
+            # reasons outside the caller's control (upstream provider capacity),
+            # so the reason needs to reach the console, not just the status code.
+            raise RuntimeError(
+                f"{self.base_url} returned HTTP {e.response.status_code} for model "
+                f"'{self.model}': {e.response.text[:500]}"
             ) from e
 
-        message = r.json()["choices"][0]["message"]
+        body    = r.json()
+        message = body["choices"][0]["message"]
         content = (message.get("content") or "")
+
+        # A model that cannot switch reasoning OFF is unusable for this
+        # pipeline, and nothing in the API response says so directly — the
+        # refusal is a server-side warning ("Reasoning setting 'off' cannot be
+        # converted to any custom KVs") the client never sees. The usage block
+        # does report it, though: a call sent with reasoning_effort="none" that
+        # comes back having spent reasoning tokens is proof the setting was
+        # ignored. Say so ONCE per model, loudly, naming the remedy.
+        #
+        # Hit live on qwopus3.5-9b-coder-exp: every mechanical call reasoned to
+        # the context ceiling (~30,600 tokens, ~43 min each) and returned no
+        # content, three attempts per subsystem, with nothing logged. The run
+        # looked hung for two hours.
+        if not thinking:
+            spent = (((body.get("usage") or {})
+                      .get("completion_tokens_details") or {})
+                     .get("reasoning_tokens") or 0)
+            if spent and self.model not in _REASONING_IGNORED:
+                _REASONING_IGNORED.add(self.model)
+                log.warning(
+                    "Model '%s' IGNORED reasoning_effort=none and spent %d "
+                    "reasoning tokens on a mechanical step. Every such step "
+                    "will burn its whole budget this way. Pick a model whose "
+                    "reasoning can be disabled (LM Studio logs 'Supported "
+                    "settings' for each), or expect stalls and empty answers.",
+                    self.model, spent,
+                )
         log.debug(
             "← LLM RESPONSE  %d chars\n%s",
             len(content),
@@ -283,9 +355,35 @@ class LMStudioClient:
         if start == -1:
             raise ValueError(f"No JSON object in LLM response:\n{text[:400]}")
 
-        # Find the outermost balanced closing brace
+        # Find the outermost balanced closing brace.
+        #
+        # STRING-AWARE, because this pipeline's whole job is to have a model
+        # emit C# inside JSON and C# is brace-dense. A scanner that counts
+        # braces inside string literals closes the object on the first `}` of
+        # a method body:
+        #
+        #   "body": "foreach (var b in _blocks) { ... } CheckLines();"
+        #                                       ^ counted     ^ closes object
+        #
+        # Hit live: an 87,677-char schema fill was sliced to 4,031 chars and
+        # reported as the MODEL's syntax error ("Expecting ',' delimiter"),
+        # discarding a response that was fine up to that point. Both repair
+        # helpers below (_repair_truncated_json, _drop_surplus_closers) have
+        # tracked string/escape state all along — only this scan did not.
         depth, end = 0, -1
+        in_string, escape = False, False
         for i, ch in enumerate(text[start:], start):
+            if escape:
+                escape = False
+                continue
+            if ch == "\\" and in_string:
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
             if ch == "{":
                 depth += 1
             elif ch == "}":

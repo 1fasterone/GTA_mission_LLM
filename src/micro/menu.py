@@ -83,6 +83,12 @@ NAVIGATION  — mouse | keyboard | gamepad
 BRIEF:
 {concept}
 
+Difficulty select: if the brief wants a difficulty choice on this menu, include
+"Easy", "Medium", and/or "Hard" as extra entries in items — those three exact
+labels get real behavior for free (writing PlayerPrefs "Difficulty", read by
+the spawner/AI/health micros to scale enemy stats), the same way "Quit"/"Retry"
+already do. Don't invent other difficulty label text; use these three verbatim.
+
 OUTPUT:
 {{
   "name": "PascalCase name",

@@ -31,7 +31,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Player"
+        "tag": "Player",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -128,7 +129,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -185,7 +187,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -257,7 +260,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.5,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -309,7 +313,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 6.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       }
     ],
     "terrain_bounds": [
@@ -701,7 +706,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -913,7 +919,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1125,7 +1132,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1217,7 +1225,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1264,7 +1273,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1298,7 +1308,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Player"
+        "tag": "Player",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1344,7 +1355,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 4.0,
-        "tag": "Enemy"
+        "tag": "Enemy",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1386,7 +1398,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1428,7 +1441,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1470,7 +1484,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1507,7 +1522,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1544,7 +1560,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1581,7 +1598,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1618,7 +1636,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1655,7 +1674,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1692,7 +1712,8 @@
         "shape": "cylinder",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       },
       {
         "atoms": [],
@@ -1779,7 +1800,8 @@
         "shape": "cube",
         "sketchfab_query": "",
         "spacing": 2.0,
-        "tag": "Untagged"
+        "tag": "Untagged",
+        "tilt_deg": 0.0
       }
     ],
     "terrain_bounds": [

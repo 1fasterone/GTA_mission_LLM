@@ -61,7 +61,8 @@ class _StubLLM:
         self._fail = fail
         self.prompts: list[str] = []
 
-    def chat(self, *, system, user, temperature=0.0, thinking=False):
+    def chat(self, *, system, user, temperature=0.0, thinking=False,
+             max_tokens=None):
         self.prompts.append(user)
         if self._fail:
             raise RuntimeError("model unavailable")

@@ -346,6 +346,32 @@ class TestChatReasoningModels:
 # _drop_surplus_closers  (the mirror of _repair_truncated_json)
 # ══════════════════════════════════════════════════════════════════════════════
 
+class TestExtractJsonStringAwareness:
+    """Braces inside a JSON string must not end the object.
+
+    Live regression: this pipeline asks the model for C# inside JSON, and a C#
+    method body is brace-dense. A string-unaware scan closed the root object on
+    the first `}` of a body, sliced an 87,677-char schema fill down to 4,031
+    chars, and reported the result as the MODEL's syntax error.
+    """
+
+    def test_csharp_braces_in_a_body_do_not_close_the_object(self, client):
+        doc = ('{"project_name":"X",'
+               '"scripts":[{"name":"Board","extra_methods":[{'
+               '"signature":"void SoftDrop()",'
+               '"body":"foreach (var b in _blocks) { if (!b.Locked()) b.Down(); } Check();"'
+               '}]}],'
+               '"platform":"mobile"}')
+        out = client.extract_json(doc)
+        # The key AFTER the brace-bearing body is the one an early close loses.
+        assert out["platform"] == "mobile"
+        assert out["scripts"][0]["extra_methods"][0]["body"].count("{") == 1
+
+    def test_escaped_quote_inside_a_string_does_not_flip_state(self, client):
+        out = client.extract_json(r'{"a":"say \"hi\" { } end","b":2}')
+        assert out == {"a": 'say "hi" { } end', "b": 2}
+
+
 class TestDropSurplusClosers:
     def test_balanced_json_unchanged(self):
         text = '{"a": [1, 2], "b": {"c": 3}}'
@@ -395,3 +421,131 @@ class TestExtractJsonSurplusClosers:
     def test_valid_json_still_parses_unchanged(self, client):
         raw = '{"a": {"b": [1, 2, 3]}, "c": "]}"}'
         assert client.extract_json(raw) == {"a": {"b": [1, 2, 3]}, "c": "]}"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OpenRouter backend (src/backends.py active_chat_cfg/make_chat_client,
+# added 2026-08-28 as a third chat backend alongside LM Studio/Ollama)
+# ══════════════════════════════════════════════════════════════════════════════
+
+_OPENROUTER_ENV_VARS = ("OPENROUTER_API", "OPENROUTER_API_KEY")
+
+
+@pytest.fixture
+def no_openrouter_env(monkeypatch):
+    """Hermetic: strip any real OPENROUTER_API[_KEY] from the environment so
+    'no key configured' tests don't false-negative against a developer's real
+    .env-loaded key."""
+    for var in _OPENROUTER_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
+class TestOpenRouterBackend:
+    def test_defaults(self, no_openrouter_env):
+        cfg = active_chat_cfg({"lm_studio": {"backend": "openrouter"}})
+        assert cfg["backend"] == "openrouter"
+        assert cfg["base_url"] == "https://openrouter.ai/api/v1"
+        assert cfg["model"] == "nvidia/nemotron-3-super-120b-a12b:free"
+        assert cfg["api_key"] == ""
+
+    def test_config_model_override(self, no_openrouter_env):
+        cfg = active_chat_cfg({"lm_studio": {"backend": "openrouter"},
+                                "openrouter": {"model": "z-ai/glm-5.2:free"}})
+        assert cfg["model"] == "z-ai/glm-5.2:free"
+
+    def test_env_var_supplies_key(self, no_openrouter_env, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API", "sk-test-123")
+        cfg = active_chat_cfg({"lm_studio": {"backend": "openrouter"}})
+        assert cfg["api_key"] == "sk-test-123"
+
+    def test_env_var_wins_over_config(self, no_openrouter_env, monkeypatch):
+        """Same precedence as SketchfabClient's token resolution — a personal
+        API key should not need to live in a git-tracked config.yaml."""
+        monkeypatch.setenv("OPENROUTER_API", "sk-env-wins")
+        cfg = active_chat_cfg({"lm_studio": {"backend": "openrouter"},
+                                "openrouter": {"api_key": "sk-config-loses"}})
+        assert cfg["api_key"] == "sk-env-wins"
+
+    def test_config_key_used_when_no_env_var(self, no_openrouter_env):
+        cfg = active_chat_cfg({"lm_studio": {"backend": "openrouter"},
+                                "openrouter": {"api_key": "sk-from-config"}})
+        assert cfg["api_key"] == "sk-from-config"
+
+    def test_alternate_env_var_name(self, no_openrouter_env, monkeypatch):
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-alt-name")
+        cfg = active_chat_cfg({"lm_studio": {"backend": "openrouter"}})
+        assert cfg["api_key"] == "sk-alt-name"
+
+    def test_make_chat_client_abstains_without_key(self, no_openrouter_env):
+        """Abstain loudly, never silently default (CLAUDE.md) — a missing key
+        must not silently fall through to a different backend or an
+        unauthenticated request that OpenRouter will reject anyway."""
+        with pytest.raises(RuntimeError, match="no API key"):
+            make_chat_client({"lm_studio": {"backend": "openrouter"}})
+
+    def test_make_chat_client_succeeds_with_key(self, no_openrouter_env):
+        client = make_chat_client({"lm_studio": {"backend": "openrouter"},
+                                    "openrouter": {"api_key": "sk-ok"}})
+        assert client.base_url == "https://openrouter.ai/api/v1"
+        assert client.api_key == "sk-ok"
+
+    def test_local_backends_get_no_api_key(self):
+        """Regression guard: adding api_key support must not change LM
+        Studio/Ollama, which take no auth."""
+        assert make_chat_client({"lm_studio": {}}).api_key is None
+        assert make_chat_client(
+            {"lm_studio": {"backend": "ollama"}, "ollama": {"base_url": "http://y/v1", "model": "q"}}
+        ).api_key is None
+
+    def test_chat_sends_authorization_header_when_key_set(self):
+        from unittest.mock import MagicMock, patch
+        c = LMStudioClient("https://openrouter.ai/api/v1", "m", api_key="sk-abc")
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        captured = {}
+
+        def fake_post(url, json=None, headers=None, **kwargs):
+            captured["headers"] = headers
+            return mock_response
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            c.chat(system="sys", user="user")
+
+        assert captured["headers"] == {"Authorization": "Bearer sk-abc"}
+
+    def test_chat_sends_no_auth_header_without_key(self, client):
+        """LM Studio/Ollama path (api_key=None) must send no Authorization
+        header at all — not an empty/None one."""
+        from unittest.mock import MagicMock, patch
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        captured = {}
+
+        def fake_post(url, json=None, headers=None, **kwargs):
+            captured["headers"] = headers
+            return mock_response
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            client.chat(system="sys", user="user")
+
+        assert captured["headers"] == {}
+
+    def test_http_error_surfaces_provider_message(self, client):
+        """A provider-side failure (rate limit, quota, bad model id) must
+        raise with the real response body, not a bare status-code error —
+        confirmed live (2026-08-28) against OpenRouter's structured 429s."""
+        import httpx
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.text = '{"error":{"message":"rate-limited upstream"}}'
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "429", request=MagicMock(), response=mock_response)
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
+            with pytest.raises(RuntimeError, match="rate-limited upstream"):
+                client.chat(system="sys", user="user")

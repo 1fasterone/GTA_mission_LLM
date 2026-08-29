@@ -920,7 +920,7 @@ public class EntitySpawner : MonoBehaviour
 {% set role = e.kind|lower %}
 {% set epath = entity_model_paths.get(e.name, "") %}
 {% if role not in ["player", "road", "ground"] and not epath.startswith("skip:") and not epath.startswith("fx:") %}
-        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh);
+        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceRow2D("{{ e.name }}", {{ e.count }}, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", {{ "true" if role in ["building", "crowd", "tree"] else "false" }}, courseLen, sh, {{ "%.2f"|format(e.tilt_deg) }}f);
 {% endif %}
 {% endfor %}
         PlacePlayerStart2D();
@@ -941,7 +941,8 @@ public class EntitySpawner : MonoBehaviour
     }
 
     private void PlaceRow2D(string groupName, int count, float scale, string modelPath,
-                            Color color, string tag, bool backdrop, float courseLen, Shader sh)
+                            Color color, string tag, bool backdrop, float courseLen, Shader sh,
+                            float tiltDeg = 0f)
     {
         // Load order: 2D sprite (Sprites/... path → Texture2D) → 3D model prefab
         // → primitive cube. Sprite textures import with Unity's default settings,
@@ -981,6 +982,13 @@ public class EntitySpawner : MonoBehaviour
             go.transform.position = new Vector3((i + 1) * (courseLen / (n + 1)),
                                                 backdrop ? 3.5f : scale * 0.5f,
                                                 backdrop ? 8f : 0f);
+            // Ramps/sloped props: a Z rotation here is followed correctly by
+            // the BoxCollider2D added below, giving a real sloped collision
+            // surface (not just a sloped-looking sprite) — the same technique
+            // any 2D platformer ramp uses. 0f (default) leaves upright props
+            // untouched.
+            if (!backdrop && tiltDeg != 0f)
+                go.transform.rotation = Quaternion.Euler(0f, 0f, tiltDeg);
             foreach (var cc in go.GetComponentsInChildren<Collider>()) SafeDestroy(cc);
             if (!backdrop && go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
             if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);

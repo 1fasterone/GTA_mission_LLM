@@ -33,6 +33,12 @@ public class {{ s.name }} : MonoBehaviour
     public event Action<float> OnDamaged;
     public event Action<float> OnHealed;
     public event Action OnDeath;
+{% if variant == "lives" %}
+    /// <summary>Fired when a life is lost but lives remain (see OnDeath for the
+    /// terminal, all-lives-gone case). Wired to SaveSystem.Respawn by the
+    /// compose layer when a checkpoint saveload micro is also present.</summary>
+    public event Action OnLifeLost;
+{% endif %}
 
     private float _current;
 {% if variant == "shielded" %}
@@ -48,6 +54,15 @@ public class {{ s.name }} : MonoBehaviour
 
     private void Awake()
     {
+{% set _hp_target = s.meta.get("target", "") %}
+{% if _hp_target and _hp_target != "player" %}
+        // Difficulty scaling (non-player only — set by the main menu's
+        // difficulty selector; see Menu.cs.j2's Activate()).
+        string _difficulty = PlayerPrefs.GetString("Difficulty", "Medium");
+        float _diffMult = _difficulty == "Easy" ? 0.65f : _difficulty == "Hard" ? 1.6f : 1f;
+        maxHealth   *= _diffMult;
+        startHealth *= _diffMult;
+{% endif %}
         _current = Mathf.Clamp(startHealth, 0f, maxHealth);
 {% if variant == "shielded" %}
         _shield = shield;
@@ -97,6 +112,11 @@ public class {{ s.name }} : MonoBehaviour
         _current = Mathf.Max(0f, _current - amount);
         OnDamaged?.Invoke(amount);
         OnHealthChanged?.Invoke(_current, maxHealth);
+        // Both hooks are harmless no-ops with nothing listening
+        // (SendMessageOptions.DontRequireReceiver) — a sprite animator or AI's
+        // stagger role picks these up with zero compile-time coupling here.
+        if (_current > 0f) SendMessage("PlayAction", "hurt", SendMessageOptions.DontRequireReceiver);
+        SendMessage("OnHurt", SendMessageOptions.DontRequireReceiver);
         if (_current <= 0f) Die();
     }
 
@@ -116,9 +136,11 @@ public class {{ s.name }} : MonoBehaviour
         {
             _current = maxHealth;
             OnHealthChanged?.Invoke(_current, maxHealth);
+            OnLifeLost?.Invoke();
             return;
         }
 {% endif %}
+        SendMessage("PlayAction", "death", SendMessageOptions.DontRequireReceiver);
         OnDeath?.Invoke();
 {% if s.death_action == "destroy" %}
         Destroy(gameObject);

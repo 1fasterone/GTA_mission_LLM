@@ -139,6 +139,15 @@ class TestAssetFidelity:
         s = _S([_E(name="ClearancePad", model_hint="button")])
         assert check_asset_fidelity(s, {"ClearancePad": "ui:button"}) == []
 
+    def test_default_tier_paths_are_never_scored(self):
+        # Live (DeadReckoningProtocol): a `player`-kind entity named
+        # "Operative" resolves to the curated default player pack by ROLE,
+        # not by name — Tier B of unity_entity_asset_resolver.py never
+        # claims a name match, so it must not be held to one.
+        s = _S([_E(name="Operative", kind="player", model_hint="operative")])
+        assert check_asset_fidelity(
+            s, {"Operative": "Models/Default/Player/Player"}) == []
+
     def test_asset_gaps_sort_above_modifier_gaps(self):
         s = _S([_E(name="Pie", model_hint="pie")])
         rep = check_fidelity(HIPPOS, s, nouns=["Pie"],

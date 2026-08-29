@@ -45,7 +45,8 @@ from pydantic import BaseModel, Field, field_validator
 from ..micro_pipeline import to_pascal
 from .code_fields import (UNITY_EXTRA_INSTRUCTIONS, CodeExtensibleSchema,
                           clamp_enum, lint_extensible, harden_against_template,
-                          apply_extensions_safe_block)
+                          apply_extensions_safe_block, template_field_types,
+                          template_readonly_property_names)
 from .unity_base import UnityMicroPipeline
 
 # "guided"  — briefing modal + step panel + hint bar (the full teaching shape)
@@ -194,8 +195,15 @@ class RulesPipeline(UnityMicroPipeline):
         if not schema.steps:
             msgs.append("rules: no steps — the player is told the goal and "
                         "nothing about how to reach it")
+        # `_objectives`/`CurrentStep` etc. are declared unconditionally in
+        # GameRules.cs.j2 (before its one variant-gated block), so every
+        # variant sees the same field/property ground truth here.
+        tdir = str(self.template_root)
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
-                        template_usings=self._TEMPLATE_USINGS)
+                        template_usings=self._TEMPLATE_USINGS,
+                        template_field_types=template_field_types(tdir, schema.variant),
+                        template_readonly_names=template_readonly_property_names(
+                            tdir, schema.variant))
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         # This override REPLACES MicroPipeline.harden's own body, which is the
         # only thing that normally calls harden_against_template — every other

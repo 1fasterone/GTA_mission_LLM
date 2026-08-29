@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
-from .code_fields import CodeField, CodeMethod, lint_code_fragment, lint_usings, lint_fields
+from .code_fields import (
+    CodeField, CodeMethod, lint_usings, lint_fields,
+    lint_method, lint_field_type_misuse, template_field_types,
+    _repair_collection_compared_as_scalar, _repair_animator_play_layer_arg,
+)
 
 
 AnimatorVariant = Literal[
@@ -179,8 +183,36 @@ class AnimatorPipeline(UnityMicroPipeline):
         schema.extra_fields = lint_fields(
             schema.extra_fields, reserved=self._RESERVED_FIELD_NAMES,
         )
-        for i, m in enumerate(schema.extra_methods):
-            schema.extra_methods[i].body = lint_code_fragment(m.body, what="method body")
+        # Template + own-field type ground truth, the same misuse cross-check
+        # every lint_extensible-based generator gets (see code_fields.
+        # lint_extensible's own_field_types comment) — AnimatorSchema predates
+        # lint_extensible and has no awake_extra/update_extra/fixed_update_
+        # extra yet, so this calls the two underlying passes directly rather
+        # than the full helper. Confirmed live, DeadReckoningProtocol
+        # PlayerAnimator.cs(109): `_anim.CrossFade(_vehicleModeHash,
+        # modeName)` — `_anim` is the template's own `private Animator _anim;`,
+        # invisible to any check until template_field_types names it.
+        field_types = {**template_field_types(str(self.template_root), variant),
+                       **{f.name: f.type for f in schema.extra_fields if f.name}}
+        taken: set[str] = set()
+        cleaned: list[CodeMethod] = []
+        for m in schema.extra_methods:
+            if field_types:
+                body, _ = lint_field_type_misuse(m.body, field_types=field_types,
+                                                 signature=m.signature)
+                # Same field_types, two sibling misuse shapes lint_field_type_misuse
+                # doesn't cover (CS0019 collection-vs-scalar, CS1503 Animator.Play's
+                # int layer arg) — see each repair's own docstring. Confirmed live
+                # (2026-08-28) via THIS animator-specific path, same as the
+                # CrossFade citation above.
+                body = _repair_collection_compared_as_scalar(body, field_types)
+                body = _repair_animator_play_layer_arg(body, field_types)
+                if body != m.body:
+                    m = m.model_copy(update={"body": body})
+            m2 = lint_method(m, taken_names=taken)
+            if m2 is not None:
+                cleaned.append(m2)
+        schema.extra_methods = cleaned
         return schema
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

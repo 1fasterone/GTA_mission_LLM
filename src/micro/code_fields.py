@@ -504,6 +504,240 @@ def _repair_static_called_as_instance(text: str) -> str:
     return new
 
 
+_RIGIDBODY2D_LOCAL_RE = re.compile(
+    r'\b(?:var|Rigidbody2D)\s+(\w+)\s*=\s*(?:\([^()]*\)\s*)?GetComponent<Rigidbody2D>\s*\(\s*\)'
+)
+
+
+def _repair_forcemode_on_rigidbody2d(text: str) -> str:
+    """Rigidbody2D.AddForce/AddForceAtPosition/AddTorque take ForceMode2D,
+    not ForceMode — same enum member NAMES (Impulse/Force/VelocityChange/
+    Acceleration), different types (CS1503). Confirmed live (2026-08-28,
+    WorldInteractable.cs(105)):
+        thrown.GetComponent<Rigidbody2D>().AddForce(Vector2.right * 15f, ForceMode.Impulse);
+    A straightforward 3D-physics-API-on-a-2D-body slip. Tracks both the
+    direct GetComponent<Rigidbody2D>() chain and a `var rb =
+    GetComponent<Rigidbody2D>();` ... `rb.AddForce(..., ForceMode.X)`
+    two-step form (the same locals-tracking shape
+    _repair_gameobject_component_assign uses), since either is equally
+    plausible LLM output."""
+    if not text or "ForceMode." not in text or "Rigidbody2D" not in text:
+        return text
+    names = sorted({m.group(1) for m in _RIGIDBODY2D_LOCAL_RE.finditer(text)},
+                    key=len, reverse=True)
+    receivers = [r'GetComponent<Rigidbody2D>\s*\(\s*\)'] + [re.escape(n) for n in names]
+    pattern = re.compile(
+        r'(?:' + '|'.join(receivers) + r')\s*\.\s*(?:AddForce|AddForceAtPosition|AddTorque)\s*\('
+        r'[^;]*?\bForceMode\.(?:Impulse|Force|VelocityChange|Acceleration)\b'
+    )
+    member_re = re.compile(r'\bForceMode\.(Impulse|Force|VelocityChange|Acceleration)\b')
+
+    def _fix_call(m: "re.Match[str]") -> str:
+        return member_re.sub(r'ForceMode2D.\1', m.group(0))
+
+    new = pattern.sub(_fix_call, text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  corrected ForceMode -> ForceMode2D on a "
+                       "Rigidbody2D call (CS1503)")
+    return new
+
+
+def _repair_self_class_static_call(text: str, self_class_name: str) -> str:
+    """`<ThisClass>.SomeMethod(...)` written from within `ThisClass` itself
+    (CS0120 when SomeMethod is an instance member — a model reaching for
+    Java/other-language "call it by class" habits, or just confusing static
+    and instance). Confirmed live (2026-08-28), GameRules.cs(113):
+        if (...) { GameRules.Begin(); ... }
+    called from inside class GameRules itself, where Begin() is `public void
+    Begin()` — a genuine instance method. Stripping the redundant
+    self-qualifier is safe unconditionally, not just for this case: if
+    SomeMethod were actually static, C# resolves a bare call to it from
+    within the same class identically to the qualified form, so there is no
+    behavior this could ever change for a correct static call — only fix an
+    incorrect instance one. Deliberately does NOT try to guess a "more
+    correct" method to call instead (e.g. a sibling SpawnEnemy() that might
+    have been intended) — that is a content judgment belonging to the
+    schema-fill step, not a mechanical repair."""
+    if not text or not self_class_name or self_class_name not in text:
+        return text
+    pattern = re.compile(r'\b' + re.escape(self_class_name) + r'\.(?=\w+\s*\()')
+    new = pattern.sub("", text)
+    if new != text:
+        console.print(f"  [magenta]FIX[/]  dropped redundant self-class "
+                      f"qualifier '{self_class_name}.' before an instance "
+                      f"call (CS0120)")
+    return new
+
+
+def _repair_collection_compared_as_scalar(text: str, field_types: "dict[str, str]") -> str:
+    """A List<T>/array-typed TEMPLATE field compared directly via a
+    relational operator (CS0019 — List<T> has no such operator overload at
+    all, so this is unconditionally wrong, never a legitimate call).
+    Confirmed live (2026-08-28), EnemySpawner.cs(161):
+        return _spawnTimer <= 0f && _alive < maxAlive;
+    where `_alive` is the template's own `private readonly List<GameObject>
+    _alive`, used correctly as `_alive.Count` everywhere else in that SAME
+    file — the LLM's own IsSpawningNextWave() clearly meant `_alive.Count <
+    maxAlive`. Rewriting (not neutralizing, unlike the older
+    find_field_type_misuse member-access checks) because there is no second
+    interpretation for a bare relational operator on a collection, the way
+    there can be for an ambiguous member call. Scoped to the observed
+    direction (collection on the left of the operator) — the field_types
+    dict comes from the same template_field_types/extra_fields source
+    lint_field_type_misuse already uses, no new plumbing."""
+    if not text or not field_types:
+        return text
+    collection_members: dict[str, str] = {}
+    for name, ftype in field_types.items():
+        t = (ftype or "").strip()
+        if t.endswith("[]"):
+            collection_members[name] = "Length"
+        elif re.match(r'^(?:List|IList|ICollection|IReadOnlyList|IReadOnlyCollection)\s*<', t):
+            collection_members[name] = "Count"
+    if not collection_members:
+        return text
+
+    changed = False
+    for name, member in collection_members.items():
+        pattern = re.compile(r'\b' + re.escape(name) + r'\b(?!\s*\.\w)(\s*(?:<=|>=|<|>)\s*)')
+        new_text, n = pattern.subn(f'{name}.{member}' + r'\1', text)
+        if n:
+            text = new_text
+            changed = True
+    if changed:
+        console.print("  [magenta]FIX[/]  inserted .Count/.Length before a "
+                      "relational operator on a collection field (CS0019)")
+    return text
+
+
+def _repair_animator_play_layer_arg(text: str, field_types: "dict[str, str]") -> str:
+    """Animator.Play/PlayInFixedTime's SECOND positional argument is `int
+    layer`, unlike CrossFade/CrossFadeInFixedTime where position 2 is a
+    float duration (_ANIMATOR_STATE_SWITCH_METHODS's own comment treats all
+    four as one shape — Play's real signature is (stateName, int layer,
+    float normalizedTime); CrossFade's is (stateName, float duration, int
+    layer, ...) — different order). Confirmed live (2026-08-28),
+    PlayerAnimator.cs(104):
+        _anim.Play(_play_J_, -1f, 0f);
+    `-1f` is Unity's own idiomatic "current layer" sentinel, just written
+    with an errant `f` suffix (CS1503) — the existing string-argument check
+    next to this one never sees it, since a float isn't a string. Rewrites
+    (drops the suffix and any decimal remainder) rather than neutralizing:
+    a genuine float literal in Play's layer slot is provably wrong
+    regardless of overload, so there is nothing ambiguous to guess at."""
+    if not text or not field_types or ".Play" not in text:
+        return text
+    animator_names = {n for n, t in field_types.items()
+                      if (t or "").strip().lower() == "animator"}
+    if not animator_names:
+        return text
+    names_alt = "|".join(re.escape(n) for n in sorted(animator_names, key=len, reverse=True))
+    pattern = re.compile(
+        r'(\b(?:' + names_alt + r')\.(?:Play|PlayInFixedTime)\s*\([^,()]*,\s*)'
+        r'(-?\d+)\.?\d*f\b'
+    )
+    new = pattern.sub(r'\1\2', text)
+    if new != text:
+        console.print("  [magenta]FIX[/]  corrected Animator.Play's int layer "
+                      "argument (float literal -> int, CS1503)")
+    return new
+
+
+_STRUCT_RETURN_TYPES = frozenset({"vector2", "vector3", "vector4", "color", "color32", "quaternion"})
+_METHOD_RETURN_TYPE_RE = re.compile(
+    r'\b(?:public|private|protected|internal)\b(?:\s+(?:static|virtual|override|async|sealed))*'
+    r'\s+([A-Za-z_]\w*)\s+[A-Za-z_]\w*\s*\(')
+
+
+def _repair_struct_return_type_mismatch(text: str, field_types: "dict[str, str]",
+                                        signature: str = "") -> str:
+    """A `return` statement referencing a field whose declared struct type
+    doesn't match the method's own declared return type (CS0029 — no
+    implicit conversion between Vector2/3/4/Color/Quaternion). Confirmed
+    live (2026-08-28), LightingDirector.cs, GetSkyboxColor():
+        public Color GetSkyboxColor()
+        { return _skyboxColor != null ? _skyboxColor : ambientSky; }
+    `_skyboxColor` is the LLM's own extra_field, declared Vector3 where the
+    method (and the sibling TEMPLATE field it's ternary'd against,
+    `ambientSky: Color`) both want Color — a wrong TYPE CHOICE for a new
+    field, not a fixable syntax slip, so this neutralizes the return
+    statement rather than guessing a conversion. A method left with no live
+    return statement is then dropped whole by lint_method's own dead-body
+    check — safe here specifically because nothing else in a freshly
+    generated project can already be calling a method the LLM just invented
+    this run."""
+    if not text or "return" not in text or not field_types:
+        return text
+    m = _METHOD_RETURN_TYPE_RE.search(signature or "")
+    if not m:
+        return text
+    ret_type = m.group(1).strip().lower()
+    if ret_type not in _STRUCT_RETURN_TYPES:
+        return text
+    out_lines = []
+    changed = False
+    for line in text.splitlines():
+        if "return" not in line:
+            out_lines.append(line)
+            continue
+        mismatched = any(
+            (ftype or "").strip().lower() in _STRUCT_RETURN_TYPES
+            and (ftype or "").strip().lower() != ret_type
+            for name, ftype in field_types.items()
+            if re.search(r'\b' + re.escape(name) + r'\b', line)
+        )
+        if mismatched:
+            indent = line[:len(line) - len(line.lstrip())]
+            out_lines.append(f"{indent}// AUDIT: removed type-incompatible return -- {line.strip()}")
+            changed = True
+        else:
+            out_lines.append(line)
+    if not changed:
+        return text
+    console.print("  [magenta]FIX[/]  neutralized a return statement referencing a "
+                  "struct-typed field incompatible with the method's own return "
+                  "type (CS0029)")
+    return "\n".join(out_lines)
+
+
+def _repair_getcomponent_wrong_dimension(text: str, field_types: "dict[str, str]") -> str:
+    """A field with a known 2D-physics type assigned from GetComponent<X>()
+    where X is that type's 3D counterpart (CS0029 — Rigidbody has no
+    implicit conversion to Rigidbody2D, and likewise for Collider/
+    BoxCollider/etc.). Confirmed live (2026-08-28), Bike.cs(36) (this
+    session's own bike micro — LLM-authored awake_extra assigning its own
+    template field `_riderRb: Rigidbody2D`):
+        _riderRb = _mountPoint.GetComponent<Rigidbody>();
+    Rewrites the generic argument to match the field's real declared type —
+    unambiguous, the same "only one sensible reading" reasoning as
+    _repair_forcemode_on_rigidbody2d. General over any `<X>2D`-suffixed
+    field type, not just Rigidbody2D — Collider2D/BoxCollider2D/etc. share
+    the exact same 3D-vs-2D confusion shape."""
+    if not text or "GetComponent<" not in text or not field_types:
+        return text
+    changed = False
+    for name, ftype in field_types.items():
+        t = (ftype or "").strip()
+        if not t.endswith("2D") or len(t) <= 2:
+            continue
+        three_d = t[:-2]   # "Rigidbody2D" -> "Rigidbody", "BoxCollider2D" -> "BoxCollider"
+        pattern = re.compile(
+            r'\b' + re.escape(name) + r'\b\s*=\s*[^;]*?GetComponent<'
+            + re.escape(three_d) + r'>\s*\(\s*\)')
+
+        def _fix(m: "re.Match[str]", _three_d=three_d, _t=t) -> str:
+            return m.group(0).replace(f"GetComponent<{_three_d}>", f"GetComponent<{_t}>")
+
+        new_text, n = pattern.subn(_fix, text)
+        if n:
+            text = new_text
+            changed = True
+    if changed:
+        console.print("  [magenta]FIX[/]  corrected GetComponent<T>()'s dimension to "
+                      "match the field's own 2D-typed declaration (CS0029)")
+    return text
+
+
 def _repair_numeric_literals(text: str) -> str:
     """Strip numeric-literal suffixes C# does not accept.
 
@@ -758,20 +992,30 @@ def _repair_gameobject_component_assign(text: str,
     return new
 
 
-# CS0023: `!` cannot apply to an int-valued expression. Unary `!` binds tighter
-# than `==`/`!=`, so a model checking "is this collection non-empty" by negating
-# the wrong term — `!x.Count == 0` (meant `x.Count != 0`) — parses as
-# `(!x.Count) == 0`, never as the intended `!(x.Count == 0)`. Hit live,
-# NPCDialogueManager.cs(17): `if (!_isSpeaking && !_dialogueQueue.Count == 0)`.
-# Scoped to `.Count`/`.Length` (the two collection-size members this slip shows
-# up on) compared against a numeric literal — flipping the comparison operator
-# instead of just dropping the `!` preserves the author's intent exactly.
-_BANG_COUNT_COMPARISON_RE = re.compile(
-    r'!\s*([\w.]*?\.(?:Count|Length))\s*(==|!=)\s*(\d+)')
+# CS0023: `!` cannot apply to a non-bool-valued expression. Unary `!` binds
+# tighter than a comparison operator, so a model checking a numeric condition
+# by negating the wrong term parses `!x <op> N` as `(!x) <op> N`, never the
+# intended `!(x <op> N)`. Hit live twice: NPCDialogueManager.cs(17)
+# `!_dialogueQueue.Count == 0` (meant `.Count != 0`), and StreetBeat2D's
+# MovingPlatform.cs(137) `!_cooldown <= 0f` (meant `_cooldown > 0f`) — a bare
+# field, not a `.Count`/`.Length` member, and a `<=` operator, not `==`/`!=`,
+# so the original Count/Length-only, `==`/`!=`-only version missed it.
+# Scoped to comparisons against a NUMERIC LITERAL specifically — that alone
+# proves `!` is misapplied regardless of the left side's real type: if it were
+# legitimately bool, `bool <op> <number>` could never have compiled in the
+# first place (CS0019), `!` misplaced or not. Flipping the operator (De
+# Morgan) instead of just dropping the `!` preserves the author's intent.
+_BANG_NUMERIC_COMPARISON_RE = re.compile(
+    r'!\s*([\w.]+)\s*(<=|>=|==|!=|<|>)\s*(-?\d+\.?\d*f?)\b')
+_COMPARISON_NEGATION: dict[str, str] = {
+    "==": "!=", "!=": "==", "<=": ">", ">=": "<", "<": ">=", ">": "<=",
+}
 
 
 def _repair_bang_count_comparison(text: str) -> str:
-    """Rewrite `!x.Count == 0` -> `x.Count != 0` (CS0023)."""
+    """Rewrite `!x <op> N` -> `x <negated-op> N` for a numeric literal N
+    (CS0023) — e.g. `!x.Count == 0` -> `x.Count != 0`, `!_cooldown <= 0f` ->
+    `_cooldown > 0f`."""
     if not text or "!" not in text:
         return text
     mask = _code_mask(text)
@@ -782,12 +1026,12 @@ def _repair_bang_count_comparison(text: str) -> str:
         if not mask[m.start()]:
             return m.group(0)                       # inside a comment/literal
         changed = True
-        flipped = "!=" if m.group(2) == "==" else "=="
+        flipped = _COMPARISON_NEGATION[m.group(2)]
         return f"{m.group(1)} {flipped} {m.group(3)}"
 
-    new = _BANG_COUNT_COMPARISON_RE.sub(repl, text)
+    new = _BANG_NUMERIC_COMPARISON_RE.sub(repl, text)
     if changed:
-        console.print("  [magenta]FIX[/]  rewrote '!' applied to Count/Length "
+        console.print("  [magenta]FIX[/]  rewrote '!' applied to a numeric "
                       "comparison (CS0023)")
     return new
 
@@ -858,7 +1102,8 @@ def _declare_inline_out_params(text: str) -> str:
 
 def lint_code_fragment(text: str, *, what: str,
                        hoist_into: Optional[list[CodeMethod]] = None,
-                       gameobject_fields: "frozenset[str]" = frozenset()) -> str:
+                       gameobject_fields: "frozenset[str]" = frozenset(),
+                       self_class_name: str = "") -> str:
     """
     Clean an LLM-authored C# fragment intended for an injection point.
     Returns "" if the fragment is rejected (caller should skip it).
@@ -871,6 +1116,10 @@ def lint_code_fragment(text: str, *, what: str,
     `gameobject_fields` names the schema's own GameObject-typed extra_fields,
     so a `<field> = GetComponentInChildren<Canvas>();` assigned to one of them
     can be repaired — see `_repair_gameobject_component_assign`.
+
+    `self_class_name` (typically the schema's own `.name`) lets
+    `_repair_self_class_static_call` drop a redundant `<ThisClass>.` before
+    an instance-method call (CS0120) written from within that same class.
     """
     if not text:
         return ""
@@ -901,6 +1150,8 @@ def lint_code_fragment(text: str, *, what: str,
     text = _repair_numeric_literals(text)
     text = _repair_wrong_namespace_qualifiers(text)
     text = _repair_static_called_as_instance(text)
+    text = _repair_forcemode_on_rigidbody2d(text)
+    text = _repair_self_class_static_call(text, self_class_name)
     # Two structural defects that CANNOT be repaired from the fragment alone.
     # Both were live on the grandma run and together took the whole build down
     # (17 of 28 gate errors), because a broken fragment does not fail alone —
@@ -989,6 +1240,25 @@ def _wrap_property_accessor(sig: str, body: str) -> str:
 # modifier and the now-illegal `base.OnEnable()` call (CS0117: 'MonoBehaviour'
 # does not contain a definition for 'OnEnable') have to go; the rest of the
 # body is exactly the behavior that was wanted.
+#
+# A curated list of REAL Unity messages is not the whole gap, though: the model
+# can just as easily invent a plausible-sounding hook name that is not a Unity
+# message either — hit live on a DeadReckoningProtocol `spawner` micro run,
+# EnemySpawner.cs(129):
+#
+#     public override void OnSpawned()
+#     { ... configure this spawner's own AudioSource for the prefab it holds ... }
+#
+# — no base class declares `OnSpawned`, invented or otherwise, so `override` is
+# illegal here too (CS0115), for the same structural reason. The general rule
+# is therefore inverted from "strip only these known-illegal names": `override`
+# is legal ONLY on a name the class's OWN template actually declares `virtual`/
+# `abstract` (e.g. Dialogue.cs.j2's `Resolve` — see each pipeline's
+# `_KNOWN_VIRTUAL_METHODS`) — everything else gets stripped, Unity message or
+# invented alike. `_UNITY_MESSAGE_METHODS` is kept as an explicit, unconditional
+# floor: those names are illegal to override REGARDLESS of what any pipeline's
+# `known_virtual_methods` happens to list, so a future mistake there can't
+# resurrect the SceneTransition bug.
 _UNITY_MESSAGE_METHODS = frozenset({
     "Awake", "Start", "OnEnable", "OnDisable", "OnDestroy",
     "OnApplicationQuit", "OnApplicationPause", "OnApplicationFocus",
@@ -1006,32 +1276,51 @@ _UNITY_MESSAGE_METHODS = frozenset({
 _OVERRIDE_MODIFIER_RE = re.compile(r"\b(?:override|sealed)\s+")
 
 
-def _strip_illegal_message_override(sig: str, body: str, name: str) -> tuple[str, str]:
+def _strip_illegal_message_override(sig: str, body: str, name: str, *,
+                                    known_virtual_methods: "frozenset[str]" = frozenset()
+                                    ) -> tuple[str, str]:
     """Drop `override`/`sealed` from `sig` and any `base.<name>(...)` call from
-    `body` when `name` is a Unity message method. No-op otherwise."""
-    if name not in _UNITY_MESSAGE_METHODS or not re.search(r"\boverride\b", sig):
+    `body`, unless `name` is one of the template's own genuine `virtual`/
+    `abstract` members (`known_virtual_methods` — always overridable) and not
+    itself a hard-illegal Unity message name. No-op when `sig` has no
+    `override`/`sealed` at all."""
+    if not re.search(r"\boverride\b", sig):
+        return sig, body
+    if name in known_virtual_methods and name not in _UNITY_MESSAGE_METHODS:
         return sig, body
     new_sig = _OVERRIDE_MODIFIER_RE.sub("", sig)
     base_call_re = re.compile(rf"\bbase\s*\.\s*{re.escape(name)}\s*\([^)]*\)\s*;\s*")
     new_body = base_call_re.sub("", body)
-    console.print(f"  [magenta]FIX[/]  stripped illegal 'override' + base.{name}() "
-                 f"call — Unity message methods are not virtual (CS0115)")
+    if name in _UNITY_MESSAGE_METHODS:
+        console.print(f"  [magenta]FIX[/]  stripped illegal 'override' + base.{name}() "
+                     f"call — Unity message methods are not virtual (CS0115)")
+    else:
+        console.print(f"  [yellow]FIX[/]  stripped illegal 'override' from {name!r} "
+                     f"(CS0115) — no base method by that name exists, so nothing calls "
+                     f"it automatically; it is now live only if other authored code "
+                     f"calls it directly")
     return new_sig, new_body
 
 
 def lint_method(m: CodeMethod, *, taken_names: set[str],
                 hoist_into: Optional[list[CodeMethod]] = None,
-                gameobject_fields: "frozenset[str]" = frozenset()) -> Optional[CodeMethod]:
+                gameobject_fields: "frozenset[str]" = frozenset(),
+                known_virtual_methods: "frozenset[str]" = frozenset(),
+                self_class_name: str = "") -> Optional[CodeMethod]:
     """
     Validate + clean a CodeMethod. Returns None if it should be dropped.
     `taken_names` is mutated with the method's lower-cased identifier so
     duplicates are dropped. `hoist_into` collects members the model nested
     inside this method's body — see `lint_code_fragment`. `gameobject_fields`
-    is forwarded to it too — see `_repair_gameobject_component_assign`.
+    and `self_class_name` are forwarded to it too — see
+    `_repair_gameobject_component_assign` / `_repair_self_class_static_call`.
+    `known_virtual_methods` names this generator's OWN template's genuine
+    `virtual`/`abstract` members — see `_strip_illegal_message_override`.
     """
     sig  = m.signature.strip()
     body = lint_code_fragment(m.body, what=f"method {sig!r}", hoist_into=hoist_into,
-                              gameobject_fields=gameobject_fields)
+                              gameobject_fields=gameobject_fields,
+                              self_class_name=self_class_name)
     if not body:
         return None
     body = _wrap_property_accessor(sig, body)
@@ -1039,7 +1328,8 @@ def lint_method(m: CodeMethod, *, taken_names: set[str],
     name_match = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", sig)
     if name_match:
         name = name_match.group(1)
-        sig, body = _strip_illegal_message_override(sig, body, name)
+        sig, body = _strip_illegal_message_override(
+            sig, body, name, known_virtual_methods=known_virtual_methods)
         if not body.strip():
             console.print(f"  [yellow]FIX[/]  dropped method {name!r}: nothing "
                           f"left after stripping the illegal base call")
@@ -1141,6 +1431,130 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
      r"I(?:Begin|End)?DragHandler|IDropHandler|IScrollHandler)\b",
      "UnityEngine.EventSystems"),
 ]
+
+
+# Namespaces an authored body needs but never asks for.
+#
+# lint_usings below only ever FILTERS the model's `extra_usings`; nothing has
+# ever ADDED one. So a body that calls `Array.Fill(...)` — perfectly good C# —
+# ships without `using System;` and fails with CS0103 "The name 'Array' does
+# not exist in the current context", which reads like an invented symbol rather
+# than a missing import. Hit live in Gridfall's GridLogic row-clear.
+#
+# Deliberately a SMALL, unambiguous table. Each entry is a type whose namespace
+# has exactly one sane answer in a Unity script. `Random` is excluded on
+# purpose: `UnityEngine.Random` and `System.Random` are both real, and adding
+# `using System;` to a body that means the Unity one introduces CS0104
+# ambiguity — a repair that trades one compile error for another.
+_TYPE_NAMESPACES: "dict[str, str]" = {
+    "Array": "System",
+    "Math": "System",
+    "Convert": "System",
+    "DateTime": "System",
+    "TimeSpan": "System",
+    "StringComparison": "System",
+    "IDisposable": "System",
+    "List": "System.Collections.Generic",
+    "Dictionary": "System.Collections.Generic",
+    "HashSet": "System.Collections.Generic",
+    "Queue": "System.Collections.Generic",
+    "Stack": "System.Collections.Generic",
+    "IEnumerator": "System.Collections",
+}
+
+# `Array.Fill(` / `new List<` / `List<int> x` — a real reference, not the word
+# appearing inside an identifier or a string.
+_TYPE_USE_RES: "dict[str, object]" = {
+    name: re.compile(r"(?<![\w.])" + re.escape(name)
+                     + r"(?=\s*[.<(])")
+    for name in _TYPE_NAMESPACES
+}
+
+
+def _rank(type_name: str) -> int:
+    """How many `[]` suffixes a jagged-array type carries. `int[][]` -> 2."""
+    return str(type_name or "").count("[]")
+
+
+def jagged_rank_corrections(fields: "list[tuple[str, str]]", body: str
+                            ) -> "dict[str, str]":
+    """`{field_name: corrected_type}` where the author's own code contradicts
+    the rank they declared for a jagged array.
+
+    Only ONE signal is trusted, and it is the author stating the type
+    themselves: an explicit local declaration initialised straight from the
+    field —
+
+        [SerializeField] private int[][][] _grid;   // declared rank 3
+        ...
+        int[][] grid = _grid;                       // used as rank 2, x5
+
+    That is the author disagreeing with the author, in writing, and the local
+    is the side they went on to index. Every other kind of rank mismatch is
+    left alone: inferring a type from indexing depth guesses, and a guess that
+    lowers a rank correctly used elsewhere trades a compile error for a wrong
+    program. Hit live in Gridfall's GridLogic — one bad declaration produced
+    seven CS0029s across five methods.
+    """
+    out: "dict[str, str]" = {}
+    if not body:
+        return out
+    for name, declared in fields:
+        if _rank(declared) < 2 or not name:
+            continue
+        base = declared.split("[")[0].strip()
+        rx = re.compile(re.escape(base) + r"((?:\[\])+)\s+\w+\s*=\s*"
+                        + re.escape(name) + r"\b")
+        ranks = {len(m.group(1)) // 2 for m in rx.finditer(body)}
+        ranks = {r for r in ranks if 0 < r < _rank(declared)}
+        if len(ranks) == 1:
+            out[name] = base + "[]" * ranks.pop()
+    return out
+
+
+# Types a model routinely qualifies with the WRONG namespace. `Touchscreen`,
+# `Gamepad` and friends read like core engine types, so an author writing a
+# mobile input script reaches for `UnityEngine.Touchscreen` — CS0234, "does not
+# exist in the namespace 'UnityEngine'". They live in UnityEngine.InputSystem.
+# Live on BlockWell's TouchInput, which had already imported the right
+# namespace and then over-qualified the type anyway.
+_MISQUALIFIED_TYPES: "dict[str, str]" = {
+    name: "UnityEngine.InputSystem" for name in (
+        "Touchscreen", "Keyboard", "Mouse", "Gamepad", "Pointer", "Pen",
+        "InputAction", "InputActionAsset", "InputActionMap", "InputControl",
+        "InputDevice", "InputSystem", "TouchPhase",
+    )
+}
+
+
+def correct_qualified_type(type_str: str) -> "tuple[str, str]":
+    """`UnityEngine.Touchscreen` -> `("Touchscreen", "UnityEngine.InputSystem")`.
+
+    Returns `(type, required_namespace)`; the namespace is "" when nothing was
+    corrected. Only rewrites a qualifier we can name a correct home for — an
+    unknown `Foo.Bar` is left exactly as written.
+    """
+    raw = (type_str or "").strip()
+    if "." not in raw:
+        return raw, ""
+    head, _, tail = raw.rpartition(".")
+    ns = _MISQUALIFIED_TYPES.get(tail)
+    if ns and head != ns:
+        return tail, ns
+    return raw, ""
+
+
+def required_usings_for(text: str) -> "list[str]":
+    """Namespaces `text` uses but may not have imported, in declaration order."""
+    if not text:
+        return []
+    out: "list[str]" = []
+    for name, rx in _TYPE_USE_RES.items():
+        if rx.search(text):
+            ns = _TYPE_NAMESPACES[name]
+            if ns not in out:
+                out.append(ns)
+    return out
 
 
 def lint_usings(usings: list[str], *, already_in_template: set[str],
@@ -2483,14 +2897,75 @@ def _vector_initializer(base: str, text: str) -> Optional[str]:
     A tuple literal whose arity matches the declared type is rewritten to the
     real constructor call; anything else is already an expression (`new
     Vector3(...)`, `Vector3.zero`) and only the structural guard applies.
-    """
+
+    A bare word (`null`, a stray identifier) is rejected outright rather than
+    reaching that structural guard — unlike `_color_initializer`, which
+    already refuses this shape, the guard alone only checks brace/paren/quote
+    BALANCE, which "null" trivially passes despite being CS0037 for a
+    non-nullable value type. Confirmed live (2026-08-28),
+    LightingDirector.cs(48): `[SerializeField] private Vector3 _skyboxColor
+    = null;` shipped unrepaired for exactly this reason."""
+    if re.fullmatch(r"[A-Za-z_]\w*", text) and text not in ("true", "false"):
+        return None
     m = _TUPLE_LITERAL_RE.match(text)
     if m:
         items = [p.strip() for p in _split_top_level_args(m.group("items"))]
         if len(items) == _VECTOR_ARITY[base] and all(items):
             return f"new {_VECTOR_CTOR[base]}({', '.join(items)})"
         return None
+    # Bare comma-separated numbers with NO wrapping parens at all — a second
+    # habitual shorthand alongside the tuple-literal one above, confirmed
+    # live, DamageReceiver.cs(11,142):
+    #     [SerializeField] private Vector3 _knockbackForce = 0f, 0f, 0f;
+    # C# reads that as three separate field declarators, not one initializer
+    # (CS1001/CS1003) — the tuple branch above never sees it because there are
+    # no parens to match, and it would otherwise reach the structural-safety
+    # fallback below, which only checks brace/paren/quote balance (trivially
+    # fine for a string with none of those) and ships it unrepaired. A real
+    # Vector expression never has a top-level comma outside a constructor
+    # call, so finding one here is decisive: matching arity rewrites to the
+    # real constructor exactly like the tuple case, any other arity is
+    # dropped rather than falling through to a check that cannot see this.
+    items = _split_top_level_args(text)
+    if len(items) > 1:
+        items = [p.strip() for p in items]
+        if len(items) == _VECTOR_ARITY[base] and all(items):
+            return f"new {_VECTOR_CTOR[base]}({', '.join(items)})"
+        return None
     return text if _initializer_is_structurally_safe(text) else None
+
+
+_VECTOR_ARITY = {"vector2": 2, "vector3": 3, "vector4": 4, "quaternion": 4,
+                 "color": 4, "color32": 4}
+
+
+def _as_float_literal(tok: str) -> str:
+    """`0.5` -> `0.5f`; an int or an already-suffixed literal is left alone.
+
+    A Vector component is a float, so `new Vector2(0.5, 0.5)` is CS1503 —
+    fixing the brackets without fixing the literal just moves the error.
+    """
+    if re.fullmatch(r"-?\d+\.\d+", tok):
+        return tok + "f"
+    return tok
+
+
+def _rebuild_bracket_literal(type_str: str, parts: "list[str]") -> str:
+    """`Vector2` + ["0.5","0.5"] -> `new Vector2(0.5f, 0.5f)`; `int[]` + [...]
+    -> `new int[] { ... }`. "" when the shape is not one we can name."""
+    if not parts:
+        return ""
+    raw  = type_str.strip().rstrip("?").strip()
+    base = raw.lower()
+    if base.endswith("[]"):
+        elem = raw[:-2]
+        toks = ([_as_float_literal(p) for p in parts]
+                if elem.strip().lower() == "float" else parts)
+        return f"new {elem}[] {{ {', '.join(toks)} }}"
+    arity = _VECTOR_ARITY.get(base)
+    if arity is not None and len(parts) == arity:
+        return f"new {raw}({', '.join(_as_float_literal(p) for p in parts)})"
+    return ""
 
 
 def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
@@ -2509,6 +2984,19 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
         return None
     text = _PY_LITERALS.get(text.lower(), text)
     base = type_str.strip().rstrip("?").strip().lower()
+
+    # A bracketed collection literal — Python/JS syntax that is not C#:
+    #
+    #     [SerializeField] private Vector2 _targetRect = [0.5, 0.5];
+    #
+    # CS1525 "Invalid expression term '['". Live on Gridfall's CameraController.
+    # Same contract as the unquoting repair below: the model meant the VALUE,
+    # the syntax is the only thing wrong, so rebuild it rather than drop it.
+    # Anything whose shape we cannot name confidently still drops.
+    if text.startswith("[") and text.endswith("]"):
+        parts = [p.strip() for p in text[1:-1].split(",") if p.strip()]
+        rebuilt = _rebuild_bracket_literal(type_str, parts)
+        return rebuilt if rebuilt else None
 
     if base == "string":
         if (text.lower() in _STRING_SENTINELS
@@ -2722,7 +3210,10 @@ class _ExtensibleLike(Protocol):
 def lint_extensible(schema: _ExtensibleLike, *,
                     reserved_fields: set[str],
                     template_usings: set[str],
-                    hoist_field_inits: bool = False) -> _ExtensibleLike:
+                    hoist_field_inits: bool = False,
+                    known_virtual_methods: "frozenset[str]" = frozenset(),
+                    template_field_types: "dict[str, str] | None" = None,
+                    template_readonly_names: "frozenset[str]" = frozenset()) -> _ExtensibleLike:
     """
     Run the full defensive lint over every `extra_*` field of an extensible
     schema, in place. Mirrors the controller's hand-written pass so every
@@ -2735,6 +3226,32 @@ def lint_extensible(schema: _ExtensibleLike, *,
     (ai, animator, dialogue, interactable, lighting, shader, statemachine,
     transition, trigger, vfx), and hoisting into a channel nothing reads would
     lose the assignment silently — worse than the loud drop.
+
+    `known_virtual_methods` names this generator's OWN template's genuine
+    `virtual`/`abstract` members (e.g. Dialogue.cs.j2's `Resolve`) — an
+    authored `override` of one of these is legitimate and left alone; every
+    other `override` is illegal (CS0115, no base method exists — see
+    `_strip_illegal_message_override`) and gets stripped. Defaults to empty:
+    a generator whose template declares no virtuals (every one of them today
+    except dialogue) needs no override to ever survive.
+
+    `template_field_types` (typically `template_field_types(template_dir,
+    variant, facts)`, `code_fields.py`'s own reader for a micro's `.cs.j2`
+    field declarations) folds the TEMPLATE's own fields into the same misuse
+    check that already covers the schema's own `extra_fields` — see the
+    comment at `own_field_types` below for why this was missing and what it
+    caught live. Defaults to None (no template fields known): a caller that
+    never reads its template still gets exactly today's behavior.
+
+    `template_readonly_names` (typically `template_readonly_property_names(
+    template_dir, variant, facts)`) names the template's get-only,
+    expression-bodied properties whose body is too complex for
+    `_repair_readonly_property_assign` to rewrite an assignment into (a
+    simple `Name => _field;` passthrough still gets that value-preserving
+    rewrite via `bind_authored_code`'s own path for `type: custom` scripts,
+    but `lint_extensible` never had it either — see
+    `find_readonly_property_misuse`). An assignment into one of these is
+    refused outright (CS0200) rather than left broken. Defaults to empty.
     """
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=template_usings,
                                       allowed=_KNOWN_NAMESPACES)
@@ -2749,16 +3266,21 @@ def lint_extensible(schema: _ExtensibleLike, *,
         if (f.type or "").strip() == "GameObject" and f.name)
     # Members the model nested inside a body (CS0106) are re-homed here, at the
     # one layer that can see both the bodies and the class-level method list.
+    # getattr, not schema.name: _ExtensibleLike's structural contract doesn't
+    # promise a `.name` (UnityScript/CodeExtensibleSchema both happen to have
+    # one, but nothing enforces that every future satisfier will) — an empty
+    # self_class_name just makes _repair_self_class_static_call a no-op.
+    self_class_name = getattr(schema, "name", "") or ""
     hoisted: list[CodeMethod] = []
-    schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body",         hoist_into=hoisted, gameobject_fields=gameobject_fields)
+    schema.awake_extra        = lint_code_fragment(schema.awake_extra,        what="Awake() body",         hoist_into=hoisted, gameobject_fields=gameobject_fields, self_class_name=self_class_name)
     # AFTER the fragment lint, and FIRST in the body: these assignments are
     # already valid C# (they must not be re-judged as authored prose), and the
     # author's own Awake() statements may read the fields they initialise.
     if field_inits:
         schema.awake_extra = "\n".join(
             field_inits + ([schema.awake_extra] if schema.awake_extra else []))
-    schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body",       hoist_into=hoisted, gameobject_fields=gameobject_fields)
-    schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body",   hoist_into=hoisted, gameobject_fields=gameobject_fields)
+    schema.update_extra       = lint_code_fragment(schema.update_extra,       what="per-frame body",       hoist_into=hoisted, gameobject_fields=gameobject_fields, self_class_name=self_class_name)
+    schema.fixed_update_extra = lint_code_fragment(schema.fixed_update_extra, what="FixedUpdate() body",   hoist_into=hoisted, gameobject_fields=gameobject_fields, self_class_name=self_class_name)
     taken: set[str] = set()
     cleaned: list[CodeMethod] = []
     # A queue, not a for-loop: a hoisted method can itself contain a nested
@@ -2770,7 +3292,9 @@ def lint_extensible(schema: _ExtensibleLike, *,
         budget -= 1
         nested: list[CodeMethod] = []
         m2 = lint_method(queue.pop(0), taken_names=taken, hoist_into=nested,
-                         gameobject_fields=gameobject_fields)
+                         gameobject_fields=gameobject_fields,
+                         known_virtual_methods=known_virtual_methods,
+                         self_class_name=self_class_name)
         if m2 is not None:
             cleaned.append(m2)
         queue.extend(nested)
@@ -2781,17 +3305,28 @@ def lint_extensible(schema: _ExtensibleLike, *,
     schema.extra_fields = retype_string_fields_used_as_audioclip(
         schema.extra_fields, blob=_authored_blob(schema))
 
-    # Self-field-type misuse: `lint_extensible` never had `bind_authored_code`'s
-    # cross-check against a TEMPLATE's field types (that pass needs a .cs.j2 to
-    # read, which a `type: custom` script never has) — but the SCHEMA'S OWN
-    # extra_fields are ground truth regardless. Confirmed live,
-    # StealthAudioManager.cs(20,38): two `object`-typed extra_fields (cross-
-    # script references with no sanctioned real type — see
-    # docs/model-pipeline-architecture.md) had real-sounding methods called on
-    # them (`RetractGear`, `OnEscortComplete`), which can never exist on
-    # `object`. Every `lint_extensible` caller gets this for free, not only
-    # custom scripts.
-    own_field_types = {f.name: f.type for f in schema.extra_fields if f.name}
+    # Self-field-type misuse: `lint_extensible` originally had no cross-check
+    # against a TEMPLATE's field types the way `bind_authored_code` does for
+    # `type: custom` scripts — only the SCHEMA'S OWN extra_fields were ground
+    # truth here. Confirmed live, StealthAudioManager.cs(20,38): two
+    # `object`-typed extra_fields (cross-script references with no sanctioned
+    # real type — see docs/model-pipeline-architecture.md) had real-sounding
+    # methods called on them (`RetractGear`, `OnEscortComplete`), which can
+    # never exist on `object`.
+    #
+    # That left a second, later gap: misuse of the TEMPLATE's OWN pre-existing
+    # fields went uncaught by this pass, because it never saw their types
+    # either (AnimatorPipeline hit the SAME gap independently — see
+    # micro/animator.py's own default_fix — but predates lint_extensible
+    # entirely, so it calls lint_field_type_misuse directly rather than
+    # through here). Confirmed live via THIS path, DeadReckoningProtocol
+    # GameRules.cs(265,277): `_objectives.Count`/`_objectives[i]` — `_objectives`
+    # is Rules.cs.j2's own `private MonoBehaviour _objectives;`, invisible
+    # here until a caller passes `template_field_types`. Extra_fields still
+    # win a name collision (the author's own explicit declaration is the
+    # more specific fact).
+    own_field_types = {**(template_field_types or {}),
+                       **{f.name: f.type for f in schema.extra_fields if f.name}}
     if own_field_types:
         schema.awake_extra, _ = lint_field_type_misuse(
             schema.awake_extra, field_types=own_field_types)
@@ -2802,6 +3337,45 @@ def lint_extensible(schema: _ExtensibleLike, *,
         schema.extra_methods = [
             m.model_copy(update={"body": lint_field_type_misuse(
                 m.body, field_types=own_field_types, signature=m.signature)[0]})
+            for m in schema.extra_methods
+        ]
+        # Same field_types source, several sibling misuse shapes
+        # (CS0019/CS1503/CS0029, not the CS1061/CS1503-on-string the pass
+        # above catches) — see each repair's own docstring. awake_extra/
+        # update_extra/fixed_update_extra are always void, so
+        # _repair_struct_return_type_mismatch (needs a non-void `signature`
+        # to have anything to check against) only runs over extra_methods,
+        # where LLM-authored non-void helper methods actually occur.
+        for _repair in (_repair_collection_compared_as_scalar,
+                        _repair_animator_play_layer_arg,
+                        _repair_getcomponent_wrong_dimension):
+            schema.awake_extra        = _repair(schema.awake_extra,        own_field_types)
+            schema.update_extra       = _repair(schema.update_extra,       own_field_types)
+            schema.fixed_update_extra = _repair(schema.fixed_update_extra, own_field_types)
+            schema.extra_methods = [
+                m.model_copy(update={"body": _repair(m.body, own_field_types)})
+                for m in schema.extra_methods
+            ]
+        schema.extra_methods = [
+            m.model_copy(update={"body": _repair_struct_return_type_mismatch(
+                m.body, own_field_types, signature=m.signature)})
+            for m in schema.extra_methods
+        ]
+
+    # Same discovery, one property over: `CurrentStep += 1;` against
+    # Rules.cs.j2's ternary-bodied `CurrentStep` (see
+    # `find_readonly_property_misuse`'s own comment for the full citation).
+    if template_readonly_names:
+        schema.awake_extra, _ = lint_readonly_property_misuse(
+            schema.awake_extra, readonly_names=template_readonly_names)
+        schema.update_extra, _ = lint_readonly_property_misuse(
+            schema.update_extra, readonly_names=template_readonly_names)
+        schema.fixed_update_extra, _ = lint_readonly_property_misuse(
+            schema.fixed_update_extra, readonly_names=template_readonly_names)
+        schema.extra_methods = [
+            m.model_copy(update={"body": lint_readonly_property_misuse(
+                m.body, readonly_names=template_readonly_names,
+                signature=m.signature)[0]})
             for m in schema.extra_methods
         ]
 
@@ -3863,7 +4437,18 @@ _TEMPLATE_FIELD_DECL_RE = re.compile(
     r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"
     r"(?:public|private|protected|internal)\b"
     r"(?:[ \t]+(?:static|readonly|const|new))*"
-    r"[ \t]+(?P<type>[A-Za-z_][\w.]*\??)"
+    # Generic-argument suffix (List<GameObject>, Dictionary<string, int>) —
+    # greedy `.*` inside the bracket group backtracks to the LAST `>` that
+    # still leaves a valid name+terminator after it, which for one field
+    # declaration on one line is the true outermost close even when the
+    # generic itself nests (Dictionary<string, List<int>>). Confirmed live
+    # (2026-08-28): the type-capture group had no `<`/`>` at all before this,
+    # so it silently failed to match ANY generic-typed field declaration —
+    # `private readonly List<GameObject> _alive = ...;` never matched,
+    # meaning template_field_types() never saw a collection field exists,
+    # and the misuse checks that key off it (find_field_type_misuse,
+    # _repair_collection_compared_as_scalar) had no ground truth for one.
+    r"[ \t]+(?P<type>[A-Za-z_][\w.]*(?:<.*>)?\??(?:\[\])?)"
     r"[ \t]+(?P<name>[A-Za-z_]\w*)[ \t]*(?:=[^=]|;)")
 
 
@@ -3963,6 +4548,83 @@ def _repair_readonly_property_assign(text: str, *, backing: "dict[str, str]") ->
         console.print("  [magenta]FIX[/]  rewrote assignment to a get-only "
                       "template property as its backing field (CS0200)")
     return new
+
+
+# The rewrite above only fires for a TRIVIAL passthrough body (`Name =>
+# _field;`) — it has nowhere to route an assignment when the body is
+# anything else, and silently left the assignment untouched rather than
+# ever saying so. Confirmed live, DeadReckoningProtocol GameRules.cs(266):
+# `CurrentStep += 1;` against Rules.cs.j2's
+#     public Step CurrentStep => Finished || steps.Count == 0 ? null : steps[_step];
+# — a ternary returning a `Step` object, not a passthrough of any single
+# field, so there is no backing name to rewrite INTO; the assignment is
+# simply illegal (CS0200) and must be neutralized like any other
+# unrepairable misuse. `_ASSIGN_TO_NAME_RE` also only ever matched a bare
+# `=`, so `+=` here was invisible to the rewrite pass in the first place —
+# not simply un-rewritable, but never even detected.
+_READONLY_PROPERTY_ANY_BODY_RE = re.compile(
+    r"^\s*(?:public|private|protected|internal)\s+[A-Za-z_][\w<>,\[\].?]*\s+"
+    r"(?P<name>[A-Za-z_]\w*)\s*=>\s*[^;]+;\s*$",
+    re.MULTILINE)
+_READONLY_ASSIGN_RE = re.compile(
+    r"(?<!\.)\b(?P<name>[A-Za-z_]\w*)\b[ \t]*"
+    r"(?:\+=|-=|\*=|/=|(?<![=!<>])=(?!=))[ \t]*[^;=\s][^;]*;")
+
+
+@lru_cache(maxsize=64)
+def template_readonly_property_names(template_dir: str, variant: str = "",
+                                     facts: "tuple[tuple[str, str], ...]" = ()
+                                     ) -> "frozenset[str]":
+    """Every get-only, expression-bodied property NAME the template declares,
+    regardless of body complexity — a strict superset of
+    `template_readonly_property_backing`'s keys (that one additionally
+    requires a trivial single-identifier body to know what to rewrite an
+    assignment INTO). Ground truth for `find_readonly_property_misuse`."""
+    return frozenset(
+        m.group("name")
+        for line in _template_text(template_dir, variant, facts).splitlines()
+        for m in [_READONLY_PROPERTY_ANY_BODY_RE.match(line)] if m)
+
+
+def find_readonly_property_misuse(text: str, *, readonly_names: "frozenset[str]",
+                                  signature: str = "") -> "dict[int, set[str]]":
+    """`{line_index: {description}}` for an assignment (`=`/`+=`/`-=`/...)
+    into a name the template declares as a get-only, expression-bodied
+    property (CS0200) — the complement to `_repair_readonly_property_assign`:
+    that one rewrites the simple, value-preserving case (a trivial
+    passthrough body); this one catches everything else — a complex body
+    (ternary, indexer, method call, ...) has no single backing field to
+    rewrite into, so the assignment is refused outright, the same as any
+    other unrepairable misuse this module neutralizes."""
+    if not text or not readonly_names:
+        return {}
+    mask = _code_mask(text)
+    shadowed = _fragment_declares(text) | _signature_param_names(signature)
+    bad: "dict[int, set[str]]" = {}
+    for m in _READONLY_ASSIGN_RE.finditer(text):
+        if not mask[m.start()]:
+            continue
+        name = m.group("name")
+        if name not in readonly_names or name in shadowed:
+            continue
+        bad.setdefault(text.count("\n", 0, m.start()), set()).add(
+            f"{name} -- {name} is a read-only property, it has no setter")
+    return bad
+
+
+def lint_readonly_property_misuse(text: str, *, readonly_names: "frozenset[str]",
+                                  signature: str = "") -> "tuple[str, set[str]]":
+    """Neutralize an assignment into a get-only template property whose body
+    is too complex for `_repair_readonly_property_assign` to rewrite. Call
+    this AFTER that rewrite, on its output: a property it already rewrote no
+    longer has an assignment to its OWN name left in the text (the statement
+    now assigns the backing field instead), so the two passes never conflict
+    — this one only ever sees what the first pass could not fix."""
+    bad = find_readonly_property_misuse(text, readonly_names=readonly_names,
+                                        signature=signature)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(text, bad, reason="assignment(s) to a read-only property")
 
 
 def find_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
@@ -4203,6 +4865,66 @@ def _neutralize_flagged_lines(text: str, bad: "dict[int, set[str]]", *,
     return "\n".join(out), flagged
 
 
+# CS0103 — the author declared `_grid` and then wrote `grid`.
+#
+# Like lint_undeclared_catch_exception_var above, this is a fully MECHANICAL
+# fix rather than a neutralize-the-line fallback, and it is safe for the same
+# reason: the name being rewritten provably does not bind (it is in `unbound`),
+# so no code that compiles today can change meaning.
+#
+# It matters more than the compile error it clears. The alternative repairs are
+# both wrong on CONTENT: neutralizing the statement deletes behaviour the author
+# meant to write, and DECLARING a second `grid` field leaves two references to
+# the same collaborator where only one is ever wired in the scene — the script
+# compiles and then silently does nothing at runtime. Rebinding to the field
+# the author already declared is the only repair that keeps the intent.
+#
+# Hit live on Gridfall's InputHandler: `[SerializeField] private GridLogic
+# _grid` declared, `if (_grid == null) return;` guarding, then
+# `grid.SetScore(grid.GetScore() + 1);` — three CS0103s in one file.
+_ALIAS_SKIP_RE = re.compile(
+    r'"(?:\\.|[^"\\])*"'        # string literal
+    r"|'(?:\\.|[^'\\])*'"       # char literal
+    r"|//[^\n]*"                  # line comment
+    r"|/\*.*?\*/",                # block comment
+    re.DOTALL,
+)
+
+
+def lint_underscore_alias_references(text: str, *, unbound: "set[str]",
+                                     declared: "set[str] | frozenset[str]"
+                                     ) -> "tuple[str, set[str]]":
+    """Rewrite an unbound `name` to `_name` when `_name` IS a declared member.
+
+    Returns `(text, rebound_names)`. Only names present in `unbound` are ever
+    touched, so a genuine local variable called `grid` is left alone. String
+    and comment regions are skipped so prose is never rewritten.
+    """
+    targets = {n for n in unbound if n and f"_{n}" in declared and n not in declared}
+    if not text or not targets:
+        return text, set()
+
+    pattern = re.compile(r"(?<![\w.])(" + "|".join(sorted(map(re.escape, targets),
+                                                         key=len, reverse=True))
+                         + r")\b")
+    rebound: set[str] = set()
+
+    def _fix_code(chunk: str) -> str:
+        def _sub(m: "re.Match") -> str:
+            rebound.add(m.group(1))
+            return "_" + m.group(1)
+        return pattern.sub(_sub, chunk)
+
+    out: list[str] = []
+    pos = 0
+    for m in _ALIAS_SKIP_RE.finditer(text):
+        out.append(_fix_code(text[pos:m.start()]))
+        out.append(m.group(0))          # strings/comments pass through verbatim
+        pos = m.end()
+    out.append(_fix_code(text[pos:]))
+    return "".join(out), rebound
+
+
 def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                              arities: "dict[str, tuple[int, int]] | None" = None,
                              params: "dict[str, tuple[str, ...]] | None" = None,
@@ -4247,7 +4969,7 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
 #       — `ambientGround` is `[SerializeField] private Color ambientGround`.
 #       Mathf.Lerp always returns float. CS1503.
 #
-# Three cases are judged, each requiring the field's type to be read straight
+# Five cases are judged, each requiring the field's type to be read straight
 # off the template (never guessed):
 #
 #   (a) MEMBER CALL on a primitive-typed field. A float/int/bool/... field has
@@ -4256,12 +4978,26 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
 #       is unconditionally wrong, whatever the name.
 #   (b) MEMBER CALL against a small, hand-verified Unity component surface
 #       (`_UNITY_FIELD_TYPE_SURFACE`) — never a guess at the rest of a type's
-#       real API. AudioSource is the only entry today, because it is the one
-#       that shipped a real build; add another type here only once its listed
-#       surface has been checked against the real Unity API, the same
-#       discipline `_MEMBER_VAR_TYPES` follows for GTA types above.
+#       real API. AudioSource/MonoBehaviour are the entries today, each added
+#       only once its listed surface was checked against the real Unity API,
+#       the same discipline `_MEMBER_VAR_TYPES` follows for GTA types above.
 #   (c) ASSIGNMENT of a provably numeric expression into a struct field with
 #       no implicit numeric conversion (Color, Vector2/3/4, Quaternion).
+#   (d) ARGUMENT to one of Animator's four state-switch methods
+#       (`_ANIMATOR_STATE_SWITCH_METHODS`) whose second positional argument is
+#       a provably string-typed expression — every real overload of all four
+#       takes a number there (duration or layer), never a string, so this
+#       needs no knowledge of which overload was intended.
+#   (e) BARE PROPERTY ACCESS (`recv.Member`, no call) or INDEXING
+#       (`recv[...]`) on a field typed `object`/a primitive/one of the
+#       `_UNITY_FIELD_TYPE_SURFACE` types — none of those support a custom
+#       property or an indexer, so this reuses the SAME three buckets (a)/(b)
+#       already judge for calls, just without requiring the trailing `(`.
+#       Confirmed live, DeadReckoningProtocol GameRules.cs(265,266,277,278):
+#       `_objectives.Count` / `_objectives[_currentStepIndex]` — `_objectives`
+#       is the template's own generic `MonoBehaviour` reflection binding (see
+#       Rules.cs.j2's `BindObjectives()`), not a collection. Cases (a)/(b)
+#       never saw this because their regex requires a call's `(`.
 _NUMERIC_BOOL_TYPES = _PRIMITIVE_TYPES - {"string"}
 _STRUCT_NO_NUMERIC_CONVERSION = frozenset({
     "color", "color32", "vector2", "vector3", "vector4", "quaternion",
@@ -4277,21 +5013,87 @@ _UNITY_FIELD_TYPE_SURFACE: "dict[str, frozenset[str]]" = {
         "minDistance", "maxDistance", "rolloffMode", "ignoreListenerVolume",
         "ignoreListenerPause", "velocityUpdateMode",
     }),
+    # `MonoBehaviour` is this pipeline's OWN fallback type for a cross-script
+    # reference it cannot resolve to a real generated class (no sanctioned
+    # pattern exists for one custom script to reference another — see
+    # docs/model-pipeline-architecture.md) — the same shape `object` already
+    # covers above, just less restrictive because MonoBehaviour genuinely has
+    # a real (small, well-known) API. Confirmed live, DeadReckoningProtocol
+    # EngineerEscort.cs(17): `[SerializeField] private MonoBehaviour
+    # _engineerDialogueManager;` then `_engineerDialogueManager.
+    # TriggerEvent("StartEscortDialogue");` — TriggerEvent is not a member of
+    # MonoBehaviour or anything it inherits from (CS1061), but fell through
+    # every existing check because MonoBehaviour was in none of the
+    # type-specific buckets above. Full public surface of
+    # MonoBehaviour/Behaviour/Component/UnityEngine.Object — never a guess.
+    "monobehaviour": frozenset({
+        "GetComponent", "GetComponents", "GetComponentInChildren",
+        "GetComponentsInChildren", "GetComponentInParent",
+        "GetComponentsInParent", "TryGetComponent",
+        "CompareTag", "SendMessage", "SendMessageUpwards", "BroadcastMessage",
+        "StartCoroutine", "StopCoroutine", "StopAllCoroutines",
+        "Invoke", "InvokeRepeating", "CancelInvoke", "IsInvoking",
+        "GetInstanceID", "print",
+        "gameObject", "transform", "tag", "name", "hideFlags",
+        "enabled", "isActiveAndEnabled", "useGUILayout",
+    }),
 }
 
 _FIELD_MEMBER_CALL_RE = re.compile(
     r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)\.(?P<member>[A-Za-z_]\w*)\s*\(")
+# (e)'s two shapes: a property READ (no trailing call) and an indexer. Both
+# exclude what _FIELD_MEMBER_CALL_RE already owns (a member immediately
+# followed by `(`), so the two never double-flag the same text.
+_FIELD_PROPERTY_RE = re.compile(
+    r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)\.(?P<member>[A-Za-z_]\w*)\b(?!\s*\()")
+_FIELD_INDEX_RE = re.compile(r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)\s*\[")
 _FIELD_ASSIGN_RE = re.compile(
     r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)[ \t]*"
     r"(?P<op>\+=|-=|\*=|/=|(?<![=!<>])=(?!=))"
     r"[ \t]*(?P<rhs>[^;\n]+);")
+
+# (d) Animator's four state-switch overload families all share one shape:
+# (string|int stateName, float duration_or_normalizedTime, int layer = -1,
+# ...). None of them EVER take a string as the second positional argument, in
+# any real overload — so a statically-string-typed second argument is wrong
+# regardless of which overload was intended, no knowledge of the rest of
+# Animator's API required. Confirmed live, DeadReckoningProtocol
+# PlayerAnimator.cs(109): `_anim.CrossFade(_vehicleModeHash, modeName)` —
+# `modeName` is this METHOD'S OWN `string` parameter, passed where the
+# transition duration belongs (CS1503 on both arguments, since the first is
+# also wrong — an `int` hash where CrossFade's own overloads take `string` or
+# `int`, but AS THE FIRST ARG. The second-argument check alone is enough to
+# catch this call and every other realistic misuse of this method family).
+_ANIMATOR_STATE_SWITCH_METHODS = frozenset({
+    "CrossFade", "CrossFadeInFixedTime", "Play", "PlayInFixedTime",
+})
+
+
+def _find_matching_close_paren(text: str, start: int) -> "int | None":
+    """Index of the `)` matching an already-consumed `(` (`start` is the
+    index right after it), nesting-aware for `()[]{}`. None when the parens
+    never balance within a bounded scan — bail out rather than mis-parse; a
+    missed check is safe, a false flag on a mis-parsed call is not. Pair with
+    the module's OWN `_split_top_level_args(args_text)` (a plain string
+    splitter, no position-finding) to get the actual argument list."""
+    depth = 1
+    limit = min(len(text), start + 2000)
+    for i in range(start, limit):
+        c = text[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return None
 
 
 def find_field_type_misuse(text: str, *, field_types: "dict[str, str]",
                            signature: str = "") -> "dict[int, set[str]]":
     """`{line_index: {description, ...}}` for statements that use a
     TEMPLATE-declared field in a way its own declared type cannot support —
-    see the module comment above for the three cases judged.
+    see the module comment above for the five cases judged.
 
     `field_types` maps field name -> declared type, read off the micro's own
     template (`template_field_types`). A name the fragment or its own
@@ -4307,6 +5109,7 @@ def find_field_type_misuse(text: str, *, field_types: "dict[str, str]",
     def flag(pos: int, msg: str) -> None:
         bad.setdefault(text.count("\n", 0, pos), set()).add(msg)
 
+    locals_: "dict[str, str] | None" = None
     for m in _FIELD_MEMBER_CALL_RE.finditer(text):
         if not mask[m.start("recv")]:
             continue
@@ -4338,8 +5141,90 @@ def find_field_type_misuse(text: str, *, field_types: "dict[str, str]",
         if surface is not None and member not in surface:
             flag(m.start("recv"), f"{recv}.{member}() -- {recv} is "
                                   f"{ftype}, which has no such member")
+        if base == "animator" and member in _ANIMATOR_STATE_SWITCH_METHODS:
+            close = _find_matching_close_paren(text, m.end())
+            if close is not None:
+                args = _split_top_level_args(text[m.end():close])
+                if len(args) >= 2:
+                    if locals_ is None:
+                        locals_ = _declared_types(signature + "\n" + text)
+                    arg2 = _expression_type(args[1].strip(), locals_)
+                    if arg2 == "string":
+                        flag(m.start("recv"), f"{recv}.{member}(...) -- second "
+                                              f"argument must be numeric (a "
+                                              f"transition duration or layer "
+                                              f"index), got string")
+                    # Two more shapes, checked over EVERY argument (not just
+                    # arg2): a fabricated static member on the field's own
+                    # declared type, or a bare identifier that is not
+                    # declared anywhere reachable. Confirmed live
+                    # (2026-08-28), PlayerAnimator.cs(102):
+                    #     _anim.Play(animName, Animator.DefaultStateMode, __J_Id);
+                    # `Animator.DefaultStateMode` is not a real Unity member
+                    # at all (the LLM wrote the TYPE name where an instance/
+                    # constant belonged); `__J_Id` is never declared anywhere
+                    # in the fragment or signature. Neither has a ground
+                    # truth to repair TO — arg2's string-vs-numeric check
+                    # above can rewrite nothing meaningful here either, since
+                    # the values themselves are invented, not just
+                    # mistyped — so this flags for neutralization like every
+                    # other unrecoverable-reference case in this module,
+                    # rather than guessing a replacement value.
+                    for arg in args:
+                        a = arg.strip()
+                        if not a or a == args[1].strip() and arg2 == "string":
+                            continue   # already flagged above
+                        if a.startswith(ftype + "."):
+                            flag(m.start("recv"), f"{recv}.{member}(...) -- "
+                                                  f"argument {a!r} is not a real "
+                                                  f"{ftype} member")
+                            continue
+                        if re.fullmatch(r"[A-Za-z_]\w*", a) and a not in _CS_KEYWORDS \
+                                and a not in ("null", "true", "false") \
+                                and a not in locals_ and a not in field_types:
+                            flag(m.start("recv"), f"{recv}.{member}(...) -- "
+                                                  f"argument {a!r} is not declared "
+                                                  f"anywhere")
 
-    locals_: "dict[str, str] | None" = None
+    for m in _FIELD_PROPERTY_RE.finditer(text):
+        if not mask[m.start("recv")]:
+            continue
+        recv, member = m.group("recv"), m.group("member")
+        if recv in shadowed or member in _MEMBER_ALWAYS_OK:
+            continue
+        ftype = field_types.get(recv)
+        if ftype is None:
+            continue
+        base = ftype.lower()
+        if base == "object":
+            flag(m.start("recv"), f"{recv}.{member} -- {recv} is object, "
+                                  f"which has no such member")
+            continue
+        if base in _NUMERIC_BOOL_TYPES:
+            if member != "CompareTo":
+                flag(m.start("recv"), f"{recv}.{member} -- {recv} is "
+                                      f"{ftype}, which has no such member")
+            continue
+        surface = _UNITY_FIELD_TYPE_SURFACE.get(base)
+        if surface is not None and member not in surface:
+            flag(m.start("recv"), f"{recv}.{member} -- {recv} is "
+                                  f"{ftype}, which has no such member")
+
+    for m in _FIELD_INDEX_RE.finditer(text):
+        if not mask[m.start("recv")]:
+            continue
+        recv = m.group("recv")
+        if recv in shadowed:
+            continue
+        ftype = field_types.get(recv)
+        if ftype is None:
+            continue
+        base = ftype.lower()
+        if (base == "object" or base in _NUMERIC_BOOL_TYPES
+                or base in _UNITY_FIELD_TYPE_SURFACE):
+            flag(m.start("recv"), f"{recv}[...] -- {recv} is {ftype}, "
+                                  f"which has no indexer")
+
     for m in _FIELD_ASSIGN_RE.finditer(text):
         if not mask[m.start("recv")]:
             continue
@@ -4616,6 +5501,7 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     params  = template_method_params(tdir, var, facts)
     field_types = template_field_types(tdir, var, facts)
     readonly_backing = template_readonly_property_backing(tdir, var, facts)
+    readonly_names = template_readonly_property_names(tdir, var, facts)
     # `find_unbound_identifiers`'s argument-TYPE check (its own `field_types`
     # param) additionally needs the SCHEMA'S OWN authored fields — a field the
     # LLM itself declared (`extra_fields`) is USED, never declared, inside the
@@ -4669,12 +5555,14 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             if not before:
                 continue
             fixed_ro = _repair_readonly_property_assign(before, backing=readonly_backing)
+            fixed_ro, names3 = lint_readonly_property_misuse(
+                fixed_ro, readonly_names=readonly_names)
             after, names = lint_unbound_identifiers(fixed_ro, known=known,
                                                     arities=live_arities,
                                                     params=params,
                                                     field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types)
-            names = names | names2
+            names = names | names2 | names3
             if names or fixed_ro != before:
                 setattr(schema, key, after)
                 flagged |= names
@@ -4685,13 +5573,15 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             body = getattr(m, "body", "") or ""
             sig = getattr(m, "signature", "") or ""
             fixed_ro = _repair_readonly_property_assign(body, backing=readonly_backing)
+            fixed_ro, names3 = lint_readonly_property_misuse(
+                fixed_ro, readonly_names=readonly_names, signature=sig)
             after, names = lint_unbound_identifiers(
                 fixed_ro, known=known | _signature_param_names(sig),
                 arities=live_arities, params=params, signature=sig,
                 field_types=arg_field_types)
             after, names2 = lint_field_type_misuse(after, field_types=field_types,
                                                    signature=sig)
-            names = names | names2
+            names = names | names2 | names3
             if names or fixed_ro != body:
                 flagged |= names
                 changed = True
