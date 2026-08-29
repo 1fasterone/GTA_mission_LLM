@@ -305,6 +305,23 @@ class EntitySpec(BaseModel):
     # Authored by deterministic scaffolds, never by the LLM. Empty -> the
     # spawner leaves each instance at the model's default rotation.
     instance_yaws: list[float] = Field(default_factory=list)
+    # Z-axis tilt in degrees (2D games only — rotates the entity's transform,
+    # which a BoxCollider2D follows correctly, giving a genuinely sloped
+    # collision surface, not just a sloped-looking sprite). For a ramp prop
+    # (model_hint mentions "ramp"): 0.0 (default) = un-authored; the fixer
+    # (unity_pipeline.py's _apply_ramp_tilts) assigns a sensible default when
+    # the LLM leaves this at 0 on an entity it clearly intends as a ramp,
+    # rather than requiring the schema-fill step to reason about slope
+    # geometry itself. Positive tilts right side up, negative left side up.
+    tilt_deg: float = 0.0
+
+    @field_validator("tilt_deg", mode="before")
+    @classmethod
+    def _clamp_tilt(cls, v) -> float:
+        try:
+            return max(-60.0, min(60.0, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
 
     @field_validator("path_points", mode="before")
     @classmethod
@@ -1195,8 +1212,33 @@ class UnitySchema(BaseModel):
     @field_validator("platform", mode="before")
     @classmethod
     def normalise_platform(cls, v: str) -> str:
+        """Map the words a model actually writes onto the closed Platform set.
+
+        `Platform` is an ABSTRACT target class ("mobile"), but a brief that says
+        "this ships to Android phones" gets answered with the CONCRETE store
+        name — "Android", "iOS", "Quest". Without a synonym table those all fell
+        through the `in _VALID_PLATFORMS` check to the "pc" default, so an
+        explicitly mobile brief silently compiled as a desktop game: no touch
+        bindings, landscape orientation, resizable window. Silently wrong, and
+        invisible in the log — exactly what the no-silent-defaults doctrine is
+        for. Mirrors `normalise_locomotion`'s synonym dict below.
+        """
         p = str(v).lower().strip().replace("-", "_")
-        return p if p in _VALID_PLATFORMS else "pc"
+        if p in _VALID_PLATFORMS:
+            return p
+        synonyms = {
+            "android": "mobile", "ios": "mobile", "iphone": "mobile",
+            "ipad": "mobile", "phone": "mobile", "smartphone": "mobile",
+            "tablet": "mobile", "handheld": "mobile", "touch": "mobile",
+            "windows": "pc", "mac": "pc", "macos": "pc", "linux": "pc",
+            "desktop": "pc", "standalone": "pc", "steam": "pc",
+            "web": "webgl", "browser": "webgl", "html5": "webgl",
+            "switch": "console", "playstation": "console", "ps5": "console",
+            "xbox": "console",
+            "quest": "mobile",   # standalone Quest builds ARE Android players
+            "cross_platform": "all", "multiplatform": "all", "any": "all",
+        }
+        return synonyms.get(p, "pc")
 
     @field_validator("locomotion", mode="before")
     @classmethod
@@ -1303,6 +1345,24 @@ class UnitySchema(BaseModel):
         prevent. `_check_multi_mode_registry` (unity_playability.py) is what
         turns this record into a graded finding."""
         if not self.locomotion_modes:
+            return self
+        # Dimension mismatch (docs/CONTROL_SURFACE_STACK.md: "2D kinds...
+        # out of scope — a project's world is fixed 3D or 2D, the stack
+        # can't switch that at runtime"). Confirmed live (2026-08-28):
+        # unity_compose.py's multi_mode branch had NO game_type guard at
+        # all — a 2D schema-fill writing locomotion_modes=["on_foot",
+        # "vehicle_car"] (a free-tier model reaching for the closest
+        # vocabulary it knew for "bike riding") would have silently routed
+        # a 2D project through the 3D-only ControllerMultiMode.cs.j2
+        # template. Drop the WHOLE list here — the doc says 2D is entirely
+        # out of scope, not "some kinds" — so subsystems_for never sees
+        # enough entries to enter that branch, same "ground truth exists,
+        # so repair deterministically" as the unknown/dupe drops below.
+        if self.game_type in ("2D", "2d_topdown") and self.locomotion_modes:
+            self.meta["locomotion_modes_lint"] = {
+                "dropped_2d_dimension_mismatch": list(self.locomotion_modes),
+            }
+            self.locomotion_modes = []
             return self
         valid = ("on_foot", "vehicle_car", "flying")   # grows with the template vocabulary
         seen: set[str] = set()

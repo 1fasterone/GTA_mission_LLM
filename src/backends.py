@@ -1,13 +1,28 @@
 """
 Backend selection + health checks.
 
-Two chat backends are supported, both OpenAI-compatible:
-  - LM Studio  (default, http://localhost:1234/v1)
-  - Ollama     (http://localhost:11434/v1)
+Three chat backends are supported, all OpenAI-compatible:
+  - LM Studio  (default, http://localhost:1234/v1, local, no auth)
+  - Ollama     (http://localhost:11434/v1, local, no auth)
+  - OpenRouter (https://openrouter.ai/api/v1, cloud, needs an API key)
 
-Because both speak the OpenAI chat API, the existing LMStudioClient works
-against either one — only the base_url/model differ. `make_chat_client` reads
-`lm_studio.backend` and selects the right config block.
+Because all three speak the OpenAI chat API, the existing LMStudioClient
+works against any of them — base_url/model/api_key differ, the request/
+response contract does not. `make_chat_client` reads `lm_studio.backend` and
+selects the right config block.
+
+OpenRouter, added 2026-08-28 after a real side-by-side (see
+docs/model-pipeline-architecture.md context / session history): free-tier
+`:free` models sidestep the local 8GB card's VRAM contention with ComfyUI/
+Stable Audio 3 that caused several crashes this session, at the cost of
+needing network access and an OpenRouter account. Verified live against this
+repo's actual Step 2/3 prompts: nvidia/nemotron-3-super-120b-a12b:free
+produced a valid schema on the first attempt (17s concept + 40s schema fill).
+Free-tier availability can be inconsistent per-model (a specific upstream
+provider can be temporarily saturated, returning HTTP 429) — this is an
+OpenRouter/upstream-provider condition, not something retrying in this repo
+can fix; LMStudioClient's HTTPStatusError handling surfaces the real
+provider message instead of swallowing it.
 
 Health checks back the UI's status lights and "Test Connection" buttons. They
 never raise; failures are classified through src.errors.classify() so the UI
@@ -16,6 +31,7 @@ gets an actionable fix instead of a stack trace.
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -23,6 +39,10 @@ import httpx
 
 from .lm_studio_client import LMStudioClient
 from .errors import classify
+
+# Env var wins over config.yaml — an API key should not need to live in a
+# git-tracked file. Same two-name fallback as src/sprites/openrouter_backend.py.
+_OPENROUTER_ENV_KEY_VARS = ("OPENROUTER_API", "OPENROUTER_API_KEY")
 
 
 # ── Config helpers ──────────────────────────────────────────────────────────────
@@ -52,6 +72,33 @@ def active_chat_cfg(config: dict) -> dict:
                                            lm_cfg.get("reasoning_effort")),
         }
 
+    if backend == "openrouter":
+        openrouter = config.get("openrouter", {})
+        api_key = ""
+        for var in _OPENROUTER_ENV_KEY_VARS:
+            if os.environ.get(var):
+                api_key = os.environ[var]
+                break
+        if not api_key:
+            api_key = str(openrouter.get("api_key", "") or "")
+        return {
+            "backend":     "openrouter",
+            "base_url":    openrouter.get("base_url", "https://openrouter.ai/api/v1"),
+            "model":       openrouter.get("model", "nvidia/nemotron-3-super-120b-a12b:free"),
+            "api_key":     api_key,
+            "temperature": openrouter.get("temperature", lm_cfg.get("temperature", 0.7)),
+            "max_tokens":  openrouter.get("max_tokens", lm_cfg.get("max_tokens", 8192)),
+            # A cloud call has no local-VRAM ceiling to hit but real network +
+            # provider-queue latency to absorb — longer default than the local
+            # backends' timeout, not shorter.
+            "timeout":     openrouter.get("timeout", 280.0),
+            "seed":        openrouter.get("seed", lm_cfg.get("seed")),
+            "concept_temperature": lm_cfg.get("concept_temperature", 0.85),
+            "schema_temperature":  lm_cfg.get("schema_temperature", 0.2),
+            "reasoning_effort": openrouter.get("reasoning_effort",
+                                               lm_cfg.get("reasoning_effort")),
+        }
+
     # default: lm_studio
     return {
         "backend":     "lm_studio",
@@ -70,6 +117,13 @@ def active_chat_cfg(config: dict) -> dict:
 def make_chat_client(config: dict) -> LMStudioClient:
     """Build the chat client for whichever backend is selected."""
     cfg = active_chat_cfg(config)
+    if cfg["backend"] == "openrouter" and not cfg.get("api_key"):
+        raise RuntimeError(
+            f"lm_studio.backend is 'openrouter' but no API key was found in "
+            f"env {_OPENROUTER_ENV_KEY_VARS} or config.openrouter.api_key. "
+            f"Abstaining rather than silently falling back to a different "
+            f"backend — set the key or switch lm_studio.backend back."
+        )
     return LMStudioClient(
         base_url    = cfg["base_url"],
         model       = cfg["model"],
@@ -78,6 +132,7 @@ def make_chat_client(config: dict) -> LMStudioClient:
         timeout     = cfg["timeout"],
         seed        = cfg.get("seed"),
         reasoning_effort = cfg.get("reasoning_effort"),
+        api_key     = cfg.get("api_key"),
     )
 
 
@@ -116,10 +171,11 @@ def check_chat(config: dict) -> dict[str, Any]:
     cfg = active_chat_cfg(config)
     base = cfg["base_url"].rstrip("/")
     url = f"{base}/models"
+    headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg.get("api_key") else {}
     started = time.perf_counter()
     try:
         with httpx.Client(timeout=5.0) as client:
-            r = client.get(url)
+            r = client.get(url, headers=headers)
             r.raise_for_status()
         data = r.json()
         models = [m.get("id") for m in data.get("data", []) if m.get("id")]

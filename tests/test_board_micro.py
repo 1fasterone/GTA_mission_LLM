@@ -264,6 +264,39 @@ def test_the_brief_names_the_tool_the_command_line_belongs_to():
     assert any(ok and "`git <verb>`" in m for ok, m in msgs)
 
 
+def test_a_described_noun_in_front_of_a_verb_is_not_a_tool_name():
+    """A domain verb is an ordinary English word too, and a brief that uses it
+    in another sense must not name the tool.
+
+    Live regression: a falling-block brief whose only verb was "clear" carried
+    the sentence "keeps its margins clear of notches", and `margins` became the
+    tool — every command in that game read `margins clear`. What gives it away
+    is the determiner: "its margins" is the sentence's subject matter, not the
+    thing acting on the board.
+    """
+    opts, msgs = _domain(_cast(), [
+        MissionObjective(id="o1", description="Commit what you staged",
+                         type="reach", target_ref="CommitHistoryLog")],
+        brief="The layout keeps its margins commit of notches.")
+    assert not opts.get("command_prefix")
+    assert any(not ok and "margins" in m for ok, m in msgs), msgs
+
+
+def test_a_counted_noun_in_front_of_a_verb_is_not_a_tool_name():
+    """Quantifiers introduce a noun phrase the same way determiners do.
+
+    Live regression: an AUDIO line reading "a four-note flourish when four rows
+    clear at once" made `rows` the command prefix, so every command in the game
+    read `rows clear`.
+    """
+    opts, msgs = _domain(_cast(), [
+        MissionObjective(id="o1", description="Commit what you staged",
+                         type="reach", target_ref="CommitHistoryLog")],
+        brief="A flourish when four rows commit at once.")
+    assert not opts.get("command_prefix")
+    assert any(not ok and "rows" in m for ok, m in msgs), msgs
+
+
 def test_grammar_in_front_of_a_verb_is_not_a_tool_name():
     opts, msgs = _domain(_cast(), [
         MissionObjective(id="o1", description="Commit what you staged",

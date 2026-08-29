@@ -145,6 +145,11 @@ class DialoguePipeline(UnityMicroPipeline):
     _TEMPLATE_USINGS = {
         "UnityEngine", "System", "System.Collections", "System.Collections.Generic",
     }
+    # Dialogue.cs.j2 declares `protected virtual string Resolve(string text) =>
+    # text;` for localization — the one genuine override target in this
+    # generator's template. Every other `override` on an extra_method here is
+    # illegal (CS0115 — see code_fields._strip_illegal_message_override).
+    _KNOWN_VIRTUAL_METHODS = frozenset({"Resolve"})
 
     def _default_nodes(self, variant: str) -> list[DialogueNode]:
         if variant == "branching":
@@ -182,7 +187,8 @@ class DialoguePipeline(UnityMicroPipeline):
             schema.start_node = schema.nodes[0].id
 
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
-                        template_usings=self._TEMPLATE_USINGS)
+                        template_usings=self._TEMPLATE_USINGS,
+                        known_virtual_methods=self._KNOWN_VIRTUAL_METHODS)
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
         return schema
 

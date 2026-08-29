@@ -77,6 +77,19 @@ def test_registry_has_all_known():
         # move core. UI-first games only — an embodied game's verbs are the
         # controller's.
         "board",
+        # Moving/oscillating/falling platforms — the runtime-scripted half of
+        # platforming; static step-up platforms need no script (just correct
+        # entity placement), so this only covers platforms that move.
+        "platform",
+        # Mountable 2D bike — a standalone entity (not the 3D-only Control
+        # Surface Stack's multi_mode) the player mounts/dismounts; while
+        # ridden it drives itself and the player's own controller stands
+        # down via Controller.cs.j2's SetMovementLocked hook.
+        "bike",
+        # 2D sprite frame animation — generates character frames via a local
+        # ComfyUI backend (src/sprites/) and wires the runtime frame-swap
+        # component; see docs discussion in the 2D-brawler plan.
+        "sprite_animator",
     }
 
 
@@ -677,6 +690,27 @@ def test_spawner_pooled_emits_pool_file(tmp_path, dummy_config):
     assert "public class PooledPool" in pool
 
 
+def test_spawner_invented_override_hook_is_stripped_not_left_illegal(dummy_config):
+    # Regression (live Unity, DeadReckoningProtocol run): the model authored
+    # `public override void OnSpawned()` on EnemySpawner — a plausible-sounding
+    # hook name, but not a real Unity message and not declared virtual by any
+    # spawner template, so there is no base method to override (CS0115,
+    # EnemySpawner.cs(129)). default_fix must strip the illegal modifier so
+    # the method still compiles, rather than shipping a guaranteed CS0115.
+    from src.micro.code_fields import CodeMethod
+    p = SpawnerPipeline(dummy_config)
+    s = SpawnerSchema(
+        name="EnemySpawner", variant="wave_spawner",
+        extra_methods=[CodeMethod(
+            signature="public override void OnSpawned()",
+            body="int x = 1;")],
+    )
+    s = p.default_fix(s, "wave_spawner")
+    assert len(s.extra_methods) == 1
+    assert "override" not in s.extra_methods[0].signature
+    assert "OnSpawned" in s.extra_methods[0].signature
+
+
 # ── Schema-fill retry (model robustness) ────────────────────────────────────
 
 class _FlakyLLM:
@@ -920,6 +954,25 @@ def test_dialogue_escapes_quotes_in_baked_text(tmp_path, dummy_config):
     p.write_files(s, "linear", tmp_path)
     runner = (tmp_path / "Scripts" / "Talk.cs").read_text(encoding="utf-8")
     assert r'\"halt\"' in runner          # quotes escaped, not raw
+
+
+def test_dialogue_resolve_override_is_preserved(dummy_config):
+    # Dialogue.cs.j2 declares `protected virtual string Resolve(string text)`
+    # for localization — the one legitimate override target in this
+    # generator's template (see DialoguePipeline._KNOWN_VIRTUAL_METHODS). Must
+    # survive default_fix unlike an invented hook name — see
+    # test_spawner_invented_override_hook_is_stripped_not_left_illegal.
+    from src.micro.code_fields import CodeMethod
+    p = DialoguePipeline(dummy_config)
+    s = DialogueSchema(
+        name="TownDialogue", variant="linear",
+        extra_methods=[CodeMethod(
+            signature="protected override string Resolve(string text)",
+            body="return text.ToUpperInvariant();")],
+    )
+    s = p.default_fix(s, "linear")
+    assert len(s.extra_methods) == 1
+    assert "override" in s.extra_methods[0].signature
 
 
 @pytest.mark.parametrize("variant", DialoguePipeline.variants)
@@ -1544,3 +1597,137 @@ def test_hud_never_emits_a_headerless_field_block(
     for f in sorted((tmp_path / "Scripts").glob("*.cs")):
         bad = dangling_attribute_lists(f.read_text(encoding="utf-8"))
         assert not bad, f"{f.name} {variant}/{backend}: CS0592 at {bad}"
+
+
+# ── CS0103: `_grid` declared, `grid` written ─────────────────────────────────
+
+class TestUnderscoreAliasRebinding:
+    """Live regression (Gridfall/InputHandler): the author declared
+    `[SerializeField] private GridLogic _grid`, guarded with
+    `if (_grid == null) return;`, then called `grid.SetScore(...)` — three
+    CS0103s in one file. Rebinding to the declared field is the only repair
+    that keeps the behaviour: neutralizing deletes it, and declaring a second
+    `grid` field ships a collaborator nothing ever wires.
+    """
+
+    def _fix(self, body, unbound, declared):
+        from src.micro.code_fields import lint_underscore_alias_references
+        return lint_underscore_alias_references(
+            body, unbound=unbound, declared=declared)
+
+    def test_rebinds_to_the_declared_field(self):
+        out, rebound = self._fix(
+            "grid.SetScore(grid.GetScore() + 1);", {"grid"}, {"_grid"})
+        assert out == "_grid.SetScore(_grid.GetScore() + 1);"
+        assert rebound == {"grid"}
+
+    def test_leaves_a_longer_identifier_alone(self):
+        out, rebound = self._fix("int n = gridSize;", {"grid"}, {"_grid"})
+        assert out == "int n = gridSize;"
+        assert not rebound
+
+    def test_leaves_strings_and_comments_alone(self):
+        src = 'var s = "grid";  // grid\n'
+        out, rebound = self._fix(src, {"grid"}, {"_grid"})
+        assert out == src
+        assert not rebound
+
+    def test_leaves_a_bound_local_alone(self):
+        # Not in `unbound`, so it compiles today and must not be touched.
+        src = "var grid = New(); grid.Go();"
+        assert self._fix(src, set(), {"_grid"})[0] == src
+
+    def test_does_not_double_underscore_a_member_access(self):
+        src = "other._grid.Ping();"
+        assert self._fix(src, {"grid"}, {"_grid"})[0] == src
+
+
+# ── Authored bodies that need an import, or contradict their own field type ──
+
+class TestAuthoredBodyRepairs:
+    """Both hit live in one Gridfall build of GridLogic."""
+
+    def test_array_use_requires_system(self):
+        from src.micro.code_fields import required_usings_for
+        # lint_usings only ever FILTERED what the model asked for, so a body
+        # calling Array.Fill shipped without `using System;` -> CS0103.
+        assert required_usings_for("Array.Fill(grid[0], -1);") == ["System"]
+
+    def test_generic_collection_requires_its_namespace(self):
+        from src.micro.code_fields import required_usings_for
+        assert required_usings_for("var p = new List<int>();") == [
+            "System.Collections.Generic"]
+
+    def test_random_is_left_alone_because_it_is_ambiguous(self):
+        from src.micro.code_fields import required_usings_for
+        # UnityEngine.Random and System.Random are both real — importing
+        # System here would trade CS0103 for CS0104.
+        assert required_usings_for("Random.Range(0, 3);") == []
+
+    def test_jagged_rank_follows_the_authors_own_declaration(self):
+        from src.micro.code_fields import jagged_rank_corrections
+        body = "int[][] grid = _grid; grid[y][x] = -1;"
+        assert jagged_rank_corrections([("_grid", "int[][][]")], body) == {
+            "_grid": "int[][]"}
+
+    def test_jagged_rank_abstains_without_an_explicit_declaration(self):
+        from src.micro.code_fields import jagged_rank_corrections
+        # Indexing depth alone is a guess; a wrong guess ships a wrong program.
+        assert jagged_rank_corrections([("_grid", "int[][][]")],
+                                       "_grid[y][x] = 1;") == {}
+
+    def test_jagged_rank_abstains_on_conflicting_declarations(self):
+        from src.micro.code_fields import jagged_rank_corrections
+        assert jagged_rank_corrections(
+            [("_grid", "int[][][]")], "int[][] a = _grid; int[] b = _grid;") == {}
+
+
+class TestBracketLiteralDefaults:
+    """`private Vector2 _targetRect = [0.5, 0.5];` — Python/JS list syntax in a
+    C# initializer, CS1525 "Invalid expression term '['". Live on Gridfall's
+    CameraController. The model meant the value; only the syntax is wrong, so
+    rebuild it rather than drop it — the same contract sanitize_default already
+    uses when unquoting `"0.5"`.
+    """
+
+    def _s(self, ty, default):
+        from src.micro.code_fields import sanitize_default
+        return sanitize_default(ty, default)
+
+    def test_vector2_literal_is_rebuilt_with_float_suffixes(self):
+        # Without the `f`, fixing the brackets would just trade CS1525 for
+        # CS1503 (double -> float).
+        assert self._s("Vector2", "[0.5, 0.5]") == "new Vector2(0.5f, 0.5f)"
+
+    def test_array_literal_is_rebuilt(self):
+        assert self._s("int[]", "[1, 2, 3]") == "new int[] { 1, 2, 3 }"
+
+    def test_wrong_arity_is_dropped_not_guessed(self):
+        assert self._s("Vector2", "[1, 2, 3]") is None
+
+    def test_a_valid_initializer_is_untouched(self):
+        assert self._s("Vector2", "new Vector2(1f, 2f)") == "new Vector2(1f, 2f)"
+
+
+class TestMisqualifiedTypes:
+    """`UnityEngine.Touchscreen` — CS0234. Touch types read like core engine
+    types but live in UnityEngine.InputSystem. Live on BlockWell's TouchInput,
+    which had already imported the right namespace and over-qualified anyway.
+    """
+
+    def _f(self, ty):
+        from src.micro.code_fields import correct_qualified_type
+        return correct_qualified_type(ty)
+
+    def test_touchscreen_is_requalified(self):
+        assert self._f("UnityEngine.Touchscreen") == (
+            "Touchscreen", "UnityEngine.InputSystem")
+
+    def test_already_correct_is_untouched(self):
+        assert self._f("UnityEngine.InputSystem.Touchscreen")[1] == ""
+
+    def test_a_real_unityengine_type_is_untouched(self):
+        assert self._f("UnityEngine.Transform") == ("UnityEngine.Transform", "")
+
+    def test_an_unknown_qualified_type_is_left_alone(self):
+        assert self._f("MyNs.Thing") == ("MyNs.Thing", "")

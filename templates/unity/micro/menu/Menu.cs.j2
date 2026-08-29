@@ -103,6 +103,13 @@ public class {{ s.name }} : MonoBehaviour
             case "Quit":
                 Application.Quit();
                 break;
+            case "Easy":
+            case "Medium":
+            case "Hard":
+                // Read by the spawner/AI/health micros at their own Awake() —
+                // see ApplyDifficulty()/DifficultyDamageMult() in those templates.
+                PlayerPrefs.SetString("Difficulty", item);
+                break;
             case "Quit to Menu":
             case "Main Menu":
                 LoadScene("MainMenu");

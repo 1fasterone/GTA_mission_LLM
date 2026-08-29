@@ -1,0 +1,78 @@
+TITLE
+Gridfall
+
+GENRE
+A 2d game puzzle: a falling-block stacking puzzle for Android phones, portrait,
+one thumb. There is no player character and no avatar — no one walks, drives or
+is piloted. The player acts only by touching the blocks. No 3d scenery.
+
+STYLE
+Dark, calm, high contrast. A near-black background, a slightly lighter well and
+saturated flat block colours with a thin lighter edge on every cell, so a stack
+reads at arm's length on a phone. Readouts are flat dark cards with pale
+numerals. Large type, generous spacing, no decoration that is not information.
+
+CORE PREMISE
+Pieces made of four cells fall into a ten-by-twenty well. The player slides and
+rotates each one as it falls and locks it into the stack. Any row that fills
+completely is cleared and everything above it drops down. Clearing rows scores,
+every ten rows raises the level and speeds the fall, and the run ends when a
+new piece has nowhere legal to sit.
+
+ENTITIES
+- FallingBlock: a single four-cell tetromino cell, flat coloured with a lighter
+  edge, the thing the player touches and moves (kind: collectible, model_hint
+  "cube block"), count 28.
+- LockedBlock: a cell already locked into the stack, waiting for its row to
+  fill (kind: collectible, model_hint "cube block"), count 24.
+- WellFrame: the recessed ten-by-twenty well the blocks fall inside (kind:
+  prop, model_hint "panel frame"), count 1.
+- GhostOutline: the pale outline showing where the current piece will land
+  (kind: prop, model_hint "outline square"), count 1.
+- NextBox: the readout panel showing the two upcoming pieces (kind: prop,
+  model_hint "panel card"), count 1.
+- HoldBox: the readout panel holding the one piece set aside (kind: prop,
+  model_hint "panel card"), count 1.
+- ScoreReadout: the score, lines and level numerals (kind: prop, model_hint
+  "panel card"), count 3.
+
+MISSIONS
+1. Reach Level Two — survive the opening speed and clear the first ten rows.
+- Clear ten full rows out of the well (collect: FallingBlock x10)
+- Keep the stack below the top of the well while you do it (survive)
+2. Reach Level Three — the gravity timer shortens and the stack builds faster.
+- Clear ten more full rows at the higher speed (collect: LockedBlock x10)
+- Keep the stack below the top of the well again (survive)
+3. Hold The Well — play on until a new piece has nowhere legal to sit.
+- Stay alive as long as the pieces keep coming (survive)
+
+SCENES
+- Main — the well, the blocks falling into it, and the readout column beside
+  it. This is where the whole game is played.
+- MainMenu — the title over a still stack, with Play and Quit.
+
+SCRIPTS
+- GridLogic (custom) — owns the ten-by-twenty grid of cells and knows which are
+  filled; spawns the next piece at the top; steps the active piece down one row
+  on every tick of a gravity timer; refuses a move or rotation that would put a
+  cell into a wall, the floor or an occupied cell; locks a piece that can fall
+  no further; finds every full row, removes it and drops the rows above it;
+  scores by how many rows went at once; raises the level and shortens the
+  gravity interval every ten rows; ends the run when a new piece cannot be
+  placed.
+- TouchInput (custom) — reads swipes and taps and turns them into the moves:
+  swipe left or right to shift a column, tap to rotate a quarter turn, swipe
+  down to soft-drop, flick down to hard-drop, swipe up to send the piece to the
+  Hold box.
+
+AUDIO
+- A quiet low drone under everything.
+- A soft click when a piece shifts or rotates.
+- A firmer thud when a piece locks.
+- A bright ascending chime when a row clears.
+- A four-note flourish when four rows clear at once.
+- A short descending tone when the well tops out.
+
+PLATFORM
+Android phones only, targeting Android 12 and newer. Portrait orientation,
+touch input only — no keyboard, no gamepad, no mouse.

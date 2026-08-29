@@ -699,6 +699,61 @@ class TestMissionSceneInference:
         assert obj_scenes == {"obj_reach_gate_1": "HallOne",
                               "obj_collect_cogs_1": "HallOne"}
 
+    def test_objective_scene_map_refines_per_objective_by_own_description(self):
+        # Regression fixture: a live DeadReckoningProtocol run. Mission
+        # "Engineer Extraction" title-matches scene "ExtractionPad" alone
+        # (tier 1), so the mission-level map has only that one scene for
+        # every objective. Two of its three objectives are BOTH `reach` —
+        # one for the Engineer (met in the depot yard), one for the pad
+        # itself — and SEAM 8 can bind only ONE `reach` objective per scene,
+        # so lumping both under "ExtractionPad" left one permanently
+        # unadvanceable even though DepotYard had its own unused trigger.
+        # Each objective's own description must be checked before falling
+        # back to the mission's scene, so "in the depot yard" sends the
+        # first objective to DepotYard while the second stays on
+        # ExtractionPad, and the two no longer collide.
+        mission = self._mission("m1", "Engineer Extraction", [
+            ("obj_escort_engineer", "Reach the Engineer in the depot yard.",
+             "reach", "Engineer"),
+            ("obj_collect_fuel", "Collect all SupplyCrate fuel cells for the VTOL.",
+             "collect", "SupplyCrate"),
+            ("obj_reach_pad", "Reach the ExtractionPad with the Engineer.",
+             "reach", "ExtractionPad"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scenes=["Main", "ExtractionPad", "DepotYard", "HangarBay"])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["ExtractionPad"]}
+        assert unresolved == []
+        obj_scenes = _objective_scene_map(schema, resolved)
+        assert obj_scenes == {
+            "obj_escort_engineer": "DepotYard",
+            "obj_collect_fuel":    "ExtractionPad",  # no scene named -> mission default
+            "obj_reach_pad":       "ExtractionPad",
+        }
+
+    def test_objective_scene_map_requires_the_full_scene_name_not_one_word(self):
+        # A single generic shared word must NOT reroute an objective: only an
+        # objective that names a scene IN FULL (every one of its tokens) is
+        # strong enough evidence to override the mission's own resolved
+        # scene. "the supply yard" shares "yard" with "DepotYard" but not
+        # "depot" -- one word of a two-word scene name is exactly the false
+        # -positive shape a generic noun (yard, hallway, gate...) could
+        # trigger by coincidence, so it must fall back to the mission
+        # default instead of misrouting to DepotYard.
+        mission = self._mission("m1", "Engineer Extraction", [
+            ("obj_collect_fuel", "Collect fuel cells from the supply yard.",
+             "collect", "SupplyCrate"),
+        ])
+        schema = self._schema(
+            missions=[mission],
+            scenes=["Main", "ExtractionPad", "DepotYard", "HangarBay"])
+        resolved, _ = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["ExtractionPad"]}
+        obj_scenes = _objective_scene_map(schema, resolved)
+        assert obj_scenes == {"obj_collect_fuel": "ExtractionPad"}
+
     def test_reconcile_scene_specs_restores_mission_target_entities(self):
         # The exact live GearCitadel shape: HallOne's own subset lists its
         # hazard flavor entities but not the mission's own targets.
@@ -1053,3 +1108,38 @@ class TestBriefAndFeatureReconciliation:
         assert _is_structured_brief(brief)
         assert not _is_structured_brief("a cozy skydiving game over the desert")
         assert not _is_structured_brief("")
+
+    def test_structured_brief_detection_arbitrary_headers(self):
+        """Confirmed live (2026-08-28): a real 10-section brief using headers
+        outside the original fixed vocabulary (GOAL/CORE GAMEPLAY/LEVEL &
+        PLATFORMS/...) matched only 2 markers under the old closed-list regex
+        — below the 3-marker floor — so resolve_theme() ran its autodetect
+        path on already-fully-themed content and grafted an unrelated
+        "Superhero Flying Mechanics" theme onto a ground-based brawler brief.
+        _BRIEF_MARKER_RE must recognize ANY all-caps section header, not just
+        the specific words in the original list."""
+        from src.unity_pipeline import _is_structured_brief
+        brief = (
+            "GOAL:\nGenerate a colourful 2D beat 'em up.\n\n"
+            "CORE GAMEPLAY:\n- Punch and throw.\n\n"
+            "LEVEL & PLATFORMS:\n- Moving platforms.\n\n"
+            "PLAYER STATS & LIVES:\n- 3 lives.\n\n"
+            "UI & HUD:\n- Score counter.\n\n"
+            "AUDIO (Stable Audio 3):\nUse Stable Audio 3.\n\n"
+            "UNITY IMPLEMENTATION:\n- 2D character controller.\n\n"
+            "STYLE & TONE:\n- Cartoonish.\n"
+        )
+        assert _is_structured_brief(brief)
+
+    def test_structured_brief_detection_still_rejects_prose(self):
+        """The broadened regex must not start matching normal sentence-case
+        text just because it drops the fixed vocabulary — Title Case and
+        sentence-case words (only the first letter capitalized) still fail
+        the per-word ALL-CAPS requirement."""
+        from src.unity_pipeline import _is_structured_brief
+        brief = (
+            "Make A Cozy Skydiving Game Over The Desert.\n"
+            "The Player Wears A Bright Red Jumpsuit.\n"
+            "Enemies Are Friendly Clouds.\n"
+        )
+        assert not _is_structured_brief(brief)

@@ -48,6 +48,9 @@ public class {{ s.name }} : MonoBehaviour
 
     /// <summary>Current FSM state, for wiring and debugging.</summary>
     public {{ s.name }}State CurrentState => _state;
+    /// <summary>Set for exactly one Update() after OnHurt() fires, then cleared
+    /// — see CheckTransitions and the "took_damage" transition condition.</summary>
+    private bool _tookDamage;
 {% endif %}
 
 {% if variant == "waypoint_follow" %}
@@ -207,6 +210,12 @@ public class {{ s.name }} : MonoBehaviour
                 if (_agent != null && _agent.hasPath) _agent.ResetPath();
 {%- endif %}
                 enabled = false;   // terminal state
+{%- elif st.role == "hurt" %}
+{%- if s.nav_backend == "navmesh" %}
+                if (_agent != null && _agent.hasPath) _agent.ResetPath();
+{%- endif %}
+                // Stagger: hold position until the "hurt" timer (alert_elapsed
+                // reused as a generic state-timeout) transitions back out.
 {%- else %}
                 // {{ st.name }}: hold position and scan{% if st.description %} — {{ st.description }}{% endif %}
 
@@ -216,6 +225,7 @@ public class {{ s.name }} : MonoBehaviour
         }
 
         CheckTransitions(dist);
+        _tookDamage = false;
 {% elif variant == "cover_shooter" %}
         if (_target == null) return;
         float dist = Vector3.Distance(transform.position, _target.position);
@@ -387,9 +397,27 @@ public class {{ s.name }} : MonoBehaviour
         if (_attackTimer > 0f) return;
         _attackTimer = 1.0f;
 {% if s.use_health_hook %}
-        if (_target != null) _target.SendMessage("TakeDamage", 10f, SendMessageOptions.DontRequireReceiver);
+        if (_target != null)
+            _target.SendMessage("TakeDamage", 10f * DifficultyDamageMult(), SendMessageOptions.DontRequireReceiver);
 {% endif %}
     }
+{% if s.use_health_hook %}
+
+    /// <summary>Scales this AI's attack damage by the main menu's difficulty
+    /// selection (PlayerPrefs "Difficulty": Easy | Medium | Hard).</summary>
+    private static float DifficultyDamageMult()
+    {
+        string diff = PlayerPrefs.GetString("Difficulty", "Medium");
+        return diff == "Easy" ? 0.6f : diff == "Hard" ? 1.6f : 1f;
+    }
+
+{% if variant in ("fsm_guard", "behaviour_tree_lite") %}
+
+    /// <summary>SendMessage target called by Health.cs.j2's TakeDamage — marks
+    /// this AI hit for one Update() so a "took_damage" transition can fire.</summary>
+    public void OnHurt() => _tookDamage = true;
+{% endif %}
+{% endif %}
 
     private void OnDrawGizmosSelected()
     {

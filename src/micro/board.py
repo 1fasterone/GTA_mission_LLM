@@ -101,6 +101,21 @@ _VERB_SKIP: frozenset[str] = frozenset({
 
 # Words that turn up in front of a verb without being the tool that owns it.
 # A command prefix is a NAME ("git commit"); these are grammar.
+# Words that introduce a NOUN PHRASE. A candidate tool name preceded by one of
+# these is the thing being described, not the tool doing the describing — see
+# the command_prefix derivation for the live case this exists to reject.
+_NOUN_INTRODUCERS: frozenset[str] = frozenset({
+    "the", "a", "an", "its", "it's", "his", "her", "their", "our", "your",
+    "my", "this", "that", "these", "those", "some", "any", "all", "no",
+    "every", "each", "both", "another", "such", "keeps", "keep", "kept",
+    "with", "without", "of",
+    # Quantifiers introduce a noun phrase exactly like a determiner does.
+    # Live: an AUDIO line reading "a four-note flourish when four rows clear at
+    # once" made `rows` the tool — "four rows" is a counted noun, not a command.
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "twenty", "several", "many", "few", "more", "most", "half",
+})
+
 _PREFIX_SKIP: frozenset[str] = frozenset(_VERB_SKIP | {
     "can", "will", "may", "might", "cannot", "never", "always", "also", "just",
     "only", "before", "after", "when", "while", "once", "they", "we", "it",
@@ -863,8 +878,21 @@ def board_domain_for_missions(options: dict, mission, *,
     # that merely make it a console removed.
     verbs = {c["verb"] for c in commands}
     prefix = ""
+    coincidences: dict[str, set[str]] = {}
     if verbs:
         low = " ".join(str(brief or "").split()).lower()
+        # A domain verb is usually an ordinary English word too, so a brief
+        # that uses it in another sense produces a `<word> <verb>` match that
+        # has nothing to do with commands. Hit live on a falling-block brief
+        # whose only verb was "clear": "keeps its margins clear of notches"
+        # (an ADJECTIVE) made `margins` the tool, and every command in that
+        # game read `margins clear`.
+        #
+        # What separates the two is what sits in FRONT of the candidate. A tool
+        # name opens a clause — "then git commit". A described noun is
+        # introduced by a determiner or possessive — "its margins", "the
+        # score". So a candidate preceded by one is the sentence's subject
+        # matter, not the tool acting on it.
         for verb in sorted(verbs):
             for m in re.finditer(rf"\b([a-z][a-z0-9_-]{{1,15}})\s+{re.escape(verb)}\b",
                                  low):
@@ -876,10 +904,16 @@ def board_domain_for_missions(options: dict, mission, *,
                 # naming the tool that acts on it.
                 if any(cand in _id_tokens(n) for n in pieces + [z["id"] for z in zones]):
                     continue
-                prefix = cand
+                prev = low[:m.start(1)].rstrip().rsplit(" ", 1)[-1].strip(".,;:!?()\"")
+                if prev in _NOUN_INTRODUCERS or prev.isdigit():
+                    coincidences.setdefault(cand, set()).add(verb)
+                    continue
+                if not prefix:
+                    prefix = cand
                 break
             if prefix:
                 break
+
         if not prefix:
             prefix = _prefix_from_console(str(options.get("console_group") or ""),
                                           verbs)
@@ -888,9 +922,19 @@ def board_domain_for_missions(options: dict, mission, *,
         out.append((True, f"board: commands read as `{prefix} <verb>` "
                           f"({prefix} is optional when typing)"))
     elif verbs:
-        out.append((False, "board: no command prefix derived — nothing in the "
-                    "brief puts a tool name in front of a verb and the console "
-                    "is not named after one; commands are typed bare"))
+        why = ("nothing in the brief puts a tool name in front of a verb and "
+               "the console is not named after one")
+        if len(coincidences) > 1:
+            why = ("several words front a verb once each ("
+                   + ", ".join(f"`{c} {sorted(vs)[0]}`"
+                               for c, vs in sorted(coincidences.items()))
+                   + ") and none fronts two, so none is corroborated as the tool")
+        elif coincidences:
+            cand, vs = sorted(coincidences.items())[0]
+            why = (f"`{cand}` fronts `{sorted(vs)[0]}` just once, which reads as "
+                   f"prose rather than a tool name")
+        out.append((False, f"board: no command prefix derived — {why}; "
+                    f"commands are typed bare"))
 
     # ── requires ─────────────────────────────────────────────────────────────
     if not drops:

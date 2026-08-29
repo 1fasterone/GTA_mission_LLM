@@ -183,6 +183,13 @@ class MicroComposer:
             variant=variant,
             **sub.options,
         )
+        # Generic compose-time context stamp, available to every kind's template
+        # the same way game_type/genre already are — lets a template (e.g.
+        # Health.cs.j2's difficulty scaling) tell "this instance is the player's"
+        # apart from "this instance is an enemy's/world's" without a bespoke
+        # per-kind schema field. Additive only; never overwrites LLM-authored meta.
+        if hasattr(schema, "meta") and isinstance(schema.meta, dict):
+            schema.meta.setdefault("target", sub.target)
         schema = pipeline.default_fix(schema, variant)
         # The compose path does not go through MicroPipeline.run, so it must run
         # the template reconciliation itself — this is where the TurboToys
@@ -970,6 +977,28 @@ class MicroComposer:
                     ),
                 })
 
+        # Life lost -> checkpoint respawn. Health's "lives" variant only refills
+        # HP in place (Health.cs.j2 Die()); SaveSystem's "checkpoint" variant
+        # already has a correct Respawn() that teleports to checkpointPosition
+        # (SaveSystem.cs.j2). Neither template can hardcode the other's class
+        # name (both are independently LLM-nameable), so — same reasoning as the
+        # GameManager bridge above — the wiring is added here, once, with the
+        # real resolved names.
+        health_lives = next((u for u in real_units
+                              if u.kind == "health" and u.variant == "lives"), None)
+        checkpoint = next((u for u in real_units
+                            if u.kind == "saveload" and u.variant == "checkpoint"), None)
+        if health_lives and checkpoint:
+            bridges.append({
+                "label": "Life lost -> SaveSystem.Respawn (micro -> micro)",
+                "snippet": (
+                    f"var __healthLives = Get<{health_lives.class_name}>();\n"
+                    f"var __checkpoint = Get<{checkpoint.class_name}>();\n"
+                    f"if (__healthLives != null && __checkpoint != null)\n"
+                    f"    __healthLives.OnLifeLost += __checkpoint.Respawn;"
+                ),
+            })
+
         env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
                           undefined=StrictUndefined, keep_trailing_newline=True)
         content = env.get_template("GameContext.cs.j2").render(
@@ -996,6 +1025,8 @@ class MicroComposer:
         "ai":           ["com.unity.modules.ai"],
         "audio":        ["com.unity.modules.audio"],
         "controller":   ["com.unity.modules.physics"],
+        "platform":     ["com.unity.modules.physics"],
+        "bike":         ["com.unity.modules.physics"],
         "physics":      ["com.unity.modules.physics"],
         "spawner":      ["com.unity.modules.physics"],
         "interactable": ["com.unity.modules.physics"],
@@ -1624,6 +1655,15 @@ def subsystems_for(
         "2d": "2d_platformer", "2.5d": "platformer_2_5d", "top_down": "top_down",
         "2d_topdown": "2d_topdown", "isometric": "top_down", "vr": "first_person",
     }.get(gt, ctrl_default)
+    # genre-aware 2D override — same fix the "Known follow-up" note above once
+    # flagged for genre=="fps" (never implemented for that case either): the
+    # controller-selection table above only reads game_type, so a classified
+    # genre="fighting" 2D brief got the plain "2d_platformer" variant with no
+    # combat abilities section in its schema-fill prompt at all — the LLM is
+    # TOLD "VARIANT MUST BE: 2d_platformer" (see ControllerPipeline.SCHEMA_PROMPT)
+    # and has no way to ask for "2d_fighting" itself.
+    if gt == "2d" and genre == "fighting":
+        ctrl = "2d_fighting"
     cam = {
         "2d": "follow_2d", "2.5d": "follow_2_5d", "top_down": "cinemachine_topdown",
         "2d_topdown": "follow_2d", "isometric": "cinemachine_topdown",
@@ -1955,6 +1995,45 @@ def subsystems_for(
             + ", ".join(sorted(s.kind for s in dropped))
             + " (each one rides an avatar this game declares it has none of)")
 
+    # 2D sprite animation for the player — gated on game_type alone (not a
+    # feature flag) since it's meaningless for a 3D/2.5D project: 2.5D is
+    # explicitly "3D models with 2D gameplay" (real meshes, not sprites — see
+    # unity_archetypes.py's game_type keyword table). Skipped for ui_first
+    # (no avatar to animate as a sprite in the first place). One per enemy
+    # TYPE is added below, inside `if has_enemies:`, where the enemy's own
+    # ai_tgt/entity name are already resolved.
+    if gt == "2d" and not ui_first:
+        subs.append(Subsystem(kind="sprite_animator", variant="player", target="player",
+                              name="PlayerSpriteAnimator", options={"entity_name": "Player"}))
+    # Moving platforms — same keyword-gated pattern as has_inventory above;
+    # the local LLM rarely emits a bespoke "platform" feature token, so this
+    # reads the brief's own words instead of trusting a feature flag. Static
+    # step-up platforms need no script at all (see src/micro/platform.py's
+    # module docstring), so only moving/oscillating/falling ones are composed.
+    _platform_words = ("moving platform", "platforms that move", "step-up platform",
+                       "step up platform", "step-up platforms", "step up platforms")
+    if gt == "2d" and any(w in prompt_low for w in _platform_words):
+        subs.append(Subsystem(kind="platform", variant="waypoint_pingpong", target="world",
+                              name="MovingPlatform"))
+
+    # Mountable bike — same keyword-gated pattern as platforms above, and for
+    # the same reason: a standalone entity, not the 3D Control Surface
+    # Stack's multi_mode (docs/CONTROL_SURFACE_STACK.md — explicitly 3D-only,
+    # and vehicle_bike isn't wired into it yet regardless). target="world"
+    # like platform, not "player" — it's a separate mountable GameObject the
+    # player's own (unchanged) controller rides via Controller.cs.j2's
+    # SetMovementLocked hook, not a replacement for that controller.
+    # Distinct from the `_bike_words` above, which gates the vehicle_bike
+    # CONTROLLER variant on lean/countersteer language. This broader list gates
+    # the 2D bike MICRO. Sharing one name shadowed the first list and tripped
+    # mypy (two tuple arities, one binding).
+    _bike_micro_words = ("bike", "motorbike", "motorcycle", "dirt bike",
+                         "ride a bike", "riding a bike", "bike section",
+                         "bike level")
+    if gt == "2d" and any(w in prompt_low for w in _bike_micro_words):
+        subs.append(Subsystem(kind="bike", variant="mountable_2d", target="world",
+                              name="Bike"))
+
     # Feature- AND content-driven additions
     if has_enemies:
         # locomotion=="drive" alone is not "this is a racing game" — it only
@@ -2005,6 +2084,12 @@ def subsystems_for(
         subs.append(Subsystem(kind="ai",           variant=ai_var,          target=ai_tgt,    name="EnemyAI", options=ai_opts))
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
+        if gt == "2d":
+            _enemy_entity = next((e for e in (entities or []) if getattr(e, "kind", "") == "enemy"), None)
+            _enemy_name = to_pascal(getattr(_enemy_entity, "name", "") or "Enemy", "Enemy")
+            subs.append(Subsystem(kind="sprite_animator", variant="enemy", target=ai_tgt,
+                                  name=f"{_enemy_name}SpriteAnimator",
+                                  options={"entity_name": _enemy_name}))
     if "audio" in feats or audio_specs:
         # Pass user_prompt via meta so AudioPipeline.default_fix can derive the game
         # type from the original request (e.g. "horror maze" → horror required cues

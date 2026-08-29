@@ -248,11 +248,52 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
 
 
 # Section headers that mark a fully-authored design brief (vs a one-line vibe
-# prompt). Three or more = the author already themed it.
+# prompt). Three or more = the author already themed it — see
+# _is_structured_brief's docstring for what that gates.
+#
+# ANY line starting with a run of ALL-CAPS word(s) — not a fixed vocabulary.
+# Originally a closed list (TITLE|GENRE|STYLE|CORE PREMISE|SCENES|NARRATIVE|
+# SCRIPTS|ENTITIES|MISSIONS|AUDIO|FEATURES|VISUAL STYLE|COLOR PALETTE|
+# PROCEDURAL) tuned for briefs that mirror the schema's own field names.
+# Confirmed live (2026-08-28): a fully-authored 10-section brief using
+# different, equally-structured header words (GOAL/CORE GAMEPLAY/LEVEL &
+# PLATFORMS/PLAYER STATS & LIVES/UI & HUD/...) matched only 2 of the old
+# list ("AUDIO", "STYLE" via "STYLE & TONE") — under the 3-marker floor — so
+# resolve_theme() ran its autodetect path on brief content that had already
+# fully themed itself, grafting an unrelated "Superhero Flying Mechanics /
+# flight burns calories" theme onto a ground-based brawler. That is the EXACT
+# failure mode this check exists to prevent (see the TerminalHorizon incident
+# noted where this is called in run()) — the vocabulary was just too narrow
+# to recognize a second, differently-worded but equally real structured
+# brief. No colon required — matches the pre-existing convention (a bare
+# "ENTITIES" or "SCENES (8 total)" line with no trailing colon was already a
+# valid marker; see test_structured_brief_detection).
 _BRIEF_MARKER_RE = re.compile(
-    r"^(TITLE|GENRE|STYLE|CORE PREMISE|SCENES|NARRATIVE|SCRIPTS|ENTITIES"
-    r"|MISSIONS|AUDIO|FEATURES|VISUAL STYLE|COLOR PALETTE|PROCEDURAL)\b",
-    re.MULTILINE | re.IGNORECASE)
+    r"^\s*([A-Z][A-Z]+(?:[ &/-]+[A-Z][A-Z]+)*)\b",
+    re.MULTILINE)
+
+
+def _apply_ramp_tilts(schema: UnitySchema) -> list[str]:
+    """Assign a default UnitySchema.EntitySpec.tilt_deg to any 2D entity whose
+    name/model_hint signals a ramp but which still has tilt_deg==0 — see the
+    field's own docstring in unity_schema.py. 3D-only games are left alone:
+    ramps there are ordinary geometry (a rotated model/mesh), not something
+    this 2D-specific BoxCollider2D-rotation technique applies to."""
+    if schema.game_type != "2D":
+        return []
+    msgs: list[str] = []
+    sign = 1.0
+    for e in schema.entities:
+        if e.tilt_deg != 0.0:
+            continue
+        haystack = f"{e.name} {e.model_hint}".lower()
+        if "ramp" not in haystack:
+            continue
+        e.tilt_deg = 22.0 * sign
+        sign = -sign
+        msgs.append(f"[ramp-tilt] '{e.name}' had no tilt_deg — assigned "
+                    f"{e.tilt_deg:+.1f}° (name/model_hint signaled a ramp)")
+    return msgs
 
 
 def _is_structured_brief(prompt: str) -> bool:
@@ -667,11 +708,55 @@ def _objective_scene_map(schema: UnitySchema,
     """Flatten `{mission.id: [scene, ...]}` (from `_infer_mission_scenes`) to
     `{objective.id: scene}` — what SEAM 8 (`unity_compose.py`) needs to gate
     each objective's event-source wiring to the scene it can actually fire
-    in. A mission resolved to more than one scene (not produced by
-    `_infer_mission_scenes` today, but tolerated) contributes its first scene
-    only, rather than guessing which objective belongs to which."""
+    in.
+
+    Refined per objective, not just per mission: a single mission can
+    legitimately span more than one scene (an extraction runs from a start
+    point to an end point), but `_infer_mission_scenes` only ever resolves
+    ONE scene for the whole mission. Confirmed live (DeadReckoningProtocol):
+    mission "Engineer Extraction" title-matched to scene "ExtractionPad", so
+    BOTH its `reach` objectives — "Reach the Engineer in the depot yard" and
+    "Reach the ExtractionPad with the Engineer" — were scoped to that one
+    scene, and SEAM 8 (one trigger source per scene) could bind only the
+    first; the second stayed permanently unadvanceable even though
+    DepotYard's own SceneTrigger sat unused in the composed project.
+
+    Each objective's OWN description is checked first, word-matched against
+    scene names with the same `_match_tokens` a mission title is matched
+    with — "in the depot yard" uniquely names DepotYard regardless of what
+    the mission as a whole resolved to. The bar is deliberately stricter
+    than the mission-title tier's "most shared words wins": a scene only
+    qualifies when its ENTIRE token set is contained in the objective's
+    description, not merely overlapping it. A single generic shared word
+    (a "Hallway" scene and an unrelated objective that happens to mention a
+    hallway) is not enough to reroute an objective away from its mission —
+    only an objective that names the scene in full is. Multiple qualifying
+    scenes (one a subset of another, e.g. "Hall" and "HallOne") resolve to
+    the more specific (larger) one; an outright tie, or no scene named at
+    all, is not a signal: fall back to the mission's own resolved scene
+    exactly as before, so an objective whose description says nothing about
+    scenes keeps today's behavior byte for byte. A mission resolved to more
+    than one scene (not produced by `_infer_mission_scenes` today, but
+    tolerated) still contributes its first scene as that fallback, rather
+    than guessing."""
     if not mission_scenes:
         return {}
+    gameplay_scenes = [s for s in schema.scenes
+                       if s and not any(w in s.lower() for w in _MENU_SCENE_WORDS)]
+    scene_tokens = {s: _match_tokens(s) for s in gameplay_scenes}
+
+    def _own_scene(description: str) -> "str | None":
+        tokens = _match_tokens(description)
+        if not tokens:
+            return None
+        hits = {s: len(toks) for s, toks in scene_tokens.items()
+               if toks and toks <= tokens}
+        if not hits:
+            return None
+        best = max(hits.values())
+        winners = [s for s, c in hits.items() if c == best]
+        return winners[0] if len(winners) == 1 else None
+
     out: dict[str, str] = {}
     for mission in schema.missions:
         scenes = mission_scenes.get(mission.id)
@@ -679,7 +764,7 @@ def _objective_scene_map(schema: UnitySchema,
             continue
         for o in mission.objectives:
             if o.id:
-                out[o.id] = scenes[0]
+                out[o.id] = _own_scene(o.description) or scenes[0]
     return out
 
 
@@ -1177,8 +1262,16 @@ class UnityPipeline:
                 except (ValueError, ValidationError) as exc:
                     last_err = exc
                     if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
+                        # The exception TYPE alone says nothing actionable —
+                        # a truncated JSON, an empty response and a field-level
+                        # validation error all print "ValueError" and each has
+                        # a different remedy (raise the loaded context, check
+                        # the model is loaded, read the offending field). Carry
+                        # the reason.
                         self._warn(f"schema fill attempt {attempt + 1} failed "
-                                   f"({type(exc).__name__}); retrying colder")
+                                   f"({type(exc).__name__}: "
+                                   f"{str(exc).splitlines()[0][:200]}); "
+                                   f"retrying colder")
             if schema is None:
                 raise RuntimeError(
                     f"schema fill failed after {self.SCHEMA_FILL_ATTEMPTS} "
@@ -1262,6 +1355,16 @@ class UnityPipeline:
             schema, _rescue_scene_fixes = _reconcile_scene_specs(schema)
             for msg in _rescue_scene_fixes:
                 self._fix(msg)
+
+        # Ramp tilt rescue: an entity the LLM clearly intends as a ramp (name
+        # or model_hint mentions "ramp") but left tilt_deg at its 0 default —
+        # geometry a schema-fill step has no reason to reason correctly about,
+        # not creative content. Positive tilt (rises left-to-right) by default;
+        # alternates direction so back-to-back ramps in one row don't all lean
+        # the same way. Never overrides an explicit non-zero tilt the LLM (or
+        # the concept-entity rescue) already set.
+        for msg in _apply_ramp_tilts(schema):
+            self._fix(msg)
 
         # Concept-named SCRIPT rescue — the entity rescue's sibling, for the
         # brief's systems. Runs here, before Step 6, so the restored scripts are
@@ -1841,6 +1944,24 @@ class UnityPipeline:
                 self._ok("Audio clips overlaid -> Assets/Audio/ + Assets/Resources/Audio/")
                 try:
                     shutil.rmtree(audio_micro_res)
+                except OSError:
+                    pass   # best-effort cleanup — a locked file must not break the run
+            # Overlay generated sprite frames the identical way:
+            #   Micros/sprite_animator/Resources/Sprites/<entity>/<action>/ ->
+            #   Assets/Sprites/ (canonical) + Assets/Resources/Sprites/ (Resources.LoadAll<Sprite>()).
+            sprite_micro_res = project_root / "Assets" / "Micros" / "sprite_animator" / "Resources"
+            sprite_micro_frames = sprite_micro_res / "Sprites"
+            if sprite_micro_frames.exists():
+                dst_sprites = project_root / "Assets" / "Sprites"
+                shutil.copytree(sprite_micro_frames, dst_sprites, dirs_exist_ok=True)
+                dst_res_sprites = project_root / "Assets" / "Resources" / "Sprites"
+                shutil.copytree(sprite_micro_frames, dst_res_sprites, dirs_exist_ok=True)
+                smf = sprite_micro_res / "sprite_manifest.json"
+                if smf.exists():
+                    shutil.copy2(smf, project_root / "Assets" / "Resources" / "sprite_manifest.json")
+                self._ok("Sprite frames overlaid -> Assets/Sprites/ + Assets/Resources/Sprites/")
+                try:
+                    shutil.rmtree(sprite_micro_res)
                 except OSError:
                     pass   # best-effort cleanup — a locked file must not break the run
             # Overlay NPC dialog (Kokoro) clips + manifest the same way as audio:

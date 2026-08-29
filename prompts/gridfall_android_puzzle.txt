@@ -1,0 +1,75 @@
+Title: Gridfall
+
+High-Level Concept:
+A clean, fast falling-block puzzle game for Android phones — a modern take on
+the classic stacking puzzle. It is a flat 2d game held in portrait, played with
+one thumb. There is no player character and no avatar: nothing walks, nothing
+drives, nothing is piloted. The player never moves through a world. The whole
+game is a puzzle board on the glass, and the only things that move are the
+falling blocks the player steers with taps and swipes. No 3d scenery of any
+kind.
+
+The Board
+One tall rectangular well, ten cells wide and twenty cells tall, drawn as a
+recessed panel with a faint grid. Blocks lock into that grid and stack from the
+bottom up. To the right of the well, a narrow column of small readout panels:
+a Next box showing the two upcoming pieces, a Hold box for the one piece the
+player has set aside, a Score readout, a Lines readout and a Level readout.
+Along the top, a thin status bar. Nothing else is on screen.
+
+The Pieces
+Seven block shapes, each four cells in size and each its own flat colour: a
+straight bar in cyan, a square in yellow, a T-shape in purple, an S-shape in
+green, a Z-shape in red, an L-shape in orange and a J-shape in blue. Pieces
+enter at the top of the well one at a time, in a shuffled bag so the same seven
+always arrive before any repeats. A pale ghost outline sits at the bottom of
+the well showing exactly where the current piece will land.
+
+What the Player Does
+Everything is touch. Swipe left or right to shift the falling piece one column.
+Tap the left or right half of the well to nudge it the same way. Tap the piece
+itself to rotate it a quarter turn clockwise; press and hold two fingers to
+rotate the other way. Swipe down to soft-drop, which speeds the fall while the
+finger is held. Flick down hard to hard-drop, which slams the piece straight to
+the ghost outline and locks it instantly. Swipe up to send the current piece to
+the Hold box and bring back whatever was in there. Every control is reachable
+with one thumb in portrait, and nothing sits under the status bar or the
+gesture area at the bottom of the screen.
+
+The Rules
+A piece falls one row on every tick of a gravity timer. It may not move into an
+occupied cell or through the walls of the well; a rotation that would collide is
+refused, then retried one column left and one column right before it is
+abandoned. When a piece can fall no further it locks into the grid after a short
+grace window, and the next piece enters. Any row that becomes completely full is
+cleared: it flashes once, is removed, and every row above it drops down one.
+Clearing one, two, three or four rows at once scores progressively more, and
+four at once is worth far more than four singles. Every ten cleared lines the
+level goes up by one and the gravity timer gets faster. If a newly entered piece
+has nowhere legal to sit, the run is over.
+
+The Session
+A run starts at level one and ends when the well tops out. The goal is simply to
+survive and to keep clearing lines: the game ends with a summary card showing the
+final score, the lines cleared and the level reached, over a Play Again button
+and a Quit button. A pause button in the status bar freezes the gravity timer and
+dims the well behind a small pause panel with Resume and Quit.
+
+Look and Feel
+Dark, calm, high-contrast. A near-black background, a slightly lighter well, and
+saturated flat block colours with a thin lighter edge on each cell so a stack
+reads clearly at arm's length on a phone screen. Readout panels are flat dark
+cards with pale numerals. Large type, generous spacing, no clutter and no
+decoration that is not information. The whole layout scales to any phone aspect
+ratio and keeps its margins clear of notches and rounded corners.
+
+Audio
+A quiet low drone under everything. A soft click when a piece shifts or rotates,
+a firmer thud when it locks, a bright ascending chime when a row clears and a
+louder four-note flourish when four clear at once. A short descending tone when
+the well tops out.
+
+Platform
+This ships to Android phones only, targeting Android 12 and newer. Portrait
+orientation, touch input only — no keyboard, no gamepad, no mouse. It must run
+smoothly on a mid-range phone.

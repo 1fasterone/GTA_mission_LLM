@@ -172,6 +172,14 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private float grabRange    = 1.5f;
     [SerializeField] private float grabCooldown = 2.0f;
 {% endif %}
+{% if "throw" in s.abilities %}
+    [Header("Throw")]
+    [Tooltip("Pickup-detection radius for a nearby object tagged \"Throwable\".")]
+    [SerializeField] private float throwDamage   = {{ "%.2f"|format(s.throw_damage) }}f;
+    [SerializeField] private float throwRange    = {{ "%.2f"|format(s.throw_range) }}f;
+    [SerializeField] private float throwForce    = {{ "%.2f"|format(s.throw_force) }}f;
+    [SerializeField] private float throwCooldown = {{ "%.2f"|format(s.throw_cooldown) }}f;
+{% endif %}
 
     // ═══ INTERACTION ═════════════════════════════════════════════════════════
 {% if "interact" in s.abilities %}
@@ -329,6 +337,21 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if "grab" in s.abilities %}
     private float _grabCooldown;
 {% endif %}
+{% if "throw" in s.abilities %}
+    private float      _throwCooldown;
+    private GameObject _carriedObject;
+{% endif %}
+{% if variant == "2d_fighting" %}
+    // +1 = facing right, -1 = facing left. Only 2d_fighting tracks this today
+    // (2d_platformer has no facing-dependent behaviour yet) — used to aim
+    // melee/throw hit-detection toward whichever way the player last moved.
+    private float _facing = 1f;
+{% endif %}
+{% if variant in ("2d_platformer", "2d_fighting") %}
+    // See "Locked while riding a mountable vehicle" comment at the movement
+    // block above. Off by default — no vehicle micro means this never fires.
+    private bool _movementLocked;
+{% endif %}
 {% if "open_inventory" in s.abilities %}
     private bool _inventoryOpen;
 {% endif %}
@@ -351,6 +374,12 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if not variant.startswith("vehicle_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
     /// <summary>Read by GameWiring each frame to push grounded state to FSM + Animator.</summary>
     public bool IsGrounded => _grounded;
+{% endif %}
+{% if variant in ("2d_platformer", "2d_fighting") %}
+    /// <summary>SendMessage entry point — see the movement-lock comment
+    /// above. A mountable vehicle calls this on mount/dismount instead of
+    /// this script needing a compile-time reference to that one.</summary>
+    public void SetMovementLocked(bool locked) => _movementLocked = locked;
 {% endif %}
 {% if variant.startswith("vehicle_") %}
     public float SpeedKmh            => _rb != null ? _rb.linearVelocity.magnitude * 3.6f : 0f;
@@ -617,13 +646,25 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
         // ── Per-variant movement ──────────────────────────────────────────────
-{% if variant == "2d_platformer" %}
+{% if variant in ("2d_platformer", "2d_fighting") %}
+        // Locked while riding a mountable vehicle (e.g. Bike.cs.j2) — that
+        // component drives its own Rigidbody2D and the player transform rides
+        // along parented to it; this guard just stops THIS component's own
+        // walk/jump from fighting that motion. SendMessage-only coupling (no
+        // compile-time reference either direction), same convention as every
+        // other cross-micro hook in this file.
+        if (!_movementLocked)
+        {
         Vector2 vel2 = _rb.linearVelocity;
         vel2.x = h * speed;
         _rb.linearVelocity = vel2;
         _grounded = CheckGrounded2D();
         if (jumpPressed && _grounded)
             _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);
+{% if variant == "2d_fighting" %}
+        if (Mathf.Abs(h) > 0.01f) _facing = Mathf.Sign(h);
+{% endif %}
+        }
 {% elif variant == "2d_topdown" %}
         _rb.linearVelocity = new Vector2(h, v).normalized * speed;
 {% elif variant == "top_down" %}
@@ -947,19 +988,25 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
         // ── Fighting ──────────────────────────────────────────────────────────
-{% if "primary_attack" in s.abilities or "secondary_attack" in s.abilities or "block" in s.abilities or "dodge" in s.abilities or "grab" in s.abilities %}
+{% if "primary_attack" in s.abilities or "secondary_attack" in s.abilities or "block" in s.abilities or "dodge" in s.abilities or "grab" in s.abilities or "throw" in s.abilities %}
 {% if s.input_backend == "input_system" %}
         bool punchDown = kb != null && kb.jKey.wasPressedThisFrame;
         bool kickDown  = kb != null && kb.kKey.wasPressedThisFrame;
         bool blockHeld = kb != null && kb.rKey.isPressed;
         bool dodgeDown = kb != null && kb.qKey.wasPressedThisFrame;
         bool grabDown  = kb != null && kb.gKey.wasPressedThisFrame;
+{% if "throw" in s.abilities %}
+        bool throwDown = kb != null && kb.lKey.wasPressedThisFrame;
+{% endif %}
 {% else %}
         bool punchDown = Input.GetKeyDown(KeyCode.J);
         bool kickDown  = Input.GetKeyDown(KeyCode.K);
         bool blockHeld = Input.GetKey(KeyCode.R);
         bool dodgeDown = Input.GetKeyDown(KeyCode.Q);
         bool grabDown  = Input.GetKeyDown(KeyCode.G);
+{% if "throw" in s.abilities %}
+        bool throwDown = Input.GetKeyDown(KeyCode.L);
+{% endif %}
 {% endif %}
 {% if "primary_attack" in s.abilities %}
         if (_primaryCooldown > 0f) _primaryCooldown -= Time.deltaTime;
@@ -982,6 +1029,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if "grab" in s.abilities %}
         if (_grabCooldown > 0f) _grabCooldown -= Time.deltaTime;
         if (grabDown && _grabCooldown <= 0f) TryGrab();
+{% endif %}
+{% if "throw" in s.abilities %}
+        if (_throwCooldown > 0f) _throwCooldown -= Time.deltaTime;
+        if (throwDown && _throwCooldown <= 0f) TryThrow();
 {% endif %}
 {% endif %}
 
@@ -1170,7 +1221,11 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private void TryMeleeAttack()
     {
         _meleeCooldown = meleeCooldown;
+{% if variant.startswith("2d_") %}
+        Collider2D[] hits = Physics2D.OverlapCircleAll(transform.position, meleeRange);
+{% else %}
         Collider[] hits = Physics.OverlapSphere(transform.position + transform.forward * meleeRange * 0.5f, meleeRange);
+{% endif %}
         foreach (var c in hits)
         {
             if (c.gameObject == gameObject) continue;
@@ -1185,8 +1240,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private void TryPrimaryAttack()
     {
         _primaryCooldown = primaryCooldown;
+        SendMessage("PlayAction", "punch_light", SendMessageOptions.DontRequireReceiver);
+{% if variant.startswith("2d_") %}
+        Vector2 __primaryCenter = (Vector2)transform.position
+            + Vector2.right * ({{ "_facing" if variant == "2d_fighting" else "1f" }} * primaryRange * 0.6f);
+        Collider2D[] hits = Physics2D.OverlapCircleAll(__primaryCenter, primaryRange);
+{% else %}
         Collider[] hits = Physics.OverlapSphere(
             transform.position + transform.forward * primaryRange * 0.6f, primaryRange);
+{% endif %}
         foreach (var c in hits)
         {
             if (c.gameObject == gameObject) continue;
@@ -1199,8 +1261,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private void TrySecondaryAttack()
     {
         _secondaryCooldown = secondaryCooldown;
+        SendMessage("PlayAction", "punch_heavy", SendMessageOptions.DontRequireReceiver);
+{% if variant.startswith("2d_") %}
+        Vector2 __secondaryCenter = (Vector2)transform.position
+            + Vector2.right * ({{ "_facing" if variant == "2d_fighting" else "1f" }} * secondaryRange * 0.6f);
+        Collider2D[] hits = Physics2D.OverlapCircleAll(__secondaryCenter, secondaryRange);
+{% else %}
         Collider[] hits = Physics.OverlapSphere(
             transform.position + transform.forward * secondaryRange * 0.6f, secondaryRange);
+{% endif %}
         foreach (var c in hits)
         {
             if (c.gameObject == gameObject) continue;
@@ -1215,13 +1284,23 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         _isDodging      = true;
         _isInvincible   = true;
         _dashCooldownTimer = dashCooldown;
+{% if variant.startswith("2d_") %}
+        Vector2 dir2 = new Vector2(_moveInput.x, 0f);
+        if (dir2.sqrMagnitude < 0.01f) dir2 = new Vector2({{ "_facing" if variant == "2d_fighting" else "1f" }}, 0f);
+        dir2.Normalize();
+{% else %}
         Vector3 dir = (transform.right * _moveInput.x + transform.forward * _moveInput.y);
         if (dir.sqrMagnitude < 0.01f) dir = -transform.forward;
         dir.Normalize();
+{% endif %}
         float elapsed = 0f;
         while (elapsed < dashDuration)
         {
+{% if variant.startswith("2d_") %}
+            if (_rb != null) _rb.MovePosition(_rb.position + dir2 * dashForce * Time.deltaTime);
+{% else %}
             if (_cc != null) _cc.Move(dir * dashForce * Time.deltaTime);
+{% endif %}
             elapsed += Time.deltaTime;
             yield return null;
         }
@@ -1235,13 +1314,23 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         _isDodging         = true;
         _isInvincible      = true;
         _dashCooldownTimer = dashCooldown;
+{% if variant.startswith("2d_") %}
+        Vector2 dir2 = new Vector2(_moveInput.x, 0f);
+        if (dir2.sqrMagnitude < 0.01f) dir2 = new Vector2({{ "_facing" if variant == "2d_fighting" else "1f" }}, 0f);
+        dir2.Normalize();
+{% else %}
         Vector3 dir = (transform.right * _moveInput.x + transform.forward * _moveInput.y);
         if (dir.sqrMagnitude < 0.01f) dir = transform.forward;
         dir.Normalize();
+{% endif %}
         float elapsed = 0f;
         while (elapsed < dashDuration)
         {
+{% if variant.startswith("2d_") %}
+            if (_rb != null) _rb.MovePosition(_rb.position + dir2 * dashForce * Time.deltaTime);
+{% else %}
             if (_cc != null) _cc.Move(dir * dashForce * Time.deltaTime);
+{% endif %}
             elapsed += Time.deltaTime;
             yield return null;
         }
@@ -1254,7 +1343,11 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private void TryGrab()
     {
         _grabCooldown = grabCooldown;
+{% if variant.startswith("2d_") %}
+        Collider2D[] hits = Physics2D.OverlapCircleAll(transform.position, grabRange);
+{% else %}
         Collider[] hits = Physics.OverlapSphere(transform.position + transform.forward * grabRange, grabRange);
+{% endif %}
         foreach (var c in hits)
         {
             if (c.gameObject == gameObject) continue;
@@ -1263,12 +1356,69 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         }
     }
 {% endif %}
+{% if "throw" in s.abilities %}
+    private void TryThrow()
+    {
+        _throwCooldown = throwCooldown;
+        if (_carriedObject != null)
+            SendMessage("PlayAction", "throw", SendMessageOptions.DontRequireReceiver);
+        if (_carriedObject == null)
+        {
+            // Not carrying anything — look for a nearby "Throwable" to pick up.
+{% if variant.startswith("2d_") %}
+            Collider2D[] near = Physics2D.OverlapCircleAll(transform.position, throwRange);
+{% else %}
+            Collider[] near = Physics.OverlapSphere(transform.position, throwRange);
+{% endif %}
+            foreach (var c in near)
+            {
+                if (c.gameObject == gameObject || !c.CompareTag("Throwable")) continue;
+                _carriedObject = c.gameObject;
+                break;
+            }
+            if (_carriedObject != null)
+            {
+                var carriedRb2d = _carriedObject.GetComponent<Rigidbody2D>();
+                if (carriedRb2d != null) carriedRb2d.bodyType = RigidbodyType2D.Kinematic;
+                var carriedRb3d = _carriedObject.GetComponent<Rigidbody>();
+                if (carriedRb3d != null) carriedRb3d.isKinematic = true;
+                _carriedObject.transform.SetParent(transform, true);
+                _carriedObject.transform.localPosition = Vector3.up * 1.2f;
+            }
+            return;
+        }
+
+        // Carrying something — launch it.
+        GameObject thrown = _carriedObject;
+        _carriedObject = null;
+        thrown.transform.SetParent(null, true);
+        var impact = thrown.GetComponent<ThrownObject>();
+        if (impact == null) impact = thrown.AddComponent<ThrownObject>();
+        impact.damage = throwDamage;
+{% if variant.startswith("2d_") %}
+        var rb2d = thrown.GetComponent<Rigidbody2D>();
+        if (rb2d == null) rb2d = thrown.AddComponent<Rigidbody2D>();
+        rb2d.bodyType = RigidbodyType2D.Dynamic;
+        Vector2 dir2d = new Vector2({{ "_facing" if variant == "2d_fighting" else "1f" }}, 0.4f).normalized;
+        rb2d.AddForce(dir2d * throwForce, ForceMode2D.Impulse);
+{% else %}
+        var rb3d = thrown.GetComponent<Rigidbody>();
+        if (rb3d == null) rb3d = thrown.AddComponent<Rigidbody>();
+        rb3d.isKinematic = false;
+        rb3d.AddForce((transform.forward * 0.8f + Vector3.up * 0.3f).normalized * throwForce, ForceMode.Impulse);
+{% endif %}
+    }
+{% endif %}
 
     // ═══ INTERACTION METHODS ═════════════════════════════════════════════════
 {% if "interact" in s.abilities %}
     private void TryInteract()
     {
+{% if variant.startswith("2d_") %}
+        Collider2D[] near = Physics2D.OverlapCircleAll(transform.position, interactRange);
+{% else %}
         Collider[] near = Physics.OverlapSphere(transform.position, interactRange);
+{% endif %}
         foreach (var c in near)
         {
             if (c.gameObject == gameObject) continue;

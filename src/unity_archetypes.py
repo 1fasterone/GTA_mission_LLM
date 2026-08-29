@@ -472,6 +472,16 @@ _GENRE: list[tuple[str, list[str]]] = [
         "platformer", "platforming", "metroidvania", "jump and run", "precision platformer",
         "side-scroller",
     ]),
+    ("fighting", [
+        "beat em up", "beat 'em up", "beat-em-up", "brawler", "side-scrolling brawler",
+        "side scrolling brawler", "arcade brawler", "punch enemies", "melee combat game",
+        "fighting game", "combo fighter", "streets of rage", "final fight",
+        # NOTE: bare "fighting"/"combat"/"punch"/"melee" are deliberately excluded —
+        # they collide with unrelated genres that describe combat incidentally
+        # (an RPG or FPS brief routinely says "the player can fight enemies").
+        # Every phrase here is a genre-naming compound, not a bare verb, mirroring
+        # why "racing" excludes bare "drift" above.
+    ]),
     ("horror", [
         "horror", "survival horror", "scary", "creepy", "haunted", "zombie survival",
         "psychological horror", "jump scare", "found footage",

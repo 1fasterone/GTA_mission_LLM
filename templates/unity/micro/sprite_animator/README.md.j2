@@ -1,0 +1,43 @@
+# {{ s.name }} — Unity 2D Sprite Frame Animator
+
+**Role:** `{{ variant }}`
+**Entity:** `{{ s.entity_name }}`
+**FPS:** `{{ "%.1f"|format(s.fps) }}`
+
+{{ s.description }}
+
+## Install
+
+1. Drop the `Scripts/` folder into your project's `Assets/` and the
+   `Resources/` folder's contents into your project's `Assets/Resources/`
+   (the pipeline's `unity-create` overlay step does this automatically for a
+   composed project — see `Assets/Resources/Sprites/{{ s.entity_name }}/`).
+2. Add the `{{ s.name }}` component to the `{{ s.entity_name }}` GameObject —
+   it requires a `SpriteRenderer` on the same object.
+
+## Behaviour
+
+Loads every generated frame via `Resources.LoadAll<Sprite>()` at `Awake()`.
+Idle{% if "run" in actions %}/run{% endif %}{% if "jump" in actions %}/jump{% endif %} state is inferred each frame from the
+GameObject's own motion (no dependency on any specific controller script — it
+reads `transform.position` deltas directly, so it works with any movement
+code). One-shot actions
+({% for a in actions if a not in ("idle", "run", "jump") %}{{ a }}{% if not loop.last %}, {% endif %}{% endfor %})
+are triggered from elsewhere via:
+
+```csharp
+SendMessage("PlayAction", "punch_light", SendMessageOptions.DontRequireReceiver);
+```
+
+with no compile-time reference needed — Controller.cs.j2 and Health.cs.j2
+already call this at the right moments (attack/jump/hurt/death) when a
+sprite-animated entity is composed alongside them.
+
+## Art generation
+
+Frames were generated once via a local ComfyUI server and frozen to
+`Resources/Sprites/{{ s.entity_name }}/<action>/frame_NN.png` — see
+`Resources/sprite_manifest.json` for exactly what was generated vs.
+placeholder-filled (a solid magenta frame means ComfyUI was unreachable or a
+specific frame failed; re-run sprite generation once that's fixed, it will
+not silently pass off a placeholder as real art).

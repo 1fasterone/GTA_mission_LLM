@@ -360,6 +360,43 @@ class TestSchemaValidation:
         assert schema.locomotion_modes == ["on_foot", "vehicle_car"]
         assert schema.meta["locomotion_modes_lint"]["dropped_duplicate_kind"] == ["on_foot"]
 
+    @staticmethod
+    def _schema(game_type: str, locomotion_modes: list[str]) -> UnitySchema:
+        # Not _unity_schema() — it hardcodes game_type="3D" positionally, and
+        # this class needs to vary it.
+        return UnitySchema(
+            project_name="MultiModeTest", company_name="C", description="",
+            game_type=game_type, platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            locomotion_modes=locomotion_modes, entities=[], scripts=[])
+
+    def test_2d_game_drops_the_whole_registry(self):
+        """Confirmed live (2026-08-28): a 2D schema-fill (an OpenRouter free
+        model reaching for the nearest vocabulary it knew for "bike riding")
+        wrote locomotion_modes=["on_foot", "vehicle_car"] on a 2D project.
+        docs/CONTROL_SURFACE_STACK.md says 2D is entirely out of scope for
+        the Control Surface Stack ("the stack can't switch [dimension] at
+        runtime") — unlike unknown-kind/duplicate entries, this drops the
+        WHOLE list, not just the offending entries, since there is no such
+        thing as a valid multi_mode registry for a 2D project."""
+        schema = self._schema("2D", ["on_foot", "vehicle_car"])
+        assert schema.locomotion_modes == []
+        assert schema.meta["locomotion_modes_lint"]["dropped_2d_dimension_mismatch"] \
+            == ["on_foot", "vehicle_car"]
+
+    def test_2d_topdown_also_drops_the_whole_registry(self):
+        schema = self._schema("2d_topdown", ["on_foot", "flying"])
+        assert schema.locomotion_modes == []
+        assert "locomotion_modes_lint" in schema.meta
+
+    def test_3d_game_unaffected(self):
+        """Regression guard: the 2D dimension-mismatch drop must not touch
+        3D — that's Phase 1's already-shipped, correctly-working path."""
+        schema = self._schema("3D", ["on_foot", "vehicle_car"])
+        assert schema.locomotion_modes == ["on_foot", "vehicle_car"]
+        assert "locomotion_modes_lint" not in schema.meta
+
 
 # ── Playability (src/unity_playability.py) ───────────────────────────────────
 

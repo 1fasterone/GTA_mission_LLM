@@ -1,0 +1,119 @@
+GOAL:
+Generate a colourful, hand‑animated, 2D game — a beat 'em up fighting game — resembling the visual tone and pacing of "Cuphead," but with original art, characters, and audio. The game must build and run in Unity with ZERO compile errors.
+
+CORE GAMEPLAY:
+- 2D side‑scrolling combat against a constant onslaught of enemies.
+- Player can:
+  - Punch (light and heavy attacks).
+  - Pick up and throw objects (e.g., crates, bottles, barrels) as weapons.
+- Enemies:
+  - Spawn continuously from off‑screen.
+  - Have simple AI: move toward player, attack in melee range, can be knocked back or stunned.
+- Difficulty modes:
+  - Easy, Medium, Hard selectable from a main menu.
+  - Scale enemy health, damage, and spawn rate per mode.
+
+LEVEL & PLATFORMS:
+- Single continuous level for the first version:
+  - Colourful, multi‑layered scrolling background (sky, distant buildings/trees, mid‑ground props), each layer scrolling at its own speed for a sense of depth.
+- Platforms:
+  - Moving platforms that travel horizontally or vertically.
+  - Step‑up platforms that require the player to jump up to reach higher areas.
+- Player must be able to:
+  - Run, jump, and land reliably on all platforms.
+  - Fall off platforms and take minor damage or respawn at a safe checkpoint.
+
+PLAYER STATS & LIVES:
+- Player has exactly 3 lives.
+- When health reaches zero:
+  - Lose one life.
+  - Respawn at the latest checkpoint.
+- When all 3 lives are lost:
+  - Show "Game Over" screen with final score and option to restart or return to main menu.
+
+UI & HUD:
+- Top of screen:
+  - **Score counter** that increases for:
+    - Defeating enemies.
+    - Successfully hitting enemies with thrown objects.
+  - **Life counter** showing remaining lives (3 icons or numeric).
+  - Optional health bar for the current life.
+- Main menu:
+  - Start Game (with difficulty selection: Easy / Medium / Hard).
+  - Options (audio volume sliders).
+  - Quit.
+
+AUDIO (Stable Audio 3):
+Use Stable Audio 3 to generate:
+1. **Ambient music track**:
+   - Single looping file.
+   - Mood: energetic, whimsical, slightly jazzy, fitting a "Cuphead‑like" cartoon combat vibe.
+   - Length: 2–3 minutes, seamless loop.
+2. **SFX pack**:
+   - Distinct files for:
+     - Player punch (light).
+     - Player punch (heavy).
+     - Object throw.
+     - Object impact (hit enemy).
+     - Enemy attack.
+     - Enemy death.
+     - Player jump.
+     - Player land.
+     - UI button click.
+     - Game Over sting.
+   - All SFX should be short, punchy, and consistent in style with the ambient track.
+
+UNITY IMPLEMENTATION:
+- Use Unity (latest LTS) with 2D tools.
+- Project structure:
+  - `Assets/Scripts/Gameplay/` for player, enemy, and platform logic.
+  - `Assets/Scripts/UI/` for HUD, menus, and game state.
+  - `Assets/Audio/Music/` for ambient track.
+  - `Assets/Audio/SFX/` for sound effects.
+  - `Assets/Art/` for sprites, backgrounds, and animations.
+- Player:
+  - 2D character controller with:
+    - Horizontal movement.
+    - Jumping with variable height.
+    - Attack states (light/heavy punch, throw).
+  - Animation state machine for idle, run, jump, attack, hurt, death.
+- Enemies:
+  - Simple state machine: idle, chase, attack, hurt, death.
+  - Different enemy types can be added later, but start with one base type.
+- Platforms:
+  - Moving platform script with configurable path and speed.
+  - Static step‑up platforms with colliders and proper layer setup.
+- Game manager:
+  - Tracks score, lives, difficulty mode, and current level state.
+  - Handles respawn, Game Over, and transitions between main menu and gameplay.
+
+UNITY CLI & VERIFICATION:
+- Use the Unity CLI to:
+  - Install or verify required Unity Editor version and modules.
+  - Run batchmode builds to confirm the project compiles without errors.
+- The pipeline must:
+  - Continuously run generation and refinement passes.
+  - Automatically fix compile errors, missing references, and broken scripts.
+  - Re‑invoke generation and patching until:
+    - Unity CLI build completes successfully with ZERO compile errors.
+    - The game launches and basic gameplay (movement, jumping, attacking, enemy spawning, scoring, lives) works.
+
+STYLE & TONE:
+- Visual style:
+  - Colourful, cartoonish, high‑contrast backgrounds and characters.
+  - Not copying Cuphead assets—only inspired by its era and mood.
+- Animation:
+  - Exaggerated squash‑and‑stretch for attacks and hits.
+- Audio:
+  - Cohesive, playful, slightly retro feel.
+
+FINAL REQUIREMENT:
+Produce:
+1. A complete Unity project folder layout with all necessary scripts, prefabs, scenes, and assets wired together.
+2. Stable Audio 3 prompts and resulting audio files integrated into the project.
+3. A successful Unity CLI build with no compile errors.
+4. A playable scene where:
+   - Player can move, jump, punch, throw objects.
+   - Enemies spawn and attack.
+   - Score and lives update correctly.
+   - Difficulty selection affects gameplay parameters.

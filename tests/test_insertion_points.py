@@ -28,6 +28,11 @@ from src.micro.code_fields import (
     template_members, template_usings, harden_against_template,
     find_vector3_entity_prop_misuse, _code_brace_depth, _code_paren_depth,
     _split_nested_members, _repair_numeric_literals,
+    _repair_forcemode_on_rigidbody2d, _repair_self_class_static_call,
+    _TEMPLATE_FIELD_DECL_RE, template_field_types,
+    _repair_collection_compared_as_scalar, _repair_animator_play_layer_arg,
+    _repair_struct_return_type_mismatch, _repair_getcomponent_wrong_dimension,
+    _vector_initializer, lint_field_type_misuse,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
 from src.micro.physics  import PhysicsPipeline,   PhysicsSchema
@@ -175,6 +180,220 @@ def test_numeric_repair_ignores_comments_and_strings():
     out = _repair_numeric_literals(src)
     assert '"cost: 5i"' in out and "// was 7i" in out
     assert "int n = 3;" in out
+
+
+# ── CS1503: ForceMode used on a Rigidbody2D, needs ForceMode2D
+# (live: WorldInteractable.cs(105), 2026-08-28) ───────────────────────────────
+
+def test_forcemode_repaired_on_direct_getcomponent_chain():
+    src = "thrown.GetComponent<Rigidbody2D>().AddForce(Vector2.right * 15f, ForceMode.Impulse);"
+    out = _repair_forcemode_on_rigidbody2d(src)
+    assert "ForceMode2D.Impulse" in out
+    assert "ForceMode.Impulse" not in out
+    # Everything else in the call must survive untouched.
+    assert "Vector2.right * 15f" in out
+
+
+def test_forcemode_repaired_via_tracked_local_variable():
+    src = ("var rb = GetComponent<Rigidbody2D>();\n"
+           "rb.AddForce(dir, ForceMode.VelocityChange);")
+    out = _repair_forcemode_on_rigidbody2d(src)
+    assert "ForceMode2D.VelocityChange" in out
+
+
+def test_forcemode_on_addtorque_also_repaired():
+    src = "GetComponent<Rigidbody2D>().AddTorque(5f, ForceMode.Force);"
+    assert "ForceMode2D.Force" in _repair_forcemode_on_rigidbody2d(src)
+
+
+def test_forcemode_on_a_real_rigidbody3d_untouched():
+    """A genuine 3D Rigidbody call must not be rewritten — only a Rigidbody2D
+    receiver (directly or via a tracked local) triggers the fix."""
+    src = "GetComponent<Rigidbody>().AddForce(dir, ForceMode.Impulse);"
+    assert _repair_forcemode_on_rigidbody2d(src) == src
+
+
+# ── CS0120: own-class-qualified instance call (live: GameRules.cs(113),
+# 2026-08-28) ───────────────────────────────────────────────────────────────
+
+def test_self_class_static_call_stripped():
+    src = 'if (ready) { GameRules.Begin(); }'
+    out = _repair_self_class_static_call(src, "GameRules")
+    assert out == "if (ready) { Begin(); }"
+
+
+def test_self_class_static_call_noop_without_class_name():
+    src = "GameRules.Begin();"
+    assert _repair_self_class_static_call(src, "") == src
+
+
+def test_self_class_static_call_leaves_other_classes_alone():
+    """Only the CONTAINING class's own name is stripped — a call into a
+    different, real class must survive unchanged."""
+    src = "GameRules.Begin(); OtherScript.DoThing();"
+    out = _repair_self_class_static_call(src, "GameRules")
+    assert out == "Begin(); OtherScript.DoThing();"
+
+
+def test_self_class_static_call_no_false_positive_on_prefix_match():
+    """GameRulesHelper must not be mistaken for GameRules."""
+    src = "GameRulesHelper.DoThing();"
+    assert _repair_self_class_static_call(src, "GameRules") == src
+
+
+def test_self_class_static_call_wired_through_lint_extensible():
+    """End-to-end: lint_extensible must thread the schema's own name through
+    to actually fix this in a real awake/update_extra body, not just via the
+    function in isolation. CodeExtensibleSchema itself is a bare mixin with
+    no `.name` field (that's _ExtensibleLike's whole point — it's structural,
+    not nominal) — PlatformSchema is a real subclass with both."""
+    from src.micro.platform import PlatformSchema
+    schema = PlatformSchema(name="GameRules", update_extra="GameRules.Begin();")
+    lint_extensible(schema, reserved_fields=set(), template_usings=set())
+    assert schema.update_extra == "Begin();"
+
+
+# ── template_field_types blind to ANY generic-typed field (live:
+# EnemySpawner.cs, 2026-08-28 — the root cause behind the CS0019 above:
+# List<GameObject> _alive was invisible to every misuse check until this) ────
+
+@pytest.mark.parametrize("decl, name, expected_type", [
+    ("private readonly List<GameObject> _alive = new List<GameObject>();",
+     "_alive", "List<GameObject>"),
+    ("private Dictionary<string, int> _scores = new Dictionary<string, int>();",
+     "_scores", "Dictionary<string, int>"),
+    ("[SerializeField] private List<AudioClip> clips;", "clips", "List<AudioClip>"),
+    ("private int[] _lanes;", "_lanes", "int[]"),
+    # Plain (non-generic) declarations must still match exactly as before.
+    ("private Animator _anim;", "_anim", "Animator"),
+    ("[SerializeField] private float speed = 2.00f;", "speed", "float"),
+])
+def test_template_field_decl_regex_handles_generics(decl, name, expected_type):
+    m = _TEMPLATE_FIELD_DECL_RE.match(decl)
+    assert m, f"regex failed to match: {decl!r}"
+    assert m.group("name") == name
+    assert m.group("type") == expected_type
+
+
+def test_template_field_types_sees_a_generic_field(tmp_path):
+    (tmp_path / "Fake.cs.j2").write_text(
+        "public class Fake : MonoBehaviour\n{\n"
+        "    private readonly List<GameObject> _alive = new List<GameObject>();\n"
+        "    private int maxAlive = 5;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    template_field_types.cache_clear()
+    types = template_field_types(str(tmp_path))
+    assert types.get("_alive") == "List<GameObject>"
+    assert types.get("maxAlive") == "int"
+
+
+# ── CS0019: collection compared via a relational operator, needs .Count
+# (live: EnemySpawner.cs(161), 2026-08-28) ────────────────────────────────────
+
+def test_collection_compared_as_scalar_repaired():
+    ft = {"_alive": "List<GameObject>"}
+    src = "return _spawnTimer <= 0f && _alive < maxAlive;"
+    out = _repair_collection_compared_as_scalar(src, ft)
+    assert "_alive.Count < maxAlive" in out
+
+
+def test_collection_compared_as_scalar_handles_array():
+    ft = {"_lanes": "int[]"}
+    out = _repair_collection_compared_as_scalar("if (i < _lanes.Length) return;\nx = _lanes >= 3;", ft)
+    assert "_lanes.Length >= 3" in out
+
+
+def test_collection_compared_as_scalar_already_correct_untouched():
+    ft = {"_alive": "List<GameObject>"}
+    src = "return _alive.Count < maxAlive;"
+    assert _repair_collection_compared_as_scalar(src, ft) == src
+
+
+# ── CS1503: Animator.Play's 2nd arg is int layer, not the float CrossFade
+# expects there (live: PlayerAnimator.cs(104), 2026-08-28) ────────────────────
+
+def test_animator_play_layer_arg_float_to_int():
+    ft = {"_anim": "Animator"}
+    src = "_anim.Play(_play_J_, -1f, 0f);"
+    out = _repair_animator_play_layer_arg(src, ft)
+    assert "Play(_play_J_, -1, 0f)" in out
+
+
+def test_animator_play_fabricated_static_member_and_undeclared_arg_neutralized():
+    """The doubly-broken shape: a non-existent static member AND an
+    undeclared bare identifier in the same call — nothing here has a ground
+    truth to repair TO, so the whole statement is neutralized instead."""
+    ft = {"_anim": "Animator"}
+    body = "if (_anim != null) _anim.Play(animName, Animator.DefaultStateMode, __J_Id);"
+    out, _msgs = lint_field_type_misuse(body, field_types=ft,
+                                        signature="private void Play_J(string animName)")
+    assert "Animator.DefaultStateMode" not in out or out.startswith("//")
+    assert "__J_Id" not in out or "AUDIT" in out
+
+
+# ── CS0029: a struct-typed field returned where the method declares a
+# DIFFERENT struct return type (live: LightingDirector.cs GetSkyboxColor(),
+# 2026-08-28) ───────────────────────────────────────────────────────────────
+
+def test_struct_return_type_mismatch_neutralized():
+    ft = {"_skyboxColor": "Vector3", "ambientSky": "Color"}
+    body = "return _skyboxColor != null ? _skyboxColor : ambientSky;"
+    out = _repair_struct_return_type_mismatch(
+        body, ft, signature="public Color GetSkyboxColor()")
+    assert "AUDIT" in out
+    assert "return _skyboxColor" not in out.split("//")[0]
+
+
+def test_struct_return_type_mismatch_noop_for_matching_type():
+    ft = {"tint": "Color"}
+    body = "return tint;"
+    out = _repair_struct_return_type_mismatch(
+        body, ft, signature="public Color GetTint()")
+    assert out == body
+
+
+def test_struct_return_type_mismatch_noop_without_signature():
+    ft = {"_skyboxColor": "Vector3"}
+    body = "return _skyboxColor;"
+    assert _repair_struct_return_type_mismatch(body, ft) == body
+
+
+# ── CS0029: GetComponent<T>() called with the 3D counterpart of a field's
+# own 2D-typed declaration (live: Bike.cs(36), 2026-08-28) ────────────────────
+
+def test_getcomponent_wrong_dimension_repaired():
+    ft = {"_riderRb": "Rigidbody2D"}
+    src = "_riderRb = _mountPoint.GetComponent<Rigidbody>();"
+    out = _repair_getcomponent_wrong_dimension(src, ft)
+    assert "GetComponent<Rigidbody2D>()" in out
+
+
+def test_getcomponent_wrong_dimension_handles_collider():
+    ft = {"_col": "BoxCollider2D"}
+    out = _repair_getcomponent_wrong_dimension(
+        "_col = GetComponent<BoxCollider>();", ft)
+    assert "GetComponent<BoxCollider2D>()" in out
+
+
+def test_getcomponent_already_correct_untouched():
+    ft = {"_rb": "Rigidbody2D"}
+    src = "_rb = GetComponent<Rigidbody2D>();"
+    assert _repair_getcomponent_wrong_dimension(src, ft) == src
+
+
+# ── CS0037: `null` on a non-nullable Vector2/3/4 field (live:
+# LightingDirector.cs(48), 2026-08-28 — _color_initializer already refused
+# this shape; _vector_initializer did not) ─────────────────────────────────
+
+def test_vector_initializer_rejects_null():
+    assert _vector_initializer("vector3", "null") is None
+
+
+def test_vector_initializer_still_accepts_real_expressions():
+    assert _vector_initializer("vector3", "Vector3.zero") == "Vector3.zero"
+    assert _vector_initializer("vector3", "new Vector3(1f, 2f, 3f)") == "new Vector3(1f, 2f, 3f)"
 
 
 # ── CS0106: member declaration nested in a method body (live: PlayerFSM.cs) ───

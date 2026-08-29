@@ -127,7 +127,11 @@ PlayerSettings:
     Standalone: 0
   overrideDefaultApplicationIdentifier: 0
   AndroidBundleVersionCode: 1
-  AndroidMinSdkVersion: 22
+{# API 31 = Android 12, the floor a new Unity 6 mobile project realistically
+   ships to (modern splash-screen, permission and exported-activity behaviour
+   all land there). API 22 = Android 5.1 (2015) and stays the floor for every
+   non-mobile target, where this key is inert anyway. #}
+  AndroidMinSdkVersion: {{ "31" if platform == "mobile" else "22" }}
   AndroidTargetSdkVersion: 34
   AndroidPreferredInstallLocation: 1
   aotOptions:

@@ -61,6 +61,7 @@ import re
 from typing import Any, Iterable, Sequence
 
 from pydantic import ValidationError
+from rich.console import Console
 
 from .micro import REGISTRY
 from pathlib import Path
@@ -68,7 +69,7 @@ from pathlib import Path
 from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
                                 build_missing_fields, find_unbound_identifiers,
                                 lint_method, lint_unbound_identifiers,
-                                template_members,
+                                sanitize_default, template_members,
                                 template_method_arities, template_usings,
                                 _KNOWN_SYMBOLS, _MONO_INHERITED, _method_name,
                                 _signature_param_names,
@@ -194,6 +195,12 @@ def _filter_keys(kind: str, raw: object) -> dict:
 # pass — unlike guessing at undeclared identifiers in general, which the
 # incomplete per-micro `_RESERVED_FIELD_NAMES` sets cannot support.
 from .micro.code_fields import _neutralize_lines
+from .micro.code_fields import lint_underscore_alias_references
+from .micro.code_fields import required_usings_for
+from .micro.code_fields import jagged_rank_corrections
+from .micro.code_fields import correct_qualified_type
+from .micro.code_fields import (template_method_params,
+                                template_field_types)
 from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
                               _extract_base_type, _make_composed_call_stripper,
                               _strip_invented_constructors, _strip_builtin_call_arity)
@@ -749,6 +756,14 @@ def _contract_for(sub, *, tags: Sequence[str] = ()) -> str:
         arities  = template_method_arities(str(tdir))
         members  = template_members(str(tdir))
         usings   = template_usings(str(tdir))
+        # Ground truth the compiler has always had and never showed the author.
+        # Names and arity alone leave every TYPE to be guessed, and the guesses
+        # are wrong in the ordinary way: `SetScore(1 arg)` says nothing about
+        # `long`, so the model passes a float (CS1503), and a bare field list
+        # says nothing about `SaveTime` being a string, so it subtracts a
+        # string from a float (CS0019). Both hit live on the same build.
+        params   = template_method_params(str(tdir))
+        ftypes   = template_field_types(str(tdir))
     except Exception:                       # noqa: BLE001 — never block authoring
         return ""
     if not members:
@@ -759,16 +774,25 @@ def _contract_for(sub, *, tags: Sequence[str] = ()) -> str:
 
     lines = ["", "WHAT THIS CLASS ALREADY HAS — you may call these directly"]
     if callable_names:
-        lines.append("  callable (name -> argument count it accepts):")
+        lines.append("  callable (exact signature — argument COUNT and TYPE "
+                     "both have to match):")
         for n in callable_names[:40]:
+            sig = params.get(n)
+            if sig is not None:
+                lines.append(f"    {n}({', '.join(sig)})")
+                continue
             lo, hi = arities[n]
             span = str(lo) if lo == hi else f"{lo}..{hi}"
             lines.append(f"    {n}({span} arg{'' if hi == 1 else 's'})")
         lines.append("    Calling one of these with the wrong number of "
                      "arguments will not compile — an event declared "
-                     "`Action<string>` needs exactly one.")
+                     "`Action<string>` needs exactly one. Passing the wrong "
+                     "TYPE will not compile either: pass a long where a long "
+                     "is declared, and never do arithmetic on a string field.")
     if plain:
-        lines.append("  fields / properties: " + ", ".join(plain[:40]))
+        lines.append("  fields / properties (name: declared type):")
+        lines.append("    " + ", ".join(
+            f"{m}: {ftypes[m]}" if m in ftypes else m for m in plain[:40]))
     if usings:
         lines.append("  namespaces already imported: " + ", ".join(sorted(usings)))
     if tags:
@@ -817,6 +841,21 @@ Return ONE JSON object containing only these keys: {", ".join(keys)}
 """
 
 
+# Per-call completion ceiling for a micro-code request. The answer is a small
+# JSON of C# fragments — a few fields and methods — so a few thousand tokens is
+# generous. It must NOT inherit the client-wide budget (config sets 50000 for
+# the schema step): a model that runs away then generates until the 2600s client
+# timeout instead of until a cap, and this loop retries `attempts` times, so one
+# bad subsystem costs three full timeouts. Measured live on
+# qwopus3.5-9b-coder-exp: 1h54m burned on a single subsystem, silently.
+_MAX_TOKENS = 6000
+
+# Live progress channel. `msgs` is only printed AFTER this function returns, so
+# a per-attempt failure appended there stays invisible for exactly as long as
+# the stall it is reporting.
+console = Console()
+
+
 def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                       user_prompt: str = "", temperature: float = 0.35,
                       attempts: int = 3, tags: Sequence[str] = ()) -> list[str]:
@@ -861,6 +900,7 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                                           contract=contract) + correction,
                     temperature=temperature if attempt == 0 else min(temperature, 0.15),
                     thinking=False,
+                    max_tokens=_MAX_TOKENS,
                 )
                 candidate = _filter_keys(sub.kind, llm.extract_json(raw))
                 if not candidate:
@@ -905,6 +945,13 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                             f"{len(cuts) + len(struct_errors)} "
                             f"binding/structural error(s)")
             except Exception as exc:  # noqa: BLE001 — one micro must not abort the build
+                # Logged on EVERY attempt, not just the last. A silent retry
+                # loop is how a stalled subsystem became invisible: three
+                # timeouts in a row printed nothing for 1h54m, so the run
+                # looked hung rather than failing. Name the attempt as it dies.
+                console.print(f"  [yellow]micro-code: {sub.kind} attempt "
+                              f"{attempt + 1}/{attempts} failed[/] "
+                              f"({type(exc).__name__}: {str(exc)[:160]})")
                 if attempt + 1 >= attempts:
                     msgs.append(f"micro-code: {sub.kind} enrichment failed "
                                 f"({type(exc).__name__}: {exc}) — fallback applies")
@@ -1123,6 +1170,10 @@ def _script_would_not_bind(script, payload: dict) -> list[str]:
                         body, known=known | _signature_param_names(sig),
                         signature=sig).values():
                     cuts.extend(names)
+        # A name whose underscored twin IS declared is not a correction for the
+        # model to make — `_bind_script` rewrites `grid` to `_grid`
+        # deterministically. Asking anyway burns a retry on a solved problem.
+        cuts = [n for n in cuts if f"_{n}" not in known]
         # Deduplicated and capped: a correction listing forty names teaches the
         # model less than one listing six.
         return sorted(set(cuts))[:6]
@@ -1202,6 +1253,25 @@ def _apply_script(script, payload: dict) -> bool:
                 if linted is None:
                     continue
                 candidate = linted
+            else:
+                # extra_fields never routed through sanitize_default the way
+                # a micro's lint_fields does — confirmed live,
+                # DamageReceiver.cs(11,142): `private Vector3 _knockbackForce
+                # = 0f, 0f, 0f;` (CS1001/CS1003, C# reads the bare comma list
+                # as three separate declarators). Custom scripts (schema.scripts)
+                # never call lint_fields at all, so this was the only gap left.
+                assert isinstance(candidate, CodeField)  # model was CodeField in this branch
+                fixed = sanitize_default(candidate.type, candidate.default)
+                if fixed != candidate.default:
+                    if fixed is None:
+                        print(f"  FIX  dropped uncompilable initializer "
+                              f"{candidate.default!r} on `{candidate.type} "
+                              f"{candidate.name}` (custom script)")
+                    else:
+                        print(f"  FIX  repaired initializer on `{candidate.type} "
+                              f"{candidate.name}`: {candidate.default!r} -> "
+                              f"{fixed!r} (custom script)")
+                    candidate.default = fixed or ""
             built.append(candidate)
         if not built:
             continue
@@ -1270,6 +1340,34 @@ def _bind_script(script) -> list[str]:
                 signature=sig).values():
             wanted |= names
 
+    # Rebind `grid` -> `_grid` BEFORE building or cutting anything. The author
+    # declared the field and then referred to it without the underscore; the
+    # other two repairs available here are both wrong on content — neutralizing
+    # deletes the behaviour, and declaring a second `grid` field leaves a
+    # collaborator that is never wired in the scene, so the script compiles and
+    # does nothing. See lint_underscore_alias_references.
+    rebound_all: set[str] = set()
+    for key in _FRAGMENT_KEYS:
+        before = getattr(script, key, "") or ""
+        if not before:
+            continue
+        after, rebound = lint_underscore_alias_references(
+            before, unbound=wanted, declared=known)
+        if rebound:
+            setattr(script, key, after)
+            rebound_all |= rebound
+    for m in methods:
+        before = getattr(m, "body", "") or ""
+        if not before:
+            continue
+        after, rebound = lint_underscore_alias_references(
+            before, unbound=wanted, declared=known)
+        if rebound:
+            m.body = after
+            rebound_all |= rebound
+    if rebound_all:
+        wanted -= rebound_all
+
     built = build_missing_fields(script, wanted, blob)
     if built:
         known |= {b.split()[-1] for b in built}
@@ -1294,7 +1392,77 @@ def _bind_script(script) -> list[str]:
             m.body = after
             flagged |= names
 
+    # Add the namespaces the authored body USES but never imported. Nothing
+    # else does this: lint_usings only ever filters what the model asked for,
+    # so `Array.Fill(...)` shipped without `using System;` and failed as
+    # CS0103 — which reads like an invented symbol, not a missing import.
+    added_usings: list[str] = []
+    try:
+        blob_all = "\n".join(
+            [str(getattr(script, key, "") or "") for key in _FRAGMENT_KEYS]
+            + [str(getattr(m, "body", "") or "") for m in methods]
+        )
+        have = {str(u).strip().rstrip(";").replace("using ", "")
+                for u in (getattr(script, "extra_usings", None) or [])}
+        for ns in required_usings_for(blob_all):
+            if ns not in have:
+                script.extra_usings = list(
+                    getattr(script, "extra_usings", None) or []) + [ns]
+                have.add(ns)
+                added_usings.append(ns)
+    except Exception:                      # noqa: BLE001 — never block codegen
+        added_usings = []
+
+    # The author declared a jagged array one rank deeper than their own code
+    # then used it — see jagged_rank_corrections for why only the explicit
+    # local-declaration signal is trusted.
+    rank_fixes: dict[str, str] = {}
+    try:
+        declared_pairs = [(str(getattr(f, "name", "") or ""),
+                           str(getattr(f, "type", "") or ""))
+                          for f in (getattr(script, "extra_fields", None) or [])]
+        rank_fixes = jagged_rank_corrections(declared_pairs, blob_all)
+        for f in (getattr(script, "extra_fields", None) or []):
+            fixed = rank_fixes.get(str(getattr(f, "name", "") or ""))
+            if fixed:
+                f.type = fixed
+    except Exception:                      # noqa: BLE001 — never block codegen
+        rank_fixes = {}
+
+    # `UnityEngine.Touchscreen` -> `Touchscreen` + the namespace it really
+    # lives in. See correct_qualified_type.
+    ns_fixes: list[str] = []
+    try:
+        for f in (getattr(script, "extra_fields", None) or []):
+            was = str(getattr(f, "type", "") or "")
+            fixed, need_ns = correct_qualified_type(was)
+            if not need_ns:
+                continue
+            f.type = fixed
+            ns_fixes.append(f"{was} -> {fixed}")
+            have_ns = {str(u).strip().rstrip(";").replace("using ", "")
+                       for u in (getattr(script, "extra_usings", None) or [])}
+            if need_ns not in have_ns:
+                script.extra_usings = list(
+                    getattr(script, "extra_usings", None) or []) + [need_ns]
+    except Exception:                      # noqa: BLE001 — never block codegen
+        ns_fixes = []
+
     msgs: list[str] = []
+    if ns_fixes:
+        msgs.append(f"script-code: {script.name} — REQUALIFIED type(s) written "
+                    f"with the wrong namespace: " + ", ".join(ns_fixes))
+    if rank_fixes:
+        msgs.append(f"script-code: {script.name} — CORRECTED array rank on "
+                    + ", ".join(f"{n} -> {ty}" for n, ty in sorted(rank_fixes.items()))
+                    + " (the body's own declaration disagreed with the field's)")
+    if added_usings:
+        msgs.append(f"script-code: {script.name} — ADDED using(s) the body "
+                    f"needs: {', '.join(added_usings)}")
+    if rebound_all:
+        msgs.append(f"script-code: {script.name} — REBOUND {len(rebound_all)} "
+                    f"reference(s) to the field already declared for them: "
+                    + ", ".join(f"{n} -> _{n}" for n in sorted(rebound_all)))
     if built:
         msgs.append(f"script-code: {script.name} — BUILT {len(built)} "
                     f"field(s) used but not declared: "
@@ -1348,6 +1516,7 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                                              contract=contract) + correction,
                     temperature=temperature if attempt == 0 else min(temperature, 0.15),
                     thinking=False,
+                    max_tokens=_MAX_TOKENS,
                 )
                 candidate = {k: v for k, v in (llm.extract_json(raw) or {}).items()
                              if k in CODE_KEYS and v not in (None, "", [], {})}
@@ -1383,6 +1552,11 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                             f"{len(cuts) + len(struct_errors)} "
                             f"binding/structural error(s)")
             except Exception as exc:       # noqa: BLE001 — one script must not abort
+                # Logged per attempt for the same reason as enrich_subsystems:
+                # a silent retry loop makes a stalled call look like a hang.
+                console.print(f"  [yellow]script-code: {script.name} attempt "
+                              f"{attempt + 1}/{attempts} failed[/] "
+                              f"({type(exc).__name__}: {str(exc)[:160]})")
                 if attempt + 1 >= attempts:
                     msgs.append(f"script-code: {script.name} enrichment failed "
                                 f"({type(exc).__name__}: {exc}) — stays a shell")
