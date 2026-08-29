@@ -2935,8 +2935,13 @@ def _vector_initializer(base: str, text: str) -> Optional[str]:
     return text if _initializer_is_structurally_safe(text) else None
 
 
-_VECTOR_ARITY = {"vector2": 2, "vector3": 3, "vector4": 4, "quaternion": 4,
-                 "color": 4, "color32": 4}
+# Bracket-literal rebuild only — deliberately NOT named _VECTOR_ARITY, which
+# already exists above with a narrower key set and a matching _VECTOR_CTOR.
+# Shadowing it routed a `Color` field into _vector_initializer (the dispatch at
+# `base in _VECTOR_ARITY`) where _VECTOR_CTOR has no "color" key: KeyError, and
+# wrong anyway since Color has its own _color_initializer.
+_BRACKET_ARITY = {"vector2": 2, "vector3": 3, "vector4": 4, "quaternion": 4,
+                  "color": 4, "color32": 4}
 
 
 def _as_float_literal(tok: str) -> str:
@@ -2962,7 +2967,7 @@ def _rebuild_bracket_literal(type_str: str, parts: "list[str]") -> str:
         toks = ([_as_float_literal(p) for p in parts]
                 if elem.strip().lower() == "float" else parts)
         return f"new {elem}[] {{ {', '.join(toks)} }}"
-    arity = _VECTOR_ARITY.get(base)
+    arity = _BRACKET_ARITY.get(base)
     if arity is not None and len(parts) == arity:
         return f"new {raw}({', '.join(_as_float_literal(p) for p in parts)})"
     return ""
