@@ -632,3 +632,80 @@ def test_would_not_bind_never_mutates_the_payload():
     before = payload["extra_methods"][0]["body"]
     _would_not_bind(sub, payload)
     assert payload["extra_methods"][0]["body"] == before
+
+
+# ── _brief_job_for / _script_user_prompt ─────────────────────────────────────
+#
+# Regression cover (Gridfall/GridLogic): a brief states its SCRIPTS section near
+# the end, script.description is a twice-paraphrased echo of it by Step 3.5a,
+# and the "ORIGINAL BRIEF" block in the code-authoring prompt is a blind
+# head-slice that never reaches that section either. _brief_job_for re-parses
+# the brief's own SCRIPTS bullet so the model authoring the script sees the
+# brief's actual spec, not a paraphrase of a paraphrase.
+
+_GRIDLOGIC_BRIEF = (
+    "TITLE\nGridfall\n\nSCRIPTS\n"
+    "- GridLogic (custom)  owns the grid, spawns pieces, applies gravity on\n"
+    "                      every tick, refuses collisions, locks a piece,\n"
+    "                      clears full rows, awards score, advances level,\n"
+    "                      and detects top-out\n"
+    "- ScoreHud  (custom)  shows the current score and level\n"
+)
+
+
+def _script(name: str, description: str = "schema paraphrase", attach_to: str = "systems"):
+    return type("S", (), {"name": name, "description": description,
+                          "attach_to": attach_to})()
+
+
+def test_brief_job_for_returns_the_bullets_own_description():
+    from src.unity_micro_code import _brief_job_for
+    job = _brief_job_for(_script("GridLogic"), _GRIDLOGIC_BRIEF)
+    assert "gravity" in job and "top-out" in job
+    assert job != "schema paraphrase"
+
+
+def test_brief_job_for_matches_by_name_not_position():
+    from src.unity_micro_code import _brief_job_for
+    job = _brief_job_for(_script("ScoreHud"), _GRIDLOGIC_BRIEF)
+    assert "score" in job and "gravity" not in job
+
+
+def test_brief_job_for_is_case_insensitive():
+    from src.unity_micro_code import _brief_job_for
+    assert _brief_job_for(_script("gridlogic"), _GRIDLOGIC_BRIEF) != ""
+
+
+def test_brief_job_for_empty_when_brief_has_no_such_script():
+    """A vibe brief, or a script the LLM invented that the brief never named,
+    falls through to the schema's own description untouched."""
+    from src.unity_micro_code import _brief_job_for
+    assert _brief_job_for(_script("Nonexistent"), _GRIDLOGIC_BRIEF) == ""
+    assert _brief_job_for(_script("GridLogic"), "a one-line vibe prompt") == ""
+
+
+def test_brief_job_for_never_raises_on_a_malformed_prompt():
+    """extract_named_scripts is a regex parse over untrusted brief text;
+    _brief_job_for must degrade to the schema description, never abort
+    authoring, if that parse misbehaves."""
+    from src.unity_micro_code import _brief_job_for
+    assert _brief_job_for(_script("GridLogic"), None) == ""  # type: ignore[arg-type]
+
+
+def test_script_user_prompt_prefers_the_brief_job_over_the_schema_description():
+    from src.unity_micro_code import _script_user_prompt
+    out = _script_user_prompt(
+        _script("GridLogic", description="schema paraphrase"),
+        concept="Gridfall concept", user_prompt=_GRIDLOGIC_BRIEF,
+        keys=(), contract="")
+    assert "gravity" in out and "top-out" in out
+    assert "schema paraphrase" not in out
+
+
+def test_script_user_prompt_falls_back_to_schema_description_when_unbriefed():
+    from src.unity_micro_code import _script_user_prompt
+    out = _script_user_prompt(
+        _script("SomeSystem", description="schema paraphrase"),
+        concept="c", user_prompt="a one-line vibe prompt",
+        keys=(), contract="")
+    assert "its job:     schema paraphrase" in out

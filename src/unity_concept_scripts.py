@@ -60,7 +60,15 @@ _TYPE_CLAUSE_RE = re.compile(r"\(\s*type:\s*([A-Za-z_][\w ]*?)\s*\)", re.IGNOREC
 # respect it or the whole schema fails validation on append.
 _MAX_SCRIPTS = 24
 _CHECKLIST_MAX_SCRIPTS = _MAX_SCRIPTS
-_CHECKLIST_MAX_DESC = 160
+# A script description is the SPECIFICATION of a mechanic, not a label, and
+# this is the only form of it Step 3 ever sees. At 160 the Gridfall brief's
+# GridLogic entry (517 chars: grid, spawn, gravity, collision refusal, lock,
+# row clear, score, level, top-out) was cut mid-word at "on every tick of a
+# grav" — 69% of the mechanic discarded, and the built game had none of it.
+# Scripts are few (capped at _CHECKLIST_MAX_SCRIPTS), so the prompt cost of a
+# real budget here is trivial; the entity checklist keeps its tight cap
+# because a brief may name 40 entities.
+_CHECKLIST_MAX_DESC = 900
 
 # Script types that own a singleton role in the generated project: the
 # generator selects a template by `type` and attaches by `attach_to`, so two

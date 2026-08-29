@@ -118,6 +118,31 @@ def test_checklist_states_the_type_the_schema_would_store():
     assert "saveload" not in out
 
 
+def test_checklist_does_not_truncate_a_real_mechanic_description():
+    """Regression (Gridfall/GridLogic): at the old 160-char cap a 517-char
+    mechanic spec (grid, spawn, gravity, collision refusal, lock, row clear,
+    score, level, top-out) was cut mid-word at "on every tick of a grav" —
+    69% of the mechanic discarded, and the built game had none of it. The
+    budget must be wide enough to carry an ordinary multi-clause spec whole."""
+    desc = ("owns the grid, spawns pieces, applies gravity on every tick, "
+            "refuses illegal collisions, locks a piece in place, clears full "
+            "rows, awards score for each clear, advances the level every ten "
+            "lines, and detects top-out when a spawn is blocked")
+    assert len(desc) > 160
+    brief = f"SCRIPTS\n- GridLogic (custom)  {desc}\n"
+    out = render_script_checklist(brief)
+    assert desc in out
+
+
+def test_checklist_still_caps_an_extreme_description():
+    """The budget is wide, not unbounded — a pathological brief must not blow
+    up the Step-3 prompt without limit."""
+    brief = "SCRIPTS\n- GridLogic (custom)  " + ("word " * 400) + "\n"
+    out = render_script_checklist(brief)
+    line = next(ln for ln in out.splitlines() if ln.strip().startswith("word"))
+    assert len(line.strip()) <= 900
+
+
 # ── rescue ────────────────────────────────────────────────────────────────────
 
 def test_rescue_restores_only_the_dropped_scripts():

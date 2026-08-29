@@ -884,12 +884,59 @@ def _split_nested_members(text: str) -> tuple[str, list[CodeMethod]]:
     return "".join(kept).strip(), hoisted
 
 
+def _unclosed_braces(text: str) -> int:
+    """How many `{` the text leaves open, ignoring strings and comments."""
+    depth = 0
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '"' or ch == "'":
+            quote = ch
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    break
+                i += 1
+        elif ch == "/" and i + 1 < n and text[i + 1] == "/":
+            while i < n and text[i] != "\n":
+                i += 1
+        elif ch == "/" and i + 1 < n and text[i + 1] == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 1
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        i += 1
+    return max(0, depth)
+
+
 def _cap_lines(text: str, *, what: str) -> str:
+    """Cap a runaway body, leaving code that still PARSES.
+
+    The cap slices at a line count, and a line count knows nothing about brace
+    depth: cutting inside a `for` loop drops that block's closing brace and the
+    method's with it, so the file ends mid-block and Unity reports CS1022 on the
+    whole assembly. The syntax gate then rejects the entire build — one runaway
+    method costing every other script in it.
+
+    Hit live on Gridfall's GridLogic, where the model degenerated into repeating
+    one `for` block and the cut landed inside the last copy. Closing what the
+    slice left open turns an unparseable file into a truthful one: the body is
+    still incomplete, and the TODO says so, but everything around it compiles.
+    """
     lines = text.splitlines()
     if len(lines) <= _MAX_METHOD_LINES:
         return text
     kept = lines[: _MAX_METHOD_LINES - 1]
     kept.append(f"// TODO: continue — {what} truncated at {_MAX_METHOD_LINES} lines")
+    open_blocks = _unclosed_braces("\n".join(kept))
+    kept.extend("}" for _ in range(open_blocks))
     return "\n".join(kept)
 
 
