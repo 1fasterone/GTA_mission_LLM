@@ -2023,9 +2023,14 @@ def subsystems_for(
     # like platform, not "player" — it's a separate mountable GameObject the
     # player's own (unchanged) controller rides via Controller.cs.j2's
     # SetMovementLocked hook, not a replacement for that controller.
-    _bike_words = ("bike", "motorbike", "motorcycle", "dirt bike", "ride a bike",
-                  "riding a bike", "bike section", "bike level")
-    if gt == "2d" and any(w in prompt_low for w in _bike_words):
+    # Distinct from the `_bike_words` above, which gates the vehicle_bike
+    # CONTROLLER variant on lean/countersteer language. This broader list gates
+    # the 2D bike MICRO. Sharing one name shadowed the first list and tripped
+    # mypy (two tuple arities, one binding).
+    _bike_micro_words = ("bike", "motorbike", "motorcycle", "dirt bike",
+                         "ride a bike", "riding a bike", "bike section",
+                         "bike level")
+    if gt == "2d" and any(w in prompt_low for w in _bike_micro_words):
         subs.append(Subsystem(kind="bike", variant="mountable_2d", target="world",
                               name="Bike"))
 

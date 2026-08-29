@@ -1464,7 +1464,7 @@ _TYPE_NAMESPACES: "dict[str, str]" = {
 
 # `Array.Fill(` / `new List<` / `List<int> x` — a real reference, not the word
 # appearing inside an identifier or a string.
-_TYPE_USE_RES: "dict[str, object]" = {
+_TYPE_USE_RES: "dict[str, re.Pattern[str]]" = {
     name: re.compile(r"(?<![\w.])" + re.escape(name)
                      + r"(?=\s*[.<(])")
     for name in _TYPE_NAMESPACES
@@ -3425,7 +3425,10 @@ def apply_extensions_safe_block(schema: _ExtensionsLike, *,
     `schema.meta["extensions_conflicts"]` — never just dropped quietly.
     """
     known: set[str] = {n.lower() for n in reserved}
-    known |= {n.lower() for n in type(schema).model_fields.keys()}
+    # `model_fields` is pydantic's, not part of `_ExtensionsLike` — every
+    # real caller is a BaseModel, but the Protocol deliberately does not
+    # promise a pydantic-only attribute, so read it defensively.
+    known |= {n.lower() for n in getattr(type(schema), "model_fields", {})}
     known |= {f.name.lower() for f in getattr(schema, "extra_fields", [])}
     known |= {name.lower() for m in getattr(schema, "extra_methods", [])
              if (name := _method_name(m.signature))}
