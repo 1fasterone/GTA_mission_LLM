@@ -21,7 +21,7 @@ named warning (FAIL-LOUD, not FAIL-SILENT — see matte.solid_placeholder_png).
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from .comfyui_backend import ComfyUIBackend

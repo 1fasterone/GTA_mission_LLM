@@ -30,7 +30,7 @@ from pydantic import Field, field_validator
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
-    CodeExtensibleSchema, lint_extensible, clamp_enum, apply_extensions_safe_block,
+    CodeExtensibleSchema, lint_extensible, apply_extensions_safe_block,
     UNITY_EXTRA_INSTRUCTIONS, template_field_types,
 )
 
