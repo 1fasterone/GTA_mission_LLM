@@ -23,7 +23,7 @@ TERRAIN_ATOMS: list[AtomDef] = [
             "Instantiate a prefab at N seeded-random positions within a "
             "rectangular bounds, each snapped to Terrain.activeTerrain's "
             "sampled height. Runs once at Start — the terrain is already "
-            "baked (TerrainImporter has already run) by the time this fires."
+            "baked (TerrainBuilder has already run) by the time this fires."
         ),
         engines=["unity"],
         duration="instant",

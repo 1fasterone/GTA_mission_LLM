@@ -273,6 +273,33 @@ class TestDenialAwareMatching:
         assert intent.locomotion == "drive"
 
 
+# ── Idiomatic (adjectival) uses of a locomotion word ──────────────────────────
+
+class TestIdiomaticFalsePositives:
+    def test_a_driving_music_bed_is_not_a_driving_game(self):
+        # Hit live on the Chromabreak brief: an arena FPS whose AUDIO section
+        # asked for "a driving synth music bed" produced locomotion='drive' on
+        # the strength of that one adjective — which picks the vehicle_car
+        # controller for a game played on foot.
+        intent = classify(
+            "A fully 3d first-person shooter. An arena shooter with gunplay "
+            "where the player strafes on foot. Audio: a driving synth music "
+            "bed that speeds up wave by wave.")
+        assert intent.locomotion != "drive"
+        assert intent.genre == "fps"
+
+    def test_a_real_driving_game_still_scores(self):
+        # The guard masks fixed idioms only — a brief that means the vehicle
+        # says so somewhere the mask does not cover.
+        intent = classify("A rally game with a driving beat where you drive a "
+                          "car through forest stages.")
+        assert intent.locomotion == "drive"
+
+    def test_flying_colours_is_not_a_flight_sim(self):
+        intent = classify("A quiz game you pass with flying colours.")
+        assert intent.locomotion != "fly"
+
+
 # ── The hints actually injected into Steps 2 and 3 ────────────────────────────
 
 class TestHintHonesty:

@@ -583,6 +583,42 @@ class TestObjectiveIdentity:
         assert "objective_targets" not in rep.checks
         assert "objective_targets" in rep.not_graded
 
+    def test_a_character_id_resolves_through_its_model_ref(self):
+        """Live (Chromabreak): the Step 3 prompt tells the model a target_ref
+        may be "an entity group name or character id", and the fill used a
+        character id. Resolving only entity names failed the gate on a build
+        whose enemy was in the scene 14 times over."""
+        from src.unity_schema import CharacterSpec
+
+        s = _playable()
+        s.entities.append(EntitySpec(name="ShardConstruct", kind="enemy", count=14))
+        s.characters = [CharacterSpec(id="shard_construct", name="Shard Construct",
+                                      role="enemy", model_ref="ShardConstruct")]
+        s.missions = [MissionSpec(
+            id="m1", title="Break", description="d",
+            objectives=[MissionObjective(id="o1", description="break four",
+                                         type="defeat",
+                                         target_ref="shard_construct", count=4)])]
+        rep, checks = _checks(s)
+        assert "objective_targets" not in checks
+        assert rep.checks["objective_targets"] is True
+
+    def test_a_character_whose_model_ref_is_absent_is_still_dangling(self):
+        """The indirection is FOLLOWED, not waved through — a character
+        pointing at nothing has no spawned thing behind its name."""
+        from src.unity_schema import CharacterSpec
+
+        s = _playable()
+        s.characters = [CharacterSpec(id="ghost", name="Ghost", role="enemy",
+                                      model_ref="NotInTheBuild")]
+        s.missions = [MissionSpec(
+            id="m1", title="Hunt", description="d",
+            objectives=[MissionObjective(id="o1", description="hunt it",
+                                         type="defeat", target_ref="ghost")])]
+        rep, checks = _checks(s)
+        assert "objective_targets" in checks
+        assert rep.checks["objective_targets"] is False
+
 
 class TestObjectiveSceneReachability:
     """A mission's objective target must actually spawn in the scene that

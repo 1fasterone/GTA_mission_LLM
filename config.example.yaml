@@ -17,6 +17,36 @@ ollama:                            # used when lm_studio.backend == "ollama"
   base_url: http://localhost:11434/v1
   model: qwen2.5:7b               # must match a pulled tag (ollama pull <model>)
 
+# Used when lm_studio.backend == "openrouter" (see src/backends.py). Cloud, so
+# it sidesteps the local card's VRAM contention with ComfyUI / Stable Audio 3,
+# and puts models far larger than a local 9B on the Step 2/3 content steps —
+# which is what the vfx/materials/shaders sections of a rich brief actually
+# need. Needs OPENROUTER_API (or OPENROUTER_API_KEY) in .env; make_chat_client
+# abstains loudly if the key is missing rather than silently falling back.
+#
+# Free-tier notes, all measured live (2026-08-29) against this repo's real
+# Step 2/3 prompts, which run ~11k prompt tokens:
+#   * A ":free" model's ADVERTISED context is not a promise. OpenRouter lists
+#     nvidia/nemotron-3-ultra-550b-a55b:free at 1,000,000 tokens, and a short
+#     request works — but the real Step 3 prompt comes back in under a second
+#     as HTTP 404 "Provider returned error" with an empty body. Always probe a
+#     candidate model at the real prompt size before trusting it.
+#   * minimax/minimax-m3:free took the same prompt in 6.7s and completed a full
+#     --compose run (concept, schema, ~25 micro-code calls).
+#   * The free-model allowance is per ACCOUNT, not per model: without purchased
+#     credits it is 50 requests/day, and one --compose --micro-code run spends
+#     most of that. Past it, every free model 429s with
+#     "Rate limit exceeded: free-models-per-day".
+#   * Upstream providers rotate and can fail mid-run (a 402 "Insufficient
+#     balance" from one provider killed a 40-minute run). LMStudioClient now
+#     retries provider-transient statuses three times with backoff.
+openrouter:
+  base_url: https://openrouter.ai/api/v1
+  model: minimax/minimax-m3:free
+  timeout: 600                    # a cloud queue absorbs more latency than a local server
+  # api_key: ''                   # DO NOT commit a real key — OPENROUTER_API wins
+  # seed: 1234
+
 rag:
   fallback_to_local: true         # use bundled local lookups when RAG misses
   # index_dir: rag/index           # optional override for ChromaDB path (default: rag/index/)

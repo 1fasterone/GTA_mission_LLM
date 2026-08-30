@@ -161,6 +161,22 @@ class TestExtractJson:
         result = client.extract_json(raw)
         assert result["mission_name"] == "Heist"
 
+    def test_literal_newline_inside_an_authored_code_string(self, client):
+        # Live (Chromabreak schema fill): a model writing C# into a JSON string
+        # wrote the code the way it writes code — with real newlines and tabs —
+        # and ONE of them rejected a whole 90KB fill as "Invalid control
+        # character at: line 280 column 118".
+        raw = '{"name":"Foo","body":"void A()\n{\n\tDo();\n}"}'
+        result = client.extract_json(raw)
+        assert result["name"] == "Foo"
+        # The newline IS part of the authored code — kept, not stripped.
+        assert result["body"] == "void A()\n{\n\tDo();\n}"
+
+    def test_control_character_repair_does_not_rescue_real_garbage(self, client):
+        # strict=False is tried SECOND, so malformed JSON still fails.
+        with pytest.raises(ValueError, match="JSON"):
+            client.extract_json('{"a": }')
+
     def test_think_block_plus_markdown_fence(self, client):
         raw = '<think>reasoning</think>\n```json\n{"val": 99}\n```'
         result = client.extract_json(raw)
@@ -532,20 +548,60 @@ class TestOpenRouterBackend:
 
         assert captured["headers"] == {}
 
+    @staticmethod
+    def _error_response(status: int, text: str):
+        import httpx
+        from unittest.mock import MagicMock
+
+        resp = MagicMock()
+        resp.status_code = status
+        resp.text = text
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            str(status), request=MagicMock(), response=resp)
+        return resp
+
     def test_http_error_surfaces_provider_message(self, client):
         """A provider-side failure (rate limit, quota, bad model id) must
         raise with the real response body, not a bare status-code error —
         confirmed live (2026-08-28) against OpenRouter's structured 429s."""
-        import httpx
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.text = '{"error":{"message":"rate-limited upstream"}}'
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "429", request=MagicMock(), response=mock_response)
+        resp = self._error_response(
+            429, '{"error":{"message":"rate-limited upstream"}}')
 
-        with patch("httpx.Client") as MockClient:
-            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
+        # 429 is retryable, so the call sleeps between attempts before giving
+        # up — patched out here so the suite does not pay the real backoff.
+        with patch("httpx.Client") as MockClient, patch("time.sleep"):
+            MockClient.return_value.__enter__.return_value.post.return_value = resp
             with pytest.raises(RuntimeError, match="rate-limited upstream"):
                 client.chat(system="sys", user="user")
+
+    def test_a_transient_provider_status_is_retried_and_succeeds(self, client):
+        """Live (2026-08-29): a 40-minute --compose run died on ONE HTTP 402
+        "Insufficient balance" from an OpenRouter upstream provider. The same
+        payload sent seconds later succeeded, so the whole run was lost to a
+        provider's bad minute."""
+        from unittest.mock import MagicMock, patch
+
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.raise_for_status.return_value = None
+        ok.json.return_value = {"choices": [{"message": {"content": "recovered"}}]}
+
+        posts = [self._error_response(402, '{"error":"Insufficient balance"}'), ok]
+        with patch("httpx.Client") as MockClient, patch("time.sleep") as slept:
+            MockClient.return_value.__enter__.return_value.post.side_effect = posts
+            assert client.chat(system="sys", user="user") == "recovered"
+        assert slept.call_count == 1
+
+    def test_a_real_request_error_is_not_retried(self, client):
+        """Only PROVIDER-transient statuses retry. A 400 is this request being
+        wrong, and sending it three more times just delays the message."""
+        from unittest.mock import patch
+
+        resp = self._error_response(400, '{"error":{"message":"bad request"}}')
+        with patch("httpx.Client") as MockClient, patch("time.sleep") as slept:
+            MockClient.return_value.__enter__.return_value.post.return_value = resp
+            with pytest.raises(RuntimeError, match="bad request"):
+                client.chat(system="sys", user="user")
+        assert slept.call_count == 0

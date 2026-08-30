@@ -9,7 +9,7 @@ that can't be hand-authored as text the way a `.cs.j2` MonoBehaviour can, so
 the deterministic-Python-only rule (CLAUDE.md: "Steps 4-7 remain
 deterministic") is honored here differently than elsewhere: Python bakes the
 DATA (16-bit heightmap PNG + packed-RGBA splatmap PNG), and a fixed,
-non-LLM-authored `TerrainImporter.cs` (templates/unity/micro/terrain/) reads
+non-LLM-authored `TerrainBuilder.cs` (templates/unity/micro/terrain/) reads
 that data at Unity import time and calls `TerrainData.SetHeights`/
 `SetAlphamaps`.
 
@@ -248,7 +248,7 @@ def write_heightmap_png(heightmap: np.ndarray, path: Path) -> None:
 
 def write_splatmap_png(splatmap: np.ndarray, path: Path) -> None:
     """Pack up to 4 layers one per RGBA channel. A biome with fewer than 4
-    layers leaves the remaining channels at 0 — TerrainImporter.cs.j2 only
+    layers leaves the remaining channels at 0 — TerrainBuilder.cs.j2 only
     ever reads the first `len(layers)` channels back, so an unused zeroed
     channel is inert data, never mistaken for a real (zero-weight) layer."""
     res = splatmap.shape[0]

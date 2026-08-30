@@ -1196,6 +1196,7 @@ def lint_code_fragment(text: str, *, what: str,
     text = _declare_inline_out_params(text)
     text = _repair_numeric_literals(text)
     text = _repair_wrong_namespace_qualifiers(text)
+    text = _qualify_ambiguous_unity_types(text)
     text = _repair_static_called_as_instance(text)
     text = _repair_forcemode_on_rigidbody2d(text)
     text = _repair_self_class_static_call(text, self_class_name)
@@ -1233,6 +1234,46 @@ def lint_code_fragment(text: str, *, what: str,
     return text.strip()
 
 
+# CS0104 ("'Random' is an ambiguous reference between 'UnityEngine.Random' and
+# 'System.Random'"). A generated MonoBehaviour has `using UnityEngine;`, and the
+# moment anything adds `using System;` — which the extras legitimately need for
+# Action, Math or DateTime — every bare `Random` and `Object` in the file
+# becomes ambiguous. Hit live on Chromabreak in three micros at once:
+#
+#     Vector2 r = Random.insideUnitCircle * patrolRadius;   (behavior_tree)
+#     Quaternion.Euler(-_recoilKick, Random.Range(...), 0f) (statemachine)
+#     GameObject inst = Object.Instantiate(_prefab, ...);   (objectives)
+#
+# Scoped to members that exist ONLY on the UnityEngine type, so what the author
+# meant is not in question — `System.Random` has no `insideUnitCircle`, and
+# `System.Object` has no `Instantiate`. `new Random()` is deliberately NOT
+# matched: that one really is the System type, and qualifying it would be the
+# wrong repair. This is why `Random` is excluded from `_TYPE_NAMESPACES` —
+# adding a using cannot resolve an ambiguity, only qualifying the use can.
+_UNITY_RANDOM_MEMBERS = (
+    "Range", "value", "insideUnitCircle", "insideUnitSphere", "onUnitSphere",
+    "rotation", "rotationUniform", "ColorHSV", "InitState", "state",
+)
+_UNITY_OBJECT_MEMBERS = (
+    "Instantiate", "Destroy", "DestroyImmediate", "DontDestroyOnLoad",
+    "FindObjectOfType", "FindObjectsOfType", "FindAnyObjectByType",
+    "FindFirstObjectByType", "FindObjectsByType",
+)
+_AMBIGUOUS_TYPE_RES = tuple(
+    (re.compile(r"(?<![\w.])" + name + r"\.(?=(?:" + "|".join(members) + r")\b)"),
+     f"UnityEngine.{name}.")
+    for name, members in (("Random", _UNITY_RANDOM_MEMBERS),
+                          ("Object", _UNITY_OBJECT_MEMBERS))
+)
+
+
+def _qualify_ambiguous_unity_types(text: str) -> str:
+    """Qualify `Random.`/`Object.` uses that can only mean the UnityEngine type."""
+    for rx, repl in _AMBIGUOUS_TYPE_RES:
+        text = rx.sub(repl, text)
+    return text
+
+
 # CS1014 ("A get or set accessor expected"): the model authors a PROPERTY
 # through the method channel — a signature with no parameter list, and a body
 # that is a bare `return`. Hit live on a grandma run,
@@ -1254,6 +1295,57 @@ _PROPERTY_SIG_RE = re.compile(
     r"\s+[A-Za-z_]\w*\s*$"                 # name, and nothing after it
 )
 _ACCESSOR_RE = re.compile(r"^\s*(?:get|set)\b\s*[{;=]", re.MULTILINE)
+
+
+# A FIELD filed in the method channel. The model writes the declaration as the
+# "signature" and the initializer as the "body":
+#
+#   {"signature": "private Vector3 _anchorPos", "body": "= Vector3.zero;"}
+#
+# which the template renders as `private Vector3 _anchorPos { = Vector3.zero; }`
+# — four CS1014s per occurrence. Hit live on Chromabreak's composed
+# `interactable` micro (WorldInteractable.cs), twice in one file.
+#
+# It is a field, so it is moved to the field channel rather than dropped: the
+# author's declaration and initializer both survive, and `lint_fields` then
+# applies its full repair pass (reserved-name collisions, `sanitize_default`,
+# CS0236 initializers) to it exactly as if it had been declared there.
+_FIELD_DECL_SIG_RE = re.compile(
+    r"^(?:\[[^\]\n]*\]\s*)*"
+    r"(?:(?:public|private|protected|internal|static|readonly|const|new)\s+)*"
+    r"(?P<type>[A-Za-z_][\w<>,\[\].?]*)"
+    r"\s+(?P<name>[A-Za-z_]\w*)\s*$"
+)
+_FIELD_INIT_BODY_RE = re.compile(r"^\s*=\s*(?P<value>.+?)\s*;?\s*$", re.S)
+
+
+def _split_field_shaped_methods(
+        fields: list[CodeField],
+        methods: list[CodeMethod]) -> tuple[list[CodeField], list[CodeMethod]]:
+    """Move `extra_methods` entries that are really field declarations into
+    `extra_fields`. Returns (fields, methods) — never raises."""
+    moved: list[CodeField] = []
+    kept:  list[CodeMethod] = []
+    for m in methods:
+        sig  = (m.signature or "").strip()
+        body = m.body or ""
+        sig_m  = _FIELD_DECL_SIG_RE.match(sig) if "(" not in sig else None
+        body_m = _FIELD_INIT_BODY_RE.match(body)
+        if sig_m and body_m and not _ACCESSOR_RE.search(body):
+            try:
+                moved.append(CodeField(name=sig_m.group("name"),
+                                       type=sig_m.group("type"),
+                                       default=body_m.group("value")))
+            except Exception:  # noqa: BLE001 — a name/type the field model refuses
+                kept.append(m)
+                continue
+            console.print(
+                f"  [magenta]FIX[/]  moved {sig!r} from extra_methods to "
+                f"extra_fields — a declaration with an initializer is a field, "
+                f"not a method (CS1014)")
+            continue
+        kept.append(m)
+    return list(fields) + moved, kept
 
 
 def _wrap_property_accessor(sig: str, body: str) -> str:
@@ -1371,6 +1463,17 @@ def lint_method(m: CodeMethod, *, taken_names: set[str],
     if not body:
         return None
     body = _wrap_property_accessor(sig, body)
+    # Containment for everything the wrapper above could not make legal: with no
+    # parameter list, the emitted `sig { body }` is a PROPERTY, and a property
+    # body without a get/set accessor is CS1014 no matter what is in it. The
+    # field-shaped case is recovered upstream (`_split_field_shaped_methods`);
+    # whatever still lands here is a member this pass cannot render, and a loud
+    # drop beats writing a syntax error into the project.
+    if "(" not in sig and not _ACCESSOR_RE.search(body):
+        console.print(f"  [yellow]FIX[/]  dropped {sig!r}: no parameter list and "
+                      f"no get/set accessor — neither a method nor a property "
+                      f"(CS1014)")
+        return None
     # Extract method name for dedupe (best-effort; brittle parse is OK here).
     name_match = re.search(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", sig)
     if name_match:
@@ -1507,7 +1610,50 @@ _TYPE_NAMESPACES: "dict[str, str]" = {
     "Queue": "System.Collections.Generic",
     "Stack": "System.Collections.Generic",
     "IEnumerator": "System.Collections",
+    # UI Toolkit. Only the types with ONE sane answer: `Button`, `Label`,
+    # `Image` and `Text` all exist in BOTH UnityEngine.UI and
+    # UnityEngine.UIElements, so importing either for those is the CS0104
+    # ambiguity `Random` is excluded for. These four have no uGUI twin.
+    "VisualElement": "UnityEngine.UIElements",
+    "UIDocument": "UnityEngine.UIElements",
+    "VisualTreeAsset": "UnityEngine.UIElements",
+    "StyleSheet": "UnityEngine.UIElements",
+    # New Input System device singletons. A model writes `Mouse.current.delta`
+    # for mouse-look whatever `input_backend` the variant declares, and the
+    # legacy-backend controller template imports nothing for it: eight CS0103
+    # "The name 'Mouse' does not exist" in one PlayerController.cs, live on
+    # Chromabreak. Adding the import is the faithful repair — the code already
+    # names these types, so the alternative is not "legacy input", it is a
+    # controller that does not compile.
+    "Mouse": "UnityEngine.InputSystem",
+    "Keyboard": "UnityEngine.InputSystem",
+    "Gamepad": "UnityEngine.InputSystem",
+    "Touchscreen": "UnityEngine.InputSystem",
+    "InputSystem": "UnityEngine.InputSystem",
 }
+
+# Every identifier inside a declared type — `List<VisualElement>[]` names two.
+_TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*")
+
+
+def usings_for_declared_types(types) -> "list[str]":
+    """Namespaces the DECLARED TYPES of authored fields need, in first-seen order.
+
+    `required_usings_for` reads BODIES, where a type appears as `Name.`,
+    `Name<` or `Name(` — the three shapes `_TYPE_USE_RES` matches. A field
+    declaration has none of them: the type is followed by the field's own name.
+    So a micro that declared `[SerializeField] private VisualElement _pauseTint`
+    imported nothing for it and shipped CS0246 "The type or namespace name
+    'VisualElement' could not be found". Hit live on Chromabreak's composed
+    `menu` micro, which is a uGUI menu the model gave a UI Toolkit field.
+    """
+    out: "list[str]" = []
+    for raw in types:
+        for token in _TYPE_TOKEN_RE.findall(str(raw or "")):
+            ns = _TYPE_NAMESPACES.get(token)
+            if ns and ns not in out:
+                out.append(ns)
+    return out
 
 # `Array.Fill(` / `new List<` / `List<int> x` — a real reference, not the word
 # appearing inside an identifier or a string.
@@ -3020,6 +3166,50 @@ def _rebuild_bracket_literal(type_str: str, parts: "list[str]") -> str:
     return ""
 
 
+# A SCALAR field handed a comma-separated list of literals. The declaration
+# renders as `= <default>;`, so the model's own words come out as
+#
+#     [SerializeField] private string _introLines = "Welcome…","Survive…","Don't blink.";
+#
+# — three CS1001/CS1003 per field, and the whole build stopped at the syntax
+# gate (live: Chromabreak's QuartermasterBrain.cs, four fields in a row). What
+# was meant is not in doubt: several values of one type is an ARRAY, so the
+# field is promoted to `<type>[]` and the values wrapped in an array
+# initializer. That keeps every line the model wrote, which dropping all but
+# the first would not.
+#
+# Scoped to a list whose items are all the same KIND of literal, and only for a
+# type that is not already a collection — an expression list with a `(` or `{`
+# in it could be one `new Foo(a, b)` call, where the commas are arguments.
+_LIST_ITEM_SPLIT_RE = re.compile(r'"(?:[^"\\]|\\.)*"|[^,]+')
+
+
+def _promote_list_default_to_array(field) -> bool:
+    """Retype a scalar field whose default is a literal list to an array."""
+    default = (getattr(field, "default", None) or "").strip()
+    base = (getattr(field, "type", "") or "").strip()
+    if ("," not in default or not base
+            or "[" in base or "<" in base
+            or _COLLECTION_TYPE_RE.search(base.lower())
+            or any(ch in default for ch in "({[")):
+        return False
+    items = [m.group(0).strip() for m in _LIST_ITEM_SPLIT_RE.finditer(default)]
+    items = [i for i in items if i]
+    if len(items) < 2:
+        return False
+    quoted = [i.startswith('"') and i.endswith('"') and len(i) > 1 for i in items]
+    if not (all(quoted) or not any(quoted)):
+        return False                      # mixed shapes — not one list
+    if all(quoted) and base.lower() not in ("string", "system.string"):
+        return False                      # string literals into a non-string field
+    field.type = f"{base}[]"
+    field.default = "new " + base + "[] { " + ", ".join(items) + " }"
+    console.print(f"  [magenta]FIX[/]  retyped `{base} {field.name}` to "
+                  f"`{base}[]` — its initializer is a {len(items)}-item list "
+                  f"(CS1003)")
+    return True
+
+
 def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     """Coerce an LLM-authored initializer into a literal that parses as
     `= <default>;` for the declared type. Returns None to drop the initializer.
@@ -3179,6 +3369,7 @@ def lint_fields(fields: list[CodeField], *, reserved: set[str],
         # an int one, and it is unavailable to the fragment-level pass, which
         # sees loose statements with no declaration in view.
         # `_repair_numeric_literals` keeps its own job on fragment bodies.
+        _promote_list_default_to_array(f)
         fixed = sanitize_default(f.type, f.default)
         if fixed != f.default:
             if fixed is None:
@@ -3307,10 +3498,22 @@ def lint_extensible(schema: _ExtensibleLike, *,
     """
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=template_usings,
                                       allowed=_KNOWN_NAMESPACES)
+    # BEFORE lint_fields: a field the model filed as a method has to reach the
+    # field channel while that channel's own repair pass can still run on it.
+    schema.extra_fields, schema.extra_methods = _split_field_shaped_methods(
+        schema.extra_fields, schema.extra_methods)
     field_inits: list[str] = []
     schema.extra_fields = lint_fields(
         schema.extra_fields, reserved=reserved_fields,
         hoist_into=field_inits if hoist_field_inits else None)
+    # AFTER lint_fields, so a dropped field cannot pull in a namespace nothing
+    # declares any more. Appended rather than run back through `lint_usings`:
+    # these come from `_TYPE_NAMESPACES`, a curated table, not from the model.
+    for _ns in usings_for_declared_types(f.type for f in schema.extra_fields):
+        if _ns not in template_usings and _ns not in schema.extra_usings:
+            schema.extra_usings.append(_ns)
+            console.print(f"  [magenta]FIX[/]  added `using {_ns};` — an "
+                          f"extra_field's declared type needs it (CS0246)")
     # For _repair_gameobject_component_assign — computed AFTER lint_fields so a
     # field it dropped is never treated as a real GameObject-typed target.
     gameobject_fields = frozenset(

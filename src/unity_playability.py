@@ -637,6 +637,24 @@ def _check_objective_targets(schema: UnitySchema,
                   "no mission objective declares a target_ref")
         return
     have = {e.name.strip().lower() for e in schema.entities}
+    # A CHARACTER id is a legal target_ref — the Step 3 prompt says so in as
+    # many words ("<entity group name or character id>") — and a character is
+    # not itself spawned: it is a named role whose `model_ref` points at the
+    # entity group that IS. Resolving only entity names read every such
+    # objective as dangling and failed the gate on a build where the enemy was
+    # in the scene 14 times over. Hit live on Chromabreak, whose `defeat`
+    # objective targeted the character `shard_construct` -> entity
+    # `ShardConstruct`.
+    #
+    # The indirection is followed, not waved through: a character whose
+    # model_ref names nothing in the build is still dangling, because then
+    # there really is no spawned thing behind the name.
+    for c in (schema.characters or []):
+        ref = (getattr(c, "model_ref", "") or "").strip().lower()
+        if ref and ref in have:
+            for alias in ((getattr(c, "id", "") or ""), (getattr(c, "name", "") or "")):
+                if alias.strip():
+                    have.add(alias.strip().lower())
     dangling = sorted(authored for key, authored in refs.items()
                       if key not in have)
     if dangling:

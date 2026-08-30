@@ -575,6 +575,38 @@ def test_real_method_signature_is_not_treated_as_a_property():
     assert out is not None and out.body == "return _v;"
 
 
+def test_a_field_authored_as_a_method_moves_to_the_field_channel():
+    """Live (Chromabreak, composed `interactable` micro): the model filed two
+    FIELDS in extra_methods — signature `private Vector3 _anchorPos`, body
+    `= Vector3.zero;` — which rendered as `private Vector3 _anchorPos
+    { = Vector3.zero; }` and stopped the build with six CS1014s. It is a field,
+    so it is moved rather than dropped: declaration and initializer both live."""
+    from src.micro.code_fields import _split_field_shaped_methods
+
+    fields, methods = _split_field_shaped_methods(
+        [],
+        [CodeMethod(signature="private Vector3 _anchorPos", body="= Vector3.zero;"),
+         CodeMethod(signature="private float _phasor", body="= 0f;"),
+         CodeMethod(signature="public void AddScore(int amount)", body="_score += amount;")])
+    assert [(f.type, f.name, f.default) for f in fields] == [
+        ("Vector3", "_anchorPos", "Vector3.zero"),
+        ("float", "_phasor", "0f"),
+    ]
+    # The real method is untouched, and a readable property is NOT a field.
+    assert [m.signature for m in methods] == ["public void AddScore(int amount)"]
+    _f, kept = _split_field_shaped_methods(
+        [], [CodeMethod(signature="public bool IsPlaying", body="return _v;")])
+    assert _f == [] and len(kept) == 1
+
+
+def test_a_parameterless_member_with_no_accessor_is_dropped_not_emitted():
+    """The containment layer behind the move above: whatever still reaches
+    lint_method with no parameter list and no get/set is neither a method nor a
+    property, and emitting it is a guaranteed CS1014."""
+    m = CodeMethod(signature="private void _tick", body="_t += Time.deltaTime;")
+    assert lint_method(m, taken_names=set()) is None
+
+
 def test_lint_rejects_surplus_closers_instead_of_deferring_to_the_gate():
     """Supersedes the old "leave it for the syntax gate" contract.
 
@@ -2064,3 +2096,71 @@ def test_uninferable_identifier_is_left_to_the_old_path():
         CodeMethod(signature="private void Poke()", body="_mystery.DoThing();")])
     harden_against_template(schema, _MICRO_TEMPLATES / "camera")
     assert "_mystery" not in {f.name for f in schema.extra_fields}
+
+
+# ── CS0104 / CS0246: a type the fragment names but cannot resolve ─────────────
+
+def test_unity_random_and_object_uses_are_qualified():
+    """Live (Chromabreak, three micros at once): `using System;` — which the
+    extras legitimately need for Action/Math/DateTime — makes every bare
+    `Random` and `Object` in a MonoBehaviour ambiguous with UnityEngine's."""
+    out = lint_code_fragment("Vector2 r = Random.insideUnitCircle * _radius;", what="x")
+    assert "UnityEngine.Random.insideUnitCircle" in out
+    out2 = lint_code_fragment("var i = Object.Instantiate(_prefab);", what="x")
+    assert "UnityEngine.Object.Instantiate" in out2
+
+
+def test_a_system_random_instance_is_left_alone():
+    """`new Random(42)` really is the System type — qualifying it would be the
+    wrong repair, which is why only UnityEngine-only MEMBERS are matched."""
+    out = lint_code_fragment("var rng = new Random(42);", what="x")
+    assert "UnityEngine.Random" not in out
+
+
+def test_input_system_device_types_pull_their_namespace():
+    """Live (Chromabreak): a model writes `Mouse.current.delta` for mouse-look
+    whatever input_backend the variant declares, and the legacy-backend
+    controller template imports nothing for it — eight CS0103 in one file."""
+    from src.micro.code_fields import required_usings_for
+    assert "UnityEngine.InputSystem" in required_usings_for(
+        "Vector2 d = Mouse.current.delta.ReadValue();")
+    assert "UnityEngine.InputSystem" in required_usings_for(
+        "if (Keyboard.current.spaceKey.wasPressedThisFrame) Jump();")
+
+
+# ── CS1001/CS1003: a list of literals in a SCALAR field's initializer ─────────
+
+def test_a_literal_list_promotes_the_field_to_an_array():
+    """Live (Chromabreak, QuartermasterBrain.cs): four fields of intercom
+    dialogue came through as `private string _introLines = "…","…","…";` —
+    three CS1001/CS1003 each, and the build stopped at the syntax gate. Several
+    values of one type is an array, so the field is retyped and every line the
+    model wrote survives."""
+    from src.micro.code_fields import CodeField, lint_fields
+
+    out = lint_fields([CodeField(name="_introLines", type="string",
+                                 default='"Welcome.","Survive.","Go."')],
+                      reserved=set())
+    assert out[0].type == "string[]"
+    assert out[0].default == 'new string[] { "Welcome.", "Survive.", "Go." }'
+
+
+def test_a_single_value_and_an_expression_are_left_alone():
+    from src.micro.code_fields import CodeField, lint_fields
+
+    out = lint_fields([CodeField(name="_one", type="string", default='"just one"'),
+                       CodeField(name="_vec", type="Vector3",
+                                 default="new Vector3(0f, 1f, 0f)"),
+                       CodeField(name="_names", type="string[]",
+                                 default='new string[] { "a", "b" }')],
+                      reserved=set())
+    assert [f.type for f in out] == ["string", "Vector3", "string[]"]
+
+
+def test_string_literals_are_not_promoted_into_a_numeric_field():
+    """Mismatched shapes are not one list — abstain rather than invent a type."""
+    from src.micro.code_fields import _promote_list_default_to_array, CodeField
+
+    f = CodeField(name="_x", type="float", default='"a","b"')
+    assert _promote_list_default_to_array(f) is False
+    assert f.type == "float"
