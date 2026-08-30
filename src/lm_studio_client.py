@@ -272,7 +272,6 @@ class LMStudioClient:
 
     def _post_with_retry(self, payload: dict, headers: dict) -> httpx.Response:
         """POST the completion, retrying only provider-transient statuses."""
-        last: httpx.HTTPStatusError | None = None
         for attempt in range(len(self._RETRY_BACKOFF) + 1):
             with httpx.Client(timeout=self.timeout) as client:
                 r = client.post(f"{self.base_url}/chat/completions",
@@ -284,7 +283,6 @@ class LMStudioClient:
                 if (e.response.status_code not in self._RETRY_STATUS
                         or attempt >= len(self._RETRY_BACKOFF)):
                     raise
-                last = e
                 delay = self._RETRY_BACKOFF[attempt]
                 log.warning(
                     "%s returned HTTP %d for '%s' — provider-transient, "
@@ -294,7 +292,9 @@ class LMStudioClient:
                     e.response.text[:200],
                 )
                 time.sleep(delay)
-        raise last  # unreachable: the loop either returns or raises above
+        # Unreachable: the final iteration's `attempt >= len(_RETRY_BACKOFF)`
+        # re-raises instead of sleeping, so the loop always returns or raises.
+        raise AssertionError("retry loop fell through without returning")
 
     def chat(self, system: str, user: str,
              temperature: float | None = None,
