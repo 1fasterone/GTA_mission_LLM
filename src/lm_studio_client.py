@@ -19,6 +19,7 @@ Debug output (--debug / -d flag):
 import json
 import logging
 import re
+import time
 import httpx
 from rich.console import Console
 
@@ -35,6 +36,28 @@ _NUM_SUFFIX_RE = re.compile(
 )
 # Trailing comma before a closing brace/bracket — another common model slip.
 _TRAILING_COMMA_RE = re.compile(r',(\s*[}\]])')
+
+
+def _loads(text: str):
+    """`json.loads`, falling back to the non-strict parser.
+
+    A model asked to put C# inside a JSON string writes the code the way it
+    writes code: with real newlines and tabs in it, rather than `\\n`. Strict
+    JSON forbids a literal control character inside a string, so ONE unescaped
+    newline in one method body rejects an otherwise perfect 90KB schema fill
+    with "Invalid control character at: line 280 column 118" — which the caller
+    can only report as a model failure and re-roll. Hit live on a Chromabreak
+    schema fill.
+
+    `strict=False` accepts those characters as themselves, which is exactly
+    what they mean here: the newline IS part of the authored code. Tried second,
+    never first, so genuinely malformed JSON still fails the same way it always
+    did rather than being silently reinterpreted.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(text, strict=False)
 
 
 def _sanitize_json_scalars(text: str) -> str:
@@ -231,6 +254,48 @@ class LMStudioClient:
             payload["seed"] = int(eff_seed)
         return payload
 
+    # Upstream conditions that are about the PROVIDER's moment, not about this
+    # request — the same payload sent again a few seconds later routinely
+    # succeeds. OpenRouter multiplexes each model across several upstream
+    # providers, so a 402 "Insufficient balance" or a 404 with an empty body is
+    # one provider having a bad minute, not a permanent verdict on the call.
+    #
+    # Live, on one Chromabreak build: a ~40-minute --compose run reached Step 3
+    # and died on a single HTTP 402 from GMICloud. Every deterministic step
+    # after it, the whole micro-code phase, and the asset resolution that had
+    # already been paid for were all thrown away for one transient upstream
+    # blip. Retrying three times over ~25s is cheap; re-running the pipeline is
+    # not. A genuinely exhausted quota still fails — it just fails four times
+    # first, and the caller still gets the provider's real message.
+    _RETRY_STATUS = frozenset({402, 408, 409, 425, 429, 500, 502, 503, 504})
+    _RETRY_BACKOFF = (5.0, 10.0, 15.0)
+
+    def _post_with_retry(self, payload: dict, headers: dict) -> httpx.Response:
+        """POST the completion, retrying only provider-transient statuses."""
+        last: httpx.HTTPStatusError | None = None
+        for attempt in range(len(self._RETRY_BACKOFF) + 1):
+            with httpx.Client(timeout=self.timeout) as client:
+                r = client.post(f"{self.base_url}/chat/completions",
+                                json=payload, headers=headers)
+            try:
+                r.raise_for_status()
+                return r
+            except httpx.HTTPStatusError as e:
+                if (e.response.status_code not in self._RETRY_STATUS
+                        or attempt >= len(self._RETRY_BACKOFF)):
+                    raise
+                last = e
+                delay = self._RETRY_BACKOFF[attempt]
+                log.warning(
+                    "%s returned HTTP %d for '%s' — provider-transient, "
+                    "retrying in %.0fs (attempt %d/%d): %s",
+                    self.base_url, e.response.status_code, self.model, delay,
+                    attempt + 1, len(self._RETRY_BACKOFF),
+                    e.response.text[:200],
+                )
+                time.sleep(delay)
+        raise last  # unreachable: the loop either returns or raises above
+
     def chat(self, system: str, user: str,
              temperature: float | None = None,
              thinking: bool = True,
@@ -263,9 +328,7 @@ class LMStudioClient:
 
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                r = client.post(f"{self.base_url}/chat/completions", json=payload, headers=headers)
-                r.raise_for_status()
+            r = self._post_with_retry(payload, headers)
         except httpx.TimeoutException as e:
             # Raised as TimeoutError (not ValueError) so callers don't burn another
             # full timeout retrying. Reasoning models / CPU-offloaded models hit this.
@@ -396,11 +459,11 @@ class LMStudioClient:
             # Response was truncated mid-JSON — try to repair it
             repaired = _sanitize_json_scalars(_repair_truncated_json(text, start))
             try:
-                return json.loads(repaired)
+                return _loads(repaired)
             except json.JSONDecodeError:
                 pass
             try:
-                return json.loads(_rebalance(text, start))
+                return _loads(_rebalance(text, start))
             except json.JSONDecodeError:
                 raise ValueError(
                     f"JSON truncated and could not be repaired.\n"
@@ -410,17 +473,17 @@ class LMStudioClient:
 
         candidate = text[start : end + 1]
         try:
-            return json.loads(candidate)
+            return _loads(candidate)
         except json.JSONDecodeError:
             # Retry after repairing code-model contaminants (10f, trailing commas).
             try:
-                return json.loads(_sanitize_json_scalars(candidate))
+                return _loads(_sanitize_json_scalars(candidate))
             except json.JSONDecodeError as exc:
                 # A surplus closer ends the balanced-brace scan early, so
                 # `candidate` is both short and malformed — rebalance the FULL
                 # text rather than the slice.
                 try:
-                    return json.loads(_rebalance(text, start))
+                    return _loads(_rebalance(text, start))
                 except json.JSONDecodeError:
                     pass
                 raise ValueError(

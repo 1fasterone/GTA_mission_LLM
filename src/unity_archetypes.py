@@ -419,7 +419,37 @@ def _denied_spans(text: str) -> tuple[tuple[int, int], ...]:
         end_m = _CLAUSE_END_RE.search(text, cue.end())
         end = end_m.start() if end_m else len(text)
         spans.append((cue.start(), min(end, cue.start() + _DENIAL_REACH)))
-    return tuple(spans)
+    return tuple(spans) + _idiom_spans(text)
+
+
+# ── Idiomatic false positives ────────────────────────────────────────────────
+#
+# A locomotion gerund used as an ADJECTIVE is not a movement signal. "a driving
+# synth music bed" in an arena-shooter's AUDIO section scored 3 for `drive` and
+# was the ONLY locomotion hit in the whole brief, so a first-person shooter came
+# out of the classifier as a driving game — which picks the vehicle_car
+# controller (see unity_compose.subsystems_for's loco_ctrl table). Hit live on
+# the Chromabreak brief.
+#
+# Deliberately a fixed bigram list, not a part-of-speech guess: every entry is a
+# phrase where the gerund cannot mean locomotion, so masking it can never
+# suppress a real signal. A genuine driving game says "drive", "car" or
+# "vehicle" somewhere else and is unaffected. Masked exactly like a denial —
+# same span mechanism, so it covers every axis at once.
+_IDIOM_RE = re.compile(
+    r"\b(?:"
+    r"driving\s+(?:synth|beat|beats|bass|rhythm|rhythms|drum|drums|music|score|"
+    r"soundtrack|tempo|pulse|groove|riff|force|rain|snow|need|ambition)"
+    r"|flying\s+(?:colou?rs|start|visit)"
+    r"|racing\s+(?:heart|pulse|thoughts|mind)"
+    r"|jet\s+black"
+    r")\b"
+)
+
+
+def _idiom_spans(text: str) -> tuple[tuple[int, int], ...]:
+    """Character ranges where a locomotion word is idiomatic, not literal."""
+    return tuple((m.start(), m.end()) for m in _IDIOM_RE.finditer(text))
 
 
 def _live_match(pat: re.Pattern, text: str,

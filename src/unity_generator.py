@@ -342,6 +342,10 @@ _GENERIC_WRAPPER_RE = re.compile(
 _DICT_RE = re.compile(r"^Dictionary<([^,]+),\s*(.+)>$")
 
 
+# A bare C# identifier — what a `public class <name>` stub needs its name to be.
+_CS_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
+
+
 def _extract_base_type(type_str: str) -> str:
     """Strip generics/arrays to return the innermost concrete type name."""
     # A MULTI-dimensional suffix has commas in it — `GridCell[,]`. rstrip("[]")
@@ -379,9 +383,22 @@ class _TypeCarrier:
         self.type = ty
 
 
+# Parameter modifiers that sit BEFORE the type and are not part of it.
+# `ref Foo bar` split naively yields the type "ref Foo", which is not a type.
+_PARAM_MODIFIERS = frozenset({"ref", "out", "in", "params", "this", "readonly", "scoped"})
+
+
 def _signature_type_names(extra_methods: list) -> list[str]:
     """Every type named in a method signature — the return type and each
-    parameter type, in source order."""
+    parameter type, in source order.
+
+    A parameter is `<modifiers> <type> <name> [= <default>]`, and only the
+    middle part is a type. Both ends were being read as one before: an OPTIONAL
+    parameter's default made `float lockoutSeconds = 1.5f` yield the "type"
+    `float lockoutSeconds =`, which `_collect_custom_type_stubs` then emitted as
+    `public class float lockoutSeconds =` — five CS syntax errors from one
+    authored default value. Hit live on Chromabreak's Interactable.cs.
+    """
     out: list[str] = []
     for m in (extra_methods or []):
         sig = str(getattr(m, "signature", "") or "")
@@ -390,7 +407,9 @@ def _signature_type_names(extra_methods: list) -> list[str]:
             continue
         out.append(hit.group("ret"))
         for arg in (hit.group("args") or "").split(","):
-            parts = arg.strip().split()
+            # Everything from the '=' is the default VALUE, not the type.
+            parts = [p for p in arg.split("=", 1)[0].strip().split()
+                     if p not in _PARAM_MODIFIERS]
             if len(parts) >= 2:
                 out.append(" ".join(parts[:-1]))
     return [t for t in out if t]
@@ -416,6 +435,14 @@ def _stub_type_names(extra_fields: list,
         base = _extract_base_type(getattr(f, "type", "") or "")
         if (
             not base
+            # A stub is emitted as `public class {base}`, so `base` MUST be a
+            # bare C# identifier. Anything else — a whole declaration, a
+            # leftover modifier, punctuation — is not a type, and stubbing it
+            # writes a syntax error into the project instead of the CS0246 fix
+            # it was reaching for. The producers are guarded individually
+            # (see _signature_type_names); this is the one place every one of
+            # them funnels through, so it is also guarded here.
+            or not _CS_IDENTIFIER_RE.match(base)
             or base in _CS_BUILTIN_TYPES
             or "<" in base
             or "." in base
@@ -3630,6 +3657,21 @@ class UnityProjectGenerator:
             tmp.write_text(content, encoding="utf-8")
             os.replace(tmp, dest)
 
+        # Sweep BEFORE the gate below, not after. The sweep is manifest-driven,
+        # and the manifest is written by the same call — so a run that raised at
+        # the gate used to leave its files on disk having recorded NOTHING, and
+        # every later run's sweep was blind to them forever. Those orphans then
+        # compile alongside the new build: an aborted run's Interactable.cs
+        # (never gated, hence broken — that is why the run aborted) failed the
+        # real Unity compile of a LATER, clean build of the same project. Hit
+        # live on Chromabreak.
+        #
+        # The files are on disk the moment the loop above finishes, which is
+        # exactly what the manifest claims, so recording it here is the honest
+        # order — and it means a build can never again be poisoned by the
+        # wreckage of the run that failed before it.
+        self._sweep_stale_outputs(root, schema.project_name, set(files))
+
         # ── Syntax gate ──────────────────────────────────────────────────────
         # Every .cs file this call just wrote, through the same Roslyn parser
         # gate --compose already runs on composed micros (src/csharp_syntax_gate.py).
@@ -3644,8 +3686,6 @@ class UnityProjectGenerator:
                 enabled=bool((project_config or {}).get("unity_pipeline", {})
                              .get("syntax_gate", True)),
                 label="generated script(s)")
-
-        self._sweep_stale_outputs(root, schema.project_name, set(files))
 
         # Binary model copies. Same _resolve_all_models call as generate() —
         # deterministic, so the .meta files emitted there and the binaries

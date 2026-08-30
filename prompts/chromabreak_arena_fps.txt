@@ -1,0 +1,148 @@
+TITLE
+Chromabreak
+
+GENRE
+A fully 3d first-person shooter. Genre is fps — a fast, close-quarters arena
+shooter with real gunplay and melee. The player holds a weapon in view, aims
+down the centre of the screen, sprints and strafes constantly, and fights waves
+of enemies that close in from every side. Movement is quick: the fight is won by
+never standing still.
+
+STYLE
+Saturated prismatic neon. The arena is a glass-and-chrome fighting pit lit by
+banks of coloured floodlights — hot magenta key light, cyan rim light, an amber
+accent from the pit floor, and a deep indigo background. Every surface is either
+a glossy metallic panel with low roughness, a cel shaded toon-outlined enemy
+shell, or an emissive neon strip. High contrast, hard shadows, bloom on every
+light source. Nothing in this game is grey.
+
+CORE PREMISE
+The player is a chrome-suited pit fighter dropped into the Chromabreak arena.
+Waves of hostile shard constructs spawn from vents around the pit, hunt the
+player down and attack in melee range. The player breaks them with the pulse
+rifle and a fast melee punch, banks the colour shards they drop, and survives
+wave after wave. Each wave is faster and denser than the last. Clearing the
+final wave of a round opens the vault door to the next round.
+
+PLAYER
+A chrome-suited pit fighter in first person. Uses a first_person controller —
+CharacterController-based walk, sprint and strafe with a short hop, held to the
+pit floor by gravity. Mouse look drives the aim, WASD moves, shift sprints, and
+the whole controller is tuned quick: a high move speed, a high sprint
+multiplier, and a responsive look sensitivity so a 180 degree turn is one flick.
+Left click fires the pulse rifle down the crosshair with a muzzle flash, a
+recoil kick, a spent-casing spark and a short cooldown; limited ammo per clip
+with a reload. Right click throws a fast melee punch that knocks a construct
+back. The player animation rig is humanoid with an idle, a walk cycle, a sprint,
+a fire gesture, a punch and a hurt reaction.
+
+ENTITIES
+This list is EXHAUSTIVE. Use exactly these entities with exactly these names,
+kinds, counts and models. Do not invent extra entity groups, and do not add a
+second enemy group under a different name. Only the Player entity may carry the
+"Player" tag.
+- Player: the chrome-suited pit fighter (kind: player, count: 1,
+  model: character soldier).
+- PulseRifle: the player's held pulse rifle, visible in first person
+  (kind: weapon, count: 1, model: blaster gun).
+- ShardConstruct: the enemy — a jagged crystalline humanoid shell that hunts the
+  player and attacks in melee range. This is the ONLY enemy in the game
+  (kind: enemy, count: 14, model: character enemy).
+- PitFloor: the glass-and-chrome arena floor the whole fight happens on
+  (kind: ground, model: platform large).
+- VentPillar: the glowing spawn vents ringing the pit that constructs climb out
+  of (kind: prop, count: 6, model: machine generator).
+- BarrierWall: the low chrome barriers the player breaks line of sight behind
+  (kind: prop, count: 8, model: barrier).
+- ColourShard: a glowing shard a broken construct drops, collected for score
+  (kind: pickup, count: 10).
+- AmmoCell: a glowing ammo cell that refills the rifle clip (kind: pickup,
+  count: 6).
+- RepairCell: a cell that restores suit integrity (kind: pickup, count: 4).
+- Quartermaster: the arena handler who briefs the player between rounds and
+  talks over the intercom (kind: npc, count: 1, model: character civilian).
+
+AI
+Every ShardConstruct uses a ground chase AI: it climbs out of a VentPillar,
+holds a short idle while it acquires the player, then hunts the player down at
+speed, closes to melee range and attacks. It can be knocked back and briefly
+stunned by a punch or a rifle hit. Constructs patrol between vents when they
+have no detection on the player and go aggro the moment they see one. Elite
+constructs acquire faster, hit harder and take more shots. Waves spawn from the
+spawner on a timer with a short lull between them; the construct count and speed
+step up every wave.
+
+SCENES
+- Main Menu: start run, high scores, settings, quit.
+- Chromabreak Arena: the fight scene — one glass pit, six glowing vent pillars
+  around the rim, chrome barriers scattered for cover, coloured floodlight banks
+  overhead, and constructs inbound from every vent.
+
+MISSIONS
+- Round One — Break the First Wave: defeat 10 ShardConstructs, collect 5
+  ColourShards, and reach the vault door alive.
+- Round Two — Hold the Pit: survive the second wave for 90 seconds and defeat
+  the elite construct that spawns with it.
+
+COLOUR REQUIREMENTS
+These are hard requirements, not mood notes. The game must be loud with colour.
+- Fill color_palette with the arena's real colours and nothing grey or
+  near-black: primary hot magenta, secondary electric cyan, accent amber, trim
+  white, background deep indigo. Every one a valid #RRGGBB hex.
+- Author named materials for every distinct surface the concept describes — the
+  chrome suit, the glass pit floor, the crystalline construct shell, the
+  emissive neon strip, the amber vent glow, the chrome barrier — each with its
+  own strong hex colour and its own smoothness and metallic roughness value. No
+  two materials may share a colour.
+- Author shaders for the looks a plain material cannot give: a toon ramp with a
+  hard black outline on the construct shells, and a scrolling neon hologram
+  scanline on the vault door. Give each one a runtime-driven property so the
+  colour actually moves — a colour cycle, a pulse, a flash on hit.
+- Lighting is coloured, not white: a magenta key, a cyan rim, an amber floor
+  bounce, an indigo ambient. Bloom on every emissive surface.
+
+PARTICLE REQUIREMENTS
+These are hard requirements too. Every important event in this game throws
+particles.
+- Muzzle flash: a bright magenta spark burst at the rifle muzzle on every shot,
+  with a short smoke puff and a spent-casing trail.
+- Impact: a cyan spark and debris burst wherever a rifle bolt hits a construct
+  or a wall, scaled by damage.
+- Construct break: an explosion of crystalline shard debris, a dust puff and a
+  bright colour flash when a construct dies.
+- Shard pickup: a small amber sparkle that rises and fades when a ColourShard is
+  collected.
+- Vent glow: a looping ambient particle plume rising from each VentPillar, on
+  for the whole scene.
+- Every effect above is a real particle system, object-pooled, played on the
+  event and auto-destroyed after it finishes — except the looping vent plume.
+
+HUD
+Centre crosshair that flares on a hit, suit integrity bar, ammo counter with
+clip and reserve, current wave number, colour-shard score, an objective readout
+for the current round, a wave-incoming banner, a damage vignette at the screen
+edge when the player is hit, and a game-over screen showing waves survived and
+constructs broken.
+
+DIALOGUE
+The Quartermaster talks to the player over the intercom in plain text — a
+briefing line before the first wave, a warning line when the elite construct
+spawns, and a congratulation line on a cleared round. Text only, no voice
+acting.
+
+AUDIO
+A punchy pulse-rifle crack with a synth tail, a reload clack, a heavy melee
+thud, a glassy shatter when a construct breaks, a bright chime on a shard
+pickup, a low warning drone as a wave closes in, and a driving synth music bed
+that speeds up wave by wave. Spatial audio on every construct so the player can
+hear which vent the next one is coming from.
+
+FEATURES
+Save/load high scores and best wave (json_file). Pause menu (resume, restart,
+quit to menu). Game-over screen with a restart option. A fade transition between
+the menu and the arena.
+
+VISUAL STYLE
+URP, stylized, high saturation. Bloom on the rifle bolts, muzzle flash, neon
+strips and floodlights. Hard coloured key light, strong rim separation, deep
+indigo background, long hard shadows across the glass floor.

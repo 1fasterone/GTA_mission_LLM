@@ -70,6 +70,7 @@ from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
                                 build_missing_fields, find_unbound_identifiers,
                                 lint_method, lint_unbound_identifiers,
                                 sanitize_default, template_members,
+                                _promote_list_default_to_array,
                                 template_method_arities, template_usings,
                                 _KNOWN_SYMBOLS, _MONO_INHERITED, _method_name,
                                 _signature_param_names,
@@ -1292,6 +1293,14 @@ def _apply_script(script, payload: dict) -> bool:
                 # as three separate declarators). Custom scripts (schema.scripts)
                 # never call lint_fields at all, so this was the only gap left.
                 assert isinstance(candidate, CodeField)  # model was CodeField in this branch
+                # A list of literals in a SCALAR field's initializer is an
+                # array the model typed as one value — retyped rather than
+                # dropped, so all of its lines survive. Same defect class as
+                # the Vector3 case above, one step further: four fields of
+                # intercom dialogue came through as
+                # `private string _introLines = "…","…","…";` and stopped the
+                # build at the syntax gate (live: QuartermasterBrain.cs).
+                _promote_list_default_to_array(candidate)
                 fixed = sanitize_default(candidate.type, candidate.default)
                 if fixed != candidate.default:
                     if fixed is None:
