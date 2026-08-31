@@ -953,13 +953,27 @@ public class EntitySpawner : MonoBehaviour
                             Color color, string tag, bool backdrop, float courseLen, Shader sh,
                             float tiltDeg = 0f)
     {
-        // Load order: 2D sprite (Sprites/... path → Texture2D) → 3D model prefab
-        // → primitive cube. Sprite textures import with Unity's default settings,
-        // so the Sprite itself is built at runtime — no TextureImporter .meta
-        // authoring needed.
+        // Load order: sprite_animator's OWN generated bank (Sprites/<name>/idle/
+        // frame_00 → Texture2D) → modelPath's resolved 2D sprite/3D model prefab
+        // → primitive cube. Checked FIRST and by groupName, not modelPath: the
+        // sprite_animator micro (Player/Rivals) writes its bank AFTER
+        // entity_model_paths is baked into this file (compose emits micros once
+        // Step 6 has already rendered EntitySpawner.cs), so modelPath can never
+        // know that bank exists — confirmed live, 2026-08-31, a genre="racing"
+        // Rivals entity resolved a 3D "Models/Kenney/Vehicle/race" model_hint
+        // path despite 15 real generated rival sprite frames sitting unused
+        // right next to it. Resources.Load returns null harmlessly for any
+        // entity with no bank (PineTrees, RoadSegments, ...), falling straight
+        // through to the existing modelPath chain below — purely additive.
+        // Sprite textures import with Unity's default settings, so the Sprite
+        // itself is built at runtime — no TextureImporter .meta authoring needed.
         Sprite sprite = null;
         GameObject modelPrefab = null;
-        if (!string.IsNullOrEmpty(modelPath))
+        var genTex = Resources.Load<Texture2D>("Sprites/" + groupName + "/idle/frame_00");
+        if (genTex != null)
+            sprite = Sprite.Create(genTex, new Rect(0f, 0f, genTex.width, genTex.height),
+                                   new Vector2(0.5f, 0.5f), Mathf.Max(1f, genTex.height));
+        else if (!string.IsNullOrEmpty(modelPath))
         {
             var tex = Resources.Load<Texture2D>(modelPath);
             if (tex != null)
@@ -1035,10 +1049,17 @@ public class EntitySpawner : MonoBehaviour
                                      float radius, float scale, string modelPath, Color color,
                                      string tag, Shader sh)
     {
-        // Same sprite -> model -> primitive load order as PlaceRow2D.
+        // Same sprite_animator-bank -> modelPath -> model -> primitive load
+        // order as PlaceRow2D — see that method's own comment for why the
+        // bank has to be checked by groupName, ahead of modelPath, rather
+        // than folded into entity_model_paths.
         Sprite sprite = null;
         GameObject modelPrefab = null;
-        if (!string.IsNullOrEmpty(modelPath))
+        var genTex = Resources.Load<Texture2D>("Sprites/" + groupName + "/idle/frame_00");
+        if (genTex != null)
+            sprite = Sprite.Create(genTex, new Rect(0f, 0f, genTex.width, genTex.height),
+                                   new Vector2(0.5f, 0.5f), Mathf.Max(1f, genTex.height));
+        else if (!string.IsNullOrEmpty(modelPath))
         {
             var tex = Resources.Load<Texture2D>(modelPath);
             if (tex != null)

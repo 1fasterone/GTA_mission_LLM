@@ -52,7 +52,31 @@ public class {{ s.name }} : MonoBehaviour
         foreach (var action in _Actions)
         {
             var loaded = Resources.LoadAll<Sprite>($"Sprites/{entityName}/{action}");
-            if (loaded != null && loaded.Length > 0) _frames[action] = loaded;
+            if (loaded == null || loaded.Length == 0)
+            {
+                // Pipeline-generated frame PNGs import with Unity's DEFAULT
+                // texture type (Texture2D), not Sprite (2D and UI) — nothing
+                // written by this pipeline pre-authors that .meta setting, so
+                // LoadAll<Sprite> above always finds zero assets here and
+                // this dictionary stayed permanently empty, leaving the
+                // SpriteRenderer's .sprite field never set (confirmed live,
+                // 2026-08-31: a fully composed, PLAYABLE build with a real
+                // generated sprite bank still rendered no visible player or
+                // rivals at all). EntitySpawner.PlaceRow2D already works
+                // around the exact same import behavior by loading each
+                // frame as a Texture2D and building the Sprite by hand — same
+                // fix, same reason, here.
+                var built = new List<Sprite>();
+                for (int i = 0; ; i++)
+                {
+                    var tex = Resources.Load<Texture2D>($"Sprites/{entityName}/{action}/frame_{i:D2}");
+                    if (tex == null) break;
+                    built.Add(Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                                            new Vector2(0.5f, 0.5f), Mathf.Max(1f, tex.height)));
+                }
+                loaded = built.ToArray();
+            }
+            if (loaded.Length > 0) _frames[action] = loaded;
         }
 {{ inject.lifecycle(s.awake_extra) }}
     }

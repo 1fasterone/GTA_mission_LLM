@@ -700,6 +700,71 @@ def _repair_struct_return_type_mismatch(text: str, field_types: "dict[str, str]"
     return "\n".join(out_lines)
 
 
+_ASSIGNMENT_CALL_RE = re.compile(
+    r'\b(?P<field>[A-Za-z_]\w*)\s*=\s*(?P<call>[A-Za-z_]\w*)\s*\(')
+# Type pairs where an implicit conversion IS legal, so two DIFFERENT type
+# names alone must not be enough to flag — numeric widening is the only such
+# pair either side of this check could plausibly produce (every other pair a
+# bareword type-name regex can see is between distinct reference/struct
+# types, which C# never converts implicitly).
+_ASSIGNMENT_WIDENING_PAIRS = frozenset({
+    ("int", "float"), ("int", "double"), ("float", "double"),
+})
+
+
+def _repair_field_assignment_type_mismatch(
+        text: str, *, field_types: "dict[str, str]",
+        method_return_types: "dict[str, str]") -> str:
+    """A field is assigned the return value of a template-native method whose
+    OWN declared return type does not match the field's OWN declared type —
+    CS0029, no implicit conversion between two unrelated types. Confirmed live
+    (2026-08-30), LightingDirector.cs:
+        _rigRoot = FindBrightestDirectional();
+    `_rigRoot` is the template's own `Transform`; `FindBrightestDirectional()`
+    is the template's own `private static Light`. The author's OWN field
+    (whatever type it actually declared this under) was already dropped as a
+    reserved-name duplicate by `lint_fields` — a NAME-only collision check
+    with no way to know the usage disagreed on TYPE — so this is the other
+    half: check the surviving, template-typed field against what its authored
+    assignment actually hands it.
+
+    Scoped to bareword type names on both sides (no generics/interfaces to
+    reason about — a mismatch there is `field_types`/`method_return_types`
+    simply not having an entry, which this silently skips) and exempts
+    numeric widening, the only legal implicit conversion two textually
+    different simple type names could still have."""
+    if not text or not field_types or not method_return_types:
+        return text
+    out_lines = []
+    changed = False
+    for line in text.splitlines():
+        m = _ASSIGNMENT_CALL_RE.search(line)
+        ftype = field_types.get(m.group("field")) if m else None
+        rtype = method_return_types.get(m.group("call")) if m else None
+        if ftype and rtype:
+            fnorm, rnorm = ftype.strip().lower(), rtype.strip().lower()
+            mismatched = (fnorm != rnorm
+                         and (fnorm, rnorm) not in _ASSIGNMENT_WIDENING_PAIRS
+                         and (rnorm, fnorm) not in _ASSIGNMENT_WIDENING_PAIRS)
+        else:
+            mismatched = False
+        if mismatched and m is not None:
+            indent = line[:len(line) - len(line.lstrip())]
+            out_lines.append(
+                f"{indent}// AUDIT: removed assignment -- {line.strip()} "
+                f"({m.group('field')} is {ftype}, {m.group('call')}() "
+                f"returns {rtype}, CS0029)")
+            changed = True
+        else:
+            out_lines.append(line)
+    if not changed:
+        return text
+    console.print("  [magenta]FIX[/]  neutralized a field assignment whose "
+                  "declared type disagrees with the called method's own "
+                  "return type (CS0029)")
+    return "\n".join(out_lines)
+
+
 def _repair_getcomponent_wrong_dimension(text: str, field_types: "dict[str, str]") -> str:
     """A field with a known 2D-physics type assigned from GetComponent<X>()
     where X is that type's 3D counterpart (CS0029 — Rigidbody has no
@@ -3934,6 +3999,22 @@ _ATOM_EQ_RE = re.compile(
 _ATOM_IN_RE = re.compile(
     r"""^\s*(?:s\.)?(?P<name>[A-Za-z_]\w*)\s+(?P<op>not\s+in|in)\s*"""
     r"""[\(\[](?P<opts>[^)\]]*)[\)\]]\s*$""")
+# The OPPOSITE shape from `_ATOM_IN_RE` above: a literal on the left, a bare
+# list-typed field on the right — `{% if "boost" in s.abilities %}`, the form
+# every ability-gated block in Controller.cs.j2 uses (35+ occurrences: jump,
+# dash, shoot, block, grab, pause, ...). None of them matched `_ATOM_IN_RE`
+# (that pattern needs a literal `(...)`/`[...]` set on the right, not a bare
+# field), so every one of them fell through _eval_atom as undecidable — and
+# the "keep the body when undecided" default counted EVERY ability's fields as
+# always-declared-by-the-template, regardless of this schema's real abilities
+# list. Confirmed live: an authored `_boostTimer`/`_boostCooldownTimer` got
+# deleted as a false CS0102 duplicate of a block that, for this schema's
+# actual (boost-less) abilities list, never rendered — leaving CS0103s at
+# every surviving usage. See render_facts's list[str] handling for the write
+# side this reads.
+_ATOM_MEMBERSHIP_RE = re.compile(
+    r"""^\s*['"](?P<lit>[^'"]*)['"]\s+(?P<op>not\s+in|in)\s+(?:s\.)?(?P<name>[A-Za-z_]\w*)\s*$""")
+_LIST_FACT_SEP = "\x1f"
 # Split a condition on ONE boolean operator. A condition mixing `and` with `or`
 # is left undecided rather than guessed at — precedence is not worth reasoning
 # about here, and an undecided condition only widens the scope.
@@ -3956,6 +4037,14 @@ def _eval_atom(cond: str, facts: "dict[str, str]") -> "bool | None":
             return None
         options = {v.strip().strip("\"'") for v in m.group("opts").split(",") if v.strip()}
         return (value not in options) if m.group("op").startswith("not") else (value in options)
+    m = _ATOM_MEMBERSHIP_RE.match(cond or "")
+    if m:
+        value = facts.get(m.group("name"))
+        if value is None:
+            return None
+        members = value.split(_LIST_FACT_SEP) if value else []
+        is_member = m.group("lit") in members
+        return (not is_member) if m.group("op").startswith("not") else is_member
     return None
 
 
@@ -3977,7 +4066,8 @@ def _drop_dead_variant_branches(raw: str, variant: str,
                                 facts: "tuple[tuple[str, str], ...]" = ()) -> str:
     """Remove the bodies of branches this render will not produce.
 
-    `facts` carries the schema's own string fields as `((name, value), ...)`;
+    `facts` carries the schema's own string AND list[str] fields (the latter
+    joined on `_LIST_FACT_SEP` — see render_facts) as `((name, value), ...)`;
     `variant` is folded in under both `variant` and `s.variant`, the two spellings
     the templates use. Conservative in one direction only: a condition this
     cannot decide keeps its body, so the scope can still be too WIDE but never
@@ -4017,11 +4107,19 @@ _NON_ENUM_FACTS = frozenset({"name", "description"})
 
 
 def render_facts(schema) -> "tuple[tuple[str, str], ...]":
-    """The schema's string fields as a hashable `((name, value), ...)`.
+    """The schema's string AND list[str] fields as a hashable `((name, value), ...)`.
 
-    These are what a template's `{% if s.<field> == "…" %}` tests, so they are
-    what decides which of its members the produced file will really have. Sorted
-    so the tuple is a stable cache key.
+    These are what a template's `{% if s.<field> == "…" %}` / `{% if "x" in
+    s.<field> %}` tests, so they are what decides which of its members the
+    produced file will really have. Sorted so the tuple is a stable cache key.
+
+    A list[str] field (e.g. ControllerSchema.abilities) is stored joined on
+    `_LIST_FACT_SEP` so the tuple stays a flat str->str mapping — see
+    `_eval_atom`'s membership branch for the read side. An empty list is still
+    recorded (as `""`), deliberately: a field's ABSENCE from facts means
+    "unknown, cannot decide" (keeps the branch), but a field present with no
+    members means "known — nothing is in it", which correctly decides a bare
+    `"x" in s.field` test to False instead of leaving it undecided.
     """
     fields = getattr(type(schema), "model_fields", None) or {}
     out: "dict[str, str]" = {}
@@ -4031,6 +4129,8 @@ def render_facts(schema) -> "tuple[tuple[str, str], ...]":
         value = getattr(schema, fname, None)
         if isinstance(value, str):
             out[fname] = value
+        elif isinstance(value, list) and all(isinstance(v, str) for v in value):
+            out[fname] = _LIST_FACT_SEP.join(value)
     return tuple(sorted(out.items()))
 
 
@@ -4234,6 +4334,36 @@ def template_method_arities(template_dir: str, variant: str = "",
         prev = out.get(m.group("name"))
         out[m.group("name")] = ((min(lo, prev[0]), max(hi, prev[1])) if prev
                                 else (lo, hi))
+    return out
+
+
+# `_TEMPLATE_METHOD_DECL_RE` deliberately skips over the return type (a lazy
+# non-capturing group) since arity never needed it; this sibling captures it
+# instead, for `_repair_field_assignment_type_mismatch` below.
+_TEMPLATE_METHOD_RETURN_RE = re.compile(
+    r"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*"
+    r"(?:public|private|protected|internal)\b(?:\s+(?:static|virtual|override|async|sealed))*"
+    r"\s+(?P<ret>[A-Za-z_]\w*)\s+(?P<name>[A-Za-z_]\w*)\s*\(")
+
+
+@lru_cache(maxsize=64)
+def template_method_return_types(template_dir: str, variant: str = "",
+                                 facts: "tuple[tuple[str, str], ...]" = ()
+                                 ) -> "dict[str, str]":
+    """{method_name: return_type} for methods the template declares.
+
+    Sibling to `template_method_arities` (arity) — feeds the CS0029 shape
+    `_repair_field_assignment_type_mismatch` checks: a field assigned the
+    result of a template-native method whose declared return type doesn't
+    match the field's own declared type. `void` is excluded — nothing
+    meaningful is ever assigned from it, so its presence could only produce a
+    spurious "field = void" flag.
+    """
+    out: "dict[str, str]" = {}
+    for line in _template_text(template_dir, variant, facts).splitlines():
+        m = _TEMPLATE_METHOD_RETURN_RE.match(line)
+        if m and m.group("ret").lower() != "void":
+            out.setdefault(m.group("name"), m.group("ret"))
     return out
 
 

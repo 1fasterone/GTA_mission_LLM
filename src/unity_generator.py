@@ -715,7 +715,15 @@ def _sanitize_stub_type_usage(script: UnityScript,
     # SerializeField it expects to be assigned in the inspector, and was the
     # live failure shape (TimelineController.cs CS1061: stub `Timeline` has no
     # `Play()`) that a bare `\.` silently let through uncaught.
-    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\??\.\s*\w+\s*\(")
+    #
+    # No trailing `\(` requirement — a stub class has ZERO real members by
+    # construction (_collect_custom_type_stubs emits an empty body), so a bare
+    # PROPERTY/field read off one (`_timeline.IsPaused`) is exactly as invalid
+    # as a method call, just without the parens the old pattern required. Hit
+    # live: FinishSequence.cs CS1061 `_timeline.IsPaused` — read, never called
+    # — sailed through this check while a same-shaped `.Play()` call next to it
+    # would have been caught.
+    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\??\.\s*\w+\b")
 
     def _strip(body: str) -> str:
         if not body:
@@ -725,8 +733,22 @@ def _sanitize_stub_type_usage(script: UnityScript,
     script.awake_extra        = _strip(script.awake_extra)
     script.update_extra       = _strip(script.update_extra)
     script.fixed_update_extra = _strip(script.fixed_update_extra)
+    surviving_methods = []
     for m in script.extra_methods:
-        m.body = _strip(m.body)
+        before = m.body
+        m.body = _strip(before)
+        # A method left with no live (non-blank, non-comment) statement after
+        # stripping still has to satisfy its own signature — a non-void method
+        # with an empty body is CS0161, a new error traded for the one just
+        # fixed. Only reached when this pass actually removed something
+        # (`before != m.body`); an author method that was already empty is not
+        # this pass's problem to solve.
+        if before != m.body and not any(
+                ln.strip() and not ln.lstrip().startswith("//")
+                for ln in m.body.splitlines()):
+            continue
+        surviving_methods.append(m)
+    script.extra_methods = surviving_methods
 
 
 # Verified public API of composed micro classes (--compose mode) a custom script
