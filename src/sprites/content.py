@@ -49,8 +49,14 @@ class SpriteCue:
     action:      str          # e.g. "idle", "run", "punch_light"
     frame_index: int          # 0-based within the action
     prompt:      str          # full generation prompt (character_desc + pose hint)
-    width:       int = 1024
-    height:      int = 1024
+    # 512, not 1024: comfyui_backend._CHECKPOINT is pinned to an SD1.5-family
+    # checkpoint (see that module's own comment for why), and SD1.5 wasn't
+    # trained past ~512x512 — asking it for 1024x1024 in one pass commonly
+    # produces duplicated/deformed bodies (the classic "SD1.5 at SDXL
+    # resolution" artifact) rather than a cleaner, larger image. Unity's
+    # Sprite import scales freely, so nothing downstream needs the pixels.
+    width:       int = 512
+    height:      int = 512
 
 
 def _seed_for(entity_id: str, seed: int) -> int:

@@ -712,6 +712,17 @@ def test_a_ui_first_game_composes_a_board():
     assert [p["id"] for p in board.options["pieces"]] == ["FileIcons"]
 
 
+def test_a_ui_first_controller_targets_systems_not_player():
+    """unity_pipeline.run() stamps schema.meta["composed_player_controller"]
+    only when a composed controller subsystem targets "player" — a ui_first
+    PointerController must keep target="systems" or a declared-non-embodied
+    game would get graded as if it had an avatar (see unity_playability's
+    avatar check)."""
+    ctrl = next(s for s in _subs(_schema()) if s.kind == "controller")
+    assert ctrl.target == "systems"
+    assert ctrl.name == "PointerController"
+
+
 def test_the_board_is_titled_after_the_mission():
     """A board captioned "Game Board" under a briefing that calls the game
     something else is two player-facing surfaces disagreeing about what is

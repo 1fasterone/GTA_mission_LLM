@@ -457,6 +457,14 @@ def unity_validate(
         if before != len(schema.scripts):
             console.print(f"  [magenta]FIX[/]  composition owns {before - len(schema.scripts)} "
                           "subsystem(s) — dropped duplicate built-in/name-colliding scripts")
+        # Same stamp unity_pipeline.run() leaves after its own drop_owned_scripts
+        # call (see that comment) — without it, a `unity-playability` run against
+        # THIS command's rewritten schema sidecar (below) would report the
+        # ERROR-level "no player script" false positive again, because this
+        # recompile just erased the same type="player" script that check reads.
+        if isinstance(schema.meta, dict):
+            schema.meta["composed_player_controller"] = any(
+                u.kind == "controller" and u.target == "player" for u in composed_units)
         deps = {**deps, **composer.module_deps(composed_units)}
         if any(u.kind in ("input", "controller") for u in composed_units):
             _pkg_id, _pkg_ver = resolver.resolve_package("input system", schema.unity_version)

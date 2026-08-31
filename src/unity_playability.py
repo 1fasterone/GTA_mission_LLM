@@ -309,7 +309,19 @@ def _ungraded(rep: PlayabilityReport, check: str, why: str) -> None:
 # Each appends its findings and records pass/fail under its own name.
 
 def _controllers(schema: UnitySchema) -> set[str]:
-    return {(s.type or "").lower() for s in (schema.scripts or [])}
+    """Script types that count as a movement controller.
+
+    Compose mode drops a schema-level type="player" script the instant it
+    builds its own controller micro (unity_compose.drop_owned_scripts), so
+    schema.scripts alone goes blind to a project that plainly has one. The
+    meta stamp (unity_pipeline.run, set only when compose built the PLAYER's
+    controller — never the ui_first PointerController) is what's left in its
+    place; folding it in here keeps every caller below in sync automatically.
+    """
+    types = {(s.type or "").lower() for s in (schema.scripts or [])}
+    if schema.meta.get("composed_player_controller"):
+        types.add("player")
+    return types
 
 
 def _objective_refs(schema: UnitySchema) -> dict[str, str]:

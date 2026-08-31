@@ -32,6 +32,7 @@ from .objectives    import ObjectivesPipeline,    ObjectivesSchema
 from .rules         import RulesPipeline,         RulesSchema
 from .board         import BoardPipeline,         BoardSchema
 from .behavior_tree  import BehaviorTreePipeline,  BehaviorTreeSchema
+from .waypoint       import WaypointPipeline,      WaypointSchema
 
 __all__ = [
     "ModelPipeline",
@@ -64,6 +65,7 @@ __all__ = [
     "RulesPipeline",        "RulesSchema",
     "BoardPipeline",        "BoardSchema",
     "BehaviorTreePipeline", "BehaviorTreeSchema",
+    "WaypointPipeline",     "WaypointSchema",
 ]
 
 
@@ -104,6 +106,7 @@ REGISTRY: dict[str, type[Any]] = {
     "rules":        RulesPipeline,
     "board":        BoardPipeline,
     "behavior_tree": BehaviorTreePipeline,
+    "waypoint":     WaypointPipeline,
 }
 
 

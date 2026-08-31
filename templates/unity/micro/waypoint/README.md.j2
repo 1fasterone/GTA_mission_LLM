@@ -1,0 +1,30 @@
+# {{ s.name }} — Waypoint Marker
+
+**Variant:** {{ variant }}
+
+{{ s.description }}
+
+## What it does
+
+`{{ s.name }}` builds one small on-screen marker at `Awake()` (finding or
+creating a `Canvas` the same way `SceneSetup` does) and, every `LateUpdate()`,
+clamps it to the screen edge in the direction of whatever target `SetTarget`
+last named. It hides itself when there is no target, the target hasn't
+spawned yet, the target is already fully on-screen, or the player is within
+3 world units of it.
+
+## API
+
+```csharp
+var waypoint = GameContext.Instance.Get<{{ s.name }}>();
+waypoint.SetTarget("VaultDoor");   // points at the spawned "VaultDoor_0"
+waypoint.SetTarget("");           // hides the marker
+```
+
+## Wiring
+
+Composed alongside the "objectives" subsystem (`unity_compose.subsystems_for`)
+whenever a mission has real objectives in a spatial (non-board) project. The
+generated `GameWiring.RefreshObjectiveHud()` calls `SetTarget` with the same
+`targetRef` its HUD text reads — the marker and the HUD label always name the
+same objective.

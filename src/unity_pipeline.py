@@ -43,9 +43,8 @@ from .unity_concept_scripts import (extract_named_scripts,
 from .unity_concept_missions import inject_missing_concept_missions
 from .unity_layout        import compute_layout
 from .unity_scenebind     import apply_scene
-from .unity_playability   import (PlayabilityGateError,
-                                  evaluate as evaluate_playability,
-                                  gate as playability_gate)
+from .unity_playability   import PlayabilityGateError, gate as playability_gate
+from .unity_playability_artifact import evaluate_project
 from .unity_playability_repair import repair_and_regrade
 from .unity_pathnorm      import normalize_paths
 from .unity_objective_targets import resolve_objective_targets
@@ -887,6 +886,26 @@ _SCHEMA_FILL_RETRY_REMINDER = (
 )
 
 
+def _read_project_files_for_grading(project_root: Path) -> dict[str, str]:
+    """Read a just-written project back off disk into the
+    `{relative_path: content}` shape unity_playability_artifact's checks need.
+
+    `write()` returns `(project_root, file_count)`, not the in-memory files
+    dict `generate()` built — reading it back is cheaper than changing that
+    signature. Binary assets (models, textures, ...) fail to decode as UTF-8
+    and are skipped; none of the artifact checks read them."""
+    out: dict[str, str] = {}
+    for p in Path(project_root).rglob("*"):
+        if not p.is_file():
+            continue
+        try:
+            out[str(p.relative_to(project_root)).replace("\\", "/")] = \
+                p.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+    return out
+
+
 # ── Pipeline class ─────────────────────────────────────────────────────────────
 
 class UnityPipeline:
@@ -1717,6 +1736,18 @@ class UnityPipeline:
             if before != len(schema.scripts):
                 self._fix(f"composition owns {before - len(schema.scripts)} subsystem(s) — "
                           "dropped duplicate built-in/name-colliding scripts")
+            # Step 7's avatar check (unity_playability._controllers) reads only
+            # schema.scripts.type — exactly the field drop_owned_scripts just
+            # erased a type="player" entry from, whenever compose builds its own
+            # controller micro. Left unstamped, EVERY compose'd project whose
+            # schema-fill didn't also tag an entity Player would hard-fail the
+            # playability gate as "no player script", despite a real controller
+            # existing on disk. Only true when compose actually built the
+            # PLAYER's controller (target="player") — a ui_first PointerController
+            # (target="systems", locomotion='none') must never satisfy this, or a
+            # declared-non-embodied game would be graded as if it had an avatar.
+            schema.meta["composed_player_controller"] = any(
+                u.kind == "controller" and u.target == "player" for u in composed_units)
             # Contribute the micros' module deps (UI/UGUI/AI/...) so the composed
             # project compiles.
             manifest_deps = {**manifest_deps, **composer.module_deps(composed_units)}
@@ -2034,7 +2065,7 @@ class UnityPipeline:
         # objectives or the entities the brief named explicitly says so here
         # instead of waiting to be noticed in the editor.
         self._step(7, "Playability evaluator grades the build")
-        report = evaluate_playability(schema)
+        report = evaluate_project(schema, _read_project_files_for_grading(project_root))
         # markup=False: findings carry schema field paths, which rich would
         # otherwise read as console markup and swallow.
         console.print(report.render(), markup=False,

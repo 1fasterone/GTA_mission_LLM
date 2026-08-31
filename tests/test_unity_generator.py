@@ -25,6 +25,14 @@ _STALE_EVENT_SYSTEM_GUID = "76c392e42b5098d4f8003d6289d9e15e"
 _URP_LIT_GUID = "933532a4fcc9baf4fa0491de14d08ed7"
 _HDRP_LIT_GUID = "6e4ae4064600d784cac1e41a9e6f2e59"
 _BUILTIN_STANDARD_GUID = "0000000000000000f000000000000000"
+# URP Volume override GUIDs (sourced from real installed Unity Editors,
+# cross-checked against this repo's actual Unity 6 target — see
+# unity_generator.py's own comment above these constants for provenance).
+_COLOR_ADJUSTMENTS_GUID_PP = "66f335fb1ffd8684294ad653bf1c7564"
+_TONEMAPPING_GUID_PP = "97c23e3b12dc18c42a140437e53d3951"
+_VIGNETTE_GUID_PP = "899c54efeace73346a0a16faa3afe726"
+_BLOOM_GUID_PP = "0b2db86121404754db890f4c8dfe81b2"
+_UNIVERSAL_CAM_DATA_GUID = "a79441f348de89743a2939f4d699eac1"
 
 
 @pytest.fixture
@@ -609,6 +617,78 @@ class TestMaterialShaderPipeline:
         mat = files_3d["FullProject/Assets/Materials/Primary.mat"]
         assert _URP_LIT_GUID in mat
         assert _HDRP_LIT_GUID not in mat
+
+
+# ── Primitive fallback material harmonization (regression: plasticky primitives) ─
+# Baked palette materials (_generate_material) use smoothness 0.10-0.40 and
+# Metallic 0. A spawned entity with no resolved catalog asset falls back to a
+# runtime primitive colored only via `m.color = color`, leaving smoothness at
+# the shader's own default (~0.5) — visibly glossier than everything else in
+# the scene. EntitySpawner.cs.j2's runtime fallback must match that band.
+
+class TestPrimitiveFallbackMaterialHarmonization:
+    MANIFEST = {"com.unity.render-pipelines.universal": "14.0.9"}
+
+    def test_primitive_fallback_sets_smoothness_and_metallic(
+            self, gen, full_3d_schema):
+        full_3d_schema.entities = [
+            EntitySpec(name="Crate", kind="prop", count=3, placement="scatter",
+                       tag="Untagged", model_hint="wooden crate"),
+        ]
+        files = gen.generate(full_3d_schema, self.MANIFEST)
+        spawner = files["FullProject/Assets/Scripts/EntitySpawner.cs"]
+        assert 'SpawnGroup("Crate"' in spawner
+        assert 'm.SetFloat("_Smoothness", 0.20f)' in spawner
+        assert 'm.SetFloat("_Metallic", 0f)' in spawner
+        assert 'm.SetColor("_BaseColor", color)' in spawner
+
+
+# ── Post-processing volume (regression: no tonemap/grade to unify a scene) ───────
+# Nothing baked exposure/contrast/saturation across a scene's mismatched asset
+# palettes before this — see _generate_postprocess_profile's own docstring.
+
+class TestPostProcessVolume:
+    def test_urp_project_gets_a_postprocess_profile(self, files_3d):
+        assert "FullProject/Assets/Settings/PostProcessProfile.asset" in files_3d
+        assert "FullProject/Assets/Settings/PostProcessProfile.asset.meta" in files_3d
+
+    def test_profile_carries_the_expected_overrides(self, files_3d):
+        prof = files_3d["FullProject/Assets/Settings/PostProcessProfile.asset"]
+        assert _COLOR_ADJUSTMENTS_GUID_PP in prof
+        assert _TONEMAPPING_GUID_PP in prof
+        assert _VIGNETTE_GUID_PP in prof
+        assert _BLOOM_GUID_PP in prof
+        # Tonemapping mode 1 = Neutral (minimal hue/saturation impact, chosen
+        # over ACES so it can't fight the "never black" ambient floor).
+        assert "mode:\n    m_OverrideState: 1\n    m_Value: 1\n" in prof
+
+    def test_scene_gets_a_global_volume_pointing_at_the_profile(self, gen, full_3d_schema):
+        from src.unity_generator import _make_guid
+        files = gen.generate(full_3d_schema, {})
+        scene = files["FullProject/Assets/Scenes/Main.unity"]
+        assert "PostProcessVolume" in scene
+        assert "m_IsGlobal: 1" in scene
+        profile_guid = _make_guid("FullProject/Settings/PostProcessProfile")
+        assert f"sharedProfile: {{fileID: 11400000, guid: {profile_guid}, type: 2}}" in scene
+
+    def test_main_camera_gets_post_processing_enabled(self, files_3d):
+        scene = files_3d["FullProject/Assets/Scenes/Main.unity"]
+        assert _UNIVERSAL_CAM_DATA_GUID in scene
+        assert "m_RenderPostProcessing: 1" in scene
+
+    def test_hdrp_project_gets_no_postprocess_profile(self, gen, schema_hdrp):
+        files = gen.generate(schema_hdrp, {})
+        pn = schema_hdrp.project_name
+        assert f"{pn}/Assets/Settings/PostProcessProfile.asset" not in files
+        scene = files[f"{pn}/Assets/Scenes/{schema_hdrp.scenes[0]}.unity"]
+        assert "PostProcessVolume" not in scene
+        assert _UNIVERSAL_CAM_DATA_GUID not in scene
+
+    def test_output_is_deterministic(self, gen, full_3d_schema):
+        first  = gen.generate(full_3d_schema, {})
+        second = gen.generate(full_3d_schema, {})
+        assert (first["FullProject/Assets/Settings/PostProcessProfile.asset"]
+                == second["FullProject/Assets/Settings/PostProcessProfile.asset"])
 
 
 # ── Player controller component guard (regression: CharacterController missing) ──
