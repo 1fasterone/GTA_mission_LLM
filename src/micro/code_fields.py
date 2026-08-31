@@ -748,7 +748,7 @@ def _repair_field_assignment_type_mismatch(
                          and (rnorm, fnorm) not in _ASSIGNMENT_WIDENING_PAIRS)
         else:
             mismatched = False
-        if mismatched:
+        if mismatched and m is not None:
             indent = line[:len(line) - len(line.lstrip())]
             out_lines.append(
                 f"{indent}// AUDIT: removed assignment -- {line.strip()} "
