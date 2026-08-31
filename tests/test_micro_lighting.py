@@ -415,6 +415,46 @@ def test_scene_yaml_carries_the_luminance_floor(tmp_path):
     assert _luminance(*sky) >= AMBIENT_LUMINANCE_FLOOR - 1e-6
 
 
+# ── build_default_lighting_schema (pure, LLM-free rig for non-compose) ───────
+# Factored out of LightingPipeline.default_fix so the deterministic generator
+# path can bake an identical baseline rig without constructing a
+# LightingPipeline (whose __init__ builds an unused LLM chat client). Must stay
+# equivalent to what default_fix produces for a fresh, unauthored schema.
+
+from src.micro.lighting import build_default_lighting_schema  # noqa: E402
+
+
+@pytest.mark.parametrize("variant", VARIANTS)
+def test_build_default_lighting_schema_matches_default_fix(pipeline, variant):
+    via_pipeline = pipeline.default_fix(LightingSchema(variant=variant), variant)
+    via_pure     = build_default_lighting_schema(variant)
+    assert [l.model_dump() for l in via_pure.lights] == \
+        [l.model_dump() for l in via_pipeline.lights]
+    for field in ("ambient_mode", "ambient_sky_r", "ambient_sky_g", "ambient_sky_b",
+                  "ambient_equator_r", "ambient_equator_g", "ambient_equator_b",
+                  "ambient_ground_r", "ambient_ground_g", "ambient_ground_b",
+                  "ambient_intensity"):
+        assert getattr(via_pure, field) == getattr(via_pipeline, field), field
+
+
+def test_build_default_lighting_schema_applies_palette_tint():
+    palette = dict(
+        primary={"r": 0.8, "g": 0.1, "b": 0.1}, secondary={"r": 0.1, "g": 0.8, "b": 0.1},
+        accent={"r": 0.1, "g": 0.1, "b": 0.9}, background={"r": 0.05, "g": 0.05, "b": 0.1},
+        trim={"r": 0.9, "g": 0.9, "b": 0.9},
+    )
+    tinted   = build_default_lighting_schema("three_point", palette)
+    untinted = build_default_lighting_schema("three_point", {})
+    assert [l.model_dump() for l in tinted.lights] != \
+        [l.model_dump() for l in untinted.lights]
+
+
+def test_build_default_lighting_schema_is_deterministic():
+    a = build_default_lighting_schema("outdoor_sun", {"primary": {"r": 0.5, "g": 0.5, "b": 0.5}})
+    b = build_default_lighting_schema("outdoor_sun", {"primary": {"r": 0.5, "g": 0.5, "b": 0.5}})
+    assert a.model_dump() == b.model_dump()
+
+
 def test_non_composed_project_still_gets_a_lit_scene(tmp_path):
     """No --compose means no lighting unit — the generator must still resolve one."""
     from src.unity_generator import UnityProjectGenerator
@@ -424,6 +464,39 @@ def test_non_composed_project_still_gets_a_lit_scene(tmp_path):
     scene = files[f"{schema.project_name}/Assets/Scenes/Main.unity"]
     sky = _yaml_color(scene, "m_AmbientSkyColor")
     assert _luminance(*sky) >= AMBIENT_LUMINANCE_FLOOR - 1e-6
+
+
+def test_non_composed_project_still_gets_the_extra_light_rig(tmp_path):
+    """Regression: only the ambient gradient was ever unconditional. The extra
+    fill/rim/practical Light rig beyond the single baked Directional Light —
+    and the LightingDirector.cs script that carries it — used to exist only
+    when --compose ran. A non-composed build must get the same rig."""
+    from src.unity_generator import UnityProjectGenerator
+    schema = _project(description="derelict mine tunnels",
+                      meta={"user_prompt": "derelict mine tunnels"})
+    files = UnityProjectGenerator("templates/unity").generate(schema, {})
+    from src.unity_generator import _make_guid
+    cs_path = f"{schema.project_name}/Assets/Scripts/LightingDirector.cs"
+    assert cs_path in files
+    assert "class LightingDirector" in files[cs_path]
+    guid = _make_guid(f"{schema.project_name}/Scripts/LightingDirector")
+    scene = files[f"{schema.project_name}/Assets/Scenes/Main.unity"]
+    assert guid in scene
+
+
+def test_composed_lighting_unit_is_not_duplicated(tmp_path):
+    """When --compose DID run its own lighting unit, the generator's baseline
+    attach must be a no-op — never a second rig fighting the composed one."""
+    from src.unity_compose import ComposedUnit
+    from src.unity_generator import UnityProjectGenerator
+    schema = _project(description="derelict mine tunnels",
+                      meta={"user_prompt": "derelict mine tunnels"})
+    units = [ComposedUnit(kind="lighting", variant="interior_practical",
+                          class_name="ComposedLighting", guid="a" * 32,
+                          target="systems", file_id=900000099)]
+    files = UnityProjectGenerator("templates/unity").generate(
+        schema, {}, composed_units=units)
+    assert f"{schema.project_name}/Assets/Scripts/LightingDirector.cs" not in files
 
 
 def test_composed_lighting_lands_on_a_systems_holder(tmp_path):

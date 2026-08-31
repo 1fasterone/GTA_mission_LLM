@@ -691,6 +691,22 @@ class TestAvatarBinding:
         rep = evaluate(_playable())
         assert rep.checks["avatar_binding"]
 
+    def test_composed_player_controller_prevents_the_avatar_error(self):
+        """--compose drops the schema-level type="player" script the moment it
+        builds its own controller micro (unity_compose.drop_owned_scripts) —
+        without the meta stamp this leaves behind, a project with a real
+        controller on disk but no Player-tagged entity would fail the same
+        "no player script" ERROR _script_only() below is a WARN for."""
+        s = self._script_only()
+        s.scripts = []  # compose already dropped the type="player" script
+        s.meta["composed_player_controller"] = True
+        rep, checks = _checks(s)
+        assert "avatar" not in checks
+        assert rep.checks["avatar"]
+        assert next(f for f in rep.findings
+                    if f.check == "avatar_binding").severity == WARN
+
+
     def test_a_plural_avatar_is_an_error(self):
         """count>1 spawns N Player-tagged objects and disables the generator's
         player-merge, which needs count==1."""

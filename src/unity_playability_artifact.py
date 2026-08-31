@@ -43,7 +43,7 @@ from .unity_layout_archetype import pick_player_entity
 from .unity_playability import (ERROR, WARN, Finding, PlayabilityReport,
                                 _is_objective, _objective_names, _ungraded,
                                 evaluate)
-from .unity_schema import UnitySchema
+from .unity_schema import UnitySchema, is_embodied
 
 # How far the emitted avatar may sit from the spawn the layout baked before it
 # counts as a different place. The merge writes y = baked_y + 1.0 (the capsule
@@ -249,6 +249,107 @@ def _check_objectives_spawned(schema: UnitySchema, files: Mapping[str, str],
     rep.checks["objectives_spawned"] = not missing
 
 
+# ── visual-quality checks ─────────────────────────────────────────────────────
+# All four close the same gap: a generated project could look bland/garish or
+# leave the player with no spatial sense of the objective, and the schema-only
+# evaluator (unity_playability.py) has no way to see any of it — these facts
+# only exist in the emitted FILES. Structural presence only, same as every
+# other check here — never a subjective "does it look good".
+
+def _check_postprocessing_present(schema: UnitySchema, files: Mapping[str, str],
+                                  rep: PlayabilityReport) -> None:
+    """A global URP Volume (_generate_postprocess_profile) is what keeps a
+    scene's baked palette materials, primitive fallbacks, and untouched
+    Kenney/FBX textures from reading as an uncalibrated clash of saturated
+    colors. URP-only for v1 (see unity_generator._emit_postprocess_volume)."""
+    if schema.render_pipeline != "URP":
+        _ungraded(rep, "postprocessing_present",
+                  f"render_pipeline={schema.render_pipeline!r} — the post-"
+                  "processing volume is only implemented for URP")
+        return
+    present = any(p.endswith("PostProcessProfile.asset") for p in files)
+    if not present:
+        rep.findings.append(Finding(
+            "postprocessing_present", WARN,
+            "no PostProcessProfile.asset in the build — nothing tone-maps or "
+            "unifies exposure/contrast/saturation across the scene's mixed "
+            "asset palettes",
+            "unity_generator._emit_postprocess_volume"))
+    rep.checks["postprocessing_present"] = present
+
+
+def _check_lighting_rig_present(schema: UnitySchema, files: Mapping[str, str],
+                                rep: PlayabilityReport) -> None:
+    """The palette-tinted fill/rim/practical light rig (beyond the single
+    baked Directional Light) — see unity_generator._emit_baseline_lighting
+    and its `--compose` counterpart, the always-on "lighting" subsystem."""
+    present = any(p.endswith("LightingDirector.cs") for p in files)
+    if not present:
+        rep.findings.append(Finding(
+            "lighting_rig_present", WARN,
+            "no LightingDirector.cs in the build — the scene is lit by only "
+            "the one flat Directional Light plus the ambient gradient, with "
+            "no fill/rim/practical rig",
+            "unity_generator._emit_baseline_lighting"))
+    rep.checks["lighting_rig_present"] = present
+
+
+def _check_primitive_material_smoothness(schema: UnitySchema,
+                                         files: Mapping[str, str],
+                                         rep: PlayabilityReport) -> None:
+    """An entity with no resolved catalog asset falls back to a runtime
+    primitive (EntitySpawner.cs.j2) — it must match the baked palette
+    materials' smoothness/metallic band, not the shader's own glossy
+    default, or it reads as plasticky next to everything else in the scene."""
+    spawner = next((c for p, c in files.items() if p.endswith("EntitySpawner.cs")), None)
+    if spawner is None:
+        _ungraded(rep, "primitive_material_smoothness",
+                  "the build emitted no EntitySpawner.cs to read")
+        return
+    present = 'SetFloat("_Smoothness"' in spawner or 'SetFloat("_Glossiness"' in spawner
+    if not present:
+        rep.findings.append(Finding(
+            "primitive_material_smoothness", WARN,
+            "EntitySpawner.cs's primitive fallback sets only .color, leaving "
+            "smoothness at the shader default — a visibly glossier look than "
+            "the baked palette materials use",
+            "templates/unity/EntitySpawner.cs.j2"))
+    rep.checks["primitive_material_smoothness"] = present
+
+
+def _check_objective_marker_present(schema: UnitySchema, files: Mapping[str, str],
+                                    rep: PlayabilityReport) -> None:
+    """The screen-edge waypoint (src/micro/waypoint.py) — the only thing that
+    gives the player a SPATIAL sense of where the objective is, as opposed to
+    the flat-text HUD readout / rules hint bar. Compose-only (like the
+    objective-text HUD it rides alongside), and only meaningful for a spatial
+    game with a real authored objective."""
+    if not is_embodied(schema):
+        _ungraded(rep, "objective_marker_present",
+                  "locomotion='none' — a board's objectives bind to board "
+                  "events, not a world Transform a marker could point at")
+        return
+    if not any((m.objectives for m in (schema.missions or ()))):
+        _ungraded(rep, "objective_marker_present",
+                  "no mission carries a real objective for a marker to point at")
+        return
+    if not any(p.endswith("GameWiring.cs") for p in files):
+        _ungraded(rep, "objective_marker_present",
+                  "the build did not use --compose — the waypoint marker "
+                  "rides the same compose-only wiring as the HUD's objective "
+                  "text readout")
+        return
+    present = any(p.endswith("Waypoint.cs") for p in files)
+    if not present:
+        rep.findings.append(Finding(
+            "objective_marker_present", WARN,
+            "the build has a real objective and used --compose, but no "
+            "Waypoint.cs was composed — the player has no spatial indication "
+            "of where the objective is",
+            "unity_compose.subsystems_for (waypoint subsystem)"))
+    rep.checks["objective_marker_present"] = present
+
+
 # ── entry points ──────────────────────────────────────────────────────────────
 
 def grade_artifact(schema: UnitySchema, files: Mapping[str, str],
@@ -264,6 +365,10 @@ def grade_artifact(schema: UnitySchema, files: Mapping[str, str],
         _check_avatar_spawn(schema, scene_name, scene, rep)
     _check_avatar_not_duplicated(schema, files, rep)
     _check_objectives_spawned(schema, files, rep)
+    _check_postprocessing_present(schema, files, rep)
+    _check_lighting_rig_present(schema, files, rep)
+    _check_primitive_material_smoothness(schema, files, rep)
+    _check_objective_marker_present(schema, files, rep)
     return rep
 
 

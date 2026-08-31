@@ -2155,6 +2155,171 @@ def _generate_material(mat_name: str, hex_color: str,
         )
 
 
+# ── Post-processing (URP Volume) ──────────────────────────────────────────────
+# GUIDs sourced from real installed Unity Editors, read directly from
+# Editor/Data/Resources/PackageManager/BuiltInPackages/*/*.cs.meta — not
+# guessed. Cross-checked identical (guid AND every VolumeParameter field name
+# below) between com.unity.render-pipelines.{universal,core} 14.0.11 (Unity
+# 2022.3.30f1) and 17.0.4 (Unity 6000.0.66f2 — this repo's own default
+# `_VERSION_MAP` target). A package's foundational MonoScript guids are the
+# class's permanent identity; Unity does not regenerate a .meta's guid across
+# version bumps (every existing user project's serialized references would
+# break), which is why they hold across this jump. A future URP major that
+# did change one fails soft regardless (Unity shows "script cannot be
+# loaded" for that one override, not a crash or a broken Volume).
+_VOLUME_GUID             = "172515602e62fb746b5d573b38a5fe58"
+_VOLUME_PROFILE_GUID     = "d7fd9488000d3734a9e00ee676215985"
+_BLOOM_GUID              = "0b2db86121404754db890f4c8dfe81b2"
+_COLOR_ADJUSTMENTS_GUID  = "66f335fb1ffd8684294ad653bf1c7564"
+_TONEMAPPING_GUID        = "97c23e3b12dc18c42a140437e53d3951"
+_VIGNETTE_GUID           = "899c54efeace73346a0a16faa3afe726"
+_UNIVERSAL_CAM_DATA_GUID = "a79441f348de89743a2939f4d699eac1"
+
+
+def _generate_postprocess_profile() -> str:
+    """One conservative, fixed URP Volume Profile: a Neutral tonemap, a small
+    contrast lift + saturation trim, a subtle vignette, and a low bloom.
+
+    Fixed constants for v1, not schema/palette-driven — the point is a small
+    universal grade that keeps a scene's baked palette materials, runtime
+    primitive fallbacks (see EntitySpawner's fallback branch), and untouched
+    Kenney/FBX asset textures from reading as an uncalibrated clash of
+    saturated colors sitting side by side with nothing tying them together,
+    not a stylistic statement. Neutral (not ACES) for the tonemap: minimal
+    hue/saturation impact, so it can't fight the "never black" ambient floor
+    this repo already enforces (src/micro/lighting.py).
+
+    Field names/types read directly from the real URP override sources
+    (Bloom.cs, ColorAdjustments.cs, Tonemapping.cs, Vignette.cs) — a
+    VolumeParameter<T> always serializes as {m_OverrideState, m_Value}; an
+    omitted field just keeps that class's own default, exactly like adding a
+    new field to an existing component never breaks old scenes.
+    """
+    return (
+        "%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n"
+        "--- !u!114 &11400000\n"
+        "MonoBehaviour:\n"
+        "  m_ObjectHideFlags: 0\n"
+        "  m_CorrespondingSourceObject: {fileID: 0}\n"
+        "  m_PrefabInstance: {fileID: 0}\n"
+        "  m_PrefabAsset: {fileID: 0}\n"
+        "  m_GameObject: {fileID: 0}\n"
+        "  m_Enabled: 1\n"
+        "  m_EditorHideFlags: 0\n"
+        f"  m_Script: {{fileID: 11500000, guid: {_VOLUME_PROFILE_GUID}, type: 3}}\n"
+        "  m_Name: PostProcessProfile\n"
+        "  m_EditorClassIdentifier: \n"
+        "  components:\n"
+        "  - {fileID: 11400001}\n"
+        "  - {fileID: 11400002}\n"
+        "  - {fileID: 11400003}\n"
+        "  - {fileID: 11400004}\n"
+        "--- !u!114 &11400001\n"
+        "MonoBehaviour:\n"
+        "  m_ObjectHideFlags: 3\n"
+        "  m_CorrespondingSourceObject: {fileID: 0}\n"
+        "  m_PrefabInstance: {fileID: 0}\n"
+        "  m_PrefabAsset: {fileID: 0}\n"
+        "  m_GameObject: {fileID: 0}\n"
+        "  m_Enabled: 1\n"
+        "  m_EditorHideFlags: 0\n"
+        f"  m_Script: {{fileID: 11500000, guid: {_COLOR_ADJUSTMENTS_GUID}, type: 3}}\n"
+        "  m_Name: ColorAdjustments\n"
+        "  m_EditorClassIdentifier: \n"
+        "  active: 1\n"
+        "  postExposure:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0\n"
+        "  contrast:\n"
+        "    m_OverrideState: 1\n"
+        "    m_Value: 8\n"
+        "  colorFilter:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: {r: 1, g: 1, b: 1, a: 1}\n"
+        "  hueShift:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0\n"
+        "  saturation:\n"
+        "    m_OverrideState: 1\n"
+        "    m_Value: -6\n"
+        "--- !u!114 &11400002\n"
+        "MonoBehaviour:\n"
+        "  m_ObjectHideFlags: 3\n"
+        "  m_CorrespondingSourceObject: {fileID: 0}\n"
+        "  m_PrefabInstance: {fileID: 0}\n"
+        "  m_PrefabAsset: {fileID: 0}\n"
+        "  m_GameObject: {fileID: 0}\n"
+        "  m_Enabled: 1\n"
+        "  m_EditorHideFlags: 0\n"
+        f"  m_Script: {{fileID: 11500000, guid: {_TONEMAPPING_GUID}, type: 3}}\n"
+        "  m_Name: Tonemapping\n"
+        "  m_EditorClassIdentifier: \n"
+        "  active: 1\n"
+        "  mode:\n"
+        "    m_OverrideState: 1\n"
+        "    m_Value: 1\n"
+        "--- !u!114 &11400003\n"
+        "MonoBehaviour:\n"
+        "  m_ObjectHideFlags: 3\n"
+        "  m_CorrespondingSourceObject: {fileID: 0}\n"
+        "  m_PrefabInstance: {fileID: 0}\n"
+        "  m_PrefabAsset: {fileID: 0}\n"
+        "  m_GameObject: {fileID: 0}\n"
+        "  m_Enabled: 1\n"
+        "  m_EditorHideFlags: 0\n"
+        f"  m_Script: {{fileID: 11500000, guid: {_VIGNETTE_GUID}, type: 3}}\n"
+        "  m_Name: Vignette\n"
+        "  m_EditorClassIdentifier: \n"
+        "  active: 1\n"
+        "  color:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: {r: 0, g: 0, b: 0, a: 1}\n"
+        "  center:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: {x: 0.5, y: 0.5}\n"
+        "  intensity:\n"
+        "    m_OverrideState: 1\n"
+        "    m_Value: 0.2\n"
+        "  smoothness:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0.2\n"
+        "  rounded:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0\n"
+        "--- !u!114 &11400004\n"
+        "MonoBehaviour:\n"
+        "  m_ObjectHideFlags: 3\n"
+        "  m_CorrespondingSourceObject: {fileID: 0}\n"
+        "  m_PrefabInstance: {fileID: 0}\n"
+        "  m_PrefabAsset: {fileID: 0}\n"
+        "  m_GameObject: {fileID: 0}\n"
+        "  m_Enabled: 1\n"
+        "  m_EditorHideFlags: 0\n"
+        f"  m_Script: {{fileID: 11500000, guid: {_BLOOM_GUID}, type: 3}}\n"
+        "  m_Name: Bloom\n"
+        "  m_EditorClassIdentifier: \n"
+        "  active: 1\n"
+        "  threshold:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0.9\n"
+        "  intensity:\n"
+        "    m_OverrideState: 1\n"
+        "    m_Value: 0.15\n"
+        "  scatter:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0.7\n"
+        "  clamp:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 65472\n"
+        "  tint:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: {r: 1, g: 1, b: 1, a: 1}\n"
+        "  highQualityFiltering:\n"
+        "    m_OverrideState: 0\n"
+        "    m_Value: 0\n"
+    )
+
+
 def _material_hex_and_smoothness(spec) -> tuple[str, float]:
     """MaterialSpec has no direct color field (pbr_maps are texture PATHS, not
     generated texture data — no real texture-generation backend exists). Reuse
@@ -3143,6 +3308,14 @@ class UnityProjectGenerator:
         )
         files[f"{pn}/Assets/Scripts/SceneSetup.cs.meta"] = _meta_file(_scene_setup_guid)
 
+        # A --compose build gets its own palette-tinted fill/rim/practical
+        # light rig (the "lighting" core subsystem); a build without --compose
+        # otherwise got only the single Directional Light + ambient gradient
+        # baked above. Backfill the same rig here so both paths agree.
+        _baseline_lighting_guid = self._emit_baseline_lighting(
+            files, schema, pn, _palette_rgb, composed_units)
+        _postprocess_profile_guid = self._emit_postprocess_volume(files, schema, pn)
+
         scene_ctx = {
             **base_ctx,
             "camera_position":  _cam["position"],
@@ -3167,6 +3340,8 @@ class UnityProjectGenerator:
             "model_swap_guid": _make_guid(f"{pn}/Scripts/ModelSwap"),
             "character_controller_res": "Models/Default/DefaultCharacter",
             "scene_setup_guid": _scene_setup_guid,
+            "baseline_lighting_guid": _baseline_lighting_guid,
+            "postprocess_profile_guid": _postprocess_profile_guid,
         }
         # Per-scene content (SceneSpec): mood overrides recompute the sun/fog
         # block for that scene only; an entity filter controls which groups the
@@ -3840,6 +4015,72 @@ class UnityProjectGenerator:
 
     def _render(self, template_name: str, ctx: dict) -> str:
         return self._env.get_template(template_name).render(**ctx)
+
+    def _emit_baseline_lighting(self, files: dict, schema: UnitySchema, pn: str,
+                                palette_rgb: dict, composed_units: list | None) -> "str | None":
+        """Bake the LightingDirector rig for a build that did not `--compose`.
+
+        `--compose` already emits its own LightingDirector (see MicroComposer /
+        subsystems_for's core "lighting" unit) — this is a no-op then, so a
+        project never gets two competing rigs. Otherwise every non-composed
+        build previously got only the single hard-coded scene Directional
+        Light plus the ambient gradient (both baked unconditionally into
+        scene.unity.j2 already); this adds the same palette-tinted fill/rim/
+        practical rig a `--compose` build gets.
+
+        Uses build_default_lighting_schema — the pure, LLM-free extraction of
+        what LightingPipeline.default_fix bakes for an unauthored schema —
+        rather than constructing a LightingPipeline, whose __init__ builds an
+        LLM chat client this deterministic path (Steps 4-7) must never touch.
+        Returns the new script's GUID, or None when nothing was emitted.
+        """
+        if any(u.kind == "lighting" for u in (composed_units or [])):
+            return None
+        from .micro.lighting import AMBIENT_LUMINANCE_FLOOR, build_default_lighting_schema
+
+        variant = _lighting_variant_for(schema, composed_units)
+        light_schema = build_default_lighting_schema(variant, palette_rgb)
+        # Same loader-root recipe MicroPipeline.jinja() uses for this template
+        # (search the lighting micro's own folder, then the shared micro root
+        # its `{% import "_inject.j2" %}` resolves against) — a DIFFERENT env
+        # from self._env (which doesn't cover templates/unity/micro/) and with
+        # no trim_blocks/lstrip_blocks, so a --compose build and this baseline
+        # path render byte-identical output for the same schema.
+        tpl_root = self.template_dir / "micro" / "lighting"
+        env = Environment(
+            loader=FileSystemLoader([str(tpl_root), str(tpl_root.parent)]),
+            undefined=StrictUndefined,
+            keep_trailing_newline=True,
+        )
+        cs_text = env.get_template("LightingDirector.cs.j2").render(
+            s=light_schema, variant=variant, ambient_floor=AMBIENT_LUMINANCE_FLOOR)
+        guid = _make_guid(f"{pn}/Scripts/LightingDirector")
+        files[f"{pn}/Assets/Scripts/LightingDirector.cs"] = cs_text
+        files[f"{pn}/Assets/Scripts/LightingDirector.cs.meta"] = _meta_file(guid)
+        return guid
+
+    def _emit_postprocess_volume(self, files: dict, schema: UnitySchema, pn: str) -> "str | None":
+        """Bake one conservative global URP Volume + VolumeProfile per project
+        (see _generate_postprocess_profile). Returns the profile asset's GUID
+        for the scene template's Volume component, or None when nothing was
+        emitted.
+
+        URP-only for v1: HDRP's post-processing overrides are a DIFFERENT set
+        of Runtime classes (different GUIDs, different property surfaces) even
+        though the concepts (Bloom, Tonemapping, ...) are the same, so this
+        abstains rather than guessing at an HDRP profile. Per the "abstain
+        loudly" doctrine, that's a log line, not a silent no-op.
+        """
+        if schema.render_pipeline != "URP":
+            _log.info(
+                "post-processing volume skipped for %s: render_pipeline=%r "
+                "(only URP is implemented for v1)", pn, schema.render_pipeline)
+            return None
+        profile_guid = _make_guid(f"{pn}/Settings/PostProcessProfile")
+        files[f"{pn}/Assets/Settings/PostProcessProfile.asset"] = _generate_postprocess_profile()
+        files[f"{pn}/Assets/Settings/PostProcessProfile.asset.meta"] = \
+            _native_meta(profile_guid, 11400000)
+        return profile_guid
 
     def _generate_script(self, schema: UnitySchema, script: UnityScript,
                          base_ctx: dict,

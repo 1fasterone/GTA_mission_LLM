@@ -644,13 +644,19 @@ WIRING_MICRO_KINDS: tuple[str, ...] = (
     # see unity_compose.py); a legitimate wiring target for the same reason
     # animator is (e.g. a hurt/death trigger driving PlayAction).
     "sprite_animator",
+    # waypoint — the screen-edge marker for the active objective, auto-composed
+    # alongside "objectives" for spatial games (unity_compose.py). Already
+    # wired objectives→waypoint via RefreshObjectiveHud's targetRef; a
+    # legitimate wiring target for anything else the concept implies.
+    "waypoint",
 )
 
 # Pairs unity_compose already wires with a named seam — declaring them again
 # just produces a duplicate comment, so the prompt tells the LLM to skip them.
 _WIRED_PAIRS = (
     "health↔hud, health↔statemachine, health↔audio, statemachine↔animator, "
-    "input↔controller, input↔statemachine, trigger↔saveload"
+    "input↔controller, input↔statemachine, trigger↔saveload, "
+    "objectives↔waypoint"
 )
 
 WIRING_SCHEMA_GUIDANCE = """

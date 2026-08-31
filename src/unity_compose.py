@@ -433,6 +433,7 @@ class MicroComposer:
         trigger  = _pick("trigger",      "world")
         saveload = _pick("saveload",     "systems")
         menu     = _pick("menu",         "ui")
+        waypoint = _pick("waypoint",     "ui")
 
         # Field-name helper: derive a unique C# variable name from class_name so
         # two units of the same kind (PlayerFSM/EnemyFSM) never collide.
@@ -887,23 +888,36 @@ class MicroComposer:
             # are stated. The label is the FIRST tracker still holding a live
             # objective, which is the step the rules panel is showing — the two
             # readouts name the same action or the player is told two things.
+            # targetRef rides the same "first live objective" pick so a
+            # waypoint marker (below) always points at what the HUD text
+            # names, never a different mission's objective.
             _hud_reads = "\n".join(
                 f"        if ({_fv(u)} != null)\n"
                 f"        {{\n"
                 f"            var a{i} = {_fv(u)}.ActiveObjective;\n"
-                f"            if (label.Length == 0 && a{i} != null) label = a{i}.description;\n"
+                f"            if (label.Length == 0 && a{i} != null)\n"
+                f"                {{ label = a{i}.description; targetRef = a{i}.targetRef; }}\n"
                 f"            done  += {_fv(u)}.CompletedRequired;\n"
                 f"            total += {_fv(u)}.TotalRequired;\n"
                 f"        }}"
                 for i, u in enumerate(objective_units))
+            # Waypoint (see src/micro/waypoint.py) is the only reader of
+            # targetRef — a build without one just leaves it computed and
+            # unused, cheaper than branching the read loop itself on its
+            # presence.
+            _waypoint_call = (
+                f"\n        if ({_fv(waypoint)} != null) {_fv(waypoint)}.SetTarget(targetRef);"
+                if waypoint is not None else "")
             helper_methods.append(
                 f"private void RefreshObjectiveHud()\n"
                 f"    {{\n"
                 f"        if ({uv} == null) return;\n"
                 f"        string label = \"\";\n"
+                f"        string targetRef = \"\";\n"
                 f"        int done = 0, total = 0;\n"
                 f"{_hud_reads}\n"
-                f"        {uv}.SetObjective(label, done, total);\n"
+                f"        {uv}.SetObjective(label, done, total);"
+                f"{_waypoint_call}\n"
                 f"    }}"
             )
 
@@ -2257,6 +2271,15 @@ def subsystems_for(
         subs.append(Subsystem(kind="objectives", variant="tracker", target="systems",
                               name=f"{to_pascal(mission.title, 'Mission')}Objectives",
                               options=_objectives_options_for_mission(mission)))
+    # Waypoint marker — a screen-edge indicator pointing toward the active
+    # objective's target (see RefreshObjectiveHud's targetRef read, above).
+    # Spatial games only: a UI-first board's objectives bind to board events,
+    # not a world Transform, so there is nothing in 3D space to point at.
+    # Same signal as the objectives subsystem above — real authored
+    # objectives — not a separate feature flag.
+    if not ui_first and any(m.objectives for m in (missions or [])):
+        subs.append(Subsystem(kind="waypoint", variant="edge_arrow", target="ui",
+                              name="Waypoint"))
     # ── The board layer ──────────────────────────────────────────────────────
     # The MECHANIC of a game with no avatar: the domain model (where every piece
     # is) and the legal-move logic (whether it may go where the player is

@@ -39,11 +39,17 @@ import urllib.request
 import uuid
 from typing import Optional
 
-# Pinned, explicit, all-ages-safe. Present in both G:/AI MODELS/checkpoints/
-# and F:/ComfyUI_windows_portable/.../checkpoints/ (via extra_model_paths.yaml).
-# Never replace this with a keyword search over the checkpoint library — see
-# module docstring.
-_CHECKPOINT = "sdXL_v10VAEFix.safetensors"
+# Pinned, explicit, all-ages-safe. The previous pin (an SDXL checkpoint) was
+# never present in a ComfyUI Desktop install's own models/checkpoints folder —
+# confirmed live (2026-08-30) via /object_info/CheckpointLoaderSimple, which
+# ComfyUI's /prompt validates ckpt_name against before queuing, 400ing the
+# whole graph otherwise. dreamshaper_8.safetensors is SD1.5-family, general-
+# purpose/illustration-friendly (a reasonable fit for the flat-shaded game-
+# sprite look _KEY_PROMPT_FRAGMENT asks for), and was actually present in that
+# checkpoint list. SD1.5, not SDXL, is also why SpriteCue's default resolution
+# is 512 — see content.py's own comment. Never replace this with a keyword
+# search over the checkpoint library — see module docstring.
+_CHECKPOINT = "dreamshaper_8.safetensors"
 
 _NEGATIVE_DEFAULT = (
     "photorealistic, photo, 3d render, realistic skin, gore, blood, nsfw, nude, "
@@ -143,8 +149,8 @@ class ComfyUIBackend:
         with urllib.request.urlopen(self.base_url + path, timeout=self.timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
-    def generate(self, prompt: str, *, seed: int, width: int = 1024,
-                 height: int = 1024, negative: str = "") -> Optional[bytes]:
+    def generate(self, prompt: str, *, seed: int, width: int = 512,
+                 height: int = 512, negative: str = "") -> Optional[bytes]:
         """txt2img — one frame from pure noise. Returns raw PNG bytes, or None
         on any failure (unreachable server, node error, timeout)."""
         graph = _build_txt2img_workflow(
@@ -209,6 +215,21 @@ class ComfyUIBackend:
         client_id = str(uuid.uuid4())
         try:
             resp = self._post_json("/prompt", {"prompt": graph, "client_id": client_id})
+        except urllib.error.HTTPError as exc:
+            # ComfyUI's actual validation reason (e.g. which node/field failed,
+            # such as an unknown ckpt_name) lives in the response BODY of a 400 —
+            # urlopen raises before that body is ever read, so the generic
+            # "HTTP Error 400: Bad Request" this used to log named nothing.
+            # Confirmed live (2026-08-30): that gap is exactly what hid a
+            # checkpoint-not-found rejection until /object_info was queried by
+            # hand. Best-effort — a body that isn't valid JSON just falls back
+            # to the exception's own message instead of raising a second error.
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                detail = str(exc)
+            self._warn_once("post_failed", f"POST /prompt failed (HTTP {exc.code}): {detail}")
+            return None
         except (urllib.error.URLError, OSError, ValueError) as exc:
             self._warn_once("post_failed", f"POST /prompt failed ({type(exc).__name__}: {exc})")
             return None

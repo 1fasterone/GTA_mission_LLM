@@ -445,6 +445,15 @@ public class EntitySpawner : MonoBehaviour
             {
                 var m = new Material(sh);
                 m.color = color;
+                // Match the baked palette materials' look (Primary/Secondary/
+                // Accent/Trim all use smoothness 0.10-0.40, Metallic 0 — see
+                // _generate_material) instead of the shader's own default
+                // (~0.5), which made a primitive fallback read as glossy
+                // plastic next to every other material in the scene.
+                if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", color);
+                if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.20f);
+                if (m.HasProperty("_Glossiness")) m.SetFloat("_Glossiness", 0.20f);
+                if (m.HasProperty("_Metallic")) m.SetFloat("_Metallic", 0f);
                 var rend = go.GetComponent<Renderer>();
                 if (rend != null) rend.material = m;
             }

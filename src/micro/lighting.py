@@ -529,6 +529,119 @@ def resolve_ambient(
     )
 
 
+# ── Default rig construction (pure, LLM-free) ─────────────────────────────────
+# Factored out of LightingPipeline so the deterministic generator path (Steps
+# 4-7) can bake an identical baseline rig for a non-`--compose` build without
+# constructing a LightingPipeline — its __init__ (via MicroPipeline) builds an
+# LLM chat client that would never be called here, exactly the kind of Steps
+# 4-7 LLM blur the Pipeline Contract forbids. LightingPipeline's own methods
+# below delegate to these for the `--compose` path, so both stay byte-for-byte
+# in agreement.
+
+def _tint_light(light: LightSpec, palette: dict) -> None:
+    """Tint a blueprint light from the project palette.
+
+    key   — warm sun, left at near-white so albedo reads true
+    fill  — the background/sky color (what actually bounces onto shadow sides)
+    rim   — the accent color, so silhouettes pick up the project's identity
+    others— trim, the neutral practical color
+    """
+    if not palette:
+        return
+    slot = {"key": "trim", "fill": "background", "rim": "accent"}.get(
+        light.role, "trim")
+    r, g, b = _palette_slot(palette, slot, (light.color_r, light.color_g, light.color_b))
+    # A near-black palette slot would defeat the point of the light; lift it
+    # to a usable tint while keeping its hue.
+    lifted = _lift_to_luminance(r, g, b, LIGHT_TINT_FLOOR)
+    if lifted is None:
+        return
+    light.color_r, light.color_g, light.color_b = lifted
+
+
+def _enforce_key_light(schema, variant: str, *, on_fix=None) -> None:
+    """Lift the summed directional intensity to KEY_INTENSITY_FLOOR."""
+    if variant == "flat_2d":
+        return
+    directional = sum(l.intensity for l in schema.lights if l.type == "directional")
+    if directional < KEY_INTENSITY_FLOOR:
+        key = next((l for l in schema.lights if l.role == "key"), None)
+        if key is None:
+            key = next((l for l in schema.lights if l.type == "directional"), None)
+        if key is not None:
+            key.intensity = round(key.intensity + (KEY_INTENSITY_FLOOR - directional), 4)
+            if on_fix:
+                on_fix(f"key light lifted to the {KEY_INTENSITY_FLOOR} directional floor "
+                       f"(intensity -> {key.intensity})")
+
+
+def _enforce_lit(schema, variant: str, palette: dict, *, on_fix=None) -> None:
+    """Guarantee the rig can never resolve to an unlit scene.
+
+    Delegates the ambient half to resolve_ambient() — the same pure function
+    unity_generator uses to bake scene.unity.j2's RenderSettings, so the
+    scene at rest and the scene at Play cannot drift apart. Raises when
+    there is genuinely nothing to lift: an all-zero ambient with no lights
+    is not a look, it's a broken scene, and shipping it silently is what
+    produced the black-materials bug this micro exists to close.
+    """
+    res = resolve_ambient(
+        palette, variant,
+        sky=(schema.ambient_sky_r, schema.ambient_sky_g, schema.ambient_sky_b),
+        equator=(schema.ambient_equator_r, schema.ambient_equator_g,
+                 schema.ambient_equator_b),
+        ground=(schema.ambient_ground_r, schema.ambient_ground_g,
+                schema.ambient_ground_b),
+        intensity=schema.ambient_intensity,
+        authored=bool(schema.meta.get("ambient_authored")),
+    )
+
+    if _luminance(*res.sky) <= 0.0 and not schema.lights:
+        raise ValueError(
+            f"lighting: variant {variant!r} resolves to a fully unlit scene "
+            "(ambient luminance 0, no lights). Refusing to emit — supply an "
+            "ambient color or at least one light."
+        )
+
+    schema.ambient_mode = res.mode
+    schema.ambient_intensity = res.intensity
+    (schema.ambient_sky_r, schema.ambient_sky_g, schema.ambient_sky_b) = res.sky
+    (schema.ambient_equator_r, schema.ambient_equator_g,
+     schema.ambient_equator_b) = res.equator
+    (schema.ambient_ground_r, schema.ambient_ground_g,
+     schema.ambient_ground_b) = res.ground
+    if res.lifted and on_fix:
+        on_fix(f"ambient lifted to the {AMBIENT_LUMINANCE_FLOOR} luminance "
+               f"floor (sky luminance -> {_luminance(*res.sky):.4f})")
+
+    _enforce_key_light(schema, variant, on_fix=on_fix)
+
+
+def build_default_lighting_schema(
+        variant: str, palette: dict | None = None, *,
+        name: str = "LightingDirector", description: str = "",
+        on_fix=None) -> "LightingSchema":
+    """The same default light rig + ambient guard `LightingPipeline.default_fix`
+    bakes for an unauthored (no LLM content) schema — pure and LLM-free, for
+    callers that need a baseline rig without going through the micro pipeline.
+    """
+    schema = LightingSchema(
+        name=name or "LightingDirector",
+        variant=variant,
+        description=description or "Scene light rig and environment-lighting guard",
+    )
+    palette = palette or {}
+    if variant == "flat_2d":
+        schema.lights = []
+        schema.ambient_mode = "flat"
+    else:
+        schema.lights = [LightSpec(**bp) for bp in _RIG_BLUEPRINTS.get(variant, [])]
+        for light in schema.lights:
+            _tint_light(light, palette)
+    _enforce_lit(schema, variant, palette, on_fix=on_fix)
+    return schema
+
+
 class LightingPipeline(UnityMicroPipeline):
     kind            = "lighting"
     display_name    = "Unity Lighting"
@@ -565,7 +678,7 @@ class LightingPipeline(UnityMicroPipeline):
                     LightSpec(**bp) for bp in _RIG_BLUEPRINTS.get(variant, [])
                 ]
                 for light in schema.lights:
-                    self._apply_project_light(light, palette)
+                    _tint_light(light, palette)
 
         # Ambient mode/colors/intensity are resolved (and floor-guarded) in one
         # place — see resolve_ambient. flat_2d's "flat" mode falls out of the
@@ -639,83 +752,22 @@ class LightingPipeline(UnityMicroPipeline):
             return fallback
 
     def _apply_project_light(self, light: LightSpec, palette: dict) -> None:
-        """Tint a blueprint light from the project palette.
-
-        key   — warm sun, left at near-white so albedo reads true
-        fill  — the background/sky color (what actually bounces onto shadow sides)
-        rim   — the accent color, so silhouettes pick up the project's identity
-        others— trim, the neutral practical color
-        """
-        if not palette:
-            return
-        slot = {"key": "trim", "fill": "background", "rim": "accent"}.get(
-            light.role, "trim")
-        r, g, b = _palette_slot(palette, slot, (light.color_r, light.color_g, light.color_b))
-        # A near-black palette slot would defeat the point of the light; lift it
-        # to a usable tint while keeping its hue.
-        lifted = _lift_to_luminance(r, g, b, LIGHT_TINT_FLOOR)
-        if lifted is None:
-            return
-        light.color_r, light.color_g, light.color_b = lifted
+        _tint_light(light, palette)
 
     # ── the "never black" invariant ──────────────────────────────────────────
 
     def _enforce_lit(self, schema, variant: str, palette: dict) -> None:
         """Guarantee the rig can never resolve to an unlit scene.
 
-        Delegates the ambient half to resolve_ambient() — the same pure function
-        unity_generator uses to bake scene.unity.j2's RenderSettings, so the
-        scene at rest and the scene at Play cannot drift apart. Raises when
-        there is genuinely nothing to lift: an all-zero ambient with no lights
-        is not a look, it's a broken scene, and shipping it silently is what
-        produced the black-materials bug this micro exists to close.
+        Delegates to the module-level `_enforce_lit`/`_enforce_key_light` (see
+        their docstrings) — this wrapper only supplies `self._fix` as the
+        logging sink, so `--compose` output stays byte-identical to before
+        this was factored out for reuse by the non-compose generator path.
         """
-        res = resolve_ambient(
-            palette, variant,
-            sky=(schema.ambient_sky_r, schema.ambient_sky_g, schema.ambient_sky_b),
-            equator=(schema.ambient_equator_r, schema.ambient_equator_g,
-                     schema.ambient_equator_b),
-            ground=(schema.ambient_ground_r, schema.ambient_ground_g,
-                    schema.ambient_ground_b),
-            intensity=schema.ambient_intensity,
-            authored=bool(schema.meta.get("ambient_authored")),
-        )
-
-        if _luminance(*res.sky) <= 0.0 and not schema.lights:
-            raise ValueError(
-                f"{self.kind}: variant {variant!r} resolves to a fully unlit scene "
-                "(ambient luminance 0, no lights). Refusing to emit — supply an "
-                "ambient color or at least one light."
-            )
-
-        schema.ambient_mode = res.mode
-        schema.ambient_intensity = res.intensity
-        (schema.ambient_sky_r, schema.ambient_sky_g, schema.ambient_sky_b) = res.sky
-        (schema.ambient_equator_r, schema.ambient_equator_g,
-         schema.ambient_equator_b) = res.equator
-        (schema.ambient_ground_r, schema.ambient_ground_g,
-         schema.ambient_ground_b) = res.ground
-        if res.lifted:
-            self._fix(f"ambient lifted to the {AMBIENT_LUMINANCE_FLOOR} luminance "
-                      f"floor (sky luminance -> {_luminance(*res.sky):.4f})")
-
-        self._enforce_key_light(schema, variant)
+        _enforce_lit(schema, variant, palette, on_fix=self._fix)
 
     def _enforce_key_light(self, schema, variant: str) -> None:
-        """Lift the summed directional intensity to KEY_INTENSITY_FLOOR."""
-
-        if variant == "flat_2d":
-            return
-
-        directional = sum(l.intensity for l in schema.lights if l.type == "directional")
-        if directional < KEY_INTENSITY_FLOOR:
-            key = next((l for l in schema.lights if l.role == "key"), None)
-            if key is None:
-                key = next((l for l in schema.lights if l.type == "directional"), None)
-            if key is not None:
-                key.intensity = round(key.intensity + (KEY_INTENSITY_FLOOR - directional), 4)
-                self._fix(f"key light lifted to the {KEY_INTENSITY_FLOOR} directional floor "
-                          f"(intensity -> {key.intensity})")
+        _enforce_key_light(schema, variant, on_fix=self._fix)
 
     # ── writer ───────────────────────────────────────────────────────────────
 
