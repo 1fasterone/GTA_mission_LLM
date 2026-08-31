@@ -689,6 +689,7 @@ class LightingPipeline(UnityMicroPipeline):
             _KNOWN_NAMESPACES, template_field_types, lint_field_type_misuse,
             _repair_collection_compared_as_scalar, _repair_animator_play_layer_arg,
             _repair_self_class_static_call, _repair_struct_return_type_mismatch,
+            _repair_field_assignment_type_mismatch, template_method_return_types,
             _body_is_live,
         )
         schema.extra_usings = lint_usings(
@@ -707,6 +708,7 @@ class LightingPipeline(UnityMicroPipeline):
         # _repair_struct_return_type_mismatch's own docstring.
         field_types = {**template_field_types(str(self.template_root), variant),
                        **{f.name: f.type for f in schema.extra_fields if f.name}}
+        method_return_types = template_method_return_types(str(self.template_root), variant)
         kept_methods = []
         for m in schema.extra_methods:
             body = lint_code_fragment(m.body, what="method body")
@@ -717,6 +719,9 @@ class LightingPipeline(UnityMicroPipeline):
                 body = _repair_animator_play_layer_arg(body, field_types)
                 body = _repair_struct_return_type_mismatch(
                     body, field_types, signature=m.signature)
+                body = _repair_field_assignment_type_mismatch(
+                    body, field_types=field_types,
+                    method_return_types=method_return_types)
             body = _repair_self_class_static_call(body, schema.name)
             # Not lint_method (this micro predates it, same reason it calls
             # lint_code_fragment directly above) — but its OWN dead-body drop

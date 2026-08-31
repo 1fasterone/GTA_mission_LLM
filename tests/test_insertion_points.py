@@ -32,6 +32,7 @@ from src.micro.code_fields import (
     _TEMPLATE_FIELD_DECL_RE, template_field_types,
     _repair_collection_compared_as_scalar, _repair_animator_play_layer_arg,
     _repair_struct_return_type_mismatch, _repair_getcomponent_wrong_dimension,
+    _repair_field_assignment_type_mismatch, template_method_return_types,
     _vector_initializer, lint_field_type_misuse,
 )
 from src.micro.camera   import CameraRigPipeline, CameraRigSchema
@@ -358,6 +359,49 @@ def test_struct_return_type_mismatch_noop_without_signature():
     ft = {"_skyboxColor": "Vector3"}
     body = "return _skyboxColor;"
     assert _repair_struct_return_type_mismatch(body, ft) == body
+
+
+# ── CS0029: a field assigned the return value of a template-native method
+# whose declared return type disagrees with the field's own (live:
+# LightingDirector.cs `_rigRoot = FindBrightestDirectional();`,
+# 2026-08-30 — `_rigRoot` is Transform, the method returns Light) ────────────
+
+def test_field_assignment_type_mismatch_neutralized():
+    ft = {"_rigRoot": "Transform"}
+    mrt = {"FindBrightestDirectional": "Light"}
+    body = "_rigRoot = FindBrightestDirectional();"
+    out = _repair_field_assignment_type_mismatch(
+        body, field_types=ft, method_return_types=mrt)
+    assert "AUDIT" in out
+    assert "_rigRoot = FindBrightestDirectional()" not in out.split("//")[0]
+
+
+def test_field_assignment_type_mismatch_noop_for_matching_type():
+    ft = {"_key": "Light"}
+    mrt = {"FindBrightestDirectional": "Light"}
+    body = "_key = FindBrightestDirectional();"
+    assert _repair_field_assignment_type_mismatch(
+        body, field_types=ft, method_return_types=mrt) == body
+
+
+def test_field_assignment_type_mismatch_allows_numeric_widening():
+    ft = {"_speed": "float"}
+    mrt = {"ComputeSpeed": "int"}
+    body = "_speed = ComputeSpeed();"
+    assert _repair_field_assignment_type_mismatch(
+        body, field_types=ft, method_return_types=mrt) == body
+
+
+def test_field_assignment_type_mismatch_noop_without_a_known_method():
+    ft = {"_rigRoot": "Transform"}
+    body = "_rigRoot = SomeUncatalogedMethod();"
+    assert _repair_field_assignment_type_mismatch(
+        body, field_types=ft, method_return_types={}) == body
+
+
+def test_template_method_return_types_reads_the_real_template():
+    mrt = template_method_return_types("templates/unity/micro/lighting")
+    assert mrt.get("FindBrightestDirectional") == "Light"
 
 
 # ── CS0029: GetComponent<T>() called with the 3D counterpart of a field's

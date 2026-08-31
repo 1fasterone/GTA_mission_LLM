@@ -644,6 +644,34 @@ def test_a_field_declared_under_another_enum_is_out_of_scope():
     assert "spawnPoints" in template_scope_members(tdir, "wave_spawner")
 
 
+# ── A LITERAL-in-list-FIELD condition decides scope too ─────────────────────
+#
+# Provenance: live, C:\u\RedlineRidge\Assets\Micros\controller\Scripts\
+# PlayerController.cs(258): CS0103 on `_boostCooldownTimer`. Controller.cs.j2
+# gates its boost fields on `{% if "boost" in s.abilities %}` — the OPPOSITE
+# shape from the spawn_shape test above (a literal on the left, a bare
+# list-typed field on the right), which `_ATOM_IN_RE` cannot parse at all. Every
+# ability-gated block in that template (35+: jump, dash, shoot, block, grab,
+# pause, ...) was therefore undecidable and counted as always-declared by the
+# dedup pass regardless of this schema's real abilities — so an author's own
+# `_boostTimer`/`_boostCooldownTimer` fields got deleted as false CS0102
+# duplicates of a block that, for a boost-less abilities list, never renders.
+
+def test_a_literal_in_list_field_condition_decides_scope():
+    from src.micro.code_fields import render_facts
+    from src.micro.controller import ControllerSchema
+
+    tdir = str(MICRO / "controller")
+    boosted = render_facts(ControllerSchema(variant="2d_platformer", abilities=["boost"]))
+    plain   = render_facts(ControllerSchema(variant="2d_platformer", abilities=["jump"]))
+    assert "_boostCooldownTimer" in template_members(tdir, "2d_platformer", boosted)
+    assert "_boostCooldownTimer" not in template_members(tdir, "2d_platformer", plain)
+    assert "_boostCooldownTimer" in template_scope_members(tdir, "2d_platformer", boosted)
+    assert "_boostCooldownTimer" not in template_scope_members(tdir, "2d_platformer", plain)
+    # No facts at all keeps the old union — too WIDE, never too narrow.
+    assert "_boostCooldownTimer" in template_members(tdir, "2d_platformer")
+
+
 def test_an_undecidable_condition_still_keeps_its_body():
     from src.micro.code_fields import _drop_dead_variant_branches
     # A field this pass has no value for, and a mixed and/or it will not
