@@ -68,9 +68,8 @@
     "offroad":              "outlaw",
     "quad bike":            "blazer",
     "atv":                  "blazer",
-    "muscle car":              "dominator",
     "high performance muscle": "dominator",
-    "police suv":              "policet",
+    "police transporter":      "policet",
     "armored police suv":      "riot",
     "gang sedan":              "buccaneer",
     "enemy gang sedan":        "buccaneer"
