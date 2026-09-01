@@ -59,7 +59,8 @@ def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> 
     catalog's dest_rel / resource_path / rig / scale unchanged.
     For kinds NOT yet in the catalog (no static fallback file existed): bootstraps
     a complete ResolvedModel so the copy + .meta + ModelSwap chain still fires.
-    Silently skips any entry whose FBX file doesn't exist on disk yet.
+    Skips (loudly) any entry whose FBX file doesn't exist on disk yet, degrading
+    that kind back to whatever the catalog tiers already resolved.
     """
     if not overrides:
         return resolved
@@ -70,6 +71,9 @@ def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> 
     # (vehicle/prop) carries a vehicle/no skeleton -> Generic, never Humanoid.
     for kind, src in overrides.items():
         if not src or not Path(src).is_file():
+            _log.warning("[model-overrides] %s FBX missing on disk (%s) — "
+                         "falling back to the catalog tiers for this kind",
+                         kind, src or "<empty>")
             continue
         src_abs = str(Path(src).resolve())
         rig = "humanoid" if kind in ("player", "enemy") else "generic"

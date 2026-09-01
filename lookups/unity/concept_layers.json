@@ -49,7 +49,7 @@
     "platform_walkway": {
       "vocabulary": ["platform", "platforms", "ledge", "walkway", "deck", "scaffold", "bridge", "span", "catwalk", "pier", "dock", "balcony", "structure"],
       "kinds": ["platform", "structure"],
-      "categories": ["platform", "structure"]
+      "categories": ["platform"]
     },
     "stairs_ramp": {
       "vocabulary": ["stairs", "steps", "staircase", "ramp", "ramps", "ladder", "incline", "slope"],

@@ -91,11 +91,9 @@
     "target":                 "a_m_m_business_01",
     "witness":                "a_m_y_business_01",
     "victim":                 "a_m_y_business_01",
-    "corrupt cop":            "s_m_y_cop_01",
     "corrupt police officer": "s_m_y_cop_01",
-    "mechanic":               "s_m_y_xmech_01",
     "nervous mechanic":       "s_m_y_xmech_01",
-    "gang member":            "g_m_y_ballaeast_01",
+    "ballas gang member":     "g_m_y_ballaeast_01",
     "rival gang member":      "g_m_y_lost_01"
   },
   "valid_models": [
