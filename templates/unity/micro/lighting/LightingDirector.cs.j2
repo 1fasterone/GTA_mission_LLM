@@ -221,10 +221,19 @@ public class {{ s.name }} : MonoBehaviour
     {
         // Projects that opted into the vendored URP-Atmosphere feature own
         // RenderSettings themselves (see AtmosphereBootstrap.cs); two systems
-        // writing the skybox fight and flicker.
+        // writing the skybox fight and flicker. Type existence is the whole
+        // check: AtmosphereBootstrap is a bare static class (no instance
+        // ever exists — FindFirstObjectByType(t) on it isn't a stricter
+        // check, it's a guaranteed "type has to be derived from
+        // UnityEngine.Object" engine error + NullReferenceException, on
+        // every single Awake(), confirmed live by the PlayMode smoke test
+        // this repo's compiler ships (src/unity_playtest.py) — and even a
+        // fixed version would always read "not yet spawned" here regardless,
+        // since AtmosphereBootstrap.Spawn() runs on
+        // RuntimeInitializeLoadType.AfterSceneLoad, which fires after every
+        // scene object's own Awake() including this one.
         var t = System.Type.GetType("AtmosphereBootstrap");
-        if (t == null) return false;
-        return FindFirstObjectByType(t) != null;
+        return t != null;
     }
 
     /// <summary>
