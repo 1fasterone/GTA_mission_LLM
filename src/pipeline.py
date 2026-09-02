@@ -598,6 +598,25 @@ class MissionPipeline:
         self._ok(f"Written -> {output_path}")
         self._ok(f"Schema  -> {output_path.with_suffix('.schema.json')}")
 
+        # Compile-verify against the real ScriptHookVDotNet3.dll. This mostly
+        # matters for the extra_usings/extra_fields/extra_init/extra_tick/
+        # extra_methods channel (STEP 3's free-form C#) — the templated
+        # skeleton itself is trusted, but LLM-authored fragments can reference
+        # an undeclared field or use an API wrong (e.g. assigning to the
+        # read-only Ped.Model) and still produce a schema that validates and
+        # a .cs file that "writes" successfully while being dead on arrival in
+        # the game. Advisory, not fatal — a bad compile still leaves a valid
+        # schema.json a modder can hand-repair or regenerate from.
+        from .gta5_compile_check import compile_check, format_findings
+        compiles, findings, _info = compile_check(str(output_path))
+        if compiles is False:
+            self._warn(f"Generated script has {len(findings)} compile error(s) "
+                        f"— it will NOT load in-game as written:")
+            console.print(format_findings(findings))
+        elif compiles is True:
+            self._ok("Compile-verified against ScriptHookVDotNet3.dll")
+        # compiles is None -> toolchain unavailable on this machine; skip silently.
+
         console.print(Panel(
             f"[bold green]Done![/]\n"
             f"Mission:  [cyan]{schema.mission_name}[/]\n"

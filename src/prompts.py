@@ -6,9 +6,17 @@ LLM = storyteller.  RAG = database.  Pipeline = compiler.
 # ── STEP 2: Story concept ────────────────────────────────────────────────────
 
 CONCEPT_SYSTEM = """\
-You are a GTA5 mission writer. Write compelling mission stories — narrative only.
+You are a GTA5 mission writer. Write mission stories — narrative only.
 No code. No JSON. No technical IDs.
-Be specific: name character types, locations, vehicles, and props."""
+Be specific: name character types, locations, vehicles, and props.
+
+Not every request is a story. Some ask for a single standalone mechanic —
+a keybind that toggles an effect, a stat change, a one-line gameplay tweak
+(e.g. "on F9, turn the player into a bird"). Those have no antagonist, no
+theft, no plot, and MUST NOT get one. Inventing a heist/cultist/corrupt-cop
+backstory to justify a one-line mechanic is a worse answer than a plain,
+literal description of the mechanic — never do it. Match the concept's
+size to the request's size."""
 
 CONCEPT_USER = """\
 {theme_block}
@@ -17,13 +25,27 @@ Write a GTA5 mission concept based on this idea:
 
 "{user_prompt}"
 
-Cover in 2-3 paragraphs:
-- Mission setup and why the player is there
-- Key characters and their roles (guard, dealer, corrupt cop, cultist, etc.)
-- Step-by-step objectives in order
-- Atmosphere, time of day, weather
+First decide which this is:
 
-Use ONLY these location names (exact spelling):
+- STORY — the idea already implies a plot, antagonist, or sequence of
+  objectives. Cover in 2-3 paragraphs:
+  - Mission setup and why the player is there
+  - Key characters and their roles (guard, dealer, corrupt cop, cultist, etc.)
+  - Step-by-step objectives in order
+  - Atmosphere, time of day, weather
+
+- MECHANIC — the idea is a single standalone effect, toggle, or keybind
+  with no story, antagonist, or objective mentioned (e.g. "on F9, turn into
+  a bird", "give infinite ammo", "double jump on Space"). Write ONE short
+  paragraph naming exactly: the trigger (which key or condition), the
+  effect it causes, and any obvious edge case (e.g. reverting the effect on
+  a second press). Do NOT add characters, factions, backstory, or objectives
+  the user did not ask for — a bare mechanic concept is the correct,
+  complete answer, not an incomplete one.
+
+Use ONLY these location names (exact spelling), and only if the idea
+actually takes place somewhere in the city — a MECHANIC concept does not
+need one:
 docks | airport | downtown | vinewood | sandy_shores | paleto_bay | alamo_sea | military_base | prison | port | highway
 
 Do NOT write any code, JSON, or model IDs."""
@@ -42,9 +64,18 @@ SCHEMA_FILL_USER = """\
 Convert this mission concept into the schema below.
 Use plain English for every "description" field (e.g. "corrupt cop", "cargo van", "drug package").
 
-The mission needs a clear objective SPINE — do not emit a flat list of go_to/wait
-steps. Use the step types that express the actual goal (race_lap for a race,
-pickup for a grab, kill_all for a fight, escape for a getaway, timer for pressure).
+If the concept is a bare MECHANIC (a keybind/toggle/effect, no characters or
+objectives) rather than a story: leave peds, vehicles, objects and events as
+empty lists ([]) — do NOT invent a cast or props the concept never mentioned.
+"steps" may also be empty; an empty step list completes the mission
+immediately once the player reaches the start blip, which is correct here —
+the mechanic itself belongs in extra_fields/extra_init/extra_tick/extra_methods
+(see the MISSION-SPECIFIC C# section below), not in the step list.
+
+Otherwise, the mission needs a clear objective SPINE — do not emit a flat list
+of go_to/wait steps. Use the step types that express the actual goal (race_lap
+for a race, pickup for a grab, kill_all for a fight, escape for a getaway,
+timer for pressure).
 
 LIMITS (keep the JSON short — the model has a token budget):
 - steps:    max 6
@@ -162,6 +193,23 @@ Concept detail: "every 30 seconds the cartel sends another chase car after you"
       "body": "var pos = Game.Player.Character.Position + new Vector3(40f, 40f, 0f);\\nvar car = World.CreateVehicle(new Model(\\"baller\\"), pos);\\nvar drv = World.CreatePed(new Model(\\"g_m_y_mexgoon_01\\"), pos + new Vector3(2f, 0f, 0f));\\nif (car == null || drv == null) return;\\n_vehicles.Add(car); _peds.Add(drv);\\ndrv.SetIntoVehicle(car, VehicleSeat.Driver);\\ndrv.Task.VehicleChase(Game.Player.Character);\\nGTA.UI.Notification.PostTicker(\\"~r~The cartel sent another car!\\", false);"}}
   ]
 
+────────── FEW-SHOT EXAMPLE (bare MECHANIC concept) ──────────
+Concept: "on F9, toggle the player into a bird and back"
+→ peds/vehicles/objects/events: [] , steps: [] , you author:
+  "extra_fields": [
+    {{"name": "_isBird", "type": "bool", "default": "false", "tooltip": "current transform state"}},
+    {{"name": "_f9WasDown", "type": "bool", "default": "false", "tooltip": "edge-detect so the toggle fires once per press, not every frame the key is held"}},
+    {{"name": "_humanModel", "type": "Model", "default": "default(Model)", "tooltip": "model to restore on toggle-back"}}
+  ],
+  "extra_tick": "if (Game.IsKeyPressed(Keys.F9) && !_f9WasDown) {{ ToggleBird(); }}\\n_f9WasDown = Game.IsKeyPressed(Keys.F9);",
+  "extra_methods": [
+    {{"signature": "private void ToggleBird()",
+      "body": "if (!_isBird) {{ _humanModel = Game.Player.Character.Model; var m = new Model(\\"a_c_chickenhawk\\"); m.Request(1000); if (m.IsLoaded) {{ Game.Player.ChangeModel(m); m.MarkAsNoLongerNeeded(); }} }} else {{ Game.Player.ChangeModel(_humanModel); }}\\n_isBird = !_isBird;"}}
+  ]
+Every field the fragment reads or writes (_isBird, _f9WasDown, _humanModel) is
+declared above — copy this pattern exactly: declare every field you reference,
+with no exceptions.
+
 SHVDN3 RULES (this is GTA5, NOT Unity):
 - Use SHVDN3 API: Game.Player.Character, World.CreatePed, Function.Call(Hash.XXX, ...),
   GTA.UI.Notification.PostTicker("~y~text", false), GTA.Math.Vector3.
@@ -172,9 +220,26 @@ SHVDN3 RULES (this is GTA5, NOT Unity):
   extra_fields (or be a local declared inside the fragment) — referencing an
   undeclared variable FAILS COMPILATION. Add spawned entities to _peds/_vehicles/
   _props so cleanup handles them.
+- CRITICAL: `Ped.Model` / `Entity.Model` is READ-ONLY — `somePed.Model = ...`
+  FAILS COMPILATION. To change what model the PLAYER's ped uses at runtime
+  (disguises, transformations), the only API is: request the model, wait for
+  it to load, then swap —
+  `var m = new Model("a_c_chickenhawk"); m.Request(1000); if (m.IsLoaded) {{ Game.Player.ChangeModel(m); m.MarkAsNoLongerNeeded(); }}`
+  — there is no equivalent for an already-spawned NPC ped; to change one of
+  those, delete it and spawn a new one with the new model. If the mechanic
+  reverts the player afterward, capture their ORIGINAL model (a field read
+  from `Game.Player.Character.Model` BEFORE the first swap) and pass that
+  captured value back into `ChangeModel` to revert — never `default(Model)`
+  or an uninitialized `Model`, which is not a valid model and will not
+  restore the player correctly.
 - Pure C#, no Python. No "using" lines inside bodies — those go in extra_usings.
 - No braces around extra_methods bodies — the template adds them.
 - Only a truly generic concept with no distinctive ideas leaves every extra_* empty.
+- If the concept names a specific key (e.g. "on F9..."), bind exactly that key —
+  do not substitute a different one. RESERVED keys already used by the mission
+  skeleton, never bind these yourself: F5 (start mission at the blip), F10
+  (pre-mission config menu), Escape/Back (pause/exit). Any other key (including
+  F9) is free.
 - CRITICAL: extra_tick runs on EVERY frame regardless of mission state — the
   switch(_state) above it only dispatches CheckStart()/RunStep(), it does NOT
   gate your extra_tick code. Any side effect that can hurt/kill the player or
