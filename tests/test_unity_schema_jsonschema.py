@@ -40,3 +40,23 @@ class TestResponseFormatSchema:
         schema = response_format_schema()["json_schema"]["schema"]
         assert "$defs" in schema
         assert len(schema["required"]) < len(schema["properties"])
+
+    def test_entities_forced_required_and_nonempty(self):
+        """Root-cause fix (docs/COMPILER_AUDIT.md Gap A, 2026-09-02): without
+        this, entities is skippable (all-optional legacy field, 20th of 37 in
+        declaration order) and live-verified 3/3 to come back missing entirely
+        under grammar-constrained decoding with the real Step 3 prompt.
+        `required` alone isn't enough either — a required-but-empty array
+        still satisfies the grammar — so both must hold together."""
+        schema = response_format_schema()["json_schema"]["schema"]
+        assert "entities" in schema["required"]
+        assert schema["properties"]["entities"]["minItems"] >= 1
+
+    def test_hardening_does_not_mutate_pydantics_own_schema(self):
+        """Guards the deep-copy: a fresh, unhardened call to
+        UnitySchema.model_json_schema() must still show entities as
+        optional — proves response_format_schema() didn't mutate something
+        Pydantic shares across calls."""
+        fresh = UnitySchema.model_json_schema()
+        assert "entities" not in fresh.get("required", [])
+        assert "minItems" not in fresh["properties"]["entities"]
