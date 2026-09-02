@@ -204,19 +204,78 @@ remain a safety net rather than the primary recall mechanism.
 title (the project's own §5 ranks this "highest-value" separately from feeding the brief) —
 still open, see the solutions table.
 
-#### Gap C — QA Stops at the Compiler · ⬜ open
-**Verdict:** STRUCTURAL-ONLY
+#### Gap C — QA Stops at the Compiler · ✅ fixed
+**Verdict:** STRUCTURAL-ONLY → now also LIVE (Unity side) and checks a rendered pixel
 
 Automated testing is genuinely strong where it exists: a pytest smoke suite, a playability
 evaluator with per-case score floors *locked* in version control, and a real Unity batchmode
-compile gate that greps the authoritative editor log. None of it looks at a rendered pixel,
-and none of it plays the game. `tests/test_blender_render.py` asserts `parts > 0` and
-`nonmanifold_or_invalid == []` — no image is ever produced or compared, despite the
-filename; worth flagging so a skim of the test list doesn't over-credit coverage that isn't
-there. Whether a generated mission or scene is actually *playable* — the blip appears, every
-ped spawns, the objective completes — is a ten-minute human checklist per generation, for
-both backends. `com.unity.test-framework` (Unity's own PlayMode automation) already sits in
-the vendored package cache, unused for this.
+compile gate that greps the authoritative editor log. Historically none of it looked at a
+rendered pixel, and none of it played the game. `tests/test_blender_render.py` asserts
+`parts > 0` and `nonmanifold_or_invalid == []` — no image is ever produced or compared,
+despite the filename; still true, still worth flagging so a skim of the test list doesn't
+over-credit coverage that isn't there.
+
+**Fixed (the "plays the game" half — solution #5):** `src/unity_playtest.py` +
+`templates/unity/editor/PlayModeSmoke.{cs,Tests.asmdef}` drive `com.unity.test-framework`
+(Unity's own PlayMode automation — confirmed vendored in the package cache, previously
+unused) through a real batchmode `-runTests -testPlatform PlayMode` run: enter Play, load the
+generated main scene via the runtime `SceneManager` (never `EditorSceneManager` — sidesteps
+`EntitySpawner`'s `[ExecuteAlways]`/`_baked` edit-mode guard entirely), and assert — generically,
+with no per-genre or per-class knowledge — zero console errors/exceptions during play, exactly
+one active `Player`-tagged object when the schema declares an avatar, and every entity group
+spawned the expected instance count. That last check is the one a naive implementation gets
+wrong: expected counts are derived from the same signals `EntitySpawner.cs.j2` itself gates
+spawning on (`schema.meta["entity_model_paths"]`'s `skip:`/`fx:` routing, `SceneSpec.entities`
+scene scoping, the 2D archetypes' `kind` exclusions, tiled path groups' runtime-computed
+counts) — not from `entities[i].count` alone, which would false-fail on ordinary,
+already-shipped generator output. `com.unity.test-framework`'s version is pinned to `1.1.24`
+(what's actually vendored locally) rather than resolved through `unity_resolver`'s version
+table, which currently points at `1.4.5`/`1.4.6` — using that would have silently required
+network access on every first run. Opt-in: a new `unity_cli.py playtest <project>` command,
+plus `e2e-verify --playtest` to run compile + static playability + live playtest in one pass
+(skips the Play phase entirely when compile fails). Fast, no-Unity-launch unit tests cover the
+expectations-derivation branches and NUnit XML parsing; a `unity_playtest`-marked opt-in test
+mirrors `tests/test_unity_compile.py`'s real-Editor pattern.
+
+**Fixed (the "does it look right" half — solution #4):** a fifth `[UnityTest]`,
+`CaptureMainCameraScreenshot`, renders one real frame and hands it to
+`src/unity_playtest.py`'s `analyze_render_health()` — structural pixel checks in the same
+spirit as the manifold checks it sits beside, not a golden-reference diff (there is no fixed
+"correct" image for an arbitrary LLM-generated project): a solid-black frame (nothing
+rendered) or a frame dominated by Unity's magenta missing-shader color (a material/shader
+failed to compile or load) both fail the gate; anything else passes. Deliberately scoped no
+further than that — camera framing/composition ("is the shot interesting") is a different,
+much fuzzier problem this doesn't attempt, matching the same boundary solution #5 already
+drew around "boot-time defects, not aesthetic quality."
+
+Getting a clean capture took five real attempts against a live Cinemachine+URP project,
+each a genuine dead end worth recording (full detail in `PlayModeSmoke.cs`'s own comments):
+`WaitForEndOfFrame` is never evoked in batchmode; reassigning the scene's own
+Cinemachine-driven camera's `targetTexture` (three different ways) triggered a native
+`QuaternionToEuler: Input quaternion was not normalized` and rendered 100% magenta regardless
+of technique; `Instantiate()`-cloning that camera to strip the interference ran the clone's
+`Awake()`/`OnEnable()` synchronously, before any code could disable the offending component
+— too late by construction. The fix that actually worked: a genuinely fresh `GameObject` +
+`Camera.CopyFrom()` (never cloned from anything Cinemachine touched) plus explicitly
+attaching URP's `UniversalAdditionalCameraData` (reflection-only, `CopyFrom()` doesn't carry
+it, and runtime `AddComponent<Camera>()` doesn't auto-attach it the way the Editor's camera
+UI does).
+
+That still rendered 100% magenta — which turned out not to be a capture-mechanism bug at
+all, but a **real, previously-invisible generator bug** the new gate surfaced on its very
+first genuinely clean run: `SetupRenderPipeline.cs.j2`'s first-open setup gate checked
+`EditorPrefs` *before* the actual project state, and `EditorPrefs` is stored machine-globally,
+keyed only by `project_name` — so regenerating a same-named project (an entirely normal
+development workflow: tweak a prompt, run `unity-create` again) left every copy after the
+first permanently unconfigured. `GraphicsSettings.defaultRenderPipeline` stayed null, every
+URP-authored material rendered as Unity's magenta fallback, and nothing logged an error,
+because a pipeline mismatch isn't one — invisible to every check in this repo until this one.
+**Fixed:** the gate now checks `GraphicsSettings.defaultRenderPipeline` first, unconditionally,
+and only consults `EditorPrefs` as a same-project optimization once that real state already
+says "configured" — never as a standalone gate that can mask a genuinely-unconfigured project.
+Live-verified end to end afterward: `unity_cli.py playtest` on a fresh `SkylineGlider`
+generation — **PASS, compile=OK, playtest=OK, 9/9**, screenshot black=0% magenta=0%, a real
+sky-toned frame, not a stand-in color.
 
 #### Gap D — Reachability Without a Path · ✅ fixed
 **Verdict:** HEURISTIC → GRID/GRAPH BFS
@@ -384,8 +443,8 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 | 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | 🟡 shipped off-by-default; entities-empty regression root-caused + fixed, 2/3 e2e trials pass 95+; still opt-in pending the separate content-fidelity question (see Gap A) |
 | 2 | Feed Step 3 the raw brief | Gap B | ●○○ | ●●● | — (additive) | ✓ | ✅ shipped |
 | 3 | Extend rescue layers to scenes/audio/narrative/title | Gap B | ●●○ | ●●● | — (mirrors existing pattern) | △ | ⬜ open |
-| 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ⬜ open |
-| 5 | Unity PlayMode automated E2E smoke | Gap C | ●●● | ●●● | manual checklist → CI gate | △ | ⬜ open |
+| 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ✅ shipped (opt-in; structural black/magenta checks, not a golden-reference diff) |
+| 5 | Unity PlayMode automated E2E smoke | Gap C | ●●● | ●●● | manual checklist → CI gate | △ | ✅ shipped (opt-in) |
 | 6 | Grid/graph BFS reachability | Gap D | ●●○ | ●●○ | AABB + 1-D reach-gap walk | △ | ✅ shipped |
 | 7 | Reuse chromadb+fastembed for model resolution & scene binding | Gap E | ●●○ | ●●○ | weighted-token scorer / substring binder | △ | ⬜ open |
 | 8 | Mirror the `\b`-bounded regex guard | Gap E | ●○○ | ●●○ | unguarded `any(w in p for w in words)` | ✓ | ✅ shipped |
@@ -458,3 +517,52 @@ corrected number, not the optimistic one.
   `test_hardening_does_not_mutate_pydantics_own_schema` in `tests/test_unity_schema_jsonschema.py`.
   `json_schema` mode stays opt-in (config default `off`) pending more end-to-end trials of the
   separate content-fidelity question, not because the emptiness bug is still open.
+- **2026-09-02 (Gap C, solution #5)** — Unity PlayMode automated E2E smoke shipped:
+  `src/unity_playtest.py` + `templates/unity/editor/PlayModeSmoke.{cs,Tests.asmdef}`, wired as
+  `unity_cli.py playtest <project>` and `e2e-verify --playtest`. Five real batchmode round-trips
+  against a live-generated project (`SkylineGlider`, `qwythos-9b-claude-mythos-5-1m-mtp`) found
+  and fixed three real bugs a design-only pass would have shipped silently: the test asmdef's
+  `includePlatforms: ["Editor"]` (copied from `CompileCheck.Editor.asmdef`'s convention, wrong
+  here) silently excluded it from Play mode's runtime-capable compile set, so zero tests were
+  ever discovered — fixed to `[]`, matching Unity's own PlayMode template; `LogAssert.
+  ignoreFailingMessages` set in `[SetUp]`/`[OneTimeSetUp]` ran too late to catch a log fired
+  during Unity's own pre-test phase, tainting every check with one generic NUnit message — fixed
+  via `[InitializeOnLoadMethod]`, which fires at domain-load time; and a genuine, previously
+  invisible production bug in `LightingDirector.cs.j2`'s `HasAtmosphereController()`, which
+  called `FindFirstObjectByType` on `AtmosphereBootstrap` — a bare static class, not a
+  `UnityEngine.Object` — guaranteeing an engine error + `NullReferenceException` on every
+  `Awake()` of every project using the vendored atmosphere feature, invisible to static
+  playability checks since nothing had ever pressed Play before. Fixed to the type-existence
+  check the surrounding comment always intended. Also found live: `com.unity.test-framework` is
+  editor-bundled on modern Unity (6000.x) — forcing a manifest pin dragged in an unneeded
+  `com.unity.test-framework.performance` (itself pulled in transitively via `com.unity.
+  collections`, unrelated to this feature) — now conditional on
+  `test_framework_is_editor_bundled()`; and the Player entity was false-failing
+  `EntityGroupSpawned` (it merges into the scene's pre-placed object rather than spawning a
+  fresh `Player_0`) — excluded there via the existing `pick_player_entity` helper in favor of the
+  more-correct `PlayerTagCardinality` check. Final live run: **PASS — compile=OK, playtest=OK
+  (8/8)**. New tests: `tests/test_unity_playtest.py` (21 fast, no-Unity-launch unit tests covering
+  every expectations-derivation branch — skip:/fx:/tiled-path/scene-scoped/2D-archetype/
+  locomotion="none"/player-exclusion — plus NUnit XML parsing and manifest-merge idempotency;
+  one `unity_playtest`-marked opt-in real-Editor test). Full suite: 4076 passed, 1 skipped, same
+  one pre-existing unrelated `tests/test_outputs_smoke.py` failure. Solution #4 (render +
+  perceptual diff) remains open — see Gap C.
+- **2026-09-02 (Gap C, solution #4, follow-up)** — automated render + perceptual diff shipped:
+  a fifth `[UnityTest]`, `CaptureMainCameraScreenshot`, plus `analyze_render_health()`
+  (`src/unity_playtest.py`) — structural black/magenta detection, not a golden-reference diff
+  (no fixed "correct" image exists for arbitrary LLM-generated content). Getting a clean
+  capture took five live attempts against `SkylineGlider`'s Cinemachine+URP setup — full
+  blow-by-blow in `PlayModeSmoke.cs`'s own comments and in Gap C above — ending in a genuine,
+  previously-invisible generator bug: `SetupRenderPipeline.cs.j2` gated first-open pipeline
+  setup on a machine-global `EditorPrefs` key before checking the project's own
+  `GraphicsSettings.defaultRenderPipeline`, so regenerating a same-named project (an entirely
+  normal workflow) left every copy after the first permanently stuck on the built-in render
+  pipeline — every URP material rendered as Unity's magenta fallback, with no console error at
+  all, invisible to every prior check including this repo's own compile gate. Fixed by
+  checking the real project state first, unconditionally. New tests:
+  `TestAnalyzeRenderHealth` in `tests/test_unity_playtest.py` (5 fast, no-Unity-launch cases:
+  a normal frame, solid black, dominant magenta, a small legitimate magenta patch that must
+  NOT trip the dominance threshold, and a missing screenshot file). Live-verified end to end:
+  `unity_cli.py playtest` on a freshly regenerated `SkylineGlider` — **PASS, compile=OK,
+  playtest=OK, 9/9**, screenshot black=0% magenta=0%, confirmed by eye to be a real sky-toned
+  frame. Gap C is now fully closed — both of its named solutions (#4 and #5) shipped.

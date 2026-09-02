@@ -18,8 +18,21 @@ public static class SetupRenderPipeline
 
     static SetupRenderPipeline()
     {
-        if (EditorPrefs.GetBool(PrefKey, false)) return;
-        // Already assigned by another path (e.g. package wizard)
+        // GraphicsSettings.defaultRenderPipeline is the real, per-project
+        // source of truth for whether the pipeline is actually configured.
+        // EditorPrefs below is only a same-session optimization — it must
+        // NEVER be trusted as the sole gate: it's keyed only by
+        // project_name and stored machine-globally (the platform's global
+        // editor prefs store), so it persists across completely different
+        // project directories that happen to share a name. Confirmed live
+        // (2026-09): iterative regeneration of a same-named project during
+        // development left every copy after the first permanently
+        // unconfigured — defaultRenderPipeline stayed null, every
+        // URP-authored material rendered 100% Unity's magenta
+        // missing-shader color, and nothing logged an error, because a
+        // pipeline mismatch isn't one — invisible to every check in this
+        // repo's QA until Gap C's PlayMode render-health gate
+        // (docs/COMPILER_AUDIT.md solution #4).
         // defaultRenderPipeline replaced the deprecated renderPipelineAsset (Unity 6
         // API updater otherwise prompts a Script Updating Consent dialog on open).
         if (GraphicsSettings.defaultRenderPipeline != null)
@@ -27,12 +40,18 @@ public static class SetupRenderPipeline
             EditorPrefs.SetBool(PrefKey, true);
             return;
         }
-        // Defer until editor is fully loaded so AssetDatabase is ready
+        // Not configured — always (re-)register regardless of what
+        // EditorPrefs claims for this project NAME. CreatePipelineAsset()
+        // re-checks defaultRenderPipeline itself before creating anything,
+        // so an extra delayCall queued across domain reloads within the
+        // SAME project is harmless, not a duplicate-asset error.
         EditorApplication.delayCall += CreatePipelineAsset;
     }
 
     private static void CreatePipelineAsset()
     {
+        if (GraphicsSettings.defaultRenderPipeline != null) return;  // a queued call from an earlier reload already did this
+
         const string settingsFolder = "Assets/Settings";
         if (!AssetDatabase.IsValidFolder(settingsFolder))
             AssetDatabase.CreateFolder("Assets", "Settings");

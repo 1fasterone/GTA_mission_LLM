@@ -924,6 +924,11 @@ def e2e_verify(
     strict: bool = typer.Option(
         False, "--strict", help="Playability: exit non-zero on any playability ERROR."
     ),
+    playtest: bool = typer.Option(
+        False, "--playtest",
+        help="Also enter real Play mode and check console errors / avatar "
+             "cardinality / entity spawn counts (slow — launches the Editor again).",
+    ),
     keep: bool = typer.Option(
         False, "--keep", help="Keep the isolated verify copy even when everything passes."
     ),
@@ -947,6 +952,10 @@ def e2e_verify(
     - PLAYABILITY: Step 7's structural grade (avatar, objective, reachable
       content, brief coverage) against the `<name>.schema.json` sidecar
       `write()` always stamps next to `source`.
+    - PLAYTEST (opt-in, --playtest): real Play mode via Unity Test
+      Framework — console errors, avatar cardinality, entity spawn counts
+      (src/unity_playtest.py). Structural playability above is entirely
+      static; this is its live counterpart. Runs only when COMPILE passed.
 
     The compile check NEVER runs against `source` itself — only an isolated
     sibling copy (`_verify_<name>` next to it). Two real failure modes hit
@@ -1002,7 +1011,33 @@ def e2e_verify(
     if play_reason:
         console.print(f"[red]FAIL[/] {play_reason}")
 
-    ok = compile_rc == 0 and not play_reason
+    # -- PLAYTEST (opt-in; reuses `scratch`; only if compile passed) -----------
+    playtest_result = None
+    if playtest:
+        from src.unity_playtest import run_playtest_phase
+
+        console.print("\n[bold cyan]PLAYTEST[/]")
+        if compile_rc != 0:
+            console.print("[dim]Skipped — fix compile errors first.[/]")
+        else:
+            pt_editor = _find_editor(unity_version)
+            if pt_editor is None:
+                console.print("[red]No Unity Editor found for PLAYTEST.[/]")
+            else:
+                pcfg = pipe_cfg.get("package_cache", {}) or {}
+                from src.unity_package_cache import unity_cache_root
+                playtest_result = run_playtest_phase(
+                    scratch, UnitySchema.model_validate(data),
+                    template_dir=template_dir, editor=pt_editor,
+                    cache_dir=Path(pcfg.get("dir", "cache/unity_packages")),
+                    global_cache_root=(Path(pcfg["global_root"])
+                                       if pcfg.get("global_root") else unity_cache_root()),
+                    timeout=timeout,
+                )
+                console.print(playtest_result.render(), markup=False)
+
+    playtest_ok = playtest_result is None or playtest_result.exit_code == 0
+    ok = compile_rc == 0 and not play_reason and playtest_ok
     if ok and not keep:
         shutil.rmtree(scratch, ignore_errors=True)
     elif not ok:
@@ -1010,7 +1045,107 @@ def e2e_verify(
 
     summary = (f"compile={'OK' if compile_rc == 0 else 'FAIL'}  "
                f"playability={report.score}/100" +
-               (f"  ({play_reason})" if play_reason else ""))
+               (f"  ({play_reason})" if play_reason else "") +
+               (f"  playtest={'OK' if playtest_ok else 'FAIL'}" if playtest else ""))
+    console.print(Panel(
+        f"[bold {'green' if ok else 'red'}]{'PASS' if ok else 'FAIL'}[/]  {summary}",
+        style="green" if ok else "red",
+    ))
+    raise typer.Exit(0 if ok else 1)
+
+
+@app.command()
+def playtest(
+    source: Path = typer.Argument(
+        ..., help="Generated Unity project directory to PlayMode-smoke-test."
+    ),
+    config: str = typer.Option(
+        "config.yaml", "--config", "-c", help="Pipeline config YAML."
+    ),
+    timeout: int = typer.Option(
+        900, "--timeout", help="Max seconds for each Unity batch phase (compile, then playtest)."
+    ),
+    keep: bool = typer.Option(
+        False, "--keep", help="Keep the isolated copy even when everything passes."
+    ),
+) -> None:
+    """
+    [bold]PlayMode smoke test:[/] compile, then enter real Play mode and assert
+    the scene actually boots clean — console errors, avatar cardinality, entity
+    spawn counts (src/unity_playtest.py). The live counterpart to `unity-playability`'s
+    entirely static grade; see also `e2e-verify --playtest` to run both gates in
+    one command.
+
+    Never touches `source` directly — copies into an isolated sibling
+    `_playtest_<name>` first, same reasoning as `e2e-verify` (a same-path
+    batchmode run collides with `source` open in a live Editor). Deleted on a
+    full PASS, kept (path printed) on any FAILURE.
+
+    \b
+    Examples:
+      python unity_cli.py playtest output/unity/RepoFlowSim
+      python unity_cli.py playtest C:/u/RepoFlowSim --keep
+    """
+    from src.unity_playtest import run_playtest_phase
+
+    source = source.resolve()
+    if not source.is_dir():
+        console.print(f"[red]Source directory not found:[/] {source}")
+        raise typer.Exit(2)
+
+    schema_candidates = sorted(source.glob("*.schema.json"))
+    if not schema_candidates:
+        console.print(f"[red]No *.schema.json sidecar found in {source} — cannot "
+                      "build playtest expectations (write() always stamps one next "
+                      "to the project).[/]")
+        raise typer.Exit(2)
+    schema_file = schema_candidates[0]
+
+    cfg          = _load_cfg(config)
+    pipe_cfg     = _unity_pipe_cfg(cfg)
+    template_dir = Path(pipe_cfg.get("unity_template_dir", "templates/unity"))
+
+    console.print(Panel(f"[bold]PlayMode smoke test[/]\n{source}", style="blue"))
+
+    scratch = source.parent / f"_playtest_{source.name}"
+    if scratch.exists():
+        shutil.rmtree(scratch, ignore_errors=True)
+    shutil.copytree(source, scratch, ignore=shutil.ignore_patterns(*_OVERLAY_SKIP))
+
+    console.print("\n[bold cyan]COMPILE CHECK[/]  (isolated copy — safe with source open in the Editor)")
+    unity_version = _read_unity_version(scratch)
+    compile_rc = _run_compile_check(scratch, template_dir, unity_version, timeout)
+
+    console.print("\n[bold cyan]PLAYTEST[/]")
+    playtest_result = None
+    if compile_rc != 0:
+        console.print("[dim]Skipped — fix compile errors first.[/]")
+    else:
+        editor = _find_editor(unity_version)
+        if editor is None:
+            console.print("[red]No Unity Editor found for PLAYTEST.[/]")
+        else:
+            data = json.loads(schema_file.read_text(encoding="utf-8"))
+            pcfg = pipe_cfg.get("package_cache", {}) or {}
+            from src.unity_package_cache import unity_cache_root
+            playtest_result = run_playtest_phase(
+                scratch, UnitySchema.model_validate(data),
+                template_dir=template_dir, editor=editor,
+                cache_dir=Path(pcfg.get("dir", "cache/unity_packages")),
+                global_cache_root=(Path(pcfg["global_root"])
+                                   if pcfg.get("global_root") else unity_cache_root()),
+                timeout=timeout,
+            )
+            console.print(playtest_result.render(), markup=False)
+
+    ok = compile_rc == 0 and playtest_result is not None and playtest_result.exit_code == 0
+    if ok and not keep:
+        shutil.rmtree(scratch, ignore_errors=True)
+    elif not ok:
+        console.print(f"\n[dim]Playtest copy kept for debugging: {scratch}[/]")
+
+    summary = (f"compile={'OK' if compile_rc == 0 else 'FAIL'}  "
+               f"playtest={'OK' if (playtest_result and playtest_result.exit_code == 0) else 'FAIL'}")
     console.print(Panel(
         f"[bold {'green' if ok else 'red'}]{'PASS' if ok else 'FAIL'}[/]  {summary}",
         style="green" if ok else "red",
