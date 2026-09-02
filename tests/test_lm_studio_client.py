@@ -723,3 +723,146 @@ class TestJsonMode:
             ]
             with pytest.raises(RuntimeError, match="server error"):
                 client.chat(system="sys", user="user", json_mode=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# json_schema mode (response_format=json_schema) — Gap A follow-up: real
+# SHAPE-constrained decoding, not just valid-syntax enforcement. Mirrors
+# TestJsonMode's coverage exactly; json_schema takes precedence over json_mode
+# when both are given, and shares the same one-retry-then-surface fallback.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_FAKE_SCHEMA = {"name": "unity_schema", "schema": {"type": "object"}, "strict": False}
+
+
+class TestJsonSchemaMode:
+    def test_payload_omits_response_format_by_default(self, client):
+        p = client._build_payload("sys", "usr", None, False, None)
+        assert "response_format" not in p
+
+    def test_payload_includes_response_format_when_json_schema_given(self, client):
+        p = client._build_payload("sys", "usr", None, False, None, json_schema=_FAKE_SCHEMA)
+        assert p["response_format"] == {"type": "json_schema", "json_schema": _FAKE_SCHEMA}
+
+    def test_json_schema_takes_precedence_over_json_mode(self, client):
+        p = client._build_payload("sys", "usr", None, False, None,
+                                  json_mode=True, json_schema=_FAKE_SCHEMA)
+        assert p["response_format"]["type"] == "json_schema"
+
+    def test_chat_json_schema_sends_response_format(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        captured = {}
+
+        def fake_post(url, json=None, **kwargs):
+            captured["payload"] = json
+            return mock_response
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            client.chat(system="sys", user="user", json_schema=_FAKE_SCHEMA)
+
+        assert captured["payload"]["response_format"] == {
+            "type": "json_schema", "json_schema": _FAKE_SCHEMA,
+        }
+
+    def test_json_schema_falls_back_once_when_server_rejects_it(self, client):
+        """Same contract as json_mode's fallback: a server/model that rejects
+        response_format=json_schema must not crash the run — chat() retries
+        ONCE without it, transparently."""
+        from unittest.mock import MagicMock, patch
+
+        bad = TestOpenRouterBackend._error_response(
+            400, '{"error":"response_format not supported"}')
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.raise_for_status.return_value = None
+        ok.json.return_value = {"choices": [{"message": {"content": "recovered"}}]}
+
+        posts = [bad, ok]
+        captured_payloads = []
+
+        def fake_post(url, json=None, **kwargs):
+            captured_payloads.append(json)
+            return posts.pop(0)
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            result = client.chat(system="sys", user="user", json_schema=_FAKE_SCHEMA)
+
+        assert result == "recovered"
+        assert len(captured_payloads) == 2
+        assert captured_payloads[0]["response_format"] == {
+            "type": "json_schema", "json_schema": _FAKE_SCHEMA,
+        }
+        assert "response_format" not in captured_payloads[1]
+
+    def test_json_schema_second_failure_raises_normally(self, client):
+        from unittest.mock import patch
+
+        first = TestOpenRouterBackend._error_response(
+            400, '{"error":"response_format not supported"}')
+        second = TestOpenRouterBackend._error_response(
+            500, '{"error":"server error"}')
+        with patch("httpx.Client") as MockClient, patch("time.sleep"):
+            MockClient.return_value.__enter__.return_value.post.side_effect = [
+                first, second, second, second, second,
+            ]
+            with pytest.raises(RuntimeError, match="server error"):
+                client.chat(system="sys", user="user", json_schema=_FAKE_SCHEMA)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# last_finish_reason — server-confirmed truncation, surfaced from the API
+# response's own finish_reason instead of only inferred from a downstream
+# JSONDecodeError.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestFinishReason:
+    def test_last_finish_reason_none_before_any_call(self, client):
+        assert client.last_finish_reason is None
+
+    def test_last_finish_reason_captured_from_response(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "length"}],
+        }
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
+            client.chat(system="sys", user="user")
+
+        assert client.last_finish_reason == "length"
+
+    def test_last_finish_reason_stop_is_captured_too(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+        }
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.return_value = mock_response
+            client.chat(system="sys", user="user")
+
+        assert client.last_finish_reason == "stop"
+
+    # An incomplete literal ("tru" instead of "true") is unrepairable by
+    # _repair_truncated_json/_rebalance no matter how brackets get closed —
+    # guarantees the final "could not be repaired" raise actually fires,
+    # rather than one of the repair passes quietly fixing it first.
+    _UNREPAIRABLE = '{"a": tru'
+
+    def test_extract_json_truncation_error_names_length_when_confirmed(self, client):
+        client.last_finish_reason = "length"
+        with pytest.raises(ValueError, match="CONFIRMED"):
+            client.extract_json(self._UNREPAIRABLE)
+
+    def test_extract_json_truncation_error_stays_generic_when_unconfirmed(self, client):
+        client.last_finish_reason = None
+        with pytest.raises(ValueError) as excinfo:
+            client.extract_json(self._UNREPAIRABLE)
+        assert "CONFIRMED" not in str(excinfo.value)

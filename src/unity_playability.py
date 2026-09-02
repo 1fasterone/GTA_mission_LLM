@@ -53,6 +53,8 @@ from typing import Optional
 from .unity_concept_entities import extract_named_entities
 from .unity_concept_fidelity import check_fidelity
 from .unity_layout import _reach_distance, terrain_bounds
+from .unity_reachability import (BLOCKING_KINDS, flood_fill_reachable,
+                                 wall_climb_reachable)
 # `is_embodied` lives beside the field it reads (src/unity_schema.py) because
 # four passes act on the declaration, not just this one. Re-exported here: it
 # was this module's own function first, and the doctrine it carries is a
@@ -982,26 +984,65 @@ def _check_spawn_clear(schema: UnitySchema, rep: PlayabilityReport) -> None:
 
 def _check_content_reachable(schema: UnitySchema,
                              rep: PlayabilityReport) -> None:
-    """Every group has to sit inside the ground the scene actually builds,
-    otherwise it hangs over the void where the player cannot follow."""
+    """Every group has to sit inside the ground the scene actually builds AND
+    have an open path to it from the player's own spawn — not just inside
+    the box. A bounding-box test alone reads content sealed behind a wall as
+    reachable, because a box never asks whether the space between two points
+    is open (Gap D, docs/COMPILER_AUDIT.md). The box test still runs first
+    and stays authoritative for "over the void": a flood fill bounded by
+    `terrain_bounds` cannot itself tell a point outside those bounds from
+    one at the very edge."""
     if not _baked(schema):
         _ungraded(rep, "content_reachable",
                   "no baked instance_positions — compute_layout has not run, "
                   "so no group has a place to be out of bounds of")
         return
     xmin, zmin, xmax, zmax = terrain_bounds(schema.entities, schema.locomotion)
-    stranded: list[str] = []
+    void: set[str] = set()
+    # A wall/building/obstacle/rock instance IS the blocking geometry, not
+    # content the player needs a path TO — testing one against the flood
+    # fill it itself feeds asks whether the barrier can reach itself, which
+    # a thick enough barrier answers "no" (every cell for several rows in is
+    # blocked, so nothing embedded that deep sits within one open cell of a
+    # reached neighbour). They still count toward the "over the void" bounds
+    # test below, same as every other entity.
+    in_bounds: dict[str, list[tuple[float, float]]] = {}
     for e in schema.entities:
+        blocking = (e.kind or "").strip().lower() in BLOCKING_KINDS
         for p in _instances(e):
             if not (xmin <= p[0] <= xmax and zmin <= p[2] <= zmax):
-                stranded.append(e.name)
-                break
+                void.add(e.name)
+            elif not blocking:
+                in_bounds.setdefault(e.name, []).append((p[0], p[2]))
+
+    walled: set[str] = set()
+    # The grid flood-fill only means something for movement ACROSS a
+    # surface — a flying/swimming/climbing game's content sits at an
+    # altitude a ground-level wall was never meant to block, and grading it
+    # against a 2-D floor plan would fail perfectly reachable altitude
+    # content. Ground-level primitives only.
+    if rep.primitive in (GROUND_PLANE, ROUTE_CORRIDOR) and in_bounds:
+        sx, _sy, sz = _spawn_point(schema)
+        result = flood_fill_reachable(
+            schema.entities, (xmin, zmin, xmax, zmax), (sx, sz), in_bounds)
+        walled = result.unreachable
+
+    stranded = void | walled
     if stranded:
+        detail = []
+        if void:
+            detail.append(f"{len(void)} over the void (outside the scene's "
+                          "ground bounds)")
+        if walled:
+            detail.append(f"{len(walled)} sealed off from the player's "
+                          "spawn by blocking geometry "
+                          f"({'/'.join(sorted(BLOCKING_KINDS))})")
         rep.findings.append(Finding(
             "content_reachable", ERROR,
-            f"{', '.join(sorted(set(stranded))[:6])} sit outside the scene's "
-            "ground bounds — over the void, where the player cannot follow",
-            "src/unity_layout.terrain_bounds"))
+            f"{', '.join(sorted(stranded)[:6])} unreachable — "
+            + "; ".join(detail),
+            "src/unity_layout.terrain_bounds / "
+            "src/unity_reachability.flood_fill_reachable"))
     rep.checks["content_reachable"] = not stranded
 
 
@@ -1178,21 +1219,6 @@ def _objective_points(schema: UnitySchema) -> list[tuple[str, list[float]]]:
             for p in _instances(e)]
 
 
-def _climb_ceiling(schema: UnitySchema, reach: float) -> float:
-    """Highest altitude the hold chain reaches from the ground: walk the baked
-    hold instances bottom-up and stop at the first gap wider than `reach` --
-    the same connectivity the layout pass promises, re-verified on the built
-    artifact rather than trusted."""
-    ys = sorted(p[1] for e in schema.entities if is_climbable_entity(e)
-                for p in _instances(e))
-    ceiling = 0.0
-    for y in ys:
-        if y - ceiling > reach:
-            break
-        ceiling = max(ceiling, y)
-    return ceiling
-
-
 def _check_role_graph(schema: UnitySchema, rep: PlayabilityReport) -> None:
     """Surface what UnitySchema.enforce_role_graph recorded. R3 violations are
     written to meta["role_lint"] for exactly this gate to score; until now
@@ -1250,9 +1276,12 @@ def _check_objective_kinematics(schema: UnitySchema,
         # locally-mirrored 2.5 collapses the ceiling and fails the gate on a
         # perfectly climbable wall.
         reach, _why_reach = _reach_distance(schema)
-        ceiling = _climb_ceiling(schema, reach)
-        for name, p in objs:
-            if p[1] > max(ceiling, spawn) + reach:
+        holds = [(p[0], p[1], p[2]) for e in schema.entities
+                if is_climbable_entity(e) for p in _instances(e)]
+        targets = [(p[0], p[1], p[2]) for _name, p in objs]
+        hit, ceiling = wall_climb_reachable(holds, targets, reach, start_y=spawn)
+        for idx, (name, p) in enumerate(objs):
+            if idx not in hit:
                 lost[name] = (f"at {p[1]:.1f} m but the hold chain ends at "
                               f"{ceiling:.1f} m")
     elif (rep.primitive in VOLUME_PRIMITIVES

@@ -12,6 +12,22 @@ lm_studio:
   # "none" everywhere. LM Studio honours only this field for the toggle.
   reasoning_effort: high
   # seed: 1234                     # fixed sampler seed → reproducible LLM output (unset = random)
+  # Step-3 schema-fill request enforcement — never used for concept generation
+  # (which expects prose). A server/model that rejects either falls back to
+  # today's prompt-and-repair behavior automatically (src/lm_studio_client.py).
+  structured_output: false        # true = response_format json_object (valid JSON syntax only)
+  # off | json_object | json_schema — tri-state successor to structured_output
+  # above; json_schema asks for real SHAPE-constrained decoding against
+  # UnitySchema's own derived JSON Schema (src/unity_schema_jsonschema.py), not
+  # just valid syntax. json_schema is NOT RECOMMENDED: live-verified
+  # (2026-09-02) against qwythos-9b with the REAL Step 3 prompt at the real
+  # 50k max_tokens budget, 3/3 trials came back with entities: [] (the
+  # brief's actual collectibles/enemies never got generated) and failed the
+  # playability gate every time — see docs/COMPILER_AUDIT.md Gap A for the
+  # full writeup and suspected cause. Left wired for whoever root-causes it,
+  # not because it's usable today. Leave unset to read structured_output above
+  # unchanged (json_object mode has none of this problem).
+  # structured_output_mode: json_schema
 
 ollama:                            # used when lm_studio.backend == "ollama"
   base_url: http://localhost:11434/v1

@@ -222,6 +222,33 @@ class TestSpatialChecks:
         _, checks = _checks(schema)
         assert "content_reachable" in checks
 
+    def _walled(self, coin_z: float, wall_z: float = 4.0):
+        """A player at the origin, a wall spanning the full ground-bounds
+        width at `wall_z`, and a coin on one side or the other of it."""
+        schema = _playable()
+        schema.meta["spatial_primitive"] = "ground_plane"
+        coin = next(e for e in schema.entities if e.name == "Coin")
+        coin.instance_positions = [[0.0, 0.0, coin_z]]
+        wall_pts = [[round(x * 0.5, 3), 0.0, wall_z] for x in range(-20, 21)]
+        schema.entities.append(EntitySpec(
+            name="Barrier", kind="wall", count=len(wall_pts), scale=1.5,
+            instance_positions=wall_pts))
+        return schema
+
+    def test_content_behind_a_full_span_wall_is_unreachable(self):
+        """Gap D (docs/COMPILER_AUDIT.md): a bounding-box test alone reads
+        this coin as reachable because it sits inside the ground bounds —
+        it never asks whether the space between spawn and the coin is open."""
+        rep, checks = _checks(self._walled(coin_z=8.0))
+        assert "content_reachable" in checks
+        assert not rep.playable
+        finding = next(f for f in rep.findings if f.check == "content_reachable")
+        assert "sealed off" in finding.summary
+
+    def test_content_on_the_spawn_side_of_the_wall_is_reachable(self):
+        _, checks = _checks(self._walled(coin_z=-3.0))
+        assert "content_reachable" not in checks
+
     def test_a_grounded_player_in_a_volume_game_is_an_error(self):
         """The avatar left on the floor while the game happens at altitude."""
         schema = _playable(locomotion="fly")

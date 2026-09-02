@@ -158,6 +158,13 @@ Spatial + QA (Unity)
   objective, reachable content, brief-entity coverage). Prints a scorecard,
   writes playability.txt, gated by playability.gate in config.yaml.
   CLI: python main.py unity-playability <schema.json> [--strict]
+- unity_reachability.py — grid/graph BFS backing two of unity_playability's
+  checks: `flood_fill_reachable` (2-D occupancy grid over terrain_bounds,
+  blocked by wall/building/obstacle/rock footprints, BFS'd from the
+  player's spawn — content_reachable) and `wall_climb_reachable` (3-D
+  proximity graph over baked hold instances, BFS'd from the ground —
+  objective_kinematics' WALL_SURFACE branch). Schema-only, matching Step
+  7's own constraint that real Unity geometry doesn't exist yet.
 - unity_objective_targets.py — Step 5 pass filling every blank
   `MissionObjective.target_ref` from the objective's own description, scored
   against entities the schema already declares (shared words, +2 where a
