@@ -217,11 +217,19 @@ class LMStudioClient:
         # no auth. None -> no Authorization header sent (unchanged behaviour
         # for the two local backends).
         self.api_key     = api_key
+        # Set by chat() after every call from the response's own
+        # `finish_reason` — "length" means the SERVER confirms it cut the
+        # reply off at max_tokens, as opposed to extract_json() having to
+        # guess that from a JSONDecodeError after the fact. One client serves
+        # one sequential pipeline run (no concurrent calls), so instance state
+        # here is safe the same way _REASONING_IGNORED's module state is.
+        self.last_finish_reason: str | None = None
 
     def _build_payload(self, system: str, user: str,
                        temperature: float | None, thinking: bool,
                        seed: int | None, max_tokens: int | None = None,
-                       json_mode: bool = False) -> dict:
+                       json_mode: bool = False,
+                       json_schema: dict | None = None) -> dict:
         """Assemble the chat-completions request body. Split out so the seed/
         temperature/reasoning wiring is unit-testable without a live server.
 
@@ -231,7 +239,14 @@ class LMStudioClient:
         malformed reply after the fact. Off by default: NOT every call site
         wants JSON (concept generation expects prose), and support varies by
         backend/model — see chat()'s fallback for what happens when a server
-        rejects the parameter."""
+        rejects the parameter.
+
+        json_schema, when given, takes precedence over json_mode and instead
+        sends response_format={"type": "json_schema", "json_schema": <this
+        dict>} — grammar-constrained decoding to an actual shape, not just
+        valid syntax. Callers build the dict with
+        unity_schema_jsonschema.response_format_schema()["json_schema"];
+        this method stays schema-agnostic and just forwards it."""
         # Kept as a fallback for Qwen3 builds served by something that does not
         # implement `reasoning_effort`; the field below is what actually works
         # on LM Studio. Harmless where it is ignored.
@@ -261,7 +276,9 @@ class LMStudioClient:
         eff_seed = seed if seed is not None else self.seed
         if eff_seed is not None:
             payload["seed"] = int(eff_seed)
-        if json_mode:
+        if json_schema is not None:
+            payload["response_format"] = {"type": "json_schema", "json_schema": json_schema}
+        elif json_mode:
             payload["response_format"] = {"type": "json_object"}
         return payload
 
@@ -342,7 +359,8 @@ class LMStudioClient:
              thinking: bool = True,
              seed: int | None = None,
              max_tokens: int | None = None,
-             json_mode: bool = False) -> str:
+             json_mode: bool = False,
+             json_schema: dict | None = None) -> str:
         """
         thinking=False → reasoning_effort="none": no chain-of-thought. Use for
                          every mechanical step (schema fill, cue resolution,
@@ -362,9 +380,16 @@ class LMStudioClient:
                          the parameter (an HTTP error), the request is retried
                          ONCE without it, transparently — that retry does not
                          consume any of the caller's own retry budget.
+        json_schema    → ask the server to constrain generation to an actual
+                         SHAPE, not just valid syntax
+                         (response_format={"type":"json_schema","json_schema":
+                         this dict}). Takes precedence over json_mode when
+                         both are given. Same rejection handling as json_mode:
+                         one transparent retry without it.
         """
         payload = self._build_payload(system, user, temperature, thinking, seed,
-                                      max_tokens, json_mode=json_mode)
+                                      max_tokens, json_mode=json_mode,
+                                      json_schema=json_schema)
         user_msg = payload["messages"][1]["content"]
         log.debug(
             "→ LLM REQUEST  model=%s  temperature=%.2f  max_tokens=%d\n"
@@ -381,18 +406,19 @@ class LMStudioClient:
         try:
             r = self._post_with_retry(payload, headers)
         except httpx.HTTPStatusError as e:
-            if not json_mode:
+            if not (json_mode or json_schema):
                 raise RuntimeError(
                     f"{self.base_url} returned HTTP {e.response.status_code} for model "
                     f"'{self.model}': {e.response.text[:500]}"
                 ) from e
             log.warning(
-                "%s rejected response_format=json_object for model '%s' (HTTP %d) "
+                "%s rejected response_format=%s for model '%s' (HTTP %d) "
                 "— retrying once without it",
-                self.base_url, self.model, e.response.status_code,
+                self.base_url, "json_schema" if json_schema else "json_object",
+                self.model, e.response.status_code,
             )
             payload = self._build_payload(system, user, temperature, thinking, seed,
-                                          max_tokens, json_mode=False)
+                                          max_tokens, json_mode=False, json_schema=None)
             r = self._post_translated(payload, headers)
         except httpx.TimeoutException as e:
             raise TimeoutError(
@@ -406,8 +432,23 @@ class LMStudioClient:
             ) from e
 
         body    = r.json()
-        message = body["choices"][0]["message"]
+        choice  = body["choices"][0]
+        message = choice["message"]
         content = (message.get("content") or "")
+
+        # "length" is the server's OWN confirmation the reply was cut off at
+        # max_tokens — the direct signal for the "context window too small
+        # for the reply" failure mode, as opposed to extract_json() inferring
+        # truncation after the fact from a JSONDecodeError. Stashed on the
+        # instance (not returned) so extract_json() can use it without a
+        # signature change, and every existing call site stays untouched.
+        self.last_finish_reason = choice.get("finish_reason")
+        if self.last_finish_reason == "length":
+            log.warning(
+                "%s cut off generation at max_tokens=%d for model '%s' "
+                "(finish_reason=length) — the reply may be truncated.",
+                self.base_url, payload["max_tokens"], self.model,
+            )
 
         # A model that cannot switch reasoning OFF is unusable for this
         # pipeline, and nothing in the API response says so directly — the
@@ -518,6 +559,18 @@ class LMStudioClient:
             try:
                 return _loads(_rebalance(text, start))
             except json.JSONDecodeError:
+                if self.last_finish_reason == "length":
+                    # Server-confirmed, not inferred: the response really was
+                    # cut off at max_tokens, not just malformed on its own.
+                    raise ValueError(
+                        f"JSON truncated and could not be repaired.\n"
+                        f"CONFIRMED: the server stopped generation at "
+                        f"max_tokens (finish_reason=length). Raise "
+                        f"lm_studio.max_tokens in config.yaml, or the "
+                        f"server's own loaded context (LM Studio: check "
+                        f"`lms ps`).\n"
+                        f"Tail: ...{text[-200:]}"
+                    )
                 raise ValueError(
                     f"JSON truncated and could not be repaired.\n"
                     f"Increase max_tokens in config.yaml.\n"

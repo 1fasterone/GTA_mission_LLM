@@ -68,13 +68,44 @@ pipeline's retry loop only catches `(ValueError, ValidationError)`, not the `Run
 an HTTP rejection raises; treating it as a normal retry-loop attempt would have crashed the
 whole run uncaught on any model/server that rejects the parameter.
 
-**Still open:** this is `json_object` mode only — it guarantees syntactically valid JSON,
-not schema-shaped JSON. Full `json_schema`-constrained decoding (actually encoding
-`UnitySchema`'s ~30 top-level fields / ~40 nested models / untyped `meta: dict` /
-`Literal`-heavy shape) remains future work — the schema is large enough, and untyped enough
-in places, that it needs its own design pass rather than a quick-win treatment. The
-`structured_output` flag also stays untested against a live model in this session — flip it
-on and run a real `unity-create` before trusting it for production use.
+**Fixed (follow-up, same day):** two more pieces closed most of the remaining gap.
+
+1. `LMStudioClient.chat()` now also reads `finish_reason` off the API response and stashes it
+   as `self.last_finish_reason` — "length" is the SERVER's own confirmation the reply was cut
+   off at `max_tokens`, not an inference from a downstream `JSONDecodeError`. `extract_json`'s
+   truncation error now says "CONFIRMED" and names the real cause when this fired, instead of
+   always guessing. Zero call-site changes needed anywhere (`src/lm_studio_client.py`).
+2. Real `json_schema`-constrained decoding shipped as a second, separate opt-in:
+   `src/unity_schema_jsonschema.py` derives the full `response_format` payload from
+   `UnitySchema.model_json_schema()` (confirmed live: 37 top-level properties, 46 `$defs`,
+   `$ref`-based, ~25.9KB serialized; `meta`'s untyped `dict` already renders as an open object —
+   `{"type":"object","additionalProperties":true}` — with no post-processing needed). Sent with
+   `"strict": false` deliberately: the actual runtime is LM Studio's local llama.cpp grammar
+   converter, not OpenAI's strict-mode validator, and it accepts the looser shape. New config key
+   `lm_studio.structured_output_mode: off | json_object | json_schema` (tri-state successor to
+   the bool above; absent falls back to the bool unchanged — additive, non-breaking). Wired at
+   the same Step 3 call site, same one-retry-then-fall-back-to-prose contract as `json_object`.
+
+**Live-verified against the loaded model** (`qwythos-9b-claude-mythos-5-1m-mtp`, LM Studio,
+2026-09-01) — the thing the previous pass flagged as never having been tried:
+- The server **accepts** the full 46-`$def` schema as `response_format` — no rejection, no
+  fallback needed.
+- Output **parses and validates against `UnitySchema` directly**, with `extract_json`'s repair
+  passes never firing.
+- Latency cost is real and worth flagging before defaulting anyone into it: two back-to-back
+  `json_schema` calls at the same `max_tokens` budget as a no-`response_format` baseline came in
+  at ~7.9s and ~15.7s (the second hit the token cap) vs. a 4.5s baseline — roughly 1.8-3.5x
+  slower on a short completion. That's consistent with a per-request grammar-compile cost that a
+  two-call sample can't cleanly separate from generation time, and its *proportional* weight
+  should shrink on Step 3's real ~50k-token budget — but that needs its own measurement, not an
+  assumption, before `json_schema` becomes anyone's default. `json_object` stays the safe
+  default; `json_schema` is available, tested, and functional as a second, explicitly opt-in tier.
+
+**Still open:** a longer-run latency benchmark at Step 3's real token budget (not the 300-1200
+token smoke test above), and the same live check against OpenRouter/Ollama — `LMStudioClient`
+serves all three identically, and the fallback-on-rejection path should carry a server/model that
+doesn't support `json_schema` back to `json_object` or prose automatically, but that path is only
+exercised on a live rejection, which hasn't happened yet against any of the three.
 
 #### Gap B — Step 3 Never Sees the Brief · ✅ fixed
 **Verdict:** INFORMATION LOSS
@@ -123,20 +154,53 @@ ped spawns, the objective completes — is a ten-minute human checklist per gene
 both backends. `com.unity.test-framework` (Unity's own PlayMode automation) already sits in
 the vendored package cache, unused for this.
 
-#### Gap D — Reachability Without a Path · ⬜ open
-**Verdict:** HEURISTIC
+#### Gap D — Reachability Without a Path · ✅ fixed
+**Verdict:** HEURISTIC → GRID/GRAPH BFS
 
-Step 7's "is the content reachable" check is axis-aligned bounding-box containment, not a
+Step 7's "is the content reachable" check was axis-aligned bounding-box containment, not a
 graph walk:
 ```python
 if not (xmin <= p[0] <= xmax and zmin <= p[2] <= zmax):
     stranded.append(e.name)
 ```
-Content inside the box but behind a wall reads as reachable. The kinematic variant is closer
-but still one-dimensional — sorts hand-hold Y-coordinates, walks bottom-up, breaks at the
-first gap past a fixed reach constant, not a BFS/A*/NavMesh query over the level graph.
-Given Step 7 grades a schema before real geometry exists, bounding-box was a defensible v1 —
-it just hasn't had a v2 yet.
+Content inside the box but behind a wall read as reachable. The kinematic variant was closer
+but still one-dimensional — sorted hand-hold Y-coordinates, walked bottom-up, broke at the
+first gap past a fixed reach constant, not a BFS/A*/NavMesh query over the level graph, so two
+holds sharing a height read as "connected" even sitting on opposite sides of the wall with
+nothing joining them.
+
+**Fixed:** `src/unity_reachability.py` (new module) replaces both with a real graph walk, still
+schema-only — Step 7 grades a schema before real geometry exists, so this stays a deliberate
+approximation, not a NavMesh:
+- `flood_fill_reachable()` — a 2-D occupancy grid over `terrain_bounds`, blocked wherever a
+  `wall`/`building`/`obstacle`/`rock` instance's footprint lands (approximated from `scale`,
+  the same way `src/unity_layout.py._footprint_radius` sizes an unmeasured "single" placement),
+  BFS'd out from the player's own spawn cell. `_check_content_reachable` runs this only for
+  `ground_plane`/`route_corridor` primitives (a flying/swimming/climbing game's content sits at
+  an altitude a ground wall was never meant to block) and only after the pre-existing bounding
+  box test, which stays authoritative for "over the void" — a flood fill bounded by
+  `terrain_bounds` cannot itself tell a point outside those bounds from one at the edge. The
+  player's own spawn gets a small cleared disk regardless of what's blocked nearby, so a
+  blocker sitting AT spawn (`_check_spawn_clear`'s finding to make) can't also cage the flood
+  fill before it starts; blocking-kind entities are never tested as reachability TARGETS
+  themselves (a wall is the barrier, not content needing a path to it — a thick enough wall
+  reads every cell several rows deep as "no open neighbour", which is correct for the barrier
+  and meaningless as a finding about it).
+- `wall_climb_reachable()` — the same idea for the climbing-wall archetype: a real graph over
+  the baked hold instances, edges wherever two holds sit within the layout's own reach constant
+  in full 3-D (not just Y), BFS'd from a virtual ground node. Replaces `_climb_ceiling`'s
+  sorted-Y walk in `_check_objective_kinematics`'s `WALL_SURFACE` branch.
+
+This closes the gap the packer's own non-overlap guarantee (`_pack_groups`) mostly already
+prevented for procedurally-packed scenes — nothing legitimately ends up geometrically inside a
+solid group's circle there. It matters for content whose positions were baked outside that
+packer, most concretely a hand-authored Scene Compiler layout
+(`src/unity_sceneinput.py`/`unity_scenebind.py` bakes `instance_positions` straight from a 3-D
+editor, walls included, with no circle-packing guarantee at all). New tests:
+`tests/test_unity_reachability.py` (the grid/graph algorithms directly, including the
+horizontally-displaced-same-height-holds regression the old sorted-Y walk could not see) and
+two new cases in `tests/test_unity_playability.py` (content behind a full-span wall vs. on the
+spawn side of it).
 
 ### TIER 2 — Consistency
 
@@ -252,11 +316,13 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 | # | Solution | Fixes | Difficulty | Impact | Replaces | Day one? | Status |
 |---|---|---|---|---|---|---|---|
 | 1 | `json_object`-mode structured output | Gap A | ●○○ | ●●● | repair pipeline → fallback | ✓ | ✅ shipped (opt-in) |
+| 1b | `finish_reason`-confirmed truncation errors | Gap A | ●○○ | ●●○ | inferred-from-JSONDecodeError guess | ✓ | ✅ shipped |
+| 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | ✅ shipped (opt-in, live-verified) |
 | 2 | Feed Step 3 the raw brief | Gap B | ●○○ | ●●● | — (additive) | ✓ | ✅ shipped |
 | 3 | Extend rescue layers to scenes/audio/narrative/title | Gap B | ●●○ | ●●● | — (mirrors existing pattern) | △ | ⬜ open |
 | 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ⬜ open |
 | 5 | Unity PlayMode automated E2E smoke | Gap C | ●●● | ●●● | manual checklist → CI gate | △ | ⬜ open |
-| 6 | Grid/graph BFS reachability | Gap D | ●●○ | ●●○ | AABB + 1-D reach-gap walk | △ | ⬜ open |
+| 6 | Grid/graph BFS reachability | Gap D | ●●○ | ●●○ | AABB + 1-D reach-gap walk | △ | ✅ shipped |
 | 7 | Reuse chromadb+fastembed for model resolution & scene binding | Gap E | ●●○ | ●●○ | weighted-token scorer / substring binder | △ | ⬜ open |
 | 8 | Mirror the `\b`-bounded regex guard | Gap E | ●○○ | ●●○ | unguarded `any(w in p for w in words)` | ✓ | ✅ shipped |
 | 9 | Parametric CAD for mechanical parts | Gap F | ●●○ | ●●● | mechanical-part share of the bmesh toolkit | ✓ | ⬜ open |
@@ -279,3 +345,18 @@ corrected number, not the optimistic one.
   verified with new/updated tests; full regression suite run clean except seven pre-existing
   `tests/test_gta_retrieval.py` failures (RAG embedding-distance thresholds, confirmed via
   `git stash` to exist independent of this session's changes — out of scope here).
+- **2026-09-01 (follow-up)** — Fix #6 (Gap D, grid/graph BFS reachability) shipped: new
+  `src/unity_reachability.py`, wired into `_check_content_reachable` and
+  `_check_objective_kinematics`'s `WALL_SURFACE` branch in `src/unity_playability.py`. New
+  `tests/test_unity_reachability.py` plus two new cases in `tests/test_unity_playability.py`.
+- **2026-09-01 (follow-up 2)** — Fixes #1b and #1c (Gap A, remaining half) shipped:
+  `finish_reason` surfaced from the API response onto `LMStudioClient.last_finish_reason`
+  (confirmed-vs-guessed truncation errors), and real `json_schema`-constrained decoding
+  (`src/unity_schema_jsonschema.py`, config key `lm_studio.structured_output_mode`). Both
+  live-verified against the loaded model (`qwythos-9b-claude-mythos-5-1m-mtp`) — accepted,
+  output validates against `UnitySchema` with no repair-pass involvement, ~1.8-3.5x latency on a
+  short completion vs. no `response_format` (see Gap A for the full numbers and the caveat that
+  this needs re-measuring at Step 3's real ~50k-token budget before becoming a default). New
+  tests: `TestJsonSchemaMode`/`TestFinishReason` in `tests/test_lm_studio_client.py`,
+  `tests/test_unity_schema_jsonschema.py`. Full suite: 4026 passed, same 7 pre-existing
+  `tests/test_gta_retrieval.py` failures as the prior pass (unrelated, confirmed pre-existing).

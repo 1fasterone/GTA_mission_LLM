@@ -12,6 +12,19 @@ lm_studio:
   # "none" everywhere. LM Studio honours only this field for the toggle.
   reasoning_effort: high
   # seed: 1234                     # fixed sampler seed → reproducible LLM output (unset = random)
+  # Step-3 schema-fill request enforcement — never used for concept generation
+  # (which expects prose). A server/model that rejects either falls back to
+  # today's prompt-and-repair behavior automatically (src/lm_studio_client.py).
+  structured_output: false        # true = response_format json_object (valid JSON syntax only)
+  # off | json_object | json_schema — tri-state successor to structured_output
+  # above; json_schema asks for real SHAPE-constrained decoding against
+  # UnitySchema's own derived JSON Schema (src/unity_schema_jsonschema.py), not
+  # just valid syntax. Live-verified (2026-09-01) against qwythos-9b: accepted,
+  # output validates with no repair pass needed, ~1.8-3.5x slower on a short
+  # completion than no response_format — re-measure at Step 3's real ~50k-token
+  # budget before making this anyone's default. Leave unset to read
+  # structured_output above unchanged.
+  # structured_output_mode: json_schema
 
 ollama:                            # used when lm_studio.backend == "ollama"
   base_url: http://localhost:11434/v1

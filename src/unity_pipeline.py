@@ -20,6 +20,7 @@ from .backends           import make_chat_client, make_rag_client
 from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
                                  is_embodied)
 from .unity_schema_clamp import clamp_capped_lists, render_cap_reminder
+from .unity_schema_jsonschema import response_format_schema
 from .capability_resolver import resolve_capabilities, resolve_microgens
 from .unity_asset_catalog import asset_vocabulary
 from .unity_resolver     import UnityResolver
@@ -1261,11 +1262,26 @@ class UnityPipeline:
             # validation so a runaway list costs its own overflow instead of the
             # whole run (src/unity_schema_clamp.py — live: 155 scripts against a
             # cap of 24).
-            # response_format=json_object on this call only (never concept
-            # generation, which expects prose) — off by default; see the
-            # comment on config.yaml's lm_studio.structured_output.
-            _json_mode = bool(self.config.get("lm_studio", {})
-                              .get("structured_output", False))
+            # response_format on this call only (never concept generation,
+            # which expects prose) — off by default. `structured_output_mode`
+            # is the tri-state successor to the legacy `structured_output`
+            # bool: "off" | "json_object" (syntax only, today's shipped
+            # fix) | "json_schema" (real shape-constrained decoding, see
+            # unity_schema_jsonschema.py). Absent -> fall back to the legacy
+            # bool unchanged, so nobody's existing config silently changes
+            # behavior. An unrecognized mode string aborts loudly rather than
+            # silently picking "off" — see CLAUDE.md's abstain-loudly rule.
+            _lm_cfg = self.config.get("lm_studio", {})
+            _mode = _lm_cfg.get("structured_output_mode")
+            if _mode is None:
+                _mode = "json_object" if _lm_cfg.get("structured_output", False) else "off"
+            if _mode not in ("off", "json_object", "json_schema"):
+                raise ValueError(
+                    f"lm_studio.structured_output_mode must be one of "
+                    f"'off', 'json_object', 'json_schema' — got {_mode!r}"
+                )
+            _json_mode   = _mode == "json_object"
+            _json_schema = response_format_schema()["json_schema"] if _mode == "json_schema" else None
             clamp_msgs: list[str] = []
             last_err: Exception | None = None
             for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
@@ -1280,6 +1296,7 @@ class UnityPipeline:
                                        else min(self.schema_temp, 0.1)),
                         thinking    = False,
                         json_mode   = _json_mode,
+                        json_schema = _json_schema,
                     )
                     schema_dict = self.llm.extract_json(schema_raw)
                     clamp_msgs  = clamp_capped_lists(schema_dict)
