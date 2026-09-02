@@ -86,26 +86,57 @@ whole run uncaught on any model/server that rejects the parameter.
    the bool above; absent falls back to the bool unchanged — additive, non-breaking). Wired at
    the same Step 3 call site, same one-retry-then-fall-back-to-prose contract as `json_object`.
 
-**Live-verified against the loaded model** (`qwythos-9b-claude-mythos-5-1m-mtp`, LM Studio,
-2026-09-01) — the thing the previous pass flagged as never having been tried:
-- The server **accepts** the full 46-`$def` schema as `response_format` — no rejection, no
-  fallback needed.
-- Output **parses and validates against `UnitySchema` directly**, with `extract_json`'s repair
-  passes never firing.
-- Latency cost is real and worth flagging before defaulting anyone into it: two back-to-back
-  `json_schema` calls at the same `max_tokens` budget as a no-`response_format` baseline came in
-  at ~7.9s and ~15.7s (the second hit the token cap) vs. a 4.5s baseline — roughly 1.8-3.5x
-  slower on a short completion. That's consistent with a per-request grammar-compile cost that a
-  two-call sample can't cleanly separate from generation time, and its *proportional* weight
-  should shrink on Step 3's real ~50k-token budget — but that needs its own measurement, not an
-  assumption, before `json_schema` becomes anyone's default. `json_object` stays the safe
-  default; `json_schema` is available, tested, and functional as a second, explicitly opt-in tier.
+**Live-verified against the loaded model, corrected** (`qwythos-9b-claude-mythos-5-1m-mtp`, LM
+Studio, 2026-09-01/02) — two rounds, because the first round was wrong in a way worth recording.
 
-**Still open:** a longer-run latency benchmark at Step 3's real token budget (not the 300-1200
-token smoke test above), and the same live check against OpenRouter/Ollama — `LMStudioClient`
-serves all three identically, and the fallback-on-rejection path should carry a server/model that
-doesn't support `json_schema` back to `json_object` or prose automatically, but that path is only
-exercised on a live rejection, which hasn't happened yet against any of the three.
+*Round 1* used a short, deliberately-minimal probe prompt ("Fill the schema minimally") at
+300-1200 `max_tokens`, not the real Step 3 system prompt. It showed the server accepting the
+full 46-`$def` schema and the output validating against `UnitySchema` with no repair-pass
+involvement, and reported a ~1.8-3.5x latency cost on a short completion. That result is real but
+was measured on the wrong axis — it never exercised the real system prompt's request for rich
+content, so it couldn't have caught what round 2 found. (A `unity-create` run attempting to
+re-measure at the real 50k-token budget also landed in a shared repo checkout that a concurrent
+session had switched to a different branch mid-flight — the run silently executed old code with
+none of this gap's fixes. Re-run from an isolated `git worktree` pinned to this branch's commit,
+confirmed by inspecting the checked-out source before trusting the result.)
+
+*Round 2*, in that isolated worktree, ran the actual `unity-create` CLI against the real Step 3
+prompt (`UNITY_SCHEMA_FILL_SYSTEM`, full multimodal block, full brief) at `max_tokens: 50000`,
+`json_schema` vs. no-`response_format`, 3 `json_schema` trials + 2 baseline trials:
+
+- The server still **accepts** the schema every time — no rejection, no fallback firing.
+- **All 3 `json_schema` trials came back with `entities: []`** — byte-identical section counts
+  each time (`0 packages 0 scripts 2 scenes 0 features` at the raw Step-3-fill point). The
+  deterministic pipeline stages after Step 3 backfill *some* structure on top (packages, scripts,
+  one mission, one character — none of that is LLM content, it's scaffolding), but nothing
+  downstream invents entities (correctly, per this repo's no-generic-defaults doctrine), so the
+  brief's actual content — the five crystals, the two sentries — never existed. The playability
+  gate correctly caught this every time: `"nothing to do — no collectibles, no enemies, no
+  missions and no story beats"`, and `unity-create` exited non-zero.
+- Both baseline trials (no `response_format`) filled `entities` normally and passed the
+  playability gate at 95/100.
+- `json_schema` trials also ran *faster* than baseline (43-48s vs. 83-98s total pipeline
+  wall-clock) — the opposite of round 1's "slower" finding, because there's far less content to
+  generate when the largest, most deeply-nested list in the schema comes back empty.
+
+**Conclusion: do not recommend `json_schema` mode.** This is not a latency tradeoff, it's a
+reproducible content-loss regression, specifically on `entities` — the one field the schema's
+grammar represents as a list of the largest, most deeply-`$ref`-nested object (`EntitySpec`).
+The likely mechanism: llama.cpp's grammar-masked sampling has to choose, at the start of each list
+element, between the trivial "close the array" token and the much larger sub-grammar for one more
+`EntitySpec`, and at `schema_temperature: 0.2` the model consistently takes the cheap exit.
+`json_object` mode (syntax-only, no shape grammar) does not have this failure mode and remains the
+safe, tested default. `structured_output_mode: json_schema` stays wired and available (config
+default is still `off`, unaffected) as a documented, *not-recommended* experimental setting for
+whoever wants to root-cause this — e.g. testing a higher `schema_temperature` under `json_schema`
+specifically, or a schema variant that inlines `minItems` on `entities` — rather than removed
+outright, since the plumbing itself (payload shape, fallback-on-rejection, `finish_reason`
+capture) is correct and worth keeping for that follow-up work.
+
+**Still open:** root-causing and fixing the `entities`-empty failure mode above; the same live
+check against OpenRouter/Ollama (`LMStudioClient` serves all three identically, but the
+fallback-on-rejection path has only been exercised by a live *acceptance*, never a live
+rejection, against any of the three).
 
 #### Gap B — Step 3 Never Sees the Brief · ✅ fixed
 **Verdict:** INFORMATION LOSS
@@ -317,7 +348,7 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 |---|---|---|---|---|---|---|---|
 | 1 | `json_object`-mode structured output | Gap A | ●○○ | ●●● | repair pipeline → fallback | ✓ | ✅ shipped (opt-in) |
 | 1b | `finish_reason`-confirmed truncation errors | Gap A | ●○○ | ●●○ | inferred-from-JSONDecodeError guess | ✓ | ✅ shipped |
-| 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | ✅ shipped (opt-in, live-verified) |
+| 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | 🟡 shipped off-by-default; live-verified NOT recommended (empties `entities`, see Gap A) |
 | 2 | Feed Step 3 the raw brief | Gap B | ●○○ | ●●● | — (additive) | ✓ | ✅ shipped |
 | 3 | Extend rescue layers to scenes/audio/narrative/title | Gap B | ●●○ | ●●● | — (mirrors existing pattern) | △ | ⬜ open |
 | 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ⬜ open |
@@ -353,10 +384,23 @@ corrected number, not the optimistic one.
   `finish_reason` surfaced from the API response onto `LMStudioClient.last_finish_reason`
   (confirmed-vs-guessed truncation errors), and real `json_schema`-constrained decoding
   (`src/unity_schema_jsonschema.py`, config key `lm_studio.structured_output_mode`). Both
-  live-verified against the loaded model (`qwythos-9b-claude-mythos-5-1m-mtp`) — accepted,
-  output validates against `UnitySchema` with no repair-pass involvement, ~1.8-3.5x latency on a
-  short completion vs. no `response_format` (see Gap A for the full numbers and the caveat that
-  this needs re-measuring at Step 3's real ~50k-token budget before becoming a default). New
-  tests: `TestJsonSchemaMode`/`TestFinishReason` in `tests/test_lm_studio_client.py`,
+  initially live-verified against the loaded model (`qwythos-9b-claude-mythos-5-1m-mtp`) with a
+  short probe prompt: accepted, output validates against `UnitySchema` with no repair-pass
+  involvement, ~1.8-3.5x latency on a short completion vs. no `response_format`. New tests:
+  `TestJsonSchemaMode`/`TestFinishReason` in `tests/test_lm_studio_client.py`,
   `tests/test_unity_schema_jsonschema.py`. Full suite: 4026 passed, same 7 pre-existing
   `tests/test_gta_retrieval.py` failures as the prior pass (unrelated, confirmed pre-existing).
+- **2026-09-02 (correction)** — the follow-up's `json_schema` latency finding was measured on
+  the wrong prompt (a short minimal-fill probe, not the real Step 3 system prompt) and its
+  planned re-measurement at full `max_tokens` first ran in a repo checkout a *concurrent* Claude
+  Code session had switched to a different branch mid-flight, silently executing code without
+  this gap's fixes. Re-run from an isolated `git worktree` pinned to this branch's commit, against
+  the real `unity-create` CLI and the real Step 3 prompt at `max_tokens: 50000`: **3/3 `json_schema`
+  trials came back with `entities: []`** (the brief's actual collectibles/enemies), failing the
+  playability gate every time, while 2/2 baseline trials filled entities normally and passed at
+  95/100. This is a reproducible content-loss regression specific to `entities` — the schema's
+  largest, most deeply-`$ref`-nested list — not the latency tradeoff originally reported (the
+  `json_schema` trials ran *faster* than baseline, consistent with generating far less content).
+  **`json_schema` mode is NOT recommended** — see Gap A for the corrected writeup and the
+  suspected mechanism. `structured_output_mode` stays wired (default `off`, unaffected) as a
+  documented experimental setting for whoever root-causes this, not removed.
