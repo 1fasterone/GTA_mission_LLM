@@ -22,7 +22,9 @@ Pieces (mirrors src/blender/base_models.py):
 from __future__ import annotations
 
 import math
+import re
 import wave
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -71,6 +73,21 @@ ARCHETYPES: dict[str, dict] = {
 
 ARCHETYPE_NAMES = tuple(ARCHETYPES.keys())
 
+
+@lru_cache(maxsize=None)
+def _kw_pattern(kw: str) -> re.Pattern:
+    """Word-boundary-anchored, cached per keyword — mirrors src/unity_archetypes.py's
+    _kw_pattern. Without \\b, a substring like "fire" matches inside "campfire", or
+    "long" inside "prolonged" (the same collision shape unity_archetypes.py hit once
+    for real: "vive" matching inside "survive"). The trailing "s?" tolerates a simple
+    plural ("footstep" must still match "footsteps") without reopening that hole: the
+    LEFT boundary is what blocks "campfire"/"prolonged", and it's untouched here."""
+    return re.compile(r"\b" + re.escape(kw) + r"s?\b")
+
+
+def _any_kw_match(words: tuple[str, ...], text: str) -> bool:
+    return any(_kw_pattern(w).search(text) for w in words)
+
 # prompt keyword -> archetype (first match wins; order matters — empty/laser are
 # checked before gun/explosion so "gun clip empty" and "laser blaster" route right)
 _KEYWORD_ARCHETYPE = [
@@ -94,7 +111,7 @@ def keyword_archetype(prompt: str) -> Optional[str]:
     """Deterministic prompt/descriptor -> archetype, no LLM. None if nothing matches."""
     p = (prompt or "").lower()
     for words, arch in _KEYWORD_ARCHETYPE:
-        if any(w in p for w in words):
+        if _any_kw_match(words, p):
             return arch
     return None
 
@@ -107,17 +124,17 @@ def archetype_params(archetype: str, prompt: str = "") -> dict:
     params = dict(DEFAULT_PARAMS)
     params.update(ARCHETYPES[arch])
     p = (prompt or "").lower()
-    if any(w in p for w in ("big", "huge", "large", "heavy", "massive")):
+    if _any_kw_match(("big", "huge", "large", "heavy", "massive"), p):
         params["decay"] *= 1.7; params["base_freq"] *= 0.8; params["drive"] *= 1.15
-    if any(w in p for w in ("small", "tiny", "light", "soft", "little")):
+    if _any_kw_match(("small", "tiny", "light", "soft", "little"), p):
         params["decay"] *= 0.7; params["base_freq"] *= 1.25; params["volume"] *= 0.85
-    if any(w in p for w in ("long", "slow", "sustained")):
+    if _any_kw_match(("long", "slow", "sustained"), p):
         params["decay"] *= 1.6
-    if any(w in p for w in ("short", "quick", "snappy", "fast")):
+    if _any_kw_match(("short", "quick", "snappy", "fast"), p):
         params["decay"] *= 0.6
-    if any(w in p for w in ("deep", "low", "bass", "boom")):
+    if _any_kw_match(("deep", "low", "bass", "boom"), p):
         params["base_freq"] *= 0.6; params["lpf"] = min(params["lpf"], 0.5)
-    if any(w in p for w in ("high", "bright", "sharp", "shrill")):
+    if _any_kw_match(("high", "bright", "sharp", "shrill"), p):
         params["base_freq"] *= 1.5; params["lpf"] = 1.0
     return clamp_params(params)
 

@@ -97,6 +97,30 @@ class TestDeterminism:
         assert random.random() == a
 
 
+# ── elevation (Gap H: tested primitive only, default off — see module docstring) ─
+
+class TestElevation:
+    def test_default_amplitude_is_flat(self):
+        pts = generate_centerline(style="flowing", seed=7)
+        assert all(p[1] == 0.0 for p in pts)
+
+    def test_explicit_zero_amplitude_matches_default(self):
+        a = generate_centerline(style="technical", seed=3)
+        b = generate_centerline(style="technical", seed=3, elevation_amplitude=0.0)
+        assert a == b
+
+    def test_positive_amplitude_is_deterministic(self):
+        a = generate_centerline(style="flowing", seed=11, elevation_amplitude=5.0)
+        b = generate_centerline(style="flowing", seed=11, elevation_amplitude=5.0)
+        assert a == b
+
+    def test_positive_amplitude_varies_and_is_bounded(self):
+        amp = 4.0
+        pts = generate_centerline(style="kart", seed=6, elevation_amplitude=amp)
+        assert any(p[1] != 0.0 for p in pts)
+        assert all(abs(p[1]) <= amp + 1e-6 for p in pts)
+
+
 # ── spline helper ─────────────────────────────────────────────────────────────
 
 class TestCatmull:

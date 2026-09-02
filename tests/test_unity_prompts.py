@@ -16,12 +16,14 @@ import pytest
 from src.atoms import get_atom
 from src.unity_compose import subsystems_for
 from src.unity_prompts import (
+    BRIEF_CAP_CHARS,
     GAMECONTEXT_SCHEMA_GUIDANCE,
     UNITY_SCHEMA_FILL_SYSTEM,
     UNITY_SCHEMA_FILL_USER,
     WIRING_MICRO_KINDS,
     MultimodalBlock,
     atom_vocabulary,
+    brief_block,
     render_multimodal_block,
 )
 from src.unity_schema import (
@@ -64,7 +66,29 @@ def block(concept=EVERYTHING_CONCEPT, prompt="", **kw) -> MultimodalBlock:
 
 def full_prompt(mm: MultimodalBlock, concept: str = "a brief") -> str:
     return UNITY_SCHEMA_FILL_USER.format(concept=concept, schema_hints="",
-                                         multimodal_block=mm.text)
+                                         multimodal_block=mm.text, brief_block="")
+
+
+# ── Gap B: Step 3 sees the raw brief, not only the LLM's concept paraphrase ────
+
+def test_schema_fill_prompt_includes_raw_brief():
+    prompt = UNITY_SCHEMA_FILL_USER.format(
+        schema_hints="", concept="c", multimodal_block="",
+        brief_block=brief_block("call it Nova, 7 rivals"))
+    assert "call it Nova, 7 rivals" in prompt
+    assert prompt.index("PROJECT CONCEPT") < prompt.index("USER'S ORIGINAL BRIEF")
+
+
+def test_brief_block_caps_length():
+    huge = "x" * 10_000
+    # +200 headroom for the fixed "USER'S ORIGINAL BRIEF..." header text wrapped
+    # around the capped brief itself, not part of the cap being tested.
+    assert len(brief_block(huge)) <= BRIEF_CAP_CHARS + 200
+
+
+def test_brief_block_empty_for_no_prompt():
+    assert brief_block("") == ""
+    assert brief_block(None) == ""
 
 
 # ── The regression this whole change exists for ───────────────────────────────
@@ -449,7 +473,7 @@ class TestTokenBudget:
 
     def test_empty_block_leaves_the_base_prompt_intact(self):
         rendered = UNITY_SCHEMA_FILL_USER.format(concept="c", schema_hints="",
-                                                 multimodal_block="")
+                                                 multimodal_block="", brief_block="")
         assert "MULTIMODAL" not in rendered
         assert rendered.rstrip().endswith("Output ONLY the JSON. No other text.")
 

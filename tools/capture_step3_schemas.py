@@ -40,6 +40,7 @@ from src.unity_prompts import (  # noqa: E402
     UNITY_SCHEMA_FILL_SYSTEM,
     UNITY_SCHEMA_FILL_USER,
     render_multimodal_block,
+    brief_block,
 )
 from src.unity_schema import UnitySchema  # noqa: E402
 
@@ -124,6 +125,7 @@ def main() -> int:
         mm = render_multimodal_block(concept, prompt, max_optional=max_optional)
         schema_user = UNITY_SCHEMA_FILL_USER.format(
             concept=concept, schema_hints=schema_hints, multimodal_block=mm.text,
+            brief_block=brief_block(prompt),
         )
 
         print(f"[{pid}] sections={','.join(mm.sections)} user={len(schema_user)} chars — "

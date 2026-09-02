@@ -220,9 +220,18 @@ class LMStudioClient:
 
     def _build_payload(self, system: str, user: str,
                        temperature: float | None, thinking: bool,
-                       seed: int | None, max_tokens: int | None = None) -> dict:
+                       seed: int | None, max_tokens: int | None = None,
+                       json_mode: bool = False) -> dict:
         """Assemble the chat-completions request body. Split out so the seed/
-        temperature/reasoning wiring is unit-testable without a live server."""
+        temperature/reasoning wiring is unit-testable without a live server.
+
+        json_mode adds response_format={"type": "json_object"} — a request
+        that the server enforce syntactically valid JSON at generation time,
+        instead of this module's extract_json()/repair passes catching a
+        malformed reply after the fact. Off by default: NOT every call site
+        wants JSON (concept generation expects prose), and support varies by
+        backend/model — see chat()'s fallback for what happens when a server
+        rejects the parameter."""
         # Kept as a fallback for Qwen3 builds served by something that does not
         # implement `reasoning_effort`; the field below is what actually works
         # on LM Studio. Harmless where it is ignored.
@@ -252,6 +261,8 @@ class LMStudioClient:
         eff_seed = seed if seed is not None else self.seed
         if eff_seed is not None:
             payload["seed"] = int(eff_seed)
+        if json_mode:
+            payload["response_format"] = {"type": "json_object"}
         return payload
 
     # Upstream conditions that are about the PROVIDER's moment, not about this
@@ -296,39 +307,13 @@ class LMStudioClient:
         # re-raises instead of sleeping, so the loop always returns or raises.
         raise AssertionError("retry loop fell through without returning")
 
-    def chat(self, system: str, user: str,
-             temperature: float | None = None,
-             thinking: bool = True,
-             seed: int | None = None,
-             max_tokens: int | None = None) -> str:
-        """
-        thinking=False → reasoning_effort="none": no chain-of-thought. Use for
-                         every mechanical step (schema fill, cue resolution,
-                         query translation, micro C# bodies) — they gain
-                         nothing from reasoning and pay its full latency.
-        thinking=True  → reasoning_effort=self.reasoning_effort ("high" unless
-                         config says otherwise) — the story/concept steps.
-        seed           → per-call override of the client's reproducibility seed.
-        max_tokens     → per-call completion ceiling. Omit to inherit the
-                         client-wide budget (config lm_studio.max_tokens).
-        """
-        payload = self._build_payload(system, user, temperature, thinking, seed,
-                                      max_tokens)
-        user_msg = payload["messages"][1]["content"]
-        log.debug(
-            "→ LLM REQUEST  model=%s  temperature=%.2f  max_tokens=%d\n"
-            "  [system] %s\n"
-            "  [user]   %s",
-            payload["model"],
-            payload["temperature"],
-            payload["max_tokens"],
-            system[:300] + ("…" if len(system) > 300 else ""),
-            user_msg[:300] + ("…" if len(user_msg) > 300 else ""),
-        )
-
-        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+    def _post_translated(self, payload: dict, headers: dict) -> httpx.Response:
+        """POST + translate httpx exceptions to this client's public exception
+        contract (TimeoutError / RuntimeError). Shared by chat()'s primary
+        attempt and its json_mode fallback retry, so a failure on either one
+        surfaces identically to a caller."""
         try:
-            r = self._post_with_retry(payload, headers)
+            return self._post_with_retry(payload, headers)
         except httpx.TimeoutException as e:
             # Raised as TimeoutError (not ValueError) so callers don't burn another
             # full timeout retrying. Reasoning models / CPU-offloaded models hit this.
@@ -350,6 +335,74 @@ class LMStudioClient:
             raise RuntimeError(
                 f"{self.base_url} returned HTTP {e.response.status_code} for model "
                 f"'{self.model}': {e.response.text[:500]}"
+            ) from e
+
+    def chat(self, system: str, user: str,
+             temperature: float | None = None,
+             thinking: bool = True,
+             seed: int | None = None,
+             max_tokens: int | None = None,
+             json_mode: bool = False) -> str:
+        """
+        thinking=False → reasoning_effort="none": no chain-of-thought. Use for
+                         every mechanical step (schema fill, cue resolution,
+                         query translation, micro C# bodies) — they gain
+                         nothing from reasoning and pay its full latency.
+        thinking=True  → reasoning_effort=self.reasoning_effort ("high" unless
+                         config says otherwise) — the story/concept steps.
+        seed           → per-call override of the client's reproducibility seed.
+        max_tokens     → per-call completion ceiling. Omit to inherit the
+                         client-wide budget (config lm_studio.max_tokens).
+        json_mode      → ask the server to enforce valid JSON syntax
+                         (response_format={"type":"json_object"}). Pass this
+                         only from a call site that actually wants JSON back —
+                         it is NOT a client-wide setting, because this same
+                         client also serves prose calls (concept generation)
+                         that must not have it. If the server/model rejects
+                         the parameter (an HTTP error), the request is retried
+                         ONCE without it, transparently — that retry does not
+                         consume any of the caller's own retry budget.
+        """
+        payload = self._build_payload(system, user, temperature, thinking, seed,
+                                      max_tokens, json_mode=json_mode)
+        user_msg = payload["messages"][1]["content"]
+        log.debug(
+            "→ LLM REQUEST  model=%s  temperature=%.2f  max_tokens=%d\n"
+            "  [system] %s\n"
+            "  [user]   %s",
+            payload["model"],
+            payload["temperature"],
+            payload["max_tokens"],
+            system[:300] + ("…" if len(system) > 300 else ""),
+            user_msg[:300] + ("…" if len(user_msg) > 300 else ""),
+        )
+
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            r = self._post_with_retry(payload, headers)
+        except httpx.HTTPStatusError as e:
+            if not json_mode:
+                raise RuntimeError(
+                    f"{self.base_url} returned HTTP {e.response.status_code} for model "
+                    f"'{self.model}': {e.response.text[:500]}"
+                ) from e
+            log.warning(
+                "%s rejected response_format=json_object for model '%s' (HTTP %d) "
+                "— retrying once without it",
+                self.base_url, self.model, e.response.status_code,
+            )
+            payload = self._build_payload(system, user, temperature, thinking, seed,
+                                          max_tokens, json_mode=False)
+            r = self._post_translated(payload, headers)
+        except httpx.TimeoutException as e:
+            raise TimeoutError(
+                f"{self.base_url} did not respond within {self.timeout:.0f}s for model "
+                f"'{self.model}'. Reasoning models, or models partly offloaded to "
+                f"CPU/RAM, can exceed this — raise lm_studio.timeout in config.yaml, "
+                f"fit the model fully in VRAM, or pick a smaller / non-reasoning model. "
+                f"A model that RUNS AWAY (never emitting a stop token) also lands "
+                f"here, having generated up to max_tokens={payload['max_tokens']} "
+                f"first; lower the caller's per-call max_tokens to fail fast."
             ) from e
 
         body    = r.json()

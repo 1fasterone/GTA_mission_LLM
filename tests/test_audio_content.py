@@ -46,9 +46,17 @@ def test_clamp_params_is_robust():
     ("heavy footsteps", "footstep"),
     ("menu select beep", "blip"),
     ("a glowing crystal", None),
+    ("a cozy campfire scene", None),   # "fire" bleeding into "campfire" must not match "hit"
 ])
 def test_keyword_archetype(prompt, expected):
     assert synth.keyword_archetype(prompt) == expected
+
+
+def test_archetype_params_long_substring_does_not_bleed():
+    # "long" as a bare word nudges decay*1.6; embedded in "prolonged" must not.
+    base = synth.archetype_params("hit", "")["decay"]
+    assert synth.archetype_params("hit", "a prolonged siren")["decay"] == base
+    assert synth.archetype_params("hit", "a long low hit")["decay"] > base
 
 
 # ── resolver ──────────────────────────────────────────────────────────────────
