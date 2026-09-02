@@ -19,14 +19,18 @@ lm_studio:
   # off | json_object | json_schema — tri-state successor to structured_output
   # above; json_schema asks for real SHAPE-constrained decoding against
   # UnitySchema's own derived JSON Schema (src/unity_schema_jsonschema.py), not
-  # just valid syntax. json_schema is NOT RECOMMENDED: live-verified
-  # (2026-09-02) against qwythos-9b with the REAL Step 3 prompt at the real
-  # 50k max_tokens budget, 3/3 trials came back with entities: [] (the
-  # brief's actual collectibles/enemies never got generated) and failed the
-  # playability gate every time — see docs/COMPILER_AUDIT.md Gap A for the
-  # full writeup and suspected cause. Left wired for whoever root-causes it,
-  # not because it's usable today. Leave unset to read structured_output above
-  # unchanged (json_object mode has none of this problem).
+  # just valid syntax. Its entities-came-back-empty regression (found
+  # 2026-09-02) is root-caused and fixed — src/unity_schema_jsonschema.py
+  # forces entities non-skippable in the GENERATION-time schema only, since
+  # llama.cpp's grammar let the model omit the whole key. Live-verified via
+  # `unity-create` end-to-end: 2/3 trials passed the playability gate at
+  # 95/100 and 92/100; the third hit an UNRELATED, legitimate abstention
+  # (src/unity_layout_archetype.py refusing a water-themed layout for a
+  # land brief the model drifted off-topic on) — a content-fidelity
+  # question, not this bug. See docs/COMPILER_AUDIT.md Gap A for the full
+  # writeup. Still opt-in (not the default) pending more end-to-end trials
+  # of that separate question. Leave unset to read structured_output above
+  # unchanged.
   # structured_output_mode: json_schema
 
 ollama:                            # used when lm_studio.backend == "ollama"

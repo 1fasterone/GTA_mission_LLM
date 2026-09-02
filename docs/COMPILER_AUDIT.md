@@ -119,22 +119,55 @@ prompt (`UNITY_SCHEMA_FILL_SYSTEM`, full multimodal block, full brief) at `max_t
   wall-clock) — the opposite of round 1's "slower" finding, because there's far less content to
   generate when the largest, most deeply-nested list in the schema comes back empty.
 
-**Conclusion: do not recommend `json_schema` mode.** This is not a latency tradeoff, it's a
-reproducible content-loss regression, specifically on `entities` — the one field the schema's
-grammar represents as a list of the largest, most deeply-`$ref`-nested object (`EntitySpec`).
-The likely mechanism: llama.cpp's grammar-masked sampling has to choose, at the start of each list
-element, between the trivial "close the array" token and the much larger sub-grammar for one more
-`EntitySpec`, and at `schema_temperature: 0.2` the model consistently takes the cheap exit.
-`json_object` mode (syntax-only, no shape grammar) does not have this failure mode and remains the
-safe, tested default. `structured_output_mode: json_schema` stays wired and available (config
-default is still `off`, unaffected) as a documented, *not-recommended* experimental setting for
-whoever wants to root-cause this — e.g. testing a higher `schema_temperature` under `json_schema`
-specifically, or a schema variant that inlines `minItems` on `entities` — rather than removed
-outright, since the plumbing itself (payload shape, fallback-on-rejection, `finish_reason`
-capture) is correct and worth keeping for that follow-up work.
+**Root cause, found (2026-09-02, same day as the correction above).** Not a sampling-temperature
+effect — a probe harness that reused one fixed concept and swapped only `response_format` (fast
+iteration against the live server, bypassing the ~90s full-pipeline round-trip per attempt) showed
+every "empty" response had `finish_reason: stop`: the model wasn't cut off, it *chose* to stop.
+Inspecting the actual key order in three successful-but-sparse responses showed why: llama.cpp's
+grammar for an all-optional object enforces Pydantic's declaration order as a single monotonic
+pass, and `entities` sits 20th of 37 properties, inside an unbroken run of 16 consecutive
+all-optional "legacy" fields (`company_name` … `entities` … `environment`). The model consistently
+jumped that whole run and landed on the multimodal sections its own prompt names explicitly
+(`characters`, `missions`, `audio_specs`, …) — a real choice under the grammar's freedom to skip
+any optional key, not a truncation artifact.
 
-**Still open:** root-causing and fixing the `entities`-empty failure mode above; the same live
-check against OpenRouter/Ollama (`LMStudioClient` serves all three identically, but the
+The fix needed BOTH halves, confirmed by testing each alone: `minItems: 1` on `entities` alone did
+nothing — the model kept omitting the KEY entirely, and an absent optional key never reaches its
+own `minItems` constraint. Only adding `entities` to the schema's top-level `required` list (so
+the key can't be skipped) *together with* `minItems: 1` (so the now-mandatory array can't be
+satisfied with `[]`) produced real content — 3/3 direct-probe trials came back with on-brief
+entities (a 5-count crystal pickup group, a 2-count sentry enemy group, matching the test brief's
+"five crystals"/"two sentries" exactly), and a follow-up 3-trial run of the actual `unity-create`
+CLI end-to-end got 2/3 full playability passes at 95/100 (the third hit a real, different,
+*unrelated* failure below).
+
+**Fixed:** `src/unity_schema_jsonschema.py`'s `_harden_for_generation()` applies both changes to a
+deep-copied schema before it reaches `response_format` — deep-copied because Pydantic does not
+document `model_json_schema()`'s return value as safe to mutate in place, and other code in this
+repo calls the same method for unrelated purposes; a shared-dict mutation bug here would have been
+very hard to trace. Scoped to `entities` only: `scripts` shows the identical skip pattern in the
+same probes but was never the cause of a playability-gate failure (deterministic pipeline stages
+backfill scripts regardless of what Step 3 wrote), so it stays untouched pending its own live
+evidence of actually mattering, rather than a preemptive guess.
+
+**A second, different failure surfaced once entities stopped being empty**, worth naming so it
+isn't mistaken for the same bug: one of the three end-to-end `unity-create` trials had the model
+fill `entities` with reef/coral/ocean-themed content for a brief about an "overgrown island" that
+never mentioned water, and `src/unity_layout_archetype.py`'s strict medium classifier correctly
+refused to lay out a `planar`+`water` combination no primitive covers — exactly the
+abstain-loudly behavior that guard exists for. This is a content-fidelity question (does
+`json_schema` mode's constrained sampling degrade the model's topical adherence, separate from the
+emptiness bug just fixed), not a grammar-mechanics bug, and is not fixed by this pass — flagged
+below as still open rather than folded into a claim this pass didn't earn.
+
+`json_object` mode remains the safe, unconditionally-recommended default. `json_schema` mode's
+specific, diagnosed emptiness regression is fixed and live-verified; it is not yet claimed fully
+production-ready given the reef/coral finding above, so it stays opt-in (config default `off`)
+pending more end-to-end trials.
+
+**Still open:** whether `json_schema` mode's constrained sampling measurably increases off-brief
+content vs. `json_object`/free-form (the reef/coral finding is n=1, not yet a pattern); the same
+live check against OpenRouter/Ollama (`LMStudioClient` serves all three identically, but the
 fallback-on-rejection path has only been exercised by a live *acceptance*, never a live
 rejection, against any of the three).
 
@@ -348,7 +381,7 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 |---|---|---|---|---|---|---|---|
 | 1 | `json_object`-mode structured output | Gap A | ●○○ | ●●● | repair pipeline → fallback | ✓ | ✅ shipped (opt-in) |
 | 1b | `finish_reason`-confirmed truncation errors | Gap A | ●○○ | ●●○ | inferred-from-JSONDecodeError guess | ✓ | ✅ shipped |
-| 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | 🟡 shipped off-by-default; live-verified NOT recommended (empties `entities`, see Gap A) |
+| 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | 🟡 shipped off-by-default; entities-empty regression root-caused + fixed, 2/3 e2e trials pass 95+; still opt-in pending the separate content-fidelity question (see Gap A) |
 | 2 | Feed Step 3 the raw brief | Gap B | ●○○ | ●●● | — (additive) | ✓ | ✅ shipped |
 | 3 | Extend rescue layers to scenes/audio/narrative/title | Gap B | ●●○ | ●●● | — (mirrors existing pattern) | △ | ⬜ open |
 | 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ⬜ open |
@@ -404,3 +437,24 @@ corrected number, not the optimistic one.
   **`json_schema` mode is NOT recommended** — see Gap A for the corrected writeup and the
   suspected mechanism. `structured_output_mode` stays wired (default `off`, unaffected) as a
   documented experimental setting for whoever root-causes this, not removed.
+- **2026-09-02 (root cause + fix)** — found and fixed the `entities: []` regression the
+  correction above documented. A fast probe harness (one fixed concept, direct httpx calls
+  against the real Step 3 prompt, bypassing the ~90s full-pipeline round-trip per attempt)
+  showed every empty response had `finish_reason: stop` — a choice, not a truncation — and
+  that `entities` sits 20th of 37 properties inside an unbroken run of 16 consecutive
+  all-optional fields that llama.cpp's grammar lets the model skip past entirely, landing
+  instead on the multimodal sections its own prompt names explicitly. `minItems: 1` alone did
+  nothing (an omitted key never reaches its own `minItems`); adding `entities` to the schema's
+  top-level `required` list *together with* `minItems: 1` — so the key can't be skipped and the
+  now-mandatory array can't be `[]` — produced real, on-brief entities 3/3 in the probe harness
+  and passed the `unity-create` playability gate in 2/3 full end-to-end trials at 95/100 and
+  92/100 (the third hit an unrelated, legitimate abstention: the model drifted onto
+  reef/coral/ocean vocabulary for a land brief, and `unity_layout_archetype.py` correctly
+  refused to lay that out — a content-fidelity question, not this bug, left open). Fixed in
+  `src/unity_schema_jsonschema.py`'s new `_harden_for_generation()`, deep-copying
+  `UnitySchema.model_json_schema()`'s output before mutating it since Pydantic doesn't
+  document that dict as safe to mutate in place and other code calls the same method for
+  unrelated purposes. New tests: `test_entities_forced_required_and_nonempty`,
+  `test_hardening_does_not_mutate_pydantics_own_schema` in `tests/test_unity_schema_jsonschema.py`.
+  `json_schema` mode stays opt-in (config default `off`) pending more end-to-end trials of the
+  separate content-fidelity question, not because the emptiness bug is still open.
