@@ -106,6 +106,20 @@ class RagClient:
 
     # ── core search ───────────────────────────────────────────────────────────
 
+    # ChromaDB's HNSW index is approximate, and its recall degrades sharply
+    # when n_results itself is small — a low n narrows the graph traversal,
+    # not just the returned slice. Against the 20k-entry animation collection,
+    # asking for n_results=1 missed the true nearest neighbor by 0.02 distance
+    # (returned "club_open-20" at 0.380 for "dancing at a club" while the real
+    # nearest, an actual nightclub-dancer clip, sat at 0.361 and only surfaced
+    # once n_results reached ~150). Every caller — including _best(), which is
+    # the live resolver path — asked chromadb for exactly what it needed (often
+    # n=1), so this silently returned wrong top-1 matches in production, not
+    # just in calibration. Over-fetching a wide candidate pool and slicing to
+    # the caller's n in Python fixes recall without depending on chromadb
+    # version-specific HNSW tuning knobs.
+    _MIN_CANDIDATES = 256
+
     def _search(self, text: str, domain: str, kind: str | None = None, n: int = 3) -> list[dict]:
         """Return top-n matches from the given domain collection."""
         collection = self._ensure_domain(domain)
@@ -114,14 +128,14 @@ class RagClient:
 
         result = collection.query(
             query_embeddings=[vec],
-            n_results=n,
+            n_results=max(n, self._MIN_CANDIDATES),
             where=where,
             include=["metadatas", "distances"],
         )
         hits = []
         for meta, dist in zip(result["metadatas"][0], result["distances"][0]):
             hits.append({**meta, "distance": dist})
-        return hits
+        return hits[:n]
 
     def threshold_for(self, kind: str | None) -> float:
         """Accept/reject distance for one kind — see _KIND_THRESHOLD."""
