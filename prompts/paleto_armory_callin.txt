@@ -1,0 +1,5 @@
+A weapons heist at a rural armory outside Paleto Bay. The player sneaks in on foot,
+cracks the armory locker, and hauls the crate out before the night patrol notices.
+Because the extraction point is a long sprint from the armory, the player carries a
+remote garage fob — one press summons their getaway truck to their current position
+instead of making them run all the way back to where it was parked.
