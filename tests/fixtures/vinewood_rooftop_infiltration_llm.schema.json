@@ -1,0 +1,117 @@
+{
+  "mission_name": "Silent Drop",
+  "location_name": "vinewood",
+  "time_of_day": 0,
+  "weather": "THUNDER",
+  "steps": [
+    {
+      "type": "go_to",
+      "label": "Infiltrate the compound perimeter",
+      "params": {}
+    },
+    {
+      "type": "pickup",
+      "label": "Deploy grappling rig to rooftop",
+      "params": {}
+    },
+    {
+      "type": "go_to",
+      "label": "Reach the ventilation shaft",
+      "params": {}
+    },
+    {
+      "type": "deliver",
+      "label": "Insert listening device into vent",
+      "params": {}
+    }
+  ],
+  "peds": [
+    {
+      "description": "silent security guard at main entrance",
+      "model": "s_m_m_security_01",
+      "role": "guard",
+      "count": 1,
+      "weapon": "none"
+    },
+    {
+      "description": "corrupt officer in patrol car on highway exit",
+      "model": "s_m_y_cop_01",
+      "role": "patrol",
+      "count": 1,
+      "weapon": "pistol"
+    }
+  ],
+  "vehicles": [
+    {
+      "description": "police interceptor parked near highway exit",
+      "model": "police3",
+      "role": "parked",
+      "count": 1
+    }
+  ],
+  "objects": [
+    {
+      "description": "concealed grappling rig on belt",
+      "model": "ch_chint02_motionsensor",
+      "role": "pickup"
+    },
+    {
+      "description": "listening device for intel drop",
+      "model": "prop_cs_phone_01",
+      "role": "pickup"
+    },
+    {
+      "description": "wet rooftop tiles",
+      "model": "prop_boxpile_04a",
+      "role": "decoration"
+    }
+  ],
+  "audio": [
+    {
+      "type": "ambient",
+      "context": "heavy thunderstorm and rain sounds",
+      "name": "DLC_ISLANDS_AMBIENCE_EXTERIOR"
+    },
+    {
+      "type": "sting",
+      "context": "player successfully inserts device without alerting guards",
+      "name": "STING_SUBTLE_1"
+    }
+  ],
+  "meta": {
+    "theme": null,
+    "mashup_with": null,
+    "seed": null,
+    "twist_seed": null,
+    "concept": "Under the cover of a heavy thunderstorm in **vinewood**, night has fallen and rain lashes against the streets surrounding a guarded mansion compound where a high-profile dealer is holding court atop an illegal penthouse balcony overlooking the hills. A silent security guard stands watch at the main entrance, unaware that a corrupt officer stationed nearby is tracking the operation from his patrol car parked on the highway exit near **downtown**. The protagonist needs to infiltrate this location without alerting either faction or compromising the sensitive intel being broadcast during the event below, requiring absolute silence as they move through the stormy streets.\n\nThe mission begins with the player entering the perimeter at street level, where the objective is strictly avoidance rather than combat since climbing the exposed fire escape would be spotted instantly by the guard’s patrol tower. Instead of risking detection while scaling the side of the building, the player must trigger a specialized grappling rig concealed on their belt to instantaneously haul them from ground level straight onto the rooftop tiles. Once airborne, they navigate across the wet roof and wedge the listening device into the vent just as the corrupt officer drives past in his vehicle, ensuring the party remains unaware of the intrusion while maintaining total silence above to secure the intel drop.",
+    "user_prompt": "A rooftop infiltration above the Vinewood hills. The player starts on the street\noutside a guarded mansion and needs to reach a penthouse balcony overlooking the\nparty below to plant a listening device. Climbing up the fire escape in full view\nof the guards would blow the whole job, so the player instead uses a grappling\nrig that instantly hauls them from street level straight up onto the rooftop the\nmoment they trigger it."
+  },
+  "ai_difficulty": "medium",
+  "config_menu": false,
+  "events": [],
+  "hud": true,
+  "reward_cash": 50000,
+  "teleport_points": [
+    {
+      "name": "rooftop",
+      "location_name": "vinewood",
+      "offset_x": 0.0,
+      "offset_y": 0.0
+    }
+  ],
+  "keybinds": [
+    {
+      "key": "F6",
+      "action": "teleport_player",
+      "target": "rooftop",
+      "label": "Teleport to rooftop"
+    }
+  ],
+  "skeleton": "mission",
+  "minigame": null,
+  "extra_usings": [],
+  "extra_fields": [],
+  "extra_init": "",
+  "extra_tick": "",
+  "extra_methods": []
+}

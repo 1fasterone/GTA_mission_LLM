@@ -25,6 +25,12 @@ StepType    = Literal[
 ]
 EventType   = Literal["thunderstorm", "police_pursuit"]
 
+# ── Keybind-gated mid-mission actions (fire once per keypress, any time the
+# mission is active — unlike MissionEvent's one-shot progress-fraction firing,
+# and unlike the Mission Editor's proximity-volume `editor_triggers`, which
+# fire on player distance, not a keystroke). ─────────────────────────────────
+KeybindAction = Literal["teleport_player", "spawn_ped_group", "spawn_vehicle"]
+
 # ── Minigame skeleton (menu-primary replayable arcade loop) ──────────────────
 SkeletonKind = Literal["mission", "minigame"]
 SettingKind  = Literal["cycle", "toggle", "int"]
@@ -286,6 +292,66 @@ class MissionEvent(BaseModel):
         return _clamp_float(v, 0.0, 1.0, 0.5)
 
 
+class TeleportPoint(BaseModel):
+    """Named world position a keybind can move the player to.
+
+    Never carries raw world coordinates — the LLM has no way to know real
+    GTA5 map coordinates and would hallucinate them. Instead it names one of
+    the same closed location vocabulary already used for the mission's own
+    location_name, plus a small offset — the exact convention
+    code_generator.py already uses for waypoints/checkpoints (anchor + a
+    bounded compass offset), never an invented absolute position.
+    """
+    name:          str
+    location_name: str   = "docks"
+    offset_x:      float = 0.0
+    offset_y:      float = 0.0
+
+    @field_validator("location_name", mode="before")
+    @classmethod
+    def _clamp_location(cls, v: str) -> str:
+        normalised = str(v).strip().lower().replace(" ", "_")
+        return normalised if normalised in _VALID_LOCATIONS else "docks"
+
+    @field_validator("offset_x", "offset_y", mode="before")
+    @classmethod
+    def _clamp_offset(cls, v) -> float:
+        return _clamp_float(v, -300.0, 300.0, 0.0)
+
+
+_KEYBIND_KEY_RE: re.Pattern = re.compile(r"^F([1-9]|1[0-2])$")
+# F5 starts the mission, F10 toggles the config menu — a keybind claiming
+# either would silently steal an already-meaningful key.
+_RESERVED_KEYBIND_KEYS: frozenset[str] = frozenset({"F5", "F10"})
+
+
+class MissionKeybind(BaseModel):
+    """Keystroke-gated action, active any time the mission is running.
+
+    `target` names the entity the action acts on, matched by exact
+    description text against the schema's own peds[]/vehicles[]
+    (spawn_ped_group/spawn_vehicle) or teleport_points[] (teleport_player) —
+    reuses those declarations rather than duplicating spawn config here.
+    Resolving `target` and rejecting duplicate/reserved keys happens in
+    MissionSchema._validate_keybinds (loud abstain, never a silent guess).
+    """
+    key:    str = "F6"
+    action: KeybindAction
+    target: str = ""
+    label:  str = ""   # short player-facing text (e.g. "Call backup")
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def _clamp_key(cls, v: str) -> str:
+        key = str(v).strip().upper()
+        return key if _KEYBIND_KEY_RE.match(key) else "F6"
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def _clamp_action(cls, v: str) -> str:
+        return clamp_enum(v, get_args(KeybindAction), "spawn_ped_group")
+
+
 _VALID_WEAPONS: frozenset[str] = frozenset(get_args(WeaponEnum))
 
 
@@ -384,6 +450,14 @@ class MissionSchema(BaseModel):
     hud:           bool = False
     reward_cash:   int  = 0
 
+    # ── Keybind-gated actions (teleport / on-demand spawn) ──
+    #   teleport_points -> named locations a keybind can move the player to
+    #   keybinds        -> F1-F12-gated actions, active any time the mission
+    #                      is running; each references an existing peds[]/
+    #                      vehicles[]/teleport_points[] entry by description
+    teleport_points: list[TeleportPoint]  = Field(default_factory=list, max_length=4)
+    keybinds:        list[MissionKeybind] = Field(default_factory=list, max_length=4)
+
     # ── Minigame skeleton (menu-primary replayable arcade loop) ──
     #   skeleton   -> "mission" = classic blip→F5→steps; "minigame" = menu→round→results loop
     #   minigame   -> config-menu rows + scoring + round body (only when skeleton="minigame")
@@ -412,13 +486,15 @@ class MissionSchema(BaseModel):
     def _clamp_time(cls, v) -> int:
         return _clamp_int(v, 0, 23, 20)
 
-    @field_validator("steps", "peds", "vehicles", "objects", "events", mode="before")
+    @field_validator("steps", "peds", "vehicles", "objects", "events",
+                     "teleport_points", "keybinds", mode="before")
     @classmethod
     def _truncate_lists(cls, v, info):
         # Models sometimes return more entries than the schema caps allow; truncate
         # (keep the first N) rather than raising a 'too_long' error. Caps mirror the
         # Field(max_length=...) declarations below.
-        caps = {"steps": 7, "peds": 6, "vehicles": 4, "objects": 6, "events": 3}
+        caps = {"steps": 7, "peds": 6, "vehicles": 4, "objects": 6, "events": 3,
+                "teleport_points": 4, "keybinds": 4}
         cap = caps.get(info.field_name)
         if cap is not None and isinstance(v, list) and len(v) > cap:
             return v[:cap]
@@ -480,6 +556,60 @@ class MissionSchema(BaseModel):
             elif evt.event_type == "police_pursuit":
                 evt.params.setdefault("wanted_level", 3)
                 evt.params.setdefault("spawn_heli", False)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_keybinds(self) -> "MissionSchema":
+        """Abstain loudly on a broken keybind rather than guessing.
+
+        A keybind is dropped (never silently rewritten) when its key is
+        reserved/already claimed by another keybind, or its target doesn't
+        match a declared ped/vehicle/teleport_point description — the rest
+        of the schema stays valid either way. Every drop is named in
+        meta['keybind_warnings'], mirroring how unity_scenebind.py logs
+        uncovered entities instead of silently falling through.
+        """
+        if not self.keybinds:
+            return self
+
+        ped_names        = {p.description.strip().lower() for p in self.peds}
+        vehicle_names     = {v.description.strip().lower() for v in self.vehicles}
+        teleport_names    = {t.name.strip().lower() for t in self.teleport_points}
+        used_keys         = set(_RESERVED_KEYBIND_KEYS)
+        warnings: list[str] = []
+        kept: list[MissionKeybind] = []
+
+        for kb in self.keybinds:
+            if kb.key in used_keys:
+                warnings.append(
+                    f"keybind {kb.key} ({kb.action}, target={kb.target!r}) dropped — "
+                    f"key already bound (or reserved for start/config-menu)")
+                continue
+            target = kb.target.strip().lower()
+            if kb.action == "teleport_player":
+                if target not in teleport_names:
+                    warnings.append(
+                        f"keybind {kb.key} (teleport_player) dropped — no teleport_points "
+                        f"entry named {kb.target!r}")
+                    continue
+            elif kb.action == "spawn_ped_group":
+                if target not in ped_names:
+                    warnings.append(
+                        f"keybind {kb.key} (spawn_ped_group) dropped — no peds[] entry "
+                        f"described {kb.target!r}")
+                    continue
+            elif kb.action == "spawn_vehicle":
+                if target not in vehicle_names:
+                    warnings.append(
+                        f"keybind {kb.key} (spawn_vehicle) dropped — no vehicles[] entry "
+                        f"described {kb.target!r}")
+                    continue
+            used_keys.add(kb.key)
+            kept.append(kb)
+
+        self.keybinds = kept
+        if warnings:
+            self.meta.setdefault("keybind_warnings", []).extend(warnings)
         return self
 
     def unresolved_models(self) -> list[str]:

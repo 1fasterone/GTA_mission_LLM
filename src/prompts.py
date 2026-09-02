@@ -124,6 +124,8 @@ OUTPUT this exact JSON structure, fully populated:
   "events": "OPTIONAL list (max 3) of one-shot mid-mission twists, each {{\\"event_type\\": \\"thunderstorm | police_pursuit\\", \\"at_progress\\": 0.5, \\"params\\": {{}}}} — at_progress is the mission fraction (0.1-0.9) when it fires; police_pursuit params may set {{\\"wanted_level\\": 3, \\"spawn_heli\\": true}} for an attack helicopter. Use [] if the concept has no mid-mission twist",
   "hud": "true only if the concept wants an on-screen timer / progress bar display during the mission; otherwise false",
   "reward_cash": "integer cash paid on mission completion (max 1000000); 0 if the concept mentions no payment",
+  "teleport_points": "OPTIONAL list (max 4) of named spots a keybind can teleport the player to, each {{\\"name\\": \\"short name, e.g. rooftop\\", \\"location_name\\": \\"one of: docks | airport | downtown | vinewood | sandy_shores | paleto_bay | alamo_sea | military_base | prison | port | highway\\", \\"offset_x\\": 0, \\"offset_y\\": 0}} — offset is metres from that location's anchor point (-300 to 300); NEVER invent real GTA5 world coordinates, you don't know them. A teleport_points entry alone does NOTHING in-game — it is inert unless a keybinds entry below also targets it. Use [] if the concept has no teleport moment",
+  "keybinds": "OPTIONAL list (max 4) of keystroke-gated actions, active any time the mission is running (e.g. \\"press F6 to call in backup\\", \\"hit a key to spawn a getaway car\\", \\"teleport to the roof\\"), each {{\\"key\\": \\"one of: F1-F12 (F5 and F10 are reserved for start/menu)\\", \\"action\\": \\"one of: teleport_player | spawn_ped_group | spawn_vehicle\\", \\"target\\": \\"the EXACT description text of an existing peds[] or vehicles[] entry for spawn actions, or an existing teleport_points[] name for teleport_player — must match one exactly or the keybind is dropped\\", \\"label\\": \\"short player-facing text, e.g. Call backup\\"}}. REQUIRED whenever the concept describes a one-press/one-trigger/on-demand ability — every teleport_points entry above needs a matching keybinds entry (action=teleport_player, target=that point's name) or it never fires; likewise a concept phrase like \\"press a button and X shows up\\" needs a spawn_ped_group/spawn_vehicle keybind, not just an extra peds[]/vehicles[] entry. Use [] only if the concept has no keystroke-triggered action at all",
   "skeleton": "\\"mission\\" (default — story mission with sequential steps) or \\"minigame\\" (replayable arcade round with a config menu, score, and best-score tracking — ONLY when the concept is explicitly a repeatable minigame/arcade challenge, not a one-shot story)",
   "minigame": "null for missions. For skeleton=\\"minigame\\": {{\\"settings\\": [{{\\"key\\": \\"round_time\\", \\"label\\": \\"Round Time\\", \\"kind\\": \\"cycle | toggle | int\\", \\"options\\": [], \\"min_value\\": 0, \\"max_value\\": 100, \\"step\\": 1, \\"default\\": \\"\\"}}], \\"score_metric\\": \\"points | kills | seconds\\", \\"score_label\\": \\"SCORE\\", \\"round_type\\": \\"timed\\", \\"round_params\\": {{\\"seconds\\": 60}}}}",
   "extra_usings": [],
@@ -218,13 +220,18 @@ VALIDATION RULES:
 4b. params field on steps is optional — preserve it if present, default to {} if absent; do NOT strip it
 4c. events (optional list): event_type must be thunderstorm | police_pursuit; at_progress a number
     between 0 and 1; preserve the list as given, do NOT strip it
+4d. teleport_points (optional list): location_name must be one of the 11 valid
+    location names; offset_x/offset_y numbers between -300 and 300; preserve as given
+4e. keybinds (optional list): key must be F1-F12; action must be teleport_player |
+    spawn_ped_group | spawn_vehicle; target's text is untouched (the pipeline matches
+    it deterministically — do not "correct" or paraphrase it); preserve as given
 5. ped roles: guard | patrol | target | civilian | ally
 6. vehicle roles: patrol | escape | delivery | parked | chase | race_opponent
 7. object roles: pickup | obstacle | decoration
 8. count must be an integer between 1 and 8
 9. Remove any extra fields not in the schema — EXCEPTIONS: keep "params" on steps, keep
-   "events"/"hud"/"reward_cash"/"skeleton"/"minigame" as given, and keep
-   "extra_usings"/"extra_fields"/"extra_init"/"extra_tick"/"extra_methods" EXACTLY as given
-   (they are the mission-specific C# channel; never strip, rewrite, or empty them)
+   "events"/"teleport_points"/"keybinds"/"hud"/"reward_cash"/"skeleton"/"minigame" as given,
+   and keep "extra_usings"/"extra_fields"/"extra_init"/"extra_tick"/"extra_methods" EXACTLY
+   as given (they are the mission-specific C# channel; never strip, rewrite, or empty them)
 
 Output the corrected schema as JSON only."""

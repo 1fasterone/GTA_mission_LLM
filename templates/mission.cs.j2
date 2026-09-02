@@ -200,21 +200,39 @@ public class {{ class_name }} : Script
     {
         Tick    += OnTick;
         Aborted += OnAborted;
-{% if config_menu %}
+{% if config_menu or keybinds %}
         KeyDown += OnKeyDown;
 {% endif %}
     }
-{% if config_menu %}
+{% if config_menu or keybinds %}
 
-    // -- Config menu toggle -----------------------------------------------------
+    // -- Config menu toggle / keybind-gated actions ------------------------------
 
     private void OnKeyDown(object sender, KeyEventArgs e)
     {
+{% if config_menu %}
         if (e.KeyCode == Keys.F10 && _state != State.Active)
         {
             _menuOpen = !_menuOpen;
             if (_menuOpen) _menuSelection = 0;
         }
+{% endif %}
+{% if keybinds %}
+        if (_state != State.Active) return;
+{% for kb in keybinds %}
+        if (e.KeyCode == Keys.{{ kb.key }})
+        {
+{% if kb.action == "teleport_player" %}
+            Game.Player.Character.Position = new Vector3({{ "%.2f"|format(kb.x) }}f, {{ "%.2f"|format(kb.y) }}f, {{ "%.2f"|format(kb.z) }}f);
+            GTA.UI.Notification.PostTicker("~y~{{ kb.label }}", false);
+{% elif kb.action == "spawn_ped_group" and kb.model != "UNRESOLVED" %}
+            SpawnKeybindPeds_{{ kb.index }}();
+{% elif kb.action == "spawn_vehicle" and kb.model != "UNRESOLVED" %}
+            SpawnKeybindVehicle_{{ kb.index }}();
+{% endif %}
+        }
+{% endfor %}
+{% endif %}
     }
 {% endif %}
 
@@ -681,6 +699,54 @@ public class {{ class_name }} : Script
 {% endif %}
 {% endfor %}
     }
+{% if keybinds %}
+
+    // -- Keybind-triggered spawns -----------------------------------------------
+    // Land around the player's position at press-time (not the fixed mission
+    // SpawnOrigin — the player may be far from it by the time a key fires).
+{% for kb in keybinds %}
+{% if kb.action == "spawn_ped_group" and kb.model != "UNRESOLVED" %}
+    private void SpawnKeybindPeds_{{ kb.index }}()
+    {
+        var origin = Game.Player.Character.Position;
+        for (int i = 0; i < {{ kb.count }}; i++)
+        {
+            float ang = i * (360f / {{ kb.count }});
+            var pos = origin + new Vector3(
+                {{ "%.1f"|format(kb.radius) }}f * (float)Math.Cos(ang * Math.PI / 180.0),
+                {{ "%.1f"|format(kb.radius) }}f * (float)Math.Sin(ang * Math.PI / 180.0), 0f);
+            var p = World.CreatePed(new Model("{{ kb.model }}"), pos);
+            if (p == null) continue;
+            p.IsPersistent = true;
+{% if kb.weapon_name %}
+            { int _wh = Function.Call<int>(Hash.GET_HASH_KEY, "{{ kb.weapon_name }}");
+              Function.Call(Hash.GIVE_WEAPON_TO_PED, p, _wh, 100, false, true); }
+{% endif %}
+{% if kb.hostile %}
+            p.Task.Combat(Game.Player.Character);
+{% elif kb.ally %}
+            Function.Call(Hash.TASK_FOLLOW_TO_OFFSET_OF_ENTITY,
+                p, Game.Player.Character, 1.0f, -1.0f, 0.0f, 2.0f, -1, 1.0f, true);
+{% endif %}
+            _peds.Add(p);
+        }
+        GTA.UI.Notification.PostTicker("~y~{{ kb.label }}", false);
+    }
+{% elif kb.action == "spawn_vehicle" and kb.model != "UNRESOLVED" %}
+    private void SpawnKeybindVehicle_{{ kb.index }}()
+    {
+        var origin = Game.Player.Character.Position;
+        for (int i = 0; i < {{ kb.count }}; i++)
+        {
+            var pos = origin + new Vector3({{ "%.1f"|format(kb.radius) }}f + i * 7f, 0f, 0f);
+            var veh = World.CreateVehicle(new Model("{{ kb.model }}"), pos);
+            if (veh != null) _vehicles.Add(veh);
+        }
+        GTA.UI.Notification.PostTicker("~y~{{ kb.label }}", false);
+    }
+{% endif %}
+{% endfor %}
+{% endif %}
 
     private void SpawnProps()
     {
