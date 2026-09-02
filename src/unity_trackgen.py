@@ -20,11 +20,18 @@ Deterministic: a local `random.Random(seed)` (never the global RNG), pure
 arithmetic, fixed tie-breaks — same (style, seed) → byte-identical route, in
 the spirit of racetracksgen.py's own `SEED`. No bpy, no LLM.
 
-Elevation is flat (y = 0) in this port: a tiled road riding a Perlin-noise
-elevation profile over Unity's flat ground plane would float/dip with nothing
-under it. Banking (roll from curvature) rides along as the 4th path component,
-which the schema and normalizer already preserve. Elevation can follow once a
-track-conforming terrain pass exists.
+Elevation is flat (y = 0) BY DEFAULT, and still is in the only place that ships
+today: src/unity_racetrack.py rides the centerline's y for the road surface,
+but its start grid and finish-line marker hardcode y=0.0 independent of the
+centerline, and there is no track-conforming terrain pass — a tiled road
+riding non-zero elevation over Unity's flat ground plane would float/dip with
+nothing under it, and karts would spawn off the surface. So `amplitude`
+(below) is a tested, opt-in elevation PRIMITIVE only: pass it explicitly if
+you're building a new consumer that also fixes the start-grid/finish-line
+assumption and the ground-plane question; every existing caller (including
+unity_racetrack.py) leaves it at the 0.0 default and gets today's exact flat
+output, byte-for-byte. Banking (roll from curvature) rides along as the 4th
+path component, which the schema and normalizer already preserve.
 """
 
 from __future__ import annotations
@@ -50,6 +57,7 @@ _DEFAULT_RESOLUTION = 62
 _SAMPLES_PER_SEGMENT = 24        # dense spline sampling before arc-length resample
 _BANK_SMOOTH = 3                 # curvature smoothing passes (kills banking jitter)
 _MAX_GEN_ATTEMPTS = 60           # regenerate until the layout is clean
+_ELEV_KEYFRAMES = 6              # seeded height control points spaced around the loop
 
 # Layout-shaping presets — the SHAPE knobs from racetracksgen.py's
 # STYLE_PRESETS. TRACK_LENGTH/TRACK_WIDTH overrides are intentionally dropped:
@@ -227,12 +235,39 @@ def _generate_control_points(base_radius, rng, p):
     return points
 
 
-def _build_centerline(control_points, length, resolution, banking_max):
-    """Turn control points into (points_xz, banks_deg, tightest_radius).
+def _elevation_profile(n: int, rng: random.Random, amplitude: float,
+                       keyframes: int = _ELEV_KEYFRAMES) -> list[float]:
+    """Deterministic closed-loop value noise: seed `keyframes` random heights
+    evenly spaced around the loop, cosine-interpolate between them indexed by
+    each point's position in the arc-length-uniform points array (a good
+    arc-length proxy, since _resample_closed already produced it).
+
+    amplitude<=0 draws NOTHING from `rng` and returns an all-zero profile —
+    this is the safety property every existing caller relies on for
+    byte-identical output at the 0.0 default."""
+    if amplitude <= 0.0 or n <= 0:
+        return [0.0] * n
+    heights = [rng.uniform(-amplitude, amplitude) for _ in range(keyframes)]
+    out = []
+    for i in range(n):
+        pos = (i / n) * keyframes
+        k0 = int(pos) % keyframes
+        k1 = (k0 + 1) % keyframes
+        frac = pos - math.floor(pos)
+        mu = (1.0 - math.cos(frac * math.pi)) / 2.0   # smooth at keyframe joins
+        out.append(round(heights[k0] * (1.0 - mu) + heights[k1] * mu, 3))
+    return out
+
+
+def _build_centerline(control_points, length, resolution, banking_max,
+                      rng: random.Random | None = None, amplitude: float = 0.0):
+    """Turn control points into (points_xz, banks_deg, tightest_radius, elev).
 
     Points are arc-length-uniform around the loop, scaled to `length`; banking
     is the signed curvature normalized to ±banking_max degrees. 2D XZ port of
-    racetracksgen.build_centerline (elevation/surface-bump dropped)."""
+    racetracksgen.build_centerline. `elev` is the optional value-noise height
+    profile from `_elevation_profile` — see the module docstring for why it
+    defaults to (and stays) all-zero unless a caller explicitly opts in."""
     dense = _sample_closed_spline(control_points, _SAMPLES_PER_SEGMENT)
     pts = _resample_closed(dense, resolution)
 
@@ -256,19 +291,31 @@ def _build_centerline(control_points, length, resolution, banking_max):
     tightest = 1.0 / max_curv
     cap = min(banking_max, _BANK_CAP_DEG)
     banks = [round((c / max_curv) * cap, 3) for c in curv]
-    return pts, banks, tightest
+
+    # amplitude is capped as a fraction of track length (same spirit as
+    # banking_max/_BANK_CAP_DEG capping bank degrees) rather than coupled to
+    # curvature — climb and turn stay independent signals, on purpose.
+    elev_amp = min(amplitude, length * 0.05) if amplitude > 0.0 else 0.0
+    elev = _elevation_profile(n, rng or random.Random(0), elev_amp)
+    return pts, banks, tightest, elev
 
 
 def generate_centerline(style: str = "flowing", seed: int = 42,
                         length: float = _DEFAULT_LENGTH,
                         width: float = _DEFAULT_WIDTH,
                         resolution: int = _DEFAULT_RESOLUTION,
+                        elevation_amplitude: float = 0.0,
                         ) -> list[list[float]]:
-    """Generate a clean closed race centerline as [x, 0.0, z, bank°] points
+    """Generate a clean closed race centerline as [x, y, z, bank°] points
     (last duplicates the first — the closed-loop convention build_route and
     compose_racetrack expect). Regenerates until the layout neither folds a
     corner tighter than the track can support nor crosses itself, mirroring
     racetracksgen.generate_track's validation. Deterministic in (style, seed).
+
+    `elevation_amplitude` defaults to 0.0 — y stays exactly 0.0 for every
+    point, byte-identical to this function's pre-elevation output. Non-zero
+    values are a tested primitive only; see the module docstring before
+    wiring this into any consumer.
     """
     rng = random.Random(seed)
     params = _resolve_params(style, rng)
@@ -276,12 +323,13 @@ def generate_centerline(style: str = "flowing", seed: int = 42,
     min_corner = width * 0.9
     resolution = max(8, min(int(resolution), 62))
 
-    last: tuple[list, list, float] | None = None
+    last: tuple[list, list, float, list] | None = None
     for _ in range(_MAX_GEN_ATTEMPTS):
         cps = _generate_control_points(base_radius, rng, params)
-        pts, banks, tightest = _build_centerline(
-            cps, length, resolution, params["banking_max"])
-        last = (pts, banks, tightest)
+        pts, banks, tightest, elev = _build_centerline(
+            cps, length, resolution, params["banking_max"],
+            rng=rng, amplitude=elevation_amplitude)
+        last = (pts, banks, tightest, elev)
         if tightest < min_corner:
             continue
         if _self_intersects(pts):
@@ -289,10 +337,10 @@ def generate_centerline(style: str = "flowing", seed: int = 42,
         break
 
     assert last is not None
-    pts, banks, _tightest = last
+    pts, banks, _tightest, elev = last
     route_pts: list[list[float]] = [
-        [round(x, 3), 0.0, round(z, 3), bank]
-        for (x, z), bank in zip(pts, banks)
+        [round(x, 3), y, round(z, 3), bank]
+        for (x, z), bank, y in zip(pts, banks, elev)
     ]
     route_pts.append(list(route_pts[0]))   # close the loop
     return route_pts
@@ -302,6 +350,7 @@ def generate_track_route(style: str = "flowing", seed: int = 42,
                          length: float = _DEFAULT_LENGTH,
                          width: float = _DEFAULT_WIDTH,
                          resolution: int = _DEFAULT_RESOLUTION,
+                         elevation_amplitude: float = 0.0,
                          ) -> dict:
     """Generate a procedural circuit as a canonical `unity-create --route`
     dict — identical shape to what `unity-path` writes from text/image, so it
@@ -309,8 +358,10 @@ def generate_track_route(style: str = "flowing", seed: int = 42,
     origin, heading +Z) path, then into compose_racetrack unchanged.
 
     Returns {path_points, path_width, closed: True, source: "trackgen:<style>"}.
+    `elevation_amplitude` defaults to 0.0 — see generate_centerline.
     """
-    pts = generate_centerline(style, seed, length, width, resolution)
+    pts = generate_centerline(style, seed, length, width, resolution,
+                              elevation_amplitude=elevation_amplitude)
     route = build_route(pts, width=width, close=True,
                         source=f"trackgen:{style}")
     route["seed"] = int(seed)

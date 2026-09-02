@@ -605,3 +605,121 @@ class TestOpenRouterBackend:
             with pytest.raises(RuntimeError, match="bad request"):
                 client.chat(system="sys", user="user")
         assert slept.call_count == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# json_mode (response_format=json_object) — Gap A: request valid JSON syntax
+# at generation time instead of only repairing it after the fact. Off by
+# default; per-call, not per-client (concept generation must never get it).
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestJsonMode:
+    def test_payload_omits_response_format_by_default(self, client):
+        p = client._build_payload("sys", "usr", None, False, None)
+        assert "response_format" not in p
+
+    def test_payload_omits_response_format_when_explicitly_false(self, client):
+        p = client._build_payload("sys", "usr", None, False, None, json_mode=False)
+        assert "response_format" not in p
+
+    def test_payload_includes_response_format_when_json_mode(self, client):
+        p = client._build_payload("sys", "usr", None, False, None, json_mode=True)
+        assert p["response_format"] == {"type": "json_object"}
+
+    def test_chat_json_mode_false_sends_no_response_format(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        captured = {}
+
+        def fake_post(url, json=None, **kwargs):
+            captured["payload"] = json
+            return mock_response
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            client.chat(system="sys", user="user")   # json_mode omitted -> False
+
+        assert "response_format" not in captured["payload"]
+
+    def test_chat_json_mode_true_sends_response_format(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        captured = {}
+
+        def fake_post(url, json=None, **kwargs):
+            captured["payload"] = json
+            return mock_response
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            client.chat(system="sys", user="user", json_mode=True)
+
+        assert captured["payload"]["response_format"] == {"type": "json_object"}
+
+    def test_json_mode_falls_back_once_when_server_rejects_it(self, client):
+        """A server/model that rejects response_format must not crash the
+        whole pipeline run: chat() retries ONCE without it, transparently.
+        Confirmed live exception path: _post_with_retry doesn't retry a 400
+        (only provider-transient statuses do), so without this fallback a
+        rejection would propagate straight through as a RuntimeError the
+        Step-3 retry loop doesn't catch (it only catches ValueError/
+        ValidationError) — crashing the run instead of degrading gracefully."""
+        from unittest.mock import MagicMock, patch
+
+        bad = TestOpenRouterBackend._error_response(
+            400, '{"error":"response_format not supported"}')
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.raise_for_status.return_value = None
+        ok.json.return_value = {"choices": [{"message": {"content": "recovered"}}]}
+
+        posts = [bad, ok]
+        captured_payloads = []
+
+        def fake_post(url, json=None, **kwargs):
+            captured_payloads.append(json)
+            return posts.pop(0)
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            result = client.chat(system="sys", user="user", json_mode=True)
+
+        assert result == "recovered"
+        assert len(captured_payloads) == 2
+        assert captured_payloads[0]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in captured_payloads[1]
+
+    def test_json_mode_false_still_raises_immediately_on_400(self, client):
+        """The fallback path is json_mode-specific — a plain (non-json_mode)
+        400 must keep failing exactly as it always has, not get a spurious
+        retry."""
+        from unittest.mock import patch
+
+        resp = TestOpenRouterBackend._error_response(
+            400, '{"error":{"message":"bad request"}}')
+        with patch("httpx.Client") as MockClient, patch("time.sleep") as slept:
+            MockClient.return_value.__enter__.return_value.post.return_value = resp
+            with pytest.raises(RuntimeError, match="bad request"):
+                client.chat(system="sys", user="user")
+        assert slept.call_count == 0
+
+    def test_json_mode_second_failure_raises_normally(self, client):
+        """If the server rejects json_mode AND the plain fallback also fails,
+        the fallback's own failure must surface like any other chat() error —
+        not be swallowed."""
+        from unittest.mock import patch
+
+        first = TestOpenRouterBackend._error_response(
+            400, '{"error":"response_format not supported"}')
+        second = TestOpenRouterBackend._error_response(
+            500, '{"error":"server error"}')
+        with patch("httpx.Client") as MockClient, patch("time.sleep"):
+            MockClient.return_value.__enter__.return_value.post.side_effect = [
+                first, second, second, second, second,  # 500 is retryable -> backoff exhausts
+            ]
+            with pytest.raises(RuntimeError, match="server error"):
+                client.chat(system="sys", user="user", json_mode=True)

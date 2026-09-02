@@ -27,7 +27,7 @@ from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
     UNITY_CONCEPT_SYSTEM, UNITY_CONCEPT_USER,
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
-    GAMECONTEXT_SCHEMA_GUIDANCE, render_multimodal_block,
+    GAMECONTEXT_SCHEMA_GUIDANCE, render_multimodal_block, brief_block,
 )
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
@@ -1250,7 +1250,8 @@ class UnityPipeline:
             self._ok("Multimodal IR sections requested: " + ", ".join(mm.sections))
             schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept,
                                                         schema_hints=schema_hints,
-                                                        multimodal_block=mm.text)
+                                                        multimodal_block=mm.text,
+                                                        brief_block=brief_block(user_prompt))
             # In --compose mode the micros + GameContext locator exist, so steer
             # the LLM to reach subsystems via GameContext.Instance.Get<T>()
             # instead of inventing singletons (which the fixer strips).
@@ -1260,6 +1261,11 @@ class UnityPipeline:
             # validation so a runaway list costs its own overflow instead of the
             # whole run (src/unity_schema_clamp.py — live: 155 scripts against a
             # cap of 24).
+            # response_format=json_object on this call only (never concept
+            # generation, which expects prose) — off by default; see the
+            # comment on config.yaml's lm_studio.structured_output.
+            _json_mode = bool(self.config.get("lm_studio", {})
+                              .get("structured_output", False))
             clamp_msgs: list[str] = []
             last_err: Exception | None = None
             for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
@@ -1273,6 +1279,7 @@ class UnityPipeline:
                         temperature = (self.schema_temp if attempt == 0
                                        else min(self.schema_temp, 0.1)),
                         thinking    = False,
+                        json_mode   = _json_mode,
                     )
                     schema_dict = self.llm.extract_json(schema_raw)
                     clamp_msgs  = clamp_capped_lists(schema_dict)

@@ -345,10 +345,13 @@ real about the game — and the declaration that makes it compile is the
 compiler's. Only an invented *method call* is unrepairable (a field can be
 declared; a body cannot be invented), and that one case drops the edge by name.
 
-**2. Feed Step 3 the brief, not only the concept.**
-The single highest-recall change available, and it needs no new schema: pass
-`user_prompt` alongside `concept` into `UNITY_SCHEMA_FILL_USER`. The rescue
-injectors become a safety net instead of the mechanism.
+**2. ~~Feed Step 3 the brief, not only the concept.~~ DONE.**
+`brief_block(user_prompt)` (`src/unity_prompts.py`) threads the raw brief into
+`UNITY_SCHEMA_FILL_USER` right after `{concept}`, capped at `BRIEF_CAP_CHARS` (4000
+chars, logged if truncated) to stay inside a local model's context window. The
+rescue injectors (`unity_concept_entities.py`, `unity_concept_scripts.py`) remain a
+safety net rather than the primary recall mechanism — see `docs/COMPILER_AUDIT.md`
+Gap B for the measured before/after.
 
 **3. Invert primacy — parse first, enrich second.**
 For a structured brief, run `unity_briefparse` to build the spine (identity),

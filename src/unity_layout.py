@@ -86,10 +86,6 @@ _log = logging.getLogger(__name__)
 # Minimum world-space gap enforced between two packed groups' footprint
 # circles, on top of their own radii.
 _GROUP_MARGIN = 2.0
-# Fraction of a scatter grid cell an instance may be jittered by — keeps the
-# "scattered" look while guaranteeing no instance drifts closer than
-# roughly (1 - 2*_SCATTER_JITTER) * spacing to its grid neighbor.
-_SCATTER_JITTER = 0.3
 # Clearance multiplier applied to a MEASURED model footprint (see
 # _effective_spacing), on top of which the scatter jitter is clamped to the
 # leftover slack so the cell spacing is actually honoured. 1.25 was enough to
@@ -229,12 +225,13 @@ def _effective_spacing(entity: EntitySpec,
     base = max(entity.spacing, entity.scale * 1.15)
     fp   = (footprints or {}).get(entity.name)
     if fp and fp > 0:
-        # 1.15 is the clearance used for the primitive approximation, but a
-        # scatter cell is then jittered by up to _SCATTER_JITTER in each axis,
-        # which pulls the closest pair well inside the nominal cell. Measured
-        # against the real layout, a 1.15 margin left neighbours overlapping by
-        # about a quarter of their own width; _MODEL_CLEARANCE is sized so the
-        # tightest pair still clears the model.
+        # 1.15 is the clearance used for the primitive approximation. Measured
+        # against the real layout, a bare 1.15 margin left neighbours
+        # overlapping by about a quarter of their own width; _MODEL_CLEARANCE
+        # is sized so the tightest pair still clears the model. (Scatter
+        # placement itself now guarantees this as a real minimum distance via
+        # Poisson-disk sampling — see _scatter_positions — rather than the
+        # jittered-grid approximation this comment used to describe.)
         return max(base, fp * entity.scale * _MODEL_CLEARANCE)
     return base
 
@@ -406,41 +403,107 @@ def _measure_baked(entity: EntitySpec) -> tuple[float, float, float]:
     return cx, cz, spread + max(0.5, entity.scale * 0.6)
 
 
+_BRIDSON_K = 30   # candidate points tried per active sample (standard Bridson default)
+
+
+def _bridson_sample(rng: random.Random, radius: float,
+                    region_radius: float) -> list[tuple[float, float]]:
+    """Grid-accelerated Poisson-disk sampling (Bridson's algorithm) over a
+    disk of `region_radius` centered at the origin, with a REAL minimum
+    pairwise distance of `radius` between every accepted point — unlike a
+    jittered grid, which only approximates a minimum spacing.
+
+    Deterministic given `rng`'s state. The active list and `samples` are
+    plain lists, iterated/indexed by position — never by dict/set iteration
+    order, which Python does not guarantee stable across runs the way list
+    order is (this pipeline's determinism tests replay a build twice and
+    require byte-identical output). `grid` is a dict, but only ever looked up
+    by a key computed deterministically from a point's own coordinates —
+    never iterated — so it carries none of that risk."""
+    if radius <= 0.0:
+        radius = 1e-3
+    cell = radius / math.sqrt(2.0)
+    grid: dict[tuple[int, int], int] = {}   # (gx, gy) -> index into `samples`
+    samples: list[tuple[float, float]] = []
+    active: list[int] = []
+
+    def gkey(p: tuple[float, float]) -> tuple[int, int]:
+        return (int(math.floor(p[0] / cell)), int(math.floor(p[1] / cell)))
+
+    def fits(p: tuple[float, float]) -> bool:
+        if math.hypot(p[0], p[1]) > region_radius:
+            return False
+        gx, gy = gkey(p)
+        for dy in (-2, -1, 0, 1, 2):
+            for dx in (-2, -1, 0, 1, 2):
+                idx = grid.get((gx + dx, gy + dy))
+                if idx is not None and math.hypot(
+                        p[0] - samples[idx][0], p[1] - samples[idx][1]) < radius:
+                    return False
+        return True
+
+    origin = (0.0, 0.0)
+    samples.append(origin)
+    grid[gkey(origin)] = 0
+    active.append(0)
+
+    while active:
+        i = rng.randrange(len(active))
+        base = samples[active[i]]
+        placed = False
+        for _ in range(_BRIDSON_K):
+            ang = rng.uniform(0.0, 2.0 * math.pi)
+            dist = rng.uniform(radius, 2.0 * radius)
+            cand = (base[0] + dist * math.cos(ang), base[1] + dist * math.sin(ang))
+            if fits(cand):
+                idx = len(samples)
+                samples.append(cand)
+                grid[gkey(cand)] = idx
+                active.append(idx)
+                placed = True
+                break
+        if not placed:
+            active.pop(i)   # exhausted this sample's candidates; drop from active only
+
+    return samples
+
+
 def _scatter_positions(entity: EntitySpec, eff_spacing: float,
                         cx: float, cz: float,
                         footprint: float = 0.0,
                         y: float = 0.0) -> list[list[float]]:
-    """Deterministic jittered-grid scatter: lay a grid of `eff_spacing` cells
-    around the group center, take the `count` cells closest to it (keeps the
-    footprint round rather than a filled square), and jitter each by up to
-    `_SCATTER_JITTER * eff_spacing` — replaces the old runtime
-    `System.Random` uniform draw, which ignored `spacing`/scale entirely and
-    guaranteed overlap at any real count or scale."""
+    """Deterministic Poisson-disk (Bridson's algorithm) scatter: sample a disk
+    around the group center with a real minimum-pairwise-distance guarantee,
+    then keep the `count` samples closest to center (keeps the footprint
+    round, same intent as the old grid's distance-sort). Trimming a valid
+    Poisson-disk set to its `n` closest-to-center points cannot violate the
+    minimum-distance guarantee among what remains — removing points can only
+    preserve or increase the remaining minimum pairwise distance, never
+    decrease it.
+
+    Replaces the old jittered-grid approach, which only approximated the
+    requested spacing (and, when a model's `footprint` exceeded `eff_spacing`,
+    could still let two instances interpenetrate — the grid cells sat at
+    `eff_spacing` regardless of a larger real footprint). Using `footprint`
+    directly as the packing radius here fixes that case rather than just
+    reproducing it."""
     n = max(1, entity.count)
-    half_cols = math.ceil(math.sqrt(n)) + 2  # generous — always >= n cells
-    cells = []
-    for row in range(-half_cols, half_cols + 1):
-        for col in range(-half_cols, half_cols + 1):
-            x, z = col * eff_spacing, row * eff_spacing
-            cells.append((math.hypot(x, z), row, col, x, z))
-    cells.sort(key=lambda c: (c[0], c[1], c[2]))  # deterministic tie-break
     rng = random.Random(f"{entity.name}:{n}:{eff_spacing:.3f}")
-    # Jitter is what makes a grid read as "scattered", but two adjacent cells
-    # jittered toward each other close the gap by up to 2x the amplitude. When
-    # we know the model's real footprint, clamp the amplitude to the slack the
-    # cell actually has, so the closest pair still clears the model instead of
-    # interpenetrating. Unknown footprint keeps the original amplitude, so
-    # unmeasured projects stay byte-identical.
-    amp = _SCATTER_JITTER * eff_spacing
-    if footprint > 0.0:
-        slack = max(0.0, eff_spacing - footprint)
-        amp = min(amp, slack * 0.5)
-    pts: list[list[float]] = []
-    for _, _row, _col, x, z in cells[:n]:
-        jx = (rng.random() * 2 - 1) * amp
-        jz = (rng.random() * 2 - 1) * amp
-        pts.append([cx + x + jx, y, cz + z + jz])
-    return pts
+    r = eff_spacing if footprint <= 0.0 else max(footprint, eff_spacing * 0.5)
+    region_r = math.sqrt(n) * r * 1.6   # generous, same spirit as the old half_cols+2
+    candidates = _bridson_sample(rng, radius=r, region_radius=region_r)
+    if len(candidates) < n:
+        _log.warning("scatter: Bridson under-produced for %r (need %d, got %d "
+                     "at region_r=%.2f) — widening once, same seed",
+                     entity.name, n, len(candidates), region_r)
+        candidates = _bridson_sample(rng, radius=r, region_radius=region_r * 1.5)
+    assert len(candidates) >= n, (
+        f"[scatter.strict] Bridson under-produced for entity {entity.name!r} "
+        f"(need {n}, got {len(candidates)}) even after widening the sampling "
+        f"region — spacing={eff_spacing:.3f}/footprint={footprint:.3f} may be "
+        f"too large for this count.")
+    candidates.sort(key=lambda p: math.hypot(p[0], p[1]))
+    return [[cx + x, y, cz + z] for x, z in candidates[:n]]
 
 
 def _bake_positions(entity: EntitySpec, eff_spacing: float,

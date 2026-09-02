@@ -112,8 +112,10 @@ class TestScatterSpacing:
             math.dist(pts[i], pts[j])
             for i in range(len(pts)) for j in range(i + 1, len(pts))
         )
-        # Jittered-grid guarantees neighbors are never closer than roughly
-        # (1 - 2*jitter) * eff_spacing -- well above the un-widened `spacing`.
+        # Poisson-disk sampling guarantees a REAL minimum pairwise distance of
+        # eff_spacing between every pair, not an approximation eroded by
+        # jitter -- see test_scatter_enforces_a_real_minimum_distance below
+        # for the tight version of this assertion.
         assert worst >= eff_spacing * 0.35
         assert worst > min_gap * 0.9 or eff_spacing > min_gap
 
@@ -122,6 +124,21 @@ class TestScatterSpacing:
         schema = _schema([e])
         compute_layout(schema)
         assert len(e.instance_positions) == 37
+
+    def test_scatter_enforces_a_real_minimum_distance(self):
+        # Bridson's algorithm guarantees min pairwise distance == the packing
+        # radius, up to floating-point slop -- not an approximate bound.
+        e = EntitySpec(name="Crates", count=25, placement="scatter",
+                        radius=6, spacing=2.5, scale=1.0)
+        schema = _schema([e])
+        compute_layout(schema)
+        eff_spacing = max(e.spacing, e.scale * 1.15)
+        pts = e.instance_positions
+        worst = min(
+            math.dist(pts[i], pts[j])
+            for i in range(len(pts)) for j in range(i + 1, len(pts))
+        )
+        assert worst >= eff_spacing - 1e-6
 
 
 class TestRacetrackStartGrid:

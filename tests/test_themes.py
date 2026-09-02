@@ -156,5 +156,5 @@ def test_unity_concept_includes_theme_block():
 
 def test_unity_schema_fill_empty_hints():
     rendered = UNITY_SCHEMA_FILL_USER.format(concept="brief", schema_hints="",
-                                             multimodal_block="")
+                                             multimodal_block="", brief_block="")
     assert "brief" in rendered

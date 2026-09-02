@@ -5,9 +5,12 @@ Same philosophy as GTA5: LLM = storyteller/specifier, pipeline = deterministic c
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+
+_log = logging.getLogger(__name__)
 
 # ── STEP 2: Project concept ───────────────────────────────────────────────────
 
@@ -218,7 +221,7 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
 
 PROJECT CONCEPT:
 {concept}
-
+{brief_block}
 OUTPUT this exact JSON structure, fully populated:
 {{
   "project_name": "PascalCase name, no spaces",
@@ -316,6 +319,28 @@ OUTPUT this exact JSON structure, fully populated:
 }}
 {multimodal_block}
 Output ONLY the JSON. No other text."""
+
+# Step 3 used to see only {concept} — the LLM's own prose paraphrase of the user's
+# brief, never the brief itself. Whatever the concept dropped was unrecoverable by
+# construction: no amount of model capability fixes a value that isn't in the input.
+# _brief_block feeds the raw brief back in alongside the concept so names/counts/ids
+# the concept paraphrased away have one more chance to survive Step 3 directly,
+# on top of (not instead of) the deterministic rescue-layer re-parses
+# (unity_concept_entities.py, unity_concept_scripts.py) that already run after it.
+BRIEF_CAP_CHARS = 4000   # conservative char->token guess; local models run 8k-16k context
+                          # and the schema prompt above is already ~3.5k tokens on its own.
+
+
+def brief_block(user_prompt: str) -> str:
+    if not user_prompt:
+        return ""
+    text = user_prompt
+    if len(text) > BRIEF_CAP_CHARS:
+        _log.warning("user_prompt truncated to %d chars for Step 3 brief block (was %d)",
+                      BRIEF_CAP_CHARS, len(text))
+        text = text[:BRIEF_CAP_CHARS]
+    return (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
+            f"priority over the concept above):\n{text}\n")
 
 
 # ── STEP 3b: multimodal IR block ──────────────────────────────────────────────
