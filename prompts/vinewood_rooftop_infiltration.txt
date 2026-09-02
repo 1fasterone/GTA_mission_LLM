@@ -1,0 +1,6 @@
+A rooftop infiltration above the Vinewood hills. The player starts on the street
+outside a guarded mansion and needs to reach a penthouse balcony overlooking the
+party below to plant a listening device. Climbing up the fire escape in full view
+of the guards would blow the whole job, so the player instead uses a grappling
+rig that instantly hauls them from street level straight up onto the rooftop the
+moment they trigger it.

@@ -53,6 +53,12 @@ _WEATHER_MENU_OPTIONS = [
 _EVENT_HELI_MODEL  = "buzzard"
 _EVENT_PILOT_MODEL = "s_m_y_pilot_01"
 
+# ── Keybind-triggered spawns land around the PLAYER'S position at press-time
+# (mirrors the gta-spawner micro's "press F6, spawn around me" convention) —
+# not the fixed mission SpawnOrigin, which may be far away by the time a
+# keybind fires mid-mission. Fixed radius keeps Step 6 a pure function.
+_KEYBIND_SPAWN_RADIUS = 8.0
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -423,6 +429,52 @@ def _build_template_context(schema: MissionSchema) -> dict:
         })
     events_change_weather = any(e["event_type"] == "thunderstorm" for e in mission_events)
 
+    # ── Teleport points (named location + bounded offset → real Vector3) ─────
+    # Same anchor-plus-offset convention as waypoints/theft_garage above — never
+    # an LLM-invented absolute position.
+    teleport_points: dict[str, dict] = {}
+    for t in schema.teleport_points:
+        tloc = _LOCATIONS.get(t.location_name, _LOCATIONS["docks"])
+        teleport_points[t.name.strip().lower()] = {
+            "name": t.name,
+            "x": tloc["x"] + t.offset_x,
+            "y": tloc["y"] + t.offset_y,
+            "z": tloc["z"],
+        }
+
+    # ── Keybinds (F1-F12-gated actions, active any time the mission runs) ────
+    # schema._validate_keybinds already dropped any dangling/duplicate-key
+    # entry, so every `target` here is guaranteed to resolve.
+    keybinds: list[dict] = []
+    for i, kb in enumerate(schema.keybinds):
+        target_norm = kb.target.strip().lower()
+        entry = {
+            "index":  i,
+            "key":    kb.key,
+            "action": kb.action,
+            "label":  _escape_cs_string(kb.label or kb.target),
+        }
+        if kb.action == "teleport_player":
+            entry.update(teleport_points[target_norm])
+        elif kb.action == "spawn_ped_group":
+            ped = next(p for p in schema.peds if p.description.strip().lower() == target_norm)
+            entry.update({
+                "model":       ped.model or "UNRESOLVED",
+                "count":       ped.count,
+                "weapon_name": _WEAPON_NAME.get(ped.weapon),
+                "hostile":     ped.role == "target",
+                "ally":        ped.role == "ally",
+                "radius":      _KEYBIND_SPAWN_RADIUS,
+            })
+        elif kb.action == "spawn_vehicle":
+            veh = next(v for v in schema.vehicles if v.description.strip().lower() == target_norm)
+            entry.update({
+                "model":  veh.model or "UNRESOLVED",
+                "count":  veh.count,
+                "radius": _KEYBIND_SPAWN_RADIUS,
+            })
+        keybinds.append(entry)
+
     # ── Minigame skeleton (menu-primary arcade loop) ──────────────────────────
     mg = schema.minigame
     rp = dict(mg.round_params) if mg else {}
@@ -566,6 +618,9 @@ def _build_template_context(schema: MissionSchema) -> dict:
         "reward_cash":           int(schema.reward_cash),
         "total_steps":           max(1, len(schema.steps)),
         "scavenger_sets":        scavenger_sets,
+        # Keybind-gated actions (teleport / on-demand spawn) — empty unless
+        # the schema declares them.
+        "keybinds":              keybinds,
         # Minigame skeleton (always present — StrictUndefined — empty for missions)
         "skeleton":       schema.skeleton,
         "minigame_rows":  minigame_rows,

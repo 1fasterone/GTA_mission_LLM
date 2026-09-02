@@ -1,0 +1,5 @@
+A breakout at the state prison. The player slips through the yard to a target cell
+block and frees an inmate before the two of them fight to the perimeter fence. A
+silent panic button in the guard tower is the real danger: the moment a guard
+reaches it, the tower radios for an armed response team, and a fresh squad of
+prison guards rushes in from the gatehouse to hunt the player down.

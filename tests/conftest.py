@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from src.mission_schema import MissionAudio, MissionObject, MissionPed, MissionSchema, MissionStep, MissionVehicle
+from src.mission_schema import (
+    MissionAudio, MissionObject, MissionPed, MissionSchema, MissionStep, MissionVehicle,
+)
 from src.unity_schema import UnityPackage, UnitySchema, UnityScript
 
 
@@ -65,6 +67,35 @@ def gta_full_schema() -> MissionSchema:
             MissionAudio(type="mission_passed", context="mission complete", name="FRANKLIN_BIG_01"),
             MissionAudio(type="mission_failed",  context="mission failed",   name="FRANKLIN_LOSE_1"),
         ],
+    )
+
+
+@pytest.fixture
+def gta_minigame_schema() -> MissionSchema:
+    """Smallest valid minigame-skeleton schema (menu->round->results loop).
+
+    Mirrors tests/test_minigame_codegen.py's local `_minigame_schema()` helper
+    as a shared fixture, so other test files (e.g. the CI-coverage smoke
+    tests in test_outputs_smoke.py) don't need their own copy.
+    """
+    return MissionSchema(
+        mission_name="Rooftop Rush",
+        location_name="downtown",
+        skeleton="minigame",
+        minigame={
+            "settings": [
+                {"key": "round_time", "label": "Round Time", "kind": "cycle",
+                 "options": ["60s", "120s", "180s"], "default": "120s"},
+                {"key": "hardcore", "label": "Hardcore Mode", "kind": "toggle",
+                 "default": "false"},
+                {"key": "traffic", "label": "Traffic Density", "kind": "int",
+                 "min_value": 0, "max_value": 10, "step": 2, "default": "4"},
+            ],
+            "score_metric": "seconds",
+            "score_label": "TIME",
+            "round_type": "timed",
+            "round_params": {"seconds": 90},
+        },
     )
 
 
