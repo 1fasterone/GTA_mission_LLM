@@ -200,9 +200,32 @@ stay inside a local model's 8k-16k context window alongside the ~3.5k-token sche
 already there. The rescue injectors (`unity_concept_entities.py`, `unity_concept_scripts.py`)
 remain a safety net rather than the primary recall mechanism.
 
-**Not done this pass:** extending the rescue-layer pattern itself to scenes/audio/narrative/
-title (the project's own §5 ranks this "highest-value" separately from feeding the brief) —
-still open, see the solutions table.
+**Fixed (solution #3, follow-up):** the rescue-layer pattern itself now extends to
+SCENES/AUDIO/NARRATIVE/TITLE — the project's own §5 had ranked this "highest-value"
+separately from feeding the brief. Four new sibling modules
+(`src/unity_concept_scenes.py`, `_narrative.py`, `_audio.py`, `_title.py`) mirror
+`unity_concept_entities.py` / `unity_concept_scripts.py` exactly: a deterministic regex
+parse of `schema.meta['user_prompt']`, a Step-3 checklist, and an append-only
+`inject_missing_concept_*` fixer wired into Step 5 (`src/unity_pipeline.py`) and into the
+eval replay (`src/unity_eval.py`). The low-level section/list-folding primitives those four
+modules and `src/unity_briefparse.py` all need (`_section`, `_scalar`, `_fold_numbered`,
+`_to_pascal`, the `_HEADERS` vocabulary, ...) were extracted verbatim into a new
+`src/unity_brief_sections.py` rather than tripled — `unity_briefparse.py`'s own
+`_read_scenes`/`_read_story_beats`/`_read_audio`/`_read_title` are gone, replaced by calls
+into the same four new modules, so the `--no-llm` control arm and the LLM-arm rescue can no
+longer drift apart (confirmed byte-identical against `prompts/coldwater_circuit.txt`'s
+recorded numbers: title `ColdwaterCircuit`, 5 scenes, 9 entities, 12 scripts, 6 beats, 10
+audio cues — see `tests/test_unity_briefparse.py`, new).
+
+TITLE is the one asymmetric case in the family: `schema.project_name` is a scalar, so its
+rescue is override-if-wrong rather than append, gated by two confidence tiers
+(`src/unity_concept_title.py`) — an explicit `TITLE:` declaration is always trusted; absent
+that, the brief must carry ≥2 other recognised section headers before the "first line is the
+title" house convention is trusted to override an LLM's own invention. Neither tier met →
+abstain, so an unstructured one-line vibe prompt can never be forced into a mechanically-bad
+title. New tests: `tests/test_unity_concept_scenes.py`, `_narrative.py`, `_audio.py`,
+`_title.py` (53 cases). Full suite: 4134 passed, 1 skipped, same one pre-existing unrelated
+`tests/test_outputs_smoke.py` failure (confirmed via `git stash` to predate this change).
 
 #### Gap C — QA Stops at the Compiler · ✅ fixed
 **Verdict:** STRUCTURAL-ONLY → now also LIVE (Unity side) and checks a rendered pixel
@@ -442,7 +465,7 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 | 1b | `finish_reason`-confirmed truncation errors | Gap A | ●○○ | ●●○ | inferred-from-JSONDecodeError guess | ✓ | ✅ shipped |
 | 1c | `json_schema`-mode structured output (real shape) | Gap A | ●●○ | ●●● | `json_object` (syntax only) | △ | 🟡 shipped off-by-default; entities-empty regression root-caused + fixed, 2/3 e2e trials pass 95+; still opt-in pending the separate content-fidelity question (see Gap A) |
 | 2 | Feed Step 3 the raw brief | Gap B | ●○○ | ●●● | — (additive) | ✓ | ✅ shipped |
-| 3 | Extend rescue layers to scenes/audio/narrative/title | Gap B | ●●○ | ●●● | — (mirrors existing pattern) | △ | ⬜ open |
+| 3 | Extend rescue layers to scenes/audio/narrative/title | Gap B | ●●○ | ●●● | — (mirrors existing pattern) | △ | ✅ shipped |
 | 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ✅ shipped (opt-in; structural black/magenta checks, not a golden-reference diff) |
 | 5 | Unity PlayMode automated E2E smoke | Gap C | ●●● | ●●● | manual checklist → CI gate | △ | ✅ shipped (opt-in) |
 | 6 | Grid/graph BFS reachability | Gap D | ●●○ | ●●○ | AABB + 1-D reach-gap walk | △ | ✅ shipped |
@@ -566,3 +589,24 @@ corrected number, not the optimistic one.
   `unity_cli.py playtest` on a freshly regenerated `SkylineGlider` — **PASS, compile=OK,
   playtest=OK, 9/9**, screenshot black=0% magenta=0%, confirmed by eye to be a real sky-toned
   frame. Gap C is now fully closed — both of its named solutions (#4 and #5) shipped.
+- **2026-09-02 (Gap B, solution #3)** — the rescue-layer pattern shipped for
+  SCENES/AUDIO/NARRATIVE/TITLE, closing the §5-ranked "highest-value" item: four new sibling
+  modules (`src/unity_concept_scenes.py`/`_narrative.py`/`_audio.py`/`_title.py`) mirror
+  `unity_concept_entities.py`/`unity_concept_scripts.py` exactly — deterministic brief parse,
+  Step-3 checklist, append-only Step-5 rescue — wired into both `src/unity_pipeline.py` and
+  `src/unity_eval.py`'s replay (and into the eval-parity guard's `_TAIL_CALLS` allowlist in
+  `tests/test_unity_playability_eval.py`). `src/unity_briefparse.py`'s own private section
+  readers were extracted verbatim into those four modules rather than kept as a second,
+  drifting implementation — the shared low-level helpers (`_section`, `_scalar`,
+  `_fold_numbered`, `_to_pascal`, the header vocabulary) now live in one place,
+  `src/unity_brief_sections.py`, new. Confirmed behavior-preserving against
+  `prompts/coldwater_circuit.txt`'s recorded §1.6 numbers (title `ColdwaterCircuit`, 5 scenes,
+  9 entities, 12 scripts, 6 beats, 10 audio cues), locked in by a new
+  `tests/test_unity_briefparse.py` — the offline `--no-llm` arm had no direct test coverage
+  before this pass. TITLE is the one asymmetric rescue in the family (scalar
+  override-if-wrong, two confidence tiers — see `src/unity_concept_title.py`'s own docstring)
+  rather than a list append. New tests: 53 cases across
+  `tests/test_unity_concept_{scenes,narrative,audio,title}.py` plus
+  `tests/test_unity_briefparse.py`. Full suite: 4134 passed, 1 skipped, same one pre-existing
+  unrelated `tests/test_outputs_smoke.py` failure (confirmed via `git stash` to predate this
+  change).

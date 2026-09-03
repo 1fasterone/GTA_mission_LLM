@@ -123,6 +123,8 @@ _TAIL_CALLS = (
     "resolve_schema", "inject_required_packages", "_programmatic_fix",
     "_check_consistency", "inject_missing_concept_entities",
     "_reconcile_scene_specs", "inject_missing_concept_scripts",
+    "inject_missing_concept_scenes", "inject_missing_concept_audio",
+    "inject_missing_concept_narrative", "inject_missing_concept_title",
     "compose_racetrack", "normalize_paths", "compute_layout",
     "build_manifest_deps",
 )

@@ -315,14 +315,27 @@ a name is precisely how variety gets filtered out.
 
 ## 5. Next adopters, ranked
 
-**0. Rescue layers for SCENES, AUDIO, NARRATIVE, TITLE — the highest-value item.**
+**0. ~~Rescue layers for SCENES, AUDIO, NARRATIVE, TITLE — the highest-value item.~~ DONE.**
 §1.6 measured it exactly: every brief section with a rescue survived at 100%,
-every section without one was overwritten. Four sections currently have no
-rescue, and the run lost 4/5 scene names, 7/10 audio cues, 3/6 narrative beats
-and the project title to that gap. Build them on the same parse the
-corresponding fixer uses, exactly as `unity_concept_entities` and
-`unity_concept_scripts` already do. This makes LLM invention *purely additive*,
-after which more invention is strictly better.
+every section without one was overwritten. Four sections had no rescue, and the
+run lost 4/5 scene names, 7/10 audio cues, 3/6 narrative beats and the project
+title to that gap. Shipped as `src/unity_concept_scenes.py` /
+`_narrative.py` / `_audio.py` / `_title.py`, built on the same parse the
+corresponding fixer uses — literally the same parse for the `--no-llm` arm,
+which now imports these four modules' `extract_named_*`/`extract_title`
+instead of owning a private, driftable copy (`src/unity_briefparse.py`'s
+`_read_scenes`/`_read_story_beats`/`_read_audio`/`_read_title` are gone). LLM
+invention is now purely additive for these four sections too, exactly as it
+already was for entities/scripts.
+
+TITLE needed one more idea the others didn't: it is a scalar, not a list, so
+"rescue" means override-if-wrong rather than append. Doing that unconditionally
+would risk replacing a plausible LLM-invented title with a mechanically bad
+one on an unstructured vibe prompt, so it fires only when the brief either
+states its title explicitly or is otherwise proven structured (≥2 other
+recognised section headers present) — see `unity_concept_title.py`'s own
+docstring. Confirmed behavior-preserving against `prompts/coldwater_circuit.txt`'s
+own numbers above; see `docs/COMPILER_AUDIT.md`'s Gap B for the full writeup.
 
 **1. `statemachine` — ~~has the `ai` defect, unfixed~~ DONE.**
 State names are sanitised into the enum, dangling and self-loop transitions are

@@ -34,8 +34,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional
 
+from .unity_concept_audio import inject_missing_concept_audio
 from .unity_concept_entities import inject_missing_concept_entities
+from .unity_concept_narrative import inject_missing_concept_narrative
+from .unity_concept_scenes import inject_missing_concept_scenes
 from .unity_concept_scripts import inject_missing_concept_scripts
+from .unity_concept_title import inject_missing_concept_title
 from .unity_generator import UnityProjectGenerator
 from .unity_layout import compute_layout
 from .unity_pathnorm import normalize_paths
@@ -234,10 +238,14 @@ def replay(schema: UnitySchema, *,
     log += msgs
     n_before = len(schema.entities)
     log += inject_missing_concept_entities(schema)
+    log += inject_missing_concept_scenes(schema)
     if len(schema.entities) != n_before:
         schema, scene_msgs = _reconcile_scene_specs(schema)
         log += scene_msgs
     log += inject_missing_concept_scripts(schema)
+    log += inject_missing_concept_audio(schema)
+    log += inject_missing_concept_narrative(schema)
+    log += inject_missing_concept_title(schema)
     if ((schema.meta or {}).get("genre") == "racing"
             and schema.game_type not in ("2D", "2d_topdown")
             and is_racing_degenerate(schema)):

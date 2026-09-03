@@ -41,6 +41,14 @@ from .unity_concept_entities import (extract_named_entities,
 from .unity_concept_scripts import (extract_named_scripts,
                                     inject_missing_concept_scripts,
                                     render_script_checklist)
+from .unity_concept_scenes import (inject_missing_concept_scenes,
+                                   render_scene_checklist)
+from .unity_concept_audio import (inject_missing_concept_audio,
+                                  render_audio_checklist)
+from .unity_concept_narrative import (inject_missing_concept_narrative,
+                                      render_narrative_checklist)
+from .unity_concept_title import (inject_missing_concept_title,
+                                  render_title_checklist)
 from .unity_concept_missions import inject_missing_concept_missions
 from .unity_layout        import compute_layout
 from .unity_scenebind     import apply_scene
@@ -1176,6 +1184,32 @@ class UnityPipeline:
                 "scripts explicitly — passed to schema-fill as a required "
                 "checklist"
             )
+        # Same treatment for the brief's own SCENES/AUDIO/NARRATIVE/TITLE —
+        # Solution #3 (docs/COMPILER_AUDIT.md, Gap B): the A/B study on
+        # coldwater_circuit.txt measured these four sections losing 4/5 scene
+        # names, 7/10 audio cues, 3/6 narrative beats and the project title to
+        # invention, the same recall gap entities/scripts had before their own
+        # checklists shipped.
+        _scene_checklist = render_scene_checklist(user_prompt)
+        if _scene_checklist:
+            schema_hints += "\n" + _scene_checklist + "\n"
+            self._ok("Brief names scenes explicitly — passed to schema-fill "
+                     "as a required checklist")
+        _audio_checklist = render_audio_checklist(user_prompt)
+        if _audio_checklist:
+            schema_hints += "\n" + _audio_checklist + "\n"
+            self._ok("Brief names audio cues explicitly — passed to "
+                     "schema-fill as a required checklist")
+        _narrative_checklist = render_narrative_checklist(user_prompt)
+        if _narrative_checklist:
+            schema_hints += "\n" + _narrative_checklist + "\n"
+            self._ok("Brief numbers narrative beats explicitly — passed to "
+                     "schema-fill as a required checklist")
+        _title_checklist = render_title_checklist(user_prompt)
+        if _title_checklist:
+            schema_hints += "\n" + _title_checklist + "\n"
+            self._ok("Brief declares an explicit title — passed to "
+                     "schema-fill as a required directive")
         if intent.matched:
             # Not every intent.matched key is a top-level UnityIntent field —
             # some (locomotion_suppressed, locomotion_modes_switch_signal,
@@ -1387,6 +1421,15 @@ class UnityPipeline:
         for msg in inject_missing_concept_entities(schema):
             self._fix(msg)
 
+        # Concept-named SCENE rescue — Solution #3's sibling for the world's
+        # own places. Runs before the reconcile pass below so that pass also
+        # validates the newly-restored specs, not just the LLM's original
+        # ones. Restored specs never reference an unknown entity name (they
+        # always host every group), so this can never be dropped by that pass
+        # itself — it only ever adds scenes to what the pass reconciles.
+        for msg in inject_missing_concept_scenes(schema):
+            self._fix(msg)
+
         # Re-reconcile the scene subsets: the rescue above ADDS entities (the
         # brief's own player/weapon/enemy groups) that did not exist when
         # _check_consistency ran, so any scene declaring an entity subset still
@@ -1418,6 +1461,20 @@ class UnityPipeline:
         for msg in inject_missing_concept_scripts(schema):
             self._fix(msg)
 
+        # Concept-named AUDIO CUE rescue — Solution #3's sibling for the
+        # game's sound identity (not its meaning — see
+        # unity_concept_audio.py's own docstring on that distinction).
+        for msg in inject_missing_concept_audio(schema):
+            self._fix(msg)
+
+        # Concept-named NARRATIVE rescue — Solution #3's sibling for the
+        # story's own progression. Deliberately before the mission rescue
+        # below: a restored beat should be visible to whatever downstream
+        # derives missions from story_beats (Step 5c,
+        # src/unity_playability_repair.py), not appear one pass too late.
+        for msg in inject_missing_concept_narrative(schema):
+            self._fix(msg)
+
         # Brief-declared MISSION rescue — the same sibling, one level up: the
         # entity rescue restores the CAST the schema-fill dropped, this restores
         # the PROGRESSION it collapsed. Three consecutive live runs of a brief
@@ -1431,6 +1488,14 @@ class UnityPipeline:
         # every pass that can still add one) resolves the ones the brief left
         # bare — so the cast must be whole before either runs.
         for msg in inject_missing_concept_missions(schema):
+            self._fix(msg)
+
+        # Concept-named TITLE rescue — Solution #3's last sibling, and the odd
+        # one out: a scalar override-if-wrong rather than a list append (see
+        # unity_concept_title.py's own docstring on the two confidence tiers
+        # that guard against overwriting a good LLM title with a bad guess).
+        # Independent of everything else above; placed last.
+        for msg in inject_missing_concept_title(schema):
             self._fix(msg)
 
         # Racing-genre scaffold: a racing project whose entities carry no real
