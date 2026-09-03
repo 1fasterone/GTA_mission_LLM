@@ -55,8 +55,7 @@ from .unity_concept_narrative import (extract_named_story_beats,
 from .unity_concept_scenes import extract_named_scenes, inject_missing_concept_scenes
 from .unity_concept_scripts import inject_missing_concept_scripts
 from .unity_concept_title import extract_title, inject_missing_concept_title
-from .unity_schema import (AudioTrack, ColorPalette, EnvironmentSpec, SceneSpec,
-                           StoryBeat, UnitySchema)
+from .unity_schema import ColorPalette, EnvironmentSpec, UnitySchema
 
 
 class BriefParseError(ValueError):
