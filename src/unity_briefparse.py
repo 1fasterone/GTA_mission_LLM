@@ -1,5 +1,4 @@
-"""
-Deterministic brief -> UnitySchema fill — the `--no-llm` replacement for Steps 2-3.
+"""Deterministic brief -> UnitySchema fill — the `--no-llm` replacement for Steps 2-3.
 
 WHY THIS EXISTS
 ---------------
@@ -7,11 +6,12 @@ Steps 4-7 were always LLM-free. Steps 2-3 were not, and a structured brief
 already states, in parseable form, almost everything Step 3 is asked to invent:
 TITLE, SCENES, NARRATIVE, SCRIPTS, ENTITIES, AUDIO, FEATURES, VISUAL STYLE,
 COLOR PALETTE, RENDER PIPELINE, PLATFORM. The rescue layers
-(unity_concept_entities / unity_concept_scripts) already parse the brief's own
-ENTITIES and SCRIPTS bullets out of `meta['user_prompt']` and restore whatever
-the schema-fill model dropped — which means the deterministic reader of those
-two sections is not a fallback, it is a second, independent implementation of
-the same job.
+(unity_concept_entities / unity_concept_scripts / unity_concept_scenes /
+unity_concept_narrative / unity_concept_audio / unity_concept_title) already
+parse the brief's own sections out of `meta['user_prompt']` and restore
+whatever the schema-fill model dropped — which means the deterministic reader
+of those sections is not a fallback, it is a second, independent
+implementation of the same job.
 
 This module finishes that thought: it reads the WHOLE brief and produces a
 valid UnitySchema without a model in the loop, so the compiler can be run as a
@@ -46,9 +46,15 @@ import re
 from typing import Any, cast
 
 from .unity_archetypes import classify
+from .unity_brief_sections import _lines, _scalar, _section
+from .unity_concept_audio import extract_named_audio, inject_missing_concept_audio
 from .unity_concept_entities import (inject_missing_concept_entities,
                                      extract_named_entities)
+from .unity_concept_narrative import (extract_named_story_beats,
+                                      inject_missing_concept_narrative)
+from .unity_concept_scenes import extract_named_scenes, inject_missing_concept_scenes
 from .unity_concept_scripts import inject_missing_concept_scripts
+from .unity_concept_title import extract_title, inject_missing_concept_title
 from .unity_schema import (AudioTrack, ColorPalette, EnvironmentSpec, SceneSpec,
                            StoryBeat, UnitySchema)
 
@@ -56,40 +62,6 @@ from .unity_schema import (AudioTrack, ColorPalette, EnvironmentSpec, SceneSpec,
 class BriefParseError(ValueError):
     """The brief is too thin to fill deterministically. Carries the remedy."""
 
-
-# ── Section slicing ───────────────────────────────────────────────────────────
-# Same header vocabulary unity_pipeline._BRIEF_MARKER_RE gates on, plus the
-# trailing scalar lines. A header line may carry a parenthetical count, an em
-# dash subtitle or a colon — "SCENES (8 total):" and "AUDIO — twelve cues that
-# should sound unmistakably like a skydive:" are both real headers in
-# prompts/dropzone.txt.
-_HEADERS = (
-    "TITLE", "GENRE", "STYLE", "CORE PREMISE", "SCENES", "NARRATIVE",
-    "SCRIPTS", "ENTITIES", "MISSIONS", "AUDIO", "FEATURES", "VISUAL STYLE",
-    "COLOR PALETTE", "PROCEDURAL GEOMETRY", "PROCEDURAL", "RENDER PIPELINE",
-    "UNITY VERSION", "PLATFORM", "GAME TYPE", "LOCOMOTION",
-)
-_ANY_HEADER_RE = re.compile(
-    r"^(" + "|".join(re.escape(h) for h in _HEADERS) + r")\b", re.IGNORECASE)
-
-# A scalar declaration: "PLATFORM: PC", "RENDER PIPELINE: URP  (volumetric...)".
-_SCALAR_RE_TMPL = r"^{key}\s*[:\-—]\s*(.+)$"
-
-# "1. MainMenu         — animated title: skydiver silhouette against sunset"
-_NUMBERED_RE = re.compile(r"^(\d{1,2})[.)]\s+(.+)$")
-# The em/en dash (or " - ") that splits a numbered entry's name from its body.
-_DASH_SPLIT_RE = re.compile(r"\s+[—–]\s+|\s+-\s+")
-# "(on_enter_zone)" trailing a narrative beat
-_TRIGGER_RE = re.compile(r"\((on_start|on_enter_zone|on_timer|on_kill|"
-                         r"on_collect|on_death|manual)\)\s*$", re.IGNORECASE)
-# "  primary    #87CEEB  (open-sky daylight — clear horizon blue)"
-_PALETTE_RE = re.compile(
-    r"^(primary|secondary|accent|background|trim)\s+(#[0-9A-Fa-f]{6})\b")
-_PALETTE_NAME_RE = re.compile(r'name\s+"([^"]+)"')
-# "- freefall_wind_rush     ambient  looping  full terminal-velocity wind roar"
-_AUDIO_RE = re.compile(
-    r"^([A-Za-z][\w-]*)\s+(ambient|sfx|music|ui|dialogue|voice)\b\s*"
-    r"(looping|loop|oneshot)?\s*(.*)$", re.IGNORECASE)
 
 _VALID_PLATFORM = ("pc", "mobile", "console", "webgl", "all")
 _VALID_PIPELINE = {"urp": "URP", "hdrp": "HDRP", "builtin": "builtin",
@@ -103,262 +75,16 @@ _VALID_GAME_TYPE = ("2D", "2.5D", "3D", "VR", "top_down", "2d_topdown",
 # exists to honour, dropped at the parser.
 _VALID_LOCOMOTION = ("walk", "drive", "fly", "swim", "none")
 
-
-def _lines(prompt: str) -> list[str]:
-    return (prompt or "").splitlines()
-
-
-def _section(prompt: str, header: str) -> list[str]:
-    """Every line under `header`, up to the next recognised section header."""
-    out: list[str] = []
-    grabbing = False
-    head_re = re.compile(r"^" + re.escape(header) + r"\b", re.IGNORECASE)
-    for line in _lines(prompt):
-        stripped = line.strip()
-        if not grabbing:
-            if head_re.match(stripped):
-                grabbing = True
-            continue
-        # A new header closes the section. Checked against the stripped line so
-        # an indented continuation can never be mistaken for a header.
-        if _ANY_HEADER_RE.match(stripped) and not head_re.match(stripped):
-            break
-        out.append(line)
-    return out
+# "  primary    #87CEEB  (open-sky daylight — clear horizon blue)"
+_PALETTE_RE = re.compile(
+    r"^(primary|secondary|accent|background|trim)\s+(#[0-9A-Fa-f]{6})\b")
+_PALETTE_NAME_RE = re.compile(r'name\s+"([^"]+)"')
 
 
-def _scalar(prompt: str, key: str) -> str:
-    """Read a 'KEY: value' declaration anywhere in the brief. '' when absent."""
-    pat = re.compile(_SCALAR_RE_TMPL.format(key=re.escape(key)), re.IGNORECASE)
-    for line in _lines(prompt):
-        m = pat.match(line.strip())
-        if m:
-            # Strip a trailing parenthetical rationale: "URP  (volumetric ...)"
-            return re.sub(r"\s*\(.*$", "", m.group(1)).strip()
-    return ""
-
-
-def _fold_numbered(lines: list[str], *, bullets: bool = False) -> list[str]:
-    """Fold a wrapped list into one logical string per entry.
-
-    The generalised sibling of unity_concept_entities._fold_bullets: SCENES and
-    NARRATIVE wrap their descriptions across indented continuation lines, and
-    reading them line-by-line truncates every entry at ~80 cols.
-
-    `bullets=True` also opens an entry on a "- " marker. Both list styles are
-    live in prompts/: dropzone.txt numbers its scenes ("1. MainMenu — ..."),
-    turbo_toys.txt and grandmas_antique_shop.txt bullet theirs
-    ("- Main Menu: ..."). A reader that knows only one silently sees zero
-    scenes in half the corpus — which is an abstain, not a wrong answer, but
-    an abstain on a brief that plainly stated its scenes.
-
-    A line that is neither a marker nor an indented continuation (the trailing
-    "Scene transitions fade between hub, shop, museum..." prose both briefs put
-    under the list) closes the current entry instead of being absorbed.
-    """
-    entries: list[str] = []
-    pending: list[str] = []
-
-    def close() -> None:
-        if pending:
-            entries.append(" ".join(pending))
-            pending.clear()
-
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            close()
-            continue
-        if _NUMBERED_RE.match(stripped):
-            close()
-            pending.append(stripped)
-        elif bullets and stripped.startswith("-"):
-            close()
-            pending.append(stripped.lstrip("-").strip())
-        elif pending and line[:1].isspace():
-            pending.append(stripped)
-        else:
-            close()
-    close()
-    return entries
-
-
-def _split_name_body(entry: str) -> list[str]:
-    """Split "Name<sep>description" on whichever separator comes FIRST.
-
-    Both separators are live and they nest, so a fixed precedence gets one form
-    wrong every time. "- Sunny Speedway: the first circuit — a looping oval
-    through a cartoon toy town" splits on the colon; "1. MainMenu — animated
-    title: skydiver silhouette against sunset" splits on the dash. Trying the
-    dash first named the turbo_toys scene
-    "SunnySpeedwayTheFirstCircuit"; trying the colon first would do the same to
-    dropzone's. Earliest-wins is the only rule that reads both.
-    """
-    dash = _DASH_SPLIT_RE.search(entry)
-    colon = entry.find(":")
-    if dash is not None and (colon < 0 or dash.start() < colon):
-        return [entry[:dash.start()], entry[dash.end():]]
-    if colon >= 0:
-        return [entry[:colon], entry[colon + 1:]]
-    return [entry]
-
-
-def _to_pascal(text: str, fallback: str) -> str:
-    words = re.findall(r"[A-Za-z0-9]+", text or "")
-    out = "".join(w[:1].upper() + w[1:] for w in words)
-    if out and out[0].isdigit():
-        out = "P" + out
-    return out or fallback
-
-
-# ── Section readers ───────────────────────────────────────────────────────────
-
-def _read_title(prompt: str) -> tuple[str, str]:
-    """(project_name, description) from the TITLE line + the premise prose.
-
-    House form is a bare first line — "DropZone — a 3D skydiving simulation and
-    stunt game for PC." — with the design paragraph under it. An explicit
-    "TITLE: X" line wins when present.
-    """
-    # Three title forms are live in prompts/: an inline "TITLE: X", a bare
-    # "TITLE" header with the name on the next line (turbo_toys,
-    # grandmas_antique_shop), and no TITLE at all with the name opening the
-    # first line (dropzone). Reading only the first line named two real briefs
-    # "TITLE".
-    explicit = _scalar(prompt, "TITLE")
-    if not explicit:
-        section = [ln.strip() for ln in _section(prompt, "TITLE") if ln.strip()]
-        if section:
-            explicit = section[0]
-    lines = [ln.strip() for ln in _lines(prompt)]
-    first = next((ln for ln in lines if ln), "")
-
-    raw_title = explicit or first
-    name_part = _DASH_SPLIT_RE.split(raw_title, maxsplit=1)[0].strip()
-    project_name = _to_pascal(name_part, "UnityProject")
-
-    # Description: CORE PREMISE, else GENRE (both are prose statements of what
-    # the game IS), else the first paragraph under the title line.
-    for header in ("CORE PREMISE", "GENRE"):
-        body = [ln.strip() for ln in _section(prompt, header) if ln.strip()]
-        if body:
-            return project_name, " ".join(body)
-
-    desc: list[str] = []
-    started = False
-    for ln in lines:
-        if not started:
-            if ln == first:
-                started = True
-            continue
-        if not ln:
-            if desc:
-                break
-            continue
-        if _ANY_HEADER_RE.match(ln):
-            break
-        desc.append(ln)
-    # The title's own subtitle is the one-line description when there is no
-    # paragraph under it.
-    tail = _DASH_SPLIT_RE.split(raw_title, maxsplit=1)
-    fallback = tail[1].strip() if len(tail) > 1 else ""
-    return project_name, (" ".join(desc) or fallback)
-
-
-def _read_scenes(prompt: str) -> tuple[list[str], list[SceneSpec]]:
-    specs: list[SceneSpec] = []
-    seen: set[str] = set()
-    for entry in _fold_numbered(_section(prompt, "SCENES"), bullets=True):
-        m = _NUMBERED_RE.match(entry)
-        body = m.group(2).strip() if m else entry.strip()
-        # Numbered entries split name from body on an em dash; bulleted ones
-        # ("- Main Menu: play, best times, settings, quit.") split on the first
-        # colon. Try the dash first so a dash-form description containing a
-        # colon ("animated title: skydiver silhouette...") keeps its whole body.
-        parts = _split_name_body(body)
-        name = _to_pascal(parts[0], "")
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        desc = parts[1].strip() if len(parts) > 1 else ""
-        specs.append(SceneSpec(name=name, description=desc,
-                               time_of_day=_time_of_day(desc)))
-    return [s.name for s in specs], specs
-
-
-# Deterministic time-of-day read from the scene's own words. Not a guess: the
-# brief either says one of these or the scene keeps the "day" default, and the
-# default is logged by the caller.
-_TIME_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("night",   ("night", "midnight", "darkness", "moonlit", "after dark")),
-    ("dusk",    ("dusk", "sunset", "evening", "twilight")),
-    ("dawn",    ("dawn", "sunrise", "first light", "daybreak")),
-    ("day",     ("day", "daylight", "noon", "midday", "morning", "afternoon")),
-)
-
-
-def _time_of_day(text: str) -> str:
-    low = (text or "").lower()
-    for label, words in _TIME_WORDS:
-        if any(w in low for w in words):
-            return label
-    return "day"
-
-
-def _read_story_beats(prompt: str) -> list[StoryBeat]:
-    beats: list[StoryBeat] = []
-    for entry in _fold_numbered(_section(prompt, "NARRATIVE")):
-        m = _NUMBERED_RE.match(entry)
-        if not m:
-            continue
-        idx, body = m.group(1), m.group(2).strip()
-        trig_m = _TRIGGER_RE.search(body)
-        trigger = trig_m.group(1).lower() if trig_m else "manual"
-        if trig_m:
-            body = body[:trig_m.start()].strip()
-        parts = _DASH_SPLIT_RE.split(body, maxsplit=1)
-        label = parts[0].strip()
-        desc = parts[1].strip() if len(parts) > 1 else label
-        beats.append(StoryBeat(id=f"beat_{int(idx):02d}", label=label,
-                               description=desc, trigger=trigger))
-    return beats
-
-
-def _read_audio(prompt: str) -> list[AudioTrack]:
-    tracks: list[AudioTrack] = []
-    section = _section(prompt, "AUDIO")
-    # AUDIO bullets wrap like every other list; fold on the "- " marker.
-    folded: list[str] = []
-    pending: list[str] = []
-    for line in section:
-        stripped = line.strip()
-        if not stripped:
-            if pending:
-                folded.append(" ".join(pending)); pending = []
-            continue
-        if stripped.startswith("-"):
-            if pending:
-                folded.append(" ".join(pending))
-            pending = [stripped.lstrip("-").strip()]
-        elif pending and line[:1].isspace():
-            pending.append(stripped)
-    if pending:
-        folded.append(" ".join(pending))
-
-    for entry in folded:
-        m = _AUDIO_RE.match(entry)
-        if not m:
-            continue
-        name, category, loop_word, desc = m.groups()
-        category = category.lower()
-        tracks.append(AudioTrack(
-            name=name,
-            description=(desc or "").strip() or name.replace("_", " "),
-            loop=bool(loop_word and loop_word.lower() in ("looping", "loop")),
-            category="music" if category == "music" else category,
-        ))
-    return tracks
-
+# ── Section readers not yet promoted to their own rescue-layer module ─────────
+# COLOR PALETTE and FEATURES have no rescue-layer sibling (Solution #3 covers
+# scenes/audio/narrative/title only — see docs/COMPILER_AUDIT.md), so they stay
+# local to the offline fill rather than living in unity_brief_sections.py.
 
 def _read_palette(prompt: str) -> ColorPalette | None:
     section = _section(prompt, "COLOR PALETTE")
@@ -419,7 +145,8 @@ def parse_brief(user_prompt: str) -> tuple[UnitySchema, list[str]]:
     # no SCRIPTS section is still fillable, and inject_missing_concept_scripts
     # below adds whatever bullets it does carry.
     entity_rows = extract_named_entities(prompt)
-    scenes, scene_specs = _read_scenes(prompt)
+    scene_specs = extract_named_scenes(prompt)
+    scenes = [s.name for s in scene_specs]
 
     missing: list[str] = []
     if not game_type:
@@ -446,7 +173,7 @@ def parse_brief(user_prompt: str) -> tuple[UnitySchema, list[str]]:
 
     # ── Scalars. Each falls back to a NAMED default that is logged, never a
     # silent one.
-    project_name, description = _read_title(prompt)
+    project_name, description = extract_title(prompt)
 
     platform = (_scalar(prompt, "PLATFORM") or "").lower()
     platform = {"pc": "pc", "windows": "pc", "desktop": "pc"}.get(platform, platform)
@@ -478,8 +205,8 @@ def parse_brief(user_prompt: str) -> tuple[UnitySchema, list[str]]:
     visual_style = (_scalar(prompt, "VISUAL STYLE") or _scalar(prompt, "STYLE")
                     or "stylized")
 
-    story_beats = _read_story_beats(prompt)
-    audio_tracks = _read_audio(prompt)
+    story_beats = extract_named_story_beats(prompt)
+    audio_tracks = extract_named_audio(prompt)
     if not audio_tracks and _section(prompt, "AUDIO"):
         # The brief HAS an AUDIO section but wrote it as prose (turbo_toys.txt:
         # "Revving cartoon toy engine loop, squealing cartoon tire skids...").
@@ -547,22 +274,31 @@ def parse_brief(user_prompt: str) -> tuple[UnitySchema, list[str]]:
             + ", ".join(_dropped)
             + " — remove them from the brief or add them to FeatureFlag")
 
-    # Entities and scripts come from the SAME injectors the LLM path uses to
-    # rescue dropped content. Against an empty list every brief row is
-    # "missing", so the rescue IS the fill — one implementation, two callers,
-    # no chance of the offline schema and the rescued schema disagreeing.
-    # Their log lines say "the schema-fill dropped ..." — accurate on the LLM
-    # path, misleading here, where no schema-fill ran to drop anything. Flag the
-    # reframe rather than rewording another module's messages.
-    msgs.append("Offline fill: the two lines below are the rescue injectors "
+    # Every section below comes from the SAME injectors the LLM path uses to
+    # rescue dropped content. Against an empty/placeholder schema every brief
+    # row is "missing", so the rescue IS the fill — one implementation, two
+    # callers, no chance of the offline schema and the rescued schema
+    # disagreeing. Their log lines say "the schema-fill dropped ..." —
+    # accurate on the LLM path, misleading here, where no schema-fill ran to
+    # drop anything. Flag the reframe rather than rewording another module's
+    # messages. Also defensive: it keeps parse_brief's own return value
+    # self-sufficiently correct even for a caller that does not also run the
+    # schema through the pipeline's Step 5 (which calls the same injectors
+    # again — a no-op the second time, since every brief row is already
+    # present by then).
+    msgs.append("Offline fill: the lines below are the rescue injectors "
                 "reporting a 100% miss against an empty schema — that is the "
                 "fill working, not content being lost")
     msgs.extend(inject_missing_concept_entities(schema))
     msgs.extend(inject_missing_concept_scripts(schema))
+    msgs.extend(inject_missing_concept_scenes(schema))
+    msgs.extend(inject_missing_concept_audio(schema))
+    msgs.extend(inject_missing_concept_narrative(schema))
+    msgs.extend(inject_missing_concept_title(schema))
 
     msgs.append(
-        f"Deterministic fill: {len(scenes)} scenes, {len(schema.entities)} entities, "
-        f"{len(schema.scripts)} scripts, {len(story_beats)} beats, "
-        f"{len(audio_tracks)} audio cues, {len(features)} features"
+        f"Deterministic fill: {len(schema.scenes)} scenes, {len(schema.entities)} "
+        f"entities, {len(schema.scripts)} scripts, {len(schema.story_beats)} "
+        f"beats, {len(schema.audio_tracks)} audio cues, {len(features)} features"
     )
     return schema, msgs
