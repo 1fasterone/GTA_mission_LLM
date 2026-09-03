@@ -458,9 +458,18 @@ def _register_authored(entry: dict,
     if is_sprite and not is_2d:
         return None
     res_root = _AUTHORED_SPRITE_RES_ROOT if is_sprite else _AUTHORED_RES_ROOT
-    dest_rel = f"{res_root}/Authored/{src.name}"
+    name = src.name
     model_key = f"authored:{src.stem}"
     rm = used_models.get(model_key)
+    if rm is not None and Path(rm.src) != src.resolve():
+        # Same stem, different authored file — e.g. two placed groups each
+        # named car.fbx from different vendor folders. Same collision class
+        # as _register's asset: key; disambiguate the same way.
+        tag = hashlib.sha1(str(src.resolve()).encode("utf-8")).hexdigest()[:8]
+        name = f"{src.stem}-{tag}{src.suffix}"
+        model_key = f"authored:{Path(name).stem}"
+        rm = used_models.get(model_key)
+    dest_rel = f"{res_root}/Authored/{name}"
     if rm is None:
         rm = ResolvedModel(
             kind=model_key,
@@ -650,9 +659,28 @@ def resolve_entity_assets(schema,
             res_root = _SPRITE_RES_ROOT
         else:
             res_root = _RES_ROOT
-        dest_rel = f"{res_root}/{category}/{pick['filename']}"
-        model_key = f"asset:{Path(pick['filename']).stem}"
+        fname = pick["filename"]
+        model_key = f"asset:{Path(fname).stem}"
         rm = used_models.get(model_key)
+        if rm is not None and Path(rm.src) != src.resolve():
+            # Same filename STEM, different source file — e.g. a standalone
+            # banner-double-high.fbx and one bundled inside marbles-kit/ both
+            # tokenize to "banner-double-high" (625 such collisions live in
+            # the catalog, 125 of them spanning different categories/formats,
+            # including FBX-vs-sprite pairs like corridor.fbx/corridor.png).
+            # Reusing the bare-stem key/dest_rel here would silently hand this
+            # entity the FIRST-registered file's ResolvedModel, and later a
+            # disk copy of one file would overwrite the other at the same
+            # Resources path — two different assets answering to one path.
+            # Disambiguate with a short stable hash of the catalog relpath
+            # (sha1, not hash(), for the same PYTHONHASHSEED-reproducibility
+            # reason _stable_seed uses it above).
+            tag = hashlib.sha1(
+                (pick.get("relpath") or fname).encode("utf-8")).hexdigest()[:8]
+            fname = f"{Path(fname).stem}-{tag}{Path(fname).suffix}"
+            model_key = f"asset:{Path(fname).stem}"
+            rm = used_models.get(model_key)
+        dest_rel = f"{res_root}/{category}/{fname}"
         if rm is None:
             # Bounds-fit target: Sketchfab picks only. Kenney/default-pack
             # scale is already pack-internally consistent (modular pieces like
