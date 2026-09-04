@@ -229,7 +229,8 @@ class LMStudioClient:
                        temperature: float | None, thinking: bool,
                        seed: int | None, max_tokens: int | None = None,
                        json_mode: bool = False,
-                       json_schema: dict | None = None) -> dict:
+                       json_schema: dict | None = None,
+                       images: "list[str] | None" = None) -> dict:
         """Assemble the chat-completions request body. Split out so the seed/
         temperature/reasoning wiring is unit-testable without a live server.
 
@@ -246,16 +247,33 @@ class LMStudioClient:
         dict>} — grammar-constrained decoding to an actual shape, not just
         valid syntax. Callers build the dict with
         unity_schema_jsonschema.response_format_schema()["json_schema"];
-        this method stays schema-agnostic and just forwards it."""
+        this method stays schema-agnostic and just forwards it.
+
+        images, when given, is a list of already-encoded `data:image/...;
+        base64,...` URIs — this client stays a pure HTTP/protocol layer and
+        never fetches or encodes images itself, that is the caller's job
+        (e.g. src/unity_sketchfab_vision.py downloads a Sketchfab thumbnail
+        and encodes it). The user message's `content` becomes the OpenAI
+        vision shape (a list of text/image_url parts) instead of a bare
+        string; every other field is unaffected. A model with no attached
+        mmproj simply cannot see these — that failure mode is the caller's
+        to handle, not this method's."""
         # Kept as a fallback for Qwen3 builds served by something that does not
         # implement `reasoning_effort`; the field below is what actually works
         # on LM Studio. Harmless where it is ignored.
         user_msg = user if thinking else f"/no_think\n\n{user}"
+        if images:
+            user_content: "str | list[dict]" = (
+                [{"type": "text", "text": user_msg}]
+                + [{"type": "image_url", "image_url": {"url": uri}} for uri in images]
+            )
+        else:
+            user_content = user_msg
         payload: dict = {
             "model":       self.model,
             "messages":    [
                 {"role": "system", "content": system},
-                {"role": "user",   "content": user_msg},
+                {"role": "user",   "content": user_content},
             ],
             # Qwen3 (and several other local models) return an empty response at
             # temperature=0.0.  Clamp to 0.05 as the effective greedy minimum.
@@ -360,7 +378,8 @@ class LMStudioClient:
              seed: int | None = None,
              max_tokens: int | None = None,
              json_mode: bool = False,
-             json_schema: dict | None = None) -> str:
+             json_schema: dict | None = None,
+             images: "list[str] | None" = None) -> str:
         """
         thinking=False → reasoning_effort="none": no chain-of-thought. Use for
                          every mechanical step (schema fill, cue resolution,
@@ -386,11 +405,24 @@ class LMStudioClient:
                          this dict}). Takes precedence over json_mode when
                          both are given. Same rejection handling as json_mode:
                          one transparent retry without it.
+        images         → data URIs to attach as vision input (see
+                         _build_payload's own docstring). None for every
+                         existing text-only call site — behavior for those
+                         is unchanged.
         """
         payload = self._build_payload(system, user, temperature, thinking, seed,
                                       max_tokens, json_mode=json_mode,
-                                      json_schema=json_schema)
+                                      json_schema=json_schema, images=images)
         user_msg = payload["messages"][1]["content"]
+        # A vision request's content is the OpenAI list-of-parts shape, not a
+        # bare string — log the text part plus an image count rather than
+        # trying to slice/print the list itself.
+        if isinstance(user_msg, list):
+            user_log = next((p.get("text", "") for p in user_msg
+                             if p.get("type") == "text"), "")
+            user_log += f"  [+{sum(1 for p in user_msg if p.get('type') == 'image_url')} image(s)]"
+        else:
+            user_log = user_msg
         log.debug(
             "→ LLM REQUEST  model=%s  temperature=%.2f  max_tokens=%d\n"
             "  [system] %s\n"
@@ -399,7 +431,7 @@ class LMStudioClient:
             payload["temperature"],
             payload["max_tokens"],
             system[:300] + ("…" if len(system) > 300 else ""),
-            user_msg[:300] + ("…" if len(user_msg) > 300 else ""),
+            user_log[:300] + ("…" if len(user_log) > 300 else ""),
         )
 
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -418,7 +450,8 @@ class LMStudioClient:
                 self.model, e.response.status_code,
             )
             payload = self._build_payload(system, user, temperature, thinking, seed,
-                                          max_tokens, json_mode=False, json_schema=None)
+                                          max_tokens, json_mode=False, json_schema=None,
+                                          images=images)
             r = self._post_translated(payload, headers)
         except httpx.TimeoutException as e:
             raise TimeoutError(

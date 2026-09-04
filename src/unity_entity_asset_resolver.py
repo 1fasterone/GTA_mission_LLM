@@ -35,7 +35,7 @@ import random
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .unity_asset_catalog import load_catalog, tokenize
 from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
@@ -491,7 +491,8 @@ def resolve_entity_assets(schema,
                           lookups_dir: str = "lookups",
                           asset_cfg: Optional[dict] = None,
                           strict: bool = False,
-                          sketchfab_cfg: Optional[dict] = None) -> dict[str, str]:
+                          sketchfab_cfg: Optional[dict] = None,
+                          llm: Optional[Any] = None) -> dict[str, str]:
     """Assign a real model to every entity group.
 
     Mutates `used_models` (adds catalog picks so the existing copy/.meta/
@@ -509,6 +510,16 @@ def resolve_entity_assets(schema,
     using it. That live fetch is the one deliberate, documented exception to
     this module otherwise being a pure, network-free lookup (see
     docs/model-pipeline-architecture.md's Sketchfab section).
+
+    `llm` (the Pipeline LLM client, e.g. self.llm from UnityPipeline.run() —
+    None from every caller that has none, including unity-validate's
+    no-LLM replay) is passed straight through to a Tier S live fetch as an
+    optional vision-based visual-QC step on top of that fetch's own keyword
+    ranking — see unity_sketchfab_vision.select_best_candidate's docstring
+    for what problem that closes and how it degrades. None (no LLM reachable,
+    `sketchfab.vision_select` not enabled, a text-only model, any failure)
+    leaves every existing Tier S behavior byte-for-byte unchanged; this
+    parameter adds a capability, it never removes one.
 
     Raises ValueError in strict mode when an entity matches nothing real.
     """
@@ -1022,13 +1033,29 @@ def resolve_entity_assets(schema,
                         or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT)))
                 if genre != "universal" and not getattr(e, "sketchfab_query", ""):
                     query = f"{genre.replace('_', ' ')} {query}".strip()
+                # Visual QC on the keyword-ranked candidates below, closing
+                # the class of bug keyword scoring structurally cannot catch
+                # (a same-word coincidence like "helmet" resolving a
+                # skydiving jumpsuit to a baseball asset) — see
+                # unity_sketchfab_vision.py's own docstring. Opt-in
+                # (`sketchfab.vision_select`) and only reachable when a
+                # caller actually threaded an `llm` through (unity-validate's
+                # no-LLM replay never does) — None either way leaves this
+                # exact Tier S behavior untouched.
+                vision_select_fn = None
+                if llm is not None and sk_cfg.get("vision_select"):
+                    from .unity_sketchfab_vision import select_best_candidate
+                    vision_select_fn = lambda cands, _e=e, _kind=kind: select_best_candidate(
+                        _e.name, _kind, hint or _e.name, cands,
+                        client=sk_client, llm=llm)
                 new_entry = fetch_and_freeze(
                     query, score_fn=lambda a: _score(a, qw, kind),
                     client=sk_client, blender_cfg=sk_cfg,
                     cache_dir=sk_cfg.get("cache_dir", "Models/Sketchfab"),
                     lookups_dir=str(lookups_dir), category=kind or "prop",
                     kind_hints=[kind], min_score=sk_min,
-                    preferred_author=preferred_author)
+                    preferred_author=preferred_author,
+                    vision_select_fn=vision_select_fn)
                 if new_entry is not None:
                     sk_catalog_assets.append(new_entry)  # in-run cache: later
                                                           # entities this same

@@ -258,3 +258,30 @@ class SketchfabClient:
         except Exception as exc:  # noqa: BLE001
             log.debug("sketchfab download_archive(%s) failed: %s", model_uid, exc)
             return None
+
+    def fetch_image_bytes(self, url: str) -> Optional[bytes]:
+        """Fetch raw bytes for a thumbnail/preview image URL (a search
+        result's own `thumbnails.images[].url`), or None on any failure.
+
+        Same cold-Chromium transport as everything else here, not a plain
+        HTTP client — thumbnails are served from Sketchfab's own CDN, a
+        different host than the WAF-gated api.sketchfab.com this module's own
+        docstring documents, but there's no upside to trusting a different
+        host to be less finicky; one transport keeps this class's one failure
+        mode. No Authorization header, same reasoning as download_archive's
+        pre-signed S3 URLs — a thumbnail URL is a public asset link, and an
+        extra auth header risks the same signature-mismatch rejection.
+        """
+        if not url:
+            return None
+        try:
+            with self._browser_request_ctx() as req:
+                if req is None:
+                    return None
+                r = req.get(url, timeout=self.timeout * 1000)
+                if not r.ok:
+                    return None
+                return r.body()
+        except Exception as exc:  # noqa: BLE001
+            log.debug("sketchfab fetch_image_bytes(%r) failed: %s", url, exc)
+            return None

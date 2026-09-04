@@ -191,3 +191,46 @@ def test_download_archive_non_ok_returns_none(tmp_path, monkeypatch):
     req = _FakeRequest([_FakeResponse(ok=False)])
     monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
     assert client.download_archive("abc", tmp_path / "out.zip") is None
+
+
+def test_fetch_image_bytes_empty_url_returns_none():
+    client = SketchfabClient({"api_token": "tok"})
+    assert client.fetch_image_bytes("") is None
+    assert client.fetch_image_bytes(None) is None
+
+
+def test_fetch_image_bytes_returns_body(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    req = _FakeRequest([_FakeResponse(body=b"\xff\xd8\xff-jpeg-bytes")])
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
+    assert client.fetch_image_bytes("https://cdn.example/thumb.jpg") == \
+        b"\xff\xd8\xff-jpeg-bytes"
+    # Same S3-presigned-URL reasoning as download_archive: no Authorization
+    # header on a public thumbnail link.
+    _, kwargs = req.calls[0]
+    assert "headers" not in kwargs or not kwargs.get("headers")
+
+
+def test_fetch_image_bytes_non_ok_returns_none(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    req = _FakeRequest([_FakeResponse(ok=False)])
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
+    assert client.fetch_image_bytes("https://cdn.example/thumb.jpg") is None
+
+
+def test_fetch_image_bytes_no_browser_returns_none(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(None))
+    assert client.fetch_image_bytes("https://cdn.example/thumb.jpg") is None
+
+
+def test_fetch_image_bytes_never_raises(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+
+    @contextmanager
+    def _raises():
+        raise RuntimeError("browser launch failed")
+        yield  # pragma: no cover — unreachable, makes this a generator
+
+    monkeypatch.setattr(client, "_browser_request_ctx", _raises)
+    assert client.fetch_image_bytes("https://cdn.example/thumb.jpg") is None

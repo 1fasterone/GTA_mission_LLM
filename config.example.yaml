@@ -209,6 +209,19 @@ sketchfab:
   min_match_score: 0.15          # same scale as assets.min_match_score
   cache_dir: Models/Sketchfab    # converted FBX + Textures/ + manifest live here
   blender_path: ''                # empty => reuse blender.blender_path / auto-detect
+  # Visual QC on top of min_match_score above (src/unity_sketchfab_vision.py):
+  # keyword scoring can't tell a correct object from a same-word coincidence
+  # (a "helmet" search returns sports/motorcycle/medieval/skydiving helmets
+  # alike) — this asks the Pipeline LLM to look at the top keyword-ranked
+  # candidates' own thumbnails and confirm the pick actually looks right
+  # before spending a download + Blender convert on it. Needs a VISION-
+  # capable model load (a base GGUF + its own mmproj file, e.g. LM Studio's
+  # qwen3.5-9b paired with a co-located mmproj-Qwen3.5-9B-*.gguf) — a
+  # text-only load just never gets asked (see resolve_entity_assets: this
+  # only fires when a caller also threads a live `llm` through, which
+  # unity-validate's no-LLM replay never does). Off by default: needs that
+  # vision model loaded and adds one LLM round-trip per Tier S live fetch.
+  vision_select: false
 
 blender:                           # external asset-fulfilment stage (blender_cli.py)
   blender_path: ''                 # empty => auto-detect (PATH + standard installs)
