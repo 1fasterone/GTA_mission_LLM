@@ -1712,6 +1712,35 @@ class TestBracketLiteralDefaults:
         assert self._s("Vector2", "new Vector2(1f, 2f)") == "new Vector2(1f, 2f)"
 
 
+class TestDoubleQuotedStringExpressionDefaults:
+    """`_savePath = "Application.dataPath + "/SaveData.json""` — CS1003. The
+    model wrapped an already-valid expression (which legitimately embeds its
+    own string literal) in one extra layer of quotes. The overall quote count
+    stays even (4, not 2), so a plain balance check can't tell this apart from
+    a real literal — sanitize_default must notice the outer pair's own
+    content still holds an unescaped quote and peel it. Live regression,
+    SaveLoadManager.cs(11,112).
+    """
+
+    def _s(self, ty, default):
+        from src.micro.code_fields import sanitize_default
+        return sanitize_default(ty, default)
+
+    def test_double_quoted_expression_is_unwrapped(self):
+        assert (self._s("string", '"Application.dataPath + "/SaveData.json""')
+                == 'Application.dataPath + "/SaveData.json"')
+
+    def test_plain_string_literal_is_untouched(self):
+        assert self._s("string", '"hello world"') == '"hello world"'
+
+    def test_properly_escaped_internal_quote_is_untouched(self):
+        assert (self._s("string", r'"He said \"hi\""')
+                == r'"He said \"hi\""')
+
+    def test_unterminated_literal_is_dropped(self):
+        assert self._s("string", '"') is None
+
+
 class TestMisqualifiedTypes:
     """`UnityEngine.Touchscreen` — CS0234. Touch types read like core engine
     types but live in UnityEngine.InputSystem. Live on BlockWell's TouchInput,

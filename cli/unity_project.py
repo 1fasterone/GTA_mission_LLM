@@ -480,11 +480,18 @@ def unity_validate(
 
     if compose and composer is not None and composed_units is not None:
         has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
+        # Every named entity, spawn count included — SEAM 8c's ground truth
+        # for whether a `reach` objective's target_ref is a real, locatable
+        # GameObject it can attach a relay to (see unity_compose.py's
+        # WireReachTargetRelay pass). Same set unity_pipeline.run() builds.
+        reach_target_entities = {e.name: e.count for e in schema.entities if e.name}
         composer.emit(subsystems, root / "Assets",
                       has_game_manager=has_game_manager, wiring=schema.wiring,
                       objective_scenes=_objective_scene_map(
                           schema, schema.meta.get("mission_scenes")
-                          if isinstance(schema.meta, dict) else None))
+                          if isinstance(schema.meta, dict) else None),
+                      reach_target_entities=reach_target_entities,
+                      game_type=schema.game_type)
         if isinstance(schema.meta, dict):
             schema.meta["wiring"] = composer.wiring_report
         console.print(f"[green]OK[/]  composed {len(composed_units)} micro subsystem(s) "

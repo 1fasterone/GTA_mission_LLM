@@ -696,8 +696,36 @@ class TestMissionSceneInference:
         schema = self._schema(missions=[mission])
         resolved, _ = _infer_mission_scenes(schema)
         obj_scenes = _objective_scene_map(schema, resolved)
-        assert obj_scenes == {"obj_reach_gate_1": "HallOne",
-                              "obj_collect_cogs_1": "HallOne"}
+        assert obj_scenes == {
+            "HallOneClearanceObjectives.obj_reach_gate_1": "HallOne",
+            "HallOneClearanceObjectives.obj_collect_cogs_1": "HallOne",
+        }
+
+    def test_objective_scene_map_keys_by_tracker_class_not_bare_id(self):
+        # Two different missions whose objectives share the SAME local id —
+        # this codebase's own "obj_1"/"obj_2" convention — must not collide
+        # in the flattened map; each mission's own tracker class name
+        # disambiguates. Live regression (DropZone): three missions each
+        # authored "obj_1"/"obj_2", so a bare-id map only ever held the
+        # LAST-processed mission's scene, and SEAM 8 then lumped every
+        # mission's objectives into that one scene bucket — 3 of 6 required
+        # objectives went permanently unbound though a trigger existed for
+        # each mission's own scene.
+        m1 = self._mission("m1", "Hall One Clearance", [
+            ("obj_1", "Reach Gear Gate 1", "reach", "GearGate"),
+        ])
+        m2 = self._mission("m3", "Boss Battle: Tinker Ghost", [
+            ("obj_1", "Defeat the Tinker Ghost boss", "defeat", "BossTinkerGhost"),
+        ])
+        schema = self._schema(missions=[m1, m2])
+        resolved, unresolved = _infer_mission_scenes(schema)
+        assert resolved == {"m1": ["HallOne"], "m3": ["BossArena"]}
+        assert unresolved == []
+        obj_scenes = _objective_scene_map(schema, resolved)
+        assert obj_scenes == {
+            "HallOneClearanceObjectives.obj_1": "HallOne",
+            "BossBattleTinkerGhostObjectives.obj_1": "BossArena",
+        }
 
     def test_objective_scene_map_refines_per_objective_by_own_description(self):
         # Regression fixture: a live DeadReckoningProtocol run. Mission
@@ -728,9 +756,9 @@ class TestMissionSceneInference:
         assert unresolved == []
         obj_scenes = _objective_scene_map(schema, resolved)
         assert obj_scenes == {
-            "obj_escort_engineer": "DepotYard",
-            "obj_collect_fuel":    "ExtractionPad",  # no scene named -> mission default
-            "obj_reach_pad":       "ExtractionPad",
+            "EngineerExtractionObjectives.obj_escort_engineer": "DepotYard",
+            "EngineerExtractionObjectives.obj_collect_fuel":    "ExtractionPad",  # no scene named -> mission default
+            "EngineerExtractionObjectives.obj_reach_pad":       "ExtractionPad",
         }
 
     def test_objective_scene_map_requires_the_full_scene_name_not_one_word(self):
@@ -752,7 +780,7 @@ class TestMissionSceneInference:
         resolved, _ = _infer_mission_scenes(schema)
         assert resolved == {"m1": ["ExtractionPad"]}
         obj_scenes = _objective_scene_map(schema, resolved)
-        assert obj_scenes == {"obj_collect_fuel": "ExtractionPad"}
+        assert obj_scenes == {"EngineerExtractionObjectives.obj_collect_fuel": "ExtractionPad"}
 
     def test_reconcile_scene_specs_restores_mission_target_entities(self):
         # The exact live GearCitadel shape: HallOne's own subset lists its

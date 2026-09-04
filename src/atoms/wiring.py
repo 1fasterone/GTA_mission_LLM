@@ -145,6 +145,39 @@ WIRING_ATOMS: list[AtomDef] = [
         ],
     ),
     AtomDef(
+        name="WireReachTargetRelay",
+        category="wiring",
+        description=(
+            "Attach a self-contained trigger relay directly to a `reach` objective's "
+            "own target entity and connect it -> MissionObjectives.ReportProgress. Used "
+            "instead of WireTriggerToObjectives when a scene's single shared TriggerZone "
+            "already bound its ONE `reach` objective and a later `reach` objective in the "
+            "same scene needs its own event source — this seam does not touch the shared "
+            "trigger at all, so any number of `reach` objectives per scene can bind as "
+            "long as each names a real entity. Deferred via coroutine, polling "
+            "GameObject.Find each frame for the target's spawned instance(s), because "
+            "GameWiring.Awake() runs before every spawner's own Start()."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["reach_objective_advances_on_target_arrival"],
+        params=[
+            AtomParam(name="objectives_var",   type="string", default="_objectives"),
+            AtomParam(name="objective_id",     type="string", default=None,
+                      description="Authored objective id to advance; None omits the seam"),
+            AtomParam(name="entity_base_name", type="entity_ref", default=None,
+                      description="Target entity's schema name — EntitySpawner names its "
+                                  "instance(s) '<name>_0', '<name>_1', ...; None omits the seam"),
+            AtomParam(name="count",            type="int", default=1,
+                      description="How many spawned instances to relay (any one advances "
+                                  "the objective — a multi-instance target is 'reached' by "
+                                  "reaching any member of the group)"),
+            AtomParam(name="radius",           type="float", default=5.0,
+                      description="Trigger collider radius, matching TriggerSchema's own "
+                                  "distance_trigger default"),
+        ],
+    ),
+    AtomDef(
         name="WireInteractableToObjectives",
         category="wiring",
         description=(

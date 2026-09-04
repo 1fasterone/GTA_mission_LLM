@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
+from .micro_pipeline     import to_pascal
 from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
                                  is_embodied)
 from .unity_schema_clamp import clamp_capped_lists, render_cap_reminder
@@ -714,9 +715,23 @@ def _infer_mission_scenes(schema: UnitySchema) -> tuple[dict[str, list[str]], li
 def _objective_scene_map(schema: UnitySchema,
                          mission_scenes: "dict[str, list[str]] | None") -> dict[str, str]:
     """Flatten `{mission.id: [scene, ...]}` (from `_infer_mission_scenes`) to
-    `{objective.id: scene}` — what SEAM 8 (`unity_compose.py`) needs to gate
-    each objective's event-source wiring to the scene it can actually fire
-    in.
+    `{"<TrackerClass>.<objective.id>": scene}` — what SEAM 8 (`unity_compose.py`)
+    needs to gate each objective's event-source wiring to the scene it can
+    actually fire in. Keyed by the objectives-tracker class name
+    (`f"{to_pascal(mission.title, 'Mission')}Objectives"`, the exact string
+    `unity_compose.py`'s `subsystems_for` names that mission's tracker unit),
+    not by the bare objective id alone: every mission in this codebase's own
+    convention numbers its objectives "obj_1", "obj_2", ... independently, so
+    a flat `{objective.id: scene}` map lets a LATER mission's "obj_2" silently
+    overwrite an EARLIER mission's "obj_2" entry. Hit live (DropZone, three
+    missions each with an "obj_2"): every mission's objectives collapsed onto
+    the last-processed mission's scene, SEAM 8's per-scene bucketing then
+    lumped all three missions' objectives into that one scene, and the
+    one-source-per-type cap left every objective but the first-iterated
+    `reach` permanently unbound — 3 of 6 required objectives unwinnable,
+    though the underlying wiring capacity (one trigger per scene) was there.
+
+    Refined per objective, not just per mission: a single mission can
 
     Refined per objective, not just per mission: a single mission can
     legitimately span more than one scene (an extraction runs from a start
@@ -770,9 +785,10 @@ def _objective_scene_map(schema: UnitySchema,
         scenes = mission_scenes.get(mission.id)
         if not scenes:
             continue
+        tracker = f"{to_pascal(mission.title, 'Mission')}Objectives"
         for o in mission.objectives:
             if o.id:
-                out[o.id] = _own_scene(o.description) or scenes[0]
+                out[f"{tracker}.{o.id}"] = _own_scene(o.description) or scenes[0]
     return out
 
 
@@ -1932,6 +1948,7 @@ class UnityPipeline:
                                    f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
+        from .csharp_syntax_gate import CSharpSyntaxError
         try:
             project_root, file_count = self.generator.write(
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,
@@ -1939,16 +1956,27 @@ class UnityPipeline:
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
                 project_config=self.config)
-        except ValueError:
-            # FAIL-FAST asset doctrine tripped AFTER the expensive LLM stages —
-            # save the filled schema so the run isn't lost: edit the entity
-            # model_hints (or the asset library) and retry with unity-validate.
+        except (ValueError, CSharpSyntaxError) as exc:
+            # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
+            # LLM stages, inside generator.write(): the asset library
+            # (ValueError) and the C# syntax gate (CSharpSyntaxError, e.g. a
+            # malformed extra_fields default the fixer didn't repair). Either
+            # way the filled schema is the expensive artifact — save it so
+            # the run isn't lost. A syntax-gate failure needs a code fix
+            # first (this schema will fail the same way again unchanged);
+            # once that lands, `unity-validate` replays Steps 4-7 against the
+            # saved schema deterministically, with no further LLM call.
             rescue = Path(self.output_dir) / f"{schema.project_name}.schema.json"
             try:
                 rescue.parent.mkdir(parents=True, exist_ok=True)
                 rescue.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
-                self._warn(f"Schema rescued to {rescue} — fix entity model_hints "
-                           "and retry: python main.py unity-validate " + str(rescue))
+                if isinstance(exc, CSharpSyntaxError):
+                    self._warn(f"Schema rescued to {rescue} — after fixing the "
+                               "generator defect the syntax gate reported, retry "
+                               "with: python main.py unity-validate " + str(rescue))
+                else:
+                    self._warn(f"Schema rescued to {rescue} — fix entity model_hints "
+                               "and retry: python main.py unity-validate " + str(rescue))
             except OSError:
                 pass
             raise
@@ -1999,12 +2027,21 @@ class UnityPipeline:
                 if e.name and e.behavior
                 and any(getattr(a, "atom", "") == "Follow" for a in (e.atoms or []))
             }
+            # Every named entity, spawn count included — SEAM 8c's ground
+            # truth for whether a `reach` objective's target_ref is a real,
+            # locatable GameObject it can attach a relay to (see
+            # unity_compose.py's WireReachTargetRelay pass).
+            reach_target_entities = {
+                e.name: e.count for e in schema.entities if e.name
+            }
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,
                           objective_scenes=_objective_scene_map(
                               schema, schema.meta.get("mission_scenes")
                               if isinstance(schema.meta, dict) else None),
-                          escort_followed_entities=escort_followed_entities)
+                          escort_followed_entities=escort_followed_entities,
+                          reach_target_entities=reach_target_entities,
+                          game_type=schema.game_type)
             # Hand the wiring pass's own decisions to Step 7. Whether a mission
             # can actually be completed is a COMPOSE-time fact (which seams
             # fired, which objectives found an event source), and the evaluator
