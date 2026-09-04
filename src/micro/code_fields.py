@@ -1619,6 +1619,27 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
      r"LastOrDefault|SingleOrDefault|ToArray|ToList|ToDictionary|Any|All|Sum|Average|"
      r"Distinct|Concat|Except|Intersect|GroupBy|Zip|Take|Skip|TakeWhile|SkipWhile)\s*\(",
      "System.Linq"),
+    # `.Count(` is excluded from the list above for exactly the reason its own
+    # comment gives (`Count` reads as ordinary English), EXCEPT when a lambda
+    # follows inside the parens — `list.Count(x => …)` is unambiguously the
+    # LINQ predicate overload; the plain property (`list.Count`) never takes an
+    # argument at all. Hit live, GameRules.cs(282) CS1955 "Non-invocable member
+    # 'List<GameRules.Step>.Count' cannot be used like a method" — the model
+    # reached for `steps.Count(s => s.objectiveId == "obj_2")` with no
+    # `System.Linq` imported, so the compiler resolved `.Count` as the
+    # property instead of the extension method.
+    (r"\.Count\s*\([^)]*=>", "System.Linq"),
+    # `catch (Exception e)` / `catch (ArgumentException ex)` / a bare
+    # `throw new SomeException(...)` — every BCL exception type lives in
+    # `System`, and `_KNOWN_SYMBOLS` already treats them all as legitimate
+    # names (so `bind_authored_code` never flags one as unbound), but nothing
+    # ever added the import those names actually need. The known-symbol check
+    # answers "is this a real type" (CS0103); Unity's compiler still asks
+    # "which assembly" (CS0246) — a different question this table exists to
+    # answer. Hit live, SaveLoadManager.cs(34) CS0246: "The type or namespace
+    # name 'Exception' could not be found" with `using System.IO;` and
+    # `using UnityEngine.UI;` and nothing from bare `System`.
+    (r"\bcatch\s*\(\s*\w*Exception\b|\bnew\s+\w*Exception\s*\(", "System"),
     # uGUI. Hit live on the TowerControl run, SceneTrigger.cs(28,106):
     #
     #     [SerializeField] private Button _clearancePad = null;
@@ -4273,7 +4294,28 @@ def _has_injection_marker(raw: str) -> bool:
 @lru_cache(maxsize=64)
 def template_scope_members(template_dir: str, variant: str = "",
                            facts: "tuple[tuple[str, str], ...]" = ()) -> frozenset[str]:
-    """Member names in scope for code injected into this micro's template."""
+    """Member names in scope for code injected into this micro's template.
+
+    Excludes members declared inside a NESTED class/struct — a nested type's
+    field is reachable only through an instance of it (`step.ask`, never bare
+    `ask`), the same principle `_has_injection_marker` already applies across
+    sibling FILES. A flat, brace-depth-blind scan cannot tell a nested type's
+    own member from the outer (injectable) class's, so it folded both into
+    one flat name set. Confirmed live, GameRules.cs(122) CS0103: `Step` is a
+    small nested data class (`public string ask;` among its fields) and the
+    authored `update_extra` assigned bare `ask = "...";` — `bind_authored_code`
+    judged it against a scope that included every `Step` field as if GameRules
+    itself declared them, so the hallucinated reference was never flagged.
+
+    Depth-tracked rather than a real parser: `pending_since` remembers the
+    depth a nested type_decl was seen at, covering the Allman-style "class
+    Foo" / "{" split across two lines every template here uses (`pending_since`
+    persists across any blank/attribute lines between them); `nested_from` is
+    the depth the nested type's OWN body starts at once its "{" is seen, so
+    its closing brace — which drops depth back BELOW that — is what ends the
+    exclusion. Good enough for machine-generated templates that never
+    obfuscate braces in strings/comments on these particular lines.
+    """
     injecting = [text for _name, text, raw in _template_files(template_dir, variant, facts)
                  if _has_injection_marker(raw)]
     if not injecting:
@@ -4282,12 +4324,24 @@ def template_scope_members(template_dir: str, variant: str = "",
         return template_members(template_dir, variant, facts)
     names: set[str] = set()
     for text in injecting:
+        depth = 0
+        nested_from: "int | None" = None
+        pending_since: "int | None" = None
         for line in text.splitlines():
-            if _TYPE_DECL_RE.search(line):
-                continue
-            m = _TEMPLATE_MEMBER_RE.match(line)
-            if m:
-                names.add(m.group(1))
+            is_type_decl = bool(_TYPE_DECL_RE.search(line))
+            if not is_type_decl and nested_from is None:
+                m = _TEMPLATE_MEMBER_RE.match(line)
+                if m:
+                    names.add(m.group(1))
+            if (is_type_decl and depth >= 1
+                    and nested_from is None and pending_since is None):
+                pending_since = depth        # awaiting this nested type's own "{"
+            depth += line.count("{") - line.count("}")
+            if pending_since is not None and depth > pending_since:
+                nested_from = depth
+                pending_since = None
+            if nested_from is not None and depth < nested_from:
+                nested_from = None
     return frozenset(names)
 
 
