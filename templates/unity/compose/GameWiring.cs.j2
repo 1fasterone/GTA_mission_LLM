@@ -6,6 +6,8 @@ using System;
 using UnityEngine;
 {% if needs_scene_var %}using UnityEngine.SceneManagement;
 {% endif %}
+{% if has_reach_relay %}using System.Collections;
+{% endif %}
 
 /// <summary>
 /// Wires all composed subsystems together at startup.
@@ -87,5 +89,43 @@ public class CheckpointSaveRelay : MonoBehaviour
     private SaveSystem _save;
     public void Init(SaveSystem save) => _save = save;
     private void OnTriggerActivate() => _save?.Save();
+}
+{% endif %}
+{% if has_reach_relay %}
+{% set is2d = game_type in ("2D", "2d_topdown") %}
+
+// ── Relay helper — sits on a `reach` objective's own target entity so a
+//    scene with more than one `reach` destination can bind every one of
+//    them, not just whichever claimed the scene's single shared TriggerZone.
+public class ReachTargetRelay : MonoBehaviour
+{
+    private Action _onReach;
+
+    public void Init(Action onReach, float radius)
+    {
+        _onReach = onReach;
+{% if is2d %}
+        var col = gameObject.AddComponent<CircleCollider2D>();
+        col.isTrigger = true;
+        col.radius = radius;
+{% else %}
+        var col = gameObject.AddComponent<SphereCollider>();
+        col.isTrigger = true;
+        col.radius = radius;
+{% endif %}
+    }
+{% if is2d %}
+
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        if (other.CompareTag("Player")) _onReach?.Invoke();
+    }
+{% else %}
+
+    private void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Player")) _onReach?.Invoke();
+    }
+{% endif %}
 }
 {% endif %}

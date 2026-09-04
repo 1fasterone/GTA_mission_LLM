@@ -889,6 +889,43 @@ def _wire_trigger_to_escort_objective(args: dict) -> str:
     )
 
 
+def _wire_reach_target_relay(args: dict) -> str:
+    """A `reach` objective that lost the single-shared-trigger race for its
+    scene (a SECOND, THIRD, ... `reach` objective there — one project-wide
+    TriggerZone can only report ONE arrival) gets its own event source
+    instead of staying permanently unbound: a relay attached directly to the
+    objective's own target entity. Self-contained — no shared trigger, no
+    stored delegate, no OnDestroy unsub (Unity destroys the relay component
+    with its GameObject) — so any number of `reach` objectives per scene can
+    bind as long as each names a real entity. Hit live (DropZone): two
+    `reach` objectives in one scene, only the first could ever bind.
+
+    Deferred via ReachTargetRelaySetup (a coroutine helper GameWiring
+    declares once — unity_compose.py), because GameWiring.Awake() runs
+    before every spawner's own Start(): an eager GameObject.Find here would
+    race the entity into existence the same way an eager escort lookup
+    would (see _wire_trigger_to_escort_objective)."""
+    ov = _s(args.get("objectives_var", "_objectives"))
+    oid = args.get("objective_id")
+    base_name = args.get("entity_base_name")
+    if not oid or not base_name:
+        return ("// No authored reach objective matched a real target entity - "
+                "reach target relay seam omitted.")
+    try:
+        count = max(1, int(args.get("count", 1)))
+    except (TypeError, ValueError):
+        count = 1
+    try:
+        radius = max(0.1, float(args.get("radius", 5.0)))
+    except (TypeError, ValueError):
+        radius = 5.0
+    return (
+        f"if ({ov} != null)\n"
+        f"    StartCoroutine(ReachTargetRelaySetup(\"{_s(base_name)}\", {count}, "
+        f"() => {ov}.ReportProgress(\"{_s(oid)}\"), {radius}f));"
+    )
+
+
 def _wire_interactable_to_objectives(args: dict) -> str:
     return _objective_seam(
         args, source_key="interactable_var", source_default="_interactable",
@@ -1056,6 +1093,7 @@ _SNIPPETS: dict[str, Any] = {
     "WireTriggerToSave":      _wire_trigger_to_save,
     "WireTriggerToObjectives":      _wire_trigger_to_objectives,
     "WireTriggerToEscortObjective": _wire_trigger_to_escort_objective,
+    "WireReachTargetRelay":         _wire_reach_target_relay,
     "WireInteractableToObjectives": _wire_interactable_to_objectives,
     "WireSpawnerToObjectives":      _wire_spawner_to_objectives,
     "WireBoardToObjectives":        _wire_board_to_objectives,

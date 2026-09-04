@@ -272,7 +272,9 @@ class MicroComposer:
     def compose(self, subsystems: list[Subsystem], assets_root: Path,
                 has_game_manager: bool = False, wiring=None,
                 objective_scenes: "dict[str, str] | None" = None,
-                escort_followed_entities: "set[str] | None" = None) -> list[ComposedUnit]:
+                escort_followed_entities: "set[str] | None" = None,
+                reach_target_entities: "dict[str, int] | None" = None,
+                game_type: str = "3D") -> list[ComposedUnit]:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
@@ -308,7 +310,7 @@ class MicroComposer:
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
         self._emit_wiring(units, micros_root, wiring, objective_scenes,
-                          escort_followed_entities)
+                          escort_followed_entities, reach_target_entities, game_type)
         # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
         self._emit_context(units, micros_root, has_game_manager)
 
@@ -396,11 +398,14 @@ class MicroComposer:
 
     def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None,
                      objective_scenes: "dict[str, str] | None" = None,
-                     escort_followed_entities: "set[str] | None" = None) -> None:
+                     escort_followed_entities: "set[str] | None" = None,
+                     reach_target_entities: "dict[str, int] | None" = None,
+                     game_type: str = "3D") -> None:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
         from .atoms.backends.unity import unity_atom_snippet
 
         escort_followed_entities = escort_followed_entities or set()
+        reach_target_entities = reach_target_entities or {}
         wiring     = next(u for u in units if u.kind == "wiring")
         real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
 
@@ -477,6 +482,7 @@ class MicroComposer:
         destroy_cleanups: list[str]  = []
         helper_methods:   list[str]  = []
         has_trigger_save              = False
+        has_reach_relay                = False
 
         # SEAM 1 — Health → HUD (hp bar reflects damage/heal live)
         # Gated on the HUD class actually declaring SetHealth, not on the variant
@@ -748,8 +754,8 @@ class MicroComposer:
                     bound_ids.add(f"{unit.class_name}.{oid}")
 
         # Bucket objectives by the scene their mission resolves to
-        # (`objective_scenes`: {objective.id: scene_name}, flattened by the
-        # caller from schema.meta["mission_scenes"] — see
+        # (`objective_scenes`: {"<TrackerClass>.<objective.id>": scene_name},
+        # flattened by the caller from schema.meta["mission_scenes"] — see
         # `_infer_mission_scenes`/`_objective_scene_map`,
         # src/unity_pipeline.py). Each bucket runs the SAME one-source-per-
         # type-wins algorithm independently, so a project with N missions
@@ -762,12 +768,20 @@ class MicroComposer:
         # global, ungated behavior byte-for-byte — a project with no
         # `objective_scenes` (single mission/scene, or every project before
         # this feature) is unaffected.
+        #
+        # Looked up by class_name-qualified id, matching `bound_ids`/`unbound`
+        # below — every mission in this codebase's own convention numbers its
+        # objectives "obj_1", "obj_2", ... independently, so a lookup on the
+        # bare id alone would collide across missions (DropZone: three
+        # missions, each with an "obj_2", one scene map entry surviving for
+        # all three).
         objective_scenes = objective_scenes or {}
         scene_keys = sorted({s for s in objective_scenes.values() if s}) + [None]
         needs_scene_var = False
         for scene_key in scene_keys:
             scoped = [(u, o) for u in objective_units for o in u.objectives
-                     if o.get("id") and objective_scenes.get(str(o["id"])) == scene_key]
+                     if o.get("id")
+                     and objective_scenes.get(f"{u.class_name}.{o['id']}") == scene_key]
             if not scoped:
                 continue
             for types, source, atom, source_arg, delegate, delegate_type in _OBJECTIVE_SOURCES:
@@ -808,6 +822,62 @@ class MicroComposer:
                     f"    {_fv(source)}.{_OBJECTIVE_EVENTS[atom]} -= {delegate_name};"
                 )
                 bound_ids.add(f"{unit.class_name}.{obj['id']}")
+
+        # SEAM 8c — reach objectives that lost the single-shared-trigger race
+        # for their own scene (the scene's SECOND, THIRD, ... `reach`
+        # objective — the loop above binds only one trigger source per
+        # scene per type) get their own event source instead of staying
+        # permanently unbound: a relay attached directly to the objective's
+        # own target entity (see WireReachTargetRelay, src/atoms/wiring.py).
+        # Runs LAST of the reach-binding passes, on purpose — it only picks
+        # up what SEAM 8's shared trigger left behind, never competes with
+        # it. `reach_target_entities` names every entity the schema
+        # authored (name -> spawn count); an objective whose target_ref is
+        # blank or unresolved (never spawned) is left for the abstain block
+        # below to name, same as before this seam existed.
+        for unit in objective_units:
+            for obj in unit.objectives:
+                oid = obj.get("id")
+                ref = obj.get("target_ref") or ""
+                if (obj.get("type") != "reach" or not oid
+                        or f"{unit.class_name}.{oid}" in bound_ids
+                        or ref not in reach_target_entities):
+                    continue
+                ov = _fv(unit)
+                awake_seams.append({
+                    "label": f"SEAM 8c: reach target relay ({obj['type']}: {oid} <- {ref})",
+                    "snippet": unity_atom_snippet("WireReachTargetRelay", {
+                        "objectives_var": ov, "objective_id": oid,
+                        "entity_base_name": ref,
+                        "count": reach_target_entities[ref],
+                    }),
+                })
+                bound_ids.add(f"{unit.class_name}.{oid}")
+                if not has_reach_relay:
+                    has_reach_relay = True
+                    helper_methods.append(
+                        "private IEnumerator ReachTargetRelaySetup(string baseName, "
+                        "int count, Action onReach, float radius)\n"
+                        "    {\n"
+                        "        for (int idx = 0; idx < count; idx++)\n"
+                        "        {\n"
+                        "            string goName = baseName + \"_\" + idx;\n"
+                        "            GameObject go = null;\n"
+                        "            for (int frame = 0; frame < 300 && go == null; frame++)\n"
+                        "            {\n"
+                        "                go = GameObject.Find(goName);\n"
+                        "                if (go == null) yield return null;\n"
+                        "            }\n"
+                        "            if (go == null)\n"
+                        "            {\n"
+                        "                Debug.LogWarning(\"ReachTargetRelay: '\" + goName "
+                        "+ \"' never spawned - objective cannot advance from it.\");\n"
+                        "                continue;\n"
+                        "            }\n"
+                        "            go.AddComponent<ReachTargetRelay>().Init(onReach, radius);\n"
+                        "        }\n"
+                        "    }"
+                    )
 
         # Abstain loudly: name every authored objective this build cannot advance.
         #
@@ -1019,6 +1089,8 @@ class MicroComposer:
             helper_methods=helper_methods,
             destroy_cleanups=destroy_cleanups,
             has_trigger_save=has_trigger_save,
+            has_reach_relay=has_reach_relay,
+            game_type=game_type,
             needs_scene_var=needs_scene_var,
         )
         (sdir / "GameWiring.cs").write_text(content, encoding="utf-8")

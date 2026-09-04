@@ -22,7 +22,8 @@ from src.unity_schema import EntitySpec, MissionObjective, MissionSpec
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _mission_project(tmp_path, project="Seam8Proof", *, objectives, triggers=(),
-                     entities=None, game_type="3D") -> Path:
+                     entities=None, game_type="3D",
+                     reach_target_entities=None) -> Path:
     """Compose a whole project around one authored mission; return its Assets dir."""
     mission = MissionSpec(id="m1", title="Vault Run", triggers=list(triggers),
                           objectives=objectives)
@@ -31,7 +32,7 @@ def _mission_project(tmp_path, project="Seam8Proof", *, objectives, triggers=(),
     subs = subsystems_for(game_type, [], missions=[mission], entities=ents)
     assets = Path(tmp_path) / "Assets"
     MicroComposer(project, project_config={"audio": {"backend": "dsp"}}).compose(
-        subs, assets)
+        subs, assets, reach_target_entities=reach_target_entities, game_type=game_type)
     return assets
 
 
@@ -39,8 +40,9 @@ def _multi_mission_project(tmp_path, project="Seam8Scenes", *, missions,
                            objective_scenes=None, entities=None,
                            game_type="3D") -> Path:
     """Compose a project around several authored missions, optionally with a
-    resolved {objective.id: scene_name} map (what `_objective_scene_map`,
-    src/unity_pipeline.py, would hand to `compose()` in the real pipeline)."""
+    resolved {"<TrackerClass>.<objective.id>": scene_name} map (what
+    `_objective_scene_map`, src/unity_pipeline.py, would hand to `compose()`
+    in the real pipeline)."""
     ents = entities if entities is not None else [
         EntitySpec(name="Sentry Drone", kind="enemy", count=8)]
     subs = subsystems_for(game_type, [], missions=missions, entities=ents)
@@ -149,6 +151,85 @@ def test_one_source_binds_exactly_one_objective(tmp_path):
     assert 'ReportProgress("kill_boss")' not in gw
 
 
+# ── SEAM 8c — reach-target relay (multiple `reach` objectives, one scene) ─────
+# Live bug (DropZone): a mission with TWO `reach` objectives shares one scene's
+# single TriggerZone, which can report only ONE arrival — the same
+# one-source-per-type rule as the eliminate test above, but here the SECOND
+# objective's own target was a real, named, spawned entity sitting right in
+# the schema (FormationAISkydivers) rather than nothing at all.
+# WireReachTargetRelay closes it: a purpose-built relay attaches straight to
+# that entity's own GameObject(s), independent of the shared trigger, so any
+# number of `reach` objectives per scene can bind as long as each names a
+# real entity.
+
+def test_second_reach_objective_in_one_scene_binds_via_target_relay(tmp_path):
+    objs = [
+        MissionObjective(id="reach_vault", description="Get to the vault", type="reach"),
+        MissionObjective(id="reach_locker", description="Reach the gear locker",
+                         type="reach", target_ref="GearLocker"),
+    ]
+    gw = _gamewiring(_mission_project(
+        tmp_path, objectives=objs, reach_target_entities={"GearLocker": 1}))
+    # The FIRST reach objective still claims the shared trigger, unchanged.
+    assert "_scenetrigger.OnActivated += _onReachObjective;" in gw
+    assert 'ReportProgress("reach_vault")' in gw
+    # The SECOND gets its own relay instead of staying unbound.
+    assert ('StartCoroutine(ReachTargetRelaySetup("GearLocker", 1, '
+            '() => _vaultrunobjectives.ReportProgress("reach_locker"), 5.0f));') in gw
+    assert "private IEnumerator ReachTargetRelaySetup(" in gw
+    assert "public class ReachTargetRelay : MonoBehaviour" in gw
+    assert "no event source for reach_locker" not in gw
+
+
+def test_reach_target_relay_uses_3d_collider_for_3d_game(tmp_path):
+    objs = [MissionObjective(id="reach_vault", description="Get to the vault", type="reach"),
+            MissionObjective(id="reach_locker", description="Reach the locker",
+                             type="reach", target_ref="GearLocker")]
+    gw = _gamewiring(_mission_project(
+        tmp_path, objectives=objs, game_type="3D",
+        reach_target_entities={"GearLocker": 1}))
+    assert "gameObject.AddComponent<SphereCollider>();" in gw
+    assert "private void OnTriggerEnter(Collider other)" in gw
+    assert "CircleCollider2D" not in gw
+
+
+def test_reach_target_relay_uses_2d_collider_for_2d_game(tmp_path):
+    objs = [MissionObjective(id="reach_vault", description="Get to the vault", type="reach"),
+            MissionObjective(id="reach_locker", description="Reach the locker",
+                             type="reach", target_ref="GearLocker")]
+    gw = _gamewiring(_mission_project(
+        tmp_path, objectives=objs, game_type="2D",
+        reach_target_entities={"GearLocker": 1}))
+    assert "gameObject.AddComponent<CircleCollider2D>();" in gw
+    assert "private void OnTriggerEnter2D(Collider2D other)" in gw
+    assert "SphereCollider" not in gw
+
+
+def test_reach_target_relay_omitted_without_a_matching_entity(tmp_path):
+    """No reach_target_entities passed at all -- the second reach objective is
+    named as unbound exactly as it was before this seam existed, not silently
+    wired to a target that was never confirmed to exist."""
+    objs = [MissionObjective(id="reach_vault", description="Get to the vault", type="reach"),
+            MissionObjective(id="reach_locker", description="Reach the locker",
+                             type="reach", target_ref="GearLocker")]
+    gw = _gamewiring(_mission_project(tmp_path, objectives=objs))
+    assert "ReachTargetRelaySetup" not in gw
+    assert "public class ReachTargetRelay" not in gw
+
+
+def test_reach_target_relay_relays_every_instance_of_a_multi_count_target(tmp_path):
+    """`target_ref` naming a multi-instance entity (e.g. a 3-member formation)
+    relays EVERY spawned instance — reaching any one member counts, matching
+    EntitySpawner.cs.j2's own '<name>_0', '<name>_1', ... naming."""
+    objs = [MissionObjective(id="reach_vault", description="Get to the vault", type="reach"),
+            MissionObjective(id="reach_formation", description="Reach the formation",
+                             type="reach", target_ref="Skydivers")]
+    gw = _gamewiring(_mission_project(
+        tmp_path, objectives=objs, reach_target_entities={"Skydivers": 3}))
+    assert ('StartCoroutine(ReachTargetRelaySetup("Skydivers", 3, '
+            '() => _vaultrunobjectives.ReportProgress("reach_formation"), 5.0f));') in gw
+
+
 # ── Scene-scoped binding (multi-mission, multi-scene projects) ────────────────
 # Live bug (GearCitadel, 3 missions across 3 hall scenes): the single global
 # trigger/interactable meant only the FIRST mission's `reach`/`collect`
@@ -168,7 +249,8 @@ def test_two_missions_scoped_to_different_scenes_each_get_gated_binding(tmp_path
     ])
     gw = _gamewiring(_multi_mission_project(
         tmp_path, missions=[m1, m2],
-        objective_scenes={"reach_gate_1": "HallOne", "reach_gate_2": "HallTwo"}))
+        objective_scenes={"HallOneClearanceObjectives.reach_gate_1": "HallOne",
+                          "VerticalAscentObjectives.reach_gate_2": "HallTwo"}))
     assert 'if (_scene == "HallOne")' in gw
     assert 'if (_scene == "HallTwo")' in gw
     assert 'ReportProgress("reach_gate_1")' in gw
@@ -188,7 +270,8 @@ def test_scene_gated_delegates_get_distinct_field_names(tmp_path):
     ])
     gw = _gamewiring(_multi_mission_project(
         tmp_path, missions=[m1, m2],
-        objective_scenes={"reach_gate_1": "HallOne", "reach_gate_2": "HallTwo"}))
+        objective_scenes={"HallOneClearanceObjectives.reach_gate_1": "HallOne",
+                          "VerticalAscentObjectives.reach_gate_2": "HallTwo"}))
     assert "private Action _onReachObjective;" not in gw   # bare/unqualified — would be a duplicate
     assert "private Action _onReachObjective_HallOne;" in gw
     assert "private Action _onReachObjective_HallTwo;" in gw
