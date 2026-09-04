@@ -3306,8 +3306,23 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
         return rebuilt if rebuilt else None
 
     if base == "string":
-        if (text.lower() in _STRING_SENTINELS
-                or text.startswith(_STRING_LITERAL_PREFIXES)):
+        if text.lower() in _STRING_SENTINELS:
+            return text if _initializer_is_structurally_safe(text) else None
+        if text.startswith(_STRING_LITERAL_PREFIXES):
+            # A well-formed `"..."` literal's own content can never hold an
+            # unescaped quote — one would close the token early. When it
+            # does, the outer pair isn't a literal delimiter at all: it's an
+            # extra layer the model wrapped around an initializer that was
+            # already valid by itself (and may itself embed a string
+            # literal, e.g. `Application.dataPath + "/SaveData.json"`). The
+            # overall quote COUNT stays even either way (4, not 2), so the
+            # plain balance check below can't tell the two shapes apart —
+            # peel the outer layer first and judge what's left instead. Hit
+            # live, SaveLoadManager.cs(11,112): CS1003.
+            if (text.startswith('"') and text.endswith('"') and len(text) > 1
+                    and _unescaped_quote_count(text[1:-1])):
+                inner = text[1:-1]
+                return inner if _initializer_is_structurally_safe(inner) else None
             return text if _initializer_is_structurally_safe(text) else None
         # Bare prose the model forgot to quote (CS0103) — quoting keeps the
         # authored value; dropping it would lose the content for no reason.
