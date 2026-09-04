@@ -480,6 +480,21 @@ def unity_validate(
 
     if compose and composer is not None and composed_units is not None:
         has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
+        # Names entities resolve_escort_follow (Step 5, in the ORIGINAL
+        # unity-create run that produced this saved schema) gave a real
+        # Follow-atom behavior to — SEAM 8b's honest signal that this entity
+        # actually walks toward the player, not just a name an escort
+        # objective happens to mention. unity-validate skips Step 5 itself,
+        # but that resolution is already baked into the loaded schema's
+        # entities, so reading it back here (not re-running the resolver)
+        # is exactly what unity_pipeline.run() does at this same point.
+        # Missing before now: a schema with `escort` objectives recompiled
+        # via `unity-validate --compose` silently lost SEAM 8b entirely.
+        escort_followed_entities = {
+            e.name for e in schema.entities
+            if e.name and e.behavior
+            and any(getattr(a, "atom", "") == "Follow" for a in (e.atoms or []))
+        }
         # Every named entity, spawn count included — SEAM 8c's ground truth
         # for whether a `reach` objective's target_ref is a real, locatable
         # GameObject it can attach a relay to (see unity_compose.py's
@@ -490,6 +505,7 @@ def unity_validate(
                       objective_scenes=_objective_scene_map(
                           schema, schema.meta.get("mission_scenes")
                           if isinstance(schema.meta, dict) else None),
+                      escort_followed_entities=escort_followed_entities,
                       reach_target_entities=reach_target_entities,
                       game_type=schema.game_type)
         if isinstance(schema.meta, dict):

@@ -1,0 +1,76 @@
+"""
+`unity-validate --compose` — the no-LLM schema replay path (cli/unity_project.py).
+
+Live regression: this command's own `composer.emit(...)` call never passed
+`escort_followed_entities`, unlike unity_pipeline.py's `run()` (the fresh
+`unity-create` path), which always has. A schema with an `escort` objective
+recompiled through `unity-validate --compose` silently lost SEAM 8b — the
+objective reported "no event source" and could never advance, even though
+the SAME schema replayed correctly through a live `unity-create` run.
+
+Offline and deterministic — no LLM, no Unity, no network.
+"""
+
+from __future__ import annotations
+
+import yaml
+
+from src.unity_escort_follow import resolve_escort_follow
+from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
+
+
+def _escort_schema() -> UnitySchema:
+    schema = UnitySchema(
+        project_name="EscortRegressionCheck", company_name="TestCo", game_type="3D",
+        platform="PC", render_pipeline="URP", unity_version="6000.0",
+        color_space="Linear", description="test", features=[], packages=[],
+        scenes=["Main"],
+        entities=[EntitySpec(name="Buddy", kind="npc", count=1)],
+        missions=[MissionSpec(id="m1", title="Escort Run", objectives=[
+            MissionObjective(id="escort_buddy", description="Escort Buddy to safety",
+                             type="escort", target_ref="Buddy"),
+        ])],
+    )
+    # Same Step-5 pass a real unity-create run applies before ever saving a
+    # schema.json — the saved-schema contract unity-validate replays against.
+    resolve_escort_follow(schema)
+    return schema
+
+
+def _minimal_config(tmp_path) -> str:
+    """Just enough for unity_validate() to run compose() without a live
+    asset catalog: assets.strict=False accepts the logged prop fallback
+    instead of hard-failing on an unmatched model."""
+    cfg = {
+        "unity_pipeline": {
+            "lookups_dir": "lookups",
+            "unity_template_dir": "templates/unity",
+            "unity_output_dir": str(tmp_path / "out"),
+            "inject_mcp_bridge": True,
+        },
+        "assets": {"strict": False},
+        "sketchfab": {"enabled": False},
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    return str(path)
+
+
+def test_unity_validate_compose_wires_escort_objective(tmp_path):
+    from cli.unity_project import unity_validate
+
+    schema_path = tmp_path / "EscortRegressionCheck.schema.json"
+    schema_path.write_text(_escort_schema().model_dump_json(indent=2), encoding="utf-8")
+
+    # Typer's decorated function still takes plain kwargs when called
+    # directly, but only if every one of them is passed explicitly — a
+    # parameter left at its "default" receives the typer.Option(...)
+    # sentinel object instead of the plain value, which is truthy.
+    unity_validate(str(schema_path), config=_minimal_config(tmp_path),
+                   blender_models=False, compose=True)
+
+    gw = (tmp_path / "out" / "EscortRegressionCheck" / "Assets" / "Micros"
+          / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
+    assert "SEAM 8b: trigger" in gw
+    assert 'ReportProgress("escort_buddy")' in gw
+    assert "no event source" not in gw
