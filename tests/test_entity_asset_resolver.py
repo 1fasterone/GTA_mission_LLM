@@ -672,7 +672,8 @@ def test_sketchfab_auto_fetch_registers_once_and_caches_across_calls(env, tmp_pa
 
     def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
                     lookups_dir, category, kind_hints, min_score,
-                    preferred_author=None, vision_select_fn=None):
+                    preferred_author=None, vision_select_fn=None,
+                    semantic_filter_fn=None):
         calls["n"] += 1
         entry = _add_sketchfab_entry(Path(lookups_dir), tmp_path, uid="live1",
                                      filename="live-fetched-pine.fbx")
@@ -778,6 +779,84 @@ def test_llm_and_vision_select_together_build_an_entity_bound_closure(
     result = seen_fn["fn"]([{"uid": "x"}])
     assert result == "picked-uid"
     assert calls == [("PineTrees", "prop", "tall pine forest tree")]
+
+
+# ── semantic_filter_fn gating: sketchfab.semantic_select alone is enough ────
+# Unlike vision_select_fn, this needs NO `llm` — it's a CLIP/embedding
+# similarity score, not an LLM chat call — so it must be reachable even on
+# unity-validate's no-LLM replay path, as long as the config flag is on.
+
+def test_semantic_select_absent_never_builds_a_filter_fn(env, tmp_path, monkeypatch):
+    """Today's default (config key absent): semantic_filter_fn must be None,
+    byte-identical to before this parameter existed."""
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, semantic_filter_fn=None, **kw: seen.update(fn=semantic_filter_fn) or None)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True})  # semantic_select absent
+    assert seen["fn"] is None
+
+
+def test_semantic_select_enabled_builds_a_filter_fn_without_an_llm(env, tmp_path, monkeypatch):
+    """The defining difference from vision_select_fn: no llm is threaded
+    through at all here, and the closure must still be built — this is a
+    deterministic embedding score, not something that needs the Pipeline
+    LLM."""
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, semantic_filter_fn=None, **kw: seen.update(fn=semantic_filter_fn) or None)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True, "semantic_select": True},
+        llm=None)
+    assert seen["fn"] is not None
+
+
+def test_semantic_select_closure_binds_entity_query_and_thresholds(env, tmp_path, monkeypatch):
+    """The built closure must dispatch to unity_semantic_embed.semantic_filter
+    with THIS entity's own name/kind/query and the configured similarity
+    floors — confirming it captured the right entity, not whichever one
+    happened to run last in the loop, and that config thresholds actually
+    reach the scorer."""
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, semantic_filter_fn=None, **kw: seen.update(fn=semantic_filter_fn) or None)
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter",
+        lambda name, kind, concept_text, cands, *, client, min_image_similarity,
+               min_text_similarity: calls.append(
+            (name, kind, concept_text, min_image_similarity, min_text_similarity))
+            or list(cands))
+
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5,
+                            model_hint="tall pine forest tree")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True, "semantic_select": True,
+                       "min_image_similarity": 0.33, "min_text_similarity": 0.44},
+        llm=None)
+
+    assert seen["fn"] is not None
+    result = seen["fn"]([{"uid": "x"}])
+    assert result == [{"uid": "x"}]
+    assert len(calls) == 1
+    name, kind, concept_text, min_img, min_txt = calls[0]
+    assert (name, kind) == ("PineTrees", "prop")
+    assert concept_text  # the query text used to search — non-empty
+    assert (min_img, min_txt) == (0.33, 0.44)
 
 
 def test_sketchfab_tier_s_rejects_coincidental_kind_mismatch(env, tmp_path):
@@ -903,7 +982,8 @@ def test_preferred_author_established_from_live_fetch_threads_to_next_entity(
 
     def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
                     lookups_dir, category, kind_hints, min_score,
-                    preferred_author=None, vision_select_fn=None):
+                    preferred_author=None, vision_select_fn=None,
+                    semantic_filter_fn=None):
         calls.append(preferred_author)
         if len(calls) == 1:
             return _add_sketchfab_entry(

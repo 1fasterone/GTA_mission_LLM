@@ -222,6 +222,41 @@ sketchfab:
   # unity-validate's no-LLM replay never does). Off by default: needs that
   # vision model loaded and adds one LLM round-trip per Tier S live fetch.
   vision_select: false
+  # Deterministic sibling to vision_select above (src/unity_semantic_embed.py):
+  # CLIP/embedding cosine similarity between the search query and each
+  # candidate's own thumbnail + description, instead of an LLM chat call.
+  # No `llm` needed, so this works even without a vision-capable Pipeline
+  # LLM loaded — and given the same bytes and pinned model weights, the
+  # score is byte-reproducible, which an LLM chat call structurally is not.
+  # Unlike vision_select (reorder-only), this can REJECT every candidate
+  # that fails the floor, falling through to the next asset tier instead of
+  # accepting a semantically wrong pick (confirmed live: DropZone's
+  # "realistic paratrooper" query resolved to a Sketchfab model titled
+  # "Cartoon Character" — a real, correctly-licensed download that keyword
+  # scoring had no way to flag as wrong). First run downloads the CLIP
+  # ONNX models (fastembed, cached like the RAG embedder). Off by default.
+  #
+  # Calibrated against tools/calibrate_semantic_score.py's real Sketchfab
+  # search results (2026-09-04), not guessed:
+  #   image_similarity — genuinely-correct matches (crate/lamp/car/sword)
+  #     measured 0.28-0.36; the confirmed-wrong "Cartoon Character" ->
+  #     "realistic paratrooper" pair measured 0.200. min_image_similarity
+  #     sits just above that live failure. Caveat: humanoid/character
+  #     subjects run lower overall than object props — a weak-but-legitimate
+  #     character match measured only 0.209, almost indistinguishable from
+  #     the 0.200 failure — so this floor is a compromise across categories,
+  #     not a clean universal separator. Re-run the calibration script
+  #     before trusting it for a new asset domain.
+  #   text_similarity — much noisier: legitimate matches measured as low as
+  #     0.517, and a plausible-but-wrong pair ("soldier" text vs "realistic
+  #     paratrooper") measured 0.592 — HIGHER than that legitimate match.
+  #     Text similarity cannot reliably separate a near-domain mismatch from
+  #     a real match, so its floor is intentionally permissive (a backstop
+  #     against grossly unrelated text, not fine discrimination) —
+  #     image_similarity is the primary, more reliable signal.
+  semantic_select: false
+  min_image_similarity: 0.22     # cosine(CLIP-text(query), CLIP-image(thumbnail))
+  min_text_similarity: 0.45      # cosine(bge(query), bge(candidate description))
 
 blender:                           # external asset-fulfilment stage (blender_cli.py)
   blender_path: ''                 # empty => auto-detect (PATH + standard installs)

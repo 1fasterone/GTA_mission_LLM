@@ -396,3 +396,121 @@ def test_no_vision_select_fn_is_byte_identical_to_before(tmp_path, monkeypatch):
 
     assert entry is not None
     assert entry["sketchfab_uid"] == "baseball1"
+
+
+# ── deterministic semantic gate: semantic_filter_fn can REJECT candidates ────
+# vision_select_fn (above) only ever reorders within candidates min_match_score
+# already accepted. semantic_filter_fn is the sibling that can actually shrink
+# the pool to nothing — a genuine "every candidate is semantically wrong"
+# verdict must fall through to the caller's next asset tier, not accept a
+# same-word-coincidence pick, mirroring the live "realistic paratrooper" ->
+# "Cartoon Character" miss that motivated this feature.
+
+def test_semantic_filter_fn_reorders_like_vision_select(tmp_path, monkeypatch):
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    seen_pool = []
+
+    def _semantic(pool):
+        seen_pool.append(pool)
+        return [m for m in pool if m["uid"] == "skydive1"] + \
+               [m for m in pool if m["uid"] != "skydive1"]
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=_semantic)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "skydive1"
+    assert len(seen_pool) == 1
+    assert {m["uid"] for m in seen_pool[0]} == {"baseball1", "skydive1"}
+
+
+def test_semantic_filter_fn_empty_result_is_a_clean_miss(tmp_path, monkeypatch):
+    """Every candidate failing the semantic floor must return None (fall
+    through to the caller's next asset tier), not raise and not fall back to
+    downloading the keyword-ranked top pick anyway."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=lambda pool: [])
+
+    assert entry is None
+    assert client.download_calls == 0
+
+
+def test_semantic_filter_fn_runs_before_vision_select_fn(tmp_path, monkeypatch):
+    """The semantic gate narrows the pool FIRST; vision_select_fn (when also
+    configured) only ever sees what survived it."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+    vision_seen = []
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=lambda pool: [m for m in pool if m["uid"] == "skydive1"],
+        vision_select_fn=lambda pool: vision_seen.append(pool) or None)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "skydive1"
+    # vision_select_fn is only ever called with >1 candidate (see the
+    # existing vision_select_fn tests above) — the semantic gate narrowed
+    # this pool to exactly one, so vision never even runs.
+    assert vision_seen == []
+
+
+def test_semantic_filter_fn_exception_degrades_to_keyword_order(tmp_path, monkeypatch):
+    """The semantic gate is advisory-strict about REJECTING, but a crash in
+    it must degrade exactly like a crashing vision_select_fn — never take
+    down the whole fetch."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    def _explodes(pool):
+        raise RuntimeError("no cached CLIP model, no network")
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=_explodes)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"  # untouched keyword order
+
+
+def test_semantic_filter_fn_none_return_keeps_keyword_order(tmp_path, monkeypatch):
+    """semantic_filter.py returns the ORIGINAL candidates list (not an empty
+    one) when nothing in the whole pool was measurable at all — an embedder
+    availability failure, not a semantic verdict. Confirm that shape reaches
+    fetch_and_freeze correctly: same untouched keyword order as no gate at
+    all, and a real download still happens."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=lambda pool: pool)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"
+
+
+def test_no_semantic_filter_fn_is_byte_identical_to_before(tmp_path, monkeypatch):
+    """The default (None) must reproduce pre-existing behavior exactly —
+    every caller from before this parameter existed passes nothing for it."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"))
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"

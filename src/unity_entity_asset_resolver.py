@@ -1048,6 +1048,26 @@ def resolve_entity_assets(schema,
                     vision_select_fn = lambda cands, _e=e, _kind=kind: select_best_candidate(
                         _e.name, _kind, hint or _e.name, cands,
                         client=sk_client, llm=llm)
+                # Deterministic sibling to vision_select above: CLIP/embedding
+                # cosine similarity between the search query and each
+                # candidate's own thumbnail + description, instead of an LLM
+                # chat call. Unlike vision_select_fn (reorder-only, never
+                # rejects), this can drop every candidate that fails the
+                # semantic floor — closing exactly the "realistic paratrooper"
+                # -> "Cartoon Character" miss keyword scoring cannot catch.
+                # Opt-in (`sketchfab.semantic_select`); no `llm` needed, so
+                # this is reachable even without a vision-capable Pipeline
+                # LLM loaded. See src/unity_semantic_embed.py.
+                semantic_filter_fn = None
+                if sk_cfg.get("semantic_select"):
+                    from .unity_semantic_embed import semantic_filter
+                    semantic_filter_fn = lambda cands, _e=e, _kind=kind, _q=query: semantic_filter(
+                        _e.name, _kind, _q, cands, client=sk_client,
+                        # Defaults match config.example.yaml's calibrated
+                        # values (tools/calibrate_semantic_score.py) — kept
+                        # in sync there, not re-derived here.
+                        min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
+                        min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)))
                 new_entry = fetch_and_freeze(
                     query, score_fn=lambda a: _score(a, qw, kind),
                     client=sk_client, blender_cfg=sk_cfg,
@@ -1055,7 +1075,8 @@ def resolve_entity_assets(schema,
                     lookups_dir=str(lookups_dir), category=kind or "prop",
                     kind_hints=[kind], min_score=sk_min,
                     preferred_author=preferred_author,
-                    vision_select_fn=vision_select_fn)
+                    vision_select_fn=vision_select_fn,
+                    semantic_filter_fn=semantic_filter_fn)
                 if new_entry is not None:
                     sk_catalog_assets.append(new_entry)  # in-run cache: later
                                                           # entities this same

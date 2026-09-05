@@ -136,7 +136,8 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      max_candidates: int = 4,
                      search_params: Optional[dict] = None,
                      style_meta: Optional[dict] = None,
-                     vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None
+                     vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None,
+                     semantic_filter_fn: Optional[Callable[[list[dict]], list[dict]]] = None
                      ) -> Optional[dict]:
     """Search Sketchfab for `query`, rank license-compliant hits with the
     caller-supplied `score_fn`, download + convert the best one, freeze it
@@ -177,6 +178,16 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
     rejected). None (no vision model configured, no reachable thumbnails, an
     explicit "none match" verdict, any failure) leaves the keyword order
     exactly as it always was.
+
+    `semantic_filter_fn` (typically unity_semantic_embed.semantic_filter,
+    bound to one entity) is `vision_select_fn`'s deterministic sibling —
+    CLIP/embedding cosine similarity instead of an LLM chat call. Called
+    ONCE with the same keyword-ranked candidate list, BEFORE
+    `vision_select_fn`, it returns the subset that clears a semantic
+    similarity floor, best-first. Unlike `vision_select_fn` it MAY shrink
+    the candidate list to empty when nothing clears the floor — that is
+    treated as a clean miss (falls through to the next asset tier), never
+    as an error. None (not configured) leaves the keyword order untouched.
     """
     try:
         return _fetch_and_freeze_inner(
@@ -186,7 +197,8 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
             preferred_author=preferred_author, max_candidates=max_candidates,
             search_params=dict(search_params or {}),
             style_meta=dict(style_meta or {}),
-            vision_select_fn=vision_select_fn)
+            vision_select_fn=vision_select_fn,
+            semantic_filter_fn=semantic_filter_fn)
     except Exception as exc:  # noqa: BLE001 — must never propagate to the resolver
         log.debug("sketchfab fetch_and_freeze(%r) failed: %s", query, exc)
         return None
@@ -200,7 +212,8 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                             max_candidates: int = 4,
                             search_params: Optional[dict] = None,
                             style_meta: Optional[dict] = None,
-                            vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None
+                            vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None,
+                            semantic_filter_fn: Optional[Callable[[list[dict]], list[dict]]] = None
                             ) -> Optional[dict]:
     if not client.available():
         return None
@@ -221,6 +234,29 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
             return None
 
     candidates.sort(key=lambda sm: (-sm[0], sm[1].get("uid", "")))
+
+    # Deterministic semantic gate, ahead of the (optional) LLM vision pass
+    # below: CLIP/embedding cosine similarity between the query and each
+    # candidate's own thumbnail + description. Unlike vision_select_fn this
+    # can actually SHRINK the pool — a candidate list that fails the floor
+    # entirely comes back empty, which this function then treats exactly
+    # like a keyword-score miss (return None, fall through to the next
+    # asset tier) rather than accepting a semantically wrong pick. See
+    # unity_semantic_embed.semantic_filter's own docstring for why an
+    # unmeasurable pool (embedder unavailable) instead returns the original
+    # list untouched rather than emptying it.
+    if semantic_filter_fn is not None and candidates:
+        try:
+            filtered_models = semantic_filter_fn([m for _s, m in candidates])
+        except Exception as exc:  # noqa: BLE001 — semantic gate is advisory-strict,
+            # never fatal to the whole resolution attempt
+            log.debug("sketchfab semantic_filter_fn(%r) failed: %s", query, exc)
+            filtered_models = None
+        if filtered_models is not None:
+            score_by_uid = {m.get("uid"): s for s, m in candidates}
+            candidates = [(score_by_uid.get(m.get("uid"), 0.0), m) for m in filtered_models]
+        if not candidates:
+            return None
 
     # Visual quality control on top of the keyword ranking above: a "helmet"
     # search returns everything tagged "helmet" regardless of what KIND, and
