@@ -160,8 +160,11 @@ def select_best_candidate(entity_name: str, entity_kind: str, description: str,
     if payload is None:
         return None
     reason = str(payload.get("reason") or "").strip()
+    pick = payload.get("pick")
     try:
-        idx = int(payload.get("pick")) - 1
+        if pick is None:
+            raise TypeError("missing 'pick' field")
+        idx = int(pick) - 1
     except (TypeError, ValueError):
         log.debug("sketchfab vision select(%r): no match among %d candidates (%s)",
                   entity_name, len(images), reason or "no reason given")
