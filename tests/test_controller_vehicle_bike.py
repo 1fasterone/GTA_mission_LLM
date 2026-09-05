@@ -98,6 +98,47 @@ def test_vehicle_bike_gets_a_two_wheel_rig_and_lean():
 def test_vehicle_car_is_unaffected():
     out = _render("vehicle_car")
     assert "new WheelCollider[4]" in out
+
+
+def test_charactercontroller_velocity_misuse_is_neutralized_not_shipped():
+    """Live regression, DropZone's PlayerController.cs(238,281,283): an
+    LLM-authored update_extra and extra_method both wrote directly to
+    `CharacterController.velocity`, which is get-only (CS0200/CS1612) — the
+    model conflating it with the genuinely-settable Rigidbody.velocity. Only
+    `harden()` (bind_authored_code) catches this, not `default_fix` alone, so
+    this reproduces the real two-call pipeline sequence."""
+    from src.micro.code_fields import CodeMethod
+
+    pipe = ControllerPipeline(_cfg())
+    schema = ControllerSchema(
+        name="TestCtrl", variant="flying",
+        update_extra=(
+            "Vector3 vel = _cc.velocity;\n"
+            "if (vel.magnitude > 10f) {\n"
+            "    vel *= 0.5f;\n"
+            "    _cc.velocity = vel;\n"
+            "}"
+        ),
+        extra_methods=[CodeMethod(
+            signature="private void ApplyFreefallDynamics()",
+            body=("_cc.velocity.y -= 9.81f * Time.fixedDeltaTime;\n"
+                  "_cc.velocity += Vector3.zero;"),
+        )],
+    )
+    schema = pipe.default_fix(schema, "flying")
+    pipe.harden(schema)
+
+    env = pipe.jinja()
+    out = env.get_template("Controller.cs.j2").render(s=schema, variant="flying")
+    bad_writes = ("_cc.velocity = ", "_cc.velocity +=", "_cc.velocity.y -=")
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("//"):
+            continue
+        for bad in bad_writes:
+            assert bad not in stripped, f"unneutralized write survived: {line!r}"
+    assert "Vector3 vel = _cc.velocity;" in out, "the READ must survive untouched"
+    assert out.count("{") == out.count("}")
     assert "maxLeanAngle" not in out
     assert "_leanPivot" not in out
     assert out.count("{") == out.count("}")

@@ -1667,6 +1667,66 @@ def _sanitize_nullable_valuetype_access(script: UnityScript) -> None:
         m.body = _fix(m.body)
 
 
+# CS0019 — `Vector3 * Vector3` has no `operator*` in UnityEngine (only
+# `Vector3 * float`/`float * Vector3` scalar scaling exist); component-wise
+# multiplication needs `Vector3.Scale(a, b)`. Confirmed live, DropZone's
+# WindProfileManager.cs(13): `_windForce * -direction` — `_windForce` is the
+# script's own `[SerializeField] private Vector3 _windForce`, `direction` a
+# local `var direction = Vector3.up;`.
+#
+# A mechanical, meaning-preserving rewrite exists here — `Vector3.Scale(a, b)`
+# IS what `a * b` would mean if C# allowed it, componentwise — unlike
+# `CharacterController.velocity`'s read-only misuse (code_fields.py), which
+# has no safe replacement expression, so that one is neutralized and this one
+# is repaired instead.
+#
+# Scoped to two BARE identifiers either side of `*` (one optionally negated):
+# an arbitrary expression on either side would need a real parser to prove is
+# a Vector3, and guessing wrong there would rewrite something that was never
+# broken. Both operands must be independently provable as Vector3 — the
+# script's own `extra_fields`, or a local `var x = Vector3.Y;`/`Vector3 x =
+# Vector3.Y;` declaration in the SAME fragment — or this leaves the line
+# alone for the syntax gate to report, same as every other case here that
+# cannot ground a repair.
+_VECTOR_MULTIPLY_RE = re.compile(
+    r"(?<![\w.])(?P<lhs>[A-Za-z_]\w*)[ \t]*\*[ \t]*"
+    r"(?P<neg>-?)(?P<rhs>[A-Za-z_]\w*)(?![\w.(])")
+_LOCAL_VECTOR3_DECL_RE = re.compile(
+    r"\b(?:var|Vector3)\s+([A-Za-z_]\w*)\s*=\s*Vector3\.")
+
+
+def _sanitize_vector_scale_misuse(script: UnityScript) -> None:
+    """Rewrite `<Vector3> * <Vector3>` to `Vector3.Scale(...)` — see the
+    module comment above."""
+    field_types = {f.name: (f.type or "").strip().lower()
+                   for f in (script.extra_fields or [])}
+
+    def _fix(body: str) -> str:
+        if not body or "*" not in body:
+            return body
+        local_vec3 = {m.group(1) for m in _LOCAL_VECTOR3_DECL_RE.finditer(body)}
+        mask = _code_mask(body)
+
+        def is_vec3(name: str) -> bool:
+            return field_types.get(name) == "vector3" or name in local_vec3
+
+        def repl(m: "re.Match[str]") -> str:
+            if not mask[m.start()]:
+                return m.group(0)
+            lhs, neg, rhs = m.group("lhs"), m.group("neg"), m.group("rhs")
+            if not (is_vec3(lhs) and is_vec3(rhs)):
+                return m.group(0)
+            return f"Vector3.Scale({lhs}, {neg}{rhs})"
+
+        return _VECTOR_MULTIPLY_RE.sub(repl, body)
+
+    script.awake_extra        = _fix(script.awake_extra)
+    script.update_extra       = _fix(script.update_extra)
+    script.fixed_update_extra = _fix(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _fix(m.body)
+
+
 def _reject_unbalanced_custom_bodies(script: UnityScript) -> None:
     """Final safety net for custom (schema.scripts, type="custom") bodies —
     the equivalent of code_fields.py's lint_extensible reject-on-surplus-
@@ -2929,6 +2989,7 @@ class UnityProjectGenerator:
                 _sanitize_field_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_param_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
+                _sanitize_vector_scale_misuse(s)          # Vector3 * Vector3 -> CS0019
                 _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)
                 _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver

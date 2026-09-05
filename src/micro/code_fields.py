@@ -230,6 +230,13 @@ def _looks_like_prose(text: str) -> bool:
     return not any(c in text for c in (";", "{", "}"))
 
 
+# Subset of `_ESCAPED_WS_RE` (defined below, alongside `_decode_escaped_
+# whitespace`) — `\r\n`/`\n` only, deliberately NOT `\t`: a `\t` mid-comment
+# doesn't end the comment in real C# either, so an undecoded one shouldn't
+# end it here. See `_code_mask`'s docstring for why this exists.
+_ESCAPED_NEWLINE_RE = re.compile(r"\\r\\n|\\n")
+
+
 def _code_mask(text: str) -> bytearray:
     """Per-character mask: 1 where the character is real CODE, 0 inside a
     comment or a char/string literal.
@@ -251,6 +258,25 @@ def _code_mask(text: str) -> bytearray:
     strings are masked WHOLE: an interpolation hole's braces balance within
     the literal, so ignoring them keeps the brace count right without having
     to parse the hole.
+
+    A `//` comment also ends at an UNDECODED `\\n`/`\\r\\n` escape, not just
+    a real newline. `_decode_escaped_whitespace` runs a normal masked scan to
+    turn those back into real newlines — but it hasn't run yet the first time
+    THIS function sees the fragment, and a bare `text.find("\\n", i)` cannot
+    find a literal backslash-n. Hit live, DropZone's AudioManager.cs(47): a
+    method body that mixed one real newline with five undecoded `\\n`
+    escapes. The line-comment scan found no real `\\n` anywhere after the
+    first `//`, ran to the end of the fragment, and masked the ENTIRE REST of
+    the body — including its remaining braces and every escape after the
+    first — as "inside a comment". That hid them from
+    `_decode_escaped_whitespace` (mask says non-code, so it never decoded
+    them) and from the brace counter (which then "balanced" a depth it could
+    no longer see by appending a spurious `}`), corrupting a fragment that
+    would otherwise have decoded and parsed cleanly. Chicken-and-egg by
+    nature — an accurate mask needs the escapes decoded, decoding needs an
+    accurate mask — so this function has to treat an undecoded escape as the
+    same kind of line-ending a real newline is, rather than wait for a
+    prior pass that has not run yet.
     """
     n = len(text)
     mask = bytearray(b"\x01" * n)
@@ -262,6 +288,9 @@ def _code_mask(text: str) -> bytearray:
             if text[i + 1] == "/":                    # line comment
                 j = text.find("\n", i)
                 j = n if j == -1 else j
+                esc = _ESCAPED_NEWLINE_RE.search(text, i)
+                if esc and esc.start() < j:
+                    j = esc.start()
                 mask[i:j] = b"\x00" * (j - i)
                 i = j
                 continue
@@ -425,6 +454,42 @@ def _decode_escaped_whitespace(text: str) -> str:
     console.print("  [magenta]FIX[/]  decoded literal \\n escapes in a "
                   "fragment (CS1056)")
     return "".join(out)
+
+
+# CS1002 ("; expected") / CS1010 ("Newline in constant") — one or two stray
+# `"` characters glued directly onto the fragment with no separating token,
+# at the very start and/or end. `""_airplaneAudioSource = ...;` parses as a
+# complete, valid empty-string-literal EXPRESSION STATEMENT (`"";`)
+# immediately followed by another token with no `;` between them — CS1002 at
+# the exact column the identifier starts. A trailing `...;"` is the mirror
+# shape: an unterminated string literal opening at that lone quote, which —
+# because a string literal cannot itself contain a real newline — reports as
+# CS1010 the moment the file's next line begins.
+#
+# No legitimate C# statement ever starts or ends with an isolated `"` glued
+# straight onto an identifier with zero separation (a real string literal
+# used as an expression is always followed by an operator, `.`, or `;`,
+# never directly by another identifier character), so stripping it can only
+# repair, never misfire on genuine code. Hit live, DropZone's
+# AudioManager.cs — all three extra_methods on one custom script, each body
+# glued with a leading `""`.
+_LEADING_QUOTE_GLUE_RE  = re.compile(r'^"{1,2}(?=[A-Za-z_])')
+_TRAILING_QUOTE_GLUE_RE = re.compile(r'(?<=[;}])"$')
+
+
+def _repair_stray_quote_glue(text: str) -> str:
+    """Strip a leading/trailing `"` (or `""`) with nothing legitimate for it
+    to delimit — see the comment above."""
+    out = text
+    if _LEADING_QUOTE_GLUE_RE.search(out):
+        out = _LEADING_QUOTE_GLUE_RE.sub("", out, count=1)
+        console.print("  [magenta]FIX[/]  stripped a stray leading quote glued "
+                      "onto a fragment (CS1002)")
+    if _TRAILING_QUOTE_GLUE_RE.search(out):
+        out = _TRAILING_QUOTE_GLUE_RE.sub("", out, count=1)
+        console.print("  [magenta]FIX[/]  stripped a stray trailing quote glued "
+                      "onto a fragment (CS1010)")
+    return out
 
 
 # CS1002/CS1519: C# accepts a fixed set of numeric-literal suffixes — u/U, l/L
@@ -1148,6 +1213,57 @@ def _repair_bang_count_comparison(text: str) -> str:
     return new
 
 
+# CS0023 — a second, unrelated way `!` lands on a non-bool expression: negating
+# a call to a template-declared method whose return type is `void`. The model
+# treats a state-setting helper as if it answered a yes/no question. Confirmed
+# live, DropZone's PauseMenu.cs(151):
+#
+#     private void OnPauseStateChanged()
+#     {
+#         _isPaused = !SetPaused(true);
+#     }
+#
+# `SetPaused(bool)` (PauseMenu.cs.j2's own helper) just sets `Time.timeScale`
+# and returns nothing. Unlike the numeric-comparison misparse above, there is
+# no De Morgan flip that recovers the intended condition — the model invented
+# a return value that was never there, so this is judged for neutralization,
+# same as every other invented-member case in this module, rather than
+# guessed at.
+_BANG_CALL_RE = re.compile(r"!\s*([A-Za-z_]\w*)\s*\(")
+
+
+def find_void_method_negated(text: str, *, void_methods: "frozenset[str]"
+                             ) -> "dict[int, set[str]]":
+    """`{line_index: {"!MethodName(...)", ...}}` for `!` applied to a call of
+    a template-declared method whose return type is `void` (CS0023).
+    `void_methods` is `template_void_methods()` — the same template scan
+    `template_method_return_types` draws its (non-void) half from."""
+    if not text or "!" not in text or not void_methods:
+        return {}
+    mask = _code_mask(text)
+    bad: "dict[int, set[str]]" = {}
+    for m in _BANG_CALL_RE.finditer(text):
+        if not mask[m.start()]:
+            continue
+        name = m.group(1)
+        if name not in void_methods:
+            continue
+        line = text.count("\n", 0, m.start())
+        bad.setdefault(line, set()).add(f"!{name}(...)")
+    return bad
+
+
+def lint_void_method_negated(text: str, *, void_methods: "frozenset[str]"
+                             ) -> "tuple[str, set[str]]":
+    """Neutralize `!` applied to a known-void method call. Same three-way
+    repair as every other `lint_*` pass here."""
+    bad = find_void_method_negated(text, void_methods=void_methods)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(
+        text, bad, reason="'!' applied to a void method's result")
+
+
 # CS0103: LLMs write the pre-C#7 raycast idiom `Physics.Raycast(ray, out hit, …)`
 # without ever declaring `hit`. Modern C# allows an inline `out var hit`, so
 # declare the out parameter in place. Only lowercase, non-field (`_`-prefixed)
@@ -1247,6 +1363,7 @@ def lint_code_fragment(text: str, *, what: str,
     # Before anything line-oriented: an undecoded `\n` makes the whole fragment
     # one physical line, which hides its structure from every pass below.
     text = _decode_escaped_whitespace(text)
+    text = _repair_stray_quote_glue(text)
     # Strip `using X;` lines — these belong in `extra_usings`, not the body.
     text = _USING_RE.sub("", text)
     # Before any brace-sensitive pass: a nested member's braces are balanced,
@@ -2975,19 +3092,51 @@ def _has_malformed_char_literal(text: str) -> bool:
     return False
 
 
+# CS1001/CS1002/CS1026/CS8803 — a JSON/JS-style object literal (`{x: 0f, y:
+# 0f, z: 0f}`) spliced in as a value. No C# expression opens a `{` block with
+# a bare `identifier :` inside it — object/collection initializers use `=`,
+# never `:` — so the shape is decisive on its own. Unlike every check in
+# `_initializer_is_structurally_safe` below, this one is NOT about balance:
+# the brace and the paren wrapping it are both perfectly matched, which is
+# exactly why this shape used to sail through that function as "safe". Hit
+# live, DropZone's SaveSystem.cs(18):
+#
+#     [SerializeField] private Vector3 _formationPos
+#         = new Vector3({x: 0f, y: 0f, z: 0f});
+#
+# — the model's own field default was the raw string
+# `"new Vector3({x: 0f, y: 0f, z: 0f})"`, a JSON object where positional
+# constructor args belong. Scanned at CODE positions only (`_code_mask`), so
+# a format-specifier hole in an interpolated string (`$"{value:F2}"`, already
+# masked whole by that pass) can never trip this.
+_OBJECT_LITERAL_RE = re.compile(r"\{\s*[A-Za-z_]\w*\s*:")
+
+
+def _has_object_literal_shape(text: str) -> bool:
+    """True when `text` contains a `{ identifier : ...}` object/dict literal
+    at a CODE position — see `_OBJECT_LITERAL_RE` above."""
+    mask = _code_mask(text)
+    masked = "".join(ch if mask[i] else "#" for i, ch in enumerate(text))
+    return bool(_OBJECT_LITERAL_RE.search(masked))
+
+
 def _initializer_is_structurally_safe(text: str) -> bool:
     """True when `text` can stand as `= <text>;` without corrupting the file.
 
     The declaration is emitted on ONE line, so a newline, a stray `;` or an
     unclosed bracket does not merely mistype this field — it swallows or splits
     every member after it. Brackets and semicolons are judged at CODE positions
-    only (`_code_mask`), so a `;` inside `"a;b"` is not held against it.
+    only (`_code_mask`), so a `;` inside `"a;b"` is not held against it. A
+    JSON/JS object literal (`_has_object_literal_shape`) is rejected even
+    though its brackets balance — see that check's own comment.
     """
     if "\n" in text or "\r" in text:
         return False
     if _unescaped_quote_count(text) % 2:
         return False                                   # unterminated literal
     if _has_malformed_char_literal(text):
+        return False
+    if _has_object_literal_shape(text):
         return False
     mask = _code_mask(text)
     depth = {"(": 0, "[": 0, "{": 0}
@@ -3189,7 +3338,8 @@ def _vector_initializer(base: str, text: str) -> Optional[str]:
     m = _TUPLE_LITERAL_RE.match(text)
     if m:
         items = [p.strip() for p in _split_top_level_args(m.group("items"))]
-        if len(items) == _VECTOR_ARITY[base] and all(items):
+        if (len(items) == _VECTOR_ARITY[base] and all(items)
+                and all(map(_initializer_is_structurally_safe, items))):
             return f"new {_VECTOR_CTOR[base]}({', '.join(items)})"
         return None
     # Bare comma-separated numbers with NO wrapping parens at all — a second
@@ -3205,10 +3355,18 @@ def _vector_initializer(base: str, text: str) -> Optional[str]:
     # call, so finding one here is decisive: matching arity rewrites to the
     # real constructor exactly like the tuple case, any other arity is
     # dropped rather than falling through to a check that cannot see this.
+    # `_split_top_level_args` tracks `(`/`[` depth only, not `{` — so a JSON
+    # object literal with no wrapping parens at all (`{x: 0f, y: 0f, z: 0f}`)
+    # also lands here, splitting on its commas into arity-matching pieces
+    # that are each individually unbalanced (`{x: 0f`, ` z: 0f}`). Requiring
+    # every piece to pass the SAME structural-safety check applied below
+    # catches that: an unmatched brace fails it, so this can't misfire as a
+    # confident "repair" that is still the original defect wearing new commas.
     items = _split_top_level_args(text)
     if len(items) > 1:
         items = [p.strip() for p in items]
-        if len(items) == _VECTOR_ARITY[base] and all(items):
+        if (len(items) == _VECTOR_ARITY[base] and all(items)
+                and all(map(_initializer_is_structurally_safe, items))):
             return f"new {_VECTOR_CTOR[base]}({', '.join(items)})"
         return None
     return text if _initializer_is_structurally_safe(text) else None
@@ -3763,17 +3921,34 @@ def apply_extensions_safe_block(schema: _ExtensionsLike, *,
     field, and the whole point of that sandbox is that it is NOT run through
     the same defensive machinery as extra_*:
       - no pruning of malformed content
-      - no clamping/repair of default values or bodies
+      - no clamping/repair of default values or bodies — a default that
+        parses is never rewritten, no matter how odd (see
+        test_no_clamping_unlike_lint_fields)
       - no silent auto-rename to dodge a name collision
 
-    The one thing this function DOES do is collision detection, because an
-    unexcluded collision would silently corrupt the build (CS0102 duplicate
-    member) rather than just fail to compile the author's own intent. A name
-    colliding with `reserved`, another schema field, a sibling extra_field/
-    extra_method, or another entry in extensions_fields/extensions_methods
-    itself is a LOUD abstain: the colliding entry is excluded from what
-    renders, and the exclusion is recorded by name in
-    `schema.meta["extensions_conflicts"]` — never just dropped quietly.
+    Two things this function DOES do, both loud abstains rather than a silent
+    drop or a guessed rewrite:
+
+    1. Collision detection — an unexcluded collision would silently corrupt
+       the build (CS0102 duplicate member) rather than just fail to compile
+       the author's own intent. A name colliding with `reserved`, another
+       schema field, a sibling extra_field/extra_method, or another entry in
+       extensions_fields/extensions_methods itself excludes the WHOLE entry.
+    2. Default-syntax rejection — a default that cannot possibly be valid C#
+       (`_initializer_is_structurally_safe`, the same check `sanitize_default`
+       uses for extra_fields) has no "intent" left to preserve by shipping it
+       verbatim: it would only take the entire compose down at the final
+       syntax gate (CSharpSyntaxError aborts the WHOLE project, not just this
+       field — see CLAUDE.md "never raise in a way that discards an otherwise
+       valid schema"). Only the default is cleared; the field itself (name,
+       type, header, tooltip) survives un-renamed and un-rewritten, same as
+       collision handling keeps everything BUT the colliding entry. This is
+       narrower than `sanitize_default`: it only ever REJECTS, never rewrites
+       a parseable-but-questionable value (`"2i"` on an int field still ships
+       untouched — that is a lint_fields job, not this one's).
+
+    Both cases are recorded by name in `schema.meta["extensions_conflicts"]`
+    — never just dropped quietly.
     """
     known: set[str] = {n.lower() for n in reserved}
     # `model_fields` is pydantic's, not part of `_ExtensionsLike` — every
@@ -3791,6 +3966,13 @@ def apply_extensions_safe_block(schema: _ExtensionsLike, *,
         schema.meta.setdefault("extensions_conflicts", []).append(
             f"{what} {name!r} collides with an existing name")
 
+    def _abstain_default(name: str, default: str) -> None:
+        console.print(f"  [red]ABSTAIN[/]  extensions_fields {name!r} default "
+                      f"{default!r} is not valid C# — default dropped, field "
+                      f"kept un-initialized (see extensions_conflicts)")
+        schema.meta.setdefault("extensions_conflicts", []).append(
+            f"extensions_fields {name!r} default {default!r} is not valid C#")
+
     kept_fields: list[CodeField] = []
     seen: set[str] = set()
     for f in schema.extensions_fields:
@@ -3798,6 +3980,9 @@ def apply_extensions_safe_block(schema: _ExtensionsLike, *,
         if key in known or key in seen:
             _abstain("extensions_fields", f.name)
             continue
+        if f.default and not _initializer_is_structurally_safe(f.default):
+            _abstain_default(f.name, f.default)
+            f.default = None
         seen.add(key)
         kept_fields.append(f)
     schema.extensions_fields = kept_fields
@@ -4434,6 +4619,24 @@ def template_method_return_types(template_dir: str, variant: str = "",
         if m and m.group("ret").lower() != "void":
             out.setdefault(m.group("name"), m.group("ret"))
     return out
+
+
+def template_void_methods(template_dir: str, variant: str = "",
+                          facts: "tuple[tuple[str, str], ...]" = ()
+                          ) -> frozenset[str]:
+    """Names of methods the template declares with a void return type.
+
+    Sibling to template_method_return_types just above, which deliberately
+    EXCLUDES these -- ground truth for the opposite question:
+    find_void_method_negated needs to know which calls return nothing, not
+    what non-void type the others return.
+    """
+    out: set[str] = set()
+    for line in _template_text(template_dir, variant, facts).splitlines():
+        m = _TEMPLATE_METHOD_RETURN_RE.match(line)
+        if m and m.group("ret").lower() == "void":
+            out.add(m.group("name"))
+    return frozenset(out)
 
 
 @lru_cache(maxsize=64)
@@ -5711,6 +5914,83 @@ def lint_field_type_misuse(text: str, *, field_types: "dict[str, str]",
     return _neutralize_flagged_lines(text, bad, reason="type-incompatible use(s)")
 
 
+# CS0200/CS1612 — assignment (direct, compound, or through a value-type
+# sub-member like `.y`) into a Unity component property that is get-only.
+# Confirmed live, DropZone's PlayerController.cs(238,281,283):
+#
+#     _cc.velocity = vel;
+#     _cc.velocity.y -= _gravityScale * Time.fixedDeltaTime;
+#     _cc.velocity += drag * Time.fixedDeltaTime;
+#
+# — three shapes of the same API confusion in one file (two in `update_extra`,
+# one in an `extra_methods` body). `CharacterController.velocity` is
+# `{ get; }` only — the controller computes it internally from its own
+# collision-aware `.Move()` calls — unlike `Rigidbody.velocity`, which
+# genuinely is settable and which the model reliably conflates it with
+# whenever it wants to cap speed or apply drag.
+#
+# `unity_api_surface.py` (extracted from the installed Editor's XML docs)
+# proves a member EXISTS on a type, not whether it has a setter, so it cannot
+# tell these apart from `lint_invalid_member_uses` above — this is a second,
+# narrower question with no data source but a human reading the real API, the
+# same discipline `_UNITY_FIELD_TYPE_SURFACE` already follows: small,
+# hand-verified, grown only as a new type is actually confirmed live rather
+# than guessed at. No safe rewrite exists either way: the model's real intent
+# (a speed cap, a drag force) has no ground-truth replacement expression here
+# — the correct fix is `_cc.Move(...)` with a DISPLACEMENT the model never
+# computed, not a velocity write — so, like every other invented-member case
+# in this module, this is judged for neutralization rather than guessed at.
+_UNITY_READONLY_PROPERTIES: "dict[str, frozenset[str]]" = {
+    "charactercontroller": frozenset({"velocity", "isGrounded", "collisionFlags"}),
+}
+_READONLY_PROPERTY_ASSIGN_RE = re.compile(
+    r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)\.(?P<member>[A-Za-z_]\w*)"
+    r"(?:\.[A-Za-z_]\w*)?"
+    r"[ \t]*(?:\+=|-=|\*=|/=|(?<![=!<>])=(?!=))")
+
+
+def find_readonly_property_assign_misuse(text: str, *, field_types: "dict[str, str]"
+                                         ) -> "dict[int, set[str]]":
+    """`{line_index: {"recv.member", ...}}` for an assignment into a Unity
+    component property known to be get-only, reached directly, compounded, or
+    through a value-type sub-member (`.velocity.y -= ...`). `field_types` is
+    the same `template_field_types()` ground truth `find_field_type_misuse`
+    uses — a name the fragment declares itself is never the template's field
+    at all, but shadowing does not apply here the way it does there: this
+    checks a FIXED external API surface (`_UNITY_READONLY_PROPERTIES`), not
+    the template's own members, so there is nothing for a local re-declare of
+    `recv` to legitimately shadow.
+    """
+    if not text or not field_types:
+        return {}
+    mask = _code_mask(text)
+    bad: "dict[int, set[str]]" = {}
+    for m in _READONLY_PROPERTY_ASSIGN_RE.finditer(text):
+        if not mask[m.start("recv")]:
+            continue
+        recv, member = m.group("recv"), m.group("member")
+        ftype = field_types.get(recv)
+        if ftype is None:
+            continue
+        readonly = _UNITY_READONLY_PROPERTIES.get(ftype.lower())
+        if readonly is None or member not in readonly:
+            continue
+        line = text.count("\n", 0, m.start("recv"))
+        bad.setdefault(line, set()).add(f"{recv}.{member}")
+    return bad
+
+
+def lint_readonly_property_assign_misuse(text: str, *, field_types: "dict[str, str]"
+                                         ) -> "tuple[str, set[str]]":
+    """Neutralize an assignment into a known get-only Unity component
+    property. Same three-way repair as every other `lint_*` pass here."""
+    bad = find_readonly_property_assign_misuse(text, field_types=field_types)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(
+        text, bad, reason="assignment(s) to a get-only Unity property")
+
+
 # ── Invented members on real Unity types (CS0117 / CS1061) ───────────────────
 #
 # The pass above proves a field is not used as the wrong KIND of thing; this
@@ -5776,6 +6056,89 @@ def lint_invalid_member_uses(text: str, *, field_types: "dict[str, str]",
         return text, set()
     return _neutralize_flagged_lines(
         text, bad, reason="member(s) that do not exist on the declared type")
+
+
+# CS1503/CS0019 — a field the template declares NON-vector (a `string` in the
+# confirmed case) used where a Vector3 belongs: an argument to one of
+# Vector3's static methods, or an operand of `+`/`-` with another Vector3.
+# Confirmed live, DropZone's WorldInteractable.cs(65):
+#
+#     float dist = Vector3.Distance(transform.position, playerTag);
+#     transform.position += (playerTag - transform.position).normalized * ...;
+#
+# `playerTag` is `Interactable.cs.j2`'s own `[SerializeField] private string
+# playerTag` (used correctly elsewhere with `CompareTag`) — the model needed
+# a reference to the player's TRANSFORM to pull the pickup toward it and
+# reused the wrong existing field instead of declaring a new one. There is no
+# safe rewrite: no field holding a player Transform exists anywhere in this
+# fragment or the template, so — like `CharacterController.velocity` above —
+# this is judged for neutralization rather than guessed at.
+_VECTOR3_STATIC_METHODS = frozenset({
+    "Distance", "Angle", "SignedAngle", "Dot", "Cross", "Project",
+    "ProjectOnPlane", "Reflect", "Lerp", "LerpUnclamped", "Slerp",
+    "SlerpUnclamped", "MoveTowards", "RotateTowards", "Min", "Max",
+    "ClampMagnitude", "Scale",
+})
+_VECTOR3_STATIC_CALL_RE = re.compile(
+    r"\bVector3\.(?P<method>[A-Za-z_]\w*)\s*\(")
+_BARE_PLUSMINUS_RE = re.compile(
+    r"(?<![\w.])(?P<lhs>[A-Za-z_]\w*)[ \t]*(?P<op>[+-])[ \t]*"
+    r"(?P<rhs>[A-Za-z_]\w*)(?![\w.(])")
+# A field is not "Vector3" itself here (only NON-vector types are judged
+# against a Vector3-arithmetic context) — anything the struct-numeric-
+# conversion check above already owns is excluded so the two never overlap.
+_NON_VECTOR3_JUDGED_TYPES = _NUMERIC_BOOL_TYPES | {"string"}
+
+
+def find_field_vector3_context_misuse(text: str, *, field_types: "dict[str, str]"
+                                      ) -> "dict[int, set[str]]":
+    """`{line_index: {"fieldName", ...}}` for a field known NOT to be a
+    Vector3 used where the surrounding code demands one: a positional
+    argument to a Vector3 static method, or a bare operand of `+`/`-` beside
+    another bare identifier. `field_types` is the same `template_field_types()`
+    ground truth `find_field_type_misuse` uses."""
+    if not text or not field_types:
+        return {}
+    mask = _code_mask(text)
+    bad: "dict[int, set[str]]" = {}
+
+    def flag(pos: int, name: str) -> None:
+        bad.setdefault(text.count("\n", 0, pos), set()).add(name)
+
+    for m in _VECTOR3_STATIC_CALL_RE.finditer(text):
+        if not mask[m.start()] or m.group("method") not in _VECTOR3_STATIC_METHODS:
+            continue
+        close = _find_matching_close_paren(text, m.end())
+        if close is None:
+            continue
+        args_start = m.end()
+        for arg in _split_top_level_args(text[args_start:close]):
+            a = arg.strip()
+            ftype = field_types.get(a)
+            if ftype is not None and ftype.lower() in _NON_VECTOR3_JUDGED_TYPES:
+                flag(args_start, a)
+
+    for m in _BARE_PLUSMINUS_RE.finditer(text):
+        if not mask[m.start("lhs")]:
+            continue
+        lhs, rhs = m.group("lhs"), m.group("rhs")
+        for name in (lhs, rhs):
+            ftype = field_types.get(name)
+            if ftype is not None and ftype.lower() in _NON_VECTOR3_JUDGED_TYPES:
+                flag(m.start("lhs"), name)
+    return bad
+
+
+def lint_field_vector3_context_misuse(text: str, *, field_types: "dict[str, str]"
+                                      ) -> "tuple[str, set[str]]":
+    """Neutralize a non-Vector3 field used in a Vector3-arithmetic context.
+    Same three-way repair as every other `lint_*` pass here."""
+    bad = find_field_vector3_context_misuse(text, field_types=field_types)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(
+        text, bad, reason="non-Vector3 field used in Vector3 arithmetic")
+
 
 def _body_is_live(body: str) -> bool:
     """True if a method body still has a statement (not only AUDIT comments)."""
@@ -6025,6 +6388,7 @@ def bind_authored_code(schema, template_dir) -> list[str]:
     field_types = template_field_types(tdir, var, facts)
     readonly_backing = template_readonly_property_backing(tdir, var, facts)
     readonly_names = template_readonly_property_names(tdir, var, facts)
+    void_methods = template_void_methods(tdir, var, facts)
     # Invented members on real engine types (CS0117/CS1061) — the one
     # question none of the passes above ask. None when the surface has
     # never been built, which every consumer treats as no opinion.
@@ -6092,7 +6456,12 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             after, names2 = lint_field_type_misuse(after, field_types=field_types)
             after, names4 = lint_invalid_member_uses(
                 after, field_types=field_types, surface=api_surface)
-            names = names | names2 | names3 | names4
+            after, names5 = lint_readonly_property_assign_misuse(
+                after, field_types=field_types)
+            after, names6 = lint_void_method_negated(after, void_methods=void_methods)
+            after, names7 = lint_field_vector3_context_misuse(
+                after, field_types=field_types)
+            names = names | names2 | names3 | names4 | names5 | names6 | names7
             if names or fixed_ro != before:
                 setattr(schema, key, after)
                 flagged |= names
@@ -6113,7 +6482,12 @@ def bind_authored_code(schema, template_dir) -> list[str]:
                                                    signature=sig)
             after, names4 = lint_invalid_member_uses(
                 after, field_types=field_types, surface=api_surface)
-            names = names | names2 | names3 | names4
+            after, names5 = lint_readonly_property_assign_misuse(
+                after, field_types=field_types)
+            after, names6 = lint_void_method_negated(after, void_methods=void_methods)
+            after, names7 = lint_field_vector3_context_misuse(
+                after, field_types=field_types)
+            names = names | names2 | names3 | names4 | names5 | names6 | names7
             if names or fixed_ro != body:
                 flagged |= names
                 changed = True
@@ -6274,6 +6648,12 @@ C# RULES:
     double -> "0", "1.5"    bool -> "true"/"false"  (NEVER "True")
   A string default must be a QUOTED C# literal (the JSON value therefore
   contains the quote characters), or "null" — a bare word is not a literal.
+  A Vector2/Vector3/Vector4/Color/Quaternion default is a constructor call
+  with POSITIONAL float args, or the static shorthand — NEVER a {{"key":
+  value}} object:
+    "new Vector3(0f, 0f, 0f)"   or   "Vector3.zero"        (NOT "{{x: 0f, y: 0f, z: 0f}}")
+    "new Color(1f, 1f, 1f, 1f)"  or  "#FFD700"              (Color also takes a hex string)
+    "Quaternion.identity"
 - An extra_field "default" must be a CONSTANT expression. It is evaluated
   before the object exists, so it can never call GetComponent/
   GetComponentInChildren, read transform or gameObject, or reference another
@@ -6424,6 +6804,9 @@ SHVDN RULES:
     double -> "0", "1.5"    bool -> "true"/"false"  (NEVER "True")
   A string default must be a QUOTED C# literal (the JSON value therefore
   contains the quote characters), or "null" — a bare word is not a literal.
+  A GTA.Math.Vector3 default is a constructor call with POSITIONAL float
+  args, never a {{"key": value}} object:
+    "new Vector3(0f, 0f, 0f)"   (NOT "{{x: 0f, y: 0f, z: 0f}}")
 - OnTick fires many times per SECOND — accumulate Game.LastFrameTime for any
   per-second meter/countdown instead of decrementing every tick.
 - Every prompt has SOME prompt-specific behavior — the brief you were given
