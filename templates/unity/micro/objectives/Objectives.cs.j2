@@ -54,7 +54,7 @@ public class {{ s.name }} : MonoBehaviour
 
     private Dictionary<string, Objective> _byId;
     private bool _missionComplete;
-{% if survive_objs %}
+{% if "survive" in s.objective_types %}
     private float _surviveTimer;
 {% endif %}
 
@@ -107,7 +107,7 @@ public class {{ s.name }} : MonoBehaviour
 
     private void Update()
     {
-{% if survive_objs %}
+{% if "survive" in s.objective_types %}
         // survive objectives advance one count per second of elapsed play, so a
         // `count` of 90 means "stay alive 90 seconds". Drained in a loop rather
         // than reset, so a long frame cannot swallow a whole second.

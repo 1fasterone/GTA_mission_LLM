@@ -28,17 +28,40 @@ repair-hardened — see the safe-block contract below.
 
 Unlike `lint_extensible`:
 - **no pruning** of malformed content
-- **no clamping/repair** of default values or method bodies
+- **no clamping/repair** of default values or method bodies — a default
+  that PARSES ships exactly as authored, no matter how questionable
+  (`sanitize_default` is never called here; see
+  `test_no_clamping_unlike_lint_fields`)
 - **no silent auto-rename** to dodge a name collision
 
-The one thing it DOES do is collision detection, because an unexcluded
-collision would silently corrupt the build (CS0102 duplicate member) rather
-than just fail to compile the author's own intent. A name colliding with the
-generator's reserved-field set, another schema field, a sibling
-`extra_field`/`extra_method`, or another entry in `extensions_fields`/
-`extensions_methods` itself is a **loud abstain**: the colliding entry is
-excluded from what renders, and the exclusion is recorded by name in
-`schema.meta["extensions_conflicts"]` — never just dropped quietly.
+Two things it DOES do, both a **loud abstain** — flagged, recorded, never a
+silent drop or a guessed rewrite:
+
+1. **Collision detection.** An unexcluded collision would silently corrupt
+   the build (CS0102 duplicate member) rather than just fail to compile the
+   author's own intent. A name colliding with the generator's reserved-field
+   set, another schema field, a sibling `extra_field`/`extra_method`, or
+   another entry in `extensions_fields`/`extensions_methods` itself excludes
+   the **whole entry** from what renders.
+2. **Default-syntax rejection.** A default that cannot possibly be valid C#
+   — proven structurally via the same `_initializer_is_structurally_safe`
+   check `sanitize_default` itself falls back on for `extra_fields`, not
+   guessed — has no compilable intent left to preserve by shipping it
+   verbatim: doing so would take the ENTIRE compose down at the final
+   Roslyn syntax gate over one sandboxed field (`CSharpSyntaxError` aborts
+   the whole project, not just this micro). Only the **default** is cleared;
+   the field's name/type/header/tooltip survive untouched, exactly the way
+   collision handling leaves everything but the colliding entry alone. This
+   is strictly narrower than `sanitize_default`: it only ever REJECTS a
+   default that cannot parse, and never rewrites one that can (`"2i"` on an
+   `int` field still ships verbatim — repairing a parseable-but-wrong
+   literal is `lint_fields`' job, not this one's). Live incident that
+   motivated this: DropZone's `SaveSystem.cs`, an `extensions_fields` entry
+   whose default was the raw string `"new Vector3({x: 0f, y: 0f, z: 0f})"`
+   — a JSON object literal where positional constructor args belonged.
+
+Both cases are recorded by name in `schema.meta["extensions_conflicts"]` —
+never just dropped quietly.
 
 `extensions_metadata` gets no processing at all — it's non-code, so there's
 nothing to sandbox against.
@@ -99,7 +122,9 @@ understood, then the template include.
 ## Testing
 
 `tests/test_schema_extensions.py` covers `apply_extensions_safe_block` in
-isolation (no pruning, no clamping, no renaming, collision → loud abstain in
-`schema.meta`) plus end-to-end runs through `controller` (hand-rolled) and
-`health` (`CodeExtensibleSchema`-based) proving the fixer wiring and Jinja
-rendering both fire, including a real C# syntax-gate pass.
+isolation (no pruning, no clamping/rewriting of a PARSEABLE default, no
+renaming, collision → loud abstain in `schema.meta`, an unparseable default →
+loud abstain that clears only the default and keeps the field) plus
+end-to-end runs through `controller` (hand-rolled) and `health`
+(`CodeExtensibleSchema`-based) proving the fixer wiring and Jinja rendering
+both fire, including a real C# syntax-gate pass.

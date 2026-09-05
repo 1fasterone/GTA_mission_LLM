@@ -1955,7 +1955,7 @@ class UnityPipeline:
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                project_config=self.config)
+                project_config=self.config, llm=self.llm)
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library

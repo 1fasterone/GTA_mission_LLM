@@ -82,6 +82,22 @@ class ObjectivesSchema(CodeExtensibleSchema):
     rewards:     dict                   = Field(default_factory=dict)
     description: str                    = "Mission objective tracker"
     meta:        dict                   = Field(default_factory=dict)
+    # Derived (default_fix), never authored: the distinct `objectives[].type`
+    # values present, as a plain list[str] — the one shape render_facts()
+    # actually turns into a fact `bind_authored_code` can evaluate.
+    # Objectives.cs.j2 gates `_surviveTimer` and its Update() body on whether
+    # a `survive` objective exists, but `objectives` itself is a list of
+    # OBJECTS (not list[str]), so render_facts() cannot see it and the
+    # `{% if survive_objs %}` guard was permanently "undecidable" — which
+    # `_drop_dead_variant_branches` conservatively resolves to "keep it",
+    # reserving `_surviveTimer` in scope for EVERY objectives tracker, survive
+    # objective or not. Live regression: ChampionshipLandingObjectives (reach
+    # only) authored `_surviveTimer -= Time.deltaTime` in update_extra —
+    # `bind_authored_code` judged it against a scope that falsely included
+    # `_surviveTimer`, so the reference sailed through as CS0103. Rewriting
+    # the guard to `"survive" in s.objective_types` (a real list[str] field)
+    # closes it without teaching the fact-evaluator a new condition shape.
+    objective_types: list[str]          = Field(default_factory=list)
 
     @field_validator("variant", mode="before")
     @classmethod
@@ -190,6 +206,9 @@ class ObjectivesPipeline(UnityMicroPipeline):
             if not obj.after:
                 obj.after = prev_required_id
             prev_required_id = obj.id
+        # Derived fact for Objectives.cs.j2's `{% if "survive" in
+        # s.objective_types %}` gate — see the field's own docstring.
+        schema.objective_types = sorted({o.type for o in schema.objectives if o.type})
         # hoist_field_inits: this generator's template renders awake_extra,
         # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,

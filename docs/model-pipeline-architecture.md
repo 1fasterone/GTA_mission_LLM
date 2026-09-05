@@ -166,3 +166,45 @@ mitigations, both empirically tuned against the live API (2026-07):
    characters) overlap far more often than unrelated ones (character vs.
    environment vs. prop). The mechanism costs nothing when it misses (clean
    fallthrough to the global search, same as any other Tier S miss).
+
+### Visual QC — a same-word coincidence isn't a semantic match
+
+Keyword-overlap scoring (`min_match_score`, both mitigations above) has one
+structural blind spot neither closes: it cannot tell a CORRECT object from
+one that merely shares a tag. Live regression — `LeadSkydiverJumpsuit`
+(`model_hint: "lead skydiver jumpsuit helmet"`) resolved to a baseball
+sports-asset, because the query search's own marketplace ranking for the
+surviving bare word "helmet" is dominated by far more common upload
+categories, and every candidate scored identically on that one shared token.
+Text scoring can only ever pick the best of the pool Sketchfab hands back; it
+has no way to notice the pool itself is off-target.
+
+`src/unity_sketchfab_vision.py` closes this the only way text can't: it
+shows the top keyword-ranked candidates' own thumbnails to the Pipeline LLM
+and asks whether the pick actually looks like the entity, before
+`fetch_and_freeze`'s download + Blender-convert loop spends real time on a
+keyword-plausible but visually-wrong one. Wired as an optional
+`vision_select_fn` hook on `fetch_and_freeze` (same shape as `score_fn`) that
+only ever REORDERS candidates `min_match_score` already accepted — it can
+promote a lower-ranked keyword match to the front, never admit one the
+keyword pass rejected outright.
+
+Two conditions gate it, both required: `sketchfab.vision_select: true` (off
+by default) AND a live `llm` reaching `resolve_entity_assets` — threaded
+from `UnityPipeline.run()`'s `self.llm` through
+`UnityProjectGenerator.write()`/`generate()`/`_resolve_all_models()`, all
+`None`-defaulted so every caller before this parameter existed is
+unaffected. `unity-validate`'s no-LLM replay never passes one, so a saved
+schema recompiles exactly as it did before this feature existed. The model
+itself must be a VISION-capable load — a base GGUF paired with its own
+`mmproj` file (LM Studio auto-pairs one dropped in the same model folder,
+e.g. `qwen3.5-9b` + a co-located `mmproj-Qwen3.5-9B-*.gguf`); a text-only
+load is simply never asked, since nothing about this feature can detect
+vision capability up front — it degrades to "no opinion" the same way a
+`None` pick, an unreachable thumbnail, or any network/parse failure already
+does (`unity_sketchfab_vision.py`'s own docstring covers every fallback
+path). `LMStudioClient.chat(images=[...])` sends the OpenAI multimodal
+`image_url` content-part shape; thumbnails are fetched through
+`SketchfabClient.fetch_image_bytes` (the same cold-Chromium transport as
+everything else in that client, not a plain HTTP GET — a thumbnail CDN host
+has no proven reason to be less WAF-finicky than the API host is).

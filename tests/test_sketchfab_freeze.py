@@ -273,3 +273,126 @@ def test_no_preferred_author_only_does_global_search(tmp_path, monkeypatch):
         "red high heel shoe", _score_all_equal, client=client,
         cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"))
     assert client.search_calls == [{"query": "red high heel shoe", "user": None}]
+
+
+# ── visual QC: vision_select_fn reorders the keyword-ranked candidates ────────
+# Live regression: a keyword search for "helmet" returns every helmet on the
+# marketplace — sports, motorcycle, medieval, skydiving — all scoring
+# identically on the shared word. vision_select_fn is the honest visual check
+# text scoring cannot do; these pin that it only ever REORDERS what
+# min_match_score already accepted, and degrades to the untouched keyword
+# order on every failure path (no pick, an exception, too few candidates).
+
+_TWO_CANDIDATES = [
+    {"uid": "baseball1", "name": "Baseball Helmet Sports Asset",
+     "viewerUrl": "https://sketchfab.com/3d-models/baseball1",
+     "license": {"slug": "cc0"},
+     "user": {"displayName": "SportsGuy", "username": "sportsguy"},
+     "tags": [{"name": "helmet"}, {"name": "sports"}]},
+    {"uid": "skydive1", "name": "Skydiving Helmet",
+     "viewerUrl": "https://sketchfab.com/3d-models/skydive1",
+     "license": {"slug": "cc0"},
+     "user": {"displayName": "SkyArtist", "username": "skyartist"},
+     "tags": [{"name": "helmet"}, {"name": "skydiving"}]},
+]
+
+
+def test_vision_select_fn_promotes_its_pick_to_the_front(tmp_path, monkeypatch):
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+    seen_pool = []
+
+    def _vision(pool):
+        seen_pool.append(pool)
+        return "skydive1"  # the SECOND-ranked (equal-score) candidate
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        vision_select_fn=_vision)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "skydive1"
+    # Handed the full keyword-ranked pool (raw model dicts), not a subset.
+    assert len(seen_pool) == 1
+    assert {m["uid"] for m in seen_pool[0]} == {"baseball1", "skydive1"}
+
+
+def test_vision_select_fn_none_keeps_keyword_order(tmp_path, monkeypatch):
+    """An explicit 'none of these match' verdict must NOT fall back to
+    picking anything — it leaves the keyword-tied order (uid as the
+    deterministic tiebreak) exactly as fetch_and_freeze always resolved it."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        vision_select_fn=lambda pool: None)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"  # uid-sorted tiebreak, unchanged
+
+
+def test_vision_select_fn_unrecognized_uid_keeps_keyword_order(tmp_path, monkeypatch):
+    """A pick that doesn't match any candidate in the pool (a stale/garbled
+    response) is treated the same as no pick — never an error."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        vision_select_fn=lambda pool: "nonexistent-uid")
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"
+
+
+def test_vision_select_fn_exception_degrades_to_keyword_order(tmp_path, monkeypatch):
+    """Vision is advisory, never fatal — a raising vision_select_fn must not
+    take down the whole fetch, matching every other best-effort path here."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    def _explodes(pool):
+        raise RuntimeError("no vision-capable model loaded")
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        vision_select_fn=_explodes)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"
+
+
+def test_vision_select_fn_not_called_with_a_single_candidate(tmp_path, monkeypatch):
+    """Nothing to compare — calling out to a vision model over one candidate
+    would just spend a round-trip confirming what min_match_score already
+    decided."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient()  # the default single-result fixture
+    calls = []
+
+    entry = fetch_and_freeze(
+        "red high heel shoe", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        vision_select_fn=lambda pool: calls.append(pool) or None)
+
+    assert entry is not None
+    assert calls == []
+
+
+def test_no_vision_select_fn_is_byte_identical_to_before(tmp_path, monkeypatch):
+    """The default (None) must reproduce pre-existing behavior exactly —
+    every caller from before this parameter existed passes nothing for it."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"))
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "baseball1"

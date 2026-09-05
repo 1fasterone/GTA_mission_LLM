@@ -105,9 +105,17 @@ of running it through the normal repair passes:
 - no pruning
 - no clamping
 - no renaming
+- no rewriting a default value that parses — a parseable-but-odd default
+  ships exactly as authored, same as everywhere else in this block
 - a name that collides with a reserved field or another schema field is a
   loud abstain (flag it; never silently rename or drop it, and never let
   it silently overwrite something else)
+- the one exception: a default that cannot possibly be valid C# (proven
+  structurally, not guessed) is a loud abstain too — the default is dropped
+  and the field ships un-initialized rather than the whole compose dying at
+  the final syntax gate over one sandboxed field; the field's name/type are
+  never touched. This is rejection, not repair: nothing is rewritten into
+  what it "should" have been
 
 **Migration path.** When an extension field proves useful, promote it out
 of the sandbox in one pass: move it from `extensions_*` to a real named

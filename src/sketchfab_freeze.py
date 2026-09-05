@@ -135,7 +135,9 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      preferred_author: Optional[str] = None,
                      max_candidates: int = 4,
                      search_params: Optional[dict] = None,
-                     style_meta: Optional[dict] = None) -> Optional[dict]:
+                     style_meta: Optional[dict] = None,
+                     vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None
+                     ) -> Optional[dict]:
     """Search Sketchfab for `query`, rank license-compliant hits with the
     caller-supplied `score_fn`, download + convert the best one, freeze it
     into lookups/unity/sketchfab_catalog.json, and return the new catalog
@@ -164,6 +166,17 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
     replay can reconstruct why this model was chosen without touching the
     network. When the resolver runs with min_score=0.0 and no session, both
     default to no-ops and behavior is byte-identical to before.
+
+    `vision_select_fn` (typically unity_sketchfab_vision.select_best_candidate,
+    bound to one entity) is the visual-quality-control step text scoring
+    cannot do: called ONCE with the keyword-ranked candidate list (best-first,
+    the raw Sketchfab model dicts) after ranking and before download, it may
+    return a candidate `uid` to move to the front — text and vision AGREEING
+    is the common case (this only ever reorders within candidates that
+    already cleared min_score, never adds an off-target one the keyword pass
+    rejected). None (no vision model configured, no reachable thumbnails, an
+    explicit "none match" verdict, any failure) leaves the keyword order
+    exactly as it always was.
     """
     try:
         return _fetch_and_freeze_inner(
@@ -172,7 +185,8 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
             category=category, kind_hints=list(kind_hints), min_score=min_score,
             preferred_author=preferred_author, max_candidates=max_candidates,
             search_params=dict(search_params or {}),
-            style_meta=dict(style_meta or {}))
+            style_meta=dict(style_meta or {}),
+            vision_select_fn=vision_select_fn)
     except Exception as exc:  # noqa: BLE001 — must never propagate to the resolver
         log.debug("sketchfab fetch_and_freeze(%r) failed: %s", query, exc)
         return None
@@ -185,7 +199,9 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                             preferred_author: Optional[str] = None,
                             max_candidates: int = 4,
                             search_params: Optional[dict] = None,
-                            style_meta: Optional[dict] = None) -> Optional[dict]:
+                            style_meta: Optional[dict] = None,
+                            vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None
+                            ) -> Optional[dict]:
     if not client.available():
         return None
     search_params = search_params or {}
@@ -205,6 +221,26 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
             return None
 
     candidates.sort(key=lambda sm: (-sm[0], sm[1].get("uid", "")))
+
+    # Visual quality control on top of the keyword ranking above: a "helmet"
+    # search returns everything tagged "helmet" regardless of what KIND, and
+    # text scoring can only ever pick the best of that pool, never notice the
+    # pool itself is off-target (see unity_sketchfab_vision.py's own
+    # docstring for the live regression this closes). Reorders WITHIN the
+    # already-min_score-cleared candidates only — never adds one the keyword
+    # pass rejected — and any failure (no vision model, no thumbnails, "none
+    # match") leaves this exact keyword order untouched.
+    if vision_select_fn is not None and len(candidates) > 1:
+        try:
+            picked_uid = vision_select_fn([m for _s, m in candidates])
+        except Exception as exc:  # noqa: BLE001 — vision is advisory, never fatal
+            log.debug("sketchfab vision_select_fn(%r) failed: %s", query, exc)
+            picked_uid = None
+        if picked_uid:
+            picked = [sm for sm in candidates if sm[1].get("uid") == picked_uid]
+            rest = [sm for sm in candidates if sm[1].get("uid") != picked_uid]
+            if picked:
+                candidates = picked + rest
 
     # Try the top-ranked candidates in order — the single best-scoring hit
     # sometimes has a broken archive (no gltf inside) or fails Blender convert;

@@ -815,6 +815,60 @@ class TestJsonSchemaMode:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# images — vision input (data: URIs). The user message's `content` becomes
+# the OpenAI list-of-parts shape only when images are given; every existing
+# text-only call site (images=None, the default) is byte-identical to before.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestVisionImages:
+    def test_no_images_content_stays_a_plain_string(self, client):
+        p = client._build_payload("sys", "usr", None, False, None)
+        assert p["messages"][1]["content"] == "/no_think\n\nusr"
+
+    def test_images_wrap_content_in_the_openai_parts_shape(self, client):
+        p = client._build_payload("sys", "usr", None, False, None,
+                                  images=["data:image/jpeg;base64,AAAA"])
+        content = p["messages"][1]["content"]
+        assert isinstance(content, list)
+        assert content[0] == {"type": "text", "text": "/no_think\n\nusr"}
+        assert content[1] == {"type": "image_url",
+                              "image_url": {"url": "data:image/jpeg;base64,AAAA"}}
+
+    def test_multiple_images_each_become_their_own_part(self, client):
+        p = client._build_payload(
+            "sys", "usr", None, False, None,
+            images=["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"])
+        content = p["messages"][1]["content"]
+        assert len(content) == 3  # 1 text part + 2 image parts
+        urls = [part["image_url"]["url"] for part in content[1:]]
+        assert urls == ["data:image/jpeg;base64,AAAA", "data:image/jpeg;base64,BBBB"]
+
+    def test_empty_images_list_behaves_like_none(self, client):
+        p = client._build_payload("sys", "usr", None, False, None, images=[])
+        assert p["messages"][1]["content"] == "/no_think\n\nusr"
+
+    def test_chat_sends_image_parts_through_to_the_request(self, client):
+        from unittest.mock import MagicMock, patch
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"choices": [{"message": {"content": "ok"}}]}
+        captured = {}
+
+        def fake_post(url, json=None, **kwargs):
+            captured["payload"] = json
+            return mock_response
+
+        with patch("httpx.Client") as MockClient:
+            MockClient.return_value.__enter__.return_value.post.side_effect = fake_post
+            client.chat(system="sys", user="pick one",
+                       images=["data:image/jpeg;base64,AAAA"])
+
+        content = captured["payload"]["messages"][1]["content"]
+        assert isinstance(content, list)
+        assert content[1]["type"] == "image_url"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # last_finish_reason — server-confirmed truncation, surfaced from the API
 # response's own finish_reason instead of only inferred from a downstream
 # JSONDecodeError.

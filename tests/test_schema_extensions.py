@@ -4,11 +4,18 @@ See docs/SCHEMA_EXTENSIONS.md and CLAUDE.md "Schema Extensions". Two layers
 covered here:
 
   1. `apply_extensions_safe_block` in isolation — the safe-block contract
-     itself (no pruning, no clamping, no renaming; a collision is a loud
-     abstain recorded in schema.meta, never a silent fix). This is
-     deliberately the OPPOSITE contract from `lint_fields`/`lint_extensible`,
-     so every assertion here has a matching "and lint_fields WOULD have
-     changed this" contrast where it matters.
+     itself (no pruning, no clamping/rewriting of a default that PARSES, no
+     renaming; a collision is a loud abstain recorded in schema.meta, never
+     a silent fix). This is deliberately the OPPOSITE contract from
+     `lint_fields`/`lint_extensible` for everything that DOES parse, so every
+     assertion here has a matching "and lint_fields WOULD have changed this"
+     contrast where it matters. The one narrow exception, alongside collision
+     detection: a default that CANNOT parse as C# at all is also a loud
+     abstain (default cleared, field kept) — see
+     `test_unparseable_default_is_dropped_field_survives` — because shipping
+     it verbatim would only take the whole compose down at the final syntax
+     gate over one sandboxed field. That is rejection of the unparseable, not
+     repair of the parseable; the "2i" test below is what stays untouched.
   2. End-to-end through two real pipelines: `controller` (hand-rolled
      extra_*/extensions_*, not CodeExtensibleSchema) and `health`
      (CodeExtensibleSchema-based, the ~18-generator cohort) — proving the
@@ -106,13 +113,50 @@ def test_method_colliding_with_kept_field_name_is_excluded():
 def test_no_clamping_unlike_lint_fields():
     """A type-mismatched default (float field, int-looking literal that would
     read fine, but see the contrast below) survives untouched — the safe
-    block does not call sanitize_default the way lint_fields does."""
+    block does not call sanitize_default the way lint_fields does.
+
+    "2i" PARSES as an expression (it's just the wrong suffix for `int`), so
+    this is exactly the shape the no-clamping contract protects: not every
+    odd default is unparseable, and this function must not go fixing the
+    ones that merely look wrong. Contrast
+    `test_unparseable_default_is_dropped_field_survives` below, where the
+    default cannot parse as C# AT ALL — that one narrow case IS abstained."""
     s = _Bare()
     # "2i" is not a valid C# suffix (CS1002) — lint_fields' sanitize_default
     # would repair/strip this; apply_extensions_safe_block must not.
     s.extensions_fields = [CodeField(name="odd", type="int", default="2i")]
     apply_extensions_safe_block(s, reserved=set())
     assert s.extensions_fields[0].default == "2i"   # untouched, not repaired
+    assert "extensions_conflicts" not in s.meta
+
+
+def test_unparseable_default_is_dropped_field_survives():
+    """The DropZone SaveSystem.cs live incident: an extensions_fields default
+    that is not merely questionable but cannot possibly parse as C# — a JSON
+    object literal where positional constructor args belonged. Unlike a name
+    collision, the FIELD is not excluded: only the default is cleared, so the
+    field still renders (un-initialized) instead of the whole compose dying
+    at the final syntax gate over one sandboxed default."""
+    s = _Bare()
+    s.extensions_fields = [CodeField(
+        name="formationPos", type="Vector3",
+        default="new Vector3({x: 0f, y: 0f, z: 0f})")]
+    apply_extensions_safe_block(s, reserved=set())
+    assert [f.name for f in s.extensions_fields] == ["formationPos"]
+    assert s.extensions_fields[0].default is None
+    assert any("formationPos" in c for c in s.meta["extensions_conflicts"])
+
+
+def test_parseable_struct_default_is_not_touched_by_the_new_check():
+    """The default-rejection path must not turn into clamping by accident —
+    a Vector3 default that DOES parse (however the author chose to write it)
+    survives exactly like the "2i" case above."""
+    s = _Bare()
+    s.extensions_fields = [CodeField(name="anchor", type="Vector3",
+                                     default="Vector3.zero")]
+    apply_extensions_safe_block(s, reserved=set())
+    assert s.extensions_fields[0].default == "Vector3.zero"
+    assert "extensions_conflicts" not in s.meta
 
 
 # ── End-to-end: controller (hand-rolled extra_*/extensions_*) ──────────────
@@ -166,6 +210,35 @@ def test_controller_with_extensions_passes_the_real_csharp_syntax_gate(tmp_path)
     fixed = pipe.default_fix(schema, "third_person")
     env = pipe.jinja()
     out = env.get_template("Controller.cs.j2").render(s=fixed, variant="third_person")
+    path = tmp_path / "TestCtrl.cs"
+    path.write_text(out, encoding="utf-8")
+    result = check_files([str(path)])
+    if result.skipped_reason:
+        return  # no .NET SDK on this machine
+    assert not result.diagnostics, result.diagnostics
+
+
+def test_controller_with_unparseable_extensions_default_still_passes_the_gate(tmp_path):
+    """Reproduces the DropZone SaveSystem.cs incident through a real pipeline:
+    an extensions_fields default the LLM wrote as a JSON object literal used
+    to reach the template verbatim and fail the final Roslyn gate, aborting
+    the WHOLE compose. It must now render as an un-initialized field and pass."""
+    pipe = ControllerPipeline(_cfg())
+    schema = ControllerSchema(
+        name="TestCtrl", variant="third_person",
+        extensions_fields=[CodeField(
+            name="formationPos", type="Vector3",
+            default="new Vector3({x: 0f, y: 0f, z: 0f})", header="Runtime")],
+    )
+    fixed = pipe.default_fix(schema, "third_person")
+    assert [f.name for f in fixed.extensions_fields] == ["formationPos"]
+    assert fixed.extensions_fields[0].default is None
+    assert "extensions_conflicts" in fixed.meta
+
+    env = pipe.jinja()
+    out = env.get_template("Controller.cs.j2").render(s=fixed, variant="third_person")
+    assert "formationPos" in out
+    assert "{x: 0f" not in out
     path = tmp_path / "TestCtrl.cs"
     path.write_text(out, encoding="utf-8")
     result = check_files([str(path)])

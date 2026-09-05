@@ -1667,6 +1667,66 @@ def _sanitize_nullable_valuetype_access(script: UnityScript) -> None:
         m.body = _fix(m.body)
 
 
+# CS0019 — `Vector3 * Vector3` has no `operator*` in UnityEngine (only
+# `Vector3 * float`/`float * Vector3` scalar scaling exist); component-wise
+# multiplication needs `Vector3.Scale(a, b)`. Confirmed live, DropZone's
+# WindProfileManager.cs(13): `_windForce * -direction` — `_windForce` is the
+# script's own `[SerializeField] private Vector3 _windForce`, `direction` a
+# local `var direction = Vector3.up;`.
+#
+# A mechanical, meaning-preserving rewrite exists here — `Vector3.Scale(a, b)`
+# IS what `a * b` would mean if C# allowed it, componentwise — unlike
+# `CharacterController.velocity`'s read-only misuse (code_fields.py), which
+# has no safe replacement expression, so that one is neutralized and this one
+# is repaired instead.
+#
+# Scoped to two BARE identifiers either side of `*` (one optionally negated):
+# an arbitrary expression on either side would need a real parser to prove is
+# a Vector3, and guessing wrong there would rewrite something that was never
+# broken. Both operands must be independently provable as Vector3 — the
+# script's own `extra_fields`, or a local `var x = Vector3.Y;`/`Vector3 x =
+# Vector3.Y;` declaration in the SAME fragment — or this leaves the line
+# alone for the syntax gate to report, same as every other case here that
+# cannot ground a repair.
+_VECTOR_MULTIPLY_RE = re.compile(
+    r"(?<![\w.])(?P<lhs>[A-Za-z_]\w*)[ \t]*\*[ \t]*"
+    r"(?P<neg>-?)(?P<rhs>[A-Za-z_]\w*)(?![\w.(])")
+_LOCAL_VECTOR3_DECL_RE = re.compile(
+    r"\b(?:var|Vector3)\s+([A-Za-z_]\w*)\s*=\s*Vector3\.")
+
+
+def _sanitize_vector_scale_misuse(script: UnityScript) -> None:
+    """Rewrite `<Vector3> * <Vector3>` to `Vector3.Scale(...)` — see the
+    module comment above."""
+    field_types = {f.name: (f.type or "").strip().lower()
+                   for f in (script.extra_fields or [])}
+
+    def _fix(body: str) -> str:
+        if not body or "*" not in body:
+            return body
+        local_vec3 = {m.group(1) for m in _LOCAL_VECTOR3_DECL_RE.finditer(body)}
+        mask = _code_mask(body)
+
+        def is_vec3(name: str) -> bool:
+            return field_types.get(name) == "vector3" or name in local_vec3
+
+        def repl(m: "re.Match[str]") -> str:
+            if not mask[m.start()]:
+                return m.group(0)
+            lhs, neg, rhs = m.group("lhs"), m.group("neg"), m.group("rhs")
+            if not (is_vec3(lhs) and is_vec3(rhs)):
+                return m.group(0)
+            return f"Vector3.Scale({lhs}, {neg}{rhs})"
+
+        return _VECTOR_MULTIPLY_RE.sub(repl, body)
+
+    script.awake_extra        = _fix(script.awake_extra)
+    script.update_extra       = _fix(script.update_extra)
+    script.fixed_update_extra = _fix(script.fixed_update_extra)
+    for m in script.extra_methods:
+        m.body = _fix(m.body)
+
+
 def _reject_unbalanced_custom_bodies(script: UnityScript) -> None:
     """Final safety net for custom (schema.scripts, type="custom") bodies —
     the equivalent of code_fields.py's lint_extensible reject-on-surplus-
@@ -2753,13 +2813,20 @@ class UnityProjectGenerator:
                             composed_units: list | None,
                             strict_assets: bool,
                             asset_cfg: dict | None,
-                            sketchfab_cfg: dict | None = None) -> tuple[dict, dict[str, str]]:
+                            sketchfab_cfg: dict | None = None,
+                            llm: object | None = None) -> tuple[dict, dict[str, str]]:
         """Resolve every model the project uses: default pack → Blender
         overrides → per-entity catalog picks → rig downgrades.
 
         Both generate() (.meta emission + template paths) and write() (binary
         copies) call this — they MUST see identical results or the copies and
-        .meta files desync. Deterministic: pure lookups, no LLM.
+        .meta files desync. Deterministic: pure lookups, no LLM — with one
+        opt-in exception threaded straight through to resolve_entity_assets:
+        `llm`, when given AND `sketchfab.vision_select` is enabled, lets a
+        Tier S live fetch visually verify its keyword-ranked pick (see that
+        function's own docstring). None (every caller before this parameter
+        existed, and unity-validate's no-LLM replay) is the same pure lookup
+        it always was.
 
         Returns (used_models, entity_model_paths).
         """
@@ -2778,7 +2845,7 @@ class UnityProjectGenerator:
         entity_model_paths = resolve_entity_assets(
             schema, used_models, all_models,
             lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=strict_assets,
-            sketchfab_cfg=sketchfab_cfg)
+            sketchfab_cfg=sketchfab_cfg, llm=llm)
 
         # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
         # two independent cases:
@@ -2836,7 +2903,8 @@ class UnityProjectGenerator:
                  model_overrides: dict[str, str] | None = None,
                  strict_assets: bool = False,
                  asset_cfg: dict | None = None,
-                 sketchfab_cfg: dict | None = None) -> dict[str, str]:
+                 sketchfab_cfg: dict | None = None,
+                 llm: object | None = None) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
         Caller writes the dict to disk.
@@ -2921,6 +2989,7 @@ class UnityProjectGenerator:
                 _sanitize_field_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_param_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
+                _sanitize_vector_scale_misuse(s)          # Vector3 * Vector3 -> CS0019
                 _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
                 _strip_undeclared_foreach(s)
                 _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver
@@ -2976,7 +3045,7 @@ class UnityProjectGenerator:
         # ── Model resolution (default pack + per-entity catalog picks) ────────
         used_models, entity_model_paths = self._resolve_all_models(
             schema, lookups_dir, model_source_dir, model_overrides,
-            composed_units, strict_assets, asset_cfg, sketchfab_cfg)
+            composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
         # Entity name -> bounds-fit target (0.0 = no fit), for BoundsFit at
@@ -3826,7 +3895,8 @@ class UnityProjectGenerator:
               strict_assets: bool = False,
               asset_cfg: dict | None = None,
               sketchfab_cfg: dict | None = None,
-              project_config: dict | None = None) -> tuple[Path, int]:
+              project_config: dict | None = None,
+              llm: object | None = None) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
         files = self.generate(schema, manifest_deps,
                               lookups_dir=lookups_dir,
@@ -3836,7 +3906,8 @@ class UnityProjectGenerator:
                               model_overrides=model_overrides,
                               strict_assets=strict_assets,
                               asset_cfg=asset_cfg,
-                              sketchfab_cfg=sketchfab_cfg)
+                              sketchfab_cfg=sketchfab_cfg,
+                              llm=llm)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.
@@ -3890,10 +3961,17 @@ class UnityProjectGenerator:
 
         # Binary model copies. Same _resolve_all_models call as generate() —
         # deterministic, so the .meta files emitted there and the binaries
-        # copied here always line up (including rig downgrades that drop clips).
+        # copied here always line up (including rig downgrades that drop
+        # clips). Still true with vision_select on: a Tier S auto_fetch only
+        # ever fires on a catalog cache MISS, and generate()'s own call above
+        # already froze this run's picks to lookups/unity/sketchfab_catalog.json
+        # before this second call's fresh load_catalog() read — so this call
+        # finds every entity's pick already cached and never re-triggers
+        # fetch_and_freeze (or a second, potentially different, vision call)
+        # for it at all.
         used_models, _ = self._resolve_all_models(
             schema, lookups_dir, model_source_dir, model_overrides,
-            composed_units, strict_assets, asset_cfg, sketchfab_cfg)
+            composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm)
         n_models = 0
         for m in used_models.values():
             for item in [m] + list(m.clips.values()):

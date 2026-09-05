@@ -672,7 +672,7 @@ def test_sketchfab_auto_fetch_registers_once_and_caches_across_calls(env, tmp_pa
 
     def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
                     lookups_dir, category, kind_hints, min_score,
-                    preferred_author=None):
+                    preferred_author=None, vision_select_fn=None):
         calls["n"] += 1
         entry = _add_sketchfab_entry(Path(lookups_dir), tmp_path, uid="live1",
                                      filename="live-fetched-pine.fbx")
@@ -709,6 +709,75 @@ def test_sketchfab_fetch_failure_falls_through_cleanly(env, tmp_path, monkeypatc
         used, all_models, lookups_dir=str(env),
         sketchfab_cfg={"enabled": True, "auto_fetch": True})
     assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+# ── vision_select_fn gating: llm + sketchfab.vision_select must BOTH be set ──
+
+def test_no_llm_never_builds_a_vision_select_fn(env, tmp_path, monkeypatch):
+    """The common case (unity-validate's no-LLM replay, or any caller that
+    doesn't pass llm at all): vision_select_fn must be None even with
+    vision_select enabled in config — there's no LLM to call."""
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, vision_select_fn=None, **kw: seen.update(fn=vision_select_fn) or None)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True, "vision_select": True},
+        llm=None)
+    assert seen["fn"] is None
+
+
+def test_llm_without_vision_select_config_never_builds_one(env, tmp_path, monkeypatch):
+    """An llm IS available but the feature is off (today's default) — must
+    stay byte-identical to before this parameter existed."""
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, vision_select_fn=None, **kw: seen.update(fn=vision_select_fn) or None)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True},  # vision_select absent
+        llm=object())
+    assert seen["fn"] is None
+
+
+def test_llm_and_vision_select_together_build_an_entity_bound_closure(
+        env, tmp_path, monkeypatch):
+    """Both conditions met: a real callable reaches fetch_and_freeze, and
+    calling it dispatches to select_best_candidate with THIS entity's own
+    name/kind/hint — confirming the closure captured the right entity, not
+    whichever one happened to run last in the loop."""
+    seen_fn = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, vision_select_fn=None, **kw: seen_fn.update(fn=vision_select_fn) or None)
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_sketchfab_vision.select_best_candidate",
+        lambda name, kind, desc, cands, *, client, llm: calls.append(
+            (name, kind, desc)) or "picked-uid")
+
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    fake_llm = object()
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5,
+                            model_hint="tall pine forest tree")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "auto_fetch": True, "vision_select": True},
+        llm=fake_llm)
+
+    assert seen_fn["fn"] is not None
+    result = seen_fn["fn"]([{"uid": "x"}])
+    assert result == "picked-uid"
+    assert calls == [("PineTrees", "prop", "tall pine forest tree")]
 
 
 def test_sketchfab_tier_s_rejects_coincidental_kind_mismatch(env, tmp_path):
@@ -834,7 +903,7 @@ def test_preferred_author_established_from_live_fetch_threads_to_next_entity(
 
     def _fake_fetch(query, score_fn, *, client, blender_cfg, cache_dir,
                     lookups_dir, category, kind_hints, min_score,
-                    preferred_author=None):
+                    preferred_author=None, vision_select_fn=None):
         calls.append(preferred_author)
         if len(calls) == 1:
             return _add_sketchfab_entry(

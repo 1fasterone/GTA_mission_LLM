@@ -781,6 +781,60 @@ class TestCustomScripts:
         assert 'Debug.Log("tick")' in cs
         assert "public void Lap()" in cs
 
+    def test_stray_quote_glued_extra_method_body_still_passes_the_gate(self, gen, tmp_path):
+        """Live regression, DropZone's AudioManager.cs: all three extra_methods
+        on one custom script had a leading `""` glued onto the first statement
+        (CS1002), and the third's body also mixed one real newline with five
+        undecoded `\\n` escapes — which used to make `_code_mask`'s line-
+        comment scan run to the end of the fragment (no REAL newline left to
+        stop at), hiding everything after the first `//` from
+        `_decode_escaped_whitespace` and from the brace counter, which then
+        "balanced" a depth it could no longer see by appending a spurious `}`.
+        Both defects together took the whole custom-script gate down; this
+        reproduces the exact three bodies end to end through the real
+        generator and the real Roslyn syntax gate."""
+        from src.unity_schema import UnitySchema
+
+        schema = UnitySchema(
+            project_name="DZ", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[
+                UnityScript(name="PlayerController", type="player", description="m"),
+                UnityScript(
+                    name="AudioManager", type="custom", attach_to="systems",
+                    description="Spatial audio pool, crossfade between altitude layers.",
+                    extra_fields=[
+                        {"name": "_freefallAudioSource", "type": "AudioSource", "default": "null"},
+                    ],
+                    extra_methods=[
+                        {"signature": "private void InitializeAudioSources()",
+                         "body": ('""_freefallAudioSource = GetComponent<AudioSource>();\n'
+                                  'if (_freefallAudioSource == null) '
+                                  '_freefallAudioSource = gameObject.AddComponent<AudioSource>();\n'
+                                  '_freefallAudioSource.volume = 0.5f;"')},
+                        {"signature": "private void UpdateAltitudeLogic()",
+                         "body": '""if (_freefallAudioSource == null) return;\n'},
+                        {"signature": "private void ApplyDopplerEffect(float airspeedKmh)",
+                         "body": (
+                             '""if (_freefallAudioSource != null && airspeedKmh > 50f) {\n'
+                             '            // Simulate Doppler shift by pitch shifting,'
+                             '\\n    // otherwise rely on spatial audio properties.'
+                             '\\n    _freefallAudioSource.pitch = 1f + (airspeedKmh / 200f);'
+                             '\\n} else {\\n    _freefallAudioSource.pitch = 1f;\\n}"')},
+                    ],
+                ),
+            ],
+        )
+        root, _ = gen.write(schema, {}, output_dir=str(tmp_path))
+        cs = (root / "Assets" / "Scripts" / "AudioManager.cs").read_text(encoding="utf-8")
+        assert '""' not in cs
+        assert '\\n' not in cs
+        assert cs.count("{") == cs.count("}")
+        assert "// Simulate Doppler shift" in cs
+        assert "} else {" in cs
+
     def test_custom_attaches_to_player_in_gameplay_scene(self, files_custom):
         s = scene(files_custom, "CustomT", "Main")
         # DriftAssist (first custom) gets fileID 900003010 hosted on Player GO.
@@ -2409,6 +2463,68 @@ class TestFragmentSanitizers:
         original = s.update_extra
         _sanitize_nullable_valuetype_access(s)
         assert s.update_extra == original
+
+    # ── Vector3 * Vector3 has no operator* (CS0019) ────────────────────────────
+
+    def test_vector_scale_misuse_rewritten_live_bug_string(self):
+        """Live regression, DropZone's WindProfileManager.cs(13):
+        `_windForce * -direction` — `_windForce` is the script's own
+        extra_field (Vector3), `direction` a local `var direction =
+        Vector3.up;`. UnityEngine has no `operator*(Vector3, Vector3)`;
+        `Vector3.Scale` is the componentwise equivalent."""
+        from src.unity_generator import _sanitize_vector_scale_misuse
+        s = UnityScript(
+            name="WindProfileManager", type="custom", description="d",
+            extra_fields=[{"name": "_windForce", "type": "Vector3",
+                          "default": "Vector3.zero"}],
+            update_extra=(
+                "var currentSpeed = GetComponent<Rigidbody>().linearVelocity.magnitude; "
+                "if (currentSpeed > _terminalVelocityCap) { "
+                "var direction = Vector3.up; "
+                "GetComponent<Rigidbody>().AddForce(_windForce * -direction, "
+                "ForceMode.VelocityChange); }"),
+        )
+        _sanitize_vector_scale_misuse(s)
+        assert "Vector3.Scale(_windForce, -direction)" in s.update_extra
+        assert "_windForce * -direction" not in s.update_extra
+
+    def test_vector_scale_misuse_without_negation(self):
+        from src.unity_generator import _sanitize_vector_scale_misuse
+        s = UnityScript(
+            name="Test", type="custom", description="d",
+            extra_fields=[{"name": "_a", "type": "Vector3", "default": "Vector3.zero"},
+                         {"name": "_b", "type": "Vector3", "default": "Vector3.zero"}],
+            update_extra="var c = _a * _b;",
+        )
+        _sanitize_vector_scale_misuse(s)
+        assert s.update_extra == "var c = Vector3.Scale(_a, _b);"
+
+    def test_scalar_multiply_is_left_alone(self):
+        """`Vector3 * float` is real, legal UnityEngine scaling — must not be
+        rewritten just because one operand happens to be a known Vector3."""
+        from src.unity_generator import _sanitize_vector_scale_misuse
+        s = UnityScript(
+            name="Test", type="custom", description="d",
+            extra_fields=[{"name": "_windForce", "type": "Vector3",
+                          "default": "Vector3.zero"}],
+            update_extra="var f = _windForce * speed;",
+        )
+        original = s.update_extra
+        _sanitize_vector_scale_misuse(s)
+        assert s.update_extra == original
+
+    def test_extra_method_body_is_also_fixed(self):
+        from src.unity_generator import _sanitize_vector_scale_misuse
+        s = UnityScript(
+            name="Test", type="custom", description="d",
+            extra_fields=[{"name": "_windForce", "type": "Vector3",
+                          "default": "Vector3.zero"}],
+            extra_methods=[{"signature": "private void ApplyWind()",
+                           "body": "var direction = Vector3.up; "
+                                   "rb.AddForce(_windForce * direction);"}],
+        )
+        _sanitize_vector_scale_misuse(s)
+        assert "Vector3.Scale(_windForce, direction)" in s.extra_methods[0].body
 
     # ── Undeclared persisted scalars (auto-declare, not strip) ─────────────────
 
