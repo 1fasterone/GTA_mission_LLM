@@ -12,21 +12,56 @@ is a fractal value-noise field; the splatmap blends `{{ layers|join("/") }}`
 by elevation band, so texture always agrees with the terrain it's painted on.
 
 ## Install
+{% if in_place %}
+This folder was baked straight into a project's `Assets/` — it's already in
+place. **Do not copy `heightmap.png`, `splatmap.png`, or `{{ class_name }}.cs`
+anywhere else in this project.** A second copy of `{{ class_name }}.cs` (for
+example under `Assets/Scripts/`) is a duplicate MonoBehaviour class in the
+same assembly and **will break the Unity compile** (CS0101 — "already
+contains a definition for '{{ class_name }}'").
 
-1. Copy `heightmap.png` and `splatmap.png` (with their `.meta` files) into
-   `Assets/Resources/Terrain/{{ name }}/`.
-2. Copy `{{ class_name }}.cs` into `Assets/Scripts/` (or wherever your project
-   keeps runtime builders) and attach it to an empty GameObject in the scene.
+1. `{{ class_name }}.cs` is already at
+   `Assets/Terrain/{{ name }}/Scripts/{{ class_name }}.cs`, already compiled.
+   Attach it to an empty GameObject in the scene.
+2. For each layer in `{{ layers|join(", ") }}`, create or assign a
+   `TerrainLayer` asset under any `Resources/` folder in the project at
+   `Terrain/Layers/<layer>.asset` (e.g.
+   `Assets/Resources/Terrain/Layers/<layer>.asset`) — the builder logs a
+   warning (not an error) and leaves that splatmap channel unpainted if one
+   is missing.
+3. Press Play (or build) — `{{ class_name }}.Awake()` assembles the
+   `Terrain` + `TerrainCollider` GameObject from the baked data.
+{% if scatter_snippet %}
+4. On Start, `{{ class_name }}` also scatters detail props across the region
+   (seed {{ seed }} — same layout every run) via the `ScatterTerrainDetails`
+   atom.
+{% endif %}
+{% else %}
+This folder was baked standalone, outside any Unity project.
+
+1. Copy the whole `Terrain/{{ name }}/` folder (`.meta` files included) into
+   your project's `Assets/` — e.g. to `Assets/Terrain/{{ name }}/`. Copy the
+   folder as a unit; don't split its `Resources/` and `Scripts/` subfolders
+   apart into other destinations. If `Assets/Terrain/{{ name }}/` already
+   exists in that project, this IS that folder (already installed) —
+   copying it again duplicates `{{ class_name }}.cs` and **will break the
+   Unity compile** (CS0101).
+2. Attach `{{ class_name }}.cs` (now at
+   `Assets/Terrain/{{ name }}/Scripts/{{ class_name }}.cs`) to an empty
+   GameObject in the scene.
 3. For each layer in `{{ layers|join(", ") }}`, create or assign a
-   `TerrainLayer` asset at `Assets/Resources/Terrain/Layers/<layer>.asset` —
-   the builder logs a warning (not an error) and leaves that splatmap channel
-   unpainted if one is missing.
+   `TerrainLayer` asset under any `Resources/` folder in the project at
+   `Terrain/Layers/<layer>.asset` (e.g.
+   `Assets/Resources/Terrain/Layers/<layer>.asset`) — the builder logs a
+   warning (not an error) and leaves that splatmap channel unpainted if one
+   is missing.
 4. Press Play (or build) — `{{ class_name }}.Awake()` assembles the
    `Terrain` + `TerrainCollider` GameObject from the baked data.
 {% if scatter_snippet %}
 5. On Start, `{{ class_name }}` also scatters detail props across the region
    (seed {{ seed }} — same layout every run) via the `ScatterTerrainDetails`
    atom.
+{% endif %}
 {% endif %}
 
 ## v1 limitations (documented, not silent)
