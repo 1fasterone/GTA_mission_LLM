@@ -22,6 +22,7 @@ from src.unity_prompts import (
     UNITY_SCHEMA_FILL_USER,
     WIRING_MICRO_KINDS,
     MultimodalBlock,
+    _MM_COURSE,
     atom_vocabulary,
     brief_block,
     render_multimodal_block,
@@ -52,12 +53,13 @@ EVERYTHING_CONCEPT = (
     "humanoid rig with an idle and a walk cycle. Explosions throw sparks, smoke "
     "and debris particles. Custom toon shader materials with metallic textures "
     "dress the procedural meshes. A cinematic intro cutscene fades in before the "
-    "opening sequence."
+    "opening sequence. The race track has a rough whoop section leading into a "
+    "rocky wash crossing."
 )
 
 CORE_SECTIONS = ("capabilities", "characters", "missions", "audio_specs")
 OPTIONAL_SECTIONS = ("dialog", "behavior_trees", "animations", "vfx",
-                     "surfaces", "sequence")
+                     "surfaces", "sequence", "course")
 
 
 def block(concept=EVERYTHING_CONCEPT, prompt="", **kw) -> MultimodalBlock:
@@ -112,10 +114,24 @@ class TestMultimodalFieldsAreAskedFor:
         assert '"wiring"' in GAMECONTEXT_SCHEMA_GUIDANCE
         assert '"wiring"' not in full_prompt(block())
 
-    def test_world_spec_is_deliberately_not_asked_for(self):
-        # unity_layout / unity_racetrack author world_spec deterministically in
-        # Step 5 — asking the LLM for it would only cost tokens.
-        assert '"world_spec"' not in full_prompt(block(max_optional=99))
+    def test_world_spec_fields_other_than_course_are_not_asked_for(self):
+        # unity_layout / unity_racetrack author biome/time_of_day/weather/regions
+        # deterministically in Step 5 -- asking the LLM for those would only cost
+        # tokens. "course" is the one deliberate exception (docs/COURSE_ARCHETYPE_
+        # LAYERS.md step 5): it's authored INTENT no deterministic pass can invent,
+        # so a brief that signals for it DOES see "world_spec" (via _MM_COURSE),
+        # but the OTHER world_spec fields still never appear THERE -- note this
+        # checks _MM_COURSE's own text, not the whole prompt: "time_of_day" (a
+        # separate PER-SCENE mood field, unrelated to WorldSpec) legitimately
+        # appears elsewhere in the base prompt already.
+        rendered_no_course = full_prompt(block(concept="a quiet 2D puzzle game",
+                                               max_optional=99))
+        assert '"world_spec"' not in rendered_no_course
+
+        assert '"world_spec"' in _MM_COURSE
+        for untouched_field in ('"biome"', '"weather"', '"regions"',
+                                "world_spec.biome", "world_spec.weather"):
+            assert untouched_field not in _MM_COURSE
 
     def test_system_prompt_frames_the_schema_as_the_full_design(self):
         assert "characters" in UNITY_SCHEMA_FILL_SYSTEM

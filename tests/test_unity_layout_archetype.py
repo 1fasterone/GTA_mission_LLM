@@ -41,7 +41,7 @@ from src.unity_layout_archetype import (
     volume_height,
 )
 from src.unity_racetrack import compose_racetrack
-from src.unity_schema import EntitySpec, UnitySchema
+from src.unity_schema import CourseSpec, EntitySpec, RouteZoneSpec, UnitySchema, WorldSpec
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -991,6 +991,175 @@ class TestArenaPlaneUnchanged:
         # the same reason `_round` exists. The numbers themselves are covered
         # exactly (to 1e-6) by test_layout_matches_the_pre_change_recording.
         assert files == self._baseline()["planar_project_files"]
+
+
+# ── 3b. Course zones (docs/COURSE_ARCHETYPE_LAYERS.md, step 3/4) ────────────
+# "Do not default to empty if present": an authored course.zones must
+# produce a REAL, different, deterministic effect on the two wired
+# archetypes (ArenaPlane's path-route corridor, BoundedVolume), and a LOUD
+# warning (never silent) on every archetype that doesn't consume it yet.
+
+class TestCourseZonesWiring:
+    @staticmethod
+    def _with_zones(schema: UnitySchema, *zones: RouteZoneSpec) -> UnitySchema:
+        if schema.world_spec is None:
+            schema.world_spec = WorldSpec()
+        schema.world_spec.course = CourseSpec(zones=list(zones))
+        return schema
+
+    def test_arena_plane_dip_zone_lowers_packed_group_elevation(self):
+        baseline = _racing_schema()
+        compute_layout(baseline)
+        baseline_elev = {e.name: e.elevation for e in baseline.entities}
+
+        zoned = self._with_zones(
+            _racing_schema(),
+            RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="dip",
+                         amplitude=2.5, label="TestDip"))
+        msgs = compute_layout(zoned)
+
+        # Every packed (non-path, non-preplaced) group covered by a dip
+        # spanning the WHOLE route must have shifted by exactly -amplitude —
+        # not stayed at its zone-free baseline.
+        crates = next(e for e in zoned.entities if e.name == "Crates")
+        assert crates.elevation == round(baseline_elev["Crates"] - 2.5, 3)
+        assert crates.elevation != baseline_elev["Crates"]
+        assert any("Applied 1 authored course zone" in m for m in msgs)
+
+    def test_arena_plane_zones_are_deterministic(self):
+        """Same schema, same zones, twice -> identical output (no RNG leak)."""
+        def _run():
+            s = self._with_zones(
+                _racing_schema(),
+                RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="rough", amplitude=1.0))
+            compute_layout(s)
+            return {e.name: e.elevation for e in s.entities}
+        assert _run() == _run()
+
+    def test_arena_plane_empty_zones_still_byte_identical(self):
+        """CourseSpec present but zones=[] (the schema default) must be a
+        complete no-op — the "empty means unchanged" half of the contract,
+        proven directly rather than only via the golden-baseline test."""
+        plain = _racing_schema()
+        compute_layout(plain)
+        explicit_empty = self._with_zones(_racing_schema())  # zones=()
+        compute_layout(explicit_empty)
+        assert ([e.model_dump() for e in plain.entities] ==
+                [e.model_dump() for e in explicit_empty.entities])
+
+    def test_bounded_volume_dip_zone_shifts_interior_elevation(self):
+        baseline = _glider_schema()
+        compute_layout(baseline)
+        baseline_elev = {e.name: e.elevation for e in baseline.entities}
+
+        zoned = self._with_zones(
+            _glider_schema(),
+            RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="dip",
+                         amplitude=0.1, label="TestVolumeDip"))
+        msgs = compute_layout(zoned)
+        zoned_elev = {e.name: e.elevation for e in zoned.entities}
+
+        shifted = [name for name in baseline_elev
+                   if baseline_elev[name] != zoned_elev.get(name)]
+        assert shifted, "a course-wide dip zone must shift at least one interior group"
+        assert any("Applied 1 authored course zone" in m for m in msgs)
+
+    def test_unwired_archetype_warns_loudly_instead_of_silent_noop(self, monkeypatch):
+        """All five real archetypes are wired as of step 4 (see the other
+        tests in this class) -- this test proves the WARNING MECHANISM
+        itself still fires correctly for whatever archetype ISN'T in
+        `_ZONE_AWARE_ARCHETYPES`, by shrinking that set for one call, rather
+        than depending on any particular archetype staying unwired forever
+        (VerticalCorridor was that archetype until this same change wired
+        it, which is exactly why this test needed to stop depending on it)."""
+        import src.unity_layout as unity_layout_module
+        monkeypatch.setattr(unity_layout_module, "_ZONE_AWARE_ARCHETYPES",
+                            {"ArenaPlane", "BoundedVolume", "VerticalSurface",
+                             "UISurface"})  # VerticalCorridor deliberately excluded
+        zoned = self._with_zones(
+            _skydive_schema(),
+            RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="dip", amplitude=5.0))
+        msgs = compute_layout(zoned)
+        assert any("doesn't interpret them yet" in m for m in msgs), (
+            "authored course zones on an archetype outside "
+            "_ZONE_AWARE_ARCHETYPES must warn, not silently no-op")
+
+    @pytest.mark.parametrize("builder", [_skydive_schema, _dive_schema])
+    def test_vertical_corridor_dip_zone_shifts_stratified_elevation(self, builder):
+        baseline = builder()
+        compute_layout(baseline)
+        baseline_elev = {e.name: e.elevation for e in baseline.entities}
+
+        zoned = self._with_zones(
+            builder(),
+            RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="dip",
+                         amplitude=0.2, label="TestCorridorDip"))
+        msgs = compute_layout(zoned)
+        zoned_elev = {e.name: e.elevation for e in zoned.entities}
+
+        shifted = [name for name in baseline_elev
+                  if baseline_elev[name] != zoned_elev.get(name)]
+        assert shifted, "a course-wide dip zone must shift at least one stratified group"
+        assert any("Applied 1 authored course zone(s) along the drop axis" in m
+                  for m in msgs)
+
+    def test_vertical_surface_dip_zone_shifts_hazard_height(self):
+        baseline = _load("living_wall_llm.schema.json")
+        compute_layout(baseline)
+        baseline_elev = {e.name: e.elevation for e in baseline.entities}
+
+        zoned = self._with_zones(
+            _load("living_wall_llm.schema.json"),
+            RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="dip",
+                         amplitude=0.15, label="TestClimbDip"))
+        msgs = compute_layout(zoned)
+        zoned_elev = {e.name: e.elevation for e in zoned.entities}
+
+        shifted = [name for name in baseline_elev
+                  if baseline_elev[name] != zoned_elev.get(name)]
+        assert shifted, "a course-wide dip zone must shift at least one hazard's height"
+        assert any("Applied" in m and "climb axis" in m for m in msgs)
+
+    @staticmethod
+    def _board_schema() -> UnitySchema:
+        """A minimal non-embodied (UISurface) schema, freshly built each
+        call -- must NOT be reused across two compute_layout() calls, since
+        the first bakes instance_positions onto its entities and the second
+        would then see them as already-preplaced."""
+        return UnitySchema(
+            project_name="TestBoard", company_name="C",
+            description="A file browser interface.",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear", locomotion="none",
+            features=[], scenes=["Main"], packages=[],
+            entities=[
+                EntitySpec(name="Row1", kind="prop", count=1, placement="single", scale=1.0),
+                EntitySpec(name="Row2", kind="prop", count=1, placement="single", scale=1.0),
+                EntitySpec(name="Row3", kind="prop", count=1, placement="single", scale=1.0),
+                EntitySpec(name="Row4", kind="prop", count=1, placement="single", scale=1.0),
+            ],
+        )
+
+    def test_ui_surface_ripple_zone_shifts_row_depth(self):
+        baseline = self._board_schema()
+        compute_layout(baseline)
+        baseline_z = {e.name: e.origin_offset[1] for e in baseline.entities}
+
+        zoned = self._with_zones(
+            self._board_schema(),
+            # frequency=0.25 so t=0 and t=1 (this schema's 2 reading-order
+            # rows) don't BOTH land on sin's zero crossing the way
+            # frequency=1.0 would (sin(0)=sin(2*pi)=0) -- deliberately picked
+            # so the test exercises a real nonzero shift, not a coincidental no-op.
+            RouteZoneSpec(start_t=0.0, end_t=1.0, modifier="ripple",
+                         amplitude=1.5, frequency=0.25, label="TestRowRipple"))
+        msgs = compute_layout(zoned)
+        zoned_z = {e.name: e.origin_offset[1] for e in zoned.entities}
+
+        shifted = [name for name in baseline_z if baseline_z[name] != zoned_z.get(name)]
+        assert shifted, "a ripple zone must shift at least one row's depth"
+        assert any("Applied 1 authored course zone" in m and "reading-order" in m
+                  for m in msgs)
 
 
 # ── 4. Provenance on every run ───────────────────────────────────────────────

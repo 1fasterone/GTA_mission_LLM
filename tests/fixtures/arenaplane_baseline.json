@@ -325,77 +325,80 @@
     ],
     "world_spec": {
       "biome": "urban",
-      "procedural_rules": null,
+      "time_of_day": "day",
+      "weather": "clear",
+      "scale": "medium",
       "regions": [
         {
+          "name": "Player",
           "biome": "",
+          "entities": [
+            "Player"
+          ],
           "bounds": [
             -6.6,
             -0.5999999999999992,
             -5.4,
             0.6000000000000008
-          ],
-          "entities": [
-            "Player"
-          ],
-          "name": "Player"
+          ]
         },
         {
+          "name": "Containers",
           "biome": "",
+          "entities": [
+            "Containers"
+          ],
           "bounds": [
             -22.78207252018059,
             -14.122934917841434,
             -6.78207252018059,
             1.8770650821585653
-          ],
-          "entities": [
-            "Containers"
-          ],
-          "name": "Containers"
+          ]
         },
         {
+          "name": "Drones",
           "biome": "",
+          "entities": [
+            "Drones"
+          ],
           "bounds": [
             -15.740251485476346,
             3.8581929876693017,
             4.259748514523654,
             23.8581929876693
-          ],
-          "entities": [
-            "Drones"
-          ],
-          "name": "Drones"
+          ]
         },
         {
+          "name": "ScrapPiles",
           "biome": "",
+          "entities": [
+            "ScrapPiles"
+          ],
           "bounds": [
             -8.000000000000004,
             -28.0,
             7.9999999999999964,
             -12.0
-          ],
-          "entities": [
-            "ScrapPiles"
-          ],
-          "name": "ScrapPiles"
+          ]
         },
         {
+          "name": "Floodlights",
           "biome": "",
+          "entities": [
+            "Floodlights"
+          ],
           "bounds": [
             6.0,
             -12.0,
             30.0,
             12.0
-          ],
-          "entities": [
-            "Floodlights"
-          ],
-          "name": "Floodlights"
+          ]
         }
       ],
-      "scale": "medium",
-      "time_of_day": "day",
-      "weather": "clear"
+      "procedural_rules": null,
+      "course": {
+        "zones": []
+      }
     }
   },
   "planar_project_files": [
@@ -1816,16 +1819,13 @@
     ],
     "world_spec": {
       "biome": "urban",
-      "procedural_rules": null,
+      "time_of_day": "day",
+      "weather": "clear",
+      "scale": "medium",
       "regions": [
         {
+          "name": "Racetrack",
           "biome": "track",
-          "bounds": [
-            -42.5,
-            -66.5,
-            42.5,
-            66.5
-          ],
           "entities": [
             "TrackSurface",
             "TrackBarriersOuter",
@@ -1844,51 +1844,57 @@
             "TracksideTrees5",
             "TracksideTrees6"
           ],
-          "name": "Racetrack"
+          "bounds": [
+            -42.5,
+            -66.5,
+            42.5,
+            66.5
+          ]
         },
         {
+          "name": "Crates",
           "biome": "",
+          "entities": [
+            "Crates"
+          ],
           "bounds": [
             51.0,
             -48.0,
             63.0,
             -36.0
-          ],
-          "entities": [
-            "Crates"
-          ],
-          "name": "Crates"
+          ]
         },
         {
+          "name": "PlayerKart",
           "biome": "",
+          "entities": [
+            "PlayerKart"
+          ],
           "bounds": [
             35.4,
             41.4,
             36.6,
             42.6
-          ],
-          "entities": [
-            "PlayerKart"
-          ],
-          "name": "PlayerKart"
+          ]
         },
         {
+          "name": "OpponentKarts",
           "biome": "",
+          "entities": [
+            "OpponentKarts"
+          ],
           "bounds": [
             32.369,
             32.103,
             41.497,
             41.231
-          ],
-          "entities": [
-            "OpponentKarts"
-          ],
-          "name": "OpponentKarts"
+          ]
         }
       ],
-      "scale": "medium",
-      "time_of_day": "day",
-      "weather": "clear"
+      "procedural_rules": null,
+      "course": {
+        "zones": []
+      }
     }
   }
 }

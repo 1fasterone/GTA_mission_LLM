@@ -596,6 +596,50 @@ class ProceduralRules(BaseModel):
     navmesh: dict[str, Any] = Field(default_factory=dict)
 
 
+# ── Course archetype layers (docs/COURSE_ARCHETYPE_LAYERS.md) ──────────────
+# A small, medium-agnostic vocabulary for "this stretch of the course behaves
+# differently" -- what `t` MEANS is owned by whichever spatial archetype
+# consumes it (src/unity_layout.py): arc-length fraction along a path-route
+# corridor for ArenaPlane, altitude/depth fraction for BoundedVolume, etc.
+# Mirrors src.unity_route_axis.RouteZone; kept as a separate Pydantic model
+# here since that module is pure geometry with no schema/validation
+# dependency of its own.
+class RouteZoneSpec(BaseModel):
+    start_t:   float = 0.0
+    end_t:     float = 1.0
+    modifier:  Literal["flat", "ripple", "dip", "rough"] = "flat"
+    amplitude: float = 0.0
+    frequency: float = 0.0
+    layer:     str = ""   # which surface/material/hazard layer this zone claims
+    label:     str = ""   # human-readable only, never branched on
+
+    @field_validator("start_t", "end_t", mode="before")
+    @classmethod
+    def _clamp_t(cls, v) -> float:
+        try:
+            return max(0.0, min(1.0, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @field_validator("amplitude", "frequency", mode="before")
+    @classmethod
+    def _clamp_nonneg(cls, v) -> float:
+        try:
+            return max(0.0, float(v))
+        except (TypeError, ValueError):
+            return 0.0
+
+
+class CourseSpec(BaseModel):
+    # Empty (the default) means "no authored zones" -- every archetype
+    # interpreter falls back to its pre-existing behavior byte-for-byte.
+    # Non-empty MUST be consumed by any archetype interpreter that claims to
+    # support it (currently ArenaPlane's path-route corridor and
+    # BoundedVolume — see src/unity_layout.py); an archetype that doesn't yet
+    # logs a loud warning rather than silently ignoring authored zones.
+    zones: list[RouteZoneSpec] = Field(default_factory=list)
+
+
 class WorldSpec(BaseModel):
     biome:            str                    = "urban"
     time_of_day:      str                    = "day"
@@ -603,6 +647,7 @@ class WorldSpec(BaseModel):
     scale:            str                    = "medium"
     regions:          list[WorldRegion]      = Field(default_factory=list)
     procedural_rules: Optional[ProceduralRules] = None
+    course:           CourseSpec             = Field(default_factory=CourseSpec)
 
     @field_validator("time_of_day", mode="before")
     @classmethod
