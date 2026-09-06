@@ -77,6 +77,10 @@ from .unity_layout_archetype import (
     ui_element_of,
     volume_height,
 )
+from .unity_route_axis import RouteModifier, RouteZone
+from .unity_route_axis import project as _route_project
+from .unity_route_axis import resolve_offset as _route_resolve_offset
+from .unity_route_axis import sample_n as _route_sample_n
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec, is_embodied
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
                             describe, select_primitive, tier_of)
@@ -301,29 +305,46 @@ def _sample_polyline(pts: list, n: int) -> list[tuple[float, float, float, float
     """`n` anchors evenly spaced by XZ arc length along the polyline, each as
     (px, pz, nx, nz) where (nx, nz) is the unit LEFT normal to the travel
     tangent. Anchors are centered in their arc-length bucket ((k+0.5)/n) so a
-    closed loop's first and last don't coincide. Deterministic."""
-    seglens = [math.hypot(b[0] - a[0], b[2] - a[2]) for a, b in zip(pts, pts[1:])]
-    total = sum(seglens)
-    if total < 1e-9 or n <= 0:
-        return [(pts[0][0], pts[0][2], -0.0, 1.0)] * max(0, n)
-    out: list[tuple[float, float, float, float]] = []
-    for k in range(n):
-        target = total * (k + 0.5) / n
-        acc = 0.0
-        for (a, b), L in zip(zip(pts, pts[1:]), seglens):
-            if L < 1e-9:
-                continue
-            if acc + L >= target:
-                t = (target - acc) / L
-                px, pz = a[0] + (b[0] - a[0]) * t, a[2] + (b[2] - a[2]) * t
-                tx, tz = (b[0] - a[0]) / L, (b[2] - a[2]) / L
-                out.append((px, pz, -tz, tx))   # left normal = tangent +90° in XZ
-                break
-            acc += L
-        else:
-            a = pts[-1]
-            out.append((a[0], a[2], -0.0, 1.0))
-    return out
+    closed loop's first and last don't coincide. Deterministic.
+
+    REFACTORED to delegate to src.unity_route_axis.sample_n -- the shared
+    primitive step 1 of docs/COURSE_ARCHETYPE_LAYERS.md's migration path
+    lands. Byte-identical to the inline implementation this replaced; see
+    that module's docstring and tests/test_unity_route_axis.py for the proof,
+    plus TestArenaPlaneUnchanged.test_layout_matches_the_pre_change_recording
+    (tests/test_unity_layout_archetype.py) for the end-to-end golden-output
+    guarantee that this call site specifically still produces identical
+    racetrack-corridor layouts."""
+    return _route_sample_n(pts, n)
+
+
+# Archetypes that actually consume schema.world_spec.course.zones today --
+# see compute_layout()'s loud-not-silent warning for every other archetype.
+# All five real archetypes are wired as of docs/COURSE_ARCHETYPE_LAYERS.md
+# step 4; this set (and the warning mechanism it drives) stays in place for
+# whatever spatial primitive gets added next (a spline/path primitive,
+# per LAYOUT_ARCHETYPES.md's "Abstain" section) so that one's own gap is
+# loud too, not silently reintroduced.
+_ZONE_AWARE_ARCHETYPES = {"ArenaPlane", "BoundedVolume", "VerticalCorridor",
+                         "VerticalSurface", "UISurface"}
+
+
+def _course_zones(schema: UnitySchema) -> list[RouteZone]:
+    """schema.world_spec.course.zones (Pydantic RouteZoneSpec, step 2 of
+    docs/COURSE_ARCHETYPE_LAYERS.md's migration path) converted to
+    src.unity_route_axis.RouteZone -- the schema model and the geometry
+    primitive are kept independent (unity_route_axis has no schema/pydantic
+    dependency), so this is the one place they're bridged. [] when no
+    world_spec exists yet or none were authored -- the empty-means-unchanged
+    contract every zone-aware interpreter relies on."""
+    if schema.world_spec is None:
+        return []
+    return [
+        RouteZone(start_t=z.start_t, end_t=z.end_t,
+                 modifier=RouteModifier(z.modifier), amplitude=z.amplitude,
+                 frequency=z.frequency, layer=z.layer, label=z.label)
+        for z in schema.world_spec.course.zones
+    ]
 
 
 def _corridor_pack(packable: list[EntitySpec], primary: EntitySpec,
@@ -724,9 +745,19 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
             f"(y={top_y:g}, {where}) instead of standing on the terminal plane")
 
     # ── Corridor content: stratified below the top, never all at y = 0 ───────
+    # Authored course.zones (docs/COURSE_ARCHETYPE_LAYERS.md), interpreted
+    # HERE along the DROP axis: t = this group's normalized position within
+    # the stratification band [_CORRIDOR_BAND_FLOOR, _CORRIDOR_BAND_TOP] --
+    # so a "dip" zone near the bottom of the fall (a downdraft pocket) pulls
+    # affected content further down, "ripple" oscillates it, "rough" jitters
+    # it. Only applied to the DEFAULT case -- an authored elevation, a schema
+    # altitude hint, or a water-dweller's submerged depth are all explicit
+    # intent and keep winning outright, same rule as before zones existed.
+    zones = _course_zones(schema)
     ordered = _band_order(corridor)
     span = _CORRIDOR_BAND_TOP - _CORRIDOR_BAND_FLOOR
     banded: list[str] = []
+    zoned: list[str] = []
     for i, e in enumerate(ordered):
         # Evenly spaced band centers, largest group highest. A single group
         # takes the top band — near the player, where it can be reached.
@@ -740,12 +771,33 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
             y = round(max(0.0, min(height, hint)), 3)
             band_why = f"{e.name}@{y:g}(schema)"
         elif is_water and is_water_dweller(e):
-            # Below the surface plane: this group's home is the medium itself.
+            # Below the surface plane: this group's home is the medium
+            # itself -- e.g. a "dip" zone here is a real thermocline/trench
+            # pocket pulling a school of fish deeper, the underwater example
+            # docs/COURSE_ARCHETYPE_LAYERS.md's multi-layer section names.
             y = round(-_WATER_DEPTH_DEFAULT * frac, 3)
             band_why = f"{e.name}@{y:g}(submerged)"
+            if zones:
+                t_norm = (frac - _CORRIDOR_BAND_FLOOR) / span if span > 1e-9 else 0.0
+                offset = _route_resolve_offset(zones, t_norm, seed=e.name)
+                if offset != 0.0:
+                    # Additive, same convention as the default branch below --
+                    # a "dip" zone's offset is already negative (zone_offset),
+                    # so adding it here makes y MORE negative (deeper), correct
+                    # for a thermocline/trench pocket.
+                    y = round(y + offset * _WATER_DEPTH_DEFAULT, 3)
+                    band_why = f"{e.name}@{y:g}(submerged, zoned)"
+                    zoned.append(e.name)
         else:
             y = round(height * frac, 3)
             band_why = f"{e.name}@{y:g}"
+            if zones:
+                t_norm = (frac - _CORRIDOR_BAND_FLOOR) / span if span > 1e-9 else 0.0
+                offset = _route_resolve_offset(zones, t_norm, seed=e.name)
+                if offset != 0.0:
+                    y = round(y + offset * height, 3)
+                    band_why = f"{e.name}@{y:g}(zoned)"
+                    zoned.append(e.name)
         banded.append(band_why)
 
         # Parked beside the drop axis, one golden-angle step per group, so the
@@ -763,6 +815,10 @@ def _layout_vertical_corridor(schema: UnitySchema, arch: LayoutArchetype,
         msgs.append(
             f"Stratified {len(banded)} group(s) down the corridor "
             f"({', '.join(banded)})")
+    if zoned:
+        msgs.append(
+            f"Applied {len(zones)} authored course zone(s) along the drop "
+            f"axis to {len(zoned)} group's elevation ({', '.join(zoned)})")
 
     # ── Terminal plane ───────────────────────────────────────────────────────
     goal = pick_goal_entity(terminal)
@@ -897,6 +953,7 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
     seeded scatter jitter (which this primitive does not use).
     """
     msgs: list[str] = []
+    zones = _course_zones(schema)
     height, why_height, defaulted = surface_height(schema)
     if defaulted:
         _log.warning(
@@ -983,15 +1040,31 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
             f"({', '.join(f'{e.name}x{e.count}' for e in ordered_holds)})")
 
     # ── Hazards: on the face, between the holds, never blocking them ─────────
+    # Authored course.zones interpreted along the CLIMB axis (t = this
+    # hazard instance's own fraction of the base->summit span, already
+    # computed below for its nominal position) -- e.g. "rough" (crumbling
+    # holds -> more slip hazard nearby) or "dip" (a section with no holds,
+    # widening the hazard gap) shift a hazard's height within the climb.
+    # Never applied to the hold chain itself: perturbing a hold's position
+    # risks the `_verify_hold_chain` reachability invariant, which hazards
+    # (never part of the chain) cannot violate.
+    climb_span = max(1e-6, top_y - _HOLD_FIRST_Y)
     if hazards:
         placed_haz = 0
+        zoned_haz: list[str] = []
         for hi, e in enumerate(sorted(hazards, key=lambda x: x.name)):
             n_h = max(1, e.count)
             pts: list[list[float]] = []
             for k in range(n_h):
                 # Sit between hold rows, on the opposite swing from the chain.
                 t = (k + 0.5 + hi) / max(1, n_h + hi)
-                hy = _HOLD_FIRST_Y + (top_y - _HOLD_FIRST_Y) * min(1.0, t)
+                hy = _HOLD_FIRST_Y + climb_span * min(1.0, t)
+                if zones:
+                    offset = _route_resolve_offset(zones, min(1.0, t), seed=f"{e.name}:{k}")
+                    if offset != 0.0:
+                        hy = max(0.0, min(top_y, hy + offset * climb_span))
+                        if e.name not in zoned_haz:
+                            zoned_haz.append(e.name)
                 hx = (1.0 if (k + hi) % 2 else -1.0) * half_width * 0.55
                 # Push outward until it clears every hold it could smother.
                 for _ in range(24):
@@ -1010,6 +1083,11 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
         msgs.append(f"Attached {placed_haz} hazard/enemy instance(s) to the "
                     f"face between the hold rows, cleared by "
                     f"{_HAZARD_HOLD_CLEARANCE:g} m from every hold")
+        if zoned_haz:
+            msgs.append(
+                f"Applied {len(zones)} authored course zone(s) along the "
+                f"climb axis to {len(zoned_haz)} hazard group's height "
+                f"({', '.join(zoned_haz)})")
 
     # ── Re-verify the chain AFTER hazards, as an invariant ───────────────────
     if chain:
@@ -1177,13 +1255,31 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
     # different altitudes for no reason. Tier ordering says a jump plane is
     # above what it drops, and two gate groups belong at the same height and
     # apart in PLAN view, which is what band packing then does.
+    # Authored course.zones (docs/COURSE_ARCHETYPE_LAYERS.md), interpreted
+    # HERE along the ALTITUDE axis: t = tier_of(e), the same [0,1] "where
+    # this kind of thing lives vertically" value the band split already
+    # used -- so a "dip" zone pulls affected kinds toward one boundary (a
+    # thermocline pocket, a downdraft), "ripple" oscillates by tier, "rough"
+    # adds small per-group jitter. Skipped for a group with an AUTHORED
+    # elevation -- that is the schema's explicit intent and always wins
+    # outright, same rule this function already applied before zones existed.
+    zones = _course_zones(schema)
     span = _VOLUME_BAND_CEIL - _VOLUME_BAND_FLOOR
     elevations: dict[str, float] = {}
+    zoned: list[str] = []
     for e in interior:
         authored = _authored_elevation(e)
-        elevations[e.name] = round(
-            authored if authored is not None
-            else height * (_VOLUME_BAND_FLOOR + span * tier_of(e)) * sign, 3)
+        if authored is not None:
+            elevations[e.name] = round(authored, 3)
+            continue
+        tier = tier_of(e)
+        base = height * (_VOLUME_BAND_FLOOR + span * tier) * sign
+        if zones:
+            offset = _route_resolve_offset(zones, tier, seed=e.name)
+            if offset != 0.0:
+                base += offset * height * sign
+                zoned.append(e.name)
+        elevations[e.name] = round(base, 3)
 
     placed_layers: list[str] = []
     for band in sorted({band_key(y) for y in elevations.values()}, reverse=True):
@@ -1206,6 +1302,10 @@ def _layout_bounded_volume(schema: UnitySchema, arch: LayoutArchetype,
     if placed_layers:
         msgs.append("Distributed interior content through the volume ("
                     + "; ".join(placed_layers) + ")")
+    if zoned:
+        msgs.append(
+            f"Applied {len(zones)} authored course zone(s) along the "
+            f"altitude axis to {len(zoned)} group's elevation ({', '.join(zoned)})")
 
     # ── Boundary plane ───────────────────────────────────────────────────────
     if on_boundary:
@@ -1347,6 +1447,7 @@ def _layout_ui_board(schema: UnitySchema, arch: LayoutArchetype,
     primitive never calls the seeded scatter jitter.
     """
     msgs: list[str] = []
+    zones = _course_zones(schema)
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
     preplaced, packable = _measure_and_size(layoutable, footprints)
 
@@ -1378,16 +1479,34 @@ def _layout_ui_board(schema: UnitySchema, arch: LayoutArchetype,
         # The block is centred on the origin so the flat camera preset at
         # (0, 0, -10) frames it without the generator having to aim.
         cursor_y = total_h / 2.0
-        for row, row_h in zip(rows, row_heights):
+        # Authored course.zones interpreted along the READING-ORDER axis
+        # (t = this row's position through the board, top to bottom) as a
+        # z-depth offset -- NOT x/y: repositioning cells in the reading
+        # plane would break "position carries meaning," the reason this
+        # primitive doesn't pack by size in the first place. A "ripple"
+        # zone gently staggers row depth for visual interest, "dip" pushes
+        # a whole section further back, "rough" jitters depth per row.
+        # Unlike the other three archetypes (which have a natural H to
+        # scale a fraction by), amplitude here is raw world units of depth
+        # -- there is no "height" for a flat board to make it a fraction of.
+        zoned_rows: list[str] = []
+        for ri, (row, row_h) in enumerate(zip(rows, row_heights)):
             row_w = (sum(w for _e, w, _h in row)
                      + _UI_CELL_GUTTER * (len(row) - 1))
             cursor_x = -row_w / 2.0
             cy = cursor_y - row_h / 2.0
+            z = _UI_BOARD_Z
+            if zones:
+                t = ri / max(1, len(rows) - 1)
+                offset = _route_resolve_offset(zones, t, seed=f"row{ri}")
+                if offset != 0.0:
+                    z = round(_UI_BOARD_Z + offset, 3)
+                    zoned_rows.append(str(ri))
             for e, w, _h in row:
                 cx = cursor_x + w / 2.0
-                e.origin_offset = [round(cx, 3), _UI_BOARD_Z]
+                e.origin_offset = [round(cx, 3), z]
                 e.instance_positions = _ui_bake_cell(
-                    e, pitches[e.name], cx, cy, _UI_BOARD_Z)
+                    e, pitches[e.name], cx, cy, z)
                 e.group_radius = round(max(w, _h) / 2.0, 3)
                 _set_elevation(e, cy)
                 cursor_x += w + _UI_CELL_GUTTER
@@ -1401,6 +1520,11 @@ def _layout_ui_board(schema: UnitySchema, arch: LayoutArchetype,
             f"group(s) in {len(rows)} reading-order row(s): "
             + " | ".join(", ".join(f"{e.name}({ui_element_of(e) or 'content'})"
                                    for e, _w, _h in row) for row in rows))
+        if zoned_rows:
+            msgs.append(
+                f"Applied {len(zones)} authored course zone(s) along the "
+                f"reading-order axis to {len(zoned_rows)} row's depth "
+                f"(rows {', '.join(zoned_rows)})")
     else:
         board_w = total_h = 0.0
         msgs.append("UISurface board is empty — no content groups to arrange")
@@ -1568,6 +1692,20 @@ def compute_layout(schema: UnitySchema,
             "direction": arch.direction, "evidence": dict(arch.evidence),
         }
     msgs: list[str] = [arch.provenance()]
+    # Abstain LOUDLY, never silently default (see CLAUDE.md): an authored
+    # course.zones that lands on an archetype whose interpreter doesn't
+    # consume it yet must say so, not quietly do nothing.
+    _pre_zones = _course_zones(schema)
+    if _pre_zones and arch.name not in _ZONE_AWARE_ARCHETYPES:
+        _log.warning(
+            "[layout] %r authored %d course zone(s) but the %r archetype "
+            "interpreter doesn't consume them yet (wired: %s) -- they will "
+            "have NO effect on this build.", schema.project_name,
+            len(_pre_zones), arch.name,
+            ", ".join(sorted(_ZONE_AWARE_ARCHETYPES)))
+        msgs.append(
+            f"WARNING: {len(_pre_zones)} authored course "
+            f"zone(s) have no effect -- {arch.name} doesn't interpret them yet")
     if arch.name == "VerticalCorridor":
         return msgs + _layout_vertical_corridor(schema, arch, footprints)
     if arch.name == "BoundedVolume":
@@ -1649,10 +1787,27 @@ def _layout_arena_plane(schema: UnitySchema,
     else:
         slots = _pack_groups(packable, seed_circles)
 
+    # Authored course.zones (docs/COURSE_ARCHETYPE_LAYERS.md), interpreted
+    # HERE as elevation offsets along the route's arc length -- a group
+    # packed near a "dip" zone (e.g. a wash crossing) sits lower, near a
+    # "ripple" zone rides a sine wave by its position along the corridor,
+    # near a "rough" zone gets small deterministic per-group jitter. Only
+    # meaningful when there's a route to project onto; compute_layout()
+    # already warned loudly if zones were authored without one reaching an
+    # archetype that can use them.
+    zones = _course_zones(schema) if primary is not None else []
+    zoned: list[str] = []
     moved: list[str] = []
     for e in packable:
         cx, cz, _r = slots[e.name]
         y = elevations.get(e.name, 0.0)
+        if zones:
+            assert primary is not None  # zones is only ever non-empty when primary was found above
+            t, _lateral = _route_project(primary.path_points, cx, cz)
+            offset = _route_resolve_offset(zones, t, seed=e.name)
+            if offset != 0.0:
+                y = round(y + offset, 3)
+                zoned.append(e.name)
         e.elevation = y
         e.origin_offset = [round(cx, 3), round(cz, 3)]
         e.instance_positions = _bake_positions(
@@ -1665,6 +1820,12 @@ def _layout_arena_plane(schema: UnitySchema,
     _volume_msg = describe(primitive, elevations)
     if _volume_msg:
         msgs.append(_volume_msg)
+    if zoned:
+        assert primary is not None  # zoned is only ever non-empty when primary was found above
+        msgs.append(
+            f"Applied {len(zones)} authored course zone(s) along the "
+            f"'{primary.name}' route to {len(zoned)} group's elevation "
+            f"({', '.join(zoned)})")
     if moved and primary is not None:
         msgs.append(
             f"Layout pass placed {len(packable)} entity group(s) along the "

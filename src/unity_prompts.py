@@ -365,8 +365,16 @@ def brief_block(user_prompt: str) -> str:
 #               (its source/target vocabulary is the micro kinds, which only
 #               exist in --compose mode).
 #
-# world_spec is deliberately absent: unity_layout / unity_racetrack author it
-# deterministically in Step 5, so asking the LLM for it would only cost tokens.
+# world_spec is deliberately absent for everything EXCEPT one field:
+# biome/time_of_day/weather/regions are unity_layout / unity_racetrack's own
+# DERIVED output in Step 5 (or scene-mood text elsewhere), so asking the LLM
+# for them would only cost tokens re-deriving what the pipeline computes
+# anyway. world_spec.course.zones is the opposite kind of field: it is
+# INTENT ("this stretch is rough," "there's a dip here") no deterministic
+# pass can invent from nothing -- the compiler can interpret a zone once
+# authored (see docs/COURSE_ARCHETYPE_LAYERS.md), but it cannot decide
+# WHERE the concept wants one. That's why "course" gets its own gated
+# OPTIONAL section (_MM_COURSE) below instead of living in this absent set.
 
 _MULTIMODAL_HEADER = """
 MULTIMODAL DESIGN LAYER — ADDITIONAL top-level keys in the SAME JSON object
@@ -522,6 +530,19 @@ _MM_SEQUENCE = """
     Python. Anything outside these keys is ignored.
 """
 
+_MM_COURSE = """
+  "world_spec": {"course": {"zones": [...]}} — ONLY for a route/progression
+    with distinct feel changes (track, fall, climb, swim). Each zone is a
+    stretch of it, start_t/end_t in [0,1] (0=start, 1=end/summit):
+      {"start_t":0.3,"end_t":0.5,"modifier":"ripple","amplitude":0.3,
+       "frequency":2.0,"layer":"gravel","label":"Whoop Section"}
+    modifier: flat|ripple|dip|rough — the compiler scales amplitude/frequency
+    (roughly 0..1, not meters) to whatever the game is (elevation, a climb
+    hazard's height, current strength, a UI card's depth). Zones may overlap
+    (a narrow one nested in a wide one) — the narrower/later one wins there.
+    "layer" is a short surface label (sand/rock/current), else "". Max 8.
+"""
+
 # Section id → (keywords, body). Declaration order breaks score ties, so the
 # earlier a section sits the more it is favoured at equal signal strength.
 _OPTIONAL_SECTIONS: tuple[tuple[str, tuple[str, ...], str], ...] = (
@@ -556,6 +577,13 @@ _OPTIONAL_SECTIONS: tuple[tuple[str, tuple[str, ...], str], ...] = (
         "scripted", "sequence", "timeline", "camera pan", "fade in", "fade out",
         "set piece", "choreograph", "montage", "prologue",
     ), _MM_SEQUENCE),
+    ("course", (
+        "race track", "racetrack", "track", "circuit", "lap", "laps", "course",
+        "obstacle course", "whoop", "whoops", "wash crossing", "chicane",
+        "switchback", "hairpin", "checkpoint", "checkpoints", "climb",
+        "ascent", "descent", "corridor", "current", "reef", "trench",
+        "thermocline", "rough patch", "bumpy", "terrain section",
+    ), _MM_COURSE),
 )
 
 _SEQUENCE_ATOM_CATEGORIES = (

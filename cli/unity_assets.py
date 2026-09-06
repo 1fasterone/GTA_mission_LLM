@@ -185,6 +185,11 @@ def sketchfab_fetch(
                                     help="Number of search results to rank before picking"),
     dry_run:    bool = typer.Option(False, "--dry-run",
                                     help="Search + rank + print candidates only — no download/convert/write"),
+    semantic_select: Optional[bool] = typer.Option(
+        None, "--semantic-select/--no-semantic-select",
+        help="Gate candidates by CLIP/embedding similarity before download "
+             "(src.unity_semantic_embed) — deterministic, no LLM. Defaults to "
+             "config.yaml's sketchfab.semantic_select when unset."),
 ) -> None:
     """Search Sketchfab and freeze the best licensed model into the catalog.
 
@@ -265,12 +270,39 @@ def sketchfab_fetch(
     if dry_run:
         return
 
+    # Deterministic CLIP/embedding gate (src.unity_semantic_embed) -- the
+    # same one unity_entity_asset_resolver.py wires into unity-create's
+    # Tier S, ported here so a solo sketchfab-fetch freeze gets the same
+    # protection instead of trusting keyword overlap alone. Byte-reproducible
+    # (pinned ONNX weights via fastembed, no LLM, no sampling): a candidate
+    # only clears the gate if its own thumbnail/description actually measures
+    # up, closing exactly the "realistic paratrooper" -> "Cartoon Character"
+    # miss keyword scoring cannot catch on its own.
+    use_semantic = sk_cfg.get("semantic_select") if semantic_select is None else semantic_select
+    semantic_filter_fn = None
+    if use_semantic:
+        from src.unity_semantic_embed import semantic_filter
+        semantic_filter_fn = lambda cands, _q=query, _kind=(hints[0] if hints else category): semantic_filter(
+            _q, _kind, _q, cands, client=client,
+            # Defaults match config.example.yaml's calibrated values
+            # (tools/calibrate_semantic_score.py) — kept in sync there.
+            min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
+            min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)))
+        console.print("[dim]semantic gate: on "
+                      f"(image>={sk_cfg.get('min_image_similarity', 0.22)}, "
+                      f"text>={sk_cfg.get('min_text_similarity', 0.45)})[/]")
+
     from src.sketchfab_freeze import fetch_and_freeze
     entry = fetch_and_freeze(
         query, score_fn=_score_fn, client=client, blender_cfg=sk_cfg,
         cache_dir=sk_cfg.get("cache_dir", "Models/Sketchfab"),
         lookups_dir=lookups, category=category, kind_hints=hints,
-        min_score=float(sk_cfg.get("min_match_score", 0.0)))
+        min_score=float(sk_cfg.get("min_match_score", 0.0)),
+        semantic_filter_fn=semantic_filter_fn)
+    if entry is None and use_semantic:
+        console.print("[yellow]Note:[/] if every candidate failed the semantic "
+                      "floor, re-run with --no-semantic-select to see the "
+                      "keyword-only pick, or --dry-run to inspect candidates.")
     if entry is None:
         console.print("[red]Error:[/] fetch/convert failed — check that Blender is "
                       "installed (blender.blender_path in config.yaml) and reachable")

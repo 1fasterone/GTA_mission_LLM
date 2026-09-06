@@ -104,6 +104,17 @@ def write_terrain_files(
         "seed": spec.seed,
         "layers": bake.layers,
         "scatter_snippet": scatter_snippet,
+        # True whenever assets_root IS a project's Assets/ folder already
+        # (always true from the --compose pipeline, which passes
+        # project_root / "Assets" directly) — the files below are then
+        # already in their final, Unity-compiling location. False for the
+        # standalone `unity-terrain-gen` CLI's default output dir, which
+        # isn't inside a project yet and genuinely needs a manual copy.
+        # Getting this wrong in the "already in place" direction is how a
+        # second copy of <class_name>.cs lands under Assets/Scripts/ and
+        # Unity throws CS0101 on the duplicate class — see the incident
+        # this ctx flag fixes (DropZone/Assets/Terrain/Parachutes).
+        "in_place": Path(assets_root).name == "Assets",
     }
 
     env = _jinja()

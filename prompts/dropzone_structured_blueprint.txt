@@ -1,0 +1,79 @@
+DropZone — Unity 6 Production Blueprint
+1. Project architecture
+Assets/
+├── DropZone/
+│   ├── Art/
+│   │   ├── Characters/
+│   │   ├── Aircraft/
+│   │   ├── Environment/
+│   │   ├── Parachutes/
+│   │   └── VFX/
+│   │
+│   ├── Audio/
+│   │   ├── Music/
+│   │   ├── Ambience/
+│   │   ├── SFX/
+│   │   └── Radio/
+│   │
+│   ├── Materials/
+│   │   ├── DropZone/
+│   │   ├── Terrain/
+│   │   ├── Sky/
+│   │   └── Characters/
+│   │
+│   ├── Prefabs/
+│   │   ├── Player/
+│   │   ├── Formation/
+│   │   ├── Aircraft/
+│   │   ├── Parachute/
+│   │   ├── Collectibles/
+│   │   ├── Terrain/
+│   │   └── UI/
+│   │
+│   ├── Scenes/
+│   │   ├── MainMenu.unity
+│   │   ├── AircraftInterior.unity
+│   │   ├── ColoradoFreefall.unity
+│   │   ├── CoastalCliffs.unity
+│   │   ├── StormFront.unity
+│   │   ├── CanyonRun.unity
+│   │   ├── NightJump.unity
+│   │   └── FinalApproach.unity
+│   │
+│   ├── Scripts/
+│   │   ├── Core/
+│   │   ├── Player/
+│   │   ├── AI/
+│   │   ├── Environment/
+│   │   ├── Camera/
+│   │   ├── UI/
+│   │   ├── Narrative/
+│   │   ├── Audio/
+│   │   ├── Progression/
+│   │   └── Editor/
+│   │
+│   ├── ScriptableObjects/
+│   │   ├── Locations/
+│   │   ├── Dialogue/
+│   │   ├── WindProfiles/
+│   │   ├── FormationObjectives/
+│   │   └── GameSettings/
+│   │
+│   └── UI/
+│       ├── UXML/
+│       ├── USS/
+│       └── Icons/
+│
+└── Settings/
+2. Core gameplay state machine
+
+GameManager should be the central authority.
+use an enum rather than scattering booleans throughout the project:
+Then expose state changes through an event:
+That lets the camera, UI, audio, dialogue and player controller react without becoming tightly coupled.
+The player should be composed rather than having one enormous controller.
+The important thing is to make the controller physics-oriented rather than animation-oriented.
+The desired velocity can be conceptually modeled
+Your ~200 km/h terminal velocity becomes the cap rather than a fixed movement speed.
+make the terminal velocity angle-dependent:
+Start game → enter aircraft → door opens → jump → control body → reach formation → receive lock confirmation → deploy parachute → steer canopy → land on target → receive score.
