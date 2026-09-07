@@ -1870,7 +1870,12 @@ class UnityPipeline:
                               "(input/controller micros use UnityEngine.InputSystem)")
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
-            # Pre-extract concept-specific NPC dialog lines NOW — while the LLM is
+            # Step 6.5 (cont.) — NPC dialog pre-extraction. Sibling of the
+            # sketchfab_query enrichment above (same warm-window LLM family,
+            # named there); the LLM call here is content extraction consumed
+            # deterministically by the Step 6 generator below, not a Step 6
+            # LLM call in its own right. Pre-extract concept-specific NPC
+            # dialog lines NOW — while the LLM is
             # warm from the schema step and BEFORE the auto_fetch Blender/Chromium
             # phase in generator.write cools it. Inject as meta._pre_lines and pop
             # skip_audio so emit renders REAL, concept-driven Kokoro clips (mirrors
@@ -1909,7 +1914,8 @@ class UnityPipeline:
                 except Exception as _exc:  # noqa: BLE001
                     self._warn(f"NPC dialog pre-extraction failed "
                                f"({type(_exc).__name__}: {_exc})")
-            # ── Concept-driven Sketchfab model collection (10-15 models) ──────
+            # ── Step 6.5 (cont.) — Concept-driven Sketchfab model collection
+            # (10-15 models) ──────────────────────────────────────────────
             # Mirrors the audio cue pipeline: the LLM proposes the models this
             # world actually needs; each is searched + downloaded + Blender-
             # converted + frozen NOW (before generator.write) so the per-entity

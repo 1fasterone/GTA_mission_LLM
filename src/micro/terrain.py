@@ -104,17 +104,22 @@ def write_terrain_files(
         "seed": spec.seed,
         "layers": bake.layers,
         "scatter_snippet": scatter_snippet,
-        # True whenever assets_root IS a project's Assets/ folder already
-        # (always true from the --compose pipeline, which passes
-        # project_root / "Assets" directly) — the files below are then
-        # already in their final, Unity-compiling location. False for the
-        # standalone `unity-terrain-gen` CLI's default output dir, which
-        # isn't inside a project yet and genuinely needs a manual copy.
+        # True whenever assets_root IS (or is already nested inside) a
+        # project's Assets/ folder (always true from the --compose pipeline,
+        # which passes project_root / "Assets" directly) — the files below
+        # are then already in their final, Unity-compiling location. False
+        # for the standalone `unity-terrain-gen` CLI's default output dir,
+        # which isn't inside a project yet and genuinely needs a manual
+        # copy. Checking every path component (not just the last one) also
+        # covers a caller that points assets_root at a subfolder already
+        # inside Assets/ — a plain basename check would call that
+        # "not in place" and tell the user to copy it again, landing a
+        # second copy right back inside the same Assets/ tree.
         # Getting this wrong in the "already in place" direction is how a
         # second copy of <class_name>.cs lands under Assets/Scripts/ and
         # Unity throws CS0101 on the duplicate class — see the incident
         # this ctx flag fixes (DropZone/Assets/Terrain/Parachutes).
-        "in_place": Path(assets_root).name == "Assets",
+        "in_place": "Assets" in Path(assets_root).parts,
     }
 
     env = _jinja()
