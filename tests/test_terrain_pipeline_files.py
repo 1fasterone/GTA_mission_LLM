@@ -88,6 +88,55 @@ class TestWriteTerrainFiles:
         enforce(cs_files, enabled=True, label="terrain test (snake_case name)")
 
 
+class TestInPlaceDetection:
+    """Regression coverage for the `in_place` flag (fix/d721f59): whether the
+    README tells the reader to copy the Terrain/ folder into their project or
+    warns them it is already there. Getting this wrong in the "already in
+    place" direction is exactly how a second copy of <class_name>.cs lands
+    under Assets/Scripts/ and Unity throws CS0101 on the duplicate class."""
+
+    def _readme(self, tmp_path: Path, region: str = "AlphaRegion") -> str:
+        # Collapse whitespace so a phrase that happens to wrap across a
+        # template line break still matches a single-line assertion.
+        text = (tmp_path / "Terrain" / region / "README.md").read_text(encoding="utf-8")
+        return " ".join(text.split())
+
+    def test_standalone_output_dir_is_not_in_place(self, tmp_path: Path):
+        # e.g. `unity-terrain-gen`'s default -o output/unity/terrain — no
+        # "Assets" component anywhere in the path.
+        out = tmp_path / "output" / "unity" / "terrain"
+        write_terrain_files(_spec(), out)
+        text = self._readme(out)
+        assert "already in place" not in text
+        assert "Copy the whole" in text
+
+    def test_assets_root_named_assets_is_in_place(self, tmp_path: Path):
+        # The --compose pipeline's call shape: project_root / "Assets".
+        assets_root = tmp_path / "MyGame" / "Assets"
+        write_terrain_files(_spec(), assets_root)
+        text = self._readme(assets_root)
+        assert "already in place" in text
+        assert "Do not copy" in text
+
+    def test_subfolder_already_inside_assets_is_also_in_place(self, tmp_path: Path):
+        # A caller pointed at a location already nested inside Assets/ (not
+        # Assets/ itself) must still be treated as in place — a basename-only
+        # check would miss this and tell the reader to copy it again,
+        # landing a second copy right back inside the same Assets/ tree.
+        assets_root = tmp_path / "MyGame" / "Assets" / "Generated"
+        write_terrain_files(_spec(), assets_root)
+        text = self._readme(assets_root)
+        assert "already in place" in text
+
+    def test_folder_merely_containing_the_word_assets_is_not_in_place(self, tmp_path: Path):
+        # "AssetsBackup" is not the literal Unity "Assets" folder — must not
+        # false-positive on a substring match.
+        out = tmp_path / "AssetsBackup" / "terrain"
+        write_terrain_files(_spec(), out)
+        text = self._readme(out)
+        assert "already in place" not in text
+
+
 class TestWriteWorldTerrain:
     def test_writes_one_region_per_job_and_skips_no_ground_ones(self, tmp_path: Path):
         world = WorldSpec(regions=[
