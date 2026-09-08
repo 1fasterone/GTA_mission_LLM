@@ -112,6 +112,13 @@ _DEFAULT_MIN_SCORE = 0.15
 _DEFAULT_TOP_K = 5
 _VARIETY_BAND = 0.85          # candidates within 85% of the best score rotate
 
+# Embedding-based refinement (opt-in, assets.embedding_select — see
+# docs/COMPILER_AUDIT.md Gap E / solution #7, src/unity_semantic_match.py).
+# REFINEMENT only: added inside _final_score's `if s > 0.0:` guard, so an
+# entry that never clears _score()'s strong-hit gate below is never rescued
+# by embedding similarity alone, regardless of this weight's magnitude.
+_DEFAULT_EMBEDDING_WEIGHT = 0.5
+
 # Distribution-sampling mode (opt-in via assets.sample_temperature > 0). Instead
 # of "pick the best (then round-robin a narrow band)", score all candidates,
 # turn the top _SAMPLE_POOL scores into a softmax probability distribution, and
@@ -532,6 +539,8 @@ def resolve_entity_assets(schema,
     sample_temp = max(0.0, float(cfg.get("sample_temperature", 0.0) or 0.0))
     sample_pool = max(1, int(cfg.get("sample_pool", _DEFAULT_SAMPLE_POOL)))
     sample_seed = int(cfg.get("sample_seed", 0) or 0)
+    embed_enabled = bool(cfg.get("embedding_select"))
+    embed_weight = float(cfg.get("embedding_weight", _DEFAULT_EMBEDDING_WEIGHT))
 
     sk_cfg = sketchfab_cfg or {}
     sk_enabled = bool(sk_cfg.get("enabled"))
@@ -558,6 +567,28 @@ def resolve_entity_assets(schema,
     # Tier S below.
     assets = [a for a in _all_assets if a.get("source") != "sketchfab"]
     sk_catalog_assets = [a for a in _all_assets if a.get("source") == "sketchfab"]
+
+    # Embedding-based catalog refinement (opt-in, default off — see
+    # _DEFAULT_EMBEDDING_WEIGHT above and docs/COMPILER_AUDIT.md Gap E). A
+    # missing/stale/corrupt cache degrades to keyword-only scoring for the
+    # whole run, logged once, never a crash — see
+    # src/unity_semantic_match.py's module docstring for why this is a
+    # precomputed matrix, never a live per-entry re-embed of the catalog.
+    catalog_embeddings = None
+    if embed_enabled:
+        from .unity_semantic_match import catalog_content_hash, load_catalog_embeddings
+        _ce = load_catalog_embeddings(str(lookups_dir))
+        if _ce is None:
+            _log.info("[assets] embedding_select is true but no embedding cache "
+                     "was found — falling back to keyword-only scoring. Build "
+                     "it with: python main.py unity-catalog --embed")
+        elif _ce.catalog_hash != catalog_content_hash(assets):
+            _log.warning("[assets] embedding cache is stale (catalog changed "
+                        "since it was built) — falling back to keyword-only "
+                        "scoring. Re-run: python main.py unity-catalog --embed")
+        else:
+            catalog_embeddings = _ce
+    _embed_query_cache: dict = {}
 
     scene_words = {w for w in tokenize(schema.description or "")
                    if w not in _STOPWORDS}
@@ -801,6 +832,19 @@ def resolve_entity_assets(schema,
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
         qw = _query_weights(e, scene_words)
+
+        # One query embed + one precomputed-matrix cosine per entity (never
+        # per asset) — see catalog_embeddings load above. Empty dict when
+        # embeddings are disabled/unavailable, in which case _final_score's
+        # embedding term below is always skipped.
+        _embed_sims: dict[str, float] = {}
+        if catalog_embeddings is not None:
+            from .unity_semantic_match import (catalog_similarity_vector,
+                                               embed_query_cached,
+                                               entity_embedding_text)
+            _qvec = embed_query_cached(entity_embedding_text(e, kind), _embed_query_cache)
+            if _qvec is not None:
+                _embed_sims = catalog_similarity_vector(catalog_embeddings, _qvec)
         strong_q = {t for t, w in qw.items() if w >= _STRONG_HIT}
         # Strong tokens that say something MORE than the entity's own kind.
         # "Waiters" (kind="character", model_hint "waiter") carries
@@ -1097,8 +1141,13 @@ def resolve_entity_assets(schema,
 
         def _final_score(a: dict) -> float:
             s = _score(a, qw, kind)
-            if s > 0.0 and is_2d and a.get("format") == "png":
-                s += _SPRITE_2D_BONUS
+            if s > 0.0:
+                if is_2d and a.get("format") == "png":
+                    s += _SPRITE_2D_BONUS
+                if _embed_sims:
+                    sim = _embed_sims.get(a.get("relpath", ""), 0.0)
+                    if sim > 0.0:
+                        s += embed_weight * sim
             return s
 
         # ── Tier 2a: concept-layer match (find layer → best asset IN layer) ──

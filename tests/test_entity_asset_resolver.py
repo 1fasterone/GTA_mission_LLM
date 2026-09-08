@@ -2278,3 +2278,126 @@ def test_person_kinds_all_map_to_one_neutral_humanoid():
     people = [kinds[k]["model"] for k in ("character", "human", "person", "npc")]
     assert people == [people[0]] * len(people)
     assert "Spectator" in people[0]
+
+
+# ── embedding-based refinement (Solution #7, docs/COMPILER_AUDIT.md Gap E) ────
+# All real fastembed/ONNX calls are mocked out at src.unity_semantic_match's
+# origin functions — see tests/test_unity_semantic_match.py for the primitives
+# these tests build on. Focus here is resolve_entity_assets()'s own wiring:
+# the config gate, graceful degradation, and the "refine never qualify"
+# safety guarantee — not the embedding math itself, already unit-tested.
+
+class TestEmbeddingRefinement:
+
+    def test_disabled_is_byte_identical_to_today(self, env, tmp_path, monkeypatch):
+        """The regression guard: absent/None/False assets.embedding_select
+        must never even LOOK for a cache, let alone use one."""
+        calls = []
+        monkeypatch.setattr("src.unity_semantic_match.load_catalog_embeddings",
+                            lambda *a, **kw: calls.append(1) or None)
+        entities = [EntitySpec(name="Pines", kind="prop", count=1, model_hint="forest tree")]
+        for asset_cfg in (None, {}, {"embedding_select": False}):
+            paths = resolve_entity_assets(_schema(entities), {}, {},
+                                          lookups_dir=str(env), asset_cfg=asset_cfg)
+            assert paths["Pines"].startswith("Models/Kenney/")
+        assert calls == []   # never even called, not just a no-op result
+
+    def test_enabled_but_cache_missing_degrades_to_keyword_only(self, env, tmp_path, caplog):
+        """No lookups/unity/asset_catalog_embeddings.* on disk in `env` at
+        all — must fall back silently (logged), never raise."""
+        entities = [EntitySpec(name="Pines", kind="prop", count=1, model_hint="forest tree")]
+        baseline = resolve_entity_assets(_schema(entities), {}, {}, lookups_dir=str(env))
+        with caplog.at_level("INFO"):
+            enabled = resolve_entity_assets(
+                _schema(entities), {}, {}, lookups_dir=str(env),
+                asset_cfg={"embedding_select": True})
+        assert enabled == baseline
+        assert "no embedding cache" in caplog.text.lower()
+
+    def test_enabled_with_stale_cache_degrades_to_keyword_only(self, env, tmp_path, monkeypatch, caplog):
+        import src.unity_semantic_match as sm
+        stale = sm.CatalogEmbeddings(
+            vectors=__import__("numpy").zeros((1, 2), dtype="float32"),
+            keys=("tree-pine.fbx",), catalog_hash="not-the-real-hash", model=sm.BGE_MODEL_NAME)
+        monkeypatch.setattr("src.unity_semantic_match.load_catalog_embeddings",
+                            lambda *a, **kw: stale)
+        entities = [EntitySpec(name="Pines", kind="prop", count=1, model_hint="forest tree")]
+        baseline = resolve_entity_assets(_schema(entities), {}, {}, lookups_dir=str(env))
+        with caplog.at_level("WARNING"):
+            enabled = resolve_entity_assets(
+                _schema(entities), {}, {}, lookups_dir=str(env),
+                asset_cfg={"embedding_select": True})
+        assert enabled == baseline
+        assert "stale" in caplog.text.lower()
+
+    def _patch_perfect_similarity_for_everything(self, monkeypatch, catalog_hash: str):
+        """Every catalog entry AND the query embed to the identical vector —
+        the most adversarial possible input: cosine similarity = 1.0
+        uniformly, maximizing any chance embeddings could rescue a
+        zero-keyword-overlap entry."""
+        import numpy as np
+        import src.unity_semantic_match as sm
+        ce = sm.CatalogEmbeddings(
+            vectors=np.array([[1.0, 0.0]] * len(CATALOG_ASSETS), dtype=np.float32),
+            keys=tuple(a["relpath"] for a in CATALOG_ASSETS),
+            catalog_hash=catalog_hash, model=sm.BGE_MODEL_NAME)
+        monkeypatch.setattr("src.unity_semantic_match.load_catalog_embeddings",
+                            lambda *a, **kw: ce)
+        monkeypatch.setattr("src.unity_semantic_match.catalog_content_hash",
+                            lambda *a, **kw: catalog_hash)
+        monkeypatch.setattr("src.unity_semantic_match.embed_query_cached",
+                            lambda *a, **kw: np.array([1.0, 0.0], dtype=np.float32))
+
+    def test_embedding_can_only_refine_never_qualify(self, env, tmp_path, monkeypatch):
+        """corsair.fbx (aircraft — zero keyword overlap with a tree/forest
+        query) gets PERFECT embedding similarity via the mock above, yet must
+        never be picked: _final_score only adds the embedding term inside
+        `if s > 0.0`, i.e. only once the keyword scorer already qualified
+        the candidate on its own."""
+        self._patch_perfect_similarity_for_everything(monkeypatch, "H")
+        entities = [EntitySpec(name="Pines", kind="prop", count=1, model_hint="forest tree")]
+        paths = resolve_entity_assets(
+            _schema(entities), {}, {}, lookups_dir=str(env),
+            asset_cfg={"embedding_select": True, "embedding_weight": 100.0})
+        assert paths["Pines"].startswith("Models/Kenney/Nature/tree-")
+        assert "corsair" not in paths["Pines"].lower()
+
+    def test_embedding_is_deterministic_across_runs(self, env, tmp_path, monkeypatch):
+        self._patch_perfect_similarity_for_everything(monkeypatch, "H")
+        entities = [EntitySpec(name="Pines", kind="prop", count=1, model_hint="forest tree")]
+        cfg = {"embedding_select": True, "embedding_weight": 0.5}
+        paths_a = resolve_entity_assets(_schema(entities), {}, {}, lookups_dir=str(env), asset_cfg=cfg)
+        paths_b = resolve_entity_assets(_schema(entities), {}, {}, lookups_dir=str(env), asset_cfg=cfg)
+        assert paths_a == paths_b
+
+    def test_embedding_can_change_the_pick_among_qualified_candidates(self, env, tmp_path, monkeypatch):
+        """All three tree-*.fbx siblings keyword-qualify equally on "tree" for
+        this entity, so the disabled-baseline pick is whichever the
+        deterministic keyword/rotation logic favors on its own. Bias a
+        DIFFERENT sibling's embedding sharply above the rest and confirm the
+        resolved pick actually moves to it — proof the term has real effect,
+        not just that it's harmless."""
+        import numpy as np
+        import src.unity_semantic_match as sm
+        entities = [EntitySpec(name="Pines", kind="prop", count=1, model_hint="forest tree")]
+        baseline = resolve_entity_assets(_schema(entities), {}, {}, lookups_dir=str(env))
+        tree_siblings = ("tree-pine.fbx", "tree-tall.fbx", "tree-large.fbx")
+        target = next(r for r in tree_siblings
+                      if f"Models/Kenney/Nature/{r[:-4]}" != baseline["Pines"])
+
+        vectors, keys = [], []
+        for a in CATALOG_ASSETS:
+            keys.append(a["relpath"])
+            vectors.append([1.0, 0.0] if a["relpath"] == target else [0.0, 1.0])
+        ce = sm.CatalogEmbeddings(vectors=np.array(vectors, dtype=np.float32),
+                                  keys=tuple(keys), catalog_hash="H", model=sm.BGE_MODEL_NAME)
+        monkeypatch.setattr("src.unity_semantic_match.load_catalog_embeddings", lambda *a, **kw: ce)
+        monkeypatch.setattr("src.unity_semantic_match.catalog_content_hash", lambda *a, **kw: "H")
+        monkeypatch.setattr("src.unity_semantic_match.embed_query_cached",
+                            lambda *a, **kw: np.array([1.0, 0.0], dtype=np.float32))
+
+        enabled = resolve_entity_assets(
+            _schema(entities), {}, {}, lookups_dir=str(env),
+            asset_cfg={"embedding_select": True, "embedding_weight": 2.0})
+        assert enabled["Pines"] == f"Models/Kenney/Nature/{target[:-4]}"
+        assert enabled["Pines"] != baseline["Pines"]

@@ -180,6 +180,57 @@ assets:
   sample_temperature: 0.0
   sample_pool: 40          # how many top-scored candidates enter the distribution
   sample_seed: 0           # change for a different reproducible draw
+  # ── Embedding-based semantic refinement (opt-in) ────────────────────────
+  # Blends cosine similarity (BAAI/bge-small-en-v1.5, src/unity_semantic_embed.py)
+  # into the catalog match score above — REFINEMENT only: an entry that never
+  # clears the keyword scorer's own strong-hit gate is never rescued by
+  # embedding similarity alone; this can only re-rank among candidates that
+  # already qualified on keywords (src/unity_entity_asset_resolver._final_score).
+  # Needs a precomputed cache (lookups/unity/asset_catalog_embeddings.{npz,
+  # meta.json}); build/refresh with `python main.py unity-catalog --embed`.
+  # Missing/stale cache -> silently disabled for the run (logged), never a
+  # crash and never a live re-embed of the whole catalog during resolve.
+  embedding_select: false
+  # Additive weight on cosine similarity. Calibrated against
+  # tools/calibrate_catalog_embedding.py (real catalog entries, 2026-09):
+  # genuinely-correct pairs (Trees/pine-tree, Crate/crate-*) measured
+  # 0.76-0.89; the cross-domain near-miss _passes_kind_scope's own docstring
+  # names (ScoreBoard sharing "board" with skateboard.fbx) measured 0.578 —
+  # below the good pairs but not dramatically so, confirming that specific
+  # bug is correctly closed by _passes_kind_scope's structural filter, not by
+  # a score threshold; embeddings here are a complementary re-ranking signal,
+  # not a replacement for that guard. No safety ceiling to solve for (unlike
+  # scenebind.embedding_weight below): this term only ever refines an
+  # already keyword-qualified candidate (_final_score's `if s > 0.0:` guard).
+  embedding_weight: 0.5
+
+scenebind:
+  # Blends cosine similarity (src/unity_semantic_embed.py) into authored-group
+  # <-> entity keyword matching (src/unity_scenebind.py bind_score). Unlike
+  # assets.embedding_select above, there is NO precompute cache here: group
+  # filenames and entity names are novel every run (no stable corpus), and N
+  # is tiny (a handful of groups vs. entities per scene) — bind_score calls
+  # text_similarity() directly, pairwise, uncached. The declared-ROLE
+  # veto/bonus runs first and is structurally untouched: a role-conflicting
+  # pair returns 0.0 before this term is ever computed.
+  embedding_select: false
+  # CAUTION: unlike assets.embedding_weight, this term has no hard pre-gate —
+  # it is summed directly alongside the keyword terms and compared against
+  # MIN_BIND_SCORE. Too high a weight can let a kind-word-only match (e.g.
+  # group "vehicle.fbx" vs entity kind="vehicle") cross the threshold on
+  # embedding similarity alone, reopening the exact failure MIN_BIND_SCORE was
+  # raised to prevent. Calibrated against tools/calibrate_scenebind_embedding.py
+  # (2026-09), which measures exactly this case: a bare "vehicle" kind-word
+  # match (group "Vehicle"/"vehicle.fbx" vs entity kind="vehicle") measured
+  # text_similarity=0.709, giving a safe upper bound of
+  # embedding_weight < (MIN_BIND_SCORE - _W_KIND) / 0.709 ≈ 1.41. 0.5 leaves
+  # ample margin (bind_score at 0.5 on that exact pair: 1.354, still well
+  # under MIN_BIND_SCORE=2.0). The same run found that at this weight the
+  # embedding term alone can never manufacture a bind from zero keyword
+  # overlap either (a genuinely-strong semantic-only pair measured
+  # sim=0.652, i.e. a score contribution of ~0.33 at weight 0.5) — it can
+  # only nudge an already-partially-matching candidate, never invent one.
+  embedding_weight: 0.5
 
 sketchfab:
   # Live Sketchfab model search — a Tier S the resolver tries BEFORE the

@@ -25,6 +25,13 @@ def unity_catalog(
     measure: bool = typer.Option(False, "--measure",
                                  help="Import every model in Unity once and record real "
                                       "bounds (slow; needed for model-aware group spacing)"),
+    embed:   bool = typer.Option(False, "--embed",
+                                 help="Precompute BAAI/bge-small-en-v1.5 embeddings for every "
+                                      "(non-Sketchfab) catalog entry, cached to lookups/unity/"
+                                      "asset_catalog_embeddings.{npz,meta.json} — needed for "
+                                      "assets.embedding_select: true (docs/COMPILER_AUDIT.md "
+                                      "Gap E). Slow, one-time; first run may need network to "
+                                      "fetch the ONNX model into the fastembed cache."),
 ) -> None:
     """Scan the asset library and (re)generate lookups/unity/asset_catalog.json.
 
@@ -38,6 +45,7 @@ def unity_catalog(
       python main.py unity-catalog                # scan + write
       python main.py unity-catalog --dry-run      # stats only
       python main.py unity-catalog --check        # CI staleness gate
+      python main.py unity-catalog --embed        # + precompute embeddings
     """
     from src.unity_asset_catalog import (CATALOG_RELPATH, CURATED_RELPATH,
                                          DEFAULT_ROOTS, DEFAULT_SPRITE_ROOTS,
@@ -112,6 +120,12 @@ def unity_catalog(
         return
     write_catalog(catalog, out_path)
     console.print(f"[green]Written[/] → {out_path}")
+
+    if embed:
+        from src.unity_semantic_match import build_and_write_catalog_embeddings
+        console.print("[cyan]Embedding[/] catalog entries (BAAI/bge-small-en-v1.5)…")
+        emb_path = build_and_write_catalog_embeddings(catalog, lookups_dir=str(lookups_dir))
+        console.print(f"[green]Written[/] → {emb_path}")
 
 
 @app.command("unity-salvage")

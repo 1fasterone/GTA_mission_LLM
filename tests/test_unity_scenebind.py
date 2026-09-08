@@ -467,6 +467,117 @@ class TestDeclaredRole:
 
 # ── uncovered entities ────────────────────────────────────────────────────────
 
+class TestEmbeddingRefinement:
+    """embed_weight (bind_score's opt-in embedding term, docs/COMPILER_AUDIT.md
+    Gap E / solution #7). src/unity_scenebind.py does a deferred `from
+    .unity_semantic_embed import text_similarity` INSIDE bind_score's `if
+    embed_weight > 0.0:` block, entered only when the term is active — tests
+    patch it at its dotted-string origin, "src.unity_semantic_embed.
+    text_similarity", never a local binding.
+
+    Case numbers below refer to tools/calibrate_scenebind_embedding.py's live
+    measured values: Case 1 (kind-alone, sim=0.709, safe bound ~=1.411) is
+    the exact pair test_kind_alone_is_below_the_threshold locks in; Case 2
+    (zero keyword overlap, sim=0.652) is the positive control proving the
+    term is not a backdoor around keyword evidence at the calibrated
+    default weight (0.5, _DEFAULT_EMBED_WEIGHT)."""
+
+    def test_disabled_is_byte_identical_to_today(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: calls.append(1) or 1.0)
+        e = EntitySpec(name="Rivals", kind="vehicle")
+        g = _group("Vehicle", "vehicle.fbx")
+        assert bind_score(g, e) == bind_score(g, e, embed_weight=0.0)
+        assert calls == []
+
+    def test_apply_scene_never_touches_the_embedder_when_disabled(self, monkeypatch):
+        calls = []
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: calls.append(1) or 1.0)
+        s = _schema([EntitySpec(name="PlayerBike", kind="vehicle")])
+        for cfg in (None, {}, {"embedding_select": False}):
+            apply_scene(s, _scene(_group("VictorianMonobike",
+                                         "victorian_monobike.fbx")), cfg=cfg)
+        assert calls == []
+
+    def test_conflicting_role_veto_survives_embedding_enabled(self, monkeypatch):
+        """The critical regression pin: `enemy_drone.fbx` must never reach
+        the player, however high the embedding weight or similarity — the
+        veto fires before bind_score ever reaches the embedding term."""
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: 1.0)
+        player = EntitySpec(name="DroneRider", kind="player")
+        assert bind_score(_group("EnemyDrone", "enemy_drone.fbx"), player,
+                          embed_weight=10.0) == 0.0
+
+    def test_kind_alone_stays_below_threshold_at_calibrated_default_weight(self, monkeypatch):
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: 0.709)
+        e = EntitySpec(name="Rivals", kind="vehicle")
+        s = bind_score(_group("Vehicle", "vehicle.fbx"), e, embed_weight=0.5)
+        assert s < MIN_BIND_SCORE
+
+    def test_positive_control_still_needs_keyword_evidence_to_bind(self, monkeypatch):
+        """Zero keyword overlap, strong semantic similarity: at the
+        calibrated default weight this alone must NOT cross MIN_BIND_SCORE —
+        the term refines an already-partially-qualified candidate, it does
+        not replace keyword evidence outright."""
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: 0.652)
+        e = EntitySpec(name="Racer", kind="vehicle",
+                       model_hint="high-speed two-wheeler")
+        g = _group("VictorianMonobike", "victorian_monobike.fbx")
+        assert bind_score(g, e, embed_weight=0.5) < MIN_BIND_SCORE
+
+    def test_embedding_can_bind_where_keywords_alone_would_not(self, monkeypatch):
+        """Same kind-alone pair as the calibrated-safe test above, but at a
+        weight ABOVE the calibrated default — proves the term has real
+        binding power (not merely inert), while the default weight (tested
+        above) stays safely under threshold for this exact pair."""
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: 0.709)
+        e = EntitySpec(name="Rivals", kind="vehicle")
+        g = _group("Vehicle", "vehicle.fbx")
+        assert bind_score(g, e, embed_weight=0.0) < MIN_BIND_SCORE
+        assert bind_score(g, e, embed_weight=2.0) >= MIN_BIND_SCORE
+
+    def test_spill_scoring_also_receives_the_embedding_term(self, monkeypatch):
+        """RivalOne shares no keyword at all with "player_monobike.fbx"
+        (kind="enemy" doesn't appear in "player"/"monobike"), so it never
+        qualifies for spill on keywords alone — confirms _plan's spill pass
+        threads embed_weight the same way the primary pass does."""
+        scene = _scene(_group(
+            "PlayerMonobike", "player_monobike.fbx", count=2,
+            positions=[[0, 0, 0], [3, 0, 0]]))
+
+        s_off = _schema([EntitySpec(name="Racer", kind="player"),
+                         EntitySpec(name="RivalOne", kind="enemy", count=1)])
+        apply_scene(s_off, json.loads(json.dumps(scene)))
+        assert s_off.entities[1].instance_positions == []
+
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: 1.0)
+        s_on = _schema([EntitySpec(name="Racer", kind="player"),
+                        EntitySpec(name="RivalOne", kind="enemy", count=1)])
+        apply_scene(s_on, scene,
+                   cfg={"embedding_select": True, "embedding_weight": 2.0})
+        assert s_on.entities[1].instance_positions != []
+
+    def test_apply_scene_threads_the_calibrated_default_weight(self, monkeypatch):
+        """cfg={"embedding_select": True} with no explicit weight must apply
+        _DEFAULT_EMBED_WEIGHT (0.5), not 0.0 and not some larger unsafe
+        number — verified end-to-end through apply_scene, not just
+        bind_score directly, using the same kind-alone pair and measured
+        similarity as the calibration script's Case 1."""
+        monkeypatch.setattr("src.unity_semantic_embed.text_similarity",
+                            lambda *a, **kw: 0.709)
+        s = _schema([EntitySpec(name="Rivals", kind="vehicle")])
+        apply_scene(s, _scene(_group("Vehicle", "vehicle.fbx")),
+                   cfg={"embedding_select": True})
+        assert "Rivals" not in authored_models(s)
+
+
 class TestUncoveredReport:
     def test_entities_the_layout_misses_are_named(self):
         """Catalog fallback is by design, but silent it reads as 'the pipeline

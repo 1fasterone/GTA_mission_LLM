@@ -1554,7 +1554,8 @@ class UnityPipeline:
         # the layout. See src/unity_scenebind.py.
         if scene:
             _n_before_scene = len(schema.entities)
-            for msg in apply_scene(schema, scene):
+            _scenebind_cfg = self.config.get("scenebind", {}) or {}
+            for msg in apply_scene(schema, scene, cfg=_scenebind_cfg):
                 self._fix(msg)
             # Injected authored entities did not exist when the scene subsets
             # were reconciled, so a schema whose scenes declare explicit entity
