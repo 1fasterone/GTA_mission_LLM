@@ -70,6 +70,19 @@ _W_ROLE = 8.0
 # containment rule starts firing on noise ("car" inside "cargo").
 _CONTAIN_MIN = 4
 
+# Embedding-based refinement (opt-in, scenebind.embedding_select — see
+# docs/COMPILER_AUDIT.md Gap E / solution #7, src/unity_semantic_match.py).
+# CAUTION, unlike unity_entity_asset_resolver's analogous weight: this term
+# has no hard pre-gate the way _score() does there — it is summed directly
+# alongside the keyword terms below and compared against MIN_BIND_SCORE. Too
+# high a value can let a kind-word-only match cross the threshold on
+# semantic similarity alone, reopening the exact failure MIN_BIND_SCORE was
+# raised to prevent (test_kind_alone_is_below_the_threshold). Calibrated
+# against tools/calibrate_scenebind_embedding.py, which measures exactly
+# this case and computes a provably-safe upper bound — do not raise this
+# past what that script confirms.
+_DEFAULT_EMBED_WEIGHT = 0.5
+
 # Words that say nothing about WHICH model this is.
 _STOPWORDS = frozenset({
     "the", "a", "an", "of", "and", "or", "with", "for", "in", "on", "at",
@@ -148,9 +161,12 @@ def _answers_to_role(entity: EntitySpec, role: str) -> bool:
     return bool(tag) and entity.tag == tag
 
 
-def bind_score(group: dict, entity: EntitySpec, *, use_role: bool = True) -> float:
+def bind_score(group: dict, entity: EntitySpec, *, use_role: bool = True,
+               embed_weight: float = 0.0) -> float:
     """How strongly this authored model answers to this entity. Deterministic:
-    pure set arithmetic over declared text, no RNG.
+    pure set arithmetic over declared text, no RNG (plus an optional,
+    off-by-default embedding term — see below — itself a pure function of
+    its inputs).
 
     A group that declares a ROLE is judged on that first: it scores _W_ROLE
     against an entity already holding that job and is VETOED outright against
@@ -162,6 +178,13 @@ def bind_score(group: dict, entity: EntitySpec, *, use_role: bool = True) -> flo
     the veto must not apply: a rival taking a spare bike from a `player_`
     group shares the machine, not the job, and vetoing that would break the
     starting grid the spill mechanism exists for.
+
+    `embed_weight` (default 0.0 — the embedder is never even loaded at the
+    default) adds cosine(bge-embed(group text), bge-embed(entity text)) —
+    see src/unity_semantic_match.py — as one more additive term, after
+    every keyword signal above and after both early-return points (the role
+    veto, the "nothing to match" abstention), so it can only ever refine a
+    score those are already free to compute, never bypass them.
     """
     role = (group.get("role") or "").lower() if use_role else ""
     if role:
@@ -184,10 +207,17 @@ def bind_score(group: dict, entity: EntitySpec, *, use_role: bool = True) -> flo
         score += _W_QUERY
     if _overlap(gterms, _terms(entity.kind)):
         score += _W_KIND
+    if embed_weight > 0.0:
+        from .unity_semantic_embed import text_similarity
+        from .unity_semantic_match import entity_embedding_text, group_embedding_text
+        sim = text_similarity(group_embedding_text(group),
+                              entity_embedding_text(entity, entity.kind))
+        if sim is not None and sim > 0.0:
+            score += embed_weight * sim
     return score
 
 
-def _plan(scene: dict, schema: UnitySchema
+def _plan(scene: dict, schema: UnitySchema, *, embed_weight: float = 0.0
           ) -> list[tuple[int, Optional[int], list[int]]]:
     """Assign groups to entities. Returns
     [(group_index, primary_entity_index | None, spill_entity_indices)] in
@@ -220,10 +250,10 @@ def _plan(scene: dict, schema: UnitySchema
     spill_scores: dict[tuple[int, int], float] = {}
     for gi, g in enumerate(groups):
         for ei, e in enumerate(entities):
-            s = bind_score(g, e)
+            s = bind_score(g, e, embed_weight=embed_weight)
             if s >= MIN_BIND_SCORE:
                 scores[(gi, ei)] = s
-            s2 = bind_score(g, e, use_role=False)
+            s2 = bind_score(g, e, use_role=False, embed_weight=embed_weight)
             if s2 >= MIN_BIND_SCORE:
                 spill_scores[(gi, ei)] = s2
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0][0], kv[0][1]))
@@ -314,17 +344,26 @@ def _apply_role(entity: EntitySpec, role: str) -> Optional[str]:
             + ", ".join(parts))
 
 
-def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
+def apply_scene(schema: UnitySchema, scene: dict, cfg: Optional[dict] = None) -> list[str]:
     """Bind `scene` onto `schema` in place. Returns fixer-style log messages.
 
     Call AFTER the concept-entity rescue and path normalization (so the entity
     list is final and world coordinates are settled) and BEFORE
     src/unity_layout.py's compute_layout (so it sees the authored groups as
     occupied space).
+
+    `cfg` (config `scenebind:` section) is None/absent/disabled by default —
+    every existing caller keeps today's keyword-only behavior byte-for-byte.
+    See _DEFAULT_EMBED_WEIGHT's docstring for the one real risk this opt-in
+    embedding term carries and how the default is meant to guard against it.
     """
     groups = scene.get("groups") or []
     if not groups:
         return []
+
+    _cfg = cfg or {}
+    embed_weight = (float(_cfg.get("embedding_weight", _DEFAULT_EMBED_WEIGHT))
+                    if _cfg.get("embedding_select") else 0.0)
 
     msgs: list[str] = []
     is_2d = schema.game_type in ("2D", "2d_topdown")
@@ -365,7 +404,7 @@ def apply_scene(schema: UnitySchema, scene: dict) -> list[str]:
         if ys and min(ys) == max(ys) and ys[0]:
             e.elevation = round(float(ys[0]), 3)
 
-    for gi, ei, spill in _plan(scene, schema):
+    for gi, ei, spill in _plan(scene, schema, embed_weight=embed_weight):
         g = groups[gi]
 
         if g.get("type") == "sprite" and not is_2d:

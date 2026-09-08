@@ -350,7 +350,7 @@ spawn side of it).
 
 ### TIER 2 — Consistency
 
-#### Gap E — The Embeddings Are Already Installed · ✅ fixed (the audio-dispatch half)
+#### Gap E — The Embeddings Are Already Installed · ✅ fixed (both halves)
 **Verdict:** KEYWORD/SUBSTRING
 
 Model/asset resolution and scene binding match by weighted token overlap and substring
@@ -370,11 +370,59 @@ left-boundary anchor blocks) — applied to `keyword_archetype()` and all six de
 checks in `archetype_params()`. New regression tests lock in both the collision fix
 ("campfire" no longer false-matches "fire") and plural tolerance.
 
-**Still open:** reusing `chromadb`/`fastembed` for model/asset resolution
-(`unity_entity_asset_resolver.py`) and scene binding (`unity_scenebind.py`) themselves — a
-bigger, determinism-sensitive change (the index build must stay offline/deterministic, and
-any embedding score should blend with, not replace, the existing deterministic weights) —
-not attempted this pass. See the solutions table.
+**Fixed (remaining half):** model/asset resolution (`unity_entity_asset_resolver.py`) and
+scene binding (`unity_scenebind.py`) now blend cosine similarity into their existing
+deterministic keyword scorers — opt-in (`assets.embedding_select` / `scenebind.
+embedding_select`, both default `false`), refinement-only, offline/deterministic. Deliberately
+**not** `chromadb`, despite the audit's original wording: measured against the real code,
+neither call site looks like a ChromaDB workload. The local catalog
+(`lookups/unity/asset_catalog.json`) has 2953 Kenney entries — well under where this repo's
+own RAG corpus (`rag/query.py`) says an approximate HNSW index starts earning its keep
+(~20k). Authored scenes are tiny-N (5-11 entities against 1-4 groups) with text that's novel
+every run — no stable corpus to index at all. A precomputed, L2-normalized embedding matrix
+plus one vectorized matrix-vector cosine per resolve call (new `src/unity_semantic_match.py`,
+cached to gitignored `lookups/unity/asset_catalog_embeddings.{npz,meta.json}`, built via
+`unity-catalog --embed`) is simpler, sub-millisecond at this scale, and avoids stacking a
+second nondeterminism surface (HNSW's approximate recall) on top of the one this tier already
+protects (`_stable_seed`'s seeded-softmax variety rotation). Both tiers reuse
+`unity_semantic_embed.text_similarity()` (PR #172) as the embedding primitive — zero new
+dependencies.
+
+Two blend points, both structurally outside every existing hard gate:
+- **Catalog** (`unity_entity_asset_resolver._final_score`): the embedding term is added only
+  inside the existing `if s > 0.0:` guard — i.e. only after the keyword scorer's own strong-hit
+  gate already qualified the candidate. A zero-keyword-overlap entry can never be rescued by
+  embedding similarity alone, at any weight (locked in by
+  `TestEmbeddingRefinement::test_embedding_can_only_refine_never_qualify`, mocking
+  similarity=1.0 for a keyword-disqualified aircraft model against a tree-type query and
+  confirming it is still never picked).
+- **Scene-bind** (`unity_scenebind.bind_score`): the term is added last, after the declared-role
+  veto/bonus and all four keyword-overlap additions — the veto stays a hard `return 0.0` before
+  the embedding term is ever reached (`test_conflicting_role_veto_survives_embedding_enabled`,
+  similarity=1.0, weight=10.0, still exactly `0.0`). Unlike the catalog tier, `bind_score` sums
+  terms directly against `MIN_BIND_SCORE` with no pre-gate — the one real risk this design
+  carries, closed not by inspection but by a purpose-built calibration script
+  (`tools/calibrate_scenebind_embedding.py`) that measures the exact
+  `test_kind_alone_is_below_the_threshold` scenario live: a bare `kind="vehicle"` match against
+  `group="Vehicle"/"vehicle.fbx"` scores `text_similarity=0.709`, giving a provable safe upper
+  bound of `embedding_weight < (MIN_BIND_SCORE - _W_KIND) / 0.709 ≈ 1.41`. The shipped default
+  (`0.5`) leaves ample margin (`bind_score` on that exact pair: `1.354`, still under
+  `MIN_BIND_SCORE=2.0`) and, measured against a genuine positive control (zero keyword overlap,
+  `text_similarity=0.652`), can only contribute `+0.33` at that weight — nowhere near enough to
+  manufacture a bind from nothing.
+
+`tools/calibrate_catalog_embedding.py` calibrated the catalog-tier default the same way:
+genuinely-correct pairs (Trees/pine-tree, Crate/crate-*) measured `0.76-0.89`; the
+cross-domain near-miss `_passes_kind_scope`'s own docstring names (ScoreBoard sharing "board"
+with `skateboard.fbx`) measured `0.578` — separated from the good pairs, confirming that
+specific bug stays closed by `_passes_kind_scope`'s structural filter rather than a score
+threshold. Both `config.example.yaml` blocks cite these measured numbers directly, not
+placeholders. New tests: `tests/test_unity_semantic_match.py` (21, the shared text
+builders/cache/matrix machinery), plus embedding-refinement classes added to
+`tests/test_entity_asset_resolver.py` (6) and `tests/test_unity_scenebind.py` (8), plus new
+`tests/test_cli_unity_catalog.py` (4, the `--embed` flag). Every disabled-path test confirms
+byte-identical output to today and that the embedder is never even loaded when the config key
+is absent/false.
 
 #### Gap F — Built by Hand, Not by the Plan · ⬜ open
 **Verdict:** DESIGNED, NOT WIRED
@@ -469,7 +517,7 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 | 4 | Automated render + perceptual diff | Gap C | ●●○ | ●●● | — (additive to manifold tests) | △ | ✅ shipped (opt-in; structural black/magenta checks, not a golden-reference diff) |
 | 5 | Unity PlayMode automated E2E smoke | Gap C | ●●● | ●●● | manual checklist → CI gate | △ | ✅ shipped (opt-in) |
 | 6 | Grid/graph BFS reachability | Gap D | ●●○ | ●●○ | AABB + 1-D reach-gap walk | △ | ✅ shipped |
-| 7 | Reuse chromadb+fastembed for model resolution & scene binding | Gap E | ●●○ | ●●○ | weighted-token scorer / substring binder | △ | ⬜ open |
+| 7 | Reuse chromadb+fastembed for model resolution & scene binding | Gap E | ●●○ | ●●○ | weighted-token scorer / substring binder | △ | ✅ shipped (opt-in; blend, not chromadb — see Gap E) |
 | 8 | Mirror the `\b`-bounded regex guard | Gap E | ●○○ | ●●○ | unguarded `any(w in p for w in words)` | ✓ | ✅ shipped |
 | 9 | Parametric CAD for mechanical parts | Gap F | ●●○ | ●●● | mechanical-part share of the bmesh toolkit | ✓ | ⬜ open |
 | 10 | Generative-mesh APIs for organic parts | Gap F | ●●● | ●●● | — (sits beside the sculpted toolkit) | — | ⬜ open |
@@ -610,3 +658,22 @@ corrected number, not the optimistic one.
   `tests/test_unity_briefparse.py`. Full suite: 4134 passed, 1 skipped, same one pre-existing
   unrelated `tests/test_outputs_smoke.py` failure (confirmed via `git stash` to predate this
   change).
+- **2026-09-08 (Gap E, solution #7)** — the remaining half of Gap E shipped: embedding-based
+  refinement for catalog matching (`unity_entity_asset_resolver.py`) and scene binding
+  (`unity_scenebind.py`), both opt-in and off by default. Deliberately **not** `chromadb`
+  (see the write-up above for the scale/corpus-stability analysis) — new
+  `src/unity_semantic_match.py` reuses PR #172's `unity_semantic_embed.text_similarity()`
+  instead, with a precomputed/cached matrix for the catalog tier
+  (`unity-catalog --embed`) and direct pairwise calls for the tiny-N scene-bind tier. Both
+  blend points sit structurally outside every existing hard gate (the catalog scorer's
+  strong-hit gate, the scene-bind role veto), verified live by two purpose-built calibration
+  scripts (`tools/calibrate_catalog_embedding.py`, `tools/calibrate_scenebind_embedding.py`)
+  against the real bge-small embedder, not guessed — `config.example.yaml`'s
+  `embedding_weight: 0.5` defaults for both `assets:` and the new `scenebind:` block cite the
+  measured numbers directly. New tests: `tests/test_unity_semantic_match.py` (21),
+  `TestEmbeddingRefinement` added to `tests/test_entity_asset_resolver.py` (6) and
+  `tests/test_unity_scenebind.py` (8), new `tests/test_cli_unity_catalog.py` (4) — 39 new
+  tests total. Full suite: 4359 passed, 1 skipped, same one pre-existing unrelated
+  `tests/test_outputs_smoke.py` failure (a stale gitignored `output/` artifact from a
+  concurrent session's GTA5 run, confirmed unrelated — this pass never touches the GTA5
+  backend).
