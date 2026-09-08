@@ -247,6 +247,19 @@ def extract_demands(brief: str, nouns: Iterable[str]) -> list[Demand]:
     return out
 
 
+# "rather than an arena shooter or open-world exploration title", "not a
+# stealth game", "instead of tank controls" — a compound inside one of these
+# clauses names something the brief is explicitly RULING OUT, not asking
+# for. Confirmed live: Grandma's Antique Shop's own auto-expanded restatement
+# paragraph reads "...a cramped interior space rather than an arena shooter
+# or open-world exploration title" — demanding "open-world" survive into a
+# shop-interior brawler schema would be grading the brief's own negation as
+# a loss.
+_NEGATION_CUE_RE = re.compile(
+    r"\b(?:rather than|instead of|as opposed to|not an?|isn't|is not|"
+    r"never an?|without)\b")
+
+
 def extract_free_modifiers(brief: str) -> list[str]:
     """Hyphenated compounds anywhere in the brief.
 
@@ -254,16 +267,30 @@ def extract_free_modifiers(brief: str) -> list[str]:
     this module managed to bind them to a noun. Reported separately so a
     binding miss never silently drops the word — the failure mode being fixed
     is losing things quietly.
+
+    A compound is dropped only when EVERY sentence it appears in negates it
+    (see `_NEGATION_CUE_RE`) — one affirming mention elsewhere in the brief
+    still counts as a real demand.
     """
-    seen: list[str] = []
-    for m in _HYPHEN_COMPOUND_RE.finditer(brief.lower()):
-        tok = m.group(1)
-        if tok in _STOPWORDS or tok in seen:
-            continue
-        if all(p in _STOPWORDS for p in tok.split("-")):
-            continue
-        seen.append(tok)
-    return seen
+    order: list[str] = []
+    affirmed: set[str] = set()
+    negated: set[str] = set()
+    for sentence in _SENTENCE_SPLIT_RE.split(brief.lower()):
+        cue = _NEGATION_CUE_RE.search(sentence)
+        cue_pos = cue.start() if cue else None
+        for m in _HYPHEN_COMPOUND_RE.finditer(sentence):
+            tok = m.group(1)
+            if tok in _STOPWORDS:
+                continue
+            if all(p in _STOPWORDS for p in tok.split("-")):
+                continue
+            if tok not in order:
+                order.append(tok)
+            if cue_pos is not None and m.start() > cue_pos:
+                negated.add(tok)
+            else:
+                affirmed.add(tok)
+    return [t for t in order if t in affirmed or t not in negated]
 
 
 # ── Survival ──────────────────────────────────────────────────────────────────

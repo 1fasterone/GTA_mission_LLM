@@ -208,6 +208,28 @@ def _make_uuid(pn: str, seed: str) -> str:
     return f"{h[:8]}-{h[8:12]}-4{h[13:16]}-a{h[17:20]}-{h[20:32]}"
 
 
+_PASCAL_WORD_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _to_display_title(name: str, fallback: str = "Untitled") -> str:
+    """Best-effort human title from a PascalCase project_name.
+
+    Mirror of micro_pipeline.to_display_title — kept local to avoid a
+    circular import, same convention as to_pascal above. `project_name` is
+    an IDENTIFIER (folder/class-safe: no spaces, no apostrophe); a template
+    that shows it to the PLAYER shows the identifier instead of a title.
+    Confirmed live — Grandma's Antique Shop's own main menu read
+    "GrandmaSAntiqueShopIsARoguelikeDungeon" as its title text. This only
+    recovers word boundaries, not the original punctuation ("Grandma's"
+    comes back as two words, "Grandma" and "S") — still far more readable
+    than the identifier it is built from.
+    """
+    if not name:
+        return fallback
+    words = _PASCAL_WORD_BOUNDARY_RE.sub(" ", name).split()
+    return " ".join(words) if words else fallback
+
+
 # ── Camera presets per game type ───────────────────────────────────────────────
 
 _CAMERA_PRESETS = {
@@ -3346,6 +3368,7 @@ class UnityProjectGenerator:
 
         base_ctx = {
             "project_name":      pn,
+            "display_title":     _to_display_title(pn),
             "company_name":      schema.company_name,
             "description":       schema.description,
             # Which subsystem kinds the composer owns — lets IR-driven scripts
