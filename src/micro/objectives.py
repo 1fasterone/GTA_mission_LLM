@@ -15,7 +15,7 @@ from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, apply_extensions_safe_block,
-    UNITY_EXTRA_INSTRUCTIONS, harden_against_template,
+    UNITY_EXTRA_INSTRUCTIONS, harden_against_template, neutralize_unavailable_names,
 )
 
 
@@ -209,6 +209,23 @@ class ObjectivesPipeline(UnityMicroPipeline):
         # Derived fact for Objectives.cs.j2's `{% if "survive" in
         # s.objective_types %}` gate — see the field's own docstring.
         schema.objective_types = sorted({o.type for o in schema.objectives if o.type})
+        # `_surviveTimer`/`_missionComplete`/`_byId` are the template's own
+        # private bookkeeping (Objectives.cs.j2's Update()) — never a legal
+        # target for authored code, which already has a public surface for
+        # the same information (ReportProgress, MissionComplete,
+        # ActiveObjective). lint_extensible only blocks a NEW field/method
+        # colliding with these names; it never inspected authored
+        # awake_extra/update_extra/fixed_update_extra/extra_methods BODIES for
+        # a bare reference. Live regression, DefendTheShopObjectives.cs(129):
+        # authored update_extra re-decremented `_surviveTimer` (valid C# —
+        # the field really exists) and fired
+        # OnObjectiveBlocked("obj_1", "Morning Audit Failed") once it went
+        # negative, which happens within ~1s of play and then every frame
+        # forever, on top of (not instead of) the template's own once-a-
+        # second progress tick — the brief's actual audit-failure mechanic
+        # already lives in InsuranceAudit, so this was pure invention.
+        neutralize_unavailable_names(
+            schema, {"_surviveTimer", "_missionComplete", "_byId"})
         # hoist_field_inits: this generator's template renders awake_extra,
         # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,

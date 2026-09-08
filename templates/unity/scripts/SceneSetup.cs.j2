@@ -7,6 +7,11 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
+{%- set needs_navmesh = "navmesh" in features %}
+{%- if needs_navmesh %}
+using System.Collections;
+using Unity.AI.Navigation;
+{%- endif %}
 {%- set pal = palette_rgb -%}
 {%- set ns = namespace(start=None, menu=None) -%}
 {%- for sc in scenes -%}
@@ -54,7 +59,30 @@ public class SceneSetup : MonoBehaviour
         string scene = SceneManager.GetActiveScene().name.ToLowerInvariant();
         if (scene.Contains("menu")) BuildMenu();
         else                        BuildGameplayUI(scene);
+{%- if needs_navmesh %}
+        StartCoroutine(BakeNavMeshNextFrame());
+{%- endif %}
     }
+{% if needs_navmesh %}
+    /// <summary>Bakes a runtime NavMesh once every object's Start() has run
+    /// (EntitySpawner's shelves/props included — waiting one frame is
+    /// cheaper and more robust than chasing execution-order numbers), so
+    /// NavMeshAgent-driven AI has a surface to path on. No .unity scene ships
+    /// a pre-baked NavMesh here — a procedurally-reshuffled layout would go
+    /// stale on night one anyway — so this is the only bake that ever runs.
+    /// Without it every NavMeshAgent logs SetDestination/GetRemainingDistance
+    /// errors every frame and never moves (confirmed live, Grandma's Antique
+    /// Shop: "navmesh" was correctly added to Packages/manifest.json but
+    /// nothing ever called BuildNavMesh()).</summary>
+    private IEnumerator BakeNavMeshNextFrame()
+    {
+        yield return null;
+        var surface = FindFirstObjectByType<NavMeshSurface>();
+        if (surface == null)
+            surface = new GameObject("__RuntimeNavMesh").AddComponent<NavMeshSurface>();
+        surface.BuildNavMesh();
+    }
+{% endif %}
 
     void Start()
     {
@@ -99,7 +127,7 @@ public class SceneSetup : MonoBehaviour
     {
         var bg = MakePanel("MenuBG", Vector2.zero, Vector2.one, _menuBg);
 
-        MakeText(bg, "GameTitle", "{{ project_name }}", 68,
+        MakeText(bg, "GameTitle", "{{ display_title }}", 68,
             new Vector2(0.1f, 0.68f), new Vector2(0.9f, 0.82f), _titleCol, true);
 {% if tagline %}
         MakeText(bg, "Tagline", "{{ tagline[:90] }}", 22,
@@ -114,7 +142,7 @@ public class SceneSetup : MonoBehaviour
             new Vector2(0.35f, 0.30f), new Vector2(0.65f, 0.40f),
             () => Application.Quit(), 32);
 
-        MakeText(bg, "Version", "{{ project_name }}  —  v0.1", 16,
+        MakeText(bg, "Version", "{{ display_title }}  —  v0.1", 16,
             new Vector2(0f, 0f), new Vector2(0.5f, 0.06f),
             new Color(0.4f, 0.4f, 0.4f, 1f), false);
     }
@@ -183,6 +211,16 @@ public class SceneSetup : MonoBehaviour
         t.text = content; t.fontSize = fontSize; t.alignment = TextAnchor.MiddleCenter;
         t.color = color; t.font = DefaultFont;
         t.fontStyle = bold ? FontStyle.Bold : FontStyle.Normal;
+        // Best Fit: project_name-derived strings (the title, the version line)
+        // vary wildly in length, and a fixed-height anchored band clips
+        // whatever a 2-line wrap does not fit at the requested size rather
+        // than shrinking to it. Confirmed live: Grandma's Antique Shop's own
+        // title wrapped to 2 lines at size 68 and the second line — "Dungeon"
+        // — rendered outside the title band's fixed height. Never GROWS past
+        // fontSize, only shrinks, so short labels/buttons are unaffected.
+        t.resizeTextForBestFit = true;
+        t.resizeTextMinSize = 10;
+        t.resizeTextMaxSize = fontSize;
         return t;
     }
 

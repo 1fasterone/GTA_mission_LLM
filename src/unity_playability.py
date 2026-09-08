@@ -108,6 +108,10 @@ _CHECK_SEVERITY: dict[str, str] = {
     "camera":            WARN,
     "interactables":     WARN,
     "scene_population":  WARN,
+    # ERROR, matching brief_entities: an entity no scene_spec ever names is
+    # not degraded content (concept_fidelity's WARN territory), it is
+    # content that is not in the game anywhere, at all.
+    "entity_scene_coverage": ERROR,
     "unbaked_gameplay":  WARN,
     "audio":             WARN,
     "enemy_wiring":      WARN,
@@ -883,6 +887,47 @@ def _check_scene_population(schema: UnitySchema,
     rep.checks["scene_population"] = not empty
 
 
+def _check_entity_scene_coverage(schema: UnitySchema,
+                                 rep: PlayabilityReport) -> None:
+    """An entity absent from every scene_spec's subset never spawns, in any
+    scene, for the whole project — a distinct failure from
+    `_check_scene_population` (which asks "does each scene host SOME
+    content", never "does every declared entity have a home"). Confirmed
+    live, Grandma's Antique Shop: GrandmaPetunia, TeaStation,
+    UprightPlayerPiano, PorcelainCat, GrandfatherClock, HauntedMusicBox,
+    PriceTag and MuseumPedestal — 8 of the schema's 14 named entities — were
+    never listed by any of the project's 5 scene_specs, so none of them
+    spawned anywhere in the whole game. `_reconcile_scene_specs`
+    (src/unity_pipeline.py) already restores player/weapon/enemy kinds into
+    every gameplay scene and a mission's objective targets into that
+    mission's own scene, but nothing plays that role for an npc/prop/
+    collectible nobody explicitly scoped anywhere — same "abstain rather
+    than guess" rule as the rest of that function, so this reports the gap
+    instead of picking a scene for it.
+    """
+    specs = schema.scene_specs or []
+    if not specs:
+        _ungraded(rep, "entity_scene_coverage",
+                  "no scene_specs declared — every scene hosts everything")
+        return
+    if any(s.entities is None for s in specs):
+        # At least one scene hosts EVERY group; nothing can be orphaned.
+        rep.checks["entity_scene_coverage"] = True
+        return
+    covered: set[str] = set()
+    for s in specs:
+        covered.update(s.entities or [])
+    orphans = [e.name for e in schema.entities if e.name and e.name not in covered]
+    if orphans:
+        rep.findings.append(Finding(
+            "entity_scene_coverage", ERROR,
+            f"{len(orphans)}/{len(schema.entities)} entities are named by NO "
+            f"scene_spec ({', '.join(orphans[:6])}) — fully authored but "
+            "never spawned anywhere in the project",
+            "Step 3 schema-fill (scene_specs[].entities)"))
+    rep.checks["entity_scene_coverage"] = not orphans
+
+
 def _check_objective_scene_reachability(schema: UnitySchema,
                                         rep: PlayabilityReport) -> None:
     """A mission's objective target must actually spawn in the scene that
@@ -1363,6 +1408,7 @@ _CHECKS = (
     _check_custom_script_bodies,
     _check_interactables_tagged,
     _check_scene_population,
+    _check_entity_scene_coverage,
     _check_objective_scene_reachability,
     _check_spawn_clear,
     _check_content_reachable,

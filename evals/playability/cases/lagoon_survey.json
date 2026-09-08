@@ -3,7 +3,7 @@
   "schema": "tests/fixtures/lagoon_survey.schema.json",
   "input": "engineer-authored",
   "provenance": "Hand-written layout fixture (tests/fixtures/README.md). Tests Steps 4-7 only.",
-  "notes": "BoundedVolume water: locomotion=swim, no descent framing and no altitude figure anywhere, so it also exercises the layout's named-default warning. Surface-marked survey boat.",
+  "notes": "BoundedVolume water: locomotion=swim, no descent framing and no altitude figure anywhere, so it also exercises the layout's named-default warning. Surface-marked survey boat. entity_scene_coverage added to ungraded_ok (score unchanged): no scene_specs declared, so nothing can be orphaned — see evals/playability/cases/dropzone_arcade.json's note for what the check catches when scene_specs IS declared.",
   "floor": {
     "score": 97,
     "must_pass": [
@@ -26,6 +26,7 @@
     ],
     "ungraded_ok": [
       "brief_entities",
+      "entity_scene_coverage",
       "mission_loop",
       "objective_targets",
       "pointer_targets",

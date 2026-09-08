@@ -69,6 +69,10 @@ LIMITS (keep JSON concise):
                       "entities": ["<entity names active in this scene>"]}}
                      Omit "entities" to spawn every group there; use it whenever a
                      scene should host a SUBSET (a boss scene, an empty menu-like hub).
+                     Every entity group you write below MUST appear in at least one
+                     scene_spec's "entities" list (or in a scene_spec that omits
+                     "entities" entirely) — an entity named nowhere never spawns
+                     anywhere, in any scene, for the rest of the project.
 - story_beats:       max 8 entries (omit array if no story-beat progression is needed)
 - audio_tracks:      max 8 entries (omit array if no music/audio design is needed)
 - procedural_meshes: max 4 entries (omit array if no runtime geometry is needed)

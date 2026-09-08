@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 {% for u in s.extra_usings %}
 using {{ u }};
@@ -52,8 +53,19 @@ public class {{ s.name }} : MonoBehaviour
     public bool Finished   => _step >= steps.Count;
     public Step CurrentStep => Finished || steps.Count == 0 ? null : steps[_step];
 
+    // Static, not per-instance: GameRules is baked into EVERY scene (not just
+    // the one the run starts in) and carries no DontDestroyOnLoad of its own,
+    // so a fresh instance — and a fresh `_briefingOpen = true` — was built
+    // every single scene load. Confirmed live, Grandma's Antique Shop: the
+    // full "Defend the Shop / Survive the night / Destroy raiders / Defeat
+    // The Appraiser" modal re-opened over the Community Center hub and the
+    // Museum Wing exactly as it had over the dungeon, because each is its
+    // own scene with its own GameRules. A static survives scene loads within
+    // one play session (only a domain reload/app restart clears it), so this
+    // reads as "shown once for this run" without needing new save state.
+    private static bool _briefingShown;
     private int  _step;
-    private bool _briefingOpen = {{ "true" if variant == "guided" else "false" }};
+    private bool _briefingOpen = {{ "true" if variant == "guided" else "false" }} && !_briefingShown;
     private int  _lastCompleted = -1;
 
     // The objectives tracker, found by DUCK TYPE rather than by class name:
@@ -68,8 +80,26 @@ public class {{ s.name }} : MonoBehaviour
 
     private void Awake()
     {
+        // This micro is composed once per PROJECT (unity_compose.py's core
+        // subsystem list), not per gameplay scene, and is present in every
+        // scene the way GameHud/PauseMenu are — including a menu scene, which
+        // has no mission running. Without this guard the FIRST thing a new
+        // player ever saw was this micro's own full-screen mission briefing
+        // covering the Main Menu's title/START/QUIT (SceneSetup.cs's own
+        // BuildMenu()), confirmed live on Grandma's Antique Shop: the
+        // "Defend the Shop" modal rendered on top of the menu at first
+        // launch, before the player had even pressed the menu's own START.
+        // Same scene-name heuristic SceneSetup.cs.j2 already uses.
+        if (SceneManager.GetActiveScene().name.ToLowerInvariant().Contains("menu"))
+            return;
         BindObjectives();
         BuildUI();
+        // BuildUI() always constructs the panel active; only Begin() (the
+        // START button) ever hides it. On a scene load after the briefing
+        // has already been shown this session, _briefingOpen is already
+        // false here — without this, the modal would render regardless.
+        if (!_briefingOpen && _briefingPanel != null)
+            _briefingPanel.gameObject.SetActive(false);
         Refresh();
 {{ inject.lifecycle(s.awake_extra) }}
     }
@@ -121,6 +151,7 @@ public class {{ s.name }} : MonoBehaviour
     public void Begin()
     {
         _briefingOpen = false;
+        _briefingShown = true;
         if (_briefingPanel != null) _briefingPanel.gameObject.SetActive(false);
         Refresh();
     }

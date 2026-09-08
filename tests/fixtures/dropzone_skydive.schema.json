@@ -13,8 +13,7 @@
   "scene_specs": [
     {
       "name": "ColoradoFreefall",
-      "description": "Open Rocky Mountain jump, blue-sky daylight, formation objective from aircraft exit down to the landing pad.",
-      "entities": []
+      "description": "Open Rocky Mountain jump, blue-sky daylight, formation objective from aircraft exit down to the landing pad."
     }
   ],
   "features": ["cinemachine", "input_system", "post_processing"],

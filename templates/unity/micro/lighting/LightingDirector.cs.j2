@@ -128,11 +128,21 @@ public class {{ s.name }} : MonoBehaviour
 {% for l in s.lights %}
 {% if l.role == "key" %}
         // key — adopted from the scene when one already exists, so the
-        // time-of-day sun baked into the scene YAML stays authoritative.
+        // time-of-day sun's POSITION/ROTATION baked into the scene YAML stays
+        // authoritative. Its COLOR does not: an adopted sun keeps whatever
+        // color an earlier, palette-blind pass gave it (confirmed live,
+        // Grandma's Antique Shop: a cold blue 0.5/0.6/0.9 sun survived
+        // Apply() untouched, next to three warm practical lights this same
+        // rig created moments later — "warm lamplight against cold shadows"
+        // read as "cold light, warm light, cold light" instead). Intensity
+        // already overrides the adopted light up to this rig's own floor;
+        // color gets the same treatment so "adopted" only ever changes
+        // whether a GameObject is reused, never which look wins.
         if (_key != null)
         {
             if (_key.intensity < {{ "%.4f"|format(l.intensity) }}f)
                 _key.intensity = {{ "%.4f"|format(l.intensity) }}f;
+            _key.color = new Color({{ "%.4f"|format(l.color_r) }}f, {{ "%.4f"|format(l.color_g) }}f, {{ "%.4f"|format(l.color_b) }}f);
             _lights.Add(_key);
         }
         else

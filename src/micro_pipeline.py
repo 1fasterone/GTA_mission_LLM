@@ -84,6 +84,28 @@ def to_pascal(s: str, fallback: str = "Generated") -> str:
     return result
 
 
+_PASCAL_WORD_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def to_display_title(s: str, fallback: str = "Untitled") -> str:
+    """Best-effort human title from a PascalCase identifier.
+
+    The inverse of `to_pascal`, which is lossy — spaces and punctuation are
+    already gone by the time this runs, so this recovers WORD BOUNDARIES
+    only, not the original text verbatim ("Grandma's" comes back as two
+    words, "Grandma" and "S"). Still far more readable than the identifier
+    it is built from, which is the bug this exists to fix: `to_pascal` is
+    for identifiers (class/folder/project names), and a template that shows
+    `project_name` to the PLAYER shows the identifier instead of a title.
+    Confirmed live — Grandma's Antique Shop's own main menu read
+    "GrandmaSAntiqueShopIsARoguelikeDungeon" as its title text.
+    """
+    if not s:
+        return fallback
+    words = _PASCAL_WORD_BOUNDARY_RE.sub(" ", s).split()
+    return " ".join(words) if words else fallback
+
+
 # ── Base class ────────────────────────────────────────────────────────────────
 
 class MicroPipeline(ABC):
