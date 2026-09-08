@@ -159,8 +159,14 @@ CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
   Referencing an undeclared variable (e.g. using `wheelSpeed` without declaring it)
   FAILS COMPILATION. extra_usings takes NAMESPACES only (UnityEngine.InputSystem,
   System.Collections.Generic) — never type names like AudioSource or ParticleSystem.
-  Reference other scripts via GetComponent / FindFirstObjectByType. Keep fragments under
-  ~40 lines each. C# only — never Python.
+  Reference other scripts via GetComponent / FindFirstObjectByType. GetComponent<T>()
+  and FindFirstObjectByType<T>() (and FindObjectOfType/FindObjectsOfType/
+  FindAnyObjectByType/FindObjectsByType) all require T to be a REAL C# class —
+  another script's name, or a real Unity component (Rigidbody, Light, etc). NEVER
+  put an entity's or a brief noun's name in there (e.g. FindFirstObjectByType<AntiqueMirror>()
+  when "AntiqueMirror" is just an entity, not a script) — entities are GameObjects,
+  not classes, and this fails compilation exactly like an undeclared extra_field type.
+  Keep fragments under ~40 lines each. C# only — never Python.
   extra_fields TYPES MUST BE DATA ONLY — a Unity/C# builtin (float, int, bool, string,
   Vector3, GameObject, Transform, List<T> of those, etc.) or, at most, a bare data name
   with NO methods of its own (an unrecognized type name auto-generates an EMPTY stub

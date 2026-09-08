@@ -10,6 +10,7 @@ fragments actually reach the rendered output and that bad fragments are cleaned.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,42 @@ def test_lint_closes_block_whose_brace_is_eaten_by_a_comment():
     # A real closer is appended AFTER the comment line that swallowed the first.
     assert out.splitlines()[-1].strip() == "}"
     assert _code_brace_depth(out) == 0
+
+
+# CS8070: control falling out of a switch statement's own FINAL section (as
+# opposed to CS0163, fallthrough between two cases) is also illegal in C# —
+# confirmed live, LithobornAscent DialogueSystem.cs(123).
+_SWITCH_MISSING_FINAL_BREAK = (
+    'switch (cycleName) {\n'
+    '    case "SporeWind":\n'
+    '        _wallReactionText = "Spores swirl around you.";\n'
+    '        break;\n'
+    '    default:\n'
+    '        _wallReactionText = "The Wall watches...";\n'
+    '}'
+)
+
+
+def test_lint_appends_missing_break_to_final_switch_case():
+    out = lint_code_fragment(_SWITCH_MISSING_FINAL_BREAK, what="x")
+    last_section = out.rsplit("default:", 1)[1]
+    assert re.search(r"\bbreak\s*;", last_section)
+
+
+def test_lint_leaves_already_correct_switch_untouched():
+    src = ('switch (x) {\n'
+           '    case 1:\n'
+           '        break;\n'
+           '    default:\n'
+           '        return;\n'
+           '}')
+    assert lint_code_fragment(src, what="x") == src
+
+
+def test_lint_fixes_empty_final_switch_case():
+    src = 'switch (x) {\n    case 1:\n        break;\n    default:\n}'
+    out = lint_code_fragment(src, what="x")
+    assert re.search(r"default:\s*\n?\s*break\s*;", out)
 
 
 @pytest.mark.parametrize("fragment,depth,why", [

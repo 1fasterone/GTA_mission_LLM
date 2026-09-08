@@ -210,7 +210,7 @@ _CLIMB_TAGS: frozenset[str] = frozenset({
     "holdable", "climbable", "grabbable", "handhold", "hold",
 })
 _CLIMB_KINDS: frozenset[str] = frozenset({
-    "handhold", "hold", "climbable", "ledge", "grip",
+    "handhold", "hold", "climbable", "ledge", "grip", "platform",
 })
 # Things that hang on the wall to hurt you. They interleave with the holds but
 # never count toward the reachable chain.

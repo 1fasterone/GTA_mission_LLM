@@ -419,6 +419,98 @@ def _balance_braces(text: str) -> str:
     return text
 
 
+# CS8070 ("Control cannot fall out of switch from final case label"): unlike
+# CS0163 (fallthrough BETWEEN cases, which the model reliably guards with its
+# own `break;`), C# also refuses to let control fall out the BOTTOM of a
+# switch STATEMENT's own last section — including an empty one — and nothing
+# here checked it. Confirmed live (LithobornAscent, 2026-09-07),
+# DialogueSystem.cs(123):
+#     switch (cycleName) {
+#         case "SporeWind": ...; break;
+#         default:
+#             _wallReactionText = "The Wall watches...";
+#     }                                    <- no break; CS8070
+# Scoped to the LAST top-level case/default label of each switch block only —
+# depth-tracked so a label inside a nested block (an `if`, a nested switch)
+# is never mistaken for a new section of THIS switch. Appending `break;` when
+# the section already ends safely some other way this scan cannot prove (a
+# trailing `}` from an if/else where every branch already jumps) costs at
+# worst an unreachable-code warning (CS0162), never a new error — so this
+# only skips insertion when the tail unambiguously already ends in a jump.
+_SWITCH_HEAD_RE = re.compile(r"\bswitch\s*\(")
+_CASE_LABEL_RE = re.compile(r"\bcase\b[^:{}]*?:|\bdefault\s*:")
+_JUMP_STATEMENT_TAIL_RE = re.compile(
+    r"(?:\bbreak\s*;|\bcontinue\s*;|\breturn\b[^;{}]*;|\bthrow\b[^;{}]*;"
+    r"|\bgoto\b[^;{}]*;)\s*$")
+
+
+def _strip_trailing_line_comments(text: str) -> str:
+    """Drop trailing blank/`//`-only lines, so a jump statement followed only
+    by a trailing comment still reads as ending in a jump."""
+    lines = text.splitlines()
+    while lines and (not lines[-1].strip() or lines[-1].strip().startswith("//")):
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _repair_switch_missing_final_break(text: str) -> str:
+    """Append `break;` to a switch statement's final section when control
+    would fall out the bottom instead of jumping. See the module comment
+    above for the confirmed-live shape and the CS0162-over-CS8070 tradeoff
+    that lets this stay a simple tail check rather than full reachability."""
+    if not text or "switch" not in text:
+        return text
+    changed_any = False
+    while True:
+        mask = _code_mask(text)
+        fixed_one = False
+        for m in _SWITCH_HEAD_RE.finditer(text):
+            if not mask[m.start()]:
+                continue
+            close_paren = _find_matching_close_paren(text, m.end())
+            if close_paren is None:
+                continue
+            brace_start = text.find("{", close_paren)
+            if brace_start == -1 or text[close_paren + 1:brace_start].strip():
+                continue
+            close_brace = _find_matching_brace_generic(text, brace_start, "{", "}", mask)
+            if close_brace < 0:
+                continue
+            body = text[brace_start + 1:close_brace]
+            body_mask = mask[brace_start + 1:close_brace]
+            last_label_end = None
+            depth = 0
+            i = 0
+            while i < len(body):
+                if body_mask[i]:
+                    ch = body[i]
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                    elif depth == 0:
+                        lm = _CASE_LABEL_RE.match(body, i)
+                        if lm:
+                            last_label_end = lm.end()
+                            i = lm.end()
+                            continue
+                i += 1
+            if last_label_end is None:
+                continue
+            tail = _strip_trailing_line_comments(body[last_label_end:])
+            if _JUMP_STATEMENT_TAIL_RE.search(tail):
+                continue
+            text = text[:close_brace] + "\n            break;\n        " + text[close_brace:]
+            changed_any = fixed_one = True
+            break
+        if not fixed_one:
+            break
+    if changed_any:
+        console.print("  [magenta]FIX[/]  appended a missing `break;` to a "
+                      "switch statement's final case (CS8070)")
+    return text
+
+
 # CS1056 ("Unexpected character '\'"): a fragment that arrives with JSON escape
 # sequences never decoded, so the whole body is one physical line carrying
 # literal backslash-n. Hit live on a grandma run,
@@ -1412,6 +1504,7 @@ def lint_code_fragment(text: str, *, what: str,
                       f"a surplus closer would close the enclosing class early")
         return ""
     text = _balance_braces(text)
+    text = _repair_switch_missing_final_break(text)
     text = _cap_lines(text, what=what)
     return text.strip()
 

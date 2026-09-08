@@ -2869,6 +2869,42 @@ class TestFieldTypedMemberCalls:
         _sanitize_invented_constructor_calls(s)
         assert "new OxygenManager" in s.update_extra
 
+    def test_invented_find_object_type_call_is_stripped(self):
+        # Live bug: MirrorSpawning.cs (Grandma's Antique Shop) —
+        # FindFirstObjectByType<AntiqueMirror>() where AntiqueMirror is the
+        # brief's ENTITY name, not a script anywhere in the project. CS0246.
+        from src.unity_generator import _sanitize_invented_find_object_type_calls
+        s = UnityScript(
+            name="MirrorSpawning", type="custom", description="d",
+            extra_methods=[{
+                "signature": "private void SpawnRaider()",
+                "body": "var mirror = FindFirstObjectByType<AntiqueMirror>();",
+            }],
+        )
+        _sanitize_invented_find_object_type_calls(s)
+        assert "AntiqueMirror" not in s.extra_methods[0].body
+
+    def test_invented_find_object_type_survives_when_builtin(self):
+        from src.unity_generator import _sanitize_invented_find_object_type_calls
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var cam = FindFirstObjectByType<Camera>();")
+        _sanitize_invented_find_object_type_calls(s)
+        assert "FindFirstObjectByType<Camera>" in s.update_extra
+
+    def test_invented_find_object_type_survives_when_known_project_type(self):
+        from src.unity_generator import _sanitize_invented_find_object_type_calls
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var hub = FindObjectOfType<GossipHub>();")
+        _sanitize_invented_find_object_type_calls(s, known_types=frozenset({"GossipHub"}))
+        assert "FindObjectOfType<GossipHub>" in s.update_extra
+
+    def test_invented_find_object_type_survives_manager_suffix(self):
+        from src.unity_generator import _sanitize_invented_find_object_type_calls
+        s = UnityScript(name="X", type="custom", description="d",
+                        update_extra="var mgr = FindObjectOfType<OxygenManager>();")
+        _sanitize_invented_find_object_type_calls(s)
+        assert "FindObjectOfType<OxygenManager>" in s.update_extra
+
     def test_get_component_wrong_arity_stripped(self):
         # Live shape: GetComponent<T>() called with an extra argument that
         # overload doesn't have — CS1501, invisible to every other check
