@@ -835,6 +835,37 @@ def test_saveload_strips_invented_data_method_call(dummy_config):
     assert "GetFloat" not in {f.name for f in s.data_fields}
 
 
+def test_saveload_strips_whole_data_assignment_from_primitive(dummy_config):
+    # Live shape (LithobornAscent, 2026-09-07): the LLM treated Data like a
+    # raw JSON buffer instead of the strongly-typed payload it actually is.
+    from src.micro.code_fields import CodeMethod
+    p = SaveLoadPipeline(dummy_config)
+    s = SaveLoadSchema(
+        name="X", variant="json_file", data_fields=[],
+        extra_methods=[CodeMethod(
+            signature="private void OnSave(string json)",
+            body='Data = json;\nfileName = "slot.json";')],
+    )
+    s = p.default_fix(s, "json_file")
+    body = s.extra_methods[0].body
+    assert "Data = json;" not in body.split("// AUDIT:")[0] if "// AUDIT:" in body else True
+    assert "// AUDIT:" in body and "CS0029" in body
+    assert 'fileName = "slot.json";' in body
+
+
+def test_saveload_data_construction_survives(dummy_config):
+    # `Data = new XData();` is the ONE legal whole-property assignment — must
+    # never be neutralized alongside the primitive-assignment case above.
+    p = SaveLoadPipeline(dummy_config)
+    s = SaveLoadSchema(
+        name="X", variant="json_file", data_fields=[],
+        awake_extra="Data = new XData();",
+    )
+    s = p.default_fix(s, "json_file")
+    assert "Data = new XData();" in s.awake_extra
+    assert "AUDIT" not in s.awake_extra
+
+
 def test_saveload_real_object_method_on_data_survives(dummy_config):
     p = SaveLoadPipeline(dummy_config)
     s = SaveLoadSchema(
@@ -1201,6 +1232,22 @@ def test_trigger_zone_enter_3d_still_uses_collider_api(tmp_path, dummy_config):
     cs = (tmp_path / "Scripts" / "TestZone.cs").read_text(encoding="utf-8")
     assert "OnTriggerEnter(Collider other)" in cs
     assert "OnTriggerEnter2D" not in cs
+
+
+def test_trigger_fire_delayed_helper_always_present(tmp_path, dummy_config):
+    # Live shape (LithobornAscent, 2026-09-07): FireDelayed used to render
+    # only when an authored `actions` entry had delay > 0 — a condition on
+    # structured schema DATA the harden pass's unbound-identifier scanner
+    # cannot see (it only tracks string/list[str] fields), so a Step 3.5
+    # custom method calling FireDelayed (the name this template itself uses
+    # for "fire this event later") survived every check and shipped as a
+    # live CS0103. Making the helper unconditional closes the gap outright.
+    p = TriggerPipeline(dummy_config)
+    s = p.default_fix(TriggerSchema(name="NoDelayZone", variant="zone_enter"), "zone_enter")
+    assert not any(a.delay > 0 for a in s.actions)
+    p.write_files(s, "zone_enter", tmp_path)
+    cs = (tmp_path / "Scripts" / "NoDelayZone.cs").read_text(encoding="utf-8")
+    assert "IEnumerator FireDelayed(string eventName, float delay)" in cs
 
 
 def test_transition_schema_clamp():

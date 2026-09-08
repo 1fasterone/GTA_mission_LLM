@@ -624,6 +624,15 @@ class TestVerticalSurface:
         assert all(p[1] > 0.0 for p in organism.instance_positions), \
             organism.instance_positions
 
+    def test_platform_kind_counts_as_a_hold(self):
+        """Live incident (LithobornAscent, 2026-09-07): a wall-climb schema
+        whose holds were authored as kind="platform" (a valid EntitySpec kind,
+        unity_schema.py's own EntityKind literal) placed zero holds — every
+        objective on the wall was unreachable because `is_climbable_entity`
+        only recognised handhold/hold/climbable/ledge/grip. "Rib platforms" on
+        a climbing wall ARE the holds; the kind must count."""
+        assert is_climbable_entity(EntitySpec(name="RibPlatform", kind="platform"))
+
     def test_hazards_never_smother_a_hold(self):
         s = self._wall()
         compute_layout(s)

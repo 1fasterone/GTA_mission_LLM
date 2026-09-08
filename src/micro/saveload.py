@@ -13,6 +13,7 @@ from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, CodeField, lint_extensible, lint_fields, clamp_enum,
     _neutralize_lines, apply_extensions_safe_block, UNITY_EXTRA_INSTRUCTIONS,
+    _declared_types, _expression_type,
 )
 
 # `Data` is the save payload (SaveSystemData) SaveSystem.cs.j2 always exposes
@@ -39,6 +40,28 @@ _DATA_FIELD_REF_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\b(?!\s*\()")
 # `Data.ToString()` for a missing field).
 _DATA_METHOD_CALL_RE = re.compile(r"\bData\??\.\s*([A-Za-z_]\w*)\s*\(")
 _OBJECT_METHODS = frozenset({"ToString", "GetHashCode", "Equals", "GetType"})
+
+# `Data = <expr>;` — reassigning the WHOLE payload property from something
+# that plainly is not a `{name}Data`. SaveData.cs.j2's class has no base
+# beyond object and declares no conversion operator, so the only expression
+# that can ever satisfy this assignment is `new {name}Data(...)` or another
+# already-Data-typed reference; a primitive can never implicitly convert to
+# it (CS0029). Confirmed live (LithobornAscent, 2026-09-07):
+#     private void OnSave(string json) { Data = json; ... }
+# The LLM treated `Data` like a raw JSON string buffer instead of the
+# strongly-typed payload it actually is — it needed
+# `JsonUtility.FromJsonOverwrite(json, Data)`, not a whole-property replace,
+# and which the author actually wanted is genuinely ambiguous, so this
+# neutralizes rather than guessing a rewrite (same policy as every other
+# unrecoverable Data misuse above). Scoped to RHS expressions this module
+# can PROVE are primitive, via the enclosing signature's own declared
+# parameter/local types — an RHS of unknown type is left alone, the same
+# conservative bias the rest of this module already uses.
+_DATA_WHOLE_ASSIGN_RE = re.compile(r"\bData\s*=\s*(?!new\b)([^=;][^;]*);")
+_DATA_INCOMPATIBLE_RHS_TYPES = frozenset({
+    "string", "int", "float", "double", "bool", "long", "short", "byte",
+    "char", "uint", "ulong", "ushort", "sbyte", "decimal",
+})
 
 SaveLoadVariant = Literal[
     "json_file", "playerprefs_kv", "save_slots",
@@ -212,6 +235,34 @@ class SaveLoadPipeline(UnityMicroPipeline):
         schema.fixed_update_extra, _, _ = _neutralize_lines(schema.fixed_update_extra, _bad_data_methods, _make_comment)
         for m in schema.extra_methods:
             m.body, _, _ = _neutralize_lines(m.body, _bad_data_methods, _make_comment)
+
+        # Strip any `Data = <primitive>;` whole-property replacement — see
+        # _DATA_WHOLE_ASSIGN_RE.
+        def _make_type_comment(names, line):
+            return (f"// AUDIT: removed assignment -- {line.strip()} "
+                    f"(Data is the strongly-typed save payload, RHS is "
+                    f"{', '.join(sorted(set(names)))}, CS0029)")
+
+        def _neutralize_data_whole_assign(body: str, signature: str = "") -> str:
+            if not body or "Data" not in body:
+                return body
+            locals_ = _declared_types(signature + "\n" + body)
+
+            def _bad(_i, line):
+                out = []
+                for m in _DATA_WHOLE_ASSIGN_RE.finditer(line):
+                    rtype = _expression_type(m.group(1).strip(), locals_)
+                    if rtype in _DATA_INCOMPATIBLE_RHS_TYPES:
+                        out.append(rtype)
+                return out
+
+            fixed, _, _ = _neutralize_lines(body, _bad, _make_type_comment)
+            return fixed
+
+        for key in ("awake_extra", "update_extra", "fixed_update_extra"):
+            setattr(schema, key, _neutralize_data_whole_assign(getattr(schema, key, "") or ""))
+        for m in schema.extra_methods:
+            m.body = _neutralize_data_whole_assign(m.body or "", m.signature or "")
 
         # Dedupe data-class members (no MonoBehaviour reserved set applies here).
         schema.data_fields = lint_fields(schema.data_fields, reserved=set())

@@ -560,6 +560,65 @@ def _sanitize_invented_constructor_calls(script: UnityScript,
         m.body = _strip_invented_constructors(m.body, known_types)
 
 
+# ── Invented type via a Find*ObjectType<T>() lookup (the other reach-for-a-
+# nonexistent-class shape) ────────────────────────────────────────────────────
+# `_sanitize_invented_constructor_calls` (above) catches `new T(...)`; this is
+# the sibling call shape a model reaches for when it wants "the X already in
+# the scene" instead of "a new X" -- FindObjectOfType<T>() and its four
+# spellings, all of which require T to be a real UnityEngine.Object-derived
+# type. Hit live: MirrorSpawning.cs (Grandma's Antique Shop),
+# SpawnRaider() calling `FindFirstObjectByType<AntiqueMirror>()` where
+# AntiqueMirror is the BRIEF'S ENTITY NAME (schema.entities), never a class --
+# entities are GameObjects instantiated by EntitySpawner at a runtime-composed
+# name, not compiled types, so no stub could make this resolve to the real
+# one. Unlike a field's invented type (_sanitize_stub_type_usage), there is
+# nothing to stub here that would help: an empty class satisfies the compiler
+# but FindFirstObjectByType<T>() over an empty stub can never find an
+# instance, and retyping the argument to a real base type (GameObject) would
+# compile while silently returning an ARBITRARY object in the scene instead
+# of failing loudly -- worse than doing nothing. Same "prefer inert over
+# broken" contract as the constructor case: drop the statement.
+_FIND_OBJECT_TYPE_RE = re.compile(
+    r"\b(?:FindObjectOfType|FindObjectsOfType|FindFirstObjectByType|"
+    r"FindAnyObjectByType|FindObjectsByType)\s*<\s*([A-Za-z_]\w*)\s*>\s*\(")
+
+
+def _strip_invented_find_calls(body: str, known_types: "frozenset[str]") -> str:
+    """Drop any physical line calling a Find*ObjectType<T>() lookup where T is
+    a type nobody declares anywhere. See the module comment above this
+    function's sibling `_sanitize_invented_find_object_type_calls` for the
+    live bug this exists for."""
+    if not body or "Find" not in body:
+        return body
+    out = []
+    for line in body.splitlines(keepends=True):
+        bad = any(_invented_constructor_type(m.group(1), known_types)
+                  for m in _FIND_OBJECT_TYPE_RE.finditer(line))
+        if not bad:
+            out.append(line)
+    return "".join(out)
+
+
+def _sanitize_invented_find_object_type_calls(script: UnityScript,
+                                              known_types: "frozenset[str]" = frozenset()) -> None:
+    """Strip any statement calling FindObjectOfType/FindObjectsOfType/
+    FindFirstObjectByType/FindAnyObjectByType/FindObjectsByType with a type
+    argument that is not `_EXPRESSION_BUILTIN_TYPES`, not `known_types`
+    (every sibling script and composed micro class name -- same ground truth
+    `_sanitize_invented_constructor_calls` uses), and not a Manager/System/
+    Controller/Handler-suffixed name (same exemption, same reason: those are
+    expected to be separate scripts this pass cannot see the full project
+    roster of). There is no field to null out and no stub that would make
+    the call resolve to anything meaningful, so the statement is dropped
+    outright rather than retyped to something that compiles but returns the
+    wrong object."""
+    script.awake_extra        = _strip_invented_find_calls(script.awake_extra, known_types)
+    script.update_extra       = _strip_invented_find_calls(script.update_extra, known_types)
+    script.fixed_update_extra = _strip_invented_find_calls(script.fixed_update_extra, known_types)
+    for m in script.extra_methods:
+        m.body = _strip_invented_find_calls(m.body, known_types)
+
+
 # ── Built-in Component-lookup call, wrong argument count ──────────────────────
 # GetComponent and its siblings are exempted from every other check in this
 # module (_BARE_CALLABLE_ALLOW, _MB_COMMON_MEMBERS) because they legitimately
@@ -2982,6 +3041,7 @@ class UnityProjectGenerator:
                 _sanitize_invented_namespace_field_types(s, _stub_known_types)
                 _sanitize_stub_type_usage(s, _stub_known_types)
                 _sanitize_invented_constructor_calls(s, _stub_known_types)
+                _sanitize_invented_find_object_type_calls(s, _stub_known_types)
                 _sanitize_builtin_component_call_arity(s)
                 _sanitize_coroutine_field_type(s)
                 _sanitize_composed_component_calls(s, composed_units)

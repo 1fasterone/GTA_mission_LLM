@@ -148,13 +148,22 @@ public class {{ s.name }} : MonoBehaviour
 {% endfor %}
     }
 
-{% if s.actions|selectattr("delay", "gt", 0)|list %}
+    // Unconditional even when no authored action currently has delay > 0:
+    // Step 3.5's own custom-code pass (extra_methods) reaches for this exact
+    // name on sight of "trigger" + "delay" in the brief, whether or not the
+    // TEMPLATE's own actions ended up needing it. Gating this on
+    // `s.actions|selectattr("delay", "gt", 0)` used to make the method's
+    // presence depend on structured schema DATA the harden pass's scope
+    // scanner cannot see (`render_facts` only tracks string/list[str] fields,
+    // never a list[TriggerAction]'s own `.delay`), so an authored call to
+    // FireDelayed survived every unbound-identifier check and shipped as a
+    // live CS0103 (SceneTrigger.cs, LithobornAscent, 2026-09-07). An always-
+    // present private coroutine costs nothing when unused.
     private IEnumerator FireDelayed(string eventName, float delay)
     {
         yield return new WaitForSeconds(delay);
         SendMessage(eventName, SendMessageOptions.DontRequireReceiver);
     }
-{% endif %}
 
     public void Reset() { _fired = false; _lastFire = -999f; }
 
