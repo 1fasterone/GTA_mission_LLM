@@ -213,6 +213,15 @@ class AISchema(CodeExtensibleSchema):
     memory_seconds:        float = 3.0    # keep heading for the last known position this long after losing perception before giving up; 0 = old instant give-up
     squad_alert_radius:    float = 10.0   # same-archetype allies within this radius are alerted the instant this AI perceives a target; 0 disables squad alerting
 
+    # ── Squad coordination (squad_alert_radius > 0 only) ──────────────────────
+    # A secondhand report is trusted separately from the receiver's OWN
+    # perception memory (memory_seconds) — see AI.cs.j2's ReceiveAllyAlert()/
+    # UpdatePerception(). This is what a de-dup check compares an incoming
+    # report's freshness against, and what fades a responder's flank/cover
+    # detour back to a plain last-known-position chase once the tip goes stale.
+    squad_alert_decay_seconds: float = 5.0   # how long a secondhand report stays trusted before the responder stops treating it as fresh
+    squad_flank_offset:        float = 3.0   # meters, lateral spread applied to a FlankLeft/FlankRight responder's approach point
+
     @field_validator("variant", mode="before")
     @classmethod
     def _clamp_variant(cls, v: str) -> str:
@@ -287,6 +296,11 @@ said about detection, above:
                          known spot (0 = gives up instantly)
   squad_alert_radius      0 disables ally alerting; >0 for "one guard sees you,
                          the group reacts"
+  squad_alert_decay_seconds  how long a squadmate's secondhand report stays
+                         trusted (only matters when squad_alert_radius > 0)
+  squad_flank_offset      meters a flanking responder spreads sideways from
+                         the reported position (only matters when
+                         squad_alert_radius > 0)
 
 BRIEF:
 {concept}
@@ -323,6 +337,8 @@ OUTPUT:
   "hearing_radius": 6.0,
   "memory_seconds": 3.0,
   "squad_alert_radius": 10.0,
+  "squad_alert_decay_seconds": 5.0,
+  "squad_flank_offset": 3.0,
   "description": "One sentence."
 }}
 
@@ -356,6 +372,10 @@ class AIPipeline(UnityMicroPipeline):
         "_targetvisible", "_heardnoise", "_wasperceiving", "_allyalerted",
         "_lastknownposition", "_searchtimer", "_prevtargetpos",
         "_haveprevtargetpos", "_squad",
+        # Squad coordination (roles/urgency/de-dup — see AI.cs.j2's
+        # ApplySquadRoleOffset()/ReceiveAllyAlert())
+        "squadalertdecayseconds", "squadflankoffset",
+        "_squadrole", "_alerturgency", "_alertsourceid", "squadrole",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.AI", "System.Collections.Generic"}
 
@@ -404,6 +424,8 @@ class AIPipeline(UnityMicroPipeline):
         schema.noise_speed_threshold = max(0.1, schema.noise_speed_threshold)
         schema.memory_seconds        = max(0.0, min(60.0, schema.memory_seconds))
         schema.squad_alert_radius    = max(0.0, schema.squad_alert_radius)
+        schema.squad_alert_decay_seconds = max(0.5, min(60.0, schema.squad_alert_decay_seconds))
+        schema.squad_flank_offset        = max(0.0, schema.squad_flank_offset)
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
