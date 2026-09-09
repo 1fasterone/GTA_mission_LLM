@@ -53,7 +53,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from .sketchfab_client import SketchfabClient
 from .unity_asset_catalog import CATALOG_VERSION
@@ -94,9 +94,9 @@ def audit_entry(entry: dict, *, client: SketchfabClient,
     uid = str(entry.get("sketchfab_uid") or "")
     query = str(entry.get("query") or "")
     name = str(entry.get("filename") or uid or "?")
-    result = {"uid": uid, "name": name, "query": query,
-             "image_similarity": None, "text_similarity": None,
-             "verdict": "unmeasured", "embedding": None}
+    result: dict[str, Any] = {"uid": uid, "name": name, "query": query,
+                              "image_similarity": None, "text_similarity": None,
+                              "verdict": "unmeasured", "embedding": None}
     if not uid or not query:
         return result
 

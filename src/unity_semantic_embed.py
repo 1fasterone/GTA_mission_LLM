@@ -50,7 +50,7 @@ import io
 import logging
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 
@@ -110,7 +110,11 @@ def _bge_text_embedder():
     return load_embedder()  # BAAI/bge-small-en-v1.5, already cache-repaired
 
 
-def _cosine(a: "np.ndarray", b: "np.ndarray") -> float:
+def _cosine(a: Any, b: Any) -> float:
+    # Accepts anything np.asarray can convert — a fastembed-returned
+    # ndarray (image_similarity/text_similarity's own embeddings) or a
+    # plain list[float] (a stored clip_image_embedding read back from JSON,
+    # see image_similarity_from_embedding) alike.
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
     denom = float(np.linalg.norm(a) * np.linalg.norm(b))
