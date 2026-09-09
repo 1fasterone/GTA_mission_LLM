@@ -14,6 +14,13 @@ so the per-entity resolver's Tier S then has real, on-concept cartoon models to
 match against — and the full set is also copied into the project so the files are
 visibly written.
 
+Because this writes straight into the shared, persistent
+lookups/unity/sketchfab_catalog.json, an off-target keyword hit here does not
+just miss once — it sits in the catalog as future bait for ANY project's Tier
+S keyword match. This path shares the resolver's own optional QC gates
+(sketchfab.vision_select / sketchfab.semantic_select) for exactly that
+reason; see fetch_and_freeze's own docstring for what each does.
+
 Every model logs its outcome (written + where, or failed + why + fallback) so a
 run is never a silent "no sketchfab files written". Never raises — a failed
 model is logged and skipped so the pipeline always continues.
@@ -217,11 +224,38 @@ def collect_models(concept: str, llm: Any, *, client: Any, sk_cfg: dict,
         def _score_fn(entry: dict, _qw=qw) -> float:
             return float(len(set(entry.get("keywords") or []) & _qw))
 
+        # Same optional QC gates as the per-entity Tier S
+        # (unity_entity_asset_resolver.py) — this batch path has none of its
+        # own otherwise, so an off-target keyword hit (a race-car query
+        # landing a GT40, a "tire changer" query landing a flashlight) gets
+        # frozen into the shared catalog with zero visual/semantic check ever
+        # having run. Gated on the exact same sketchfab.* config keys so
+        # enabling one enables both call sites; using each brief's own query
+        # as concept_text/description, since that (not the schema entity's
+        # name — briefs are LLM-authored, not schema-bound) is all this
+        # collection has to check the candidate against.
+        vision_select_fn = None
+        if llm is not None and sk_cfg.get("vision_select"):
+            from .unity_sketchfab_vision import select_best_candidate
+            vision_select_fn = lambda cands, _name=name, _cat=category, _q=query: (
+                select_best_candidate(_name, _cat, _q, cands, client=client, llm=llm))
+
+        semantic_filter_fn = None
+        if sk_cfg.get("semantic_select"):
+            from .unity_semantic_embed import semantic_filter
+            semantic_filter_fn = lambda cands, _name=name, _cat=category, _q=query: (
+                semantic_filter(
+                    _name, _cat, _q, cands, client=client,
+                    min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
+                    min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45))))
+
         entry = fetch_and_freeze(
             query, score_fn=_score_fn, client=client, blender_cfg=sk_cfg,
             cache_dir=cache_dir, lookups_dir=lookups_dir, category=category,
             kind_hints=[category], min_score=min_score,
-            preferred_author=preferred_author)
+            preferred_author=preferred_author,
+            vision_select_fn=vision_select_fn,
+            semantic_filter_fn=semantic_filter_fn)
 
         if entry is not None:
             result["written"].append(entry)

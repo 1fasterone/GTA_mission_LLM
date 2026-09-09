@@ -220,7 +220,11 @@ sketchfab:
   # text-only load just never gets asked (see resolve_entity_assets: this
   # only fires when a caller also threads a live `llm` through, which
   # unity-validate's no-LLM replay never does). Off by default: needs that
-  # vision model loaded and adds one LLM round-trip per Tier S live fetch.
+  # vision model loaded and adds one LLM round-trip per live fetch. Gates
+  # BOTH live-fetch call sites that share fetch_and_freeze: the per-entity
+  # Tier S here, and the concept-driven batch collection
+  # (src/unity_sketchfab_collection.py) that pre-populates the same shared
+  # catalog before Tier S ever runs.
   vision_select: false
   # Deterministic sibling to vision_select above (src/unity_semantic_embed.py):
   # CLIP/embedding cosine similarity between the search query and each
@@ -254,6 +258,19 @@ sketchfab:
   #     a real match, so its floor is intentionally permissive (a backstop
   #     against grossly unrelated text, not fine discrimination) —
   #     image_similarity is the primary, more reliable signal.
+  # Same dual call-site scope as vision_select above (per-entity Tier S live
+  # fetch AND src/unity_sketchfab_collection.py's batch collection) — PLUS a
+  # third, network-free check: Tier S's own keyword-match CACHE-HIT reuse of
+  # an already-frozen entry is re-verified against THIS entity's own query
+  # too (unity_semantic_embed.semantic_filter_frozen), not just a live
+  # fetch. Without that third check, one frozen model could pass the gate
+  # once and then get reused verbatim by every later, unrelated entity whose
+  # keywords merely overlapped, gate on or off, forever after. The cache-hit
+  # check reads an entry's frozen `description` (always present) and
+  # `clip_image_embedding` (present only on entries frozen — or backfilled
+  # via `sketchfab-audit --apply`, see src/sketchfab_catalog_audit.py — while
+  # this flag was on); an entry with neither measurable is left exactly
+  # where keyword scoring put it.
   semantic_select: false
   min_image_similarity: 0.22     # cosine(CLIP-text(query), CLIP-image(thumbnail))
   min_text_similarity: 0.45      # cosine(bge(query), bge(candidate description))

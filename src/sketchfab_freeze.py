@@ -188,6 +188,15 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
     the candidate list to empty when nothing clears the floor — that is
     treated as a clean miss (falls through to the next asset tier), never
     as an error. None (not configured) leaves the keyword order untouched.
+
+    When `semantic_filter_fn` was passed (semantic_select was on for this
+    freeze), the winning candidate's own CLIP image embedding is ALSO
+    computed and stamped into the returned/written entry as
+    `clip_image_embedding` — not used by this function again, but read by
+    unity_semantic_embed.semantic_filter_frozen so the resolver's Tier S can
+    re-check this SAME frozen entry against a completely different later
+    entity's query, with zero network, instead of a keyword-match cache hit
+    silently bypassing the gate forever after this one freeze.
     """
     try:
         return _fetch_and_freeze_inner(
@@ -359,6 +368,29 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
         # catalog field.
         for k, v in (style_meta or {}).items():
             entry.setdefault(k, v)
+
+        # Stamp a CLIP image embedding for the WINNING candidate's own
+        # thumbnail — turns this frozen entry into a reusable artifact for
+        # FUTURE cache hits (unity_entity_asset_resolver.py's Tier S), which
+        # can then re-check it against a completely different entity's own
+        # query with zero network at read time (see
+        # unity_semantic_embed.semantic_filter_frozen). Only attempted when
+        # this freeze already opted into semantic_select — an entry frozen
+        # with the gate off simply stores no embedding, and any later
+        # cache-hit re-check leaves that axis unmeasured for it, same as
+        # every other "missing data never blocks" rule in this gate.
+        if semantic_filter_fn is not None:
+            try:
+                from .unity_semantic_embed import image_embedding
+                from .unity_sketchfab_vision import _thumbnail_url
+                thumb_url = _thumbnail_url(model)
+                img_bytes = client.fetch_image_bytes(thumb_url) if thumb_url else None
+                emb = image_embedding(img_bytes) if img_bytes else None
+                if emb is not None:
+                    entry["clip_image_embedding"] = emb
+            except Exception as exc:  # noqa: BLE001 — a bonus for future cache
+                # hits, never allowed to block writing the entry itself
+                log.debug("sketchfab embedding capture for %r failed: %s", uid, exc)
 
         write_sketchfab_entry(entry, Path(lookups_dir) / SKETCHFAB_RELPATH)
         return entry

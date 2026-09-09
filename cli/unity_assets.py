@@ -1,4 +1,4 @@
-"""Unity asset-library commands: catalog / salvage / sketchfab-fetch."""
+"""Unity asset-library commands: catalog / salvage / sketchfab-fetch / sketchfab-audit."""
 from __future__ import annotations
 
 import json
@@ -310,6 +310,148 @@ def sketchfab_fetch(
     console.print(f"[green]Written[/] → {entry['relpath']} "
                   f"(license={entry['license']}, author={entry['author']!r}) "
                   f"→ {Path(lookups) / 'unity' / 'sketchfab_catalog.json'}")
+
+
+@app.command("sketchfab-audit")
+def sketchfab_audit(
+    config:        str            = typer.Option("config.yaml", "--config", "-c"),
+    lookups:       str            = typer.Option("lookups", "--lookups",
+                                                 help="Lookups dir holding sketchfab_catalog.json"),
+    offset:        int            = typer.Option(
+        0, "--offset", help="Skip the first N entries — combine with --limit "
+                            "to work through a large catalog in chunks across "
+                            "several runs instead of one long-lived call"),
+    limit:         Optional[int]  = typer.Option(
+        None, "--limit", help="Only audit N entries starting at --offset — "
+                              "smoke-test a run before committing to the "
+                              "whole catalog"),
+    sleep_between: float          = typer.Option(
+        0.5, "--sleep", help="Seconds to wait between entries (be a good citizen "
+                             "of Sketchfab's API across a large catalog)"),
+    apply:         bool           = typer.Option(
+        False, "--apply", help="Actually remove failed entries from the catalog "
+                               "(default: report only). Writes a timestamped "
+                               ".bak copy first."),
+) -> None:
+    """Re-check every already-frozen Sketchfab catalog entry against its OWN
+    search query, using the same deterministic CLIP/embedding floor
+    (sketchfab.semantic_select) fetch_and_freeze applies to a candidate
+    BEFORE it is ever written. Entries frozen before that gate existed, or
+    while a run had it off, were never checked at all — this is the
+    one-time (or periodic) pass that catches up the backlog.
+
+    Read-only by default: prints a pass/fail/unmeasured scorecard and a
+    table of the failed entries' own name/query/scores. Pass --apply to
+    actually remove the failed ones (a `sketchfab_catalog.bak-<UTC
+    timestamp>.json` is written first — this never deletes without a
+    recovery copy) AND backfill `clip_image_embedding` onto surviving
+    entries that don't already have one — a free byproduct of the thumbnail
+    this command already downloaded to score them. That field is what lets
+    unity_entity_asset_resolver.py's Tier S re-check a cache-hit reuse of
+    these entries against a completely different LATER entity's query, with
+    zero network, closing the gap where a keyword-match cache hit used to
+    bypass sketchfab.semantic_select forever after one freeze. Entries that
+    can't be measured at all (model deleted or made private on Sketchfab, no
+    token, network down) are left untouched — missing data is not evidence
+    of a bad pick.
+
+    \b
+    Examples:
+      python main.py sketchfab-audit --limit 10          # smoke-test first
+      python main.py sketchfab-audit                     # full dry-run report
+      python main.py sketchfab-audit --apply              # report + clean up
+    """
+    from src.sketchfab_catalog_audit import apply_removals, audit_catalog, backfill_embeddings
+    from src.sketchfab_client import SketchfabClient
+    from src.unity_asset_catalog import SKETCHFAB_RELPATH
+
+    sk_cfg = (_cfg(config).get("sketchfab", {}) or {})
+    client = SketchfabClient(sk_cfg)
+    if not client.available():
+        console.print("[red]Error:[/] no Sketchfab API token — set sketchfab.api_token "
+                      "in config.yaml or the SKETCHFAB_API_TOKEN env var")
+        raise typer.Exit(1)
+
+    catalog_path = Path(lookups) / SKETCHFAB_RELPATH
+    if not catalog_path.is_file():
+        console.print(f"[yellow]Nothing to audit[/] — {catalog_path} does not exist")
+        return
+
+    try:
+        total_on_disk = len(json.loads(catalog_path.read_text(encoding="utf-8")).get("entries") or [])
+    except (OSError, ValueError):
+        total_on_disk = 0
+    remaining = max(0, total_on_disk - offset)
+    n_to_run = min(limit, remaining) if limit is not None else remaining
+    min_img = float(sk_cfg.get("min_image_similarity", 0.22))
+    min_txt = float(sk_cfg.get("min_text_similarity", 0.45))
+    span = f"[{offset}:{offset + n_to_run}]" if offset else ""
+    console.print(f"[cyan]Auditing[/] {n_to_run}/{total_on_disk} entries {span} in {catalog_path} "
+                  f"(image>={min_img}, text>={min_txt})…")
+
+    _VERDICT_STYLE = {"pass": "[green]OK[/]", "fail": "[red]FAIL[/]",
+                      "unmeasured": "[dim]?[/]"}
+
+    def _progress(i: int, n: int, r: dict) -> None:
+        img = f"{r['image_similarity']:.3f}" if r["image_similarity"] is not None else "-"
+        txt = f"{r['text_similarity']:.3f}" if r["text_similarity"] is not None else "-"
+        console.print(f"  [{i}/{n}] {_VERDICT_STYLE[r['verdict']]} {r['name']} "
+                      f"(q={r['query']!r}) img={img} text={txt}")
+
+    results = audit_catalog(
+        catalog_path, client=client, min_image_similarity=min_img,
+        min_text_similarity=min_txt, sleep_between=sleep_between,
+        offset=offset, limit=limit, progress_fn=_progress)
+
+    n_pass = sum(1 for r in results if r["verdict"] == "pass")
+    n_fail = sum(1 for r in results if r["verdict"] == "fail")
+    n_unmeasured = sum(1 for r in results if r["verdict"] == "unmeasured")
+    console.print(f"\n[cyan]Scorecard[/] {len(results)} checked — "
+                  f"[green]{n_pass} pass[/], [red]{n_fail} fail[/], "
+                  f"[dim]{n_unmeasured} unmeasured[/]")
+
+    failed = [r for r in results if r["verdict"] == "fail"]
+    if failed:
+        table = Table(title=f"{len(failed)} failed the semantic floor")
+        table.add_column("Name", style="cyan")
+        table.add_column("Query")
+        table.add_column("Image")
+        table.add_column("Text")
+        for r in failed:
+            img = f"{r['image_similarity']:.3f}" if r["image_similarity"] is not None else "-"
+            txt = f"{r['text_similarity']:.3f}" if r["text_similarity"] is not None else "-"
+            table.add_row(r["name"], r["query"], img, txt)
+        console.print(table)
+
+    if not apply:
+        if failed:
+            console.print("[yellow]Dry run[/] — re-run with --apply to remove these from the catalog")
+        return
+
+    if failed:
+        removal = apply_removals(catalog_path, {r["uid"] for r in failed})
+        console.print(f"[green]Removed[/] {removal['removed']} entries — "
+                      f"{removal['kept']} remain. Backup: {removal['backup_path']}")
+    else:
+        console.print("[green]Nothing to remove[/]")
+
+    # Passing entries already had their thumbnail downloaded to score them
+    # above — stamp that same CLIP embedding into the catalog as
+    # clip_image_embedding so unity_entity_asset_resolver.py's Tier S can
+    # re-check a FUTURE cache-hit reuse of these entries deterministically
+    # (unity_semantic_embed.semantic_filter_frozen), with no more network,
+    # even though they predate that gate. Free — no extra fetches beyond
+    # what audit_catalog already did.
+    embeddings_by_uid = {r["uid"]: r["embedding"] for r in results
+                        if r["verdict"] == "pass" and r.get("embedding")}
+    if embeddings_by_uid:
+        backfill = backfill_embeddings(catalog_path, embeddings_by_uid)
+        if backfill["updated"]:
+            console.print(f"[green]Backfilled[/] clip_image_embedding on "
+                          f"{backfill['updated']} passing entr"
+                          f"{'y' if backfill['updated'] == 1 else 'ies'} "
+                          "(future cache-hit reuse of these can now be "
+                          "re-checked with zero network)")
 
 
 @app.command("unity-api-surface")

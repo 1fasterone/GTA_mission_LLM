@@ -1016,23 +1016,54 @@ def resolve_entity_assets(schema,
                     s += _genre_bias(layers.membership(a)[1])
                 return s
 
+            # sketchfab_query (src/unity_sketchfab_translator.py's concept +
+            # shared-style-brief enrichment) wins when present; falls back to
+            # today's mechanical model_hint / strong-token derivation,
+            # genre-prefixed so a bare "vehicle" search in a racing project
+            # asks the marketplace for "racing vehicle". Computed up front
+            # (not just inside the live-fetch branch below) because the
+            # cache-hit semantic re-check right after sk_scored needs THIS
+            # entity's own query too — a cached entry is re-verified against
+            # what THIS entity is asking for, not whatever query originally
+            # froze it.
+            query = (getattr(e, "sketchfab_query", "") or hint
+                    or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT)))
+            if genre != "universal" and not getattr(e, "sketchfab_query", ""):
+                query = f"{genre.replace('_', ' ')} {query}".strip()
+
             sk_scored = [(s, a) for a in sk_catalog_assets
                         if (s := _sk_score(a)) >= sk_min
                         and _entry_source(a, asset_root) is not None
                         and _passes_kind_guard(a)
                         and _passes_kind_scope(a)
                         and _sk_contextual_guard(a)]
+
+            # Deterministic re-check of CACHE-HIT candidates (already-frozen
+            # entries reused purely by keyword match) against the semantic
+            # floor. Without this, semantic_select only ever gated a LIVE
+            # fetch below — once ONE model was frozen for ONE query, every
+            # LATER entity whose keywords merely overlapped reused it
+            # verbatim, gate on or off, forever after. Fully network-free
+            # (unlike the live-fetch gate below, which downloads a fresh
+            # thumbnail): text axis reads the entry's own frozen
+            # `description`; image axis reads its frozen
+            # `clip_image_embedding`, present only on entries frozen (or
+            # backfilled — src.sketchfab_catalog_audit.backfill_embeddings)
+            # while semantic_select was on. An entry with neither axis
+            # measurable is left exactly where keyword scoring put it — see
+            # unity_semantic_embed.semantic_filter_frozen's own docstring.
+            if sk_scored and sk_cfg.get("semantic_select"):
+                from .unity_semantic_embed import semantic_filter_frozen
+                filtered = semantic_filter_frozen(
+                    e.name, kind, query, [a for _s, a in sk_scored],
+                    min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
+                    min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)))
+                score_by_uid = {a.get("sketchfab_uid"): s for s, a in sk_scored}
+                sk_scored = [(score_by_uid.get(a.get("sketchfab_uid"), 0.0), a)
+                            for a in filtered]
+
             if not sk_scored and sk_cfg.get("auto_fetch") and sk_client is not None:
                 from .sketchfab_freeze import fetch_and_freeze
-                # sketchfab_query (src/unity_sketchfab_translator.py's concept +
-                # shared-style-brief enrichment) wins when present; falls back
-                # to today's mechanical model_hint / strong-token derivation,
-                # genre-prefixed so a bare "vehicle" search in a racing
-                # project asks the marketplace for "racing vehicle".
-                query = (getattr(e, "sketchfab_query", "") or hint
-                        or " ".join(sorted(t for t, w in qw.items() if w >= _STRONG_HIT)))
-                if genre != "universal" and not getattr(e, "sketchfab_query", ""):
-                    query = f"{genre.replace('_', ' ')} {query}".strip()
                 # Visual QC on the keyword-ranked candidates below, closing
                 # the class of bug keyword scoring structurally cannot catch
                 # (a same-word coincidence like "helmet" resolving a

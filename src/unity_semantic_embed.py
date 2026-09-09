@@ -137,6 +137,49 @@ def image_similarity(text: str, image_bytes: bytes) -> Optional[float]:
     return _cosine(txt_emb, img_emb)
 
 
+def image_embedding(image_bytes: bytes) -> Optional[list[float]]:
+    """Raw CLIP image embedding for `image_bytes`, as a plain JSON-
+    serializable list of floats, or None on any failure. Never raises.
+
+    Meant to be stamped into a frozen Sketchfab catalog entry ONCE, at
+    freeze time (see sketchfab_freeze.py), so a later semantic check never
+    needs to re-download the thumbnail — see
+    image_similarity_from_embedding()'s own docstring for why that matters
+    for a deterministic cache-hit re-check.
+    """
+    if not image_bytes:
+        return None
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        emb = next(iter(_clip_image_embedder().embed([img])))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("[semantic] image_embedding() failed: %s", exc)
+        return None
+    return [float(v) for v in emb]
+
+
+def image_similarity_from_embedding(text: str,
+                                    image_embedding: list[float]) -> Optional[float]:
+    """cosine(CLIP-text-embed(text), `image_embedding`) — the network-free
+    sibling of image_similarity(): reuses an embedding captured once at
+    freeze time (image_embedding() above) instead of re-fetching the
+    thumbnail, so an already-frozen catalog entry can be re-checked against
+    a DIFFERENT entity's query with zero network at read time — the
+    property src.unity_entity_asset_resolver.py's Tier S cache-hit path
+    needs to stay a deterministic lookup (see semantic_filter_frozen()).
+    None on any failure (no text/embedding, unloadable CLIP text model).
+    Never raises."""
+    if not text or not image_embedding:
+        return None
+    try:
+        txt_emb = next(iter(_clip_text_embedder().embed([text])))
+    except Exception as exc:  # noqa: BLE001
+        log.debug("[semantic] image_similarity_from_embedding(%r) failed: %s", text, exc)
+        return None
+    return _cosine(txt_emb, image_embedding)
+
+
 def text_similarity(text_a: str, text_b: str) -> Optional[float]:
     """cosine(bge-embed(text_a), bge-embed(text_b)) in [-1, 1], or None on
     any failure. Never raises."""
@@ -226,3 +269,83 @@ def semantic_filter(entity_name: str, entity_kind: str, concept_text: str,
 
     passed.sort(key=lambda t: (-t[0], -t[1]))
     return [m for _i, _t, m in passed] + unscored
+
+
+def semantic_filter_frozen(entity_name: str, entity_kind: str, concept_text: str,
+                           candidates: list[dict], *, min_image_similarity: float,
+                           min_text_similarity: float,
+                           max_candidates: int = 6) -> list[dict]:
+    """Deterministic, network-free sibling of semantic_filter() for
+    CACHE-HIT reuse.
+
+    semantic_filter() only ever gates a LIVE fetch — a cache MISS in
+    src.unity_entity_asset_resolver.py's Tier S. Once one model was frozen
+    for one query, every LATER entity whose keywords merely overlapped
+    reused that same frozen entry verbatim via Tier S's own keyword-match
+    cache-hit path, semantic_select on or off — the gate never re-ran
+    against the NEW entity's own query. This closes that gap using only
+    what is already sitting in the frozen entry — no `client`, no network —
+    which is the whole point: Tier S's cache-hit path has to stay a pure,
+    deterministic lookup (see CLAUDE.md's "Steps 4-7 remain deterministic"
+    and sketchfab_freeze.py's own "frozen artifact" doctrine), so this
+    cannot re-fetch a thumbnail the way semantic_filter() does.
+
+      text axis  — text_similarity(concept_text, entry['description']) —
+                   already stored on every frozen entry; always measurable.
+      image axis — image_similarity_from_embedding(concept_text,
+                   entry['clip_image_embedding']) — only present on entries
+                   frozen (or backfilled — see
+                   src.sketchfab_catalog_audit.backfill_embeddings) while
+                   semantic_select was on. Absent on everything else, in
+                   which case this axis is simply unmeasured for that
+                   entry — never blocking, same "missing data is not
+                   evidence of a mismatch" contract semantic_filter() uses.
+
+    `candidates` here are CATALOG-ENTRY dicts (filename/description/
+    sketchfab_uid/clip_image_embedding/...) — NOT raw Sketchfab search
+    results. Do not pass one shape to the function built for the other.
+
+    Same pass/reject/unscored/any_measured shape as semantic_filter(): see
+    its docstring for the exact rules this mirrors.
+    """
+    pool = candidates[:max(1, max_candidates)]
+    passed: list[tuple[float, float, dict]] = []
+    rejected: list[tuple[float, float, dict]] = []
+    unscored: list[dict] = []
+    any_measured = False
+
+    for entry in pool:
+        stored_emb = entry.get("clip_image_embedding")
+        img_sim = (image_similarity_from_embedding(concept_text, stored_emb)
+                  if stored_emb else None)
+        description = str(entry.get("description") or "")
+        txt_sim = text_similarity(concept_text, description) if description else None
+
+        if img_sim is None and txt_sim is None:
+            unscored.append(entry)
+            continue
+        any_measured = True
+        img_ok = img_sim is None or img_sim >= min_image_similarity
+        txt_ok = txt_sim is None or txt_sim >= min_text_similarity
+        scored = (img_sim if img_sim is not None else 1.0,
+                 txt_sim if txt_sim is not None else 1.0, entry)
+        (passed if (img_ok and txt_ok) else rejected).append(scored)
+
+    if not any_measured:
+        return candidates
+
+    if not passed:
+        if rejected:
+            best_img, best_txt, best_entry = max(rejected, key=lambda t: (t[0], t[1]))
+            log.warning(
+                "[semantic] entity '%s' (kind=%s): every scoreable CACHED "
+                "Sketchfab entry for %r failed the semantic floor (need "
+                "image>=%.2f and text>=%.2f). Closest: %r (image=%.2f, "
+                "text=%.2f). Falling through instead of reusing a stale "
+                "cache hit.", entity_name, entity_kind, concept_text,
+                min_image_similarity, min_text_similarity,
+                best_entry.get("filename"), best_img, best_txt)
+        return unscored
+
+    passed.sort(key=lambda t: (-t[0], -t[1]))
+    return [e for _i, _t, e in passed] + unscored
