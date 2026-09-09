@@ -60,6 +60,13 @@ class _FakeClient:
             zf.writestr("scene.gltf", "{}")
         return dest_zip
 
+    def fetch_image_bytes(self, url):
+        # Unused by every test above (none of their candidates carry a
+        # "thumbnails" field, so _thumbnail_url short-circuits to None
+        # before this is ever called) — only the embedding-capture tests
+        # below exercise it.
+        return None
+
 
 def _score_all_equal(entry: dict) -> float:
     return 1.0
@@ -514,3 +521,90 @@ def test_no_semantic_filter_fn_is_byte_identical_to_before(tmp_path, monkeypatch
 
     assert entry is not None
     assert entry["sketchfab_uid"] == "baseball1"
+
+
+# ── clip_image_embedding capture: turns this freeze into a reusable ────────
+# artifact for unity_entity_asset_resolver.py's Tier S cache-hit gate later
+# (unity_semantic_embed.semantic_filter_frozen) — only attempted when this
+# freeze itself opted into semantic_select.
+
+_ONE_CANDIDATE_WITH_THUMBNAIL = [
+    {"uid": "abc123", "name": "Red High Heel Shoe",
+     "description": "a shiny red shoe",
+     "viewerUrl": "https://sketchfab.com/3d-models/abc123",
+     "license": {"slug": "by"},
+     "user": {"displayName": "Jane Doe", "username": "janedoe"},
+     "tags": [{"name": "shoe"}],
+     "thumbnails": {"images": [{"url": "https://x/thumb.jpg",
+                               "width": 256, "height": 256}]}},
+]
+
+
+def test_semantic_filter_fn_stamps_embedding_when_thumbnail_available(tmp_path, monkeypatch):
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_ONE_CANDIDATE_WITH_THUMBNAIL)
+    client.fetch_image_bytes = lambda url: b"thumbnail-bytes"
+    monkeypatch.setattr("src.unity_semantic_embed.image_embedding",
+                        lambda b: [1.0, 2.0, 3.0] if b == b"thumbnail-bytes" else None)
+
+    entry = fetch_and_freeze(
+        "red shoe", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=lambda pool: pool)
+
+    assert entry is not None
+    assert entry["clip_image_embedding"] == [1.0, 2.0, 3.0]
+    on_disk = json.loads((tmp_path / "lookups" / SKETCHFAB_RELPATH).read_text(encoding="utf-8"))
+    assert on_disk["entries"][0]["clip_image_embedding"] == [1.0, 2.0, 3.0]
+
+
+def test_no_semantic_filter_fn_never_stamps_embedding(tmp_path, monkeypatch):
+    """semantic_select off for this freeze — no embedding is captured, even
+    though a thumbnail is available. An entry frozen with the gate off
+    simply carries no clip_image_embedding, and any later cache-hit
+    re-check leaves that axis unmeasured for it."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_ONE_CANDIDATE_WITH_THUMBNAIL)
+    client.fetch_image_bytes = lambda url: b"thumbnail-bytes"
+
+    entry = fetch_and_freeze(
+        "red shoe", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"))
+
+    assert entry is not None
+    assert "clip_image_embedding" not in entry
+
+
+def test_semantic_filter_fn_present_but_no_thumbnail_leaves_embedding_unstamped(
+        tmp_path, monkeypatch):
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_TWO_CANDIDATES)  # no "thumbnails" field
+
+    entry = fetch_and_freeze(
+        "helmet", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=lambda pool: pool)
+
+    assert entry is not None
+    assert "clip_image_embedding" not in entry
+
+
+def test_embedding_capture_exception_never_blocks_the_freeze(tmp_path, monkeypatch):
+    """A missing fetch_image_bytes, a network hiccup, an unloadable CLIP
+    model — none of it may cost the entry itself: the embedding is a bonus,
+    writing the frozen entry is not optional."""
+    _install_fake_convert(monkeypatch)
+    client = _FakeClient(results=_ONE_CANDIDATE_WITH_THUMBNAIL)
+
+    def _boom(url):
+        raise RuntimeError("no browser, no network")
+    client.fetch_image_bytes = _boom
+
+    entry = fetch_and_freeze(
+        "red shoe", _score_all_equal, client=client,
+        cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
+        semantic_filter_fn=lambda pool: pool)
+
+    assert entry is not None
+    assert entry["sketchfab_uid"] == "abc123"
+    assert "clip_image_embedding" not in entry

@@ -147,6 +147,45 @@ def test_search_swallows_exception(monkeypatch):
     assert client.search("shoe") == []
 
 
+def test_get_model_no_token_returns_empty():
+    assert SketchfabClient({}).get_model("abc") == {}
+
+
+def test_get_model_returns_data(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    req = _FakeRequest([_FakeResponse(data={"uid": "abc", "name": "Widget"})])
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
+    assert client.get_model("abc") == {"uid": "abc", "name": "Widget"}
+    url, kwargs = req.calls[0]
+    assert url.endswith("/models/abc")
+    assert "Authorization" in kwargs["headers"]
+
+
+def test_get_model_non_ok_returns_empty(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    req = _FakeRequest([_FakeResponse(ok=False)])
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(req))
+    assert client.get_model("abc") == {}
+
+
+def test_get_model_no_browser_returns_empty(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+    monkeypatch.setattr(client, "_browser_request_ctx", _fake_ctx(None))
+    assert client.get_model("abc") == {}
+
+
+def test_get_model_never_raises(monkeypatch):
+    client = SketchfabClient({"api_token": "tok"})
+
+    @contextmanager
+    def _raises():
+        raise RuntimeError("boom")
+        yield  # pragma: no cover — unreachable, satisfies generator shape
+
+    monkeypatch.setattr(client, "_browser_request_ctx", _raises)
+    assert client.get_model("abc") == {}
+
+
 def test_get_download_urls_no_token_returns_empty():
     assert SketchfabClient({}).get_download_urls("abc") == {}
 

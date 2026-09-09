@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -584,7 +585,8 @@ def _add_sketchfab_entry(lookups: Path, tmp_path: Path, *, uid="sk1",
                          filename="ultimate-pine-sk1.fbx",
                          keywords=("pine", "tree", "forest"),
                          kind_hints=("tree", "prop"), category="nature",
-                         license="cc0", author_username="janedoe") -> dict:
+                         license="cc0", author_username="janedoe",
+                         extra: Optional[dict] = None) -> dict:
     sk_root = tmp_path / "sketchfab_lib"
     sk_root.mkdir(exist_ok=True)
     (sk_root / filename).write_bytes(b"FBX")
@@ -601,6 +603,7 @@ def _add_sketchfab_entry(lookups: Path, tmp_path: Path, *, uid="sk1",
         "attribution": f'"Pine Tree" by Jane Doe is licensed under {license.upper()}.',
         "fetched_at": "2026-01-01T00:00:00Z",
     }
+    entry.update(extra or {})
     (lookups / "unity" / "sketchfab_catalog.json").write_text(
         json.dumps({"version": 1, "entries": [entry]}), encoding="utf-8")
     return entry
@@ -646,6 +649,109 @@ def test_sketchfab_cache_miss_falls_through_to_kenney(env, tmp_path):
         used, all_models, lookups_dir=str(env),
         sketchfab_cfg={"enabled": True, "auto_fetch": False})
     assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+# ── Cache-hit semantic re-check: semantic_select must ALSO gate reuse of an
+# already-frozen entry via keyword match, not just a live fetch below — see
+# unity_semantic_embed.semantic_filter_frozen. Without this, once ONE model
+# was frozen for ONE query, every LATER entity whose keywords merely
+# overlapped reused it verbatim, gate on or off, forever after.
+
+def test_cache_hit_semantic_select_off_never_calls_the_frozen_gate(env, tmp_path, monkeypatch):
+    """Today's default (semantic_select absent): a keyword-matched cache hit
+    is served exactly as before this gate existed — the frozen semantic
+    check isn't even invoked."""
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda *a, **kw: calls.append(1) or [])
+    entry = _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True})
+    assert paths["PineTrees"] == f"Models/Sketchfab/Nature/{entry['filename']}".rsplit(".", 1)[0]
+    assert calls == []
+
+
+def test_cache_hit_semantic_select_on_and_passing_is_still_served(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: cands)  # everything passes
+    entry = _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True})
+    assert paths["PineTrees"] == f"Models/Sketchfab/Nature/{entry['filename']}".rsplit(".", 1)[0]
+
+
+def test_cache_hit_semantic_select_on_and_failing_falls_through_to_kenney(
+        env, tmp_path, monkeypatch):
+    """The cache hit fails the semantic floor against THIS entity's query —
+    with no live fetch to fall back to, Tier S must be a clean no-op, same
+    as a cache MISS, not an error and not a forced reuse."""
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: [])  # everything fails
+    _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True, "auto_fetch": False})
+    assert paths["PineTrees"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_cache_hit_semantic_select_on_and_failing_tries_a_live_fetch_next(
+        env, tmp_path, monkeypatch):
+    """A failed cache-hit re-check must fall through exactly like a cache
+    MISS — including trying a live fetch when auto_fetch is on, rather than
+    just giving up on Tier S entirely."""
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: [])
+    calls = {"n": 0}
+    def _fake_fetch(*a, **kw):
+        calls["n"] += 1
+        return None
+    monkeypatch.setattr("src.sketchfab_freeze.fetch_and_freeze", _fake_fetch)
+    _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True, "auto_fetch": True})
+    assert calls["n"] == 1
+
+
+def test_cache_hit_semantic_check_uses_this_entitys_own_query_not_the_frozen_one(
+        env, tmp_path, monkeypatch):
+    """The whole point of this gate: a reused entry is re-verified against
+    the CURRENT entity's own query, not whatever query originally froze it
+    (the fixture freezes this entry under query='pine tree')."""
+    seen = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: seen.append((name, kind, query)) or cands)
+    _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5,
+                            model_hint="tall pine forest tree")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True})
+    assert len(seen) == 1
+    name, kind, query = seen[0]
+    assert name == "PineTrees"
+    assert "pine" in query
 
 
 def test_sketchfab_auto_fetch_false_never_calls_fetch_and_freeze(env, tmp_path, monkeypatch):

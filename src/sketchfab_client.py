@@ -210,6 +210,32 @@ class SketchfabClient:
         return [m for m in results
                 if self.license_slug(m) in self.accepted_licenses]
 
+    def get_model(self, model_uid: str) -> dict:
+        """GET /models/{uid} — full model detail (name, description,
+        thumbnails, tags, license, user) for a model already known by uid.
+        {} on any failure (deleted/private model, no token, network error).
+
+        Distinct from `search()`: this looks up ONE specific model directly
+        rather than ranking a query against the marketplace, so it's the
+        right call for re-checking an already-frozen catalog entry against
+        its own stored query — a fresh `search()` might not even return the
+        same model again (ranking drift, the listing going private, etc.).
+        """
+        if not self.available():
+            return {}
+        try:
+            with self._browser_request_ctx() as req:
+                if req is None:
+                    return {}
+                r = req.get(f"{self.base_url}/models/{model_uid}",
+                           headers=self._headers, timeout=self.timeout * 1000)
+                if not r.ok:
+                    return {}
+                return dict(r.json() or {})
+        except Exception as exc:  # noqa: BLE001
+            log.debug("sketchfab get_model(%s) failed: %s", model_uid, exc)
+            return {}
+
     def get_download_urls(self, model_uid: str) -> dict:
         """GET /models/{uid}/download — signed, time-limited archive URLs
         keyed by format ("gltf", "glb", "source", "usdz"), each a

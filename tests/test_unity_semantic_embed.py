@@ -208,3 +208,150 @@ def test_semantic_filter_exception_in_embedder_never_raises(monkeypatch):
         sem.semantic_filter("Cone", "prop", "a race marker cone", candidates,
                             client=_FakeClient(), min_image_similarity=0.2,
                             min_text_similarity=0.2)
+
+
+# ── image_embedding / image_similarity_from_embedding: the cache-hit path ──
+
+def test_image_embedding_empty_bytes_returns_none():
+    assert sem.image_embedding(b"") is None
+    assert sem.image_embedding(None) is None
+
+
+def test_image_embedding_returns_plain_float_list(monkeypatch):
+    class _FakeClipImage:
+        def embed(self, images):
+            return [[1.0, 0.5]]
+    monkeypatch.setattr(sem, "_clip_image_embedder", lambda: _FakeClipImage())
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(buf, format="PNG")
+    result = sem.image_embedding(buf.getvalue())
+    assert result == [1.0, 0.5]
+    assert all(isinstance(v, float) for v in result)
+
+
+def test_image_embedding_embedder_failure_degrades_to_none(monkeypatch):
+    def _boom():
+        raise RuntimeError("no cached CLIP model, no network")
+    monkeypatch.setattr(sem, "_clip_image_embedder", _boom)
+    assert sem.image_embedding(b"fakebytes") is None
+
+
+def test_image_similarity_from_embedding_empty_input_returns_none():
+    assert sem.image_similarity_from_embedding("", [1.0, 0.0]) is None
+    assert sem.image_similarity_from_embedding("a cone", []) is None
+    assert sem.image_similarity_from_embedding("a cone", None) is None
+
+
+def test_image_similarity_from_embedding_computes_cosine(monkeypatch):
+    class _FakeClipText:
+        def embed(self, texts):
+            return [[1.0, 0.0]]
+    monkeypatch.setattr(sem, "_clip_text_embedder", lambda: _FakeClipText())
+    result = sem.image_similarity_from_embedding("a race marker cone", [1.0, 0.0])
+    assert result == pytest.approx(1.0)
+
+
+def test_image_similarity_from_embedding_no_network_call(monkeypatch):
+    """The whole point: no client, no thumbnail fetch — only the stored
+    embedding and a freshly computed text embedding."""
+    monkeypatch.setattr(sem, "_clip_image_embedder",
+                        lambda: (_ for _ in ()).throw(AssertionError(
+                            "must never load the image embedder")))
+    class _FakeClipText:
+        def embed(self, texts):
+            return [[0.0, 1.0]]
+    monkeypatch.setattr(sem, "_clip_text_embedder", lambda: _FakeClipText())
+    result = sem.image_similarity_from_embedding("a cone", [0.0, 1.0])
+    assert result == pytest.approx(1.0)
+
+
+def test_image_similarity_from_embedding_failure_degrades_to_none(monkeypatch):
+    def _boom():
+        raise RuntimeError("boom")
+    monkeypatch.setattr(sem, "_clip_text_embedder", _boom)
+    assert sem.image_similarity_from_embedding("a cone", [1.0, 0.0]) is None
+
+
+# ── semantic_filter_frozen: the deterministic, network-free cache-hit gate ──
+
+def _frozen_entry(uid, description="a description", embedding=None,
+                  filename="model.fbx"):
+    e = {"sketchfab_uid": uid, "description": description, "filename": filename}
+    if embedding is not None:
+        e["clip_image_embedding"] = embedding
+    return e
+
+
+def test_semantic_filter_frozen_never_touches_the_network(monkeypatch):
+    """No client parameter exists at all — confirm neither embedder call
+    path can reach a network-backed thumbnail fetch by construction (there
+    is no client to fetch one from)."""
+    monkeypatch.setattr(sem, "image_similarity_from_embedding", lambda t, e: 0.9)
+    monkeypatch.setattr(sem, "text_similarity", lambda a, b: 0.9)
+    candidates = [_frozen_entry("a", embedding=[1.0, 0.0])]
+    result = sem.semantic_filter_frozen(
+        "PlayerTruck", "vehicle", "dirt race vehicle", candidates,
+        min_image_similarity=0.2, min_text_similarity=0.2)
+    assert [e["sketchfab_uid"] for e in result] == ["a"]
+
+
+def test_semantic_filter_frozen_keeps_and_orders_by_image_similarity(monkeypatch):
+    scores = {(0.5,): 0.5, (0.9,): 0.9}
+    monkeypatch.setattr(sem, "image_similarity_from_embedding",
+                        lambda t, emb: scores[tuple(emb)])
+    monkeypatch.setattr(sem, "text_similarity", lambda a, b: 0.9)
+    candidates = [_frozen_entry("bad", embedding=(0.5,)),
+                 _frozen_entry("good", embedding=(0.9,))]
+
+    result = sem.semantic_filter_frozen(
+        "Cone", "prop", "a race marker cone", candidates,
+        min_image_similarity=0.2, min_text_similarity=0.2)
+    assert [e["sketchfab_uid"] for e in result] == ["good", "bad"]
+
+
+def test_semantic_filter_frozen_missing_embedding_only_checks_text(monkeypatch):
+    """An entry frozen before this gate existed has no clip_image_embedding
+    at all — the image axis is simply unmeasured, never blocking, same
+    contract as semantic_filter's missing-thumbnail case."""
+    monkeypatch.setattr(sem, "text_similarity", lambda a, b: 0.9)
+    candidates = [_frozen_entry("no-embedding", embedding=None)]
+    result = sem.semantic_filter_frozen(
+        "Cone", "prop", "a race marker cone", candidates,
+        min_image_similarity=0.99, min_text_similarity=0.5)
+    assert [e["sketchfab_uid"] for e in result] == ["no-embedding"]
+
+
+def test_semantic_filter_frozen_rejects_everything_below_floor_returns_empty(monkeypatch):
+    monkeypatch.setattr(sem, "image_similarity_from_embedding", lambda t, e: 0.05)
+    monkeypatch.setattr(sem, "text_similarity", lambda a, b: 0.05)
+    candidates = [_frozen_entry("cartoon-character", embedding=[1.0, 0.0],
+                                description="a stylized character")]
+    result = sem.semantic_filter_frozen(
+        "PlayerCharacter", "character", "realistic paratrooper", candidates,
+        min_image_similarity=0.5, min_text_similarity=0.5)
+    assert result == []
+
+
+def test_semantic_filter_frozen_no_measurement_returns_original_list_untouched():
+    """Neither description nor embedding on the candidate at all — an
+    embedder-availability/data-availability gap, not a semantic verdict."""
+    candidates = [_frozen_entry("a", description="", embedding=None)]
+    result = sem.semantic_filter_frozen(
+        "Cone", "prop", "a race marker cone", candidates,
+        min_image_similarity=0.2, min_text_similarity=0.2)
+    assert result is candidates or result == candidates
+
+
+def test_semantic_filter_frozen_unscored_candidate_is_appended_not_dropped(monkeypatch):
+    monkeypatch.setattr(sem, "text_similarity",
+                        lambda a, b: 0.9 if b == "matches" else None)
+    candidates = [_frozen_entry("unmeasurable", description="", embedding=None),
+                 _frozen_entry("measurable", description="matches", embedding=None)]
+
+    result = sem.semantic_filter_frozen(
+        "Cone", "prop", "a race marker cone", candidates,
+        min_image_similarity=0.2, min_text_similarity=0.2)
+
+    assert [e["sketchfab_uid"] for e in result] == ["measurable", "unmeasurable"]
