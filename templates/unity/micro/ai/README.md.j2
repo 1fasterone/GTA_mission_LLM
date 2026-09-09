@@ -44,6 +44,28 @@ This variant uses a direct controller — no explicit state enum.
 
 | Field              | Default | Notes |
 |--------------------|---------|-------|
-| `detectionRadius`  | {{ "%.1f"|format(s.detection_radius) }} | sight range |
+| `detectionRadius`  | {{ "%.1f"|format(s.detection_radius) }} | {% if variant in ("navmesh_patrol", "fsm_guard", "behaviour_tree_lite") %}outer perception range — see Perception below{% else %}sight range{% endif %} |
 | `attackRadius`     | {{ "%.1f"|format(s.attack_radius) }} | melee range |
 | `moveSpeed`        | {{ "%.1f"|format(s.move_speed) }} | {% if s.nav_backend == "navmesh" %}passed to NavMeshAgent.speed{% elif s.nav_backend == "kinematic_2d" %}direct 2D seek speed{% else %}direct transform seek speed{% endif %} |
+{% if variant in ("navmesh_patrol", "fsm_guard", "behaviour_tree_lite") %}
+
+## Perception
+
+This AI does not have omniscient sight — it notices the target only within a
+facing-relative vision cone, blocked by anything between it and the target
+(both toggleable), and separately picks up on fast/loud movement (sprinting)
+within a hearing radius even when out of sight. Losing the target does not
+mean instantly forgetting it: the AI keeps heading for its last known
+position for a short memory window before actually giving up.
+
+| Field                 | Default | Notes |
+|-----------------------|---------|-------|
+| `visionAngle`         | {{ "%.0f"|format(s.vision_angle) }}° | cone width centred on facing; 360 = omniscient sphere |
+| `visionObstruction`   | {{ s.vision_obstruction }} | raycast line-of-sight check |
+| `eyeHeight`           | {{ "%.1f"|format(s.eye_height) }}m | raycast origin/target height offset |
+| `hearingRadius`       | {{ "%.1f"|format(s.hearing_radius) }}m | 0 disables hearing |
+| `noiseSpeedThreshold` | {{ "%.1f"|format(s.noise_speed_threshold) }} m/s | target speed counted as "loud" |
+| `memorySeconds`       | {{ "%.1f"|format(s.memory_seconds) }}s | how long a lost target keeps being searched |
+{% if s.squad_alert_radius > 0 %}| `squadAlertRadius`    | {{ "%.1f"|format(s.squad_alert_radius) }}m | same-archetype allies alerted the instant this AI notices the target — see `AlertSquad()`/`ReceiveAllyAlert()` |
+{% endif %}
+{% endif %}
