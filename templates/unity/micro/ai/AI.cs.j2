@@ -6,7 +6,8 @@ using UnityEngine;
 {% if s.nav_backend == "navmesh" %}
 using UnityEngine.AI;
 {% endif %}
-{% if variant in ("flocking", "flying_swarm", "waypoint_follow") %}
+{% set _perception_variant = variant in ("navmesh_patrol", "fsm_guard", "behaviour_tree_lite") %}
+{% if variant in ("flocking", "flying_swarm", "waypoint_follow") or (_perception_variant and s.squad_alert_radius > 0) %}
 using System.Collections.Generic;
 {% endif %}
 {{ inject.usings(s) }}
@@ -37,6 +38,47 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     private Transform   _target;
     private float       _attackTimer;
+
+{% if _perception_variant %}
+    [Header("Perception")]
+    [Tooltip("Degrees, cone width centred on facing. 360 = old omniscient sphere.")]
+    [Range(1f, 360f)]
+    [SerializeField] private float visionAngle          = {{ "%.1f"|format(s.vision_angle) }}f;
+    [Tooltip("Raycast-check line of sight; a wall between this AI and the target hides it regardless of angle/range.")]
+    [SerializeField] private bool  visionObstruction     = {{ "true" if s.vision_obstruction else "false" }};
+    [SerializeField] private float eyeHeight             = {{ "%.2f"|format(s.eye_height) }}f;
+    [Tooltip("A target moving faster than noiseSpeedThreshold is heard even out of sight. 0 disables hearing.")]
+    [SerializeField] private float hearingRadius         = {{ "%.2f"|format(s.hearing_radius) }}f;
+    [SerializeField] private float noiseSpeedThreshold   = {{ "%.2f"|format(s.noise_speed_threshold) }}f;
+    [Tooltip("Keep heading for the last known position this long after losing perception before giving up.")]
+    [SerializeField] private float memorySeconds         = {{ "%.2f"|format(s.memory_seconds) }}f;
+{% if s.squad_alert_radius > 0 %}
+    [Tooltip("Same-archetype allies within this radius are alerted the instant this AI perceives a target.")]
+    [SerializeField] private float squadAlertRadius      = {{ "%.2f"|format(s.squad_alert_radius) }}f;
+{% endif %}
+
+    /// <summary>Live sight this frame — vision cone + range + (optionally) an
+    /// unobstructed raycast. Refreshed once per Update() by UpdatePerception().</summary>
+    private bool    _targetVisible;
+    /// <summary>Edge-triggered: the target's estimated speed crossed
+    /// noiseSpeedThreshold within hearingRadius THIS frame — see
+    /// UpdatePerception(). Never set when hearingRadius is 0.</summary>
+    private bool    _heardNoise;
+    private bool    _wasPerceiving;
+    /// <summary>Where the target was last actually sensed (sight or sound) —
+    /// what a state searches while _searchTimer > 0 and the target is not
+    /// currently _targetVisible. See ChaseDestination().</summary>
+    private Vector3 _lastKnownPosition;
+    private float   _searchTimer;
+    private Vector3 _prevTargetPos;
+    private bool    _havePrevTargetPos;
+{% if s.squad_alert_radius > 0 %}
+    /// <summary>Edge-triggered by a squadmate's own AlertSquad() call, then
+    /// cleared the same way _tookDamage is — see the "ally_alerted" transition.</summary>
+    private bool    _allyAlerted;
+    private static readonly List<{{ s.name }}> _squad = new List<{{ s.name }}>();
+{% endif %}
+{% endif %}
 
 {% if variant in ("fsm_guard", "behaviour_tree_lite") %}
     [Header("FSM")]
@@ -89,6 +131,9 @@ public class {{ s.name }} : MonoBehaviour
 {% if variant in ("flocking", "flying_swarm") %}
         _flock.Add(this);
 {% endif %}
+{% if _perception_variant and s.squad_alert_radius > 0 %}
+        _squad.Add(this);
+{% endif %}
 {% if variant == "flying_swarm" %}
         _bobPhase = (GetInstanceID() & 1023) * 0.01f;
         // Take to the air IMMEDIATELY rather than easing up from the floor.
@@ -110,6 +155,9 @@ public class {{ s.name }} : MonoBehaviour
 {% if variant in ("flocking", "flying_swarm") %}
         _flock.Remove(this);
 {% endif %}
+{% if _perception_variant and s.squad_alert_radius > 0 %}
+        _squad.Remove(this);
+{% endif %}
     }
 
     private void Update()
@@ -119,13 +167,17 @@ public class {{ s.name }} : MonoBehaviour
             var go = GameObject.FindGameObjectWithTag(targetTag);
             if (go != null) _target = go.transform;
         }
+{% if _perception_variant %}
+        UpdatePerception();
+{% endif %}
 
 {% if variant == "navmesh_patrol" %}
 {% if s.nav_backend == "navmesh" %}
-        // Patrol unless the target is in range
-        if (_target != null && Vector3.Distance(transform.position, _target.position) < detectionRadius)
+        // Patrol unless the target has been perceived (sight, sound, or still
+        // within its post-loss memory window) — see UpdatePerception().
+        if (HasPerceivedTarget())
         {
-            if (_agent != null) _agent.SetDestination(_target.position);
+            if (_agent != null) _agent.SetDestination(ChaseDestination());
         }
         else if (patrolPoints != null && patrolPoints.Length > 0 && _agent != null)
         {
@@ -135,9 +187,9 @@ public class {{ s.name }} : MonoBehaviour
             if (p != null) _agent.SetDestination(p.position);
         }
 {% else %}
-        // Patrol unless the target is in range — direct transform-seeking, no NavMesh.
-        if (_target != null && Vector3.Distance(transform.position, _target.position) < detectionRadius)
-            MoveTowards(_target.position);
+        // Patrol unless the target has been perceived — direct transform-seeking, no NavMesh.
+        if (HasPerceivedTarget())
+            MoveTowards(ChaseDestination());
         else
             PatrolStep2D();
 {% endif %}
@@ -188,9 +240,9 @@ public class {{ s.name }} : MonoBehaviour
 {%- endif %}
 {%- elif st.role == "chase" %}
 {%- if s.nav_backend == "navmesh" %}
-                if (_target != null && _agent != null) _agent.SetDestination(_target.position);
+                if (_target != null && _agent != null) _agent.SetDestination(ChaseDestination());
 {%- else %}
-                if (_target != null) MoveTowards(_target.position);
+                if (_target != null) MoveTowards(ChaseDestination());
 {%- endif %}
 {%- elif st.role == "attack" %}
                 TryAttack();
@@ -226,6 +278,9 @@ public class {{ s.name }} : MonoBehaviour
 
         CheckTransitions(dist);
         _tookDamage = false;
+{% if s.squad_alert_radius > 0 %}
+        _allyAlerted = false;
+{% endif %}
 {% elif variant == "cover_shooter" %}
         if (_target == null) return;
         float dist = Vector3.Distance(transform.position, _target.position);
@@ -391,6 +446,134 @@ public class {{ s.name }} : MonoBehaviour
     }
 {% endif %}
 
+{% if _perception_variant %}
+    /// <summary>Runs once per Update(), before any state/behaviour logic reads
+    /// perception — refreshes _targetVisible, _heardNoise, _lastKnownPosition
+    /// and _searchTimer (the post-loss memory window){% if s.squad_alert_radius > 0 %}, and alerts
+    /// nearby allies the instant this AI newly notices the target (sight OR
+    /// sound, not every frame it stays noticed){% endif %}.</summary>
+    private void UpdatePerception()
+    {
+        _heardNoise = false;
+        if (_target == null) { _targetVisible = false; _wasPerceiving = false; return; }
+
+        _targetVisible = CanSeeTarget();
+        if (_targetVisible)
+        {
+            _lastKnownPosition = _target.position;
+            _searchTimer = memorySeconds;
+        }
+        else if (hearingRadius > 0f)
+        {
+            // Loudness is estimated from the target's own movement, not a
+            // broadcast event — no other script needs to know this AI exists.
+            float speed = _havePrevTargetPos
+                ? (_target.position - _prevTargetPos).magnitude / Mathf.Max(Time.deltaTime, 0.0001f)
+                : 0f;
+            if (speed > noiseSpeedThreshold
+                && Vector3.Distance(transform.position, _target.position) <= hearingRadius)
+            {
+                _heardNoise = true;
+                _lastKnownPosition = _target.position;
+                _searchTimer = memorySeconds;
+            }
+        }
+        if (_searchTimer > 0f) _searchTimer -= Time.deltaTime;
+        _prevTargetPos     = _target.position;
+        _havePrevTargetPos = true;
+
+{% if s.squad_alert_radius > 0 %}
+        bool sensingNow = _targetVisible || _heardNoise;
+        if (sensingNow && !_wasPerceiving) AlertSquad();
+        _wasPerceiving = sensingNow;
+{% endif %}
+    }
+
+    /// <summary>True while the target is directly perceived (sight or sound)
+    /// OR still within its post-loss memory window — the single sensor gate
+    /// every perception-aware variant/transition reads.</summary>
+    private bool HasPerceivedTarget()
+        => _target != null && (_targetVisible || _heardNoise || _searchTimer > 0f);
+
+    /// <summary>Where to head while chasing: the target's live position when
+    /// actually visible, otherwise its last known one — a lost target is
+    /// searched for, never tracked through walls.</summary>
+    private Vector3 ChaseDestination() => _targetVisible ? _target.position : _lastKnownPosition;
+
+    /// <summary>Range + vision cone + (optionally) an unobstructed raycast.
+    /// The raycast starts stepped slightly toward the target so it does not
+    /// immediately self-hit this AI's own collider at the eye origin.</summary>
+    private bool CanSeeTarget()
+    {
+        if (_target == null) return false;
+        Vector3 toTarget = _target.position - transform.position;
+        if (toTarget.magnitude > detectionRadius) return false;
+
+        if (visionAngle < 360f)
+        {
+{%- if s.nav_backend == "kinematic_2d" %}
+            Vector3 flat = toTarget; flat.z = 0f;
+            if (flat.sqrMagnitude > 0.0001f
+                && Vector3.Angle(transform.right, flat) > visionAngle * 0.5f)
+                return false;
+{%- else %}
+            Vector3 flat = toTarget; flat.y = 0f;
+            if (flat.sqrMagnitude > 0.0001f
+                && Vector3.Angle(transform.forward, flat) > visionAngle * 0.5f)
+                return false;
+{%- endif %}
+        }
+
+        if (visionObstruction)
+        {
+{%- if s.nav_backend == "kinematic_2d" %}
+            Vector2 origin = transform.position;
+            Vector2 dest   = _target.position;
+            Vector2 dir    = dest - origin;
+            if (dir.sqrMagnitude > 0.0001f) origin += dir.normalized * 0.35f;
+            var hit = Physics2D.Linecast(origin, dest);
+            if (hit.collider != null && hit.transform.root != _target.root)
+                return false;
+{%- else %}
+            Vector3 eye       = transform.position + Vector3.up * eyeHeight;
+            Vector3 targetEye = _target.position   + Vector3.up * eyeHeight;
+            Vector3 dir       = targetEye - eye;
+            if (dir.sqrMagnitude > 0.0001f) eye += dir.normalized * 0.35f;
+            if (Physics.Linecast(eye, targetEye, out RaycastHit hit)
+                && hit.transform.root != _target.root)
+                return false;
+{%- endif %}
+        }
+        return true;
+    }
+{% if s.squad_alert_radius > 0 %}
+
+    /// <summary>Called from UpdatePerception() the instant this AI newly
+    /// senses the target — tells every same-archetype ally within
+    /// squadAlertRadius, sharing WHERE (not granting them live tracking; each
+    /// ally still needs its own sight/hearing to upgrade a search into a
+    /// direct chase).</summary>
+    private void AlertSquad()
+    {
+        foreach (var ally in _squad)
+        {
+            if (ally == null || ally == this) continue;
+            if (Vector3.Distance(transform.position, ally.transform.position) <= squadAlertRadius)
+                ally.ReceiveAllyAlert(_lastKnownPosition);
+        }
+    }
+
+    /// <summary>SendMessage-free entry point a squadmate's AlertSquad() calls
+    /// directly (same generated class only — see docs on squadAlertRadius).</summary>
+    public void ReceiveAllyAlert(Vector3 reportedPosition)
+    {
+        _allyAlerted        = true;
+        _lastKnownPosition  = reportedPosition;
+        _searchTimer        = Mathf.Max(_searchTimer, memorySeconds);
+    }
+{% endif %}
+{% endif %}
+
     private void TryAttack()
     {
         _attackTimer -= Time.deltaTime;
@@ -423,6 +606,30 @@ public class {{ s.name }} : MonoBehaviour
     {
         Gizmos.color = Color.yellow; Gizmos.DrawWireSphere(transform.position, detectionRadius);
         Gizmos.color = Color.red;    Gizmos.DrawWireSphere(transform.position, attackRadius);
+{% if _perception_variant %}
+        if (visionAngle < 360f)
+        {
+            Gizmos.color = new Color(1f, 1f, 0f, 0.5f);
+{%- if s.nav_backend == "kinematic_2d" %}
+            Vector3 facing = transform.right;
+{%- else %}
+            Vector3 facing = transform.forward;
+{%- endif %}
+            Quaternion left  = Quaternion.AngleAxis(-visionAngle * 0.5f, Vector3.up);
+            Quaternion right = Quaternion.AngleAxis( visionAngle * 0.5f, Vector3.up);
+            Gizmos.DrawLine(transform.position, transform.position + (left  * facing) * detectionRadius);
+            Gizmos.DrawLine(transform.position, transform.position + (right * facing) * detectionRadius);
+        }
+        if (hearingRadius > 0f)
+        {
+            Gizmos.color = Color.cyan;
+            Gizmos.DrawWireSphere(transform.position, hearingRadius);
+        }
+{% if s.squad_alert_radius > 0 %}
+        Gizmos.color = new Color(1f, 0.5f, 0f, 0.6f);
+        Gizmos.DrawWireSphere(transform.position, squadAlertRadius);
+{% endif %}
+{% endif %}
     }
 {{ inject.fixed_update(s) }}
 {{ inject.methods(s) }}{{ inject.extensions_methods(s) }}

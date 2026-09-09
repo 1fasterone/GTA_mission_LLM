@@ -85,12 +85,18 @@ _KEYWORD_DISPLAY: dict[str, str] = {
 TransitionWhen = Literal[
     "target_detected", "target_lost", "in_attack_range",
     "out_of_attack_range", "alert_elapsed", "always", "took_damage",
+    "heard_noise", "ally_alerted",
 ]
 _VALID_WHEN = frozenset(TransitionWhen.__args__)   # type: ignore[attr-defined]
 
 _WHEN_EXPR: dict[str, str] = {
-    "target_detected":     "_target != null && dist < detectionRadius",
-    "target_lost":         "_target == null || dist > detectionRadius * 1.5f",
+    # HasPerceivedTarget() is the perception model (vision cone + raycast LOS,
+    # hearing, and a short post-loss memory window) — see AI.cs.j2's
+    # UpdatePerception()/CanSeeTarget(). Only rendered for navmesh_patrol/
+    # fsm_guard/behaviour_tree_lite; those are the only variants whose
+    # transitions can reference it (see AISchema's perception fields below).
+    "target_detected":     "HasPerceivedTarget()",
+    "target_lost":         "!HasPerceivedTarget()",
     "in_attack_range":     "_target != null && dist < attackRadius",
     "out_of_attack_range": "_target == null || dist > attackRadius",
     # "Time in the current state has elapsed" — generic despite the name (any
@@ -102,6 +108,14 @@ _WHEN_EXPR: dict[str, str] = {
     # (Health.cs.j2's TakeDamage calls it via SendMessage), then AI.cs.j2's
     # Update() clears it right after CheckTransitions evaluates — see AI.cs.j2.
     "took_damage":         "_tookDamage",
+    # Edge-triggered, recomputed fresh every UpdatePerception(): the target's
+    # estimated speed crossed noiseSpeedThreshold within hearingRadius this
+    # frame (sprinting footsteps, not a raycast/LOS signal — sound isn't
+    # blocked by vision_obstruction in this model).
+    "heard_noise":          "_heardNoise",
+    # Edge-triggered by a squadmate's own AlertSquad() call (see
+    # squad_alert_radius below) — reset the same way took_damage is.
+    "ally_alerted":         "_allyAlerted",
 }
 
 def _state_ident(s: str, fallback: str = "State") -> str:
@@ -185,6 +199,20 @@ class AISchema(CodeExtensibleSchema):
     slowdown_angle:       float = 35.0          # corners sharper than this slow it down
     rubber_band_strength: float = 0.5           # 0..1 — adapt speed to keep pace with target
 
+    # ── Perception (navmesh_patrol / fsm_guard / behaviour_tree_lite only) ────
+    # detection_radius above is the outer range; these narrow WHAT within that
+    # range actually counts as "noticed" — see AI.cs.j2's CanSeeTarget()/
+    # UpdatePerception(). chase_player/cover_shooter/flocking/flying_swarm/
+    # waypoint_follow have no detection GATE today (they act unconditionally
+    # once a target exists) so perception does not apply to them.
+    vision_angle:          float = 120.0  # degrees, full cone width centred on facing; 360 = old omniscient sphere
+    vision_obstruction:    bool  = True   # raycast-check line of sight; a wall between AI and target hides it regardless of angle/range
+    eye_height:            float = 1.6    # world-up offset for both ends of the LOS raycast
+    hearing_radius:        float = 6.0    # a target moving faster than noise_speed_threshold is heard even out of sight; 0 disables hearing
+    noise_speed_threshold: float = 5.5    # m/s — sprinting, not walking; estimated from the target's own position delta, no source event needed
+    memory_seconds:        float = 3.0    # keep heading for the last known position this long after losing perception before giving up; 0 = old instant give-up
+    squad_alert_radius:    float = 10.0   # same-archetype allies within this radius are alerted the instant this AI perceives a target; 0 disables squad alerting
+
     @field_validator("variant", mode="before")
     @classmethod
     def _clamp_variant(cls, v: str) -> str:
@@ -235,12 +263,30 @@ A state whose role is omitted gets one inferred from its name.
 TRANSITIONS — the graph between those states. `when` MUST be one of these exact
 values; it is not free-form code:
   target_detected | target_lost | in_attack_range | out_of_attack_range
-  alert_elapsed   | always      | took_damage
+  alert_elapsed   | always      | took_damage     | heard_noise | ally_alerted
 took_damage fires for one frame whenever this AI's Health component takes
 damage (wired automatically, no field needed) — use it for transitions INTO a
 "hurt" state. alert_elapsed also works as a generic state-timeout for hurt's
-way back out (not just literal "alert" states).
+way back out (not just literal "alert" states). heard_noise fires when the
+target is moving fast (sprinting) within hearing range but not yet seen — use
+it for a distinct "something's out there" state (e.g. an "Investigate" state)
+if the brief wants sound and sight to read differently; target_detected
+already covers BOTH sight and sound if you don't need that distinction.
+ally_alerted fires when a nearby same-archetype ally spots the target first.
 Omit transitions entirely to get a default graph built from the roles.
+
+PERCEPTION — for navmesh_patrol/fsm_guard/behaviour_tree_lite only (the other
+variants have no detection gate to tune). Set these from whatever the brief
+said about detection, above:
+  vision_angle          degrees, cone width centred on facing (120 = alert
+                         guard, 360 = omniscient/old behaviour)
+  vision_obstruction     true unless the brief explicitly wants X-ray sight
+  hearing_radius          0 disables hearing; a few meters past detection_radius
+                         if the brief mentions noise/sound/footsteps
+  memory_seconds          how long it keeps searching a lost target's last
+                         known spot (0 = gives up instantly)
+  squad_alert_radius      0 disables ally alerting; >0 for "one guard sees you,
+                         the group reacts"
 
 BRIEF:
 {concept}
@@ -272,6 +318,11 @@ OUTPUT:
   "waypoint_parent_name": "Waypoints",
   "slowdown_angle": 35.0,
   "rubber_band_strength": 0.5,
+  "vision_angle": 120.0,
+  "vision_obstruction": true,
+  "hearing_radius": 6.0,
+  "memory_seconds": 3.0,
+  "squad_alert_radius": 10.0,
   "description": "One sentence."
 }}
 
@@ -299,6 +350,12 @@ class AIPipeline(UnityMicroPipeline):
         "waypointparentname", "slowdownangle", "rubberbandstrength",
         "_waypoints", "_wpindex",
         "_statetime", "alertseconds", "_tookdamage",
+        # Perception (vision/hearing/memory/squad — see AISchema, AI.cs.j2)
+        "visionangle", "visionobstruction", "eyeheight", "hearingradius",
+        "noisespeedthreshold", "memoryseconds", "squadalertradius",
+        "_targetvisible", "_heardnoise", "_wasperceiving", "_allyalerted",
+        "_lastknownposition", "_searchtimer", "_prevtargetpos",
+        "_haveprevtargetpos", "_squad",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.AI", "System.Collections.Generic"}
 
@@ -338,6 +395,15 @@ class AIPipeline(UnityMicroPipeline):
             for note in self._lint_fsm(schema, variant):
                 console.print(f"  [yellow]WARN[/]  {note}")
         schema.alert_seconds = max(0.0, min(30.0, schema.alert_seconds))
+
+        # Perception — clamped regardless of variant (harmless on variants
+        # that don't render it; keeps the schema itself always self-consistent).
+        schema.vision_angle          = max(1.0, min(360.0, schema.vision_angle))
+        schema.eye_height            = max(0.0, schema.eye_height)
+        schema.hearing_radius        = max(0.0, schema.hearing_radius)
+        schema.noise_speed_threshold = max(0.1, schema.noise_speed_threshold)
+        schema.memory_seconds        = max(0.0, min(60.0, schema.memory_seconds))
+        schema.squad_alert_radius    = max(0.0, schema.squad_alert_radius)
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
@@ -422,10 +488,29 @@ class AIPipeline(UnityMicroPipeline):
             valid.append(t)
         schema.transitions = valid
 
+        # 3b. "ally_alerted" only compiles when squad_alert_radius > 0 (that is
+        #     what gates _allyAlerted/_squad/AlertSquad in AI.cs.j2) — an
+        #     authored transition using it with squad disabled would be
+        #     CS0103, not a soft failure. Drop it the same loud way a dangling
+        #     endpoint is dropped above, rather than let it reach codegen.
+        if schema.squad_alert_radius <= 0:
+            kept_transitions, dropped = [], []
+            for t in schema.transitions:
+                if t.when == "ally_alerted":
+                    dropped.append(f"{t.from_state}->{t.to_state}")
+                else:
+                    kept_transitions.append(t)
+            if dropped:
+                schema.transitions = kept_transitions
+                notes.append("ai transition(s) " + ", ".join(dropped)
+                             + " dropped: when=\"ally_alerted\" needs "
+                               "squad_alert_radius > 0")
+
         # 4. No usable authored graph -> synthesise one from the roles. Built from
         #    the states that actually exist, so it is never the hardcoded triple.
         if not schema.transitions:
-            schema.transitions = self._default_transitions(kept)
+            schema.transitions = self._default_transitions(
+                kept, squad_enabled=schema.squad_alert_radius > 0)
 
         # 5. initial_state must name a real state.
         init = _resolve(schema.initial_state) if schema.initial_state else None
@@ -447,11 +532,17 @@ class AIPipeline(UnityMicroPipeline):
         return notes
 
     @staticmethod
-    def _default_transitions(states: list[AIState]) -> list[AITransition]:
+    def _default_transitions(states: list[AIState], *,
+                             squad_enabled: bool = False) -> list[AITransition]:
         """The role graph: home -> (alert) -> chase -> attack, and back out.
 
         Only edges whose endpoints both exist are emitted, so a two-state FSM
         gets a two-state graph rather than references to states it never had.
+
+        `squad_enabled` must match schema.squad_alert_radius > 0 — an
+        "ally_alerted" edge only compiles when AI.cs.j2 actually emits
+        _allyAlerted/_squad/AlertSquad (see _lint_fsm's matching guard on the
+        AUTHORED-transition path, which drops the same when-value the same way).
         """
         first: dict[str, str] = {}
         for st in states:
@@ -469,12 +560,19 @@ class AIPipeline(UnityMicroPipeline):
                 out.append(AITransition(from_state=a, to_state=b, when=when))
 
         # Outbound: home wakes on detection, through alert if one exists.
+        # ally_alerted rides the same edges as target_detected — a squadmate's
+        # own sighting/hearing wakes this AI exactly like its own senses would
+        # (see AI.cs.j2's AlertSquad()/ReceiveAllyAlert(), squad_alert_radius).
         if alert:
             add(home,  alert, "target_detected")
+            if squad_enabled:
+                add(home, alert, "ally_alerted")
             add(alert, chase or attack, "alert_elapsed")
             add(alert, home,  "target_lost")
         else:
             add(home, chase or attack, "target_detected")
+            if squad_enabled:
+                add(home, chase or attack, "ally_alerted")
         add(chase,  attack, "in_attack_range")
         add(attack, chase or home, "out_of_attack_range")
         # Inbound: give up and go home.
