@@ -17,7 +17,7 @@ from src.micro.audio          import AudioPipeline,      AudioSchema
 from src.micro.ai             import AIPipeline,         AISchema, AIState
 from src.micro.spawner        import SpawnerPipeline,    SpawnerSchema
 from src.micro.saveload       import SaveLoadPipeline,   SaveLoadSchema
-from src.micro.inventory      import InventoryPipeline,  InventorySchema
+from src.micro.inventory      import InventoryPipeline,  InventorySchema, InventoryItemSpec
 from src.micro.dialogue       import DialoguePipeline,   DialogueSchema, DialogueNode, DialogueChoice
 from src.micro.menu           import MenuPipeline,        MenuSchema
 from src.micro.interactable   import InteractablePipeline, InteractableSchema
@@ -946,6 +946,102 @@ def test_inventory_renders_every_variant(tmp_path, dummy_config, variant):
         assert "SelectedIndex" in mgr
 
 
+# ── Inventory item effects ──────────────────────────────────────────────────
+
+def test_inventory_item_effect_clamp():
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Potion", effect="not-a-real-effect")])
+    assert s.items[0].effect == "none"
+
+
+def test_inventory_fixer_drops_untargeted_unlock_to_none(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Key", effect="unlock", target_id="")])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "none"
+
+
+def test_inventory_fixer_drops_untargeted_quest_flag_to_none(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Diary", effect="quest_flag", target_id="  ")])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "none"
+
+
+def test_inventory_fixer_keeps_targeted_unlock(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Key", effect="unlock", target_id="CellarDoor")])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "unlock"
+    assert s.items[0].target_id == "CellarDoor"
+
+
+def test_inventory_fixer_drops_zero_amount_heal_to_none(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Potion", effect="heal", amount=0.0)])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "none"
+
+
+def test_inventory_fixer_keeps_positive_amount_heal(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Potion", effect="heal", amount=25.0)])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "heal"
+    assert s.items[0].amount == 25.0
+
+
+def test_inventory_item_definition_emits_effect_enum_for_container_variants(tmp_path, dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="TestInv", variant="slot_based")
+    s = p.default_fix(s, "slot_based")
+    p.write_files(s, "slot_based", tmp_path)
+    item = (tmp_path / "Scripts" / "TestInvItemDefinition.cs").read_text(encoding="utf-8")
+    assert "public enum Effect { None, Heal, RestoreShield, StatBoost, Unlock, QuestFlag }" in item
+    assert "public Effect effect = Effect.None;" in item
+    assert "public float amount;" in item
+    assert "public string targetId;" in item
+
+
+def test_inventory_item_definition_omits_effect_for_equipment(tmp_path, dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="TestInv", variant="equipment")
+    s = p.default_fix(s, "equipment")
+    p.write_files(s, "equipment", tmp_path)
+    item = (tmp_path / "Scripts" / "TestInvItemDefinition.cs").read_text(encoding="utf-8")
+    assert "enum Effect" not in item
+    assert "equipSlot" in item
+
+
+def test_inventory_use_item_dispatches_by_effect(tmp_path, dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="TestInv", variant="slot_based")
+    s = p.default_fix(s, "slot_based")
+    p.write_files(s, "slot_based", tmp_path)
+    mgr = (tmp_path / "Scripts" / "TestInv.cs").read_text(encoding="utf-8")
+    assert "public bool UseItem(TestInvItemDefinition item)" in mgr
+    assert "public event Action<float> OnHealEffect;" in mgr
+    assert "OnHealEffect?.Invoke(item.amount);" in mgr
+    assert "OnStatBoostEffect?.Invoke(item.amount, item.targetId);" in mgr
+    assert mgr.count("{") == mgr.count("}")
+
+
+def test_inventory_use_item_omitted_for_equipment(tmp_path, dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="TestInv", variant="equipment")
+    s = p.default_fix(s, "equipment")
+    p.write_files(s, "equipment", tmp_path)
+    mgr = (tmp_path / "Scripts" / "TestInv.cs").read_text(encoding="utf-8")
+    assert "UseItem" not in mgr
+    assert "OnHealEffect" not in mgr
+
+
+def test_inventory_reserved_names_cover_item_effect_api():
+    reserved = InventoryPipeline._RESERVED_FIELD_NAMES
+    for name in ("useitem", "onitemused", "onhealeffect", "onshieldeffect",
+                "onstatboosteffect", "onunlockeffect", "onquestflageffect"):
+        assert name in reserved, f"{name!r} declared in Inventory.cs.j2 but not reserved"
+
+
 def test_inventory_extensions_field_survives_and_renders(dummy_config):
     from src.micro.code_fields import CodeField
 
@@ -969,6 +1065,23 @@ def test_inventory_extensions_field_colliding_with_reserved_name_is_dropped(dumm
     s = InventorySchema(
         name="TestInv", variant="slot_based",
         extensions_fields=[CodeField(name="maxWeight", type="float", default="1f")],
+    )
+    fixed = p.default_fix(s, "slot_based")
+    assert fixed.extensions_fields == []
+    assert "extensions_conflicts" in fixed.meta
+
+
+def test_inventory_extensions_field_colliding_with_item_effect_api_is_dropped(dummy_config):
+    """The item-effect taxonomy (useitem/onhealeffect/etc., added in a sibling
+    PR) must be covered by the same safe-block collision check as the
+    original reserved names — this is the exact scenario the missing
+    apply_extensions_safe_block call would have let through silently."""
+    from src.micro.code_fields import CodeField
+
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="TestInv", variant="slot_based",
+        extensions_fields=[CodeField(name="useItem", type="bool", default="false")],
     )
     fixed = p.default_fix(s, "slot_based")
     assert fixed.extensions_fields == []
