@@ -490,15 +490,70 @@ unaffected. `unity_racetrack.py` itself was deliberately left untouched.
 start-grid/finish-line hardcode and resolving the ground-plane question the original comment
 raised — real follow-up work, not attempted this pass.
 
-#### Gap I — A Search Engine That Can't Read Sentences · ⬜ open
-**Verdict:** THIRD-PARTY LIMIT
+#### Gap I — A Search Engine That Can't Read Sentences · 🟡 partially addressed
+**Verdict:** THIRD-PARTY LIMIT, corrected write-up
 
 Sketchfab's own search is literal keyword match — verified live that a descriptive style
 sentence returns zero results while a two-word label returns dozens, which is why prompts
 are capped at four words before they're sent. The mitigations already in place
 (author-affinity biasing, a concept-translator that shortens queries) are sound engineering
-around a real external constraint, not an oversight — though nothing reranks the candidates
-that come back using the embedding stack already installed for the RAG corpus.
+around a real external constraint, not an oversight.
+
+**Correction to the original write-up:** the claim that "nothing reranks the candidates
+that come back using the embedding stack already installed for the RAG corpus" was stale.
+`unity_semantic_embed.semantic_filter()` / `semantic_filter_frozen()` (PR #172,
+`src/unity_semantic_embed.py`) already do exactly that — a hard cosine-similarity floor that
+can reject a candidate outright (`semantic_filter` can empty the pool, unlike the vision-LLM
+reorder), AND a best-first reorder by image similarity
+(`passed.sort(key=lambda t: (-t[0], -t[1]))`) — and the text axis (`text_similarity()`)
+already reuses `rag/embedder.py`'s own BAAI/bge-small-en-v1.5 loader, i.e. genuinely IS "the
+embedding stack already installed for the RAG corpus" (the image axis adds a separate CLIP
+text/vision pair). Confirmed by reading the function body directly and by
+`tests/test_unity_semantic_embed.py::test_semantic_filter_keeps_and_orders_by_image_similarity`,
+which asserts order, not just membership. Solutions-table row #13 is updated below to match.
+
+**The real, narrower gap that remained:** `semantic_filter()` / `semantic_filter_frozen()`
+only ever scored the first `max_candidates` (hardcoded default: 6) entries of the
+keyword-ranked list, while `SketchfabClient.search()` already fetches up to 24 raw
+candidates per query at no extra network cost. Positions 7-24 were keyword-ranked but never
+semantically reconsidered, no matter how good a conceptual match they were — the literal
+mechanism behind this gap's own "search engine that can't read sentences" framing. None of
+the four call sites that reach these functions (`cli/unity_assets.py`,
+`unity_entity_asset_resolver.py`'s Tier S live-fetch AND its network-free cache-hit
+re-check, `unity_sketchfab_collection.py`) ever overrode this default, and there was no
+config key to do so. This was live and active for real usage: the shipped default already
+had `sketchfab.semantic_select: true` enabled, so every live Sketchfab fetch was already
+paying the semantic-scoring network cost for up to 6 candidates while structurally unable to
+benefit from it beyond that.
+
+**Fixed:** a new `sketchfab.semantic_pool_size` config key (default `6`, byte-identical to
+today's behavior) now threads through to `max_candidates` at all four call sites. Also
+fixed, found while touching the cache-hit call site: `unity_entity_asset_resolver.py`'s
+`sk_scored` was never sorted by keyword score before being sliced to the pool width there —
+"first N" meant "first N in catalog-scan order," not "top N keyword-ranked," unlike every
+other call site — now sorted first, matching the rest.
+
+`tools/calibrate_sketchfab_rerank_pool.py` — the first calibration script in this repo
+needing the LIVE Sketchfab search API rather than local/synthetic data — first ran against 4
+queries (2026-09-10; 1, "realistic paratrooper", returned no licensed results at all), which
+showed only one marginal rescue case out of three measurable queries — too small a sample to
+draw a real conclusion from, not evidence of a narrow effect. **Widened to 14 queries across
+vehicle/weapon/character/structure/nature/urban-prop categories and re-run**: 9 of 13
+measurable queries had their best semantic match sitting outside the top 6 — a real,
+repeatable pattern, not noise. Margins varied meaningfully: `warehouse building` was
+clearest (best match at rank #15, +0.027 over the in-pool best), several others were
+meaningful (+0.014 to +0.015 at ranks #14-22: `street lamp`, `skateboard ramp`,
+`shipping container`, `drone`), and several were near-noise (+0.001 to +0.009 at ranks
+#7-19: `zombie`, `police car`, `pine tree`, `motorcycle`, `traffic cone`). `wooden crate`,
+`medieval sword`, and `assault rifle` had their best match already inside the top 6.
+
+**Still open, now a considered tradeoff rather than an evidence gap:** the default stays
+`6`. A pool wide enough to catch most of the meaningful-margin rescues would need to reach
+into the high teens or twenties, at 2.5x-4x today's per-query network/inference cost —
+`unity_sketchfab_collection.py`'s batch path pays that once per brief in a loop. The
+evidence now genuinely supports raising it for a project willing to spend the extra cost for
+more accurate Sketchfab picks; the default was kept conservative deliberately, not because
+the case is weak.
 
 ---
 
@@ -523,7 +578,7 @@ start · △ defensible v1, natural v2 · — deliberate later-stage work.
 | 10 | Generative-mesh APIs for organic parts | Gap F | ●●● | ●●● | — (sits beside the sculpted toolkit) | — | ⬜ open |
 | 11 | Poisson-disk sampling (Bridson's algorithm) | Gap G | ●○○→●●○* | ●●○ | `_scatter_positions()` jittered grid | ✓ | ✅ shipped |
 | 12 | Value/Perlin-noise elevation profile | Gap H | ●○○ | ●○○ | — (additive; elevation was flat) | ✓ | 🟡 primitive shipped, not wired |
-| 13 | Local embedding rerank of Sketchfab candidates | Gap I | ●●○ | ●○○ | — (layers on existing author-affinity biasing) | — | ⬜ open |
+| 13 | Local embedding rerank of Sketchfab candidates | Gap I | ●●○ | ●○○ | — (layers on existing author-affinity biasing) | — | ✅ shipped (PR #172; table corrected from stale `⬜ open`) — pool-width follow-up shipped opt-in, see Gap I |
 
 \* Rated low-difficulty in the original pass; implementing a real grid-accelerated Bridson
 sampler (~100 lines) turned out to be the second-most-involved fix in this batch, not the
@@ -677,3 +732,44 @@ corrected number, not the optimistic one.
   `tests/test_outputs_smoke.py` failure (a stale gitignored `output/` artifact from a
   concurrent session's GTA5 run, confirmed unrelated — this pass never touches the GTA5
   backend).
+- **2026-09-10 (Gap I correction + solution #13)** — corrected Gap I's stale "nothing
+  reranks the candidates" claim: `unity_semantic_embed.semantic_filter()` /
+  `semantic_filter_frozen()` (PR #172) already gate AND reorder Sketchfab candidates by
+  CLIP/bge-small cosine similarity; solutions-table row #13 updated from `⬜ open`. The real,
+  narrower gap found instead: `semantic_filter`'s `max_candidates` (default 6) only ever
+  scored the first 6 of the up-to-24 keyword-ranked candidates `SketchfabClient.search()`
+  already fetches per query. New `sketchfab.semantic_pool_size` config key (default `6`,
+  preserves today's exact behavior) now threads through `max_candidates` at all four call
+  sites (`cli/unity_assets.py`, `unity_entity_asset_resolver.py`'s Tier S live-fetch AND its
+  network-free cache-hit re-check, `unity_sketchfab_collection.py`). Also fixed, found while
+  touching the cache-hit call site: `sk_scored` was never sorted by keyword score before
+  that slice, so "top N" there meant "first N in catalog scan order," not "top N
+  keyword-ranked" — now sorted first, matching every other call site. New
+  `tools/calibrate_sketchfab_rerank_pool.py` (first calibration script needing the live
+  Sketchfab search API, not local/synthetic data) measured 4 real queries live — 1 returned
+  no licensed results; of the 3 measurable, only "traffic cone" showed a rescue case (best
+  match at keyword rank #19, margin ~0.01 against a ~0.18-wide spread) — too narrow a signal
+  to justify widening the shipped default off one query, so `semantic_pool_size` stayed at
+  `6`. New tests: 9 across `tests/test_unity_semantic_embed.py` (2, the `max_candidates`
+  slicing contract for both `semantic_filter` and `semantic_filter_frozen`, neither
+  previously covered),  `tests/test_cli_sketchfab_fetch.py` (2), `tests/test_entity_asset_
+  resolver.py` (3, including the cache-hit ordering regression pin), `tests/test_unity_
+  sketchfab_collection.py` (2); 2 existing tests
+  (`test_semantic_select_closure_binds_entity_query_and_thresholds`,
+  `test_semantic_select_closure_binds_brief_query_and_thresholds`) had their monkeypatched
+  `semantic_filter` fakes widened to accept `max_candidates` — their old keyword-only
+  signature with no `**kwargs` would otherwise `TypeError` once the real call sites started
+  passing it. Full suite: 4493 passed, 1 skipped, same one pre-existing unrelated
+  `tests/test_outputs_smoke.py` failure (confirmed unrelated, same stale `output/` artifact
+  as the prior entry).
+- **2026-09-10 (Gap I, widened calibration)** — the 4-query calibration run above was too
+  small to draw a real conclusion from; widened `tools/calibrate_sketchfab_rerank_pool.py`'s
+  `QUERIES` to 14, spanning vehicle/weapon/character/structure/nature/urban-prop categories,
+  and re-ran live. Result reversed the earlier read: 9 of 13 measurable queries had their
+  best semantic match sitting outside the default pool of 6 — a real, repeatable pattern,
+  not the noise the first sample suggested. Margins ranged from near-zero (`zombie`, +0.001)
+  to genuinely meaningful (`warehouse building`, +0.027 at rank #15). Kept
+  `semantic_pool_size` at `6` regardless — a deliberate cost/coverage tradeoff (catching most
+  of the meaningful-margin cases needs a pool reaching into the high teens/twenties, at
+  2.5x-4x today's per-query cost), not an evidence gap this time. `config.example.yaml`'s
+  comment and Gap I's write-up above were updated with the real, widened numbers.

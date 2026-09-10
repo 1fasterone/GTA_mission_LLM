@@ -173,6 +173,22 @@ class TestSemanticSelectWiring:
         assert call["min_image_similarity"] == 0.22
         assert call["min_text_similarity"] == 0.45
 
+    def test_config_pool_size_reaches_max_candidates(self, monkeypatch, tmp_path):
+        config_path = _config(tmp_path, {"semantic_pool_size": 10})
+        freeze_calls, semantic_calls = _run_sketchfab_fetch(
+            monkeypatch, tmp_path, semantic_select=True, config_path=config_path)
+
+        freeze_calls[0]["semantic_filter_fn"]([{"uid": "abc123"}])
+        assert semantic_calls[-1]["max_candidates"] == 10
+
+    def test_default_pool_size_used_when_config_omits_it(self, monkeypatch, tmp_path):
+        config_path = _config(tmp_path)
+        freeze_calls, semantic_calls = _run_sketchfab_fetch(
+            monkeypatch, tmp_path, semantic_select=True, config_path=config_path)
+
+        freeze_calls[0]["semantic_filter_fn"]([{"uid": "abc123"}])
+        assert semantic_calls[-1]["max_candidates"] == 6
+
     def test_entry_none_with_semantic_on_prints_fallback_hint(self, monkeypatch, tmp_path, capsys):
         config_path = _config(tmp_path)
         _run_sketchfab_fetch(

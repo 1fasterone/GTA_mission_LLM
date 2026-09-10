@@ -210,6 +210,33 @@ def test_semantic_filter_exception_in_embedder_never_raises(monkeypatch):
                             min_text_similarity=0.2)
 
 
+def test_semantic_filter_only_scores_the_first_max_candidates(monkeypatch):
+    """Position 6 (0-indexed) would score best if measured — with
+    max_candidates=6 it must never even be scored, confirming the slicing
+    genuinely excludes it rather than merely ranking it last. No existing
+    test in this file exercises more than 1-2 candidates, so this slicing
+    behavior itself had no direct coverage before."""
+    monkeypatch.setattr("src.unity_sketchfab_vision._thumbnail_url",
+                        lambda m: "https://x/y.jpg")
+    scored = []
+
+    def _img_sim(text, b):
+        scored.append(True)
+        return 0.9
+
+    monkeypatch.setattr(sem, "image_similarity", _img_sim)
+    monkeypatch.setattr(sem, "text_similarity", lambda a, b: 0.9)
+
+    candidates = [_model(str(i)) for i in range(8)]
+    result = sem.semantic_filter(
+        "Cone", "prop", "a race marker cone", candidates, client=_FakeClient(),
+        min_image_similarity=0.2, min_text_similarity=0.2, max_candidates=6)
+
+    assert len(scored) == 6  # candidates 6 and 7 were never scored at all
+    assert "6" not in [m["uid"] for m in result]
+    assert "7" not in [m["uid"] for m in result]
+
+
 # ── image_embedding / image_similarity_from_embedding: the cache-hit path ──
 
 def test_image_embedding_empty_bytes_returns_none():
@@ -309,6 +336,29 @@ def test_semantic_filter_frozen_keeps_and_orders_by_image_similarity(monkeypatch
         "Cone", "prop", "a race marker cone", candidates,
         min_image_similarity=0.2, min_text_similarity=0.2)
     assert [e["sketchfab_uid"] for e in result] == ["good", "bad"]
+
+
+def test_semantic_filter_frozen_only_scores_the_first_max_candidates(monkeypatch):
+    """Same slicing contract as semantic_filter itself — confirmed
+    separately since semantic_filter_frozen has its own independent
+    `pool = candidates[:max(1, max_candidates)]` line, not shared code."""
+    scored = []
+
+    def _img_sim(text, emb):
+        scored.append(True)
+        return 0.9
+
+    monkeypatch.setattr(sem, "image_similarity_from_embedding", _img_sim)
+    monkeypatch.setattr(sem, "text_similarity", lambda a, b: 0.9)
+
+    candidates = [_frozen_entry(str(i), embedding=[1.0, 0.0]) for i in range(8)]
+    result = sem.semantic_filter_frozen(
+        "Cone", "prop", "a race marker cone", candidates,
+        min_image_similarity=0.2, min_text_similarity=0.2, max_candidates=6)
+
+    assert len(scored) == 6
+    assert "6" not in [e["sketchfab_uid"] for e in result]
+    assert "7" not in [e["sketchfab_uid"] for e in result]
 
 
 def test_semantic_filter_frozen_missing_embedding_only_checks_text(monkeypatch):

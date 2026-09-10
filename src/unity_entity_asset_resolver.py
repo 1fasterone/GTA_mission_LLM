@@ -1097,11 +1097,20 @@ def resolve_entity_assets(schema,
             # measurable is left exactly where keyword scoring put it — see
             # unity_semantic_embed.semantic_filter_frozen's own docstring.
             if sk_scored and sk_cfg.get("semantic_select"):
+                # Sort by keyword score first so semantic_pool_size below
+                # slices the TOP-ranked N, matching what it means at every
+                # other call site (all three route through
+                # sketchfab_freeze._fetch_and_freeze_inner, which sorts its
+                # candidate list before ever calling semantic_filter_fn).
+                # Without this, "first max_candidates" here means "first N
+                # in catalog-scan order," not "top N keyword-ranked."
+                sk_scored.sort(key=lambda sa: (-sa[0], sa[1]["filename"]))
                 from .unity_semantic_embed import semantic_filter_frozen
                 filtered = semantic_filter_frozen(
                     e.name, kind, query, [a for _s, a in sk_scored],
                     min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
-                    min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)))
+                    min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)),
+                    max_candidates=int(sk_cfg.get("semantic_pool_size", 6)))
                 score_by_uid = {a.get("sketchfab_uid"): s for s, a in sk_scored}
                 sk_scored = [(score_by_uid.get(a.get("sketchfab_uid"), 0.0), a)
                             for a in filtered]
@@ -1142,7 +1151,8 @@ def resolve_entity_assets(schema,
                         # values (tools/calibrate_semantic_score.py) — kept
                         # in sync there, not re-derived here.
                         min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
-                        min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)))
+                        min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)),
+                        max_candidates=int(sk_cfg.get("semantic_pool_size", 6)))
                 new_entry = fetch_and_freeze(
                     query, score_fn=lambda a: _score(a, qw, kind),
                     client=sk_client, blender_cfg=sk_cfg,

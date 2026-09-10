@@ -754,6 +754,89 @@ def test_cache_hit_semantic_check_uses_this_entitys_own_query_not_the_frozen_one
     assert "pine" in query
 
 
+def test_cache_hit_semantic_pool_size_reaches_max_candidates(env, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: calls.append(kw["max_candidates"]) or cands)
+    _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True, "semantic_pool_size": 15})
+    assert calls == [15]
+
+
+def test_cache_hit_default_pool_size_is_six_when_config_omits_it(env, tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: calls.append(kw["max_candidates"]) or cands)
+    _add_sketchfab_entry(env, tmp_path)
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5)]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True})
+    assert calls == [6]
+
+
+def test_cache_hit_semantic_check_sorts_by_keyword_score_before_slicing(env, tmp_path, monkeypatch):
+    """Regression test for the ordering fix: `sk_scored` must be sorted by
+    keyword score BEFORE semantic_filter_frozen ever sees it — otherwise
+    "first max_candidates" means catalog-scan order, not "top N
+    keyword-ranked", defeating the point of a configurable pool width.
+    Catalog-scan order here is deliberately NOT score order (the medium
+    match is written before the strong one; the weak match falls below
+    sk_min and is expected to be filtered out before this even matters,
+    leaving [mid, strong] as the pre-sort-fix order among survivors — a
+    genuine reordering only the fix produces, not an accident of which
+    entry gets dropped)."""
+    sk_root = tmp_path / "sketchfab_lib"
+    sk_root.mkdir(exist_ok=True)
+    entries = []
+    for uid, filename, keywords in (
+        ("mid", "mid-match.fbx", ["pine", "tree"]),
+        ("strong", "strong-match.fbx", ["pine", "tree", "forest", "tall"]),
+        ("weak", "weak-match.fbx", ["tree"]),
+    ):
+        (sk_root / filename).write_bytes(b"FBX")
+        entries.append({
+            "filename": filename, "relpath": filename, "root": sk_root.as_posix(),
+            "format": "fbx", "pack": "sketchfab", "source": "sketchfab",
+            "category": "nature", "description": "test sketchfab pick",
+            "keywords": keywords, "kind_hints": ["tree", "prop"],
+            "game_contexts": ["any"], "generic_score": 0, "scale": 1.0,
+            "curated": False, "query": "pine tree", "sketchfab_uid": uid,
+            "sketchfab_url": f"https://sketchfab.com/3d-models/{uid}",
+            "license": "cc0", "author": "Jane Doe",
+            "author_username": "janedoe", "author_url": "",
+            "attribution": '"Pine Tree" by Jane Doe is licensed under CC0.',
+            "fetched_at": "2026-01-01T00:00:00Z",
+        })
+    (env / "unity" / "sketchfab_catalog.json").write_text(
+        json.dumps({"version": 1, "entries": entries}), encoding="utf-8")
+
+    seen_order = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter_frozen",
+        lambda name, kind, query, cands, **kw: seen_order.extend(
+            a["sketchfab_uid"] for a in cands) or cands)
+
+    all_models = _default_models(tmp_path)
+    used = {"prop": all_models["prop"]}
+    resolve_entity_assets(
+        _schema([EntitySpec(name="PineTrees", kind="prop", count=5,
+                            model_hint="tall pine forest tree")]),
+        used, all_models, lookups_dir=str(env),
+        sketchfab_cfg={"enabled": True, "semantic_select": True})
+
+    assert seen_order == ["strong", "mid"]  # score order, NOT catalog-scan order [mid, strong]
+
+
 def test_sketchfab_auto_fetch_false_never_calls_fetch_and_freeze(env, tmp_path, monkeypatch):
     calls = {"n": 0}
     def _fake_fetch(*a, **kw):
@@ -941,8 +1024,9 @@ def test_semantic_select_closure_binds_entity_query_and_thresholds(env, tmp_path
     monkeypatch.setattr(
         "src.unity_semantic_embed.semantic_filter",
         lambda name, kind, concept_text, cands, *, client, min_image_similarity,
-               min_text_similarity: calls.append(
-            (name, kind, concept_text, min_image_similarity, min_text_similarity))
+               min_text_similarity, max_candidates: calls.append(
+            (name, kind, concept_text, min_image_similarity, min_text_similarity,
+             max_candidates))
             or list(cands))
 
     all_models = _default_models(tmp_path)
@@ -959,10 +1043,11 @@ def test_semantic_select_closure_binds_entity_query_and_thresholds(env, tmp_path
     result = seen["fn"]([{"uid": "x"}])
     assert result == [{"uid": "x"}]
     assert len(calls) == 1
-    name, kind, concept_text, min_img, min_txt = calls[0]
+    name, kind, concept_text, min_img, min_txt, max_cand = calls[0]
     assert (name, kind) == ("PineTrees", "prop")
     assert concept_text  # the query text used to search — non-empty
     assert (min_img, min_txt) == (0.33, 0.44)
+    assert max_cand == 6  # default preserved when semantic_pool_size is absent
 
 
 def test_sketchfab_tier_s_rejects_coincidental_kind_mismatch(env, tmp_path):
