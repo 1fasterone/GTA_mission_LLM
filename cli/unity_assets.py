@@ -301,10 +301,12 @@ def sketchfab_fetch(
             # Defaults match config.example.yaml's calibrated values
             # (tools/calibrate_semantic_score.py) — kept in sync there.
             min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
-            min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)))
+            min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)),
+            max_candidates=int(sk_cfg.get("semantic_pool_size", 6)))
         console.print("[dim]semantic gate: on "
                       f"(image>={sk_cfg.get('min_image_similarity', 0.22)}, "
-                      f"text>={sk_cfg.get('min_text_similarity', 0.45)})[/]")
+                      f"text>={sk_cfg.get('min_text_similarity', 0.45)}, "
+                      f"pool={sk_cfg.get('semantic_pool_size', 6)})[/]")
 
     from src.sketchfab_freeze import fetch_and_freeze
     entry = fetch_and_freeze(

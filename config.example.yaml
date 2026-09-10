@@ -325,6 +325,37 @@ sketchfab:
   semantic_select: false
   min_image_similarity: 0.22     # cosine(CLIP-text(query), CLIP-image(thumbnail))
   min_text_similarity: 0.45      # cosine(bge(query), bge(candidate description))
+  # How many of the keyword-ranked candidates semantic_select above actually
+  # scores (semantic_filter/semantic_filter_frozen's own `max_candidates`).
+  # SketchfabClient.search() already fetches up to 24 raw candidates per
+  # query at no extra network cost — by default only the first 6
+  # (keyword-rank order) are ever semantically reconsidered, so a genuinely
+  # better semantic match sitting at keyword rank 7+ can never surface.
+  # Default 6 reproduces today's exact behavior byte-for-byte. Widening is
+  # an explicit, evidence-based opt-in: each extra candidate scored costs
+  # one thumbnail fetch + two model inferences, and
+  # src/unity_sketchfab_collection.py's batch collection pays that cost once
+  # per brief in a loop. Values above ~24 have no additional effect
+  # (SketchfabClient.search()'s own `count` default). Calibrated against
+  # tools/calibrate_sketchfab_rerank_pool.py's real measured output
+  # (2026-09-10, live Sketchfab search, widened to 14 queries after an
+  # initial 4-query sample proved too small to draw a conclusion from): 9 of
+  # 13 measurable queries (1 returned no licensed results) had their best
+  # semantic match sitting outside the top 6 — a real, repeatable pattern,
+  # not noise. Margins varied: warehouse building was clearest (+0.027 at
+  # rank #15), several others were meaningful (+0.014-0.015 at ranks #14-22:
+  # street lamp, skateboard ramp, shipping container, drone), and several
+  # were near-noise (+0.001-0.009 at ranks #7-19: zombie, police car, pine
+  # tree, motorcycle, traffic cone). A pool wide enough to catch most of the
+  # meaningful margins would need to reach into the high teens/twenties —
+  # 2.5x-4x today's per-query network/inference cost. Deliberately kept at 6
+  # anyway: this widened evidence justifies the OPTION to raise it (the
+  # earlier default-preserving choice was right for the wrong reason — the
+  # first sample was simply too small — but this one is a considered
+  # decision given the cost, not an evidence gap). Raise it explicitly if
+  # your project's budget favors more accurate Sketchfab picks over fewer
+  # network calls per entity.
+  semantic_pool_size: 6
 
 blender:                           # external asset-fulfilment stage (blender_cli.py)
   blender_path: ''                 # empty => auto-detect (PATH + standard installs)

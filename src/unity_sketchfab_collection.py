@@ -247,7 +247,8 @@ def collect_models(concept: str, llm: Any, *, client: Any, sk_cfg: dict,
                 semantic_filter(
                     _name, _cat, _q, cands, client=client,
                     min_image_similarity=float(sk_cfg.get("min_image_similarity", 0.22)),
-                    min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45))))
+                    min_text_similarity=float(sk_cfg.get("min_text_similarity", 0.45)),
+                    max_candidates=int(sk_cfg.get("semantic_pool_size", 6))))
 
         entry = fetch_and_freeze(
             query, score_fn=_score_fn, client=client, blender_cfg=sk_cfg,

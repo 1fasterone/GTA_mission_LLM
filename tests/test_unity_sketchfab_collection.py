@@ -112,8 +112,9 @@ def test_semantic_select_closure_binds_brief_query_and_thresholds(tmp_path, monk
     monkeypatch.setattr(
         "src.unity_semantic_embed.semantic_filter",
         lambda name, kind, concept_text, cands, *, client, min_image_similarity,
-               min_text_similarity: calls.append(
-            (name, kind, concept_text, min_image_similarity, min_text_similarity))
+               min_text_similarity, max_candidates: calls.append(
+            (name, kind, concept_text, min_image_similarity, min_text_similarity,
+             max_candidates))
             or list(cands))
 
     collect_models(
@@ -126,10 +127,52 @@ def test_semantic_select_closure_binds_brief_query_and_thresholds(tmp_path, monk
     result = seen["fn"]([{"uid": "x"}])
     assert result == [{"uid": "x"}]
     assert len(calls) == 1
-    name, kind, concept_text, min_img, min_txt = calls[0]
+    name, kind, concept_text, min_img, min_txt, max_cand = calls[0]
     assert (name, kind, concept_text) == ("Rival Truck", "vehicle", "cartoon dirt race vehicle")
     assert min_img == pytest.approx(0.33)
     assert min_txt == pytest.approx(0.44)
+    assert max_cand == 6  # default preserved when semantic_pool_size is absent
+
+
+def test_semantic_config_pool_size_reaches_max_candidates(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, semantic_filter_fn=None, **kw: seen.update(fn=semantic_filter_fn) or None)
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter",
+        lambda name, kind, concept_text, cands, *, client, min_image_similarity,
+               min_text_similarity, max_candidates: calls.append(max_candidates)
+            or list(cands))
+
+    collect_models(
+        "a dusty desert trophy-truck race", FakeLLM(_ONE_BRIEF), client=FakeClient(),
+        sk_cfg={"semantic_select": True, "semantic_pool_size": 15},
+        lookups_dir=str(tmp_path / "lookups"))
+
+    seen["fn"]([{"uid": "x"}])
+    assert calls == [15]
+
+
+def test_semantic_default_pool_size_is_six_when_config_omits_it(tmp_path, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(
+        "src.sketchfab_freeze.fetch_and_freeze",
+        lambda *a, semantic_filter_fn=None, **kw: seen.update(fn=semantic_filter_fn) or None)
+    calls = []
+    monkeypatch.setattr(
+        "src.unity_semantic_embed.semantic_filter",
+        lambda name, kind, concept_text, cands, *, client, min_image_similarity,
+               min_text_similarity, max_candidates: calls.append(max_candidates)
+            or list(cands))
+
+    collect_models(
+        "a dusty desert trophy-truck race", FakeLLM(_ONE_BRIEF), client=FakeClient(),
+        sk_cfg={"semantic_select": True}, lookups_dir=str(tmp_path / "lookups"))
+
+    seen["fn"]([{"uid": "x"}])
+    assert calls == [6]
 
 
 def test_both_gates_off_by_default_leaves_fetch_and_freeze_untouched(tmp_path, monkeypatch):
