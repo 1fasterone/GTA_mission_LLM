@@ -171,6 +171,42 @@ public class {{ s.name }} : MonoBehaviour
 
     public bool Has({{ s.name }}ItemDefinition item, int amount = 1) => Count(item) >= amount;
 
+    /// <summary>Raised whenever UseItem() consumes an item, for every effect
+    /// including None — the generic "something was used" hook (UI flash, SFX).</summary>
+    public event Action<{{ s.name }}ItemDefinition> OnItemUsed;
+    /// <summary>Fires only for a Heal-tagged item; amount = HP. A composed
+    /// project's GameContext wires this straight to a Health micro's
+    /// Heal(float) when both are present — see GameContext.cs.j2.</summary>
+    public event Action<float> OnHealEffect;
+    /// <summary>Fires only for a RestoreShield-tagged item; amount = shield HP.</summary>
+    public event Action<float> OnShieldEffect;
+    /// <summary>Fires only for a StatBoost-tagged item; (magnitude, stat name).</summary>
+    public event Action<float, string> OnStatBoostEffect;
+    /// <summary>Fires only for an Unlock-tagged item; the lock/door id it opens.</summary>
+    public event Action<string> OnUnlockEffect;
+    /// <summary>Fires only for a QuestFlag-tagged item; the flag name it sets.</summary>
+    public event Action<string> OnQuestFlagEffect;
+
+    /// <summary>Consume one `item` and fire its effect (dispatch on
+    /// item.effect — see {{ s.name }}ItemDefinition). Returns false without
+    /// consuming anything when the item isn't held, or its effect is None
+    /// (equipment/quest/junk items are not "used").</summary>
+    public bool UseItem({{ s.name }}ItemDefinition item)
+    {
+        if (item == null || item.effect == {{ s.name }}ItemDefinition.Effect.None) return false;
+        if (!Remove(item, 1)) return false;
+        switch (item.effect)
+        {
+            case {{ s.name }}ItemDefinition.Effect.Heal:          OnHealEffect?.Invoke(item.amount); break;
+            case {{ s.name }}ItemDefinition.Effect.RestoreShield: OnShieldEffect?.Invoke(item.amount); break;
+            case {{ s.name }}ItemDefinition.Effect.StatBoost:     OnStatBoostEffect?.Invoke(item.amount, item.targetId); break;
+            case {{ s.name }}ItemDefinition.Effect.Unlock:        OnUnlockEffect?.Invoke(item.targetId); break;
+            case {{ s.name }}ItemDefinition.Effect.QuestFlag:     OnQuestFlagEffect?.Invoke(item.targetId); break;
+        }
+        OnItemUsed?.Invoke(item);
+        return true;
+    }
+
     public void Clear()
     {
         _stacks.Clear();

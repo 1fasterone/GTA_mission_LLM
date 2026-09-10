@@ -40,7 +40,25 @@
 {% endif %}
 - `OnChanged` — C# event fired after every mutation; subscribe to refresh UI.
 - `Clear()` — empty the container.
-{% if s.starting_items %}
+{% if variant != "equipment" %}
+- `UseItem(item)` → `bool` — consumes one and fires its effect (below); returns
+  false without consuming anything for an unheld item or effect `None`.
+{% endif %}
+{% if s.items %}
 
-Suggested starting items: {{ s.starting_items | join(", ") }}.
+## Items
+
+| Name | Effect | Amount | Target |
+|---|---|---|---|
+{% for it in s.items %}| {{ it.name }} | {{ it.effect }} | {{ it.amount }} | {{ it.target_id or "—" }} |
+{% endfor %}
+Create one `{{ s.name }}ItemDefinition` asset per row above (see Install step 2)
+and set its `effect` / `amount` / `targetId` fields to match.
+{% if variant != "equipment" %}
+`UseItem()` fires one matching event per effect — `OnHealEffect`,
+`OnShieldEffect`, `OnStatBoostEffect`, `OnUnlockEffect`, `OnQuestFlagEffect` —
+plus `OnItemUsed` for all of them. Subscribe from Health/Interactable/your own
+scripts, or via `GameContext.Get<T>()` in a composed project: a composed
+Health micro is auto-wired to `OnHealEffect` for you already.
+{% endif %}
 {% endif %}

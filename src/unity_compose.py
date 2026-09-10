@@ -1159,6 +1159,28 @@ class MicroComposer:
                 ),
             })
 
+        # Item use (Heal) -> Health.Heal (micro -> micro). Inventory.OnHealEffect
+        # (Inventory.cs.j2's UseItem()) only fires for a Heal-tagged item; the
+        # other four effect events (Shield/StatBoost/Unlock/QuestFlag) have no
+        # composed micro with a matching public receiver yet, so they are left
+        # unbridged here rather than guessing a wiring — same "no receiver yet"
+        # reasoning as every other bridge in this function. "equipment" variant
+        # has no UseItem()/OnHealEffect at all (see Inventory.cs.j2), so it is
+        # excluded rather than emitting a reference that would never compile.
+        inventory = next((u for u in real_units
+                          if u.kind == "inventory" and u.variant != "equipment"), None)
+        health_player = _pick("health", "player")
+        if inventory and health_player:
+            bridges.append({
+                "label": "Item use (Heal) -> Health.Heal (micro -> micro)",
+                "snippet": (
+                    f"var __inventory = Get<{inventory.class_name}>();\n"
+                    f"var __health = Get<{health_player.class_name}>();\n"
+                    f"if (__inventory != null && __health != null)\n"
+                    f"    __inventory.OnHealEffect += __health.Heal;"
+                ),
+            })
+
         env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
                           undefined=StrictUndefined, keep_trailing_newline=True)
         content = env.get_template("GameContext.cs.j2").render(

@@ -6,6 +6,12 @@ using UnityEngine;
 [CreateAssetMenu(fileName = "Item", menuName = "{{ s.name }}/Item Definition")]
 public class {{ s.name }}ItemDefinition : ScriptableObject
 {
+{% if variant != "equipment" %}
+    /// <summary>What USING this item does — see {{ s.name }}.UseItem(). Closed
+    /// set so dispatch stays a plain switch, never free-form code.</summary>
+    public enum Effect { None, Heal, RestoreShield, StatBoost, Unlock, QuestFlag }
+
+{% endif %}
     public string id;
     public string displayName;
     public Sprite icon;
@@ -14,5 +20,13 @@ public class {{ s.name }}ItemDefinition : ScriptableObject
 {% if variant == "equipment" %}
     [Tooltip("Which equipment slot this item occupies (must match one of the inventory's slots).")]
     public string equipSlot;
+{% else %}
+    [Header("Use Effect")]
+    [Tooltip("What happens when this item is used. None = not usable (quest item, junk, sells only).")]
+    public Effect effect = Effect.None;
+    [Tooltip("Heal / RestoreShield HP, or StatBoost magnitude. Unused by Unlock and QuestFlag.")]
+    public float amount;
+    [Tooltip("StatBoost's stat name, Unlock's lock id, or QuestFlag's flag name. Unused by Heal and RestoreShield.")]
+    public string targetId;
 {% endif %}
 }
