@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.csharp_syntax_gate import check_files
+from src.micro.code_fields import CodeMethod
 from src.micro.objectives import ObjectiveEntry, ObjectivesPipeline, ObjectivesSchema
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -165,3 +166,57 @@ def test_rendered_script_compiles_with_a_cycle_present(tmp_path):
     out.write_text(cs, encoding="utf-8")
     result = check_files([str(out)])
     assert result.ok, f"Roslyn syntax gate found: {result.diagnostics}"
+
+
+# ── reserved private field neutralization ───────────────────────────────────
+# default_fix's neutralize_unavailable_names(schema, {"_surviveTimer",
+# "_missionComplete", "_byId"}) call (objectives.py, ~line 227). These are
+# Objectives.cs.j2's own private bookkeeping — never a legal target for
+# authored code, which already has a public surface for the same information
+# (ReportProgress, MissionComplete, ActiveObjective). The generic helper
+# itself is covered by tests/test_hud_e2e_stress.py; these confirm THIS call
+# site is actually wired with THIS exact reserved-name set.
+
+_AUDIT_MARKER = "AUDIT: removed reference to unavailable field"
+
+
+def test_authored_update_extra_referencing_survive_timer_is_neutralized():
+    schema = _schema([{"id": "a", "type": "reach"}])
+    schema.update_extra = "_surviveTimer -= Time.deltaTime;"
+    fixed = _fixed(schema)
+    assert _AUDIT_MARKER in fixed.update_extra
+    live_code = "\n".join(line for line in fixed.update_extra.splitlines()
+                          if not line.lstrip().startswith("//"))
+    assert "_surviveTimer" not in live_code
+
+
+def test_authored_awake_extra_referencing_mission_complete_is_neutralized():
+    schema = _schema([{"id": "a", "type": "reach"}])
+    schema.awake_extra = "if (_missionComplete) return;"
+    fixed = _fixed(schema)
+    assert _AUDIT_MARKER in fixed.awake_extra
+
+
+def test_authored_extra_method_referencing_by_id_is_neutralized():
+    schema = _schema([{"id": "a", "type": "reach"}])
+    schema.extra_methods = [CodeMethod(
+        signature="private void CustomLookup()",
+        body='var o = _byId["a"];')]
+    fixed = _fixed(schema)
+    body = fixed.extra_methods[0].body
+    assert _AUDIT_MARKER in body
+    live_code = "\n".join(line for line in body.splitlines()
+                          if not line.lstrip().startswith("//"))
+    assert "_byId" not in live_code
+
+
+def test_legitimate_public_surface_references_are_left_untouched():
+    """ReportProgress/MissionComplete/ActiveObjective are the intended public
+    surface for the same information _surviveTimer/_missionComplete/_byId
+    hold privately — authored code using them must not be touched."""
+    code = 'if (ActiveObjective != null && !MissionComplete) ReportProgress("a", 1);'
+    schema = _schema([{"id": "a", "type": "reach"}])
+    schema.update_extra = code
+    fixed = _fixed(schema)
+    assert fixed.update_extra == code
+    assert "AUDIT" not in fixed.update_extra

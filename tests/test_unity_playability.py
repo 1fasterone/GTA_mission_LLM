@@ -305,6 +305,78 @@ class TestContentChecks:
         assert "enemy_wiring" in checks
 
 
+# ── entity scene coverage ──────────────────────────────────────────────────────
+
+class TestEntitySceneCoverage:
+    """src/unity_playability.py's _check_entity_scene_coverage — an entity
+    absent from every scene_spec's subset never spawns anywhere in the whole
+    project, distinct from _check_scene_population (which only asks whether
+    each scene hosts SOME content, never whether every entity has a home)."""
+
+    def test_no_scene_specs_is_ungraded(self):
+        rep = evaluate(_playable())
+        assert "entity_scene_coverage" not in rep.checks
+        assert "entity_scene_coverage" in rep.not_graded
+
+    def test_a_scene_with_no_declared_subset_covers_everything(self):
+        """entities=None on even one scene_spec means that scene hosts every
+        group, so nothing can be orphaned — regardless of what other specs
+        in the same project say."""
+        schema = _playable()
+        schema.scene_specs = [
+            SceneSpec(name="Main", description="d", entities=["Hero"]),
+            SceneSpec(name="Extra", description="d"),   # entities=None
+        ]
+        rep, checks = _checks(schema)
+        assert rep.checks["entity_scene_coverage"] is True
+        assert "entity_scene_coverage" not in checks
+
+    def test_every_entity_named_by_some_scene_passes(self):
+        schema = _playable()
+        schema.scene_specs = [
+            SceneSpec(name="Main", description="d", entities=["Hero", "Coin"]),
+        ]
+        rep, checks = _checks(schema)
+        assert rep.checks["entity_scene_coverage"] is True
+        assert "entity_scene_coverage" not in checks
+
+    def test_an_entity_named_by_no_scene_is_an_error(self):
+        schema = _playable()
+        schema.scene_specs = [
+            SceneSpec(name="Main", description="d", entities=["Hero"]),
+        ]
+        rep, checks = _checks(schema)
+        assert "entity_scene_coverage" in checks
+        assert rep.checks["entity_scene_coverage"] is False
+        assert not rep.playable
+        finding = next(f for f in rep.findings if f.check == "entity_scene_coverage")
+        assert finding.severity == ERROR
+        assert "Coin" in finding.summary
+
+    def test_orphan_list_in_the_message_is_capped_at_six(self):
+        schema = _playable()
+        schema.entities += [
+            EntitySpec(name=f"Orphan{i}", kind="prop", count=1) for i in range(8)
+        ]
+        schema.scene_specs = [
+            SceneSpec(name="Main", description="d", entities=["Hero", "Coin"]),
+        ]
+        rep, _ = _checks(schema)
+        finding = next(f for f in rep.findings if f.check == "entity_scene_coverage")
+        assert finding.summary.count("Orphan") == 6
+        assert "8/10" in finding.summary
+
+    def test_an_entity_with_no_name_is_never_reported_as_an_orphan(self):
+        schema = _playable()
+        schema.entities.append(EntitySpec(name="", kind="prop", count=1))
+        schema.scene_specs = [
+            SceneSpec(name="Main", description="d", entities=["Hero", "Coin"]),
+        ]
+        rep, checks = _checks(schema)
+        assert rep.checks["entity_scene_coverage"] is True
+        assert "entity_scene_coverage" not in checks
+
+
 # ── the gate ──────────────────────────────────────────────────────────────────
 
 class TestGate:
