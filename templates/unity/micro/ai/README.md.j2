@@ -67,5 +67,14 @@ position for a short memory window before actually giving up.
 | `noiseSpeedThreshold` | {{ "%.1f"|format(s.noise_speed_threshold) }} m/s | target speed counted as "loud" |
 | `memorySeconds`       | {{ "%.1f"|format(s.memory_seconds) }}s | how long a lost target keeps being searched |
 {% if s.squad_alert_radius > 0 %}| `squadAlertRadius`    | {{ "%.1f"|format(s.squad_alert_radius) }}m | same-archetype allies alerted the instant this AI notices the target — see `AlertSquad()`/`ReceiveAllyAlert()` |
+| `squadAlertDecaySeconds` | {{ "%.1f"|format(s.squad_alert_decay_seconds) }}s | how long a squadmate's report stays trusted; a stale one no longer shapes a role offset or blocks a fresher re-report |
+| `squadFlankOffset`    | {{ "%.1f"|format(s.squad_flank_offset) }}m | lateral spread for a FlankLeft/FlankRight responder's approach point (a Cover responder holds back toward its own position instead) |
+
+Each responder within `squadAlertRadius` is assigned a role by the alerting AI
+(alternating FlankLeft / FlankRight / Cover in range order) so the squad
+spreads out searching the reported position instead of every responder
+converging on the identical point. A role only shapes the *search* — the
+moment a responder's own sight confirms the target, it chases the real
+position directly.
 {% endif %}
 {% endif %}

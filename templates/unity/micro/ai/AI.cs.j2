@@ -55,6 +55,10 @@ public class {{ s.name }} : MonoBehaviour
 {% if s.squad_alert_radius > 0 %}
     [Tooltip("Same-archetype allies within this radius are alerted the instant this AI perceives a target.")]
     [SerializeField] private float squadAlertRadius      = {{ "%.2f"|format(s.squad_alert_radius) }}f;
+    [Tooltip("How long a squadmate's reported sighting stays trusted before a responder stops treating it as current.")]
+    [SerializeField] private float squadAlertDecaySeconds = {{ "%.2f"|format(s.squad_alert_decay_seconds) }}f;
+    [Tooltip("Meters of lateral spread applied to a flanking responder's approach point.")]
+    [SerializeField] private float squadFlankOffset      = {{ "%.2f"|format(s.squad_flank_offset) }}f;
 {% endif %}
 
     /// <summary>Live sight this frame — vision cone + range + (optionally) an
@@ -77,6 +81,23 @@ public class {{ s.name }} : MonoBehaviour
     /// cleared the same way _tookDamage is — see the "ally_alerted" transition.</summary>
     private bool    _allyAlerted;
     private static readonly List<{{ s.name }}> _squad = new List<{{ s.name }}>();
+
+    /// <summary>Tactical approach assigned by the CALLER's AlertSquad() —
+    /// spreads responders around the reported position instead of every
+    /// squadmate beelining to the identical point. Only shapes the SEARCH:
+    /// ChaseDestination() drops it the moment this AI's own _targetVisible
+    /// goes true. None = no live secondhand report (own perception only).</summary>
+    private enum SquadRole { None, FlankLeft, FlankRight, Cover }
+    private SquadRole _squadRole = SquadRole.None;
+    /// <summary>1 the instant a report lands, decaying to 0 over
+    /// squadAlertDecaySeconds — see UpdatePerception(). Gates both the
+    /// flank/cover offset in ChaseDestination() and the de-dup check in
+    /// ReceiveAllyAlert(): a report is only worth ignoring-as-a-repeat while
+    /// it is still the one this AI is actively acting on.</summary>
+    private float     _alertUrgency;
+    /// <summary>GetInstanceID() of whichever squadmate's AlertSquad() most
+    /// recently reached this AI — see ReceiveAllyAlert()'s de-dup check.</summary>
+    private int       _alertSourceId;
 {% endif %}
 {% endif %}
 
@@ -486,6 +507,15 @@ public class {{ s.name }} : MonoBehaviour
         bool sensingNow = _targetVisible || _heardNoise;
         if (sensingNow && !_wasPerceiving) AlertSquad();
         _wasPerceiving = sensingNow;
+
+        // Urgency fades a held secondhand report back to "no live tip" —
+        // ChaseDestination() stops offsetting for a role and ReceiveAllyAlert()
+        // stops treating a repeat of it as a duplicate once this hits 0.
+        if (_alertUrgency > 0f)
+        {
+            _alertUrgency -= Time.deltaTime / Mathf.Max(squadAlertDecaySeconds, 0.01f);
+            if (_alertUrgency <= 0f) { _alertUrgency = 0f; _squadRole = SquadRole.None; }
+        }
 {% endif %}
     }
 
@@ -497,8 +527,19 @@ public class {{ s.name }} : MonoBehaviour
 
     /// <summary>Where to head while chasing: the target's live position when
     /// actually visible, otherwise its last known one — a lost target is
-    /// searched for, never tracked through walls.</summary>
-    private Vector3 ChaseDestination() => _targetVisible ? _target.position : _lastKnownPosition;
+    /// searched for, never tracked through walls.{% if s.squad_alert_radius > 0 %} A
+    /// fresh secondhand report (_alertUrgency > 0) is chased through the
+    /// caller-assigned flank/cover offset instead of the raw point, so
+    /// responders spread out around it rather than converging on one
+    /// spot.{% endif %}</summary>
+    private Vector3 ChaseDestination()
+    {
+        if (_targetVisible) return _target.position;
+{% if s.squad_alert_radius > 0 %}
+        if (_alertUrgency > 0f) return ApplySquadRoleOffset(_lastKnownPosition);
+{% endif %}
+        return _lastKnownPosition;
+    }
 
     /// <summary>Range + vision cone + (optionally) an unobstructed raycast.
     /// The raycast starts stepped slightly toward the target so it does not
@@ -552,24 +593,69 @@ public class {{ s.name }} : MonoBehaviour
     /// senses the target — tells every same-archetype ally within
     /// squadAlertRadius, sharing WHERE (not granting them live tracking; each
     /// ally still needs its own sight/hearing to upgrade a search into a
-    /// direct chase).</summary>
+    /// direct chase) AND assigning each responder a distinct approach role
+    /// (alternating FlankLeft/FlankRight/Cover in range order) so the squad
+    /// spreads out around the report instead of every responder converging
+    /// on the identical point — see ApplySquadRoleOffset().</summary>
     private void AlertSquad()
     {
+        int responderIndex = 0;
         foreach (var ally in _squad)
         {
             if (ally == null || ally == this) continue;
             if (Vector3.Distance(transform.position, ally.transform.position) <= squadAlertRadius)
-                ally.ReceiveAllyAlert(_lastKnownPosition);
+            {
+                SquadRole role = responderIndex % 3 == 0 ? SquadRole.FlankLeft
+                                : responderIndex % 3 == 1 ? SquadRole.FlankRight
+                                :                            SquadRole.Cover;
+                ally.ReceiveAllyAlert(_lastKnownPosition, GetInstanceID(), role);
+                responderIndex++;
+            }
         }
     }
 
     /// <summary>SendMessage-free entry point a squadmate's AlertSquad() calls
-    /// directly (same generated class only — see docs on squadAlertRadius).</summary>
-    public void ReceiveAllyAlert(Vector3 reportedPosition)
+    /// directly (same generated class only — see docs on squadAlertRadius).
+    /// De-duplicated: the same caller (sourceId) re-reporting a position this
+    /// AI already holds and still trusts (_alertUrgency > 0) is not new
+    /// information — accepting it anyway would restart urgency/role every
+    /// frame the whole time one squadmate keeps a stationary target in
+    /// sight, instead of decaying toward "give up and use my own memory".</summary>
+    public void ReceiveAllyAlert(Vector3 reportedPosition, int sourceId, SquadRole role)
     {
+        if (sourceId == _alertSourceId && _alertUrgency > 0f
+            && Vector3.Distance(reportedPosition, _lastKnownPosition) < 0.5f)
+            return;
+
         _allyAlerted        = true;
+        _alertSourceId      = sourceId;
+        _alertUrgency       = 1f;
+        _squadRole          = role;
         _lastKnownPosition  = reportedPosition;
         _searchTimer        = Mathf.Max(_searchTimer, memorySeconds);
+    }
+
+    /// <summary>Spreads a role-assigned responder's approach point sideways
+    /// (Flank) or holds it back toward this AI's own position (Cover) —
+    /// see ChaseDestination(), which only calls this while a secondhand
+    /// report is still fresh (_alertUrgency > 0).</summary>
+    private Vector3 ApplySquadRoleOffset(Vector3 dest)
+    {
+        if (_squadRole == SquadRole.None) return dest;
+        Vector3 toDest = dest - transform.position;
+{%- if s.nav_backend == "kinematic_2d" %}
+        Vector3 lateral = new Vector3(-toDest.y, toDest.x, 0f);
+{%- else %}
+        Vector3 lateral = Vector3.Cross(Vector3.up, toDest);
+{%- endif %}
+        if (lateral.sqrMagnitude > 0.0001f) lateral.Normalize();
+        switch (_squadRole)
+        {
+            case SquadRole.FlankLeft:  return dest - lateral * squadFlankOffset;
+            case SquadRole.FlankRight: return dest + lateral * squadFlankOffset;
+            case SquadRole.Cover:      return Vector3.Lerp(transform.position, dest, 0.5f);
+            default:                   return dest;
+        }
     }
 {% endif %}
 {% endif %}

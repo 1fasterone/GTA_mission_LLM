@@ -173,7 +173,9 @@ def test_navmesh_patrol_gate_uses_perception_not_raw_distance(dummy_config, tmp_
 def test_squad_disabled_omits_squad_machinery(dummy_config, tmp_path):
     s = _fix(AISchema(name="Lone", variant="fsm_guard", squad_alert_radius=0.0), "fsm_guard")
     cs = _render(dummy_config, s, "fsm_guard", tmp_path)
-    for marker in ("_squad", "AlertSquad", "ReceiveAllyAlert", "squadAlertRadius"):
+    for marker in ("_squad", "AlertSquad", "ReceiveAllyAlert", "squadAlertRadius",
+                  "SquadRole", "_alertUrgency", "_alertSourceId",
+                  "squadAlertDecaySeconds", "squadFlankOffset", "ApplySquadRoleOffset"):
         assert marker not in cs
     # The default graph must not reference a transition condition it never emits.
     assert "_allyAlerted" not in cs
@@ -186,7 +188,9 @@ def test_squad_enabled_emits_squad_machinery(dummy_config, tmp_path):
     assert "_squad.Add(this);" in cs
     assert "_squad.Remove(this);" in cs
     assert "private void AlertSquad()" in cs
-    assert "public void ReceiveAllyAlert(Vector3 reportedPosition)" in cs
+    assert "public void ReceiveAllyAlert(Vector3 reportedPosition, int sourceId, SquadRole role)" in cs
+    assert "private Vector3 ApplySquadRoleOffset(Vector3 dest)" in cs
+    assert "private enum SquadRole { None, FlankLeft, FlankRight, Cover }" in cs
     assert "_allyAlerted = false;" in cs   # consumed-then-reset, mirrors _tookDamage
 
 
@@ -215,8 +219,69 @@ def test_squad_alert_shares_last_known_position_not_live_tracking(dummy_config, 
     told, it does not get the other AI's omniscient live target reference."""
     s = _fix(AISchema(name="Pack", variant="fsm_guard", squad_alert_radius=8.0), "fsm_guard")
     cs = _render(dummy_config, s, "fsm_guard", tmp_path)
-    assert "ally.ReceiveAllyAlert(_lastKnownPosition);" in cs
+    assert "ally.ReceiveAllyAlert(_lastKnownPosition, GetInstanceID(), role);" in cs
     assert "_lastKnownPosition  = reportedPosition;" in cs
+
+
+# ── Squad roles, urgency decay, de-duplication ──────────────────────────────
+
+def test_squad_roles_are_clamped(dummy_config):
+    s = _fix(AISchema(name="X", variant="fsm_guard",
+                      squad_alert_decay_seconds=0.0, squad_flank_offset=-2.0),
+             "fsm_guard")
+    assert s.squad_alert_decay_seconds == 0.5   # floor, never instant expiry
+    assert s.squad_flank_offset == 0.0
+
+
+def test_squad_coordination_names_are_reserved():
+    reserved = AIPipeline._RESERVED_FIELD_NAMES
+    for name in ("squadalertdecayseconds", "squadflankoffset",
+                 "_squadrole", "_alerturgency", "_alertsourceid"):
+        assert name in reserved, f"{name!r} declared in AI.cs.j2 but not reserved"
+
+
+def test_alert_squad_assigns_alternating_roles_to_responders(dummy_config, tmp_path):
+    s = _fix(AISchema(name="Pack", variant="fsm_guard", squad_alert_radius=8.0), "fsm_guard")
+    cs = _render(dummy_config, s, "fsm_guard", tmp_path)
+    assert "SquadRole role = responderIndex % 3 == 0 ? SquadRole.FlankLeft" in cs
+    assert "responderIndex++;" in cs
+
+
+def test_chase_destination_applies_flank_offset_only_while_report_is_fresh(dummy_config, tmp_path):
+    s = _fix(AISchema(name="Pack", variant="fsm_guard", squad_alert_radius=8.0), "fsm_guard")
+    cs = _render(dummy_config, s, "fsm_guard", tmp_path)
+    assert "if (_alertUrgency > 0f) return ApplySquadRoleOffset(_lastKnownPosition);" in cs
+
+
+def test_receive_ally_alert_rejects_a_stale_duplicate_from_the_same_source(dummy_config, tmp_path):
+    s = _fix(AISchema(name="Pack", variant="fsm_guard", squad_alert_radius=8.0), "fsm_guard")
+    cs = _render(dummy_config, s, "fsm_guard", tmp_path)
+    assert ("if (sourceId == _alertSourceId && _alertUrgency > 0f\n"
+            "            && Vector3.Distance(reportedPosition, _lastKnownPosition) < 0.5f)\n"
+            "            return;") in cs
+
+
+def test_alert_urgency_decays_over_the_configured_window(dummy_config, tmp_path):
+    s = _fix(AISchema(name="Pack", variant="fsm_guard", squad_alert_radius=8.0,
+                      squad_alert_decay_seconds=7.5), "fsm_guard")
+    cs = _render(dummy_config, s, "fsm_guard", tmp_path)
+    assert "private float squadAlertDecaySeconds = 7.50f;" in cs
+    assert "_alertUrgency -= Time.deltaTime / Mathf.Max(squadAlertDecaySeconds, 0.01f);" in cs
+    assert "_alertUrgency = 0f; _squadRole = SquadRole.None;" in cs
+
+
+def test_apply_squad_role_offset_uses_2d_perpendicular_in_kinematic_2d(dummy_config, tmp_path):
+    s = _fix(AISchema(name="Pack2D", variant="fsm_guard", squad_alert_radius=8.0,
+                      meta={"game_type": "2D"}), "fsm_guard")
+    cs = _render(dummy_config, s, "fsm_guard", tmp_path)
+    assert "Vector3 lateral = new Vector3(-toDest.y, toDest.x, 0f);" in cs
+    assert "Vector3.Cross(Vector3.up, toDest);" not in cs
+
+
+def test_apply_squad_role_offset_uses_cross_product_in_3d(dummy_config, tmp_path):
+    s = _fix(AISchema(name="Pack3D", variant="fsm_guard", squad_alert_radius=8.0), "fsm_guard")
+    cs = _render(dummy_config, s, "fsm_guard", tmp_path)
+    assert "Vector3 lateral = Vector3.Cross(Vector3.up, toDest);" in cs
 
 
 # ── 3D vs 2D backend selection inside CanSeeTarget ──────────────────────────
