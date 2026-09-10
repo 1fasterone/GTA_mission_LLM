@@ -1042,6 +1042,52 @@ def test_inventory_reserved_names_cover_item_effect_api():
         assert name in reserved, f"{name!r} declared in Inventory.cs.j2 but not reserved"
 
 
+def test_inventory_extensions_field_survives_and_renders(dummy_config):
+    from src.micro.code_fields import CodeField
+
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="TestInv", variant="slot_based",
+        extensions_fields=[CodeField(name="durabilityBonus", type="int", default="0")],
+    )
+    fixed = p.default_fix(s, "slot_based")
+    assert [f.name for f in fixed.extensions_fields] == ["durabilityBonus"]
+
+    env = p.jinja()
+    out = env.get_template("Inventory.cs.j2").render(s=fixed, variant="slot_based")
+    assert "durabilityBonus" in out
+
+
+def test_inventory_extensions_field_colliding_with_reserved_name_is_dropped(dummy_config):
+    from src.micro.code_fields import CodeField
+
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="TestInv", variant="slot_based",
+        extensions_fields=[CodeField(name="maxWeight", type="float", default="1f")],
+    )
+    fixed = p.default_fix(s, "slot_based")
+    assert fixed.extensions_fields == []
+    assert "extensions_conflicts" in fixed.meta
+
+
+def test_inventory_extensions_field_colliding_with_item_effect_api_is_dropped(dummy_config):
+    """The item-effect taxonomy (useitem/onhealeffect/etc., added in a sibling
+    PR) must be covered by the same safe-block collision check as the
+    original reserved names — this is the exact scenario the missing
+    apply_extensions_safe_block call would have let through silently."""
+    from src.micro.code_fields import CodeField
+
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="TestInv", variant="slot_based",
+        extensions_fields=[CodeField(name="useItem", type="bool", default="false")],
+    )
+    fixed = p.default_fix(s, "slot_based")
+    assert fixed.extensions_fields == []
+    assert "extensions_conflicts" in fixed.meta
+
+
 # ── Tier 2 — unity-dialogue ─────────────────────────────────────────────────
 
 def test_dialogue_schema_clamp():
