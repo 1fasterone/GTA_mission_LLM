@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from ..micro_pipeline import to_pascal
+from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, UNITY_EXTRA_INSTRUCTIONS,
@@ -23,6 +23,37 @@ VARIANTS = list(InventoryVariant.__args__)   # type: ignore[attr-defined]
 Stacking = Literal["stackable", "unique"]
 SortMode = Literal["none", "by_name", "by_weight"]
 
+# What USING an item does — closed set so Inventory.cs.j2's UseItem() dispatches
+# with a plain switch, never free-form code (see ItemDefinition.cs.j2's mirrored
+# C# enum). "none" is the only variant-agnostic default: equipment/quest/junk
+# items that are carried, equipped, or shown but never consumed.
+ItemEffect = Literal[
+    "none", "heal", "restore_shield", "stat_boost", "unlock", "quest_flag",
+]
+_ITEM_EFFECTS = list(ItemEffect.__args__)   # type: ignore[attr-defined]
+# unlock/quest_flag are meaningless without a target; heal/restore_shield/
+# stat_boost are meaningless with amount<=0 — default_fix downgrades both
+# to "none" rather than ship an effect UseItem() can fire but that changes
+# nothing (see default_fix below).
+_TARGETED_EFFECTS = frozenset({"unlock", "quest_flag"})
+_AMOUNT_EFFECTS = frozenset({"heal", "restore_shield", "stat_boost"})
+
+
+class InventoryItemSpec(BaseModel):
+    """One item type: a name plus what using it does, if anything. This is
+    the Step-3 landing spot for brief intent like "heals 25 HP" or "unlocks
+    the cellar" — a bare item name has no field to carry that into, so it
+    used to evaporate into just a display string."""
+    name:      str        = "Item"
+    effect:    ItemEffect  = "none"
+    amount:    float       = 0.0   # heal/restore_shield HP, or stat_boost magnitude — unused by unlock/quest_flag
+    target_id: str         = ""    # stat_boost's stat name, unlock's lock id, or quest_flag's flag name — unused by heal/restore_shield
+
+    @field_validator("effect", mode="before")
+    @classmethod
+    def _clamp_effect(cls, v: str) -> str:
+        return clamp_enum(v, tuple(_ITEM_EFFECTS), "none")
+
 
 class InventorySchema(CodeExtensibleSchema):
     name:            str        = "Inventory"
@@ -34,7 +65,7 @@ class InventorySchema(CodeExtensibleSchema):
     grid_height:     int        = 4
     max_weight:      float      = 50.0
     equipment_slots: list[str]  = Field(default_factory=list)
-    starting_items:  list[str]  = Field(default_factory=list)
+    items:           list[InventoryItemSpec] = Field(default_factory=list)
     allow_drop:      bool       = True
     description:     str        = "Inventory system"
     meta:            dict       = Field(default_factory=dict)
@@ -69,6 +100,9 @@ Cover in 1-2 paragraphs:
 - The container shape (fixed slots, a 2D grid, weight capacity, equipment slots, a hotbar)
 - Whether identical items stack
 - Add / remove / query behaviour and any UI hook
+- What USING an item actually does, if anything (heals, restores shield,
+  boosts a stat, unlocks something, sets a quest flag) — name the amount or
+  target where the brief gives one
 
 Do NOT write code or JSON.
 """
@@ -80,6 +114,16 @@ Convert the brief into JSON. Output JSON only.
 VARIANT MUST BE: {variant}
 STACKING   — stackable | unique
 SORT_MODE  — none | by_name | by_weight
+
+Each entry in "items" is one item type. EFFECT MUST BE ONE OF:
+  none            inert — equipment, quest items, junk; nothing happens on use
+  heal            amount = HP restored
+  restore_shield  amount = shield HP restored
+  stat_boost      amount = magnitude; target_id = which stat (e.g. "speed")
+  unlock          target_id = the lock/door id this item opens
+  quest_flag      target_id = the flag name this item sets
+unlock and quest_flag REQUIRE a non-empty target_id or the effect is dropped
+to "none" — never invent a target_id; leave it "" if the brief doesn't name one.
 
 BRIEF:
 {concept}
@@ -95,7 +139,10 @@ OUTPUT:
   "grid_height": 4,
   "max_weight": 50.0,
   "equipment_slots": ["Head", "Chest", "Legs", "Weapon", "Offhand"],
-  "starting_items": ["Potion", "Sword"],
+  "items": [
+    {{"name": "Potion", "effect": "heal", "amount": 25.0, "target_id": ""}},
+    {{"name": "Sword", "effect": "none", "amount": 0.0, "target_id": ""}}
+  ],
   "allow_drop": true,
   "description": "One sentence."
 }}
@@ -115,6 +162,10 @@ class InventoryPipeline(UnityMicroPipeline):
     _RESERVED_FIELD_NAMES = {
         "stacks", "equipped", "slotcount", "gridwidth", "gridheight",
         "maxweight", "slots", "selectedindex", "_stacks", "_equipped",
+        # Item-effect dispatch (UseItem() + its per-effect events — see
+        # Inventory.cs.j2 and ItemDefinition.cs.j2's mirrored Effect enum)
+        "useitem", "onitemused", "onhealeffect", "onshieldeffect",
+        "onstatboosteffect", "onunlockeffect", "onquestflageffect",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "System", "System.Collections.Generic"}
 
@@ -137,6 +188,22 @@ class InventoryPipeline(UnityMicroPipeline):
         if variant == "grid":
             # Keep slot_count consistent with the grid for display/UX.
             schema.slot_count = schema.grid_width * schema.grid_height
+
+        # Item effects — abstain loudly (downgrade to "none") rather than ship
+        # an effect UseItem() would fire but that can never do anything: a
+        # targeted effect with no target, or an amount-driven one with
+        # amount<=0, is a silent no-op at runtime with no error to find it by.
+        for it in schema.items:
+            if it.effect in _TARGETED_EFFECTS and not it.target_id.strip():
+                console.print(f"  [yellow]WARN[/]  item {it.name!r}: "
+                              f"effect={it.effect!r} needs a target_id — "
+                              f"dropped to \"none\"")
+                it.effect = "none"
+            elif it.effect in _AMOUNT_EFFECTS and it.amount <= 0:
+                console.print(f"  [yellow]WARN[/]  item {it.name!r}: "
+                              f"effect={it.effect!r} needs amount > 0 — "
+                              f"dropped to \"none\"")
+                it.effect = "none"
 
         # hoist_field_inits: this generator's template renders awake_extra,
         # so a CS0236 initializer can be re-homed there instead of dropped.

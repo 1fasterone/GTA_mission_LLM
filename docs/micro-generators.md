@@ -256,10 +256,23 @@ Produces an item model + container manager: a `ItemDefinition` ScriptableObject 
 - **Key fields** — `stacking` (`stackable|unique`, clamped via `clamp_enum`), `sort_mode`
   (`none|by_name|by_weight`, clamped → emits a `Sort` on change), `slot_count`, `grid_width`/
   `grid_height`, `max_weight`, `equipment_slots` (defaulted for the equipment variant),
-  `starting_items`, `allow_drop`.
+  `items` (name + closed-set `effect`/`amount`/`target_id` — see Item Effects below), `allow_drop`.
 - **Files** — `Scripts/<Name>ItemDefinition.cs`, `Scripts/<Name>.cs`, `README.md` (always 3).
 - **Note** — the `equipment` variant generates a slot-dictionary manager (no stacks); the other
   five share the stack-list manager. Subscribe to `OnChanged` to refresh any HUD bound to it.
+- **Item Effects** — every non-equipment `ItemDefinition` carries a closed-set `Effect` enum
+  (`None|Heal|RestoreShield|StatBoost|Unlock|QuestFlag`) plus `amount`/`targetId`. `UseItem(item)`
+  consumes one and fires the matching event (`OnHealEffect`, `OnShieldEffect`,
+  `OnStatBoostEffect`, `OnUnlockEffect`, `OnQuestFlagEffect`, plus `OnItemUsed` for all of them) —
+  this is what lets a brief's "a potion that heals 25 HP" land as real dispatch instead of an
+  inert item name. `default_fix` downgrades a targeted effect (`unlock`/`quest_flag`) with no
+  `target_id`, or an amount-driven one (`heal`/`restore_shield`/`stat_boost`) with `amount<=0`, to
+  `none` rather than ship a silent no-op. A composed project's `GameContext` auto-wires
+  `OnHealEffect` to a composed player Health's `Heal(float)` when both are present
+  (`_emit_context` in `src/unity_compose.py`) — the other four effects have no bridge yet; they
+  fire their event but nothing in a composed project subscribes to it until a target micro
+  (Interactable's lock gate, Objectives' flag tracking, a stat system) exposes a matching public
+  method to bridge to.
 
 ```bash
 python main.py unity-inventory "5x4 grid backpack with stacking" --variant grid

@@ -671,6 +671,39 @@ def test_gamecontext_no_concept_bridge_when_no_gamemanager(tmp_path):
     assert "GameManager.Instance" not in ctx
 
 
+def test_gamecontext_bridges_inventory_heal_to_health(tmp_path):
+    """Inventory.OnHealEffect (a Heal-tagged item's UseItem()) is wired straight
+    to the composed player Health's Heal(float) — the one item-effect bridge
+    with a ready receiver on another micro today (see _emit_context)."""
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("CtxInvHeal").emit(
+        subsystems_for("3D", ["inventory"]), assets, has_game_manager=False)
+    ctx = (assets / "Micros" / "context" / "Scripts"
+          / "GameContext.cs").read_text(encoding="utf-8")
+    assert "Get<PlayerInventory>()" in ctx or "__inventory = Get<" in ctx
+    assert "__inventory.OnHealEffect += __health.Heal;" in ctx
+    assert ctx.count("{") == ctx.count("}")
+
+
+def test_gamecontext_no_inventory_bridge_without_inventory_feature(tmp_path):
+    ctx = _gamecontext_cs(tmp_path, "CtxNoInv", has_gm=False)
+    assert "OnHealEffect" not in ctx
+
+
+def test_gamecontext_no_inventory_bridge_for_equipment_variant(tmp_path):
+    """The equipment variant renders no UseItem()/OnHealEffect at all (see
+    Inventory.cs.j2) — bridging it would reference a member that doesn't
+    compile, so _emit_context excludes it by variant, not just by kind."""
+    assets = Path(tmp_path) / "Assets"
+    subs = subsystems_for("3D", ["inventory"])
+    inv = next(s for s in subs if s.kind == "inventory")
+    inv.variant = "equipment"
+    MicroComposer("CtxInvEquip").emit(subs, assets, has_game_manager=False)
+    ctx = (assets / "Micros" / "context" / "Scripts"
+          / "GameContext.cs").read_text(encoding="utf-8")
+    assert "OnHealEffect" not in ctx
+
+
 def test_gamewiring_uses_unqualified_findfirstobjectbytype(tmp_path):
     """Hardening: GameWiring imports both System and UnityEngine, so a bare
     `Object.` prefix would be CS0104. The inherited unqualified call is safe."""
