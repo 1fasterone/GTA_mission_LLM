@@ -946,6 +946,35 @@ def test_inventory_renders_every_variant(tmp_path, dummy_config, variant):
         assert "SelectedIndex" in mgr
 
 
+def test_inventory_extensions_field_survives_and_renders(dummy_config):
+    from src.micro.code_fields import CodeField
+
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="TestInv", variant="slot_based",
+        extensions_fields=[CodeField(name="durabilityBonus", type="int", default="0")],
+    )
+    fixed = p.default_fix(s, "slot_based")
+    assert [f.name for f in fixed.extensions_fields] == ["durabilityBonus"]
+
+    env = p.jinja()
+    out = env.get_template("Inventory.cs.j2").render(s=fixed, variant="slot_based")
+    assert "durabilityBonus" in out
+
+
+def test_inventory_extensions_field_colliding_with_reserved_name_is_dropped(dummy_config):
+    from src.micro.code_fields import CodeField
+
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="TestInv", variant="slot_based",
+        extensions_fields=[CodeField(name="maxWeight", type="float", default="1f")],
+    )
+    fixed = p.default_fix(s, "slot_based")
+    assert fixed.extensions_fields == []
+    assert "extensions_conflicts" in fixed.meta
+
+
 # ── Tier 2 — unity-dialogue ─────────────────────────────────────────────────
 
 def test_dialogue_schema_clamp():
