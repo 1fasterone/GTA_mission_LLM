@@ -34,9 +34,11 @@ from src.unity_layout_archetype import (
     LayoutStrictError,
     corridor_height,
     is_climbable_entity,
+    is_formation_entity,
     is_hazard_entity,
     pick_exit_platform,
     select_archetype,
+    spatial_relationship_of,
     surface_height,
     volume_height,
 )
@@ -116,6 +118,16 @@ def _racing_schema() -> UnitySchema:
     compose_racetrack(s)
     s.entities.append(EntitySpec(name="Crates", count=12, placement="scatter",
                                  radius=6, spacing=2.0, scale=1.5))
+    # kind="vehicle" -> spatial_relationship_of() == "formation" (a cohesive
+    # pack that stays at one anchor) even though it's not preplaced like
+    # compose_racetrack's own PlayerKart/OpponentKarts -- the one packable,
+    # non-scenery group this fixture needs so course-zone tests still have
+    # something that goes through `_corridor_pack` + zone-elevation
+    # application instead of `_scenery_distributed_pack` (which doesn't
+    # interpret zones yet, by design -- see its docstring).
+    s.entities.append(EntitySpec(name="RivalDrones", kind="vehicle", count=4,
+                                 placement="scatter", radius=6, spacing=2.0,
+                                 scale=1.0))
     return s
 
 
@@ -1027,12 +1039,16 @@ class TestCourseZonesWiring:
                          amplitude=2.5, label="TestDip"))
         msgs = compute_layout(zoned)
 
-        # Every packed (non-path, non-preplaced) group covered by a dip
-        # spanning the WHOLE route must have shifted by exactly -amplitude —
-        # not stayed at its zone-free baseline.
-        crates = next(e for e in zoned.entities if e.name == "Crates")
-        assert crates.elevation == round(baseline_elev["Crates"] - 2.5, 3)
-        assert crates.elevation != baseline_elev["Crates"]
+        # Every packed, FORMATION (non-path, non-preplaced, non-scenery-
+        # distributed) group covered by a dip spanning the WHOLE route must
+        # have shifted by exactly -amplitude — not stayed at its zone-free
+        # baseline. RivalDrones (kind="vehicle") goes through `_corridor_pack`
+        # same as before this fixture also gained a scenery-distributed
+        # "Crates" group, which zones don't reach yet (see
+        # _scenery_distributed_pack's docstring).
+        drones = next(e for e in zoned.entities if e.name == "RivalDrones")
+        assert drones.elevation == round(baseline_elev["RivalDrones"] - 2.5, 3)
+        assert drones.elevation != baseline_elev["RivalDrones"]
         assert any("Applied 1 authored course zone" in m for m in msgs)
 
     def test_arena_plane_zones_are_deterministic(self):
@@ -1202,3 +1218,85 @@ class TestProvenance:
         s = _planar_schema()
         s.entities = []
         assert compute_layout(s) == []
+
+
+class TestSpatialRelationshipOf:
+    """spatial_relationship_of() classifies a packable group's relationship to
+    an authored route corridor — pure keyword/kind, no schema field, no LLM.
+    See its docstring for why "cluster" is the correct default for anything
+    unrecognised, not a placeholder."""
+
+    @pytest.mark.parametrize("name", [
+        "Streetlights", "TrackTorches", "WarningSigns", "FinishFlags",
+        "Bollards", "LampPosts",
+    ])
+    def test_edge_distributed_keywords(self, name):
+        e = EntitySpec(name=name, kind="prop", count=8)
+        assert spatial_relationship_of(e) == "edge_distributed"
+
+    @pytest.mark.parametrize("name", [
+        "CrashBarriers", "TrackFences", "Guardrails", "TireWalls",
+    ])
+    def test_boundary_follow_keywords(self, name):
+        e = EntitySpec(name=name, kind="prop", count=20)
+        assert spatial_relationship_of(e) == "boundary_follow"
+
+    @pytest.mark.parametrize("name", [
+        "Spectators", "PitCrew", "Grandstands", "DirtMounds", "Merch",
+    ])
+    def test_unrecognised_scenery_names_distribute_by_default(self, name):
+        e = EntitySpec(name=name, kind="prop", count=6)
+        assert spatial_relationship_of(e) == "scenery_distributed"
+
+    def test_camel_case_name_still_matches(self):
+        # _entity_words CamelCase-splits before matching -- "StreetLamps"
+        # must read as "street lamps", not fail to match "lamp" as one token.
+        e = EntitySpec(name="StreetLamps", kind="prop", count=8)
+        assert spatial_relationship_of(e) == "edge_distributed"
+
+    def test_kind_alone_does_not_trigger_an_edge_or_boundary_match(self):
+        # kind="prop" is the schema default for nearly every entity; only
+        # NAME/model_hint/tag content should drive edge/boundary matching.
+        e = EntitySpec(name="Rivals", kind="prop", count=3)
+        assert spatial_relationship_of(e) == "scenery_distributed"
+
+
+class TestFormationVsScenery:
+    """is_formation_entity() / spatial_relationship_of()'s "formation" vs
+    "scenery_distributed" split (src/unity_layout_archetype.py) — a squad/
+    pack that belongs staying together in one spot (rival karts at a start
+    grid) vs. decorative content whose count means "this many exist around
+    the level", not "these form one group". See
+    feedback-no-single-anchor-clusters memory for why this distinction
+    exists: the user does not want ANY group dumped as one clustered
+    anchor unless it's genuinely supposed to read as one unit."""
+
+    @pytest.mark.parametrize("kind", ["vehicle", "aircraft", "character", "creature"])
+    def test_actor_kinds_are_formations(self, kind):
+        e = EntitySpec(name="Rivals", kind=kind, count=3)
+        assert is_formation_entity(e)
+        assert spatial_relationship_of(e) == "formation"
+
+    @pytest.mark.parametrize("tag", ["Enemy", "Ally"])
+    def test_relational_tags_are_formations_regardless_of_kind(self, tag):
+        # Live schema-fill puts hostility in `tag` more reliably than
+        # `kind` -- a kind="prop" landmine with tag="Enemy" must still read
+        # as a formation, not get scattered like decorative scenery.
+        # (tag="Player" is deliberately not parametrized here:
+        # EntitySpec._reserve_player_tag resets it to "Untagged" for a
+        # kind="prop" entity by design -- "Player" is a singleton tag a prop
+        # is never allowed to hold, so that combination can't occur.)
+        e = EntitySpec(name="Ambush", kind="prop", count=4, tag=tag)
+        assert is_formation_entity(e)
+        assert spatial_relationship_of(e) == "formation"
+
+    def test_prop_with_no_relational_tag_is_scenery(self):
+        e = EntitySpec(name="Crates", kind="prop", count=12, tag="Untagged")
+        assert not is_formation_entity(e)
+        assert spatial_relationship_of(e) == "scenery_distributed"
+
+    def test_collectibles_are_scenery_not_formation(self):
+        # "collectibles along a platforming route" is a distribute case, not
+        # a formation, even though every instance is functionally identical.
+        e = EntitySpec(name="Coins", kind="prop", count=15, tag="Collectible")
+        assert spatial_relationship_of(e) == "scenery_distributed"

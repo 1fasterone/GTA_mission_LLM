@@ -1221,6 +1221,107 @@ def pick_wall_surface(entities: Sequence[_Entity]) -> tuple[Optional[_Entity], s
     return None, ""
 
 
+# ── Trackside relationship (ArenaPlane route corridor) ──────────────────────
+# What spatial relationship a packable group has to an authored route
+# corridor. `_corridor_pack` (src/unity_layout.py) used to treat every group
+# identically — one anchor beside the track, `count` copies clustered
+# locally around that single point — which is the right answer for a knot of
+# spectators or a pit-stop kit but the wrong one for "twelve streetlights":
+# that group wants one instance per interval spread along the WHOLE corridor,
+# not twelve lamps stacked in one spot. Pure keyword/kind classification,
+# same pattern as `is_ground_dweller` above — no new schema field, no LLM
+# involvement post-schema.
+#
+# Checkpoints/finish-arch ("span the route" / "cross the route at a point")
+# are a real third relationship this table deliberately does NOT claim yet —
+# grouping them in here without also building their perpendicular-gate
+# placement math would silently misclassify them as one of the shapes below,
+# which is worse than leaving them as scenery. See _edge_distributed_pack's
+# docstring (src/unity_layout.py) for the migration path once that placement
+# exists.
+_EDGE_DISTRIBUTED_WORDS: tuple[str, ...] = (
+    "streetlight", "streetlights", "light", "lights", "lamp", "lamps",
+    "lantern", "lanterns", "torch", "torches", "sign", "signs", "signpost",
+    "marker", "markers", "pylon", "pylons", "cone", "cones", "flag", "flags",
+    "banner", "banners", "post", "posts", "bollard", "bollards",
+)
+_BOUNDARY_FOLLOW_WORDS: tuple[str, ...] = (
+    "barrier", "barriers", "fence", "fences", "fencing", "guardrail",
+    "guardrails", "railing", "railings", "wall", "walls", "hedge", "hedges",
+    "rope", "ropes", "tire wall", "tyre wall", "crash barrier",
+)
+# A COHESIVE in-game unit/squad/pack that belongs staying together in one
+# spot — rival karts at a start grid, a squad of guards — as opposed to
+# decorative/scenery content whose `count` means "there are this many of
+# this thing around the level", not "these instances form one group". This
+# is the line between the two remaining relationships below: a formation
+# keeps today's original single-anchor placement (correct here — these
+# instances ARE meant to share one spot); everything else now spreads
+# across the level instead (see "scenery_distributed" below and
+# src/unity_layout._scenery_distributed_pack) — replacing what used to be
+# an unconditional single-anchor default for EVERY unclassified group,
+# which is exactly the "clusters of the same model in one place" complaint
+# that motivated this table's existence in the first place.
+#
+# kind carries the actor signal; tag carries the relational-role signal
+# independent of kind, since live schema-fill output puts hostility in
+# `tag` far more reliably than in `kind` (see unity_concept_entities.py's
+# own tag="Enemy" detection). Either one is enough — a `kind="prop"
+# tag="Enemy"` landmine still reads as a formation, correctly, rather than
+# getting scattered like a prop.
+_FORMATION_KINDS: frozenset[str] = frozenset({
+    "vehicle", "aircraft", "character", "creature",
+})
+_FORMATION_TAGS: frozenset[str] = frozenset({"enemy", "ally", "player"})
+
+
+def is_formation_entity(entity) -> bool:
+    return ((entity.kind or "").lower().strip() in _FORMATION_KINDS
+            or _tag_of(entity) in _FORMATION_TAGS)
+
+
+def spatial_relationship_of(entity) -> str:
+    """How this packable group relates to an authored route corridor:
+
+      "edge_distributed"    — one instance per arc-length interval along the
+                              WHOLE route, offset outside the edge, facing
+                              back toward the road (streetlights, torches,
+                              signs).
+      "boundary_follow"     — a continuous chain hugging one side of the
+                              route (barriers, fences, guardrails).
+      "formation"           — a cohesive squad/pack (`is_formation_entity`)
+                              that stays at ONE anchor — today's original
+                              single-anchor-plus-local-pattern behaviour,
+                              correct here, not a leftover default.
+      "scenery_distributed" — the actual default: everything else
+                              (spectators, pit equipment, trees, rocks,
+                              collectibles...) spreads across multiple stops
+                              along the route instead of one clustered
+                              anchor. A small group collapses to one stop
+                              anyway (see _scenery_distributed_pack), so a
+                              handful of decorative instances still lands
+                              exactly where the old single-anchor behaviour
+                              would have put them.
+
+    Checked in this order: edge-distributed and boundary-follow first (a
+    name that could plausibly read as either, e.g. "light fence", is rare in
+    practice, but ties go to the more specific relationship); formation
+    checked before falling through to the scenery default, since a squad
+    that also happens to carry a matched keyword — unlikely, but a fence-
+    named tag="Enemy" group is not impossible — should still read as
+    edge/boundary first (that's about the OBJECT the group physically is,
+    which formation-vs-scenery doesn't override).
+    """
+    words = _entity_words(entity)
+    if _hits(words, _EDGE_DISTRIBUTED_WORDS):
+        return "edge_distributed"
+    if _hits(words, _BOUNDARY_FOLLOW_WORDS):
+        return "boundary_follow"
+    if is_formation_entity(entity):
+        return "formation"
+    return "scenery_distributed"
+
+
 # ── UISurface roles ──────────────────────────────────────────────────────────
 # A non-embodied game's entities are not scenery standing around an avatar —
 # they ARE the interface, and their identity is a UI element rather than a

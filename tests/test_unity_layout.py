@@ -7,7 +7,7 @@ import math
 
 import pytest
 
-from src.unity_layout import compute_layout, terrain_bounds
+from src.unity_layout import _SPAWN_CLEARANCE_DEFAULT, compute_layout, terrain_bounds
 from src.unity_racetrack import compose_racetrack
 from src.unity_schema import EntitySpec, UnitySchema
 
@@ -22,20 +22,39 @@ def _schema(entities, game_type="3D"):
     )
 
 
+def _instance_footprint(e: EntitySpec) -> float:
+    """Per-instance radius approximation, matching the formula every packer
+    in src/unity_layout.py already uses for an unmeasured primitive
+    (`max(0.5, entity.scale * 0.6)` — see _edge_distributed_pack et al.)."""
+    return max(0.5, e.scale * 0.6)
+
+
+def _min_instance_distance(e1: EntitySpec, e2: EntitySpec) -> float:
+    return min(
+        math.hypot(p1[0] - p2[0], p1[2] - p2[2])
+        for p1 in e1.instance_positions for p2 in e2.instance_positions
+    )
+
+
 class TestGroupPacking:
     def test_two_groups_with_same_radius_no_longer_share_origin(self):
         # This is the exact reported bug: a ring of buildings and a ring of
         # vehicles, both authored at radius=8, both landed on the identical
-        # circle around world origin.
+        # circle around world origin. Checked at the INSTANCE level, not via
+        # origin_offset/group_radius: a scenery_distributed group's own
+        # centroid is a loose aggregate over several stops (see
+        # feedback-no-single-anchor-clusters memory) and is no longer a
+        # tight "personal space" circle the way it was when every group had
+        # exactly one anchor -- the actual invariant that matters is that no
+        # instance of one group sits inside another's footprint.
         a = EntitySpec(name="Buildings", count=20, placement="ring", radius=8, scale=3.5)
         b = EntitySpec(name="Vehicles", count=3, placement="ring", radius=8, scale=1.5)
         schema = _schema([a, b])
         compute_layout(schema)
 
         assert a.origin_offset != [0.0, 0.0] or b.origin_offset != [0.0, 0.0]
-        dist = math.hypot(a.origin_offset[0] - b.origin_offset[0],
-                           a.origin_offset[1] - b.origin_offset[1])
-        assert dist >= a.group_radius + b.group_radius
+        assert _min_instance_distance(a, b) >= (
+            _instance_footprint(a) + _instance_footprint(b) - 1e-6)
 
     def test_many_groups_all_pairwise_non_overlapping(self):
         entities = [
@@ -51,9 +70,9 @@ class TestGroupPacking:
 
         for i, e1 in enumerate(entities):
             for e2 in entities[i + 1:]:
-                dist = math.hypot(e1.origin_offset[0] - e2.origin_offset[0],
-                                   e1.origin_offset[1] - e2.origin_offset[1])
-                assert dist >= e1.group_radius + e2.group_radius - 1e-6, (
+                dist = _min_instance_distance(e1, e2)
+                assert dist >= (
+                    _instance_footprint(e1) + _instance_footprint(e2) - 1e-6), (
                     f"{e1.name} and {e2.name} overlap")
 
     def test_path_placement_entities_are_never_repacked(self):
@@ -220,7 +239,10 @@ class TestPathCorridors:
                            radius=6, spacing=2.0, scale=1.5)
         schema.entities.append(props)
         msgs = compute_layout(schema)
-        assert any("corridor" in m for m in msgs)
+        # "Crates" (kind="prop", the schema default) is scenery_distributed
+        # now, not the old cluster/corridor_pack path -- checking "route"
+        # rather than "corridor" covers whichever relationship message fired.
+        assert any("route" in m for m in msgs)
 
         track = next(e for e in schema.entities if e.name == "TrackSurface")
         half_w = track.path_width / 2.0
@@ -263,30 +285,45 @@ class TestPathCorridors:
         return _schema([track] + props), track, props
 
     def test_groups_hug_the_corridor_not_distant_islands(self):
+        # Names deliberately avoid unity_layout_archetype.spatial_relationship_of's
+        # edge_distributed/boundary_follow keyword tables and formation kinds --
+        # these are plain scenery_distributed props (kind="prop", the schema
+        # default), so EVERY stop must hug the corridor, not just one anchor.
         schema, track, props = self._big_circuit_schema(
-            ["Grandstands", "DirtMounds", "Spectators", "Banners"])
+            ["Grandstands", "DirtMounds", "Spectators", "MerchStalls"])
         msgs = compute_layout(schema)
-        assert any("route corridor" in m for m in msgs)
+        assert any("route" in m for m in msgs)
         half_w = track.path_width / 2.0
         for e in props:
-            cx, cz = e.origin_offset
-            d = self._dist_to_polyline(cx, cz, track.path_points)
-            # hugging: outside the ribbon, within a tight band beside it —
-            # never flung hundreds of metres away into a packed island
-            assert d > half_w
-            assert d < half_w + 60.0, f"{e.name} at dist {d:.1f} is not hugging"
+            for x, _y, z in e.instance_positions:
+                d = self._dist_to_polyline(x, z, track.path_points)
+                # hugging: outside the ribbon, within a tight band beside
+                # it — never flung hundreds of metres away into a packed
+                # island, checked per INSTANCE now that a scenery group's
+                # own centroid can land well inside the loop (several stops
+                # on opposite sides of the track average toward the middle,
+                # which is correct for the group but meaningless as a
+                # "hugging" measure -- see TestEdgeDistributedRelationship's
+                # equivalent per-instance check for the same reasoning).
+                assert d > half_w
+                assert d < half_w + 60.0, (
+                    f"{e.name} instance ({x}, {z}) at dist {d:.1f} is not hugging")
 
     def test_groups_are_distributed_around_the_loop(self):
         schema, track, props = self._big_circuit_schema(
             ["A", "B", "C", "D", "E", "F"])
         compute_layout(schema)
-        centers = [tuple(e.origin_offset) for e in props]
-        # not all clustered: the spread of anchor centers should span a large
-        # fraction of the route's own extent
-        xs = [c[0] for c in centers]
-        zs = [c[1] for c in centers]
-        assert (max(xs) - min(xs)) > 120.0
-        assert (max(zs) - min(zs)) > 120.0
+        # Every group's OWN instances now spread across multiple stops
+        # (scenery_distributed, count=6 -> 2 stops of 3) instead of landing
+        # on one shared anchor -- checked per group's instance spread, not
+        # by comparing origin_offset centroids across groups (which, now
+        # that a group can straddle both sides of the loop, are no longer a
+        # reliable "not clustered" signal on their own).
+        for e in props:
+            xs = [p[0] for p in e.instance_positions]
+            zs = [p[2] for p in e.instance_positions]
+            spread = math.hypot(max(xs) - min(xs), max(zs) - min(zs))
+            assert spread > 30.0, f"{e.name}'s instances are still one clump"
 
     def test_corridor_ground_bounds_track_the_route_not_islands(self):
         schema, track, _ = self._big_circuit_schema(
@@ -303,6 +340,240 @@ class TestPathCorridors:
             schema, _t, _p = self._big_circuit_schema(["A", "B", "C", "D"])
             compute_layout(schema)
             return [e.model_dump() for e in schema.entities]
+        assert build() == build()
+
+
+class TestEdgeDistributedRelationship:
+    """"Streetlights" reads as spatial_relationship_of() == "edge_distributed"
+    (src/unity_layout_archetype.py) and gets ONE instance per arc-length
+    interval spread along the WHOLE corridor (src/unity_layout._edge_distributed_pack)
+    instead of the old behaviour: one anchor beside the track with all
+    `count` copies clustered locally around that single point."""
+
+    @staticmethod
+    def _dist_to_polyline(px, pz, pts):
+        return TestPathCorridors._dist_to_polyline(px, pz, pts)
+
+    def _circuit_with_lights(self, count=12):
+        route = [[0, 0, 0], [0, 0, 120], [80, 0, 200], [200, 0, 200],
+                 [260, 0, 120], [200, 0, 40], [80, 0, 20], [0, 0, 0]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        lights = EntitySpec(name="Streetlights", kind="prop", count=count,
+                            placement="scatter", scale=1.0)
+        return _schema([track, lights]), track, lights
+
+    def test_one_instance_per_count_not_one_clustered_anchor(self):
+        schema, _track, lights = self._circuit_with_lights(count=12)
+        msgs = compute_layout(schema)
+        assert any("one instance per" in m for m in msgs)
+        assert len(lights.instance_positions) == 12
+        assert len(lights.instance_yaws) == 12
+
+    def test_instances_spread_across_the_whole_route_not_one_spot(self):
+        schema, track, lights = self._circuit_with_lights(count=12)
+        compute_layout(schema)
+        xs = [p[0] for p in lights.instance_positions]
+        zs = [p[2] for p in lights.instance_positions]
+        # the route itself spans ~260 x 200 -- a real corridor-wide spread,
+        # not a dozen lamps stacked in one clustered anchor.
+        assert (max(xs) - min(xs)) > 150.0
+        assert (max(zs) - min(zs)) > 120.0
+
+    def test_every_instance_clears_the_track_ribbon(self):
+        schema, track, lights = self._circuit_with_lights(count=12)
+        compute_layout(schema)
+        half_w = track.path_width / 2.0
+        for x, _y, z in lights.instance_positions:
+            assert self._dist_to_polyline(x, z, track.path_points) > half_w
+
+    def test_instances_face_back_toward_the_road(self):
+        schema, track, lights = self._circuit_with_lights(count=12)
+        compute_layout(schema)
+        for (x, _y, z), yaw in zip(lights.instance_positions, lights.instance_yaws):
+            # Walking a small step in the yaw's facing direction (Unity's
+            # atan2(x, z) convention) must land CLOSER to the route than the
+            # instance itself sits -- i.e. it faces the road, not away.
+            rad = math.radians(yaw)
+            fx, fz = math.sin(rad), math.cos(rad)
+            here = self._dist_to_polyline(x, z, track.path_points)
+            stepped = self._dist_to_polyline(x + fx, z + fz, track.path_points)
+            assert stepped < here, f"instance at ({x}, {z}) yaw={yaw} faces away"
+
+    def test_deterministic(self):
+        def build():
+            schema, _t, _l = self._circuit_with_lights(count=12)
+            compute_layout(schema)
+            return [e.model_dump() for e in schema.entities]
+        assert build() == build()
+
+
+class TestBoundaryFollowRelationship:
+    """"CrashBarriers" reads as spatial_relationship_of() == "boundary_follow"
+    (src/unity_layout_archetype.py) and src/unity_layout._boundary_follow_pack
+    places them as a continuous chain along one fixed side of the route —
+    direct parametric sampling (count derived from arc_length / max_gap,
+    never from the schema's authored `count`), no per-instance search."""
+
+    @staticmethod
+    def _dist_to_polyline(px, pz, pts):
+        return TestPathCorridors._dist_to_polyline(px, pz, pts)
+
+    def _circuit_with_barriers(self, spacing=15.0):
+        route = [[0, 0, 0], [0, 0, 120], [80, 0, 200], [200, 0, 200],
+                 [260, 0, 120], [200, 0, 40], [80, 0, 20], [0, 0, 0]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        barriers = EntitySpec(name="CrashBarriers", kind="prop", count=1,
+                              placement="scatter", scale=1.0, spacing=spacing)
+        return _schema([track, barriers]), track, barriers
+
+    def test_instances_stay_on_one_side_not_alternating(self):
+        schema, track, barriers = self._circuit_with_barriers()
+        compute_layout(schema)
+        from src.unity_route_axis import project
+        sides = [1 if project(track.path_points, x, z)[1] >= 0 else -1
+                 for x, _y, z in barriers.instance_positions]
+        assert len(set(sides)) == 1, "a barrier chain must not cross sides"
+
+    def test_chain_covers_the_whole_route_with_no_large_gaps(self):
+        schema, track, barriers = self._circuit_with_barriers()
+        compute_layout(schema)
+        from src.unity_route_axis import project
+        ts = sorted(project(track.path_points, x, z)[0]
+                    for x, _y, z in barriers.instance_positions)
+        gaps = [b - a for a, b in zip(ts, ts[1:])]
+        assert max(gaps) < 0.25, "a >25%-of-the-loop gap isn't a continuous chain"
+
+    def test_count_is_derived_from_max_gap_not_authored_count(self):
+        # `count=1` on the schema (see _circuit_with_barriers) — a real
+        # barrier run's instance count comes from arc_length / spacing, not
+        # from an authored number that has no relation to the route's length.
+        schema, track, barriers = self._circuit_with_barriers(spacing=15.0)
+        compute_layout(schema)
+        arc_length = sum(math.hypot(b[0] - a[0], b[2] - a[2])
+                         for a, b in zip(track.path_points, track.path_points[1:]))
+        assert len(barriers.instance_positions) == math.ceil(arc_length / 15.0)
+
+    def test_smaller_max_gap_yields_more_instances(self):
+        schema_wide, _t1, wide = self._circuit_with_barriers(spacing=40.0)
+        schema_tight, _t2, tight = self._circuit_with_barriers(spacing=5.0)
+        compute_layout(schema_wide)
+        compute_layout(schema_tight)
+        assert len(tight.instance_positions) > len(wide.instance_positions)
+
+    def test_deterministic(self):
+        def build():
+            schema, _t, _b = self._circuit_with_barriers()
+            compute_layout(schema)
+            return [e.model_dump() for e in schema.entities]
+        assert build() == build()
+
+
+class TestSceneryDistributedRelationship:
+    """A plain prop group (kind="prop", no formation kind/tag, no edge/
+    boundary keyword match) is spatial_relationship_of() == "scenery_distributed"
+    -- THE DEFAULT now, replacing the old unconditional single-anchor
+    cluster. See feedback-no-single-anchor-clusters memory."""
+
+    def _circuit_with_scenery(self, count=12):
+        route = [[0, 0, 0], [0, 0, 120], [80, 0, 200], [200, 0, 200],
+                 [260, 0, 120], [200, 0, 40], [80, 0, 20], [0, 0, 0]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        crowd = EntitySpec(name="Spectators", kind="prop", count=count,
+                           placement="scatter", radius=5, spacing=2.0, scale=1.0)
+        return _schema([track, crowd]), track, crowd
+
+    def test_small_group_collapses_to_one_stop_unchanged(self):
+        # count=2 <= _SCENERY_STOP_SIZE (3): today's original single-anchor
+        # behaviour, unchanged -- a small decorative group was never the
+        # complaint this relationship exists to fix.
+        schema, _track, crowd = self._circuit_with_scenery(count=2)
+        compute_layout(schema)
+        assert len(crowd.instance_positions) == 2
+        xs = [p[0] for p in crowd.instance_positions]
+        zs = [p[2] for p in crowd.instance_positions]
+        assert math.hypot(max(xs) - min(xs), max(zs) - min(zs)) < 10.0
+
+    def test_large_group_spreads_across_multiple_stops(self):
+        schema, _track, crowd = self._circuit_with_scenery(count=12)
+        compute_layout(schema)
+        assert len(crowd.instance_positions) == 12
+        xs = [p[0] for p in crowd.instance_positions]
+        zs = [p[2] for p in crowd.instance_positions]
+        assert math.hypot(max(xs) - min(xs), max(zs) - min(zs)) > 100.0
+
+    def test_every_instance_clears_the_track_ribbon(self):
+        schema, track, crowd = self._circuit_with_scenery(count=12)
+        compute_layout(schema)
+        half_w = track.path_width / 2.0
+        for x, _y, z in crowd.instance_positions:
+            assert TestPathCorridors._dist_to_polyline(x, z, track.path_points) > half_w
+
+    def test_deterministic(self):
+        def build():
+            schema, _t, _c = self._circuit_with_scenery(count=12)
+            compute_layout(schema)
+            return [e.model_dump() for e in schema.entities]
+        assert build() == build()
+
+
+class TestSceneryScatterNoRoute:
+    """The no-route sibling of TestSceneryDistributedRelationship — a plain
+    interior/level scene with no authored path (a shop, a room), where
+    "fifteen mirrors" used to become one 5x3 grid at a single anchor. See
+    feedback-no-single-anchor-clusters memory: this was reported live as
+    "15 mirrors in a square anchor layout" in a grandma's-shop run."""
+
+    def test_small_group_collapses_to_one_stop_unchanged(self):
+        e = EntitySpec(name="Mirrors", kind="prop", count=2, placement="grid", scale=1.0)
+        schema = _schema([e])
+        compute_layout(schema)
+        assert len(e.instance_positions) == 2
+        xs = [p[0] for p in e.instance_positions]
+        zs = [p[2] for p in e.instance_positions]
+        assert math.hypot(max(xs) - min(xs), max(zs) - min(zs)) < 10.0
+
+    def test_fifteen_mirrors_spread_across_several_stops_not_one_grid(self):
+        e = EntitySpec(name="Mirrors", kind="prop", count=15, placement="grid", scale=1.0)
+        schema = _schema([e])
+        msgs = compute_layout(schema)
+        assert any("stops" in m for m in msgs)
+        assert len(e.instance_positions) == 15
+        xs = [p[0] for p in e.instance_positions]
+        zs = [p[2] for p in e.instance_positions]
+        # A single 5x3 grid of unit-scale mirrors is well under ~20 units
+        # across; several stops spread by _find_slot's spiral search must
+        # cover meaningfully more ground than that.
+        assert math.hypot(max(xs) - min(xs), max(zs) - min(zs)) > 25.0
+
+    def test_no_instance_lands_inside_the_spawn_radius(self):
+        e = EntitySpec(name="Mirrors", kind="prop", count=15, placement="grid", scale=1.0)
+        schema = _schema([e])
+        compute_layout(schema)
+        for x, _y, z in e.instance_positions:
+            assert math.hypot(x, z) >= _SPAWN_CLEARANCE_DEFAULT
+
+    def test_different_groups_stay_apart(self):
+        mirrors = EntitySpec(name="Mirrors", kind="prop", count=15,
+                             placement="grid", scale=1.0)
+        crates = EntitySpec(name="Crates", kind="prop", count=15,
+                            placement="grid", scale=1.0)
+        schema = _schema([mirrors, crates])
+        compute_layout(schema)
+        min_dist = min(
+            math.hypot(p1[0] - p2[0], p1[2] - p2[2])
+            for p1 in mirrors.instance_positions for p2 in crates.instance_positions)
+        assert min_dist >= 2.0  # _GROUP_MARGIN
+
+    def test_deterministic(self):
+        def build():
+            e = EntitySpec(name="Mirrors", kind="prop", count=15,
+                           placement="grid", scale=1.0)
+            schema = _schema([e])
+            compute_layout(schema)
+            return e.model_dump()
         assert build() == build()
 
 
@@ -356,9 +627,15 @@ class TestPlayerSpawnReservation:
         ]
         schema = _schema(entities)
         compute_layout(schema)
+        # Checked per INSTANCE, not via origin_offset/group_radius: a
+        # scenery_distributed group's own centroid is a loose aggregate over
+        # several stops (see feedback-no-single-anchor-clusters memory) and
+        # is no longer guaranteed to sit outside its own group_radius from
+        # the spawn the way a single-anchor group's did.
         for e in entities:
-            assert self._dist_from_spawn(e) >= e.group_radius, \
-                f"{e.name} overlaps the player spawn"
+            for x, _y, z in e.instance_positions:
+                assert math.hypot(x, z) >= _SPAWN_CLEARANCE_DEFAULT, \
+                    f"{e.name} instance ({x}, {z}) overlaps the player spawn"
 
     def test_no_baked_instance_lands_on_the_spawn_point(self):
         entities = [
@@ -392,7 +669,13 @@ class TestPlayerSpawnReservation:
         schema = _schema([e])
         schema.locomotion = locomotion
         compute_layout(schema)
-        assert self._dist_from_spawn(e) >= e.group_radius + clearance
+        # Checked per INSTANCE (see test_every_packed_group_clears_the_spawn_radius):
+        # `clearance` here IS the reserved spawn radius itself
+        # (_SPAWN_CLEARANCE_BY_LOCOMOTION), so no instance may sit closer to
+        # the origin than that, regardless of how the group's own centroid
+        # nets out across however many stops it was split into.
+        for x, _y, z in e.instance_positions:
+            assert math.hypot(x, z) >= clearance
         ys = {p[1] for p in e.instance_positions}
         if in_volume:
             assert ys and all(y > 0.0 for y in ys), ys
