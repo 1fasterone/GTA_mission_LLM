@@ -647,6 +647,13 @@ def _gamecontext_cs(tmp_path, project, has_gm):
             / "GameContext.cs").read_text(encoding="utf-8")
 
 
+def _gamecontext_cs_with(tmp_path, project, features):
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer(project).emit(subsystems_for("3D", features), assets, has_game_manager=False)
+    return (assets / "Micros" / "context" / "Scripts"
+            / "GameContext.cs").read_text(encoding="utf-8")
+
+
 def test_gamecontext_emitted_with_universal_locator(tmp_path):
     ctx = _gamecontext_cs(tmp_path, "CtxProof", has_gm=False)
     assert "public class GameContext" in ctx
@@ -702,6 +709,60 @@ def test_gamecontext_no_inventory_bridge_for_equipment_variant(tmp_path):
     ctx = (assets / "Micros" / "context" / "Scripts"
           / "GameContext.cs").read_text(encoding="utf-8")
     assert "OnHealEffect" not in ctx
+
+
+def test_gamecontext_bridges_inventory_questflag_to_objectives(tmp_path):
+    """Inventory.OnQuestFlagEffect is wired straight to the composed
+    Objectives tracker's SetFlag(string) — Objectives is a per-project
+    singleton (one tracker for the whole mission), so this uses the plain
+    Get<T>() pattern, same shape as the Heal bridge."""
+    mission = MissionSpec(id="m1", title="Vault Raid", objectives=[
+        MissionObjective(id="crack_vault", description="Crack the vault door",
+                         type="interact", count=1),
+    ])
+    assets = Path(tmp_path) / "Assets"
+    MicroComposer("CtxInvFlag").emit(
+        subsystems_for("3D", ["inventory"], missions=[mission]), assets, has_game_manager=False)
+    ctx = (assets / "Micros" / "context" / "Scripts"
+          / "GameContext.cs").read_text(encoding="utf-8")
+    assert "__inventory.OnQuestFlagEffect += __objectives.SetFlag;" in ctx
+    assert ctx.count("{") == ctx.count("}")
+
+
+def test_gamecontext_no_questflag_bridge_without_objectives(tmp_path):
+    """Inventory present, no mission objectives — no Objectives tracker
+    subsystem exists to bind SetFlag to."""
+    ctx = _gamecontext_cs_with(tmp_path, "CtxNoObj", features=["inventory"])
+    assert "OnQuestFlagEffect" not in ctx
+
+
+def test_gamecontext_bridges_inventory_unlock_to_locked_interactable(tmp_path):
+    """Inventory.OnUnlockEffect is wired to the LOCKED Interactable's static
+    UnlockAny broadcast, not Get<T>() — a scene can hold more than one
+    locked instance, which a single FindFirstObjectByType could never reach
+    correctly (see unity_compose.py's _emit_context and Interactable.cs.j2's
+    _lockedInstances)."""
+    assets = Path(tmp_path) / "Assets"
+    subs = subsystems_for("3D", ["inventory"])
+    interactable = next(s for s in subs if s.kind == "interactable")
+    interactable.options = {"locked": True, "lock_id": "vault_key"}
+    units = MicroComposer("CtxInvUnlock").emit(subs, assets, has_game_manager=False)
+    interactable_unit = next(u for u in units if u.kind == "interactable")
+    ctx = (assets / "Micros" / "context" / "Scripts"
+          / "GameContext.cs").read_text(encoding="utf-8")
+    assert (f"__inventory.OnUnlockEffect += {interactable_unit.class_name}.UnlockAny;"
+            in ctx)
+    assert ctx.count("{") == ctx.count("}")
+
+
+def test_gamecontext_no_unlock_bridge_for_unlocked_interactable(tmp_path):
+    """Both inventory AND interactable are present here — the golden
+    archetype's default Interactable (locked=False, the pickup variant)
+    still renders no UnlockAny at all, so bridging to it would reference a
+    static method that doesn't compile. _emit_context must gate on the
+    unit's own `locked` readback (plan()), not just kind presence."""
+    ctx = _gamecontext_cs_with(tmp_path, "CtxInvNoLock", features=["inventory"])
+    assert "OnUnlockEffect" not in ctx
 
 
 def test_gamewiring_uses_unqualified_findfirstobjectbytype(tmp_path):

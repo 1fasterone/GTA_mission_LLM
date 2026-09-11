@@ -79,6 +79,18 @@ class ComposedUnit(BaseModel):
                                                             # {pieces,zones,commands}, so
                                                             # SEAM 8 filters on a key the
                                                             # board can actually raise.
+    locked:     bool       = False                         # interactable kind only: whether
+                                                            # THIS instance's class actually
+                                                            # renders the static UnlockAny
+                                                            # surface (Interactable.cs.j2
+                                                            # gates it behind `{% if s.locked
+                                                            # %}`) — read back after
+                                                            # default_fix, since a locked=true
+                                                            # with no lock_id is downgraded
+                                                            # there. _emit_context's Unlock
+                                                            # bridge must not reference
+                                                            # UnlockAny on a class that never
+                                                            # declares it.
 
 
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
@@ -243,11 +255,15 @@ class MicroComposer:
                           in (schema.meta.get("objective_commands") or {}).items()
                           if verb in {c.verb for c in schema.commands}}}
                      if sub.kind == "board" else {})
+            # Read back AFTER default_fix for the same reason as board/setters
+            # above: a locked=true with an empty lock_id is downgraded there,
+            # and only a survived True actually renders UnlockAny in the class.
+            locked = bool(getattr(schema, "locked", False)) if sub.kind == "interactable" else False
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
                 target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
                 objectives=objs, widgets=widgets, setters=setters, states=states,
-                board=board))
+                board=board, locked=locked))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -1159,14 +1175,16 @@ class MicroComposer:
                 ),
             })
 
-        # Item use (Heal) -> Health.Heal (micro -> micro). Inventory.OnHealEffect
-        # (Inventory.cs.j2's UseItem()) only fires for a Heal-tagged item; the
-        # other four effect events (Shield/StatBoost/Unlock/QuestFlag) have no
-        # composed micro with a matching public receiver yet, so they are left
-        # unbridged here rather than guessing a wiring — same "no receiver yet"
-        # reasoning as every other bridge in this function. "equipment" variant
-        # has no UseItem()/OnHealEffect at all (see Inventory.cs.j2), so it is
-        # excluded rather than emitting a reference that would never compile.
+        # Item use (Heal/QuestFlag/Unlock) -> a matching micro receiver
+        # (micro -> micro). Inventory.OnHealEffect/OnQuestFlagEffect/
+        # OnUnlockEffect (Inventory.cs.j2's UseItem()) fire only for an item
+        # tagged with that effect; RestoreShield/StatBoost still have no
+        # composed micro with a matching public receiver, so those two stay
+        # unbridged rather than guessing a wiring — same "no receiver yet"
+        # reasoning as every other bridge in this function. "equipment"
+        # variant has no UseItem()/these events at all (see Inventory.cs.j2),
+        # so it is excluded rather than emitting a reference that would
+        # never compile.
         inventory = next((u for u in real_units
                           if u.kind == "inventory" and u.variant != "equipment"), None)
         health_player = _pick("health", "player")
@@ -1178,6 +1196,39 @@ class MicroComposer:
                     f"var __health = Get<{health_player.class_name}>();\n"
                     f"if (__inventory != null && __health != null)\n"
                     f"    __inventory.OnHealEffect += __health.Heal;"
+                ),
+            })
+
+        objectives = _pick("objectives")
+        if inventory and objectives:
+            bridges.append({
+                "label": "Item use (QuestFlag) -> Objectives.SetFlag (micro -> micro)",
+                "snippet": (
+                    f"var __inventory = Get<{inventory.class_name}>();\n"
+                    f"var __objectives = Get<{objectives.class_name}>();\n"
+                    f"if (__inventory != null && __objectives != null)\n"
+                    f"    __inventory.OnQuestFlagEffect += __objectives.SetFlag;"
+                ),
+            })
+
+        # Interactable is not a per-project singleton like Health/Inventory/
+        # Objectives — a scene can hold several locked instances (multiple
+        # doors, a chest), so this binds to the class's own static broadcast
+        # (UnlockAny, Interactable.cs.j2) instead of Get<T>()'s single
+        # FindFirstObjectByType, which would only ever reach one of them.
+        # Gated on unit.locked (read back after default_fix in plan()) — the
+        # static UnlockAny method only exists on a class whose schema.locked
+        # actually survived to True; every other Interactable variant (the
+        # golden-archetype default included) has no such method to bind to.
+        interactable = _pick("interactable")
+        if inventory and interactable and interactable.locked:
+            bridges.append({
+                "label": "Item use (Unlock) -> Interactable.UnlockAny "
+                         "(micro -> micro, static broadcast)",
+                "snippet": (
+                    f"var __inventory = Get<{inventory.class_name}>();\n"
+                    f"if (__inventory != null)\n"
+                    f"    __inventory.OnUnlockEffect += {interactable.class_name}.UnlockAny;"
                 ),
             })
 

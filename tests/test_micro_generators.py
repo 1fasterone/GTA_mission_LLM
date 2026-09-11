@@ -1343,6 +1343,68 @@ def test_interactable_3d_still_uses_collider_api(tmp_path, dummy_config):
     assert "OnTriggerEnter2D" not in cs
 
 
+# ── Locking (UnlockAny static broadcast) ────────────────────────────────────
+# Gated behind `{% if s.locked %}` (Interactable.cs.j2), same discipline as
+# AI's squad_alert_radius — default locked=False must render byte-identical
+# to before this feature existed.
+
+def test_interactable_unlocked_by_default_renders_no_locking_surface(tmp_path, dummy_config):
+    p = InteractablePipeline(dummy_config)
+    s = p.default_fix(InteractableSchema(name="TestIt", variant="pickup"), "pickup")
+    p.write_files(s, "pickup", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestIt.cs").read_text(encoding="utf-8")
+    assert "OnLocked" not in cs
+    assert "UnlockAny" not in cs
+    assert "_lockedInstances" not in cs
+
+
+def test_interactable_locked_with_no_lock_id_is_downgraded(dummy_config):
+    """Same abstain-loudly doctrine as Inventory's targeted effects
+    (src/micro/inventory.py): a lock UnlockAny could never match is a silent
+    runtime no-op, so default_fix drops it to unlocked instead of shipping
+    a door nothing can ever open."""
+    p = InteractablePipeline(dummy_config)
+    s = p.default_fix(InteractableSchema(name="TestIt", variant="door", locked=True, lock_id=""), "door")
+    assert s.locked is False
+
+
+def test_interactable_locked_with_lock_id_renders_broadcast_surface(tmp_path, dummy_config):
+    p = InteractablePipeline(dummy_config)
+    s = p.default_fix(
+        InteractableSchema(name="TestDoor", variant="door", locked=True, lock_id="cellar_key"),
+        "door")
+    assert s.locked is True
+    p.write_files(s, "door", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestDoor.cs").read_text(encoding="utf-8")
+    assert 'lockId = "cellar_key"' in cs
+    assert "public event Action OnLocked;" in cs
+    assert "private static readonly List<TestDoor> _lockedInstances" in cs
+    assert "public static void UnlockAny(string targetId)" in cs
+    # Interact() must refuse (and fire OnLocked) BEFORE any variant behavior —
+    # a locked door must never rotate/toggle/fire OnInteract.
+    interact_body = cs.split("public void Interact()")[1].split("\n    }")[0]
+    assert interact_body.index("OnLocked?.Invoke()") < interact_body.index("_on = !_on")
+
+
+def test_interactable_unlock_any_matches_by_lockid_and_deregisters(tmp_path, dummy_config):
+    """UnlockAny unlocks every currently-locked instance whose lockId matches
+    (one key can open several identical doors) and drops each match out of
+    _lockedInstances so a later call has nothing stale left to scan."""
+    p = InteractablePipeline(dummy_config)
+    s = p.default_fix(
+        InteractableSchema(name="TestVault", variant="door", locked=True, lock_id="vault_key"),
+        "door")
+    p.write_files(s, "door", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestVault.cs").read_text(encoding="utf-8")
+    body = cs.split("public static void UnlockAny(string targetId)")[1].split("\n    }")[0]
+    assert "inst.lockId == targetId" in body
+    assert "inst.locked = false" in body
+    assert "_lockedInstances.RemoveAt(i)" in body
+    # Iterated back-to-front, not a forward foreach, so removing a match
+    # mid-scan can't skip the next entry or throw a collection-modified error.
+    assert "for (int i = _lockedInstances.Count - 1; i >= 0; i--)" in body
+
+
 def test_trigger_zone_enter_2d_uses_collider2d_api(tmp_path, dummy_config):
     p = TriggerPipeline(dummy_config)
     s = p.default_fix(

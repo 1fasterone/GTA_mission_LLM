@@ -71,6 +71,7 @@ from .unity_layout_archetype import (
     pick_player_entity,
     pick_wall_surface,
     select_archetype,
+    spatial_relationship_of,
     surface_height,
     ui_board_layer,
     ui_board_rank,
@@ -80,6 +81,7 @@ from .unity_layout_archetype import (
 from .unity_route_axis import RouteModifier, RouteZone
 from .unity_route_axis import project as _route_project
 from .unity_route_axis import resolve_offset as _route_resolve_offset
+from .unity_route_axis import sample as _route_sample
 from .unity_route_axis import sample_n as _route_sample_n
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec, is_embodied
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
@@ -377,6 +379,284 @@ def _corridor_pack(packable: list[EntitySpec], primary: EntitySpec,
         placed.append((cx, cz, e.group_radius))
         result[e.name] = (round(cx, 3), round(cz, 3), e.group_radius)
     return result
+
+
+def _edge_distributed_pack(entity: EntitySpec, primary: EntitySpec,
+                           placed: list[tuple[float, float, float]]
+                           ) -> tuple[list[list[float]], list[float]]:
+    """One instance per arc-length interval along the WHOLE route, offset
+    outside the corridor edge and facing back toward the road — the
+    "edge_distributed" relationship (src/unity_layout_archetype.
+    spatial_relationship_of), e.g. `entity.count` streetlights strung the
+    length of a track instead of clustered in one spot beside it.
+
+    Sides alternate by index so a long straight doesn't pile every instance
+    on the same shoulder. Each instance is pushed out from the route
+    independently, only as far as needed to clear already-placed circles —
+    the same spiral-search shape `_corridor_pack` uses per GROUP, just run
+    per INSTANCE here since the whole point is that these instances don't
+    share one anchor.
+
+    Mutates `placed` with one circle per baked instance, so later groups (and
+    later instances of this same group) treat every lamp post as occupied
+    space. Returns (positions, yaws) at y=0 (ground level; this relationship
+    doesn't yet interpret authored course.zones the way `_layout_arena_plane`
+    does for clustered groups — a deliberate scope cut, not a silent gap: a
+    per-instance zone offset needs each instance's own arc-length `t`, which
+    this function already computes via `_sample_polyline` but doesn't yet
+    feed through `_course_zones`/`_route_resolve_offset`). The caller is
+    responsible for writing `entity.instance_positions` / `instance_yaws` /
+    `group_radius` / `origin_offset` from the return value.
+
+    boundary_follow (continuous barriers/fences hugging the route, oriented
+    ALONG the tangent rather than facing across it) is the sibling
+    relationship `spatial_relationship_of` also recognises — see
+    `_boundary_follow_pack`, placed by direct parametric sampling rather
+    than this function's per-instance spiral search.
+    """
+    n = max(1, entity.count)
+    anchors = _sample_polyline(primary.path_points, n)
+    half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
+    edge = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
+    inst_r = max(0.5, entity.scale * 0.6)
+    positions: list[list[float]] = []
+    yaws: list[float] = []
+    for i, (px, pz, nx, nz) in enumerate(anchors):
+        side = 1.0 if i % 2 == 0 else -1.0
+        d = edge + inst_r
+        cx = cz = 0.0
+        for _ in range(400):
+            cx, cz = px + nx * side * d, pz + nz * side * d
+            if all(math.hypot(cx - ox, cz - oz) >= inst_r + orad + _GROUP_MARGIN
+                   for ox, oz, orad in placed):
+                break
+            d += max(1.0, inst_r * 0.5)
+        placed.append((cx, cz, inst_r))
+        positions.append([round(cx, 3), 0.0, round(cz, 3)])
+        # Face back toward the road: the direction opposite this instance's
+        # own offset, in the same atan2(x, z) convention (0 = +Z, clockwise
+        # positive) unity_racetrack._start_yaw uses for baked instance_yaws.
+        yaws.append(round(math.degrees(math.atan2(-nx * side, -nz * side)), 3))
+    return positions, yaws
+
+
+def _boundary_follow_pack(entity: EntitySpec, primary: EntitySpec,
+                          placed: list[tuple[float, float, float]]
+                          ) -> tuple[list[list[float]], list[float]]:
+    """Continuous chain hugging ONE side of the route corridor — the
+    "boundary_follow" relationship (src/unity_layout_archetype.
+    spatial_relationship_of), e.g. a barrier/fence/guardrail group that
+    should read as a continuous line along the track edge, unlike
+    `_edge_distributed_pack`'s discrete, alternating-side lamp posts.
+
+    Direct parametric placement, deliberately NOT `_edge_distributed_pack`'s
+    per-instance spiral clearance search: a barrier is laid out once, in arc-
+    length order, on one fixed side, so there's nothing to search for — the
+    positions are a pure function of the route geometry and `max_gap`.
+
+      max_gap  = entity.spacing (the schema's own "distance between
+                 instances" field elsewhere) — the longest gap a segment may
+                 leave, NOT the authored `entity.count` (`count` end up
+                 DERIVED, exactly like a real barrier run: however many
+                 segments it takes to close every gap, not a fixed number
+                 spread over whatever length the route happens to be).
+      count    = ceil(arc_length / max_gap)
+      spacing  = arc_length / count  (evenly divides the route so the chain
+                 starts at t=0 and ends at t=1 — full edge-to-edge coverage
+                 — rather than `_edge_distributed_pack`'s bucket-centered
+                 sampling, which is right for discrete lamp posts but would
+                 leave a half-gap short at both ends of a continuous run)
+
+    `side` is fixed at +1 (route-left) for the whole chain — never chosen
+    per instance the way `_edge_distributed_pack` alternates, and not
+    dynamically chosen either: the caller only ever has ONE authored route
+    today, so there's no signal yet to prefer one side over the other.
+
+    Still appends one occupied circle per instance to `placed` (sized from
+    `entity.scale`, same footprint formula as `_edge_distributed_pack`) so
+    cluster groups packed after this treat the barrier as occupied space —
+    just without the search, since these positions are never adjusted once
+    computed.
+
+    Returns (positions, yaws) at y=0, same shape as `_edge_distributed_pack`;
+    yaw faces ALONG the route tangent (a fence panel aligned with the
+    direction of travel), not across it the way lamp posts face the road.
+    """
+    seglens = [math.hypot(b[0] - a[0], b[2] - a[2])
+              for a, b in zip(primary.path_points, primary.path_points[1:])]
+    arc_length = sum(seglens)
+    if arc_length < 1e-9:
+        return [], []
+    max_gap = entity.spacing if entity.spacing > 0.0 else 2.0
+    prefab_r = max(0.5, entity.scale * 0.6)
+    count = max(1, math.ceil(arc_length / max_gap))
+    half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
+    side_offset = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
+    side = 1.0
+
+    positions: list[list[float]] = []
+    yaws: list[float] = []
+    for i in range(count):
+        t = 0.5 if count == 1 else i / (count - 1)
+        x, z, tx, tz = _route_sample(primary.path_points, t)
+        nx, nz = -tz, tx  # left normal -- same derivation sample_n uses
+        cx, cz = x + nx * side * side_offset, z + nz * side * side_offset
+        positions.append([round(cx, 3), 0.0, round(cz, 3)])
+        # Face ALONG the tangent, matching the atan2(x, z) yaw convention
+        # unity_racetrack._start_yaw / _edge_distributed_pack both use.
+        yaws.append(round(math.degrees(math.atan2(tx, tz)), 3))
+        placed.append((cx, cz, prefab_r))
+    return positions, yaws
+
+
+# Instances per distributed "stop" — small on purpose: a real track has
+# several small groups of spectators in different grandstand areas, not one
+# dense crowd in one spot. A group with `count <= _SCENERY_STOP_SIZE`
+# collapses to exactly one stop, i.e. today's original single-anchor
+# behaviour — a small decorative group was never the complaint.
+_SCENERY_STOP_SIZE = 3
+
+
+def _stop_radius(stub: EntitySpec, eff_spacing: float, footprint: float) -> float:
+    """The clearance radius one distributed STOP actually needs.
+
+    Normally `_footprint_radius`. But for placement="scatter", `_bake_positions`
+    calls `_scatter_positions`, which samples its OWN region
+    (`region_r = sqrt(n) * r * 1.6`, independent of `_footprint_radius`'s own
+    scatter estimate `eff_spacing * sqrt(n / pi)`) — the two have never
+    agreed, by close to a factor of 3, a PRE-EXISTING gap this repo's single-
+    whole-group anchor had enough slack to never expose. A small STOP does
+    not have that slack, so stop sizing here takes whichever bound is
+    actually larger for scatter placement, rather than trusting
+    `_footprint_radius` alone the way the rest of this file still does for a
+    single group's own group_radius.
+    """
+    r = _footprint_radius(stub, eff_spacing)
+    if stub.placement == "scatter":
+        n = max(1, stub.count)
+        scatter_r = eff_spacing if footprint <= 0.0 else max(footprint, eff_spacing * 0.5)
+        r = max(r, math.sqrt(n) * scatter_r * 1.6)
+    return r
+
+
+def _scenery_distributed_pack(entity: EntitySpec, primary: EntitySpec,
+                              footprints: Optional[dict[str, float]],
+                              placed: list[tuple[float, float, float]]
+                              ) -> list[list[float]]:
+    """Spread a decorative/scenery group across multiple STOPS along the
+    WHOLE route instead of one clustered anchor holding every instance —
+    the "scenery_distributed" relationship (src/unity_layout_archetype.
+    spatial_relationship_of): a few spectators near the hairpin AND a few
+    more near the back straight, not one crowd in one place; a scatter of
+    rocks at several points around the track, not a boulder pile.
+
+    Each stop keeps the group's OWN authored placement pattern (scatter/
+    grid/ring/line) via `_bake_positions`, just applied to a SLICE of
+    `count` (~_SCENERY_STOP_SIZE instances) instead of the whole group — the
+    schema's placement field still means something, it now describes the
+    LOCAL pattern at each stop rather than one global pattern for the whole
+    group.
+
+    Stops are spread by arc length (`_sample_polyline`, the same primitive
+    `_edge_distributed_pack`/`_corridor_pack` use), alternating sides, each
+    pushed out from the corridor edge only as far as needed to clear
+    `placed` — same spiral-search shape as `_edge_distributed_pack`, run per
+    STOP instead of per instance.
+
+    Mutates `placed` with one circle per stop. Returns the flat list of
+    baked positions across every stop (yaws are left for the caller to
+    default: undirected scenery has no meaningful facing, matching
+    `instance_yaws`' existing empty-means-default-rotation contract). The
+    caller is responsible for `entity.instance_positions` / `group_radius` /
+    `origin_offset`.
+    """
+    n = max(1, entity.count)
+    num_stops = max(1, math.ceil(n / _SCENERY_STOP_SIZE))
+    base, rem = divmod(n, num_stops)
+    stop_counts = [base + (1 if i < rem else 0) for i in range(num_stops)]
+    anchors = _sample_polyline(primary.path_points, num_stops)
+    half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
+    edge = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
+    eff_spacing = _effective_spacing(entity, footprints)
+    footprint = (footprints or {}).get(entity.name, 0.0) * entity.scale
+
+    positions: list[list[float]] = []
+    for i, ((px, pz, nx, nz), stop_n) in enumerate(zip(anchors, stop_counts)):
+        # A stop's own radius scales DOWN from the group's authored `radius`
+        # by its share of the instances -- the authored value described the
+        # spread of the whole group, not of a single stop holding a fraction
+        # of it, and using it unscaled would push every stop needlessly far
+        # from the route.
+        stub = entity.model_copy(update={
+            "count": stop_n, "radius": entity.radius * stop_n / n,
+        })
+        stop_r = _stop_radius(stub, eff_spacing, footprint)
+        # _bake_positions' ring/line/grid branches read `group_radius`, NOT
+        # `radius` -- the stub must carry the STOP's own footprint there too,
+        # or a ring/line pattern draws itself at the ORIGINAL full-group
+        # radius (set earlier on `entity` for the whole, unsliced count) and
+        # can swing instances back toward the scene origin regardless of
+        # where this stop's own anchor landed.
+        stub.group_radius = stop_r
+        side = 1.0 if i % 2 == 0 else -1.0
+        d = edge + stop_r
+        cx = cz = 0.0
+        for _ in range(400):
+            cx, cz = px + nx * side * d, pz + nz * side * d
+            if all(math.hypot(cx - ox, cz - oz) >= stop_r + orad + _GROUP_MARGIN
+                   for ox, oz, orad in placed):
+                break
+            d += max(1.0, stop_r * 0.5)
+        placed.append((cx, cz, stop_r))
+        positions.extend(_bake_positions(stub, eff_spacing, cx, cz, footprint, 0.0))
+    return positions
+
+
+def _scenery_scatter_pack(entity: EntitySpec,
+                          footprints: Optional[dict[str, float]],
+                          placed: list[tuple[float, float, float]]
+                          ) -> list[list[float]]:
+    """Spread a decorative/scenery group across multiple STOPS around the
+    level instead of one clustered anchor holding every instance — the
+    NO-ROUTE sibling of `_scenery_distributed_pack` (same "scenery_distributed"
+    relationship; there's just no authored route to sample arc length along
+    here, e.g. a walk-around interior like a shop, or a park with no single
+    through-path). "Fifteen mirrors" becomes several small groups of mirrors
+    at DIFFERENT spots in the room, not one 5x3 grid stamped at one anchor.
+
+    Each stop is placed by `_find_slot`, the exact same non-overlapping
+    spiral search `_pack_groups` already uses to keep DIFFERENT groups
+    apart — here it keeps this ONE group's own stops apart from each other
+    AND from every other already-placed group, since they share the same
+    `placed` list. Each stop keeps the group's own authored placement
+    pattern (scatter/grid/ring/line) via `_bake_positions`, applied to a
+    SLICE of `count` instead of the whole group — same contract as
+    `_scenery_distributed_pack`.
+
+    Mutates `placed` with one circle per stop. Returns the flat list of
+    baked positions across every stop. The caller is responsible for
+    `entity.instance_positions` / `group_radius` / `origin_offset`.
+    """
+    n = max(1, entity.count)
+    num_stops = max(1, math.ceil(n / _SCENERY_STOP_SIZE))
+    base, rem = divmod(n, num_stops)
+    stop_counts = [base + (1 if i < rem else 0) for i in range(num_stops)]
+    eff_spacing = _effective_spacing(entity, footprints)
+    footprint = (footprints or {}).get(entity.name, 0.0) * entity.scale
+
+    positions: list[list[float]] = []
+    for stop_n in stop_counts:
+        stub = entity.model_copy(update={
+            "count": stop_n, "radius": entity.radius * stop_n / n,
+        })
+        stop_r = _stop_radius(stub, eff_spacing, footprint)
+        # See _scenery_distributed_pack's matching comment: _bake_positions'
+        # ring/line/grid branches read `group_radius`, not `radius`.
+        stub.group_radius = stop_r
+        cx, cz = _find_slot(stop_r, placed)
+        placed.append((cx, cz, stop_r))
+        positions.extend(_bake_positions(stub, eff_spacing, cx, cz, footprint, 0.0))
+    return positions
 
 
 def _corridor_circles(entity: EntitySpec) -> list[tuple[float, float, float]]:
@@ -1770,9 +2050,53 @@ def _layout_arena_plane(schema: UnitySchema,
                                  has_route=primary is not None)
     elevations = assign_elevations(packable, primitive)
 
-    if primary is not None and packable:
-        slots = _corridor_pack(packable, primary, seed_circles)
-    elif primitive in VOLUME_PRIMITIVES and packable:
+    # Groups whose relationship to the route is "edge_distributed" (e.g.
+    # streetlights) get one instance per arc-length interval spread along
+    # the WHOLE corridor instead of one anchor + a locally clustered
+    # pattern — see _edge_distributed_pack's docstring. "boundary_follow"
+    # (e.g. barriers/fences) get a continuous chain along one side instead —
+    # see _boundary_follow_pack's docstring. Both need an authored route;
+    # without one they fall back to plain scenery scatter below (still not a
+    # formation, still shouldn't be one clump — there's just no edge or
+    # boundary to follow).
+    #
+    # "scenery_distributed" — the actual DEFAULT now for anything that isn't
+    # a cohesive formation (see is_formation_entity) — spreads across
+    # several stops instead of one clustered anchor: along the route
+    # (_scenery_distributed_pack) when there is one, across the level via
+    # the same non-overlapping search `_pack_groups` already uses
+    # (_scenery_scatter_pack) when there isn't ("fifteen mirrors" is a
+    # no-route case — a shop interior — same bug, same fix, just no route
+    # to sample arc length along).
+    #
+    # One remaining gap: a VOLUME_PRIMITIVES band (an altitude tier within
+    # ArenaPlane's own volume packing below) still uses the old
+    # single-anchor `_pack_groups` per band — scoped out for now, not
+    # silently different from what this comment says; see
+    # feedback-no-single-anchor-clusters memory.
+    relationships = {e.name: spatial_relationship_of(e) for e in packable}
+    route_scatter = primary is not None and primitive not in VOLUME_PRIMITIVES
+    level_scatter = primary is None and primitive not in VOLUME_PRIMITIVES
+    if route_scatter:
+        edge_entities = [e for e in packable
+                         if relationships[e.name] == "edge_distributed"]
+        boundary_entities = [e for e in packable
+                             if relationships[e.name] == "boundary_follow"]
+        scenery_entities = [e for e in packable
+                            if relationships[e.name] == "scenery_distributed"]
+    elif level_scatter:
+        edge_entities, boundary_entities = [], []
+        scenery_entities = [e for e in packable
+                            if relationships[e.name] != "formation"]
+    else:
+        edge_entities, boundary_entities, scenery_entities = [], [], []
+    _trackside = edge_entities + boundary_entities
+    cluster_packable = [e for e in packable
+                        if e not in _trackside and e not in scenery_entities]
+
+    if primary is not None and cluster_packable:
+        slots = _corridor_pack(cluster_packable, primary, seed_circles)
+    elif primitive in VOLUME_PRIMITIVES and cluster_packable:
         # A volume is packed one ALTITUDE BAND at a time: groups in different
         # bands are already separated in Y, so forcing them apart in XZ too
         # would spread a vertical game back out across a floor — the exact
@@ -1780,12 +2104,82 @@ def _layout_arena_plane(schema: UnitySchema,
         # elevation, so the partition doesn't depend on entity order.
         slots = {}
         for band in sorted({band_key(elevations.get(e.name, 0.0))
-                            for e in packable}):
-            in_band = [e for e in packable
+                            for e in cluster_packable}):
+            in_band = [e for e in cluster_packable
                        if band_key(elevations.get(e.name, 0.0)) == band]
             slots.update(_pack_groups(in_band, seed_circles))
     else:
-        slots = _pack_groups(packable, seed_circles)
+        slots = _pack_groups(cluster_packable, seed_circles)
+
+    # Bake edge-distributed groups directly from the route, bypassing the
+    # single-anchor `slots` + `_bake_positions` path entirely: each instance
+    # gets its OWN arc-length position, not a local pattern around one point.
+    # `seed_circles` (shared occupied-space list `_corridor_pack` above also
+    # read) is mutated in place so cluster groups packed after this point,
+    # and later edge-distributed groups in this same loop, avoid every lamp
+    # post already placed.
+    edge_moved: list[str] = []
+    assert primary is not None or not edge_entities
+    for e in edge_entities:
+        assert primary is not None  # guaranteed by the assert above
+        positions, yaws = _edge_distributed_pack(e, primary, seed_circles)
+        e.instance_positions = positions
+        e.instance_yaws = yaws
+        xs = [p[0] for p in positions]
+        zs = [p[2] for p in positions]
+        cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+        r = max((math.hypot(p[0] - cx, p[2] - cz) for p in positions), default=0.0)
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.group_radius = round(max(r, max(0.5, e.scale * 0.6)), 3)
+        _set_elevation(e, 0.0)
+        slots[e.name] = (e.origin_offset[0], e.origin_offset[1], e.group_radius)
+        edge_moved.append(e.name)
+
+    # Bake boundary-follow groups the same way -- direct parametric chain
+    # along the route, bypassing `slots` + `_bake_positions` entirely. Runs
+    # AFTER edge-distributed so a barrier laid out this pass avoids lamp
+    # posts already placed (edge-distributed lamps do not, symmetrically,
+    # avoid barriers baked after them -- an accepted ordering asymmetry, not
+    # a correctness bug: both still avoid the seed geometry and each other
+    # WITHIN their own group).
+    boundary_moved: list[str] = []
+    assert primary is not None or not boundary_entities
+    for e in boundary_entities:
+        assert primary is not None  # guaranteed by the assert above
+        positions, yaws = _boundary_follow_pack(e, primary, seed_circles)
+        e.instance_positions = positions
+        e.instance_yaws = yaws
+        xs = [p[0] for p in positions]
+        zs = [p[2] for p in positions]
+        cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+        r = max((math.hypot(p[0] - cx, p[2] - cz) for p in positions), default=0.0)
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.group_radius = round(max(r, max(0.5, e.scale * 0.6)), 3)
+        _set_elevation(e, 0.0)
+        slots[e.name] = (e.origin_offset[0], e.origin_offset[1], e.group_radius)
+        boundary_moved.append(e.name)
+
+    # Bake scenery-distributed groups the same way -- multiple stops instead
+    # of one clustered anchor, along the route when there is one
+    # (_scenery_distributed_pack), across the level via the same
+    # non-overlapping search `_pack_groups` uses when there isn't
+    # (_scenery_scatter_pack). Runs AFTER edge/boundary so scenery avoids
+    # lamp posts and barriers already placed.
+    scenery_moved: list[str] = []
+    for e in scenery_entities:
+        positions = (_scenery_distributed_pack(e, primary, footprints, seed_circles)
+                    if primary is not None
+                    else _scenery_scatter_pack(e, footprints, seed_circles))
+        e.instance_positions = positions
+        xs = [p[0] for p in positions]
+        zs = [p[2] for p in positions]
+        cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+        r = max((math.hypot(p[0] - cx, p[2] - cz) for p in positions), default=0.0)
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.group_radius = round(max(r, max(0.5, e.scale * 0.6)), 3)
+        _set_elevation(e, 0.0)
+        slots[e.name] = (e.origin_offset[0], e.origin_offset[1], e.group_radius)
+        scenery_moved.append(e.name)
 
     # Authored course.zones (docs/COURSE_ARCHETYPE_LAYERS.md), interpreted
     # HERE as elevation offsets along the route's arc length -- a group
@@ -1798,7 +2192,7 @@ def _layout_arena_plane(schema: UnitySchema,
     zones = _course_zones(schema) if primary is not None else []
     zoned: list[str] = []
     moved: list[str] = []
-    for e in packable:
+    for e in cluster_packable:
         cx, cz, _r = slots[e.name]
         y = elevations.get(e.name, 0.0)
         if zones:
@@ -1826,15 +2220,42 @@ def _layout_arena_plane(schema: UnitySchema,
             f"Applied {len(zones)} authored course zone(s) along the "
             f"'{primary.name}' route to {len(zoned)} group's elevation "
             f"({', '.join(zoned)})")
+    if edge_moved:
+        assert primary is not None  # edge_moved is only ever non-empty when primary was found above
+        msgs.append(
+            f"Distributed {len(edge_moved)} group(s) as one instance per "
+            f"arc-length interval along the '{primary.name}' route edge "
+            f"instead of one clustered anchor ({', '.join(edge_moved)})"
+        )
+    if boundary_moved:
+        assert primary is not None  # boundary_moved is only ever non-empty when primary was found above
+        msgs.append(
+            f"Laid {len(boundary_moved)} group(s) as a continuous chain "
+            f"along the '{primary.name}' route edge instead of one "
+            f"clustered anchor ({', '.join(boundary_moved)})"
+        )
+    if scenery_moved and primary is not None:
+        msgs.append(
+            f"Spread {len(scenery_moved)} scenery group(s) across multiple "
+            f"stops along the '{primary.name}' route instead of one "
+            f"clustered anchor ({', '.join(scenery_moved)})"
+        )
+    elif scenery_moved:
+        msgs.append(
+            f"Spread {len(scenery_moved)} scenery group(s) across multiple "
+            f"stops around the level instead of one clustered anchor "
+            f"({', '.join(scenery_moved)})"
+        )
     if moved and primary is not None:
         msgs.append(
-            f"Layout pass placed {len(packable)} entity group(s) along the "
-            f"'{primary.name}' route corridor ({', '.join(moved)} spread by "
-            "arc length and offset outside the track, alternating sides)"
+            f"Layout pass placed {len(cluster_packable)} entity group(s) "
+            f"along the '{primary.name}' route corridor ({', '.join(moved)} "
+            "spread by arc length and offset outside the track, alternating "
+            "sides)"
         )
     elif moved:
         msgs.append(
-            f"Layout pass packed {len(packable)} entity group(s) into "
+            f"Layout pass packed {len(cluster_packable)} entity group(s) into "
             f"non-overlapping regions ({', '.join(moved)} offset from the "
             "scene origin to avoid stacking on other groups)"
         )
@@ -1843,7 +2264,7 @@ def _layout_arena_plane(schema: UnitySchema,
             f"Seeded {len(path_groups)} path route(s) as occupied corridors "
             "so packed groups stay off the route ribbons"
         )
-    if any(e.placement == "scatter" for e in packable):
+    if any(e.placement == "scatter" for e in cluster_packable):
         msgs.append(
             "Replaced runtime random scatter with deterministic jittered-grid "
             "positions honoring spacing/scale"

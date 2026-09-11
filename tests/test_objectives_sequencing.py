@@ -168,6 +168,39 @@ def test_rendered_script_compiles_with_a_cycle_present(tmp_path):
     assert result.ok, f"Roslyn syntax gate found: {result.diagnostics}"
 
 
+# ── Quest flags (required_flag / SetFlag / HasFlag) ─────────────────────────
+# The bridge target for Inventory's quest_flag effect (src/micro/inventory.py,
+# OnQuestFlagEffect) — see unity_compose.py's _emit_context. Same
+# refuse-rather-than-silently-pass policy as `after`, deliberately a SEPARATE
+# event (OnObjectiveFlagBlocked) since a flag is set by an external source,
+# not another objective in this same schema.
+
+def test_required_flag_renders_on_objective_and_gates_report_progress():
+    cs = _render(_schema([
+        {"id": "a", "type": "collect", "required_flag": "have_key"},
+    ]))
+    assert 'requiredFlag = "have_key"' in cs
+    assert "OnObjectiveFlagBlocked" in cs
+    assert "public void SetFlag(string flagName)" in cs
+    assert "public bool HasFlag(string flagName)" in cs
+    assert "_flags.Contains(o.requiredFlag)" in cs
+
+
+def test_no_required_flag_renders_empty_string_not_null():
+    cs = _render(_schema([{"id": "a", "type": "reach"}]))
+    assert 'requiredFlag = ""' in cs
+
+
+def test_rendered_script_with_required_flag_compiles(tmp_path):
+    cs = _render(_schema([
+        {"id": "a", "type": "collect", "required_flag": "have_key"},
+    ]))
+    out = tmp_path / "Objectives.cs"
+    out.write_text(cs, encoding="utf-8")
+    result = check_files([str(out)])
+    assert result.ok, f"Roslyn syntax gate found: {result.diagnostics}"
+
+
 # ── reserved private field neutralization ───────────────────────────────────
 # default_fix's neutralize_unavailable_names(schema, {"_surviveTimer",
 # "_missionComplete", "_byId"}) call (objectives.py, ~line 227). These are

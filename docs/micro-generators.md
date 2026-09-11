@@ -267,12 +267,16 @@ Produces an item model + container manager: a `ItemDefinition` ScriptableObject 
   this is what lets a brief's "a potion that heals 25 HP" land as real dispatch instead of an
   inert item name. `default_fix` downgrades a targeted effect (`unlock`/`quest_flag`) with no
   `target_id`, or an amount-driven one (`heal`/`restore_shield`/`stat_boost`) with `amount<=0`, to
-  `none` rather than ship a silent no-op. A composed project's `GameContext` auto-wires
-  `OnHealEffect` to a composed player Health's `Heal(float)` when both are present
-  (`_emit_context` in `src/unity_compose.py`) — the other four effects have no bridge yet; they
-  fire their event but nothing in a composed project subscribes to it until a target micro
-  (Interactable's lock gate, Objectives' flag tracking, a stat system) exposes a matching public
-  method to bridge to.
+  `none` rather than ship a silent no-op. A composed project's `GameContext` auto-wires three of
+  the five effects when a matching receiver is present (`_emit_context` in
+  `src/unity_compose.py`): `OnHealEffect` → a composed player Health's `Heal(float)`;
+  `OnQuestFlagEffect` → a composed Objectives tracker's `SetFlag(string)`; `OnUnlockEffect` → a
+  composed locked Interactable's static `UnlockAny(string)` broadcast (Interactable is not a
+  per-project singleton, so this binds to the class's own static fan-out rather than
+  `GameContext.Get<T>()`'s single `FindFirstObjectByType`, and is only wired when the composed
+  Interactable's `locked` schema field actually survived `default_fix` to `true`). `RestoreShield`
+  and `StatBoost` still have no bridge — they fire their event but nothing in a composed project
+  subscribes to it until a shield/stat system exists to expose a matching public method.
 
 ```bash
 python main.py unity-inventory "5x4 grid backpack with stacking" --variant grid

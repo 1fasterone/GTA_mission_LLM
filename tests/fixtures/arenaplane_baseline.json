@@ -2,326 +2,320 @@
   "planar": {
     "entities": [
       {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
-        "count": 1,
-        "elevation": 0.0,
-        "group_radius": 0.6,
-        "instance_positions": [
-          [
-            -6.0,
-            0.0,
-            7.347880794884119e-16
-          ]
-        ],
-        "instance_yaws": [],
-        "kind": "character",
-        "model_hint": "",
         "name": "Player",
-        "origin_offset": [
-          -6.0,
-          0.0
-        ],
-        "path_points": [],
-        "path_width": 0.0,
+        "kind": "character",
+        "count": 1,
+        "shape": "cube",
         "placement": "single",
+        "color_role": "accent",
+        "spacing": 2.0,
         "radius": 8.0,
         "scale": 1.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
         "tag": "Player",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
         "behavior": "",
-        "color_role": "accent",
-        "count": 14,
-        "elevation": 0.0,
-        "group_radius": 8.0,
-        "instance_positions": [
-          [
-            -14.78207252018059,
-            0.0,
-            -6.122934917841435
-          ],
-          [
-            -16.61233258598217,
-            0.0,
-            -9.069198120340019
-          ],
-          [
-            -12.530778213257673,
-            0.0,
-            -8.839159489856971
-          ],
-          [
-            -18.269768013078203,
-            0.0,
-            -4.413852239212383
-          ],
-          [
-            -13.202186442702583,
-            0.0,
-            -2.291705502534069
-          ],
-          [
-            -10.028107697962781,
-            0.0,
-            -6.314168153585536
-          ],
-          [
-            -16.51020290758716,
-            0.0,
-            -1.136230175809687
-          ],
-          [
-            -20.230421431735444,
-            0.0,
-            -8.862212200333389
-          ],
-          [
-            -12.766318810480382,
-            0.0,
-            -12.435620863039109
-          ],
-          [
-            -21.813466874774306,
-            0.0,
-            -5.136241883350369
-          ],
-          [
-            -9.173438961221478,
-            0.0,
-            -10.612579955919745
-          ],
-          [
-            -17.480648665824937,
-            0.0,
-            -12.814853309790923
-          ],
-          [
-            -19.927691952400224,
-            0.0,
-            -0.4976159525944981
-          ],
-          [
-            -7.438425532490915,
-            0.0,
-            -2.6166610292730996
-          ]
-        ],
-        "instance_yaws": [],
-        "kind": "prop",
         "model_hint": "",
-        "name": "Containers",
-        "origin_offset": [
-          -14.782,
-          -6.123
-        ],
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [],
         "path_width": 0.0,
-        "placement": "scatter",
-        "radius": 8.0,
-        "scale": 3.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
-        "count": 6,
         "elevation": 0.0,
-        "group_radius": 10.0,
-        "instance_positions": [
-          [
-            4.259748514523654,
-            0.0,
-            13.858192987669302
-          ],
-          [
-            -0.7402514854763451,
-            0.0,
-            22.518447025513687
-          ],
-          [
-            -10.740251485476344,
-            0.0,
-            22.518447025513687
-          ],
-          [
-            -15.740251485476346,
-            0.0,
-            13.858192987669304
-          ],
-          [
-            -10.74025148547635,
-            0.0,
-            5.197938949824916
-          ],
-          [
-            -0.7402514854763451,
-            0.0,
-            5.197938949824916
-          ]
-        ],
-        "instance_yaws": [],
-        "kind": "enemy",
-        "model_hint": "",
-        "name": "Drones",
         "origin_offset": [
-          -5.74,
-          13.858
+          6.0,
+          0.0
         ],
-        "path_points": [],
-        "path_width": 0.0,
-        "placement": "ring",
-        "radius": 10.0,
-        "scale": 1.2,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
-        "count": 9,
-        "elevation": 0.0,
-        "group_radius": 8.0,
-        "instance_positions": [
-          [
-            -2.5000000000000036,
-            0.0,
-            -20.0
-          ],
-          [
-            -3.673940397442059e-15,
-            0.0,
-            -20.0
-          ],
-          [
-            2.4999999999999964,
-            0.0,
-            -20.0
-          ],
-          [
-            -2.5000000000000036,
-            0.0,
-            -17.5
-          ],
-          [
-            -3.673940397442059e-15,
-            0.0,
-            -17.5
-          ],
-          [
-            2.4999999999999964,
-            0.0,
-            -17.5
-          ],
-          [
-            -2.5000000000000036,
-            0.0,
-            -15.0
-          ],
-          [
-            -3.673940397442059e-15,
-            0.0,
-            -15.0
-          ],
-          [
-            2.4999999999999964,
-            0.0,
-            -15.0
-          ]
-        ],
-        "instance_yaws": [],
-        "kind": "prop",
-        "model_hint": "",
-        "name": "ScrapPiles",
-        "origin_offset": [
-          -0.0,
-          -20.0
-        ],
-        "path_points": [],
-        "path_width": 0.0,
-        "placement": "grid",
-        "radius": 8.0,
-        "scale": 0.8,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.5,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
-        "count": 5,
-        "elevation": 0.0,
-        "group_radius": 12.0,
+        "group_radius": 0.6,
         "instance_positions": [
           [
             6.0,
             0.0,
             0.0
-          ],
-          [
-            12.0,
-            0.0,
-            0.0
-          ],
-          [
-            18.0,
-            0.0,
-            0.0
-          ],
-          [
-            24.0,
-            0.0,
-            0.0
-          ],
-          [
-            30.0,
-            0.0,
-            0.0
           ]
         ],
         "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "Containers",
         "kind": "prop",
+        "count": 14,
+        "shape": "cube",
+        "placement": "scatter",
+        "color_role": "accent",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 3.0,
+        "tag": "Untagged",
+        "behavior": "",
         "model_hint": "",
-        "name": "Floodlights",
-        "origin_offset": [
-          18.0,
-          0.0
-        ],
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [],
         "path_width": 0.0,
+        "elevation": 0.0,
+        "origin_offset": [
+          -2.389,
+          3.705
+        ],
+        "group_radius": 22.856,
+        "instance_positions": [
+          [
+            19.121840915560405,
+            0.0,
+            0.0
+          ],
+          [
+            17.996480741737006,
+            0.0,
+            3.4507636158107196
+          ],
+          [
+            15.305535162498412,
+            0.0,
+            -1.5407184699761585
+          ],
+          [
+            7.317611714705868,
+            0.0,
+            17.66627744582314
+          ],
+          [
+            6.192251540882471,
+            0.0,
+            21.11704106163386
+          ],
+          [
+            3.501305961643875,
+            0.0,
+            16.12555897584698
+          ],
+          [
+            -13.521183380163142,
+            0.0,
+            13.521183380163144
+          ],
+          [
+            -14.64654355398654,
+            0.0,
+            16.971946995973862
+          ],
+          [
+            -17.337489133225134,
+            0.0,
+            11.980464910186985
+          ],
+          [
+            -17.666277445823145,
+            0.0,
+            -7.317611714705865
+          ],
+          [
+            -18.791637619646544,
+            0.0,
+            -3.866848098895145
+          ],
+          [
+            -21.482583198885138,
+            0.0,
+            -8.858330184682023
+          ],
+          [
+            -2.868046458251954e-15,
+            0.0,
+            -15.61291772859897
+          ],
+          [
+            0.5626497184943622,
+            0.0,
+            -11.761851713937657
+          ]
+        ],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "Drones",
+        "kind": "enemy",
+        "count": 6,
+        "shape": "cube",
+        "placement": "ring",
+        "color_role": "accent",
+        "spacing": 2.0,
+        "radius": 10.0,
+        "scale": 1.2,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
+        "elevation": 0.0,
+        "origin_offset": [
+          3.099,
+          -22.697
+        ],
+        "group_radius": 20.212,
+        "instance_positions": [
+          [
+            22.6776695296637,
+            0.0,
+            -17.677669529663675
+          ],
+          [
+            15.1776695296637,
+            0.0,
+            -13.34754251074148
+          ],
+          [
+            15.177669529663698,
+            0.0,
+            -22.007796548585866
+          ],
+          [
+            -6.48050297095271,
+            0.0,
+            -27.716385975338596
+          ],
+          [
+            -13.98050297095271,
+            0.0,
+            -23.386258956416402
+          ],
+          [
+            -13.980502970952712,
+            0.0,
+            -32.04651299426079
+          ]
+        ],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "ScrapPiles",
+        "kind": "prop",
+        "count": 9,
+        "shape": "cube",
+        "placement": "grid",
+        "color_role": "accent",
+        "spacing": 2.5,
+        "radius": 8.0,
+        "scale": 0.8,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
+        "elevation": 0.0,
+        "origin_offset": [
+          12.991,
+          -13.835
+        ],
+        "group_radius": 32.291,
+        "instance_positions": [
+          [
+            9.573922002923947,
+            0.0,
+            -26.131259297527528
+          ],
+          [
+            12.073922002923947,
+            0.0,
+            -26.131259297527528
+          ],
+          [
+            9.573922002923947,
+            0.0,
+            -23.631259297527528
+          ],
+          [
+            -1.2500000000000056,
+            0.0,
+            -30.05203820042827
+          ],
+          [
+            1.2499999999999944,
+            0.0,
+            -30.05203820042827
+          ],
+          [
+            -1.2500000000000056,
+            0.0,
+            -27.55203820042827
+          ],
+          [
+            28.14766670971847,
+            0.0,
+            12.176912253289434
+          ],
+          [
+            30.64766670971847,
+            0.0,
+            12.176912253289434
+          ],
+          [
+            28.14766670971847,
+            0.0,
+            14.676912253289434
+          ]
+        ],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "Floodlights",
+        "kind": "prop",
+        "count": 5,
+        "shape": "cube",
         "placement": "line",
+        "color_role": "accent",
+        "spacing": 6.0,
         "radius": 8.0,
         "scale": 2.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 6.0,
         "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
+        "elevation": 0.0,
+        "origin_offset": [
+          15.274,
+          28.074
+        ],
+        "group_radius": 18.691,
+        "instance_positions": [
+          [
+            19.455844122715714,
+            0.0,
+            25.455844122715714
+          ],
+          [
+            25.455844122715714,
+            0.0,
+            25.455844122715714
+          ],
+          [
+            31.455844122715714,
+            0.0,
+            25.455844122715714
+          ],
+          [
+            -2.9999999999999982,
+            0.0,
+            32.00000000000001
+          ],
+          [
+            3.0000000000000018,
+            0.0,
+            32.00000000000001
+          ]
+        ],
+        "instance_yaws": [],
         "tilt_deg": 0.0
       }
-    ],
-    "terrain_bounds": [
-      -30.782,
-      -36.0,
-      38.0,
-      31.858
     ],
     "world_spec": {
       "biome": "urban",
@@ -336,10 +330,10 @@
             "Player"
           ],
           "bounds": [
-            -6.6,
-            -0.5999999999999992,
-            -5.4,
-            0.6000000000000008
+            5.4,
+            -0.6,
+            6.6,
+            0.6
           ]
         },
         {
@@ -349,10 +343,10 @@
             "Containers"
           ],
           "bounds": [
-            -22.78207252018059,
-            -14.122934917841434,
-            -6.78207252018059,
-            1.8770650821585653
+            -25.245,
+            -19.151000000000003,
+            20.467000000000002,
+            26.561
           ]
         },
         {
@@ -362,10 +356,10 @@
             "Drones"
           ],
           "bounds": [
-            -15.740251485476346,
-            3.8581929876693017,
-            4.259748514523654,
-            23.8581929876693
+            -17.113,
+            -42.909,
+            23.311,
+            -2.4849999999999994
           ]
         },
         {
@@ -375,10 +369,10 @@
             "ScrapPiles"
           ],
           "bounds": [
-            -8.000000000000004,
-            -28.0,
-            7.9999999999999964,
-            -12.0
+            -19.299999999999997,
+            -46.126,
+            45.282,
+            18.455999999999996
           ]
         },
         {
@@ -388,10 +382,10 @@
             "Floodlights"
           ],
           "bounds": [
-            6.0,
-            -12.0,
-            30.0,
-            12.0
+            -3.417,
+            9.383000000000003,
+            33.964999999999996,
+            46.765
           ]
         }
       ],
@@ -399,7 +393,13 @@
       "course": {
         "zones": []
       }
-    }
+    },
+    "terrain_bounds": [
+      -33.245000000000005,
+      -54.126,
+      53.282,
+      54.765
+    ]
   },
   "planar_project_files": [
     ".compile_map.json",
@@ -504,21 +504,20 @@
   "racing": {
     "entities": [
       {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "secondary",
-        "count": 37,
-        "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "road",
-        "model_hint": "road straight racing track",
         "name": "TrackSurface",
-        "origin_offset": [
-          0.0,
-          0.0
-        ],
+        "kind": "road",
+        "count": 37,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "secondary",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 4.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "road straight racing track",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             36.0,
@@ -707,244 +706,244 @@
           ]
         ],
         "path_width": 10.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 4.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 37,
         "elevation": 0.0,
+        "origin_offset": [
+          0.0,
+          0.0
+        ],
         "group_radius": 0.0,
         "instance_positions": [],
         "instance_yaws": [],
-        "kind": "wall",
-        "model_hint": "barrier fence guardrail",
+        "tilt_deg": 0.0
+      },
+      {
         "name": "TrackBarriersOuter",
-        "origin_offset": [
-          0.0,
-          0.0
-        ],
-        "path_points": [
-          [
-            42.5,
-            0.0,
-            42.0
-          ],
-          [
-            42.029,
-            0.0,
-            46.78
-          ],
-          [
-            40.635,
-            0.0,
-            51.376
-          ],
-          [
-            38.371,
-            0.0,
-            55.611
-          ],
-          [
-            35.324,
-            0.0,
-            59.324
-          ],
-          [
-            31.611,
-            0.0,
-            62.371
-          ],
-          [
-            27.376,
-            0.0,
-            64.635
-          ],
-          [
-            22.78,
-            0.0,
-            66.029
-          ],
-          [
-            18.0,
-            0.0,
-            66.5
-          ],
-          [
-            -18.0,
-            0.0,
-            66.5
-          ],
-          [
-            -22.78,
-            0.0,
-            66.029
-          ],
-          [
-            -27.376,
-            0.0,
-            64.635
-          ],
-          [
-            -31.611,
-            0.0,
-            62.371
-          ],
-          [
-            -35.324,
-            0.0,
-            59.324
-          ],
-          [
-            -38.371,
-            0.0,
-            55.611
-          ],
-          [
-            -40.635,
-            0.0,
-            51.376
-          ],
-          [
-            -42.029,
-            0.0,
-            46.78
-          ],
-          [
-            -42.5,
-            0.0,
-            42.0
-          ],
-          [
-            -42.5,
-            0.0,
-            -42.0
-          ],
-          [
-            -42.029,
-            0.0,
-            -46.78
-          ],
-          [
-            -40.635,
-            0.0,
-            -51.376
-          ],
-          [
-            -38.371,
-            0.0,
-            -55.611
-          ],
-          [
-            -35.324,
-            0.0,
-            -59.324
-          ],
-          [
-            -31.611,
-            0.0,
-            -62.371
-          ],
-          [
-            -27.376,
-            0.0,
-            -64.635
-          ],
-          [
-            -22.78,
-            0.0,
-            -66.029
-          ],
-          [
-            -18.0,
-            0.0,
-            -66.5
-          ],
-          [
-            18.0,
-            0.0,
-            -66.5
-          ],
-          [
-            22.78,
-            0.0,
-            -66.029
-          ],
-          [
-            27.376,
-            0.0,
-            -64.635
-          ],
-          [
-            31.611,
-            0.0,
-            -62.371
-          ],
-          [
-            35.324,
-            0.0,
-            -59.324
-          ],
-          [
-            38.371,
-            0.0,
-            -55.611
-          ],
-          [
-            40.635,
-            0.0,
-            -51.376
-          ],
-          [
-            42.029,
-            0.0,
-            -46.78
-          ],
-          [
-            42.5,
-            0.0,
-            -42.0
-          ],
-          [
-            42.5,
-            0.0,
-            42.0
-          ]
-        ],
-        "path_width": 1.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.5,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 37,
-        "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
         "kind": "wall",
+        "count": 37,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.5,
+        "tag": "Untagged",
+        "behavior": "",
         "model_hint": "barrier fence guardrail",
-        "name": "TrackBarriersInner",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [
+          [
+            42.5,
+            0.0,
+            42.0
+          ],
+          [
+            42.029,
+            0.0,
+            46.78
+          ],
+          [
+            40.635,
+            0.0,
+            51.376
+          ],
+          [
+            38.371,
+            0.0,
+            55.611
+          ],
+          [
+            35.324,
+            0.0,
+            59.324
+          ],
+          [
+            31.611,
+            0.0,
+            62.371
+          ],
+          [
+            27.376,
+            0.0,
+            64.635
+          ],
+          [
+            22.78,
+            0.0,
+            66.029
+          ],
+          [
+            18.0,
+            0.0,
+            66.5
+          ],
+          [
+            -18.0,
+            0.0,
+            66.5
+          ],
+          [
+            -22.78,
+            0.0,
+            66.029
+          ],
+          [
+            -27.376,
+            0.0,
+            64.635
+          ],
+          [
+            -31.611,
+            0.0,
+            62.371
+          ],
+          [
+            -35.324,
+            0.0,
+            59.324
+          ],
+          [
+            -38.371,
+            0.0,
+            55.611
+          ],
+          [
+            -40.635,
+            0.0,
+            51.376
+          ],
+          [
+            -42.029,
+            0.0,
+            46.78
+          ],
+          [
+            -42.5,
+            0.0,
+            42.0
+          ],
+          [
+            -42.5,
+            0.0,
+            -42.0
+          ],
+          [
+            -42.029,
+            0.0,
+            -46.78
+          ],
+          [
+            -40.635,
+            0.0,
+            -51.376
+          ],
+          [
+            -38.371,
+            0.0,
+            -55.611
+          ],
+          [
+            -35.324,
+            0.0,
+            -59.324
+          ],
+          [
+            -31.611,
+            0.0,
+            -62.371
+          ],
+          [
+            -27.376,
+            0.0,
+            -64.635
+          ],
+          [
+            -22.78,
+            0.0,
+            -66.029
+          ],
+          [
+            -18.0,
+            0.0,
+            -66.5
+          ],
+          [
+            18.0,
+            0.0,
+            -66.5
+          ],
+          [
+            22.78,
+            0.0,
+            -66.029
+          ],
+          [
+            27.376,
+            0.0,
+            -64.635
+          ],
+          [
+            31.611,
+            0.0,
+            -62.371
+          ],
+          [
+            35.324,
+            0.0,
+            -59.324
+          ],
+          [
+            38.371,
+            0.0,
+            -55.611
+          ],
+          [
+            40.635,
+            0.0,
+            -51.376
+          ],
+          [
+            42.029,
+            0.0,
+            -46.78
+          ],
+          [
+            42.5,
+            0.0,
+            -42.0
+          ],
+          [
+            42.5,
+            0.0,
+            42.0
+          ]
+        ],
+        "path_width": 1.0,
+        "elevation": 0.0,
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TrackBarriersInner",
+        "kind": "wall",
+        "count": 37,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.5,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "barrier fence guardrail",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             29.5,
@@ -1133,31 +1132,31 @@
           ]
         ],
         "path_width": 1.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.5,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
-        "count": 13,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "obstacle",
-        "model_hint": "traffic cone",
-        "name": "ApexCones",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "ApexCones",
+        "kind": "obstacle",
+        "count": 13,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "accent",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 0.6,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "traffic cone",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             29.5,
@@ -1226,31 +1225,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 0.6,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "primary",
-        "count": 4,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "decoration",
-        "model_hint": "checkpoint banner finish line",
-        "name": "CheckpointBanners",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "CheckpointBanners",
+        "kind": "decoration",
+        "count": 4,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "primary",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 2.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "checkpoint banner finish line",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             36.0,
@@ -1274,21 +1273,38 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 2.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
+        "elevation": 0.0,
+        "origin_offset": [
+          0.0,
+          0.0
+        ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
         "tilt_deg": 0.0
       },
       {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "primary",
+        "name": "PlayerKart",
+        "kind": "vehicle",
         "count": 1,
+        "shape": "cube",
+        "placement": "single",
+        "color_role": "primary",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Player",
+        "behavior": "",
+        "model_hint": "kart racer vehicle",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
         "elevation": 0.0,
+        "origin_offset": [
+          36.0,
+          42.0
+        ],
         "group_radius": 0.6,
         "instance_positions": [
           [
@@ -1300,30 +1316,30 @@
         "instance_yaws": [
           0.0
         ],
-        "kind": "vehicle",
-        "model_hint": "kart racer vehicle",
-        "name": "PlayerKart",
-        "origin_offset": [
-          36.0,
-          42.0
-        ],
-        "path_points": [],
-        "path_width": 0.0,
-        "placement": "single",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Player",
         "tilt_deg": 0.0
       },
       {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
+        "name": "OpponentKarts",
+        "kind": "vehicle",
         "count": 3,
+        "shape": "cube",
+        "placement": "grid",
+        "color_role": "accent",
+        "spacing": 4.0,
+        "radius": 6.0,
+        "scale": 1.0,
+        "tag": "Enemy",
+        "behavior": "",
+        "model_hint": "kart racer opponent vehicle",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
         "elevation": 0.0,
+        "origin_offset": [
+          36.933,
+          36.667
+        ],
         "group_radius": 4.564,
         "instance_positions": [
           [
@@ -1347,40 +1363,23 @@
           0.0,
           0.0
         ],
-        "kind": "vehicle",
-        "model_hint": "kart racer opponent vehicle",
-        "name": "OpponentKarts",
-        "origin_offset": [
-          36.933,
-          36.667
-        ],
-        "path_points": [],
-        "path_width": 0.0,
-        "placement": "grid",
-        "radius": 6.0,
-        "scale": 1.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 4.0,
-        "tag": "Enemy",
         "tilt_deg": 0.0
       },
       {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "secondary",
-        "count": 3,
-        "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "structure",
-        "model_hint": "grandstand spectator stand bleachers",
         "name": "TracksideStands1",
-        "origin_offset": [
-          0.0,
-          0.0
-        ],
+        "kind": "structure",
+        "count": 3,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "secondary",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 2.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "grandstand spectator stand bleachers",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             48.5,
@@ -1399,31 +1398,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 2.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "secondary",
-        "count": 3,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "structure",
-        "model_hint": "grandstand spectator stand bleachers",
-        "name": "TracksideStands2",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideStands2",
+        "kind": "structure",
+        "count": 3,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "secondary",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 2.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "grandstand spectator stand bleachers",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             39.567,
@@ -1442,31 +1441,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 2.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "secondary",
-        "count": 3,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "structure",
-        "model_hint": "grandstand spectator stand bleachers",
-        "name": "TracksideStands3",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideStands3",
+        "kind": "structure",
+        "count": 3,
+        "shape": "cube",
+        "placement": "path",
+        "color_role": "secondary",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 2.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "grandstand spectator stand bleachers",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             18.069,
@@ -1485,31 +1484,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 2.0,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 2,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "tree",
-        "model_hint": "tree pine foliage",
-        "name": "TracksideTrees1",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideTrees1",
+        "kind": "tree",
+        "count": 2,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "tree pine foliage",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             60.5,
@@ -1523,31 +1522,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 2,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "tree",
-        "model_hint": "tree pine foliage",
-        "name": "TracksideTrees2",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideTrees2",
+        "kind": "tree",
+        "count": 2,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "tree pine foliage",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             53.337,
@@ -1561,31 +1560,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 2,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "tree",
-        "model_hint": "tree pine foliage",
-        "name": "TracksideTrees3",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideTrees3",
+        "kind": "tree",
+        "count": 2,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "tree pine foliage",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             34.264,
@@ -1599,31 +1598,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 2,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "tree",
-        "model_hint": "tree pine foliage",
-        "name": "TracksideTrees4",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideTrees4",
+        "kind": "tree",
+        "count": 2,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "tree pine foliage",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             -18.208,
@@ -1637,31 +1636,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 2,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "tree",
-        "model_hint": "tree pine foliage",
-        "name": "TracksideTrees5",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideTrees5",
+        "kind": "tree",
+        "count": 2,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "tree pine foliage",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             -41.612,
@@ -1675,31 +1674,31 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
-        "tilt_deg": 0.0
-      },
-      {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "trim",
-        "count": 2,
         "elevation": 0.0,
-        "group_radius": 0.0,
-        "instance_positions": [],
-        "instance_yaws": [],
-        "kind": "tree",
-        "model_hint": "tree pine foliage",
-        "name": "TracksideTrees6",
         "origin_offset": [
           0.0,
           0.0
         ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "TracksideTrees6",
+        "kind": "tree",
+        "count": 2,
+        "shape": "cylinder",
+        "placement": "path",
+        "color_role": "trim",
+        "spacing": 2.0,
+        "radius": 8.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "tree pine foliage",
+        "sketchfab_query": "",
+        "atoms": [],
         "path_points": [
           [
             -57.265,
@@ -1713,21 +1712,126 @@
           ]
         ],
         "path_width": 0.0,
-        "placement": "path",
-        "radius": 8.0,
-        "scale": 1.0,
-        "shape": "cylinder",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
+        "elevation": 0.0,
+        "origin_offset": [
+          0.0,
+          0.0
+        ],
+        "group_radius": 0.0,
+        "instance_positions": [],
+        "instance_yaws": [],
         "tilt_deg": 0.0
       },
       {
-        "atoms": [],
-        "behavior": "",
-        "color_role": "accent",
+        "name": "Crates",
+        "kind": "prop",
         "count": 12,
+        "shape": "cube",
+        "placement": "scatter",
+        "color_role": "accent",
+        "spacing": 2.0,
+        "radius": 6.0,
+        "scale": 1.5,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
         "elevation": 0.0,
+        "origin_offset": [
+          -0.321,
+          -0.526
+        ],
+        "group_radius": 80.354,
+        "instance_positions": [
+          [
+            2.1143727032827577,
+            0.0,
+            -79.2502207291796
+          ],
+          [
+            3.4223120268489815,
+            0.0,
+            -80.7924021604706
+          ],
+          [
+            -0.15508190570161817,
+            0.0,
+            -79.2851012734529
+          ],
+          [
+            -53.31384387633061,
+            0.0,
+            2.1143727032827684
+          ],
+          [
+            -52.005904552764385,
+            0.0,
+            0.5721912719917739
+          ],
+          [
+            -55.583298485314984,
+            0.0,
+            2.079492159009472
+          ],
+          [
+            -2.114372703282754,
+            0.0,
+            79.2502207291796
+          ],
+          [
+            -0.8064333797165302,
+            0.0,
+            77.7080392978886
+          ],
+          [
+            -4.38382731226713,
+            0.0,
+            79.21534018490631
+          ],
+          [
+            53.31384387633061,
+            0.0,
+            -2.114372703282754
+          ],
+          [
+            54.62178319989683,
+            0.0,
+            -3.6565541345737484
+          ],
+          [
+            51.04438926734623,
+            0.0,
+            -2.1492532475560506
+          ]
+        ],
+        "instance_yaws": [],
+        "tilt_deg": 0.0
+      },
+      {
+        "name": "RivalDrones",
+        "kind": "vehicle",
+        "count": 4,
+        "shape": "cube",
+        "placement": "scatter",
+        "color_role": "accent",
+        "spacing": 2.0,
+        "radius": 6.0,
+        "scale": 1.0,
+        "tag": "Untagged",
+        "behavior": "",
+        "model_hint": "",
+        "sketchfab_query": "",
+        "atoms": [],
+        "path_points": [],
+        "path_width": 0.0,
+        "elevation": 0.0,
+        "origin_offset": [
+          57.0,
+          -42.0
+        ],
         "group_radius": 6.0,
         "instance_positions": [
           [
@@ -1736,86 +1840,24 @@
             -42.0
           ],
           [
-            58.266574224787874,
+            58.37859698977253,
             0.0,
-            -39.69235027703823
+            -43.46078233933923
           ],
           [
-            59.74844241172008,
+            55.13837838198809,
             0.0,
-            -43.042168541529605
+            -42.95829727860296
           ],
           [
-            54.456225635106144,
+            59.60728459516742,
             0.0,
-            -40.48074905684638
-          ],
-          [
-            56.1183620585813,
-            0.0,
-            -44.849928771488436
-          ],
-          [
-            60.25581141488582,
-            0.0,
-            -40.8999003223041
-          ],
-          [
-            56.165367364458454,
-            0.0,
-            -38.531301271485944
-          ],
-          [
-            53.52825796411935,
-            0.0,
-            -42.87062824075381
-          ],
-          [
-            58.505942817224366,
-            0.0,
-            -45.62461406849988
-          ],
-          [
-            60.29527388815909,
-            0.0,
-            -38.327917984297855
-          ],
-          [
-            58.210503677986296,
-            0.0,
-            -36.86079430204461
-          ],
-          [
-            53.34658323181668,
-            0.0,
-            -45.943299373359665
+            -41.6473651513803
           ]
         ],
         "instance_yaws": [],
-        "kind": "prop",
-        "model_hint": "",
-        "name": "Crates",
-        "origin_offset": [
-          57.0,
-          -42.0
-        ],
-        "path_points": [],
-        "path_width": 0.0,
-        "placement": "scatter",
-        "radius": 6.0,
-        "scale": 1.5,
-        "shape": "cube",
-        "sketchfab_query": "",
-        "spacing": 2.0,
-        "tag": "Untagged",
         "tilt_deg": 0.0
       }
-    ],
-    "terrain_bounds": [
-      -120.5,
-      -144.499,
-      123.0,
-      144.499
     ],
     "world_spec": {
       "biome": "urban",
@@ -1858,6 +1900,19 @@
             "Crates"
           ],
           "bounds": [
+            -80.675,
+            -80.88,
+            80.033,
+            79.828
+          ]
+        },
+        {
+          "name": "RivalDrones",
+          "biome": "",
+          "entities": [
+            "RivalDrones"
+          ],
+          "bounds": [
             51.0,
             -48.0,
             63.0,
@@ -1895,6 +1950,12 @@
       "course": {
         "zones": []
       }
-    }
+    },
+    "terrain_bounds": [
+      -140.675,
+      -144.499,
+      140.03300000000002,
+      144.499
+    ]
   }
 }

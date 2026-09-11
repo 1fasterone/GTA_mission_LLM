@@ -57,6 +57,13 @@ class ObjectiveEntry(BaseModel):
     # (locomotion_modes, flying_abilities, ...). See ObjectivesPipeline.default_fix
     # and ObjectivesPipeline.harden.
     after:       str = ""
+    # The quest-flag name (set by Inventory's "quest_flag" item effect, see
+    # SetFlag() in Objectives.cs.j2) that must be set before this objective
+    # accepts progress. Empty means "no flag gate" — same open-ended, never-
+    # cross-validated shape as target_id on Inventory's own quest_flag effect;
+    # unlike `after`, the flag doesn't name another objective in THIS schema,
+    # so there is nothing here to check for a dangling/self/cyclic reference.
+    required_flag: str = ""
 
     @field_validator("type", mode="before")
     @classmethod
@@ -133,6 +140,10 @@ OBJECTIVE TYPE — reach | collect | eliminate | escort | survive | interact
   Leave "" unless the brief explicitly describes an order ("first ... then ...",
   "once you've ... you can ...") — a deterministic pass fills the ordinary
   step-by-step case for you, so guessing here is not required.
+"required_flag" — the quest-flag name that must be set before this objective
+  accepts progress, or "" if none. Only set this when the brief explicitly
+  ties an objective to acquiring/using a specific item ("once you have the
+  key", "after finding the map").
 
 BRIEF:
 {concept}
@@ -144,7 +155,8 @@ OUTPUT:
   "title": "Mission title",
   "objectives": [
     {{"id": "obj1", "description": "One sentence.", "type": "reach",
-      "target_ref": "", "count": 1, "optional": false, "after": ""}}
+      "target_ref": "", "count": 1, "optional": false, "after": "",
+      "required_flag": ""}}
   ],
   "rewards": {{}},
   "description": "One sentence."
@@ -169,6 +181,10 @@ class ObjectivesPipeline(UnityMicroPipeline):
         # with any of these is CS0102 (or shadows the property), so lint drops it.
         "_surviveTimer", "_missionComplete", "_byId",
         "CompletedRequired", "TotalRequired", "ActiveObjective", "Title",
+        # Quest-flag gating (SetFlag/HasFlag + the blocked-progress event —
+        # see Objectives.cs.j2's ReportProgress and Inventory's quest_flag
+        # effect, which SetFlag is the compose-time bridge target for).
+        "_flags", "setflag", "hasflag", "onobjectiveflagblocked",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "System", "System.Collections.Generic"}
 
