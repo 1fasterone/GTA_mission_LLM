@@ -27,6 +27,9 @@ public class {{ s.name }} : MonoBehaviour
         // the deterministic step-order fixer unless the brief itself named an
         // order (see ObjectivesPipeline.default_fix in src/micro/objectives.py).
         public string after;
+        // Quest-flag name that must be set (via SetFlag, below) before this
+        // objective accepts progress, or "" for no flag gate.
+        public string requiredFlag;
         [NonSerialized] public int progress;
         [NonSerialized] public bool complete;
     }
@@ -38,7 +41,7 @@ public class {{ s.name }} : MonoBehaviour
         new Objective { id = "{{ o.id }}", description = "{{ o.description | replace('"', '\\"') }}",
                         type = "{{ o.type }}", targetRef = "{{ o.target_ref }}",
                         requiredCount = {{ o.count }}, optional = {{ "true" if o.optional else "false" }},
-                        after = "{{ o.after }}" },
+                        after = "{{ o.after }}", requiredFlag = "{{ o.required_flag }}" },
 {% endfor %}
     };
 
@@ -51,8 +54,15 @@ public class {{ s.name }} : MonoBehaviour
     /// prerequisite blocks rather than silently passing, same as an
     /// unresolved board.py zone `requires`).</summary>
     public event Action<string, string> OnObjectiveBlocked;
+    /// <summary>(objectiveId, flagName) — progress was refused because
+    /// requiredFlag has not been set yet. Separate from OnObjectiveBlocked
+    /// (an `after` prerequisite is a known objective within THIS tracker; a
+    /// flag is set by an external source — see SetFlag — so the two block
+    /// reasons are never conflated into one event's meaning.</summary>
+    public event Action<string, string> OnObjectiveFlagBlocked;
 
     private Dictionary<string, Objective> _byId;
+    private readonly HashSet<string> _flags = new HashSet<string>();
     private bool _missionComplete;
 {% if "survive" in s.objective_types %}
     private float _surviveTimer;
@@ -142,6 +152,11 @@ public class {{ s.name }} : MonoBehaviour
                 return false;
             }
         }
+        if (!string.IsNullOrEmpty(o.requiredFlag) && !_flags.Contains(o.requiredFlag))
+        {
+            OnObjectiveFlagBlocked?.Invoke(o.id, o.requiredFlag);
+            return false;
+        }
         o.progress = Mathf.Min(o.requiredCount, o.progress + amount);
         OnObjectiveProgress?.Invoke(o.id, o.progress, o.requiredCount);
         if (o.progress >= o.requiredCount)
@@ -152,6 +167,19 @@ public class {{ s.name }} : MonoBehaviour
         }
         return true;
     }
+
+    /// <summary>Sets a quest flag, unblocking any objective whose
+    /// requiredFlag matches on its NEXT ReportProgress call — same
+    /// fire-and-forget policy as `after`: progress reported before the flag
+    /// was set is not retroactively banked (see ReportProgress). A
+    /// composed project's Inventory.OnQuestFlagEffect(targetId) binds
+    /// directly to this (see unity_compose.py's _emit_context).</summary>
+    public void SetFlag(string flagName)
+    {
+        if (!string.IsNullOrEmpty(flagName)) _flags.Add(flagName);
+    }
+
+    public bool HasFlag(string flagName) => _flags.Contains(flagName);
 
     private void CheckMissionComplete()
     {

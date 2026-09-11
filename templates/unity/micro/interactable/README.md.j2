@@ -5,6 +5,8 @@
 **Key:** `{{ s.interact_key }}`
 {% if s.one_shot %}**One-shot:** yes (consumed after first use)
 {% endif %}
+{% if s.locked %}**Locked:** yes — needs an Inventory "unlock" item with `target_id` `{{ s.lock_id }}`
+{% endif %}
 
 {{ s.description }}
 
@@ -24,7 +26,14 @@ var it = GetComponent<{{ s.name }}>();
 it.OnPrompt    += text => hud.Show(text);   // "" hides it
 it.OnInteract  += ()   => Debug.Log("Used {{ s.name }}");
 {% if variant in ("lever", "button_switch", "door") %}it.OnToggled   += on => Debug.Log("State: " + on);
+{% endif %}{% if s.locked %}it.OnLocked    += ()   => Debug.Log("{{ s.name }} is locked");
 {% endif %}```
+{% if s.locked %}
+In a `--compose` build, an Inventory item with effect `unlock` and
+`target_id` `{{ s.lock_id }}` fires `{{ s.name }}.UnlockAny("{{ s.lock_id }}")`
+automatically (wired in GameContext.cs). Standalone, call
+`{{ s.name }}.UnlockAny("{{ s.lock_id }}")` yourself.
+{% endif %}
 
 ## Behaviour
 

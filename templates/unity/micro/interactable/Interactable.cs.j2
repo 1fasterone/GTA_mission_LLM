@@ -3,6 +3,7 @@
 // {{ s.description }}
 {% import "_inject.j2" as inject %}
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 {{ inject.usings(s) }}
 {% set is2d = s.meta.get("game_type") in ("2D", "2d_topdown") %}
@@ -22,6 +23,10 @@ public class {{ s.name }} : MonoBehaviour
 {{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [SerializeField] private float  radius     = {{ "%.2f"|format(s.radius) }}f;
     [SerializeField] private string promptText = {{ s.prompt_text|tojson }};
+{% if s.locked %}
+    [SerializeField] private bool   locked = true;
+    [SerializeField] private string lockId = {{ s.lock_id|tojson }};
+{% endif %}
 {% if s.detection == "pointer" %}
     [Tooltip("How far down the pointer ray this object can still be clicked.")]
     [SerializeField] private float  maxPointerDistance = 500f;
@@ -37,6 +42,24 @@ public class {{ s.name }} : MonoBehaviour
     /// <summary>Raised with the new on/off state for toggle interactables.</summary>
     public event Action<bool> OnToggled;
     private bool _on;
+{% endif %}
+{% if s.locked %}
+    /// <summary>Raised when Interact() is attempted while locked — nothing
+    /// else about the interaction fires (no OnInteract/OnToggled) until
+    /// UnlockAny(lockId) clears it.</summary>
+    public event Action OnLocked;
+
+    /// <summary>Every enabled locked instance of this class, project-wide —
+    /// the static broadcast surface UnlockAny() scans. Registered self,
+    /// like AI.cs.j2's own _squad list, because a scene can hold many
+    /// locked instances (several doors, a chest) while GameContext.Get<T>()
+    /// only ever resolves one; an Inventory "unlock" effect must be able to
+    /// reach every matching lock, not just whichever one FindFirstObjectByType
+    /// happened to return.</summary>
+    private static readonly List<{{ s.name }}> _lockedInstances = new List<{{ s.name }}>();
+
+    private void OnEnable()  { if (locked) _lockedInstances.Add(this); }
+    private void OnDisable() { _lockedInstances.Remove(this); }
 {% endif %}
 
     private bool _inRange;
@@ -138,6 +161,9 @@ public class {{ s.name }} : MonoBehaviour
     public void Interact()
     {
         if (_used) return;
+{% if s.locked %}
+        if (locked) { OnLocked?.Invoke(); return; }
+{% endif %}
 {% if variant == "pickup" %}
         OnInteract?.Invoke();
         OnPrompt?.Invoke("");
@@ -166,6 +192,33 @@ public class {{ s.name }} : MonoBehaviour
         Gizmos.color = Color.green;
         Gizmos.DrawWireSphere(transform.position, radius);
     }
+{% if s.locked %}
+
+    /// <summary>Static broadcast entry point — a composed project's
+    /// Inventory.OnUnlockEffect(targetId) binds directly to this (see
+    /// unity_compose.py's _emit_context), no GameContext.Get<T>() lookup
+    /// involved since a project can hold more than one locked instance.
+    /// Unlocks EVERY currently-enabled locked instance whose lockId matches
+    /// (one key can open several identical doors) and drops each match out
+    /// of _lockedInstances immediately — an unlocked instance has nothing
+    /// left for a later UnlockAny call to scan it for, and OnEnable never
+    /// re-adds it (guarded on `locked`). Iterated back-to-front so removing
+    /// a match mid-scan never skips the next entry.</summary>
+    public static void UnlockAny(string targetId)
+    {
+        if (string.IsNullOrEmpty(targetId)) return;
+        for (int i = _lockedInstances.Count - 1; i >= 0; i--)
+        {
+            var inst = _lockedInstances[i];
+            if (inst == null) { _lockedInstances.RemoveAt(i); continue; }
+            if (inst.lockId == targetId)
+            {
+                inst.locked = false;
+                _lockedInstances.RemoveAt(i);
+            }
+        }
+    }
+{% endif %}
 {{ inject.fixed_update(s) }}
 {{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from ..micro_pipeline import to_pascal
+from ..micro_pipeline import console, to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
     CodeExtensibleSchema, lint_extensible, clamp_enum, apply_extensions_safe_block,
@@ -38,6 +38,14 @@ class InteractableSchema(CodeExtensibleSchema):
     radius:      float     = 2.0
     one_shot:    bool      = False     # consumed after first use (pickups)
     player_tag:  str       = "Player"
+    # Unset by default — zero behavior change for every existing project. When
+    # set, the whole locked/lockId/OnLocked/UnlockAny surface renders in the
+    # template (Interactable.cs.j2 gates it behind `{% if s.locked %}`, same
+    # discipline as AI's squad_alert_radius). A composed project's
+    # Inventory.OnUnlockEffect(target_id) binds directly to the static
+    # UnlockAny(targetId) broadcast — see unity_compose.py's _emit_context.
+    locked:      bool      = False
+    lock_id:     str       = ""    # the id an Unlock-effect item's target_id must match
     description: str       = "Interactable object"
     meta:        dict      = Field(default_factory=dict)
 
@@ -71,6 +79,7 @@ Cover in 1-2 paragraphs:
 - How the player gets in range (a trigger collider, or a look-at raycast)
 - The prompt shown and which key confirms
 - Whether it is one-shot (a pickup) or repeatable (a lever/door)
+- Whether it starts locked and needs a specific key/item to open
 
 Do NOT write code or JSON.
 """
@@ -82,6 +91,10 @@ Convert the brief into JSON. Output JSON only.
 VARIANT MUST BE: {variant}
 DETECTION    — trigger | raycast
 INTERACT_KEY — E | F | Space | Return
+"locked"   — true only if the brief says this needs a specific key/item first.
+"lock_id"  — the id of the key/item that opens it (must match an Inventory
+  item's target_id for its "unlock" effect) — REQUIRED whenever locked is
+  true; leave both "" / false if the brief doesn't describe a lock.
 
 BRIEF:
 {concept}
@@ -96,6 +109,8 @@ OUTPUT:
   "radius": 2.0,
   "one_shot": false,
   "player_tag": "Player",
+  "locked": false,
+  "lock_id": "",
   "description": "One sentence."
 }}
 """ + UNITY_EXTRA_INSTRUCTIONS
@@ -114,8 +129,11 @@ class InteractablePipeline(UnityMicroPipeline):
     _RESERVED_FIELD_NAMES = {
         "radius", "prompttext", "playertag", "_inrange", "_used", "_player",
         "interactkey",
+        # Locking surface (s.locked only — see Interactable.cs.j2's
+        # `{% if s.locked %}` gate and UnlockAny's static-broadcast docstring)
+        "locked", "lockid", "onlocked", "unlockany", "_lockedinstances",
     }
-    _TEMPLATE_USINGS = {"UnityEngine", "System"}
+    _TEMPLATE_USINGS = {"UnityEngine", "System", "System.Collections.Generic"}
 
     def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "Interactable")
@@ -126,6 +144,14 @@ class InteractablePipeline(UnityMicroPipeline):
             schema.one_shot = True
         if not schema.prompt_text.strip():
             schema.prompt_text = f"Press [{schema.interact_key}]"
+        # Same abstain-loudly doctrine as Inventory's targeted effects
+        # (src/micro/inventory.py): a lock with no id UnlockAny could ever
+        # match is a silent runtime no-op — downgrade to unlocked with a
+        # printed WARN rather than ship a door nothing can ever open.
+        if schema.locked and not schema.lock_id.strip():
+            console.print(f"  [yellow]WARN[/]  {schema.name}: locked=true "
+                          f"needs a non-empty lock_id — dropped to unlocked")
+            schema.locked = False
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)
