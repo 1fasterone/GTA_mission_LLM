@@ -470,6 +470,112 @@ class TestBoundaryFollowRelationship:
         assert build() == build()
 
 
+class TestRouteGateRelationship:
+    """"Checkpoints"/"FinishArch" read as spatial_relationship_of() ==
+    "route_gate" (src/unity_layout_archetype.py) and src/unity_layout.
+    _route_gate_pack centers them ON the route and faces them along it — a
+    gate the player passes THROUGH, unlike _edge_distributed_pack's
+    streetlights (pushed to the edge, facing back)."""
+
+    @staticmethod
+    def _dist_to_polyline(px, pz, pts):
+        return TestPathCorridors._dist_to_polyline(px, pz, pts)
+
+    def _circuit_with_checkpoints(self, count=4):
+        route = [[0, 0, 0], [0, 0, 120], [80, 0, 200], [200, 0, 200],
+                 [260, 0, 120], [200, 0, 40], [80, 0, 20], [0, 0, 0]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        checkpoints = EntitySpec(name="Checkpoints", kind="prop", count=count,
+                                 placement="scatter", scale=1.0)
+        return _schema([track, checkpoints]), track, checkpoints
+
+    def test_one_instance_per_count_centered_on_the_route(self):
+        schema, track, checkpoints = self._circuit_with_checkpoints(count=4)
+        msgs = compute_layout(schema)
+        assert any("route-gate" in m for m in msgs)
+        assert len(checkpoints.instance_positions) == 4
+        assert len(checkpoints.instance_yaws) == 4
+        for x, _y, z in checkpoints.instance_positions:
+            d = self._dist_to_polyline(x, z, track.path_points)
+            assert d < 0.5, f"checkpoint ({x},{z}) is not on the centerline (d={d:.2f})"
+
+    def test_instances_spread_across_the_whole_route_not_one_spot(self):
+        schema, _track, checkpoints = self._circuit_with_checkpoints(count=4)
+        compute_layout(schema)
+        xs = [p[0] for p in checkpoints.instance_positions]
+        zs = [p[2] for p in checkpoints.instance_positions]
+        assert (max(xs) - min(xs)) > 150.0
+        assert (max(zs) - min(zs)) > 120.0
+
+    def test_instances_face_along_the_route_not_across_it(self):
+        schema, track, checkpoints = self._circuit_with_checkpoints(count=4)
+        compute_layout(schema)
+        from src.unity_route_axis import project
+        for (x, _y, z), yaw in zip(checkpoints.instance_positions,
+                                   checkpoints.instance_yaws):
+            # Stepping in the yaw's facing direction must move further ALONG
+            # the route (larger |delta t|), not off to one side the way a
+            # streetlight's back-toward-the-road facing would.
+            rad = math.radians(yaw)
+            fx, fz = math.sin(rad), math.cos(rad)
+            t0, _lat0 = project(track.path_points, x, z)
+            t1, lat1 = project(track.path_points, x + fx, z + fz)
+            assert abs(lat1) < 0.5, "a gate must not drift off the centerline"
+            assert t1 != t0
+
+    def test_finish_arch_is_a_single_instance_pinned_to_the_route_end(self):
+        # An OPEN route (not a closed loop back to the start) so the finish
+        # end is a distinct point from the spawn -- t=1 must land there
+        # regardless of `count`, since "finish arch" names ONE thing.
+        route = [[0, 0, 0], [0, 0, 100], [50, 0, 150], [100, 0, 150]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        finish = EntitySpec(name="FinishArch", kind="prop", count=6,
+                            placement="scatter", scale=1.0)
+        schema = _schema([track, finish])
+        compute_layout(schema)
+        assert len(finish.instance_positions) == 1
+        end_x, _end_y, end_z = route[-1]
+        x, _y, z = finish.instance_positions[0]
+        assert math.hypot(x - end_x, z - end_z) < 1.0
+
+    def test_route_gate_outranks_edge_distributed_on_a_banner_collision(self):
+        # The exact real collision this closes: unity_racetrack.py's own
+        # CheckpointBanners model_hint is "checkpoint banner finish line" --
+        # "banner" alone would read as edge_distributed (pushed to the edge,
+        # facing back) if route_gate weren't checked first.
+        route = [[0, 0, 0], [0, 0, 120], [80, 0, 200], [200, 0, 200],
+                 [260, 0, 120], [200, 0, 40], [80, 0, 20], [0, 0, 0]]
+        track = EntitySpec(name="TrackSurface", kind="road", placement="path",
+                           count=len(route), path_points=route, path_width=10.0)
+        gates = EntitySpec(name="RaceCheckpoints", kind="decoration", count=4,
+                           placement="scatter", scale=2.0,
+                           model_hint="checkpoint banner finish line")
+        schema = _schema([track, gates])
+        compute_layout(schema)
+        for x, _y, z in gates.instance_positions:
+            d = self._dist_to_polyline(x, z, track.path_points)
+            assert d < 0.5, f"gate ({x},{z}) was pushed to the edge, not the centerline"
+
+    def test_no_route_falls_back_to_scenery_scatter_without_crashing(self):
+        # No path group at all -- a checkpoint group has nothing to gate
+        # against, so it falls through with everything else that isn't a
+        # formation (same documented fallback edge/boundary already have).
+        checkpoints = EntitySpec(name="Checkpoints", kind="prop", count=4,
+                                 placement="scatter", scale=1.0)
+        schema = _schema([checkpoints])
+        compute_layout(schema)
+        assert len(checkpoints.instance_positions) == 4
+
+    def test_deterministic(self):
+        def build():
+            schema, _t, _c = self._circuit_with_checkpoints(count=4)
+            compute_layout(schema)
+            return [e.model_dump() for e in schema.entities]
+        assert build() == build()
+
+
 class TestSceneryDistributedRelationship:
     """A plain prop group (kind="prop", no formation kind/tag, no edge/
     boundary keyword match) is spatial_relationship_of() == "scenery_distributed"

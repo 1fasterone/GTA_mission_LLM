@@ -61,6 +61,7 @@ from .unity_layout_archetype import (
     corridor_height,
     entity_altitude_hint,
     is_climbable_entity,
+    is_finish_gate_entity,
     is_ground_dweller,
     is_hazard_entity,
     is_surface_dweller,
@@ -437,6 +438,58 @@ def _edge_distributed_pack(entity: EntitySpec, primary: EntitySpec,
         # own offset, in the same atan2(x, z) convention (0 = +Z, clockwise
         # positive) unity_racetrack._start_yaw uses for baked instance_yaws.
         yaws.append(round(math.degrees(math.atan2(-nx * side, -nz * side)), 3))
+    return positions, yaws
+
+
+def _route_gate_pack(entity: EntitySpec, primary: EntitySpec,
+                     placed: list[tuple[float, float, float]]
+                     ) -> tuple[list[list[float]], list[float]]:
+    """One instance per arc-length interval, centered ON the route and
+    facing along it — the "route_gate" relationship (src/unity_layout_
+    archetype.spatial_relationship_of): a checkpoint banner or finish arch
+    the player passes THROUGH, not one standing beside the track.
+
+    Unlike `_edge_distributed_pack` (pushed outside the corridor edge, facing
+    back at the road), a gate's lateral offset is ZERO by construction —
+    running a clearance search that could push it off the centerline would
+    defeat the entire point of a gate. Placement here is direct parametric
+    sampling instead, same style as `_boundary_follow_pack`, with no search.
+
+    `is_finish_gate_entity` pins a single instance to the END of the route
+    (t=1) regardless of `entity.count` — "finish arch" names ONE thing, not
+    `count` of them strung along the track. Every other gate (checkpoints)
+    spreads `entity.count` instances evenly by arc length — the same
+    bucket-centered sampling `_edge_distributed_pack` uses for streetlights
+    — so a multi-checkpoint course lands at regular intervals instead of
+    clustering near the start.
+
+    Mutates `placed` with one circle per instance, so later groups (barriers,
+    scenery) treat every gate as occupied space — same contract as
+    `_edge_distributed_pack`/`_boundary_follow_pack`. Returns (positions,
+    yaws) at y=0; the caller writes `instance_positions`/`instance_yaws`/
+    `group_radius`/`origin_offset`.
+    """
+    if is_finish_gate_entity(entity):
+        x, z, tx, tz = _route_sample(primary.path_points, 1.0)
+        anchors: list[tuple[float, float, float, float]] = [(x, z, tx, tz)]
+    else:
+        n = max(1, entity.count)
+        # _sample_polyline's anchors carry the LEFT NORMAL (nx, nz), not the
+        # tangent (see unity_route_axis.sample_n) — recover the tangent by
+        # inverting that rotation, the opposite direction
+        # `_boundary_follow_pack` derives the normal FROM the tangent.
+        anchors = [(px, pz, nz, -nx)
+                  for px, pz, nx, nz in _sample_polyline(primary.path_points, n)]
+    inst_r = max(0.5, entity.scale * 0.6)
+    positions: list[list[float]] = []
+    yaws: list[float] = []
+    for cx, cz, tx, tz in anchors:
+        positions.append([round(cx, 3), 0.0, round(cz, 3)])
+        # Face ALONG the tangent — the direction the player travels through
+        # the gate — same atan2(tx, tz) convention `_boundary_follow_pack`
+        # uses to align a fence panel with the route.
+        yaws.append(round(math.degrees(math.atan2(tx, tz)), 3))
+        placed.append((cx, cz, inst_r))
     return positions, yaws
 
 
@@ -2050,15 +2103,17 @@ def _layout_arena_plane(schema: UnitySchema,
                                  has_route=primary is not None)
     elevations = assign_elevations(packable, primitive)
 
-    # Groups whose relationship to the route is "edge_distributed" (e.g.
-    # streetlights) get one instance per arc-length interval spread along
-    # the WHOLE corridor instead of one anchor + a locally clustered
-    # pattern — see _edge_distributed_pack's docstring. "boundary_follow"
-    # (e.g. barriers/fences) get a continuous chain along one side instead —
-    # see _boundary_follow_pack's docstring. Both need an authored route;
-    # without one they fall back to plain scenery scatter below (still not a
-    # formation, still shouldn't be one clump — there's just no edge or
-    # boundary to follow).
+    # Groups whose relationship to the route is "route_gate" (a checkpoint or
+    # finish arch) span the route and are crossed AT a point — centered on
+    # the centerline, facing along it — see _route_gate_pack's docstring.
+    # "edge_distributed" (e.g. streetlights) get one instance per arc-length
+    # interval spread along the WHOLE corridor instead of one anchor + a
+    # locally clustered pattern — see _edge_distributed_pack's docstring.
+    # "boundary_follow" (e.g. barriers/fences) get a continuous chain along
+    # one side instead — see _boundary_follow_pack's docstring. All three
+    # need an authored route; without one they fall back to plain scenery
+    # scatter below (still not a formation, still shouldn't be one clump —
+    # there's just no route to gate/edge/boundary against).
     #
     # "scenery_distributed" — the actual DEFAULT now for anything that isn't
     # a cohesive formation (see is_formation_entity) — spreads across
@@ -2078,6 +2133,8 @@ def _layout_arena_plane(schema: UnitySchema,
     route_scatter = primary is not None and primitive not in VOLUME_PRIMITIVES
     level_scatter = primary is None and primitive not in VOLUME_PRIMITIVES
     if route_scatter:
+        gate_entities = [e for e in packable
+                        if relationships[e.name] == "route_gate"]
         edge_entities = [e for e in packable
                          if relationships[e.name] == "edge_distributed"]
         boundary_entities = [e for e in packable
@@ -2085,12 +2142,15 @@ def _layout_arena_plane(schema: UnitySchema,
         scenery_entities = [e for e in packable
                             if relationships[e.name] == "scenery_distributed"]
     elif level_scatter:
-        edge_entities, boundary_entities = [], []
+        # No route to gate against — a checkpoint/finish entity here has
+        # nothing to span, so it falls through with everything else that
+        # isn't a formation, same as edge/boundary already did.
+        gate_entities, edge_entities, boundary_entities = [], [], []
         scenery_entities = [e for e in packable
                             if relationships[e.name] != "formation"]
     else:
-        edge_entities, boundary_entities, scenery_entities = [], [], []
-    _trackside = edge_entities + boundary_entities
+        gate_entities, edge_entities, boundary_entities, scenery_entities = [], [], [], []
+    _trackside = gate_entities + edge_entities + boundary_entities
     cluster_packable = [e for e in packable
                         if e not in _trackside and e not in scenery_entities]
 
@@ -2110,6 +2170,28 @@ def _layout_arena_plane(schema: UnitySchema,
             slots.update(_pack_groups(in_band, seed_circles))
     else:
         slots = _pack_groups(cluster_packable, seed_circles)
+
+    # Bake route-gate groups directly on the route centerline, spanning it
+    # and facing along the direction of travel — see _route_gate_pack's
+    # docstring. Runs BEFORE edge/boundary/scenery so a checkpoint or finish
+    # arch claims its spot on the route first; everything baked after this
+    # treats it as occupied space via `seed_circles`, same as any other seed.
+    gate_moved: list[str] = []
+    assert primary is not None or not gate_entities
+    for e in gate_entities:
+        assert primary is not None  # guaranteed by the assert above
+        positions, yaws = _route_gate_pack(e, primary, seed_circles)
+        e.instance_positions = positions
+        e.instance_yaws = yaws
+        xs = [p[0] for p in positions]
+        zs = [p[2] for p in positions]
+        cx, cz = sum(xs) / len(xs), sum(zs) / len(zs)
+        r = max((math.hypot(p[0] - cx, p[2] - cz) for p in positions), default=0.0)
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.group_radius = round(max(r, max(0.5, e.scale * 0.6)), 3)
+        _set_elevation(e, 0.0)
+        slots[e.name] = (e.origin_offset[0], e.origin_offset[1], e.group_radius)
+        gate_moved.append(e.name)
 
     # Bake edge-distributed groups directly from the route, bypassing the
     # single-anchor `slots` + `_bake_positions` path entirely: each instance
@@ -2220,6 +2302,13 @@ def _layout_arena_plane(schema: UnitySchema,
             f"Applied {len(zones)} authored course zone(s) along the "
             f"'{primary.name}' route to {len(zoned)} group's elevation "
             f"({', '.join(zoned)})")
+    if gate_moved:
+        assert primary is not None  # gate_moved is only ever non-empty when primary was found above
+        msgs.append(
+            f"Placed {len(gate_moved)} route-gate group(s) spanning the "
+            f"'{primary.name}' route, facing along it, instead of beside "
+            f"or off to one side ({', '.join(gate_moved)})"
+        )
     if edge_moved:
         assert primary is not None  # edge_moved is only ever non-empty when primary was found above
         msgs.append(
