@@ -2121,6 +2121,7 @@ def _layout_arena_plane(schema: UnitySchema,
     edge_moved: list[str] = []
     assert primary is not None or not edge_entities
     for e in edge_entities:
+        assert primary is not None  # guaranteed by the assert above
         positions, yaws = _edge_distributed_pack(e, primary, seed_circles)
         e.instance_positions = positions
         e.instance_yaws = yaws
@@ -2144,6 +2145,7 @@ def _layout_arena_plane(schema: UnitySchema,
     boundary_moved: list[str] = []
     assert primary is not None or not boundary_entities
     for e in boundary_entities:
+        assert primary is not None  # guaranteed by the assert above
         positions, yaws = _boundary_follow_pack(e, primary, seed_circles)
         e.instance_positions = positions
         e.instance_yaws = yaws
@@ -2219,12 +2221,14 @@ def _layout_arena_plane(schema: UnitySchema,
             f"'{primary.name}' route to {len(zoned)} group's elevation "
             f"({', '.join(zoned)})")
     if edge_moved:
+        assert primary is not None  # edge_moved is only ever non-empty when primary was found above
         msgs.append(
             f"Distributed {len(edge_moved)} group(s) as one instance per "
             f"arc-length interval along the '{primary.name}' route edge "
             f"instead of one clustered anchor ({', '.join(edge_moved)})"
         )
     if boundary_moved:
+        assert primary is not None  # boundary_moved is only ever non-empty when primary was found above
         msgs.append(
             f"Laid {len(boundary_moved)} group(s) as a continuous chain "
             f"along the '{primary.name}' route edge instead of one "
