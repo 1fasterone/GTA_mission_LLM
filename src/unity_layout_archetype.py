@@ -1233,12 +1233,30 @@ def pick_wall_surface(entities: Sequence[_Entity]) -> tuple[Optional[_Entity], s
 # involvement post-schema.
 #
 # Checkpoints/finish-arch ("span the route" / "cross the route at a point")
-# are a real third relationship this table deliberately does NOT claim yet —
-# grouping them in here without also building their perpendicular-gate
-# placement math would silently misclassify them as one of the shapes below,
-# which is worse than leaving them as scenery. See _edge_distributed_pack's
-# docstring (src/unity_layout.py) for the migration path once that placement
-# exists.
+# are the "route_gate" relationship — checked FIRST, ahead of edge/boundary,
+# because a checkpoint is routinely also authored with a word from those
+# tables (a live schema names one "CheckpointBanners", and "banner" is an
+# _EDGE_DISTRIBUTED_WORDS hit) and the more specific claim must win: a gate
+# spans the route and is crossed AT a point, an edge light stands beside the
+# whole length of it. Perpendicular-gate placement math lives in
+# `_route_gate_pack` (src/unity_layout.py).
+_ROUTE_GATE_WORDS: tuple[str, ...] = (
+    "checkpoint", "checkpoints", "finish line", "finish arch", "finish gate",
+    "start line", "start gate", "startline", "gate", "gates",
+)
+_ROUTE_GATE_KINDS: frozenset[str] = frozenset({"checkpoint", "finish", "gate"})
+# The subset that names the END of the route specifically — a finish arch is
+# ONE thing, not `entity.count` of them strung along the track the way
+# checkpoints are. Deliberately excludes bare "gate"/"checkpoint": those name
+# the RELATIONSHIP (spans the route), not which end it's at. Also excludes
+# bare "finish" — an ambiguous stem, same class this module already avoids
+# elsewhere ("plane", "depth", "wreck"): "FinishFlags" is edge-of-track
+# bunting (edge_distributed), not the arch itself, and only the multi-word
+# phrases below actually name a gate.
+_FINISH_GATE_WORDS: tuple[str, ...] = (
+    "finish line", "finish arch", "finish gate",
+)
+_FINISH_GATE_KINDS: frozenset[str] = frozenset({"finish"})
 _EDGE_DISTRIBUTED_WORDS: tuple[str, ...] = (
     "streetlight", "streetlights", "light", "lights", "lamp", "lamps",
     "lantern", "lanterns", "torch", "torches", "sign", "signs", "signpost",
@@ -1250,6 +1268,24 @@ _BOUNDARY_FOLLOW_WORDS: tuple[str, ...] = (
     "guardrails", "railing", "railings", "wall", "walls", "hedge", "hedges",
     "rope", "ropes", "tire wall", "tyre wall", "crash barrier",
 )
+
+
+def is_route_gate_entity(entity) -> bool:
+    """This group spans the route and is crossed AT a point — a checkpoint
+    or finish arch — rather than standing beside it (edge_distributed) or
+    running along it (boundary_follow). An authored kind always outranks
+    prose, same precedence every other role predicate in this module uses."""
+    if (entity.kind or "").lower().strip() in _ROUTE_GATE_KINDS:
+        return True
+    return bool(_hits(_entity_words(entity), _ROUTE_GATE_WORDS))
+
+
+def is_finish_gate_entity(entity) -> bool:
+    """This gate is THE finish — one marker at the end of the route, not one
+    of `entity.count` checkpoints spread along its length."""
+    if (entity.kind or "").lower().strip() in _FINISH_GATE_KINDS:
+        return True
+    return bool(_hits(_entity_words(entity), _FINISH_GATE_WORDS))
 # A COHESIVE in-game unit/squad/pack that belongs staying together in one
 # spot — rival karts at a start grid, a squad of guards — as opposed to
 # decorative/scenery content whose `count` means "there are this many of
@@ -1283,6 +1319,11 @@ def is_formation_entity(entity) -> bool:
 def spatial_relationship_of(entity) -> str:
     """How this packable group relates to an authored route corridor:
 
+      "route_gate"          — spans the route and is crossed AT a point: a
+                              checkpoint or finish arch (`is_route_gate_
+                              entity`). Centered ON the centerline, facing
+                              along the direction of travel — see
+                              `_route_gate_pack` (src/unity_layout.py).
       "edge_distributed"    — one instance per arc-length interval along the
                               WHOLE route, offset outside the edge, facing
                               back toward the road (streetlights, torches,
@@ -1303,15 +1344,21 @@ def spatial_relationship_of(entity) -> str:
                               exactly where the old single-anchor behaviour
                               would have put them.
 
-    Checked in this order: edge-distributed and boundary-follow first (a
-    name that could plausibly read as either, e.g. "light fence", is rare in
-    practice, but ties go to the more specific relationship); formation
-    checked before falling through to the scenery default, since a squad
-    that also happens to carry a matched keyword — unlikely, but a fence-
-    named tag="Enemy" group is not impossible — should still read as
-    edge/boundary first (that's about the OBJECT the group physically is,
-    which formation-vs-scenery doesn't override).
+    Checked in this order: route-gate FIRST — a live schema names a
+    checkpoint group "CheckpointBanners", which also hits
+    _EDGE_DISTRIBUTED_WORDS ("banner"), and the more specific claim (spans
+    the route) has to win before the weaker one (stands beside it) gets a
+    chance. Then edge-distributed and boundary-follow (a name that could
+    plausibly read as either, e.g. "light fence", is rare in practice, but
+    ties go to the more specific relationship); formation checked before
+    falling through to the scenery default, since a squad that also happens
+    to carry a matched keyword — unlikely, but a fence-named tag="Enemy"
+    group is not impossible — should still read as edge/boundary first
+    (that's about the OBJECT the group physically is, which
+    formation-vs-scenery doesn't override).
     """
+    if is_route_gate_entity(entity):
+        return "route_gate"
     words = _entity_words(entity)
     if _hits(words, _EDGE_DISTRIBUTED_WORDS):
         return "edge_distributed"
@@ -1640,4 +1687,5 @@ __all__ = [
     "goal_rank", "pick_goal_entity", "is_water_dweller", "is_ground_dweller",
     "is_surface_dweller", "is_surface_entity", "pick_exit_platform",
     "player_rank", "pick_player_entity",
+    "spatial_relationship_of", "is_route_gate_entity", "is_finish_gate_entity",
 ]

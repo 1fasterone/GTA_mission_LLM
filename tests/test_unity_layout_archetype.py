@@ -1235,6 +1235,36 @@ class TestSpatialRelationshipOf:
         assert spatial_relationship_of(e) == "edge_distributed"
 
     @pytest.mark.parametrize("name", [
+        "Checkpoints", "CheckpointGates", "FinishLine", "FinishArch",
+        "StartLine", "SlalomGates",
+    ])
+    def test_route_gate_keywords(self, name):
+        e = EntitySpec(name=name, kind="prop", count=4)
+        assert spatial_relationship_of(e) == "route_gate"
+
+    @pytest.mark.parametrize("kind", ["checkpoint", "finish", "gate"])
+    def test_route_gate_kind_alone_is_enough(self, kind):
+        e = EntitySpec(name="Marker1", kind=kind, count=1)
+        assert spatial_relationship_of(e) == "route_gate"
+
+    def test_route_gate_outranks_edge_distributed_on_a_real_collision(self):
+        # unity_racetrack.py's own CheckpointBanners model_hint is literally
+        # "checkpoint banner finish line" (src/unity_racetrack.py) -- "banner"
+        # is an _EDGE_DISTRIBUTED_WORDS hit, so an LLM-authored group with the
+        # same wording must still classify as the MORE specific relationship
+        # (spans the route), not get shoved to the edge like a streetlight.
+        e = EntitySpec(name="RaceCheckpoints", kind="decoration", count=4,
+                       model_hint="checkpoint banner finish line")
+        assert spatial_relationship_of(e) == "route_gate"
+
+    def test_bare_finish_alone_is_not_a_gate(self):
+        # "FinishFlags" is edge-of-track bunting, not the arch itself -- bare
+        # "finish" is an ambiguous stem (see _FINISH_GATE_WORDS' own comment)
+        # and must not by itself override the edge_distributed "flag" hit.
+        e = EntitySpec(name="FinishFlags", kind="prop", count=8)
+        assert spatial_relationship_of(e) == "edge_distributed"
+
+    @pytest.mark.parametrize("name", [
         "CrashBarriers", "TrackFences", "Guardrails", "TireWalls",
     ])
     def test_boundary_follow_keywords(self, name):
