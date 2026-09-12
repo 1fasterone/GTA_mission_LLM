@@ -1001,16 +1001,16 @@ def _scatter_terrain_details(args: dict) -> str:
         # Terrain.activeTerrain if nothing contains it (e.g. a point just
         # outside every tile's edge).
         terrain_lookup = (
-            f"        Terrain _terrain = null;\n"
-            f"        foreach (var _t in Terrain.activeTerrains) {{\n"
-            f"            if (_t == null || _t.terrainData == null) continue;\n"
-            f"            var _origin = _t.GetPosition();\n"
-            f"            var _size = _t.terrainData.size;\n"
-            f"            if (_dx >= _origin.x && _dx <= _origin.x + _size.x &&\n"
-            f"                _dz >= _origin.z && _dz <= _origin.z + _size.z) "
-            f"{{ _terrain = _t; break; }}\n"
-            f"        }}\n"
-            f"        if (_terrain == null) _terrain = Terrain.activeTerrain;\n"
+            "        Terrain _terrain = null;\n"
+            "        foreach (var _t in Terrain.activeTerrains) {\n"
+            "            if (_t == null || _t.terrainData == null) continue;\n"
+            "            var _origin = _t.GetPosition();\n"
+            "            var _size = _t.terrainData.size;\n"
+            "            if (_dx >= _origin.x && _dx <= _origin.x + _size.x &&\n"
+            "                _dz >= _origin.z && _dz <= _origin.z + _size.z) "
+            "{ _terrain = _t; break; }\n"
+            "        }\n"
+            "        if (_terrain == null) _terrain = Terrain.activeTerrain;\n"
         )
 
     return (
