@@ -120,7 +120,7 @@ Each entry in "items" is one item type. EFFECT MUST BE ONE OF:
   none            inert — equipment, quest items, junk; nothing happens on use
   heal            amount = HP restored
   restore_shield  amount = shield HP restored
-  stat_boost      amount = magnitude; target_id = which stat (e.g. "speed")
+  stat_boost      amount = positive fractional boost (0.5 = +50%); target_id = speed, armor, or aggression
   unlock          target_id = the lock/door id this item opens
   quest_flag      target_id = the flag name this item sets
 unlock and quest_flag REQUIRE a non-empty target_id or the effect is dropped

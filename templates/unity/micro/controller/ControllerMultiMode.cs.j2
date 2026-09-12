@@ -31,6 +31,7 @@ using {{ u }};
 /// spatial layout for the whole project).</summary>
 public class {{ s.name }} : MonoBehaviour{% if has_vehicle_car %}, IVehicleState{% endif %}
 {
+    public System.Func<string, float> ReadStat;
     // ═══ MODE REGISTRY ═══════════════════════════════════════════════════════
 {% if has_on_foot %}
     public const string ModeOnFoot     = "on_foot";
@@ -370,6 +371,8 @@ public class {{ s.name }} : MonoBehaviour{% if has_vehicle_car %}, IVehicleState
 {% else %}
             float speed = moveSpeed;
 {% endif %}
+
+            speed *= Mathf.Max(0f, 1f + (ReadStat?.Invoke("speed") ?? 0f));
 
 {{ modes.on_foot_movement(on_foot_mode) | indent(12, True) }}
 

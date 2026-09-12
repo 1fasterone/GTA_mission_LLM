@@ -93,6 +93,22 @@ def sample(pts: Sequence[Point], t: float) -> tuple[float, float, float, float]:
     return _walk_to_arc_length(pts, seglens, total * max(0.0, min(1.0, t)))
 
 
+def height_at(pts: Sequence[Point], t: float) -> float:
+    """Interpolate authored Y using the same XZ arc-length metric as sample."""
+    if not pts:
+        raise ValueError("height_at() needs at least one point")
+    lengths, total = _segment_lengths(pts)
+    target = total * max(0.0, min(1.0, t))
+    acc = 0.0
+    for (a, b), length in zip(zip(pts, pts[1:]), lengths):
+        if length < 1e-9:
+            continue
+        if acc + length >= target:
+            return a[1] + (b[1] - a[1]) * ((target - acc) / length)
+        acc += length
+    return float(pts[-1][1])
+
+
 def sample_n(pts: Sequence[Point], n: int) -> list[tuple[float, float, float, float]]:
     """`n` anchors evenly spaced by XZ arc length along `pts`, each as
     (px, pz, nx, nz) where (nx, nz) is the unit LEFT normal to the travel

@@ -275,8 +275,8 @@ Produces an item model + container manager: a `ItemDefinition` ScriptableObject 
   per-project singleton, so this binds to the class's own static fan-out rather than
   `GameContext.Get<T>()`'s single `FindFirstObjectByType`, and is only wired when the composed
   Interactable's `locked` schema field actually survived `default_fix` to `true`). `RestoreShield`
-  and `StatBoost` still have no bridge — they fire their event but nothing in a composed project
-  subscribes to it until a shield/stat system exists to expose a matching public method.
+  still has no bridge. `StatBoost` uses the actor-owned store described in [STAT_MODIFIERS.md](STAT_MODIFIERS.md). Shield effects fire their event but nothing in a composed project
+  subscribes to it until a shield receiver exposes a matching public method.
 
 ```bash
 python main.py unity-inventory "5x4 grid backpack with stacking" --variant grid

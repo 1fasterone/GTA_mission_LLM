@@ -1873,6 +1873,25 @@ _CS_KEYWORDS = frozenset({
 })
 
 
+def _needs_player_rigidbody(script: UnityScript) -> bool:
+    """Render a known player binding, respecting authored declarations."""
+    if script.type != "custom" or any(f.name == "playerRigidbody" for f in script.extra_fields):
+        return False
+    bodies = [(script.awake_extra, ""), (script.update_extra, ""),
+              (script.fixed_update_extra, "")]
+    bodies += [(m.body, m.signature) for m in script.extra_methods]
+    for body, signature in bodies:
+        mask = _code_mask(body)
+        code = "".join(c if mask[i] else " " for i, c in enumerate(body))
+        declared = {m.group(1) for m in _LOCAL_DECL_RE.finditer(code)}
+        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(code))
+        declared.update(_method_param_names(signature))
+        if "playerRigidbody" not in declared and re.search(
+                r"(?<![\w.])(?:this\.)?playerRigidbody\b", code):
+            return True
+    return False
+
+
 def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
     """Auto-declare a bare assignment-target identifier the LLM never gave a
     field for (see module comment above). Skips anything already known:
@@ -4332,7 +4351,8 @@ class UnityProjectGenerator:
             content = self._render(tpl_file, {**base_ctx, "script": script,
                                               "atom_body": atom_body,
                                               "stub_classes": stub_classes,
-                                              "needs_rigidbody": needs_rigidbody})
+                                              "needs_rigidbody": needs_rigidbody,
+                                              "needs_player_rigidbody": _needs_player_rigidbody(script)})
         else:
             content = (
                 f"// Auto-generated stub — {script.name}\n"
