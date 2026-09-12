@@ -984,19 +984,50 @@ def _scatter_terrain_details(args: dict) -> str:
     xmax, zmax = _f(args.get("xmax", 100)), _f(args.get("zmax", 100))
     seed   = int(args.get("seed", 0) or 0)
     terrain_name = _s(args.get("terrain_name", ""))
-    terrain_lookup = (
-        f"GameObject.Find(\"{terrain_name}\")?.GetComponent<Terrain>()"
-        if terrain_name else "Terrain.activeTerrain"
-    )
+
+    if terrain_name:
+        terrain_lookup = (
+            f"        Terrain _terrain = "
+            f"GameObject.Find(\"{terrain_name}\")?.GetComponent<Terrain>();\n"
+        )
+    else:
+        # No named terrain bound: a multi-region world can compose more than
+        # one Terrain GameObject in the same scene, and Terrain.activeTerrain
+        # alone is ambiguous once there's more than one -- it's an arbitrary
+        # single tile, not necessarily the one under this point (the exact
+        # bug behind a live "props floating above the ground" report on a
+        # multi-tile desert). Find whichever active tile's bounds actually
+        # contain this instance's XZ position instead; only fall back to
+        # Terrain.activeTerrain if nothing contains it (e.g. a point just
+        # outside every tile's edge).
+        terrain_lookup = (
+            f"        Terrain _terrain = null;\n"
+            f"        foreach (var _t in Terrain.activeTerrains) {{\n"
+            f"            if (_t == null || _t.terrainData == null) continue;\n"
+            f"            var _origin = _t.GetPosition();\n"
+            f"            var _size = _t.terrainData.size;\n"
+            f"            if (_dx >= _origin.x && _dx <= _origin.x + _size.x &&\n"
+            f"                _dz >= _origin.z && _dz <= _origin.z + _size.z) "
+            f"{{ _terrain = _t; break; }}\n"
+            f"        }}\n"
+            f"        if (_terrain == null) _terrain = Terrain.activeTerrain;\n"
+        )
+
     return (
-        f"var _terrain = {terrain_lookup};\n"
         f"var _detailPrefab = Resources.Load<GameObject>(\"Terrain/{prefab}\");\n"
-        f"if (_terrain != null && _detailPrefab != null) {{\n"
+        f"if (_detailPrefab != null) {{\n"
         f"    var _rng = new System.Random({seed});\n"
         f"    for (int i = 0; i < {count}; i++) {{\n"
         f"        float _dx = (float)(_rng.NextDouble() * ({xmax} - {xmin}) + {xmin});\n"
         f"        float _dz = (float)(_rng.NextDouble() * ({zmax} - {zmin}) + {zmin});\n"
-        f"        float _dy = _terrain.SampleHeight(new Vector3(_dx, 0f, _dz));\n"
+        f"{terrain_lookup}"
+        f"        if (_terrain == null) continue;\n"
+        # SampleHeight() is relative to the terrain's OWN local origin, not
+        # world space -- the original snippet dropped this offset, which
+        # silently misplaces scattered props on any terrain whose GameObject
+        # isn't sitting at world Y=0.
+        f"        float _dy = _terrain.SampleHeight(new Vector3(_dx, 0f, _dz)) "
+        f"+ _terrain.transform.position.y;\n"
         f"        Instantiate(_detailPrefab, new Vector3(_dx, _dy, _dz), Quaternion.identity);\n"
         f"    }}\n"
         f"}}"

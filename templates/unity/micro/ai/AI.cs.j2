@@ -167,7 +167,7 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 {% if s.nav_backend == "navmesh" %}
         _agent = GetComponent<NavMeshAgent>();
-        if (_agent != null) _agent.speed = moveSpeed;
+        if (_agent != null) _agent.speed = EffectiveMoveSpeed;
 {% endif %}
     }
 
@@ -271,7 +271,7 @@ public class {{ s.name }} : MonoBehaviour
                 if (_target != null)
                 {
                     Vector3 away{{ loop.index }} = transform.position
-                        + (transform.position - _target.position).normalized * detectionRadius;
+                        + (transform.position - _target.position).normalized * EffectiveDetectionRadius;
 {%- if s.nav_backend == "navmesh" %}
                     if (_agent != null) _agent.SetDestination(away{{ loop.index }});
 {%- else %}
@@ -345,7 +345,7 @@ public class {{ s.name }} : MonoBehaviour
             speedScale *= 1f + band * rubberBandStrength;
         }
 
-        Vector3 step = to.normalized * (moveSpeed * speedScale);
+        Vector3 step = to.normalized * (EffectiveMoveSpeed * speedScale);
         transform.position += step * Time.deltaTime;
         if (step.sqrMagnitude > 0.01f)
             transform.rotation = Quaternion.Slerp(transform.rotation,
@@ -379,12 +379,12 @@ public class {{ s.name }} : MonoBehaviour
             Vector3 aim = _target.position
                         + Vector3.up * (hoverHeight
                             + Mathf.Sin((Time.time + _bobPhase) * bobSpeed) * bobAmplitude);
-            steer += (aim - transform.position).normalized * moveSpeed;
+            steer += (aim - transform.position).normalized * EffectiveMoveSpeed;
         }
 {% else %}
-        if (_target != null) steer += (_target.position - transform.position).normalized * moveSpeed;
+        if (_target != null) steer += (_target.position - transform.position).normalized * EffectiveMoveSpeed;
 {% endif %}
-        _velocity = Vector3.Lerp(_velocity, Vector3.ClampMagnitude(steer, moveSpeed), Time.deltaTime * 2f);
+        _velocity = Vector3.Lerp(_velocity, Vector3.ClampMagnitude(steer, EffectiveMoveSpeed), Time.deltaTime * 2f);
 {% if variant == "flying_swarm" %}
         transform.position += _velocity * Time.deltaTime;
 {% else %}
@@ -462,7 +462,7 @@ public class {{ s.name }} : MonoBehaviour
         Vector3 dir = destination - transform.position;
         dir.z = 0f;
         if (dir.sqrMagnitude < 0.0001f) return;
-        transform.position += dir.normalized * moveSpeed * Time.deltaTime;
+        transform.position += dir.normalized * EffectiveMoveSpeed * Time.deltaTime;
         transform.right = dir.normalized;
     }
 {% endif %}
@@ -548,7 +548,7 @@ public class {{ s.name }} : MonoBehaviour
     {
         if (_target == null) return false;
         Vector3 toTarget = _target.position - transform.position;
-        if (toTarget.magnitude > detectionRadius) return false;
+        if (toTarget.magnitude > EffectiveDetectionRadius) return false;
 
         if (visionAngle < 360f)
         {
@@ -687,6 +687,34 @@ public class {{ s.name }} : MonoBehaviour
     public void OnHurt() => _tookDamage = true;
 {% endif %}
 {% endif %}
+
+    // DifficultyDamageMult() above only exists for variants with a health
+    // hook — every variant moves and perceives, combat or not (a racing/
+    // patrol AI has no health hook and got ZERO difficulty scaling before
+    // this, the exact gap a hand-built racing game had to work around with
+    // its own bespoke, non-reusable copy of this same idea). These two are
+    // unconditional so movement-only AI shares in difficulty tuning too.
+    private float EffectiveMoveSpeed      => moveSpeed * DifficultyMoveMult();
+    private float EffectiveDetectionRadius => detectionRadius * DifficultySenseMult();
+
+    /// <summary>Scales AI move speed by the main menu's difficulty
+    /// selection. Narrower than DifficultyDamageMult()'s 0.6/1/1.6 — a
+    /// slower-moving Easy AI still has to look plausible driving/walking
+    /// around the same world.</summary>
+    private static float DifficultyMoveMult()
+    {
+        string diff = PlayerPrefs.GetString("Difficulty", "Medium");
+        return diff == "Easy" ? 0.85f : diff == "Hard" ? 1.15f : 1f;
+    }
+
+    /// <summary>Scales AI detection/hearing radius by difficulty — how
+    /// early it notices the player. Wider swing than move speed: Easy
+    /// should read as "reacts late," not just "slightly slower."</summary>
+    private static float DifficultySenseMult()
+    {
+        string diff = PlayerPrefs.GetString("Difficulty", "Medium");
+        return diff == "Easy" ? 0.70f : diff == "Hard" ? 1.40f : 1f;
+    }
 
     private void OnDrawGizmosSelected()
     {

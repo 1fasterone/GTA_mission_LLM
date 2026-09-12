@@ -20,10 +20,15 @@ def test_camera_shake_uses_real_cinemachine_namespace():
 
 
 def test_scatter_terrain_details_defaults_to_active_terrain():
-    # No terrain_name bound: must look up Terrain.activeTerrain rather than
-    # a hardcoded/missing name lookup.
+    # No terrain_name bound: a multi-region world can have more than one
+    # Terrain in the scene, so this must search Terrain.activeTerrains for
+    # whichever tile's bounds contain the scattered point, falling back to
+    # Terrain.activeTerrain only if none do -- never a hardcoded/missing name
+    # lookup, and never a bare Terrain.activeTerrain that's ambiguous once
+    # there's more than one tile.
     snippet = _scatter_terrain_details({})
-    assert "var _terrain = Terrain.activeTerrain;" in snippet
+    assert "Terrain.activeTerrains" in snippet
+    assert "if (_terrain == null) _terrain = Terrain.activeTerrain;" in snippet
     assert "GameObject.Find" not in snippet
 
 
@@ -33,6 +38,23 @@ def test_scatter_terrain_details_looks_up_named_terrain():
     snippet = _scatter_terrain_details({"terrain_name": "HallOneGround"})
     assert 'GameObject.Find("HallOneGround")?.GetComponent<Terrain>()' in snippet
     assert "Terrain.activeTerrain" not in snippet
+
+
+def test_scatter_terrain_details_searches_all_tiles_not_just_the_first():
+    # Regression for a live bug (found by hand-testing a multi-tile desert
+    # racing scene): with several Terrain GameObjects in one scene,
+    # Terrain.activeTerrain returns a single arbitrary tile, so sampling
+    # height against it for a point that's actually on a DIFFERENT tile
+    # produces a bogus height -- scattered props end up floating above (or
+    # buried under) the real ground. The fix must iterate every tile
+    # (Terrain.activeTerrains, plural) and pick by bounds containment,
+    # never trust a single activeTerrain reference as "the" terrain.
+    snippet = _scatter_terrain_details({})
+    assert "foreach (var _t in Terrain.activeTerrains)" in snippet
+    assert "_t.GetPosition()" in snippet
+    assert "_t.terrainData.size" in snippet
+    # Containment check must cover both axes of the tile's footprint.
+    assert "_origin.x" in snippet and "_origin.z" in snippet
 
 
 def test_scatter_terrain_details_binds_prefab_count_and_bounds():
@@ -49,8 +71,12 @@ def test_scatter_terrain_details_binds_prefab_count_and_bounds():
 
 def test_scatter_terrain_details_null_guards_terrain_and_prefab():
     # Terrain.SampleHeight/Instantiate must never run against a missing
-    # terrain or an unresolved Resources.Load prefab.
+    # terrain or an unresolved Resources.Load prefab. Terrain resolution now
+    # happens per-instance (it depends on that instance's XZ position), so
+    # the null guard moved inside the loop rather than wrapping it once.
     snippet = _scatter_terrain_details({})
-    assert "if (_terrain != null && _detailPrefab != null)" in snippet
+    assert "if (_detailPrefab != null) {" in snippet
+    assert "if (_terrain == null) continue;" in snippet
     assert "SampleHeight" in snippet
+    assert "+ _terrain.transform.position.y" in snippet
     assert "Instantiate(_detailPrefab" in snippet
