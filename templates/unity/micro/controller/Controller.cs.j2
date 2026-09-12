@@ -17,6 +17,7 @@ using {{ u }};
 /// <summary>{{ s.description }}</summary>
 public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}, IVehicleState{% endif %}
 {
+    public System.Func<string, float> ReadStat;
     // ═══ MOVEMENT ════════════════════════════════════════════════════════════
     [Header("Movement")]
     [SerializeField] private float moveSpeed   = {{ "%.2f"|format(s.move_speed) }}f;
@@ -643,6 +644,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 {% if "aim_down_sights" in s.abilities %}
         if (_isAiming) speed *= adsSpeedMultiplier;
+{% endif %}
+
+{% if not variant.startswith("vehicle_") and variant != "aircraft" %}
+        speed *= Mathf.Max(0f, 1f + (ReadStat?.Invoke("speed") ?? 0f));
 {% endif %}
 
         // ── Per-variant movement ──────────────────────────────────────────────

@@ -20,6 +20,25 @@ public class {{ script.name }} : MonoBehaviour
 {% if needs_rigidbody %}
     private Rigidbody rb;
 {% endif %}
+{% if needs_player_rigidbody %}
+    private Rigidbody _generatedPlayerBody;
+    private bool _reportedMissingPlayerBody;
+    private Rigidbody playerRigidbody
+    {
+        get
+        {
+            if (_generatedPlayerBody != null) return _generatedPlayerBody;
+            var player = GameObject.FindWithTag("Player");
+            if (player != null) _generatedPlayerBody = player.GetComponent<Rigidbody>();
+            if (_generatedPlayerBody == null && !_reportedMissingPlayerBody)
+            {
+                Debug.LogWarning("{{ script.name }}: waiting for a Player-tagged object with a Rigidbody.", this);
+                _reportedMissingPlayerBody = true;
+            }
+            return _generatedPlayerBody;
+        }
+    }
+{% endif %}
 {% for f in script.extra_fields %}
 {{ "    " }}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
 {% endfor %}
@@ -42,6 +61,9 @@ public class {{ script.name }} : MonoBehaviour
         if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
 {% endif %}
 {% if script.awake_extra %}
+{% if needs_player_rigidbody and "playerRigidbody" in script.awake_extra %}
+        if (playerRigidbody == null) return;
+{% endif %}
 {{ script.awake_extra | indent(8, True) }}
 {% endif %}
     }
@@ -50,6 +72,9 @@ public class {{ script.name }} : MonoBehaviour
 
     private void Update()
     {
+{% if needs_player_rigidbody and "playerRigidbody" in script.update_extra %}
+        if (playerRigidbody == null) return;
+{% endif %}
 {{ script.update_extra | indent(8, True) }}
     }
 {% endif %}
@@ -57,6 +82,9 @@ public class {{ script.name }} : MonoBehaviour
 
     private void FixedUpdate()
     {
+{% if needs_player_rigidbody and "playerRigidbody" in script.fixed_update_extra %}
+        if (playerRigidbody == null) return;
+{% endif %}
 {{ script.fixed_update_extra | indent(8, True) }}
     }
 {% endif %}

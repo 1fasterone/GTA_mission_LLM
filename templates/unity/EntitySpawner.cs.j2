@@ -399,7 +399,13 @@ public class EntitySpawner : MonoBehaviour
                 // layout outward about its own centre by however much it falls
                 // short. Ratio <= 1 leaves the authored layout untouched.
                 if (_bakedExpand > 1f)
+                {
+                    // Footprint expansion is horizontal. Multiplying Y lifts
+                    // elevated gates/props away from their authored surface.
+                    float bakedY = pos.y;
                     pos = _bakedCentre + (pos - _bakedCentre) * _bakedExpand;
+                    pos.y = bakedY;
+                }
                 pos.y += pivotOffsetY * finalScale;
 {% if has_baked_yaws %}
                 // Baked facing (e.g. a start grid aligned to the race

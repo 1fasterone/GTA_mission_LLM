@@ -453,7 +453,10 @@ class TestBoundaryFollowRelationship:
         compute_layout(schema)
         arc_length = sum(math.hypot(b[0] - a[0], b[2] - a[2])
                          for a, b in zip(track.path_points, track.path_points[1:]))
-        assert len(barriers.instance_positions) == math.ceil(arc_length / 15.0)
+        assert len(barriers.instance_positions) >= math.ceil(arc_length / 15.0)
+        # Offset corners can need extra segments beyond the centerline budget.
+        ps = barriers.instance_positions
+        assert max(math.dist(a, b) for a, b in zip(ps, ps[1:] + ps[:1])) <= 15.001
 
     def test_smaller_max_gap_yields_more_instances(self):
         schema_wide, _t1, wide = self._circuit_with_barriers(spacing=40.0)

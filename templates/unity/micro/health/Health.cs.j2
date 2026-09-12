@@ -10,7 +10,8 @@ using UnityEngine;
 /// Subscribe to OnHealthChanged (e.g. a HUD health bar), OnDamaged, OnHealed, OnDeath.</summary>
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
+{{ inject.fields(s) }}    public System.Func<string, float> ReadStat;
+{{ inject.extensions_fields(s) }}
     [SerializeField] private float maxHealth   = {{ "%.1f"|format(s.max_health) }}f;
     [SerializeField] private float startHealth = {{ "%.1f"|format(s.start_health) }}f;
 {% if variant == "regenerating" %}
@@ -95,6 +96,8 @@ public class {{ s.name }} : MonoBehaviour
 
     public void TakeDamage(float amount)
     {
+        amount /= Mathf.Max(0.01f, 1f + (ReadStat?.Invoke("armor") ?? 0f));
+        if (float.IsNaN(amount) || float.IsInfinity(amount)) return;
         if (amount <= 0f || _current <= 0f) return;
         if (Time.time - _lastHit < invulnTime) return;
         _lastHit = Time.time;

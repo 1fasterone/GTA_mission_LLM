@@ -1285,6 +1285,13 @@ def is_finish_gate_entity(entity) -> bool:
     of `entity.count` checkpoints spread along its length."""
     if (entity.kind or "").lower().strip() in _FINISH_GATE_KINDS:
         return True
+    if (entity.kind or "").lower().strip() == "checkpoint":
+        return False
+    # Identity outranks asset-search hints ("checkpoint banner finish line"
+    # describes a reusable model, not permission to delete checkpoints).
+    name = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", entity.name).lower()
+    if _hits(name, ("checkpoint", "checkpoints")):
+        return False
     return bool(_hits(_entity_words(entity), _FINISH_GATE_WORDS))
 # A COHESIVE in-game unit/squad/pack that belongs staying together in one
 # spot — rival karts at a start grid, a squad of guards — as opposed to

@@ -1178,8 +1178,8 @@ class MicroComposer:
         # Item use (Heal/QuestFlag/Unlock) -> a matching micro receiver
         # (micro -> micro). Inventory.OnHealEffect/OnQuestFlagEffect/
         # OnUnlockEffect (Inventory.cs.j2's UseItem()) fire only for an item
-        # tagged with that effect; RestoreShield/StatBoost still have no
-        # composed micro with a matching public receiver, so those two stay
+        # tagged with that effect; RestoreShield still has no
+        # composed micro with a matching public receiver, so it stays
         # unbridged rather than guessing a wiring — same "no receiver yet"
         # reasoning as every other bridge in this function. "equipment"
         # variant has no UseItem()/these events at all (see Inventory.cs.j2),
@@ -1232,6 +1232,66 @@ class MicroComposer:
                 ),
             })
 
+        # Actor-scoped stat readers; never use the service locator's first
+        # match to choose which actor receives a consumable.
+        stat_readers = []
+        for unit in real_units:
+            stats = []
+            if unit.kind == "health":
+                stats = ["armor"]
+            elif unit.kind == "ai":
+                stats = ["speed"]
+                if unit.variant in ("navmesh_patrol", "fsm_guard", "behaviour_tree_lite"):
+                    stats.append("aggression")
+            elif unit.kind == "controller" and unit.variant not in (
+                    "pointer", "aircraft", "vehicle_car", "vehicle_bike", "vehicle_hover"):
+                stats = ["speed"]
+            if stats:
+                stat_readers.append((unit, stats))
+        if inventory:
+            for unit, stats in stat_readers:
+                support = "\n".join(f'    __stats.Support("{stat}");' for stat in stats)
+                bridges.append({
+                    "label": f"Actor stat readers: {unit.class_name}",
+                    "snippet": (
+                        f"foreach (var __reader in FindObjectsByType<{unit.class_name}>"
+                        "(FindObjectsInactive.Include, FindObjectsSortMode.None))\n"
+                        "{\n"
+                        "    var __stats = __reader.GetComponent<StatModifier>();\n"
+                        "    if (__stats == null) __stats = __reader.gameObject.AddComponent<StatModifier>();\n"
+                        f"{support}\n"
+                        "    __reader.ReadStat = __stats.Read;\n"
+                        "}"
+                    ),
+                })
+            # A systems inventory represents the sole player. Other inventory
+            # targets must match an explicitly composed actor target.
+            actor_target = "player" if inventory.target == "systems" else inventory.target
+            owners = [u for u, _ in stat_readers if u.target == actor_target]
+            collect = "\n".join(
+                f"foreach (var __actor in FindObjectsByType<{u.class_name}>"
+                "(FindObjectsInactive.Include, FindObjectsSortMode.None))\n"
+                "    __owners.Add(__actor.GetComponent<StatModifier>());"
+                for u in owners)
+            bridges.append({
+                "label": "Item use (StatBoost) -> actor StatModifier; ambiguity abstains",
+                "snippet": (
+                    "var __owners = new System.Collections.Generic.HashSet<StatModifier>();\n"
+                    f"{collect}\n"
+                    "foreach (var __inventory in FindObjectsByType<"
+                    f"{inventory.class_name}>(FindObjectsInactive.Include, FindObjectsSortMode.None))\n"
+                    "{\n"
+                    "    __inventory.OnStatBoostEffect += (__amount, __stat) => {\n"
+                    "        if (__owners.Count != 1) { Debug.LogWarning(\"[stat.abstain] Expected one item-effect actor.\"); return; }\n"
+                    "        foreach (var __owner in __owners) {\n"
+                    "            if (__owner != null) __owner.ApplyItem(__amount, __stat);\n"
+                    "            else Debug.LogWarning(\"[stat.abstain] Item-effect actor was destroyed.\");\n"
+                    "        }\n"
+                    "    };\n"
+                    "}"
+                ),
+            })
+
         env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
                           undefined=StrictUndefined, keep_trailing_newline=True)
         content = env.get_template("GameContext.cs.j2").render(
@@ -1241,6 +1301,12 @@ class MicroComposer:
         sdir = cdir / "Scripts"
         sdir.mkdir(parents=True, exist_ok=True)
         (sdir / "GameContext.cs").write_text(content, encoding="utf-8")
+        if inventory:
+            stat_content = env.get_template("StatModifier.cs.j2").render()
+            (sdir / "StatModifier.cs").write_text(stat_content, encoding="utf-8")
+            (sdir / "StatModifier.cs.meta").write_text(
+                _meta_file(_make_guid("compose:StatModifier")), encoding="utf-8")
+
         (sdir / "GameContext.cs.meta").write_text(_meta_file(context.guid), encoding="utf-8")
         self._folder_meta(cdir)
         self._folder_meta(sdir)

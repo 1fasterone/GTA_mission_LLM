@@ -18,7 +18,8 @@ using System.Collections.Generic;
 {% endif %}
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
+{{ inject.fields(s) }}    public System.Func<string, float> ReadStat;
+{{ inject.extensions_fields(s) }}
     [Header("Detection")]
     [SerializeField] private float detectionRadius = {{ "%.2f"|format(s.detection_radius) }}f;
     [SerializeField] private float attackRadius    = {{ "%.2f"|format(s.attack_radius) }}f;
@@ -167,7 +168,7 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 {% if s.nav_backend == "navmesh" %}
         _agent = GetComponent<NavMeshAgent>();
-        if (_agent != null) _agent.speed = moveSpeed;
+        if (_agent != null) _agent.speed = EffectiveMoveSpeed;
 {% endif %}
     }
 
@@ -181,8 +182,14 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 
+    private float EffectiveMoveSpeed => moveSpeed * Mathf.Max(0f, 1f + (ReadStat?.Invoke("speed") ?? 0f));
+    private float EffectiveDetectionRadius => detectionRadius * Mathf.Max(0f, 1f + (ReadStat?.Invoke("aggression") ?? 0f));
+
     private void Update()
     {
+{% if s.nav_backend == "navmesh" %}
+        if (_agent != null) _agent.speed = EffectiveMoveSpeed;
+{% endif %}
         if (_target == null)
         {
             var go = GameObject.FindGameObjectWithTag(targetTag);
@@ -345,7 +352,7 @@ public class {{ s.name }} : MonoBehaviour
             speedScale *= 1f + band * rubberBandStrength;
         }
 
-        Vector3 step = to.normalized * (moveSpeed * speedScale);
+        Vector3 step = to.normalized * (EffectiveMoveSpeed * speedScale);
         transform.position += step * Time.deltaTime;
         if (step.sqrMagnitude > 0.01f)
             transform.rotation = Quaternion.Slerp(transform.rotation,
@@ -379,12 +386,12 @@ public class {{ s.name }} : MonoBehaviour
             Vector3 aim = _target.position
                         + Vector3.up * (hoverHeight
                             + Mathf.Sin((Time.time + _bobPhase) * bobSpeed) * bobAmplitude);
-            steer += (aim - transform.position).normalized * moveSpeed;
+            steer += (aim - transform.position).normalized * EffectiveMoveSpeed;
         }
 {% else %}
-        if (_target != null) steer += (_target.position - transform.position).normalized * moveSpeed;
+        if (_target != null) steer += (_target.position - transform.position).normalized * EffectiveMoveSpeed;
 {% endif %}
-        _velocity = Vector3.Lerp(_velocity, Vector3.ClampMagnitude(steer, moveSpeed), Time.deltaTime * 2f);
+        _velocity = Vector3.Lerp(_velocity, Vector3.ClampMagnitude(steer, EffectiveMoveSpeed), Time.deltaTime * 2f);
 {% if variant == "flying_swarm" %}
         transform.position += _velocity * Time.deltaTime;
 {% else %}
@@ -462,7 +469,7 @@ public class {{ s.name }} : MonoBehaviour
         Vector3 dir = destination - transform.position;
         dir.z = 0f;
         if (dir.sqrMagnitude < 0.0001f) return;
-        transform.position += dir.normalized * moveSpeed * Time.deltaTime;
+        transform.position += dir.normalized * EffectiveMoveSpeed * Time.deltaTime;
         transform.right = dir.normalized;
     }
 {% endif %}
@@ -548,7 +555,7 @@ public class {{ s.name }} : MonoBehaviour
     {
         if (_target == null) return false;
         Vector3 toTarget = _target.position - transform.position;
-        if (toTarget.magnitude > detectionRadius) return false;
+        if (toTarget.magnitude > EffectiveDetectionRadius) return false;
 
         if (visionAngle < 360f)
         {
