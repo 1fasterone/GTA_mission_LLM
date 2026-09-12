@@ -627,6 +627,15 @@ def test_ai_renders_every_variant(tmp_path, dummy_config, variant):
     if variant in ("navmesh_patrol", "chase_player", "fsm_guard",
                    "behaviour_tree_lite", "cover_shooter"):
         assert "using UnityEngine.AI;" in cs
+    # Move-speed/detection difficulty scaling applies to every variant,
+    # unlike DifficultyDamageMult() which is gated behind use_health_hook —
+    # movement-only AI (e.g. waypoint_follow racers) has no health hook and
+    # must still get difficulty scaling.
+    assert "private float EffectiveMoveSpeed" in cs
+    assert "private float EffectiveDetectionRadius" in cs
+    assert "private static float DifficultyMoveMult()" in cs
+    assert "private static float DifficultySenseMult()" in cs
+    assert "NotImplementedException" not in cs
 
 
 # ── Tier 2 — unity-spawner ──────────────────────────────────────────────────

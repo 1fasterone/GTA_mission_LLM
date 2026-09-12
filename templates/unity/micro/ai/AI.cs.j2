@@ -278,7 +278,7 @@ public class {{ s.name }} : MonoBehaviour
                 if (_target != null)
                 {
                     Vector3 away{{ loop.index }} = transform.position
-                        + (transform.position - _target.position).normalized * detectionRadius;
+                        + (transform.position - _target.position).normalized * EffectiveDetectionRadius;
 {%- if s.nav_backend == "navmesh" %}
                     if (_agent != null) _agent.SetDestination(away{{ loop.index }});
 {%- else %}
@@ -694,6 +694,34 @@ public class {{ s.name }} : MonoBehaviour
     public void OnHurt() => _tookDamage = true;
 {% endif %}
 {% endif %}
+
+    // DifficultyDamageMult() above only exists for variants with a health
+    // hook — every variant moves and perceives, combat or not (a racing/
+    // patrol AI has no health hook and got ZERO difficulty scaling before
+    // this, the exact gap a hand-built racing game had to work around with
+    // its own bespoke, non-reusable copy of this same idea). These two are
+    // unconditional so movement-only AI shares in difficulty tuning too.
+    private float EffectiveMoveSpeed      => moveSpeed * DifficultyMoveMult();
+    private float EffectiveDetectionRadius => detectionRadius * DifficultySenseMult();
+
+    /// <summary>Scales AI move speed by the main menu's difficulty
+    /// selection. Narrower than DifficultyDamageMult()'s 0.6/1/1.6 — a
+    /// slower-moving Easy AI still has to look plausible driving/walking
+    /// around the same world.</summary>
+    private static float DifficultyMoveMult()
+    {
+        string diff = PlayerPrefs.GetString("Difficulty", "Medium");
+        return diff == "Easy" ? 0.85f : diff == "Hard" ? 1.15f : 1f;
+    }
+
+    /// <summary>Scales AI detection/hearing radius by difficulty — how
+    /// early it notices the player. Wider swing than move speed: Easy
+    /// should read as "reacts late," not just "slightly slower."</summary>
+    private static float DifficultySenseMult()
+    {
+        string diff = PlayerPrefs.GetString("Difficulty", "Medium");
+        return diff == "Easy" ? 0.70f : diff == "Hard" ? 1.40f : 1f;
+    }
 
     private void OnDrawGizmosSelected()
     {
