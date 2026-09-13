@@ -18,7 +18,8 @@ using System.Collections.Generic;
 {% endif %}
 public class {{ s.name }} : MonoBehaviour
 {
-{{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
+{{ inject.fields(s) }}    public System.Func<string, float> ReadStat;
+{{ inject.extensions_fields(s) }}
     [Header("Detection")]
     [SerializeField] private float detectionRadius = {{ "%.2f"|format(s.detection_radius) }}f;
     [SerializeField] private float attackRadius    = {{ "%.2f"|format(s.attack_radius) }}f;
@@ -206,8 +207,14 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 
+    private float EffectiveMoveSpeed => moveSpeed * Mathf.Max(0f, 1f + (ReadStat?.Invoke("speed") ?? 0f));
+    private float EffectiveDetectionRadius => detectionRadius * Mathf.Max(0f, 1f + (ReadStat?.Invoke("aggression") ?? 0f));
+
     private void Update()
     {
+{% if s.nav_backend == "navmesh" %}
+        if (_agent != null) _agent.speed = EffectiveMoveSpeed;
+{% endif %}
         if (_target == null)
         {
             var go = GameObject.FindGameObjectWithTag(targetTag);

@@ -59,6 +59,6 @@ and set its `effect` / `amount` / `targetId` fields to match.
 `OnShieldEffect`, `OnStatBoostEffect`, `OnUnlockEffect`, `OnQuestFlagEffect` —
 plus `OnItemUsed` for all of them. Subscribe from Health/Interactable/your own
 scripts, or via `GameContext.Get<T>()` in a composed project: a composed
-Health micro is auto-wired to `OnHealEffect` for you already.
+Health micro is auto-wired to `OnHealEffect` for you already. Composed stat boosts use an actor-owned modifier store: `speed` affects on-foot movement and AI movement, `armor` reduces incoming damage, and `aggression` expands guard sight range. Magnitudes are fractional (0.5 means +50%). Unsupported names or ambiguous actors log `[stat.abstain]`. Item effects have no authored duration; the runtime modifier API supports optional expiry and decay.
 {% endif %}
 {% endif %}

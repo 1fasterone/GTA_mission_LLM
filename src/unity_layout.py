@@ -80,6 +80,7 @@ from .unity_layout_archetype import (
     volume_height,
 )
 from .unity_route_axis import RouteModifier, RouteZone
+from .unity_route_axis import height_at as _route_height
 from .unity_route_axis import project as _route_project
 from .unity_route_axis import resolve_offset as _route_resolve_offset
 from .unity_route_axis import sample as _route_sample
@@ -539,10 +540,15 @@ def _boundary_follow_pack(entity: EntitySpec, primary: EntitySpec,
               for a, b in zip(primary.path_points, primary.path_points[1:])]
     arc_length = sum(seglens)
     if arc_length < 1e-9:
-        return [], []
+        _log.warning("[layout] boundary %r has a zero-length route; emitting one marker", entity.name)
+        x, z, tx, tz = _route_sample(primary.path_points, 0.0)
+        placed.append((x, z, max(0.5, entity.scale * 0.6)))
+        return [[x, 0.0, z]], [math.degrees(math.atan2(tx, tz))]
     max_gap = entity.spacing if entity.spacing > 0.0 else 2.0
     prefab_r = max(0.5, entity.scale * 0.6)
-    count = max(1, math.ceil(arc_length / max_gap))
+    intervals = max(1, math.ceil(arc_length / max_gap))
+    closed = primary.path_points[0][:3] == primary.path_points[-1][:3]
+    count = intervals if closed else intervals + 1
     half_w = (primary.path_width / 2.0 if primary.path_width > 0.0 else 4.0)
     side_offset = half_w + _PATH_CLEARANCE + _GROUP_MARGIN
     side = 1.0
@@ -550,7 +556,7 @@ def _boundary_follow_pack(entity: EntitySpec, primary: EntitySpec,
     positions: list[list[float]] = []
     yaws: list[float] = []
     for i in range(count):
-        t = 0.5 if count == 1 else i / (count - 1)
+        t = i / intervals
         x, z, tx, tz = _route_sample(primary.path_points, t)
         nx, nz = -tz, tx  # left normal -- same derivation sample_n uses
         cx, cz = x + nx * side * side_offset, z + nz * side * side_offset
@@ -2272,6 +2278,57 @@ def _layout_arena_plane(schema: UnitySchema,
     # already warned loudly if zones were authored without one reaching an
     # archetype that can use them.
     zones = _course_zones(schema) if primary is not None else []
+    # Distributed groups need elevation at EACH instance, not at the group's
+    # centroid. Preserve authored route height and apply the local zone offset.
+    # Already-authored instance_positions never enter these collections.
+    count_changes: list[str] = []
+    for e in gate_entities + edge_entities + boundary_entities + scenery_entities:
+        if primary is not None:
+            for p in e.instance_positions:
+                t, _ = _route_project(primary.path_points, p[0], p[2])
+                p[1] = round(_route_height(primary.path_points, t)
+                             + _route_resolve_offset(zones, t, seed=e.name), 3)
+            e.elevation = round(sum(p[1] for p in e.instance_positions)
+                                / len(e.instance_positions), 3)
+            if e in boundary_entities:
+                # Centerline spacing alone underestimates outer-corner gaps
+                # and slope distances. Subdivide the actual offset chain in
+                # world space, including the closing seam, after elevation.
+                original = list(zip(e.instance_positions, e.instance_yaws))
+                closed = primary.path_points[0][:3] == primary.path_points[-1][:3]
+                pairs = list(zip(original, original[1:]))
+                if closed:
+                    pairs.append((original[-1], original[0]))
+                refined = [original[0]]
+                max_gap = e.spacing if e.spacing > 0 else 2.0
+                for a, b in pairs:
+                    stack = [(a, b, 0)]
+                    while stack:
+                        left, right, depth = stack.pop()
+                        if math.dist(left[0], right[0]) <= max_gap + .001 or depth >= 16:
+                            if depth >= 16:
+                                _log.warning("[layout] %r boundary height discontinuity exceeds spacing", e.name)
+                            refined.append(right)
+                            continue
+                        x = (left[0][0] + right[0][0]) * .5
+                        z = (left[0][2] + right[0][2]) * .5
+                        t, _ = _route_project(primary.path_points, x, z)
+                        y = _route_height(primary.path_points, t) + _route_resolve_offset(zones, t, seed=e.name)
+                        delta = (right[1] - left[1] + 180) % 360 - 180
+                        mid = ([round(x, 3), round(y, 3), round(z, 3)], left[1] + delta * .5)
+                        stack.append((mid, right, depth + 1))
+                        stack.append((left, mid, depth + 1))
+                if closed:
+                    refined.pop()  # seam is joined, not instantiated twice
+                e.instance_positions = [p for p, _ in refined]
+                e.instance_yaws = [round(yaw, 3) for _, yaw in refined]
+                e.elevation = round(sum(p[1] for p in e.instance_positions)
+                                    / len(e.instance_positions), 3)
+        # Boundary segment count is derived; a finish gate is one instance.
+        # Keep the schema, runtime spawner and playability expectations in step.
+        if e.count != len(e.instance_positions):
+            count_changes.append(f"{e.name}: {e.count} -> {len(e.instance_positions)}")
+            e.count = len(e.instance_positions)
     zoned: list[str] = []
     moved: list[str] = []
     for e in cluster_packable:
@@ -2293,6 +2350,8 @@ def _layout_arena_plane(schema: UnitySchema,
             moved.append(e.name)
 
     msgs: list[str] = []
+    if count_changes:
+        msgs.append("Layout derived instance counts: " + "; ".join(count_changes))
     _volume_msg = describe(primitive, elevations)
     if _volume_msg:
         msgs.append(_volume_msg)

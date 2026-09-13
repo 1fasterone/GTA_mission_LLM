@@ -48,7 +48,9 @@ public class GameContext : MonoBehaviour
 {% if bridges %}
 {% for b in bridges %}
         // {{ b.label }}
-{{ b.snippet | indent(8, True) }}
+        {
+{{ b.snippet | indent(12, True) }}
+        }
 {% endfor %}
 {% else %}
         // No cross-layer bridges needed for this subsystem set.
