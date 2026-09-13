@@ -640,6 +640,11 @@ public class {{ class_name }} : Script
                 }
             }
 {% elif ped.is_hostile %}
+            // CanUseCover + CombatAbility must be set BEFORE Task.Combat starts
+            // the AI — GTA V's own combat task already seeks cover once these
+            // are on, so this is the whole "cover" behavior for this backend.
+            p.SetCombatAttribute(CombatAttributes.CanUseCover, true);
+            p.CombatAbility = CombatAbility.Average;
             p.Task.Combat(Game.Player.Character);
 {% elif ped.role == "ally" %}
             // TaskInvoker.FollowToOffsetOfEntity removed in 3.9 — use native directly
