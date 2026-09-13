@@ -193,6 +193,21 @@ class TestBuildTemplateContext:
         ctx = _build_template_context(schema)
         assert ctx["peds"][0]["weapon_name"] == "weapon_assaultrifle"
 
+    def test_ped_ammo_default_in_context(self):
+        schema = self._schema(peds=[
+            MissionPed(description="cop", model="s_m_y_cop_01", role="guard", weapon="pistol"),
+        ])
+        ctx = _build_template_context(schema)
+        assert ctx["peds"][0]["ammo"] == 100
+
+    def test_ped_ammo_authored_in_context(self):
+        schema = self._schema(peds=[
+            MissionPed(description="sniper", model="s_m_y_cop_01", role="target",
+                       weapon="sniper", ammo=8),
+        ])
+        ctx = _build_template_context(schema)
+        assert ctx["peds"][0]["ammo"] == 8
+
     def test_ped_health_and_armor_default_in_context(self):
         schema = self._schema(peds=[
             MissionPed(description="cop", model="s_m_y_cop_01", role="guard"),
@@ -340,6 +355,17 @@ class TestCodeGeneratorGenerate:
         code = gen.generate(schema)
         assert "p.Health = 300;" in code
         assert "p.ArmorFloat = 50.0f;" in code
+
+    def test_nondefault_ammo_emitted_for_armed_ped(self, gen):
+        schema = MissionSchema(
+            mission_name="Sniper Nest", location_name="docks", time_of_day=20,
+            weather="CLEAR", steps=[MissionStep(type="go_to", label="Go here")],
+            peds=[MissionPed(description="sniper", model="s_m_y_cop_01", role="target",
+                             weapon="sniper", ammo=8)],
+            vehicles=[], objects=[], audio=[],
+        )
+        code = gen.generate(schema)
+        assert "GIVE_WEAPON_TO_PED, p, _wh, 8, false, true" in code
 
     def test_output_contains_weather_string(self, gen, gta_full_schema):
         code = gen.generate(gta_full_schema)

@@ -627,7 +627,7 @@ public class {{ class_name }} : Script
             // GET_HASH_KEY resolves any weapon string at runtime, including DLC weapons.
             // Split into a local to avoid parser ambiguity with nested generic calls.
             { int _wh = Function.Call<int>(Hash.GET_HASH_KEY, "{{ ped.weapon_name }}");
-              Function.Call(Hash.GIVE_WEAPON_TO_PED, p, _wh, 100, false, true); }
+              Function.Call(Hash.GIVE_WEAPON_TO_PED, p, _wh, {{ ped.ammo }}, false, true); }
 {% endif %}
 {% if ped.patrol_path_idx is not none %}
             // Patrol path binding — walk the editor-authored waypoint loop.
@@ -724,9 +724,15 @@ public class {{ class_name }} : Script
             var p = World.CreatePed(new Model("{{ kb.model }}"), pos);
             if (p == null) continue;
             p.IsPersistent = true;
+{% if kb.health != 100.0 %}
+            p.Health = {{ kb.health|round|int }};
+{% endif %}
+{% if kb.armor > 0.0 %}
+            p.ArmorFloat = {{ "%.1f"|format(kb.armor) }}f;
+{% endif %}
 {% if kb.weapon_name %}
             { int _wh = Function.Call<int>(Hash.GET_HASH_KEY, "{{ kb.weapon_name }}");
-              Function.Call(Hash.GIVE_WEAPON_TO_PED, p, _wh, 100, false, true); }
+              Function.Call(Hash.GIVE_WEAPON_TO_PED, p, _wh, {{ kb.ammo }}, false, true); }
 {% endif %}
 {% if kb.hostile %}
             p.Task.Combat(Game.Player.Character);

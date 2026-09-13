@@ -692,6 +692,30 @@ def test_gamecontext_bridges_inventory_heal_to_health(tmp_path):
     assert ctx.count("{") == ctx.count("}")
 
 
+def test_gamecontext_bridges_inventory_restoreammo_to_controller(tmp_path):
+    """Inventory.OnRestoreAmmoEffect (a RestoreAmmo-tagged item's UseItem())
+    is wired to the composed player Controller's AddAmmo(int) — gated on the
+    controller's own post-default_fix abilities (ComposedUnit.abilities),
+    same reasoning as the locked-interactable Unlock bridge below."""
+    assets = Path(tmp_path) / "Assets"
+    subs = subsystems_for("3D", ["inventory"])
+    controller = next(s for s in subs if s.kind == "controller")
+    controller.options = {"abilities": ["shoot"]}
+    MicroComposer("CtxInvAmmo").emit(subs, assets, has_game_manager=False)
+    ctx = (assets / "Micros" / "context" / "Scripts"
+          / "GameContext.cs").read_text(encoding="utf-8")
+    assert "__inventory.OnRestoreAmmoEffect += __controller.AddAmmo;" in ctx
+    assert ctx.count("{") == ctx.count("}")
+
+
+def test_gamecontext_no_restoreammo_bridge_without_shoot_ability(tmp_path):
+    """The default 3D controller (jump/sprint, no shoot) declares no AddAmmo —
+    bridging to it would be a CS1061, so _emit_context must gate on abilities,
+    not just kind+inventory presence."""
+    ctx = _gamecontext_cs_with(tmp_path, "CtxInvAmmoNoShoot", features=["inventory"])
+    assert "OnRestoreAmmoEffect" not in ctx
+
+
 def test_gamecontext_no_inventory_bridge_without_inventory_feature(tmp_path):
     ctx = _gamecontext_cs(tmp_path, "CtxNoInv", has_gm=False)
     assert "OnHealEffect" not in ctx

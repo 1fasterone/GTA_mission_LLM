@@ -29,15 +29,15 @@ SortMode = Literal["none", "by_name", "by_weight"]
 # C# enum). "none" is the only variant-agnostic default: equipment/quest/junk
 # items that are carried, equipped, or shown but never consumed.
 ItemEffect = Literal[
-    "none", "heal", "restore_shield", "stat_boost", "unlock", "quest_flag",
+    "none", "heal", "restore_shield", "restore_ammo", "stat_boost", "unlock", "quest_flag",
 ]
 _ITEM_EFFECTS = list(ItemEffect.__args__)   # type: ignore[attr-defined]
 # unlock/quest_flag are meaningless without a target; heal/restore_shield/
-# stat_boost are meaningless with amount<=0 — default_fix downgrades both
-# to "none" rather than ship an effect UseItem() can fire but that changes
-# nothing (see default_fix below).
+# restore_ammo/stat_boost are meaningless with amount<=0 — default_fix
+# downgrades both to "none" rather than ship an effect UseItem() can fire but
+# that changes nothing (see default_fix below).
 _TARGETED_EFFECTS = frozenset({"unlock", "quest_flag"})
-_AMOUNT_EFFECTS = frozenset({"heal", "restore_shield", "stat_boost"})
+_AMOUNT_EFFECTS = frozenset({"heal", "restore_shield", "restore_ammo", "stat_boost"})
 
 
 class InventoryItemSpec(BaseModel):
@@ -120,6 +120,7 @@ Each entry in "items" is one item type. EFFECT MUST BE ONE OF:
   none            inert — equipment, quest items, junk; nothing happens on use
   heal            amount = HP restored
   restore_shield  amount = shield HP restored
+  restore_ammo    amount = ammo restored (only meaningful if the player has a shoot-ability controller)
   stat_boost      amount = positive fractional boost (0.5 = +50%); target_id = speed, armor, or aggression
   unlock          target_id = the lock/door id this item opens
   quest_flag      target_id = the flag name this item sets
@@ -167,6 +168,7 @@ class InventoryPipeline(UnityMicroPipeline):
         # Inventory.cs.j2 and ItemDefinition.cs.j2's mirrored Effect enum)
         "useitem", "onitemused", "onhealeffect", "onshieldeffect",
         "onstatboosteffect", "onunlockeffect", "onquestflageffect",
+        "onrestoreammoeffect",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "System", "System.Collections.Generic"}
 

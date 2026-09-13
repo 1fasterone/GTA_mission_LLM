@@ -89,6 +89,13 @@ class TestMissionPed:
     def test_count_above_maximum_clamps_to_max(self):
         assert MissionPed(description="cop", role="guard", count=9).count == 8
 
+    def test_ammo_defaults_to_100(self):
+        assert MissionPed(description="cop", role="guard").ammo == 100
+
+    def test_ammo_clamps_to_range(self):
+        assert MissionPed(description="cop", role="guard", ammo=0).ammo == 1
+        assert MissionPed(description="cop", role="guard", ammo=99999).ammo == 9999
+
     def test_health_defaults_to_100(self):
         assert MissionPed(description="cop", role="guard").health == 100.0
 

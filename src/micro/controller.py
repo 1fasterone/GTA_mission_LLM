@@ -272,6 +272,9 @@ class ControllerSchema(BaseModel):
     shoot_range:  float = 100.0
     # Per-weapon loadout (cycle_weapon switches _weaponIndex through this).
     weapons: list[WeaponDef] = Field(default_factory=list)
+    # Reserve ammo a pickup (inventory "restore_ammo" effect) refills —
+    # ReloadRoutine() draws from this instead of an infinite refill.
+    starting_reserve_ammo: int = 90
 
     # ── Fighting params (primary_attack / secondary_attack abilities) ──────────
     primary_damage:   float = 15.0
@@ -396,6 +399,8 @@ SCHEMA FIELD GUIDE:
   weapons — optional list of {"name", "damage", "fire_rate", "magazine_size", "reload_time", "shoot_range"};
     leave empty for a single weapon (it synthesizes one from the flat fields above). Author 2+ entries
     only when "cycle_weapon" is in abilities and the brief names distinct weapons (e.g. pistol + shotgun).
+  starting_reserve_ammo — only matters when "shoot" in abilities; ammo a reload draws from once the
+    magazine is empty (an inventory's "restore_ammo" item effect refills this, not the magazine directly)
   primary_damage / primary_range / primary_cooldown — "primary_attack" (punch / light attack)
   secondary_damage / secondary_range / secondary_cooldown — "secondary_attack" (kick / heavy)
   block_reduction (0–1 fraction) — "block" ability
@@ -597,6 +602,7 @@ OUTPUT this JSON (omit no keys):
   "reload_time": 2.0,
   "shoot_range": 100.0,
   "weapons": [],
+  "starting_reserve_ammo": 90,
   "primary_damage": 15.0,
   "primary_range": 1.2,
   "primary_cooldown": 0.35,
@@ -670,6 +676,7 @@ class ControllerPipeline(UnityMicroPipeline):
         "_meleeCooldown",
         "weapons", "weaponnames", "weapondamage", "weaponfirerate",
         "weaponmagazinesize", "weaponreloadtime", "weaponrange",
+        "startingreserveammo", "_reserveammo", "addammo", "reserveammo",
         # fighting
         "primarydamage", "primaryrange", "primarycooldown",
         "secondarydamage", "secondaryrange", "secondarycooldown",
@@ -822,6 +829,7 @@ class ControllerPipeline(UnityMicroPipeline):
         schema.lean_speed     = max(30.0, min(720.0, schema.lean_speed))
 
         # Shooter clamping
+        schema.starting_reserve_ammo = max(0, min(9999, schema.starting_reserve_ammo))
         schema.fire_rate     = max(0.0,  min(5.0,   schema.fire_rate))
         schema.magazine_size = max(1,    min(999,   schema.magazine_size))
         schema.reload_time   = max(0.1,  min(10.0,  schema.reload_time))

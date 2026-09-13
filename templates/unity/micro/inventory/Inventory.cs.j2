@@ -180,6 +180,11 @@ public class {{ s.name }} : MonoBehaviour
     public event Action<float> OnHealEffect;
     /// <summary>Fires only for a RestoreShield-tagged item; amount = shield HP.</summary>
     public event Action<float> OnShieldEffect;
+    /// <summary>Fires only for a RestoreAmmo-tagged item; amount = ammo restored
+    /// (truncated to int — a composed project's GameContext wires this straight
+    /// to a shoot-ability Controller's AddAmmo(int) when both are present —
+    /// see GameContext.cs.j2).</summary>
+    public event Action<int> OnRestoreAmmoEffect;
     /// <summary>Fires only for a StatBoost-tagged item; (magnitude, stat name).</summary>
     public event Action<float, string> OnStatBoostEffect;
     /// <summary>Fires only for an Unlock-tagged item; the lock/door id it opens.</summary>
@@ -199,6 +204,7 @@ public class {{ s.name }} : MonoBehaviour
         {
             case {{ s.name }}ItemDefinition.Effect.Heal:          OnHealEffect?.Invoke(item.amount); break;
             case {{ s.name }}ItemDefinition.Effect.RestoreShield: OnShieldEffect?.Invoke(item.amount); break;
+            case {{ s.name }}ItemDefinition.Effect.RestoreAmmo:   OnRestoreAmmoEffect?.Invoke((int)item.amount); break;
             case {{ s.name }}ItemDefinition.Effect.StatBoost:     OnStatBoostEffect?.Invoke(item.amount, item.targetId); break;
             case {{ s.name }}ItemDefinition.Effect.Unlock:        OnUnlockEffect?.Invoke(item.targetId); break;
             case {{ s.name }}ItemDefinition.Effect.QuestFlag:     OnQuestFlagEffect?.Invoke(item.targetId); break;

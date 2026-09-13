@@ -339,6 +339,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
             "role":        p.role,
             "count":       p.count,
             "weapon_name": _WEAPON_NAME.get(p.weapon),
+            "ammo":        p.ammo,
             "health":      p.health,
             "armor":       p.armor,
             # A ped on a patrol path patrols the path instead of going hostile —
@@ -464,6 +465,9 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "model":       ped.model or "UNRESOLVED",
                 "count":       ped.count,
                 "weapon_name": _WEAPON_NAME.get(ped.weapon),
+                "ammo":        ped.ammo,
+                "health":      ped.health,
+                "armor":       ped.armor,
                 "hostile":     ped.role == "target",
                 "ally":        ped.role == "ally",
                 "radius":      _KEYBIND_SPAWN_RADIUS,

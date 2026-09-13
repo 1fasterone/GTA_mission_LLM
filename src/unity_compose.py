@@ -91,6 +91,16 @@ class ComposedUnit(BaseModel):
                                                             # bridge must not reference
                                                             # UnlockAny on a class that never
                                                             # declares it.
+    abilities:  list[str]  = Field(default_factory=list)   # controller kind only: the
+                                                            # class's own post-default_fix
+                                                            # abilities (cycle_weapon can add
+                                                            # "shoot" — controller.py's own
+                                                            # normalization) — read back for
+                                                            # the same reason as locked above.
+                                                            # _emit_context's RestoreAmmo
+                                                            # bridge must not reference
+                                                            # AddAmmo on a class that never
+                                                            # declares it (no "shoot").
 
 
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
@@ -259,11 +269,16 @@ class MicroComposer:
             # above: a locked=true with an empty lock_id is downgraded there,
             # and only a survived True actually renders UnlockAny in the class.
             locked = bool(getattr(schema, "locked", False)) if sub.kind == "interactable" else False
+            # Read back AFTER default_fix for the same reason as locked above:
+            # cycle_weapon can add "shoot" there, so only the survived list
+            # says whether AddAmmo/etc. actually render on this class.
+            abilities = (list(getattr(schema, "abilities", []) or [])
+                        if sub.kind == "controller" else [])
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
                 target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
                 objectives=objs, widgets=widgets, setters=setters, states=states,
-                board=board, locked=locked))
+                board=board, locked=locked, abilities=abilities))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -1175,10 +1190,10 @@ class MicroComposer:
                 ),
             })
 
-        # Item use (Heal/QuestFlag/Unlock) -> a matching micro receiver
-        # (micro -> micro). Inventory.OnHealEffect/OnQuestFlagEffect/
-        # OnUnlockEffect (Inventory.cs.j2's UseItem()) fire only for an item
-        # tagged with that effect; RestoreShield still has no
+        # Item use (Heal/RestoreAmmo/QuestFlag/Unlock) -> a matching micro
+        # receiver (micro -> micro). Inventory.OnHealEffect/OnRestoreAmmoEffect/
+        # OnQuestFlagEffect/OnUnlockEffect (Inventory.cs.j2's UseItem()) fire
+        # only for an item tagged with that effect; RestoreShield still has no
         # composed micro with a matching public receiver, so it stays
         # unbridged rather than guessing a wiring — same "no receiver yet"
         # reasoning as every other bridge in this function. "equipment"
@@ -1196,6 +1211,23 @@ class MicroComposer:
                     f"var __health = Get<{health_player.class_name}>();\n"
                     f"if (__inventory != null && __health != null)\n"
                     f"    __inventory.OnHealEffect += __health.Heal;"
+                ),
+            })
+
+        # RestoreAmmo has no dedicated micro of its own — it feeds the same
+        # player controller Phase 1's weapon loadout lives on. Gated on
+        # abilities (read back after default_fix, same reasoning as `locked`
+        # above) rather than variant, since AddAmmo only renders when "shoot"
+        # survived — a controller with no shoot ability has no such method.
+        controller = _pick("controller", "player")
+        if inventory and controller and "shoot" in controller.abilities:
+            bridges.append({
+                "label": "Item use (RestoreAmmo) -> Controller.AddAmmo (micro -> micro)",
+                "snippet": (
+                    f"var __inventory = Get<{inventory.class_name}>();\n"
+                    f"var __controller = Get<{controller.class_name}>();\n"
+                    f"if (__inventory != null && __controller != null)\n"
+                    f"    __inventory.OnRestoreAmmoEffect += __controller.AddAmmo;"
                 ),
             })
 
