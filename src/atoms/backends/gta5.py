@@ -202,13 +202,19 @@ def _equip_weapon(args: dict) -> str:
     # GTA.Native.Hash holds native FUNCTION names only — weapon hashes are not
     # members (CS0117). Resolve the weapon string at runtime via GET_HASH_KEY,
     # the same pattern the mission template uses (covers DLC weapons too).
+    # Ped target resolves the same way _set_health does — the atom's own
+    # contract declares `entity` required, but this used to hardcode the
+    # player regardless of what was passed.
+    entity = _s(args.get("entity"), "player")
     weapon = _s(args.get("weapon"), "weapon_pistol").lower()
     if not weapon.startswith("weapon_"):
         weapon = "weapon_" + weapon
     return (
+        f"var _ped = \"{entity}\" == \"player\"\n"
+        f"    ? (GTA.Ped)Game.Player.Character\n"
+        f"    : GTA.World.GetNearestPed(new Vector3(0,0,0), 999f);\n"
         f"int _wh = GTA.Native.Function.Call<int>(GTA.Native.Hash.GET_HASH_KEY, \"{weapon}\");\n"
-        f"GTA.Native.Function.Call(GTA.Native.Hash.GIVE_WEAPON_TO_PED,\n"
-        f"    Game.Player.Character, _wh, 100, false, true);"
+        f"if (_ped != null) GTA.Native.Function.Call(GTA.Native.Hash.GIVE_WEAPON_TO_PED, _ped, _wh, 100, false, true);"
     )
 
 

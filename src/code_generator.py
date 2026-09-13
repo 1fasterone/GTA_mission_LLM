@@ -339,6 +339,8 @@ def _build_template_context(schema: MissionSchema) -> dict:
             "role":        p.role,
             "count":       p.count,
             "weapon_name": _WEAPON_NAME.get(p.weapon),
+            "health":      p.health,
+            "armor":       p.armor,
             # A ped on a patrol path patrols the path instead of going hostile —
             # otherwise Task.Combat overrides the walk and it never patrols.
             # "guard" and "patrol" get their own passive stance branches below

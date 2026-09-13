@@ -617,6 +617,12 @@ public class {{ class_name }} : Script
 {% if ped.heading is not none %}
             p.Heading = {{ "%.1f"|format(ped.heading) }}f;
 {% endif %}
+{% if ped.health != 100.0 %}
+            p.Health = {{ ped.health|round|int }};
+{% endif %}
+{% if ped.armor > 0.0 %}
+            p.ArmorFloat = {{ "%.1f"|format(ped.armor) }}f;
+{% endif %}
 {% if ped.weapon_name %}
             // GET_HASH_KEY resolves any weapon string at runtime, including DLC weapons.
             // Split into a local to avoid parser ambiguity with nested generic calls.

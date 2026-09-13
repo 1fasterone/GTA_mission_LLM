@@ -361,6 +361,8 @@ class MissionPed(BaseModel):
     role:        PedRole
     count:       int = Field(default=1, ge=1, le=8)
     weapon:      WeaponEnum = "none"
+    health:      float = 100.0
+    armor:       float = 0.0
 
     @field_validator("weapon", mode="before")
     @classmethod
@@ -380,6 +382,16 @@ class MissionPed(BaseModel):
     @classmethod
     def _clamp_count(cls, v) -> int:
         return _clamp_int(v, 1, 8, 1)
+
+    @field_validator("health", mode="before")
+    @classmethod
+    def _clamp_health(cls, v) -> float:
+        return _clamp_float(v, 1.0, 1000.0, 100.0)
+
+    @field_validator("armor", mode="before")
+    @classmethod
+    def _clamp_armor(cls, v) -> float:
+        return _clamp_float(v, 0.0, 100.0, 0.0)
 
 
 class MissionVehicle(BaseModel):

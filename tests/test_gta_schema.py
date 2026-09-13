@@ -89,6 +89,20 @@ class TestMissionPed:
     def test_count_above_maximum_clamps_to_max(self):
         assert MissionPed(description="cop", role="guard", count=9).count == 8
 
+    def test_health_defaults_to_100(self):
+        assert MissionPed(description="cop", role="guard").health == 100.0
+
+    def test_health_clamps_to_range(self):
+        assert MissionPed(description="cop", role="guard", health=0).health == 1.0
+        assert MissionPed(description="cop", role="guard", health=5000).health == 1000.0
+
+    def test_armor_defaults_to_zero(self):
+        assert MissionPed(description="cop", role="guard").armor == 0.0
+
+    def test_armor_clamps_to_range(self):
+        assert MissionPed(description="cop", role="guard", armor=-5).armor == 0.0
+        assert MissionPed(description="cop", role="guard", armor=500).armor == 100.0
+
     def test_unknown_weapon_normalised_to_none(self):
         """Pydantic validator: unrecognised weapon clamps to 'none', not a raise."""
         p = MissionPed(description="cop", role="guard", weapon="bazooka")
