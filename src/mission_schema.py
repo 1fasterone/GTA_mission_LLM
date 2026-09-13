@@ -361,6 +361,7 @@ class MissionPed(BaseModel):
     role:        PedRole
     count:       int = Field(default=1, ge=1, le=8)
     weapon:      WeaponEnum = "none"
+    ammo:        int = 100   # matches GIVE_WEAPON_TO_PED's historical hardcoded value
     health:      float = 100.0
     armor:       float = 0.0
 
@@ -370,6 +371,11 @@ class MissionPed(BaseModel):
         """Clamp any unrecognised weapon string to 'none' instead of raising."""
         w = str(v).lower().strip()
         return w if w in _VALID_WEAPONS else "none"
+
+    @field_validator("ammo", mode="before")
+    @classmethod
+    def _clamp_ammo(cls, v) -> int:
+        return _clamp_int(v, 1, 9999, 100)
 
     @field_validator("role", mode="before")
     @classmethod

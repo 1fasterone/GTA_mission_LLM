@@ -9,7 +9,7 @@ public class {{ s.name }}ItemDefinition : ScriptableObject
 {% if variant != "equipment" %}
     /// <summary>What USING this item does — see {{ s.name }}.UseItem(). Closed
     /// set so dispatch stays a plain switch, never free-form code.</summary>
-    public enum Effect { None, Heal, RestoreShield, StatBoost, Unlock, QuestFlag }
+    public enum Effect { None, Heal, RestoreShield, RestoreAmmo, StatBoost, Unlock, QuestFlag }
 
 {% endif %}
     public string id;
@@ -24,7 +24,7 @@ public class {{ s.name }}ItemDefinition : ScriptableObject
     [Header("Use Effect")]
     [Tooltip("What happens when this item is used. None = not usable (quest item, junk, sells only).")]
     public Effect effect = Effect.None;
-    [Tooltip("Heal / RestoreShield HP, or StatBoost magnitude. Unused by Unlock and QuestFlag.")]
+    [Tooltip("Heal / RestoreShield / RestoreAmmo amount, or StatBoost magnitude. Unused by Unlock and QuestFlag.")]
     public float amount;
     [Tooltip("StatBoost's stat name, Unlock's lock id, or QuestFlag's flag name. Unused by Heal and RestoreShield.")]
     public string targetId;

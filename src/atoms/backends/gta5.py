@@ -209,12 +209,13 @@ def _equip_weapon(args: dict) -> str:
     weapon = _s(args.get("weapon"), "weapon_pistol").lower()
     if not weapon.startswith("weapon_"):
         weapon = "weapon_" + weapon
+    ammo = _i(args.get("ammo"), 100)
     return (
         f"var _ped = \"{entity}\" == \"player\"\n"
         f"    ? (GTA.Ped)Game.Player.Character\n"
         f"    : GTA.World.GetNearestPed(new Vector3(0,0,0), 999f);\n"
         f"int _wh = GTA.Native.Function.Call<int>(GTA.Native.Hash.GET_HASH_KEY, \"{weapon}\");\n"
-        f"if (_ped != null) GTA.Native.Function.Call(GTA.Native.Hash.GIVE_WEAPON_TO_PED, _ped, _wh, 100, false, true);"
+        f"if (_ped != null) GTA.Native.Function.Call(GTA.Native.Hash.GIVE_WEAPON_TO_PED, _ped, _wh, {ammo}, false, true);"
     )
 
 

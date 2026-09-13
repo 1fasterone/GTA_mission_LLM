@@ -129,6 +129,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private int[]    weaponMagazineSize = new int[]   { {% for w in s.weapons %}{{ w.magazine_size }}{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private float[]  weaponReloadTime   = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.reload_time) }}f{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private float[]  weaponRange        = new float[] { {% for w in s.weapons %}{{ "%.1f"|format(w.shoot_range) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+    [Tooltip("Ammo a reload draws from once the magazine is empty — an inventory's RestoreAmmo item effect refills this.")]
+    [SerializeField] private int      startingReserveAmmo = {{ s.starting_reserve_ammo }};
 {% endif %}
 {% if "aim_down_sights" in s.abilities %}
     [Header("ADS")]
@@ -308,6 +310,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if "shoot" in s.abilities %}
     private float _lastFireTime;
     private int   _currentAmmo;
+    private int   _reserveAmmo;
     private bool  _isReloading;
 {% endif %}
 {% if "aim_down_sights" in s.abilities %}
@@ -410,7 +413,12 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 {% if "shoot" in s.abilities %}
     public int  CurrentAmmo  => _currentAmmo;
+    public int  ReserveAmmo  => _reserveAmmo;
     public bool IsReloading  => _isReloading;
+    /// <summary>Refills reserve ammo — the reload draws from this, the magazine
+    /// isn't topped up directly. Wired from an inventory's RestoreAmmo item
+    /// effect when both are composed (see GameContext.cs.j2).</summary>
+    public void AddAmmo(int amount) => _reserveAmmo += Mathf.Max(0, amount);
 {% endif %}
 
     // ═══ AWAKE ═══════════════════════════════════════════════════════════════
@@ -491,6 +499,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 {% if "shoot" in s.abilities %}
         _currentAmmo = weaponMagazineSize[_weaponIndex];
+        _reserveAmmo = startingReserveAmmo;
 {% endif %}
 {% if "throw_grenade" in s.abilities %}
         _grenadesLeft = maxGrenades;
@@ -1198,7 +1207,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     {
         _isReloading = true;
         yield return new WaitForSeconds(weaponReloadTime[_weaponIndex]);
-        _currentAmmo = weaponMagazineSize[_weaponIndex];
+        int needed = weaponMagazineSize[_weaponIndex] - _currentAmmo;
+        int take   = Mathf.Min(needed, _reserveAmmo);
+        _currentAmmo += take;
+        _reserveAmmo -= take;
         _isReloading = false;
     }
 {% endif %}

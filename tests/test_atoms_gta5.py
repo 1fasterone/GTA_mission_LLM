@@ -114,6 +114,14 @@ class TestGta5Snippets:
         assert '"player" == "player"' in snippet
         assert "Game.Player.Character" in snippet
 
+    def test_equip_weapon_ammo_defaults_to_100(self):
+        snippet = gta5_atom_snippet("EquipWeapon", {"weapon": "rifle"})
+        assert "GIVE_WEAPON_TO_PED, _ped, _wh, 100, false, true" in snippet
+
+    def test_equip_weapon_honors_ammo_arg(self):
+        snippet = gta5_atom_snippet("EquipWeapon", {"weapon": "rifle", "ammo": 250})
+        assert "GIVE_WEAPON_TO_PED, _ped, _wh, 250, false, true" in snippet
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Native-hash allowlist cross-check

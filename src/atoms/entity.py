@@ -56,6 +56,8 @@ ENTITY_ATOMS: list[AtomDef] = [
                       description="Entity to equip (or 'Player')"),
             AtomParam(name="weapon", type="string",    required=True,
                       description="Weapon identifier key"),
+            AtomParam(name="ammo", type="int", default=100,
+                      description="Ammo to give with the weapon (GTA5 only)"),
         ],
     ),
 ]

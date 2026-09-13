@@ -217,6 +217,23 @@ def test_controller_cycle_weapon_bakes_per_weapon_arrays(dummy_config):
     assert "_currentAmmo = Mathf.Min(_currentAmmo, weaponMagazineSize[_weaponIndex]);" in cs
 
 
+def test_controller_add_ammo_reserve_flow(dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(name="X", abilities=["shoot"], starting_reserve_ammo=45)
+    s = p.default_fix(s, "third_person")
+    assert s.starting_reserve_ammo == 45
+
+    cs = p.jinja().get_template("Controller.cs.j2").render(s=s, variant="third_person")
+    assert "private int   _reserveAmmo;" in cs
+    assert "startingReserveAmmo = 45;" in cs
+    assert "public int  ReserveAmmo  => _reserveAmmo;" in cs
+    assert "public void AddAmmo(int amount) => _reserveAmmo += Mathf.Max(0, amount);" in cs
+    # ReloadRoutine draws from reserve instead of an infinite refill.
+    assert "int needed = weaponMagazineSize[_weaponIndex] - _currentAmmo;" in cs
+    assert "_reserveAmmo -= take;" in cs
+    assert cs.count("{") == cs.count("}")
+
+
 def test_controller_cycle_weapon_implies_shoot(dummy_config):
     p = ControllerPipeline(dummy_config)
     s = ControllerSchema(name="X", abilities=["cycle_weapon"])
@@ -1089,13 +1106,28 @@ def test_inventory_fixer_keeps_positive_amount_heal(dummy_config):
     assert s.items[0].amount == 25.0
 
 
+def test_inventory_fixer_drops_zero_amount_restore_ammo_to_none(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Ammo Box", effect="restore_ammo", amount=0.0)])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "none"
+
+
+def test_inventory_fixer_keeps_positive_amount_restore_ammo(dummy_config):
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(name="X", items=[InventoryItemSpec(name="Ammo Box", effect="restore_ammo", amount=30.0)])
+    s = p.default_fix(s, "slot_based")
+    assert s.items[0].effect == "restore_ammo"
+    assert s.items[0].amount == 30.0
+
+
 def test_inventory_item_definition_emits_effect_enum_for_container_variants(tmp_path, dummy_config):
     p = InventoryPipeline(dummy_config)
     s = InventorySchema(name="TestInv", variant="slot_based")
     s = p.default_fix(s, "slot_based")
     p.write_files(s, "slot_based", tmp_path)
     item = (tmp_path / "Scripts" / "TestInvItemDefinition.cs").read_text(encoding="utf-8")
-    assert "public enum Effect { None, Heal, RestoreShield, StatBoost, Unlock, QuestFlag }" in item
+    assert "public enum Effect { None, Heal, RestoreShield, RestoreAmmo, StatBoost, Unlock, QuestFlag }" in item
     assert "public Effect effect = Effect.None;" in item
     assert "public float amount;" in item
     assert "public string targetId;" in item
@@ -1119,7 +1151,9 @@ def test_inventory_use_item_dispatches_by_effect(tmp_path, dummy_config):
     mgr = (tmp_path / "Scripts" / "TestInv.cs").read_text(encoding="utf-8")
     assert "public bool UseItem(TestInvItemDefinition item)" in mgr
     assert "public event Action<float> OnHealEffect;" in mgr
+    assert "public event Action<int> OnRestoreAmmoEffect;" in mgr
     assert "OnHealEffect?.Invoke(item.amount);" in mgr
+    assert "OnRestoreAmmoEffect?.Invoke((int)item.amount);" in mgr
     assert "OnStatBoostEffect?.Invoke(item.amount, item.targetId);" in mgr
     assert mgr.count("{") == mgr.count("}")
 
@@ -1137,7 +1171,8 @@ def test_inventory_use_item_omitted_for_equipment(tmp_path, dummy_config):
 def test_inventory_reserved_names_cover_item_effect_api():
     reserved = InventoryPipeline._RESERVED_FIELD_NAMES
     for name in ("useitem", "onitemused", "onhealeffect", "onshieldeffect",
-                "onstatboosteffect", "onunlockeffect", "onquestflageffect"):
+                "onstatboosteffect", "onunlockeffect", "onquestflageffect",
+                "onrestoreammoeffect"):
         assert name in reserved, f"{name!r} declared in Inventory.cs.j2 but not reserved"
 
 
