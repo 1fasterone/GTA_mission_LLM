@@ -985,9 +985,18 @@ def _scatter_terrain_details(args: dict) -> str:
     seed   = int(args.get("seed", 0) or 0)
     terrain_name = _s(args.get("terrain_name", ""))
 
+    # Named terrain does not depend on the scattered point, so it is
+    # resolved ONCE before the loop (hoisted_lookup) rather than re-running a
+    # scene-wide GameObject.Find on every one of `count` instances -- that
+    # was a needless, avoidable cost reintroduced when the no-name branch's
+    # per-instance search below was added. Only the multi-tile search
+    # actually needs to run per instance, since it depends on that
+    # instance's own _dx/_dz.
+    hoisted_lookup = ""
+    per_instance_lookup = ""
     if terrain_name:
-        terrain_lookup = (
-            f"        Terrain _terrain = "
+        hoisted_lookup = (
+            f"    Terrain _terrain = "
             f"GameObject.Find(\"{terrain_name}\")?.GetComponent<Terrain>();\n"
         )
     else:
@@ -1000,7 +1009,7 @@ def _scatter_terrain_details(args: dict) -> str:
         # contain this instance's XZ position instead; only fall back to
         # Terrain.activeTerrain if nothing contains it (e.g. a point just
         # outside every tile's edge).
-        terrain_lookup = (
+        per_instance_lookup = (
             "        Terrain _terrain = null;\n"
             "        foreach (var _t in Terrain.activeTerrains) {\n"
             "            if (_t == null || _t.terrainData == null) continue;\n"
@@ -1016,11 +1025,12 @@ def _scatter_terrain_details(args: dict) -> str:
     return (
         f"var _detailPrefab = Resources.Load<GameObject>(\"Terrain/{prefab}\");\n"
         f"if (_detailPrefab != null) {{\n"
+        f"{hoisted_lookup}"
         f"    var _rng = new System.Random({seed});\n"
         f"    for (int i = 0; i < {count}; i++) {{\n"
         f"        float _dx = (float)(_rng.NextDouble() * ({xmax} - {xmin}) + {xmin});\n"
         f"        float _dz = (float)(_rng.NextDouble() * ({zmax} - {zmin}) + {zmin});\n"
-        f"{terrain_lookup}"
+        f"{per_instance_lookup}"
         f"        if (_terrain == null) continue;\n"
         # SampleHeight() is relative to the terrain's OWN local origin, not
         # world space -- the original snippet dropped this offset, which

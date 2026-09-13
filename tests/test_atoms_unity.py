@@ -40,6 +40,17 @@ def test_scatter_terrain_details_looks_up_named_terrain():
     assert "Terrain.activeTerrain" not in snippet
 
 
+def test_scatter_terrain_details_named_lookup_is_hoisted_out_of_the_loop():
+    # Regression: a named terrain doesn't depend on the scattered point, so
+    # GameObject.Find must run ONCE before the `for` loop, not once per
+    # `count` instances. Assert the lookup line appears before "for (int i"
+    # and does not appear a second time inside the loop body.
+    snippet = _scatter_terrain_details({"terrain_name": "HallOneGround", "count": 5})
+    lookup = 'GameObject.Find("HallOneGround")?.GetComponent<Terrain>()'
+    assert snippet.index(lookup) < snippet.index("for (int i")
+    assert snippet.count(lookup) == 1
+
+
 def test_scatter_terrain_details_searches_all_tiles_not_just_the_first():
     # Regression for a live bug (found by hand-testing a multi-tile desert
     # racing scene): with several Terrain GameObjects in one scene,

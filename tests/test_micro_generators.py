@@ -636,6 +636,57 @@ def test_ai_renders_every_variant(tmp_path, dummy_config, variant):
     assert "private static float DifficultyMoveMult()" in cs
     assert "private static float DifficultySenseMult()" in cs
     assert "NotImplementedException" not in cs
+    # use_health_hook defaults to True for every variant (see AISchema), so
+    # every variant here also gets the per-instance combat profile that
+    # layers on top of the flat difficulty multipliers.
+    assert "private void RecordEngagement(float dist)" in cs
+    assert "private float ProfileMoveMult()" in cs
+    assert "private float ProfileSenseMult()" in cs
+    assert "private float ProfileDamageMult()" in cs
+    assert "public void OnHurt()" in cs
+
+
+def test_ai_no_health_hook_skips_combat_profile(tmp_path, dummy_config):
+    # A variant with use_health_hook=False (e.g. a purely cosmetic wanderer)
+    # must still get the flat menu-difficulty scaling, but none of the
+    # per-instance combat-profile machinery, which has nothing to sample
+    # without TryAttack ever dealing damage.
+    p = AIPipeline(dummy_config)
+    s = AISchema(name="TestAI", variant="chase_player", use_health_hook=False)
+    s = p.default_fix(s, "chase_player")
+    p.write_files(s, "chase_player", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestAI.cs").read_text(encoding="utf-8")
+    assert "private float EffectiveMoveSpeed" in cs
+    assert "private void RecordEngagement" not in cs
+    assert "private float ProfileMoveMult()" not in cs
+    assert "public void OnHurt()" not in cs
+    # TryAttack still takes dist unconditionally (every call site passes it),
+    # but its body has nothing to do with it when there's no health hook.
+    assert "private void TryAttack(float dist)" in cs
+
+
+def test_ai_fsm_attack_role_is_range_gated(tmp_path, dummy_config):
+    # Regression: the FSM "attack" role used to call TryAttack() every tick
+    # it held that state, regardless of actual distance to the target --
+    # unlike every other variant's attack call site, which already gated on
+    # attackRadius. An authored state graph that entered "attack" before
+    # actually closing the gap dealt guaranteed damage at any range. Passing
+    # dist into TryAttack() and checking `dist <= attackRadius` before
+    # dealing damage closes that gap and doubles as the signal
+    # RecordEngagement() needs to tell a landed hit from a whiff.
+    p = AIPipeline(dummy_config)
+    s = AISchema(
+        name="TestAI", variant="fsm_guard",
+        states=[
+            AIState(name="Patrol", role="patrol"),
+            AIState(name="Strike", role="attack"),
+        ],
+    )
+    s = p.default_fix(s, "fsm_guard")
+    p.write_files(s, "fsm_guard", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestAI.cs").read_text(encoding="utf-8")
+    assert "TryAttack(dist);" in cs
+    assert "if (dist <= attackRadius && _target != null)" in cs
 
 
 # ── Tier 2 — unity-spawner ──────────────────────────────────────────────────

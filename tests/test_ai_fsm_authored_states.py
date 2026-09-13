@@ -129,7 +129,7 @@ def test_explicit_role_beats_inference():
 @pytest.mark.parametrize("role,marker", [
     ("patrol", "PatrolStep();"),
     ("chase",  "_agent.SetDestination(ChaseDestination())"),
-    ("attack", "TryAttack();"),
+    ("attack", "TryAttack(dist);"),
     ("dead",   "enabled = false;"),
 ])
 def test_each_role_emits_its_behaviour(dummy_config, tmp_path, role, marker):
