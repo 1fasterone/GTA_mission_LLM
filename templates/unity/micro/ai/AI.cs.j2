@@ -40,6 +40,31 @@ public class {{ s.name }} : MonoBehaviour
     private Transform   _target;
     private float       _attackTimer;
 
+{% if s.use_health_hook %}
+    // ── Combat profile: THIS AI's own rolling read on how its fight against
+    // the player is actually going, sampled once per attack tick in
+    // RecordEngagement() below. Replaces a flat menu-wide difficulty number
+    // with something that reacts per-instance, per-encounter — see
+    // ProfileMoveMult/SenseMult/DamageMult.
+    private int   _profileAttempts;
+    private int   _profileMisses;
+    private int   _profileClosing;
+    private int   _profileOpening;
+    private int   _profileHitsTaken;
+    private float _prevEngageDist = -1f;
+    private float _engageDistSum;
+    private int   _engageDistCount;
+    private float _evasionLevel;
+    private float _aggressionLevel;
+    private float _threatLevel;
+
+    /// <summary>Coarse read on the range this fight has actually played out
+    /// at, folded in RecordEngagement(). No consumer wires this up yet —
+    /// exposed for a future HUD/bark/spawner hook.</summary>
+    public enum EngagementRange { Close, Mid, Long }
+    public EngagementRange PreferredRange { get; private set; } = EngagementRange.Mid;
+{% endif %}
+
 {% if _perception_variant %}
     [Header("Perception")]
     [Tooltip("Degrees, cone width centred on facing. 360 = old omniscient sphere.")]
@@ -228,7 +253,8 @@ public class {{ s.name }} : MonoBehaviour
 {% else %}
         MoveTowards(_target.position);
 {% endif %}
-        if (Vector3.Distance(transform.position, _target.position) < attackRadius) TryAttack();
+        float chaseDist = Vector3.Distance(transform.position, _target.position);
+        if (chaseDist < attackRadius) TryAttack(chaseDist);
 {% elif variant in ("fsm_guard", "behaviour_tree_lite") %}
         // Distance is +infinity while there is no target, so `target_lost` style
         // transitions still evaluate and a guard keeps patrolling an empty scene
@@ -273,7 +299,7 @@ public class {{ s.name }} : MonoBehaviour
                 if (_target != null) MoveTowards(ChaseDestination());
 {%- endif %}
 {%- elif st.role == "attack" %}
-                TryAttack();
+                TryAttack(dist);
 {%- elif st.role == "flee" %}
                 if (_target != null)
                 {
@@ -323,7 +349,7 @@ public class {{ s.name }} : MonoBehaviour
         if (dist > attackRadius * 0.6f) MoveTowards(_target.position);
         else MoveTowards(transform.position - (_target.position - transform.position).normalized * 2f);
 {% endif %}
-        if (dist < attackRadius) TryAttack();
+        if (dist < attackRadius) TryAttack(dist);
 {% elif variant == "waypoint_follow" %}
         if (_waypoints == null || _waypoints.Count == 0) { CollectWaypoints(); return; }
 
@@ -400,9 +426,11 @@ public class {{ s.name }} : MonoBehaviour
         if (_velocity.sqrMagnitude > 0.01f) transform.forward = _velocity.normalized;
         // Converging on the player is only half the behaviour — without this the
         // swarm drifts into the target and then does nothing to it forever.
-        if (_target != null
-            && Vector3.Distance(transform.position, _target.position) < attackRadius)
-            TryAttack();
+        if (_target != null)
+        {
+            float swarmDist = Vector3.Distance(transform.position, _target.position);
+            if (swarmDist < attackRadius) TryAttack(swarmDist);
+        }
 {% endif %}
 {{ inject.lifecycle(s.update_extra) }}
     }
@@ -667,14 +695,16 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 {% endif %}
 
-    private void TryAttack()
+    private void TryAttack(float dist)
     {
         _attackTimer -= Time.deltaTime;
         if (_attackTimer > 0f) return;
         _attackTimer = 1.0f;
 {% if s.use_health_hook %}
-        if (_target != null)
-            _target.SendMessage("TakeDamage", 10f * DifficultyDamageMult(), SendMessageOptions.DontRequireReceiver);
+        RecordEngagement(dist);
+        if (dist <= attackRadius && _target != null)
+            _target.SendMessage("TakeDamage", 10f * DifficultyDamageMult() * ProfileDamageMult(),
+                SendMessageOptions.DontRequireReceiver);
 {% endif %}
     }
 {% if s.use_health_hook %}
@@ -687,22 +717,92 @@ public class {{ s.name }} : MonoBehaviour
         return diff == "Easy" ? 0.6f : diff == "Hard" ? 1.6f : 1f;
     }
 
+    /// <summary>SendMessage target called by Health.cs.j2's TakeDamage — every
+    /// use_health_hook variant feeds this into its own rolling combat profile
+    /// (see RecordEngagement); fsm/behaviour-tree variants additionally use it
+    /// to fire a "took_damage" transition next Update().</summary>
+    public void OnHurt()
+    {
+        _profileHitsTaken++;
 {% if variant in ("fsm_guard", "behaviour_tree_lite") %}
-
-    /// <summary>SendMessage target called by Health.cs.j2's TakeDamage — marks
-    /// this AI hit for one Update() so a "took_damage" transition can fire.</summary>
-    public void OnHurt() => _tookDamage = true;
+        _tookDamage = true;
 {% endif %}
+    }
+
+    /// <summary>Samples one attack attempt into this AI's own rolling combat
+    /// profile — how THIS fight against THIS player is actually going, not a
+    /// global menu setting. Runs on the same ~1/sec cadence as the attack
+    /// cooldown above (cheaper than sampling every Update(), and plenty
+    /// granular for a slowly-drifting profile). Every few samples this folds
+    /// into evasionLevel/aggressionLevel/threatLevel/PreferredRange, which
+    /// ProfileMoveMult/SenseMult/DamageMult below read back. No weapon, ammo
+    /// or cover system exists yet in this compiler to drive anything richer
+    /// than that (accuracy-as-shots-fired, preferred weapon, suppression,
+    /// squad-wide tension budgets) — abstaining on those rather than
+    /// fabricating numbers with nothing behind them.</summary>
+    private void RecordEngagement(float dist)
+    {
+        _profileAttempts++;
+        if (dist > attackRadius) _profileMisses++;
+
+        if (_prevEngageDist >= 0f)
+        {
+            if (dist < _prevEngageDist - 0.05f) _profileClosing++;
+            else if (dist > _prevEngageDist + 0.05f) _profileOpening++;
+        }
+        _prevEngageDist   = dist;
+        _engageDistSum   += dist;
+        _engageDistCount++;
+
+        if (_profileAttempts < 3) return;   // a couple of samples is noise, not signal
+
+        _evasionLevel    = Mathf.Clamp01((float)_profileMisses / _profileAttempts);
+        if (_profileClosing + _profileOpening > 0)
+            _aggressionLevel = Mathf.Clamp01(
+                (float)_profileClosing / (_profileClosing + _profileOpening));
+        _threatLevel = Mathf.Clamp01(_profileHitsTaken / 5f);
+
+        float avgDist = _engageDistCount > 0 ? _engageDistSum / _engageDistCount : attackRadius;
+        PreferredRange = avgDist < attackRadius * 0.6f ? EngagementRange.Close
+            : avgDist < attackRadius * 1.5f ? EngagementRange.Mid
+            : EngagementRange.Long;
+
+        _profileAttempts = 0; _profileMisses = 0; _profileClosing = 0; _profileOpening = 0;
+        _engageDistSum   = 0f; _engageDistCount = 0;
+        _profileHitsTaken = Mathf.Max(0, _profileHitsTaken - 1);   // slow decay, never a hard reset
+    }
+
+    /// <summary>Adjustments layered ON TOP OF the menu's flat difficulty tier
+    /// (DifficultyMoveMult/SenseMult/DamageMult below), driven by THIS AI's
+    /// own rolling combat profile rather than a level-wide constant. A menu
+    /// difficulty tier is the same for every AI in the level; these react
+    /// per-instance to how this one specific fight is going.</summary>
+    private float ProfileMoveMult()
+        // Whiffing a lot (high evasionLevel) → close distance faster instead
+        // of standing still missing.
+        => Mathf.Lerp(0.9f, 1.15f, _evasionLevel);
+
+    private float ProfileSenseMult()
+        // A player who keeps closing distance (high aggressionLevel) is
+        // pressing the fight — worth reacting to sooner.
+        => Mathf.Lerp(0.9f, 1.2f, _aggressionLevel);
+
+    private float ProfileDamageMult()
+        // High threatLevel = the player has been landing a lot of hits on
+        // THIS ai recently — it hits back harder. Low threatLevel (this ai
+        // barely being touched) eases off instead of piling onto a fight
+        // it is already winning.
+        => Mathf.Lerp(0.85f, 1.15f, _threatLevel);
 {% endif %}
 
-    // DifficultyDamageMult() above only exists for variants with a health
-    // hook — every variant moves and perceives, combat or not (a racing/
-    // patrol AI has no health hook and got ZERO difficulty scaling before
-    // this, the exact gap a hand-built racing game had to work around with
-    // its own bespoke, non-reusable copy of this same idea). These two are
-    // unconditional so movement-only AI shares in difficulty tuning too.
-    private float EffectiveMoveSpeed      => moveSpeed * DifficultyMoveMult();
-    private float EffectiveDetectionRadius => detectionRadius * DifficultySenseMult();
+    // DifficultyMoveMult/SenseMult below are unconditional so movement-only
+    // AI (a racing/patrol AI with no health hook) still shares in menu
+    // difficulty tuning; ProfileMoveMult/SenseMult above only exist (and
+    // only apply) for variants with a live combat profile to read.
+    private float EffectiveMoveSpeed
+        => moveSpeed * DifficultyMoveMult(){% if s.use_health_hook %} * ProfileMoveMult(){% endif %};
+    private float EffectiveDetectionRadius
+        => detectionRadius * DifficultySenseMult(){% if s.use_health_hook %} * ProfileSenseMult(){% endif %};
 
     /// <summary>Scales AI move speed by the main menu's difficulty
     /// selection. Narrower than DifficultyDamageMult()'s 0.6/1/1.6 — a
