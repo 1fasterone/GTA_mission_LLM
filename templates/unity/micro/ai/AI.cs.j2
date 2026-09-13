@@ -207,9 +207,6 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
     }
 
-    private float EffectiveMoveSpeed => moveSpeed * Mathf.Max(0f, 1f + (ReadStat?.Invoke("speed") ?? 0f));
-    private float EffectiveDetectionRadius => detectionRadius * Mathf.Max(0f, 1f + (ReadStat?.Invoke("aggression") ?? 0f));
-
     private void Update()
     {
 {% if s.nav_backend == "navmesh" %}
@@ -800,9 +797,11 @@ public class {{ s.name }} : MonoBehaviour
     // difficulty tuning; ProfileMoveMult/SenseMult above only exist (and
     // only apply) for variants with a live combat profile to read.
     private float EffectiveMoveSpeed
-        => moveSpeed * DifficultyMoveMult(){% if s.use_health_hook %} * ProfileMoveMult(){% endif %};
+        => moveSpeed * Mathf.Max(0f, 1f + (ReadStat?.Invoke("speed") ?? 0f))
+            * DifficultyMoveMult(){% if s.use_health_hook %} * ProfileMoveMult(){% endif %};
     private float EffectiveDetectionRadius
-        => detectionRadius * DifficultySenseMult(){% if s.use_health_hook %} * ProfileSenseMult(){% endif %};
+        => detectionRadius * Mathf.Max(0f, 1f + (ReadStat?.Invoke("aggression") ?? 0f))
+            * DifficultySenseMult(){% if s.use_health_hook %} * ProfileSenseMult(){% endif %};
 
     /// <summary>Scales AI move speed by the main menu's difficulty
     /// selection. Narrower than DifficultyDamageMult()'s 0.6/1/1.6 — a

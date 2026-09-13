@@ -153,6 +153,20 @@ def _clamp_ability_list(v: object) -> list[str]:
     return out
 
 
+class WeaponDef(BaseModel):
+    """One entry in a shoot-ability controller's `weapons` loadout (see
+    ControllerSchema.weapons). An unauthored (or pre-loadout) schema gets a
+    single entry synthesized in default_fix from the legacy flat fire_rate/
+    magazine_size/reload_time/shoot_range fields below, damage=25.0 matching
+    TryShoot()'s historical hardcoded value — so nothing regresses."""
+    name:          str   = "Weapon"
+    damage:        float = 25.0
+    fire_rate:     float = 0.15
+    magazine_size: int   = 30
+    reload_time:   float = 2.0
+    shoot_range:   float = 100.0
+
+
 class ControllerMode(BaseModel):
     """One entry in a multi_mode controller's `modes` registry — see
     docs/CONTROL_SURFACE_STACK.md. `abilities` here are per-mode (e.g. `nitro`
@@ -250,10 +264,14 @@ class ControllerSchema(BaseModel):
     hover_max_speed:    float = 140.0
 
     # ── Shooter params (shoot ability) ─────────────────────────────────────────
+    # Legacy flat fields — still the tuning source default_fix synthesizes the
+    # single fallback WeaponDef from when `weapons` is left empty.
     fire_rate:    float = 0.15
     magazine_size: int  = 30
     reload_time:  float = 2.0
     shoot_range:  float = 100.0
+    # Per-weapon loadout (cycle_weapon switches _weaponIndex through this).
+    weapons: list[WeaponDef] = Field(default_factory=list)
 
     # ── Fighting params (primary_attack / secondary_attack abilities) ──────────
     primary_damage:   float = 15.0
@@ -375,6 +393,9 @@ SCHEMA FIELD GUIDE:
   abilities — list of ability names from the full vocabulary above; drives which C# sections appear
   move_speed / sprint_speed / jump_force — tune to match the brief's feel
   fire_rate (s) / magazine_size / reload_time (s) / shoot_range — only matter when "shoot" in abilities
+  weapons — optional list of {"name", "damage", "fire_rate", "magazine_size", "reload_time", "shoot_range"};
+    leave empty for a single weapon (it synthesizes one from the flat fields above). Author 2+ entries
+    only when "cycle_weapon" is in abilities and the brief names distinct weapons (e.g. pistol + shotgun).
   primary_damage / primary_range / primary_cooldown — "primary_attack" (punch / light attack)
   secondary_damage / secondary_range / secondary_cooldown — "secondary_attack" (kick / heavy)
   block_reduction (0–1 fraction) — "block" ability
@@ -575,6 +596,7 @@ OUTPUT this JSON (omit no keys):
   "magazine_size": 30,
   "reload_time": 2.0,
   "shoot_range": 100.0,
+  "weapons": [],
   "primary_damage": 15.0,
   "primary_range": 1.2,
   "primary_cooldown": 0.35,
@@ -646,6 +668,8 @@ class ControllerPipeline(UnityMicroPipeline):
         "adsfovmultiplier", "adsspeedmultiplier", "_weaponindex",
         "_grenadesLeft", "maxgrenades", "throwforce",
         "_meleeCooldown",
+        "weapons", "weaponnames", "weapondamage", "weaponfirerate",
+        "weaponmagazinesize", "weaponreloadtime", "weaponrange",
         # fighting
         "primarydamage", "primaryrange", "primarycooldown",
         "secondarydamage", "secondaryrange", "secondarycooldown",
@@ -759,6 +783,13 @@ class ControllerPipeline(UnityMicroPipeline):
         if "fly" in schema.abilities and "sprint" in schema.abilities:
             schema.abilities = [a for a in schema.abilities if a != "sprint"]
 
+        # cycle_weapon switches between weapon-loadout entries — meaningless
+        # without "shoot", and SwitchWeapon() reclamps _currentAmmo against
+        # the shoot ability's own fields, so cycle_weapon-without-shoot would
+        # be a compile-time symbol gap (CS0103), not just a no-op.
+        if "cycle_weapon" in schema.abilities and "shoot" not in schema.abilities:
+            schema.abilities.append("shoot")
+
         # Speed sanity
         if schema.move_speed <= 0:
             schema.move_speed = 6.0
@@ -795,6 +826,27 @@ class ControllerPipeline(UnityMicroPipeline):
         schema.magazine_size = max(1,    min(999,   schema.magazine_size))
         schema.reload_time   = max(0.1,  min(10.0,  schema.reload_time))
         schema.shoot_range   = max(1.0,  min(1000.0, schema.shoot_range))
+
+        # Weapon loadout — a shoot-ability schema with no authored `weapons`
+        # gets exactly one synthesized entry from the flat fields above,
+        # damage=25.0 matching TryShoot()'s historical hardcoded value, so an
+        # unauthored schema renders byte-identical behavior. Authored entries
+        # get the same bounds as the flat fields, unconditionally — same as
+        # fire_rate etc. above, which clamp regardless of whether "shoot"
+        # ended up in abilities.
+        if "shoot" in schema.abilities and not schema.weapons:
+            schema.weapons = [WeaponDef(
+                name="Weapon", damage=25.0,
+                fire_rate=schema.fire_rate, magazine_size=schema.magazine_size,
+                reload_time=schema.reload_time, shoot_range=schema.shoot_range,
+            )]
+        for w in schema.weapons:
+            w.name          = (w.name or "Weapon").strip()[:40] or "Weapon"
+            w.damage        = max(0.0, min(9999.0, w.damage))
+            w.fire_rate     = max(0.0, min(5.0,    w.fire_rate))
+            w.magazine_size = max(1,   min(999,    w.magazine_size))
+            w.reload_time   = max(0.1, min(10.0,   w.reload_time))
+            w.shoot_range   = max(1.0, min(1000.0, w.shoot_range))
 
         # Fighting clamping
         schema.primary_damage    = max(0.0,  min(9999.0, schema.primary_damage))

@@ -193,6 +193,23 @@ class TestBuildTemplateContext:
         ctx = _build_template_context(schema)
         assert ctx["peds"][0]["weapon_name"] == "weapon_assaultrifle"
 
+    def test_ped_health_and_armor_default_in_context(self):
+        schema = self._schema(peds=[
+            MissionPed(description="cop", model="s_m_y_cop_01", role="guard"),
+        ])
+        ctx = _build_template_context(schema)
+        assert ctx["peds"][0]["health"] == 100.0
+        assert ctx["peds"][0]["armor"] == 0.0
+
+    def test_ped_health_and_armor_authored_in_context(self):
+        schema = self._schema(peds=[
+            MissionPed(description="tank", model="s_m_y_cop_01", role="target",
+                       health=300, armor=50),
+        ])
+        ctx = _build_template_context(schema)
+        assert ctx["peds"][0]["health"] == 300.0
+        assert ctx["peds"][0]["armor"] == 50.0
+
     def test_ped_is_not_hostile_for_guard_role(self):
         # Guards get their own passive GuardCurrentPosition() branch in the
         # template instead of instant Task.Combat at spawn.
@@ -304,6 +321,25 @@ class TestCodeGeneratorGenerate:
     def test_output_contains_weapon_string_for_armed_ped(self, gen, gta_full_schema):
         code = gen.generate(gta_full_schema)
         assert "weapon_pistol" in code
+
+    def test_default_health_and_armor_emit_no_lines(self, gen, gta_full_schema):
+        # gta_full_schema's ped is default health=100/armor=0 — no line needed,
+        # since GTA5 peds already spawn at that state.
+        code = gen.generate(gta_full_schema)
+        assert "p.Health =" not in code
+        assert "p.ArmorFloat =" not in code
+
+    def test_nondefault_health_and_armor_emitted(self, gen):
+        schema = MissionSchema(
+            mission_name="Tank Fight", location_name="docks", time_of_day=20,
+            weather="CLEAR", steps=[MissionStep(type="go_to", label="Go here")],
+            peds=[MissionPed(description="tank", model="s_m_y_cop_01", role="target",
+                             health=300, armor=50)],
+            vehicles=[], objects=[], audio=[],
+        )
+        code = gen.generate(schema)
+        assert "p.Health = 300;" in code
+        assert "p.ArmorFloat = 50.0f;" in code
 
     def test_output_contains_weather_string(self, gen, gta_full_schema):
         code = gen.generate(gta_full_schema)

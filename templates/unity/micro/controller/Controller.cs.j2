@@ -120,11 +120,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     // ═══ SHOOTING ════════════════════════════════════════════════════════════
 {% if "shoot" in s.abilities %}
     [Header("Shooting")]
-    [SerializeField] private float fireRate    = {{ "%.2f"|format(s.fire_rate) }}f;
-    [SerializeField] private int   magazineSize = {{ s.magazine_size }};
-    [SerializeField] private float reloadTime  = {{ "%.2f"|format(s.reload_time) }}f;
-    [SerializeField] private float shootRange  = {{ "%.1f"|format(s.shoot_range) }}f;
     [SerializeField] private ParticleSystem muzzleFlash = null;
+    // Per-weapon loadout — one entry unless "cycle_weapon" is also authored.
+    // _weaponIndex (below) selects which entry TryShoot()/ReloadRoutine() use.
+    [SerializeField] private string[] weaponNames        = new string[] { {% for w in s.weapons %}"{{ w.name }}"{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[]  weaponDamage       = new float[] { {% for w in s.weapons %}{{ "%.1f"|format(w.damage) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[]  weaponFireRate     = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.fire_rate) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private int[]    weaponMagazineSize = new int[]   { {% for w in s.weapons %}{{ w.magazine_size }}{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[]  weaponReloadTime   = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.reload_time) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[]  weaponRange        = new float[] { {% for w in s.weapons %}{{ "%.1f"|format(w.shoot_range) }}f{{ "" if loop.last else ", " }}{% endfor %} };
 {% endif %}
 {% if "aim_down_sights" in s.abilities %}
     [Header("ADS")]
@@ -132,10 +136,6 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private float adsFovMultiplier   = 0.6f;
     [SerializeField] private float adsSpeedMultiplier = 0.55f;
     [SerializeField] private float adsTransitionTime  = 0.12f;
-{% endif %}
-{% if "cycle_weapon" in s.abilities %}
-    [Header("Weapons")]
-    [SerializeField] private string[] weaponNames = new string[] { "Pistol", "Rifle", "Shotgun" };
 {% endif %}
 {% if "throw_grenade" in s.abilities %}
     [Header("Grenades")]
@@ -314,8 +314,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private bool  _isAiming;
     private float _defaultFov;
 {% endif %}
-{% if "cycle_weapon" in s.abilities %}
-    private int   _weaponIndex;
+{% if "shoot" in s.abilities %}
+    private int   _weaponIndex;   // indexes weaponDamage/weaponFireRate/etc. above
 {% endif %}
 {% if "throw_grenade" in s.abilities %}
     private int   _grenadesLeft;
@@ -490,7 +490,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         }
 {% endif %}
 {% if "shoot" in s.abilities %}
-        _currentAmmo = magazineSize;
+        _currentAmmo = weaponMagazineSize[_weaponIndex];
 {% endif %}
 {% if "throw_grenade" in s.abilities %}
         _grenadesLeft = maxGrenades;
@@ -956,9 +956,9 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
                     adsTransitionTime);
         }
 {% endif %}
-        if (fireDown && !_isReloading && _currentAmmo > 0 && Time.time >= _lastFireTime + fireRate)
+        if (fireDown && !_isReloading && _currentAmmo > 0 && Time.time >= _lastFireTime + weaponFireRate[_weaponIndex])
             TryShoot();
-        if (reloadDown && !_isReloading && _currentAmmo < magazineSize)
+        if (reloadDown && !_isReloading && _currentAmmo < weaponMagazineSize[_weaponIndex])
             StartCoroutine(ReloadRoutine());
 {% endif %}
 {% if "cycle_weapon" in s.abilities %}
@@ -1190,15 +1190,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         Ray ray = Camera.main != null
             ? Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
             : new Ray(transform.position, transform.forward);
-        if (Physics.Raycast(ray, out RaycastHit hit, shootRange))
-            hit.collider.SendMessage("TakeDamage", 25f, SendMessageOptions.DontRequireReceiver);
+        if (Physics.Raycast(ray, out RaycastHit hit, weaponRange[_weaponIndex]))
+            hit.collider.SendMessage("TakeDamage", weaponDamage[_weaponIndex], SendMessageOptions.DontRequireReceiver);
     }
 
     private IEnumerator ReloadRoutine()
     {
         _isReloading = true;
-        yield return new WaitForSeconds(reloadTime);
-        _currentAmmo = magazineSize;
+        yield return new WaitForSeconds(weaponReloadTime[_weaponIndex]);
+        _currentAmmo = weaponMagazineSize[_weaponIndex];
         _isReloading = false;
     }
 {% endif %}
@@ -1206,6 +1206,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private void SwitchWeapon(int delta)
     {
         _weaponIndex = (_weaponIndex + delta + weaponNames.Length) % weaponNames.Length;
+        _currentAmmo = Mathf.Min(_currentAmmo, weaponMagazineSize[_weaponIndex]);
         SendMessage("OnWeaponChanged", _weaponIndex, SendMessageOptions.DontRequireReceiver);
     }
 {% endif %}

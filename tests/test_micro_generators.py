@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.micro import REGISTRY
-from src.micro.controller     import ControllerPipeline, ControllerSchema
+from src.micro.controller     import ControllerPipeline, ControllerSchema, WeaponDef
 from src.micro.camera         import CameraRigPipeline,  CameraRigSchema
 from src.micro.physics        import PhysicsPipeline,    PhysicsSchema
 from src.micro.hud            import HUDPipeline,        HUDSchema
@@ -184,6 +184,45 @@ def test_controller_fixer_clears_abilities_for_vehicle(dummy_config):
     s = ControllerSchema(name="X", variant="vehicle_car", abilities=["jump", "sprint"])
     s = p.default_fix(s, "vehicle_car")
     assert s.abilities == []
+
+
+def test_controller_shoot_synthesizes_single_weapon_from_flat_fields(dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(name="X", abilities=["shoot"],
+                         fire_rate=0.3, magazine_size=8, reload_time=1.5, shoot_range=50.0)
+    s = p.default_fix(s, "third_person")
+    assert len(s.weapons) == 1
+    w = s.weapons[0]
+    assert w.damage == 25.0   # matches TryShoot()'s historical hardcoded value
+    assert (w.fire_rate, w.magazine_size, w.reload_time, w.shoot_range) == (0.3, 8, 1.5, 50.0)
+
+    cs = p.jinja().get_template("Controller.cs.j2").render(s=s, variant="third_person")
+    assert "weaponDamage[_weaponIndex]" in cs
+    assert "weaponRange[_weaponIndex]" in cs
+    assert "private float fireRate" not in cs   # old flat SerializeField is gone
+
+
+def test_controller_cycle_weapon_bakes_per_weapon_arrays(dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(name="X", abilities=["shoot", "cycle_weapon"], weapons=[
+        WeaponDef(name="Pistol", damage=15.0, fire_rate=0.2, magazine_size=12, reload_time=1.2, shoot_range=40.0),
+        WeaponDef(name="Shotgun", damage=60.0, fire_rate=0.9, magazine_size=6, reload_time=2.5, shoot_range=15.0),
+    ])
+    s = p.default_fix(s, "third_person")
+    assert [w.name for w in s.weapons] == ["Pistol", "Shotgun"]
+
+    cs = p.jinja().get_template("Controller.cs.j2").render(s=s, variant="third_person")
+    assert 'new string[] { "Pistol", "Shotgun" }' in cs
+    assert "new float[] { 15.0f, 60.0f }" in cs   # weaponDamage
+    assert "_currentAmmo = Mathf.Min(_currentAmmo, weaponMagazineSize[_weaponIndex]);" in cs
+
+
+def test_controller_cycle_weapon_implies_shoot(dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(name="X", abilities=["cycle_weapon"])
+    s = p.default_fix(s, "third_person")
+    assert "shoot" in s.abilities
+    assert len(s.weapons) == 1   # synthesized fallback, not left empty
 
 
 def test_camera_fixer_zeros_first_person_offset(dummy_config):

@@ -101,6 +101,19 @@ class TestGta5Snippets:
         assert '"weapon_carbine"' in snippet
         assert "Hash.WEAPON_" not in snippet
 
+    def test_equip_weapon_targets_named_entity(self):
+        # Regression: used to always arm Game.Player.Character regardless of
+        # the atom's own required `entity` param.
+        snippet = gta5_atom_snippet("EquipWeapon", {"entity": "Guard1", "weapon": "rifle"})
+        assert '"Guard1" == "player"' in snippet
+        assert "GTA.World.GetNearestPed" in snippet
+        assert "GIVE_WEAPON_TO_PED, _ped," in snippet  # targets the resolved ped, not the player directly
+
+    def test_equip_weapon_defaults_to_player(self):
+        snippet = gta5_atom_snippet("EquipWeapon", {"weapon": "rifle"})
+        assert '"player" == "player"' in snippet
+        assert "Game.Player.Character" in snippet
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Native-hash allowlist cross-check
