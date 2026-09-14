@@ -824,7 +824,8 @@ def resolve_entity_assets(schema,
         # pack — "corsair plane" on kind="vehicle" must reach the catalog, not
         # stop at Car.fbx. Hold the tier-1 model as the safety net and try the
         # catalog first; `model_hint: "default <kind>"` opts back into tier 1.
-        if tier1 is not None and hint in ("", f"default {kind}", "default prop"):
+        default_requested = hint in (f"default {kind}", "default prop")
+        if tier1 is not None and default_requested:
             if kind == "vehicle":
                 racing_core_seen = True   # default-pack car is real racing content
             entity_model_paths[e.name] = tier1.resource_path

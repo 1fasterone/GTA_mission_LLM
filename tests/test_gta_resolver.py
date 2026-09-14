@@ -104,6 +104,16 @@ class TestLocalResolve:
         upper = _local_resolve("POLICE CAR", "vehicles", lookups)
         assert lower == upper
 
+    def test_ped_synonyms_are_valid_models(self, lookups):
+        peds = lookups["peds"]
+        valid = set(peds["valid_models"])
+        missing = {
+            label: model
+            for label, model in peds["synonyms"].items()
+            if model not in valid
+        }
+        assert missing == {}
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ModelResolver.resolve — RAG + local fallback
@@ -257,3 +267,16 @@ class TestResolveSchema:
         )
         result = resolver.resolve_schema(schema)
         assert result.unresolved_models() == []
+
+    def test_distinct_common_ped_choices_resolve_to_distinct_models(self, resolver):
+        schema = self._bare_schema(peds=[
+            MissionPed(description="cop", role="guard"),
+            MissionPed(description="security guard", role="guard"),
+            MissionPed(description="armed guard", role="guard"),
+            MissionPed(description="robber", role="target"),
+            MissionPed(description="biker thug", role="target"),
+            MissionPed(description="cartel member", role="target"),
+        ])
+        result = resolver.resolve_schema(schema)
+        models = [ped.model for ped in result.peds]
+        assert len(models) == len(set(models))
