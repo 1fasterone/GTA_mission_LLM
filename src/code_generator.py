@@ -59,6 +59,12 @@ _EVENT_PILOT_MODEL = "s_m_y_pilot_01"
 # keybind fires mid-mission. Fixed radius keeps Step 6 a pure function.
 _KEYBIND_SPAWN_RADIUS = 8.0
 
+_PATROL_ROUTE_MODE_CS = {
+    "once": "Once",
+    "loop": "Loop",
+    "ping_pong": "PingPong",
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -566,9 +572,14 @@ def _build_template_context(schema: MissionSchema) -> dict:
             pts = p.get("points") or []
             if len(pts) < 2:
                 continue
+            mode = str(p.get("mode") or "loop").lower()
+            if mode not in _PATROL_ROUTE_MODE_CS:
+                mode = "loop"
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
+                "mode":    mode,
+                "mode_cs": _PATROL_ROUTE_MODE_CS[mode],
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })
