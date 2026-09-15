@@ -16,7 +16,9 @@ import tempfile
 
 import pytest
 
+from src.code_generator import CodeGenerator
 from src.gta5_compile_check import _find_arity_findings, compile_check, gate_available
+from src.mission_schema import MissionPed, MissionSchema, MissionStep
 
 _TOOLCHAIN_AVAILABLE, _TOOLCHAIN_INFO = gate_available()
 _needs_toolchain = pytest.mark.skipif(
@@ -91,5 +93,34 @@ def test_compile_check_passes_correct_arity_call(tmp_path):
         tmp_path,
         '        Function.Call(Hash.PLAY_SOUND_FRONTEND, -1, "X", "Y", true);')
     ok, findings, info = compile_check(path)
+    assert ok is True
+    assert findings == []
+
+
+@_needs_toolchain
+def test_generated_patrol_movement_native_task_compiles(tmp_path):
+    schema = MissionSchema(
+        mission_name="Patrol Movement Probe",
+        location_name="docks",
+        time_of_day=20,
+        weather="CLEAR",
+        steps=[MissionStep(type="go_to", label="Reach the route")],
+        peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+        vehicles=[],
+        objects=[],
+        audio=[],
+        meta={"editor": {"paths": [{
+            "id": "movement_probe_route",
+            "ped_idx": 0,
+            "mode": "ping_pong",
+            "speed": 2.5,
+            "points": [[-1030.0, -2710.0, 13.8], [-1000.0, -2685.0, 13.8], [-970.0, -2710.0, 13.8]],
+            "waypoints": [{"speed": 1.0}, {"speed": 2.5}, {"speed": 3.5}],
+        }]}},
+    )
+    code = CodeGenerator("templates/mission.cs.j2").generate(schema)
+    path = tmp_path / "PatrolMovementProbe.3.cs"
+    path.write_text(code, encoding="utf-8")
+    ok, findings, info = compile_check(str(path))
     assert ok is True
     assert findings == []

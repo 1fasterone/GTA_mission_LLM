@@ -59,6 +59,12 @@ _EVENT_PILOT_MODEL = "s_m_y_pilot_01"
 # keybind fires mid-mission. Fixed radius keeps Step 6 a pure function.
 _KEYBIND_SPAWN_RADIUS = 8.0
 
+_PATROL_ROUTE_MODE_CS = {
+    "once": "Once",
+    "loop": "Loop",
+    "ping_pong": "PingPong",
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -128,6 +134,20 @@ def _escape_cs_string(s: str) -> str:
          .replace("\r", "\\r")
          .replace("\t", "\\t")
     )
+
+
+def _float_or_default(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _patrol_speed(value, default: float = 1.0) -> float:
+    speed = _float_or_default(value, default)
+    if speed <= 0:
+        speed = default
+    return max(0.25, min(speed, 8.0))
 
 
 def _build_template_context(schema: MissionSchema) -> dict:
@@ -566,9 +586,22 @@ def _build_template_context(schema: MissionSchema) -> dict:
             pts = p.get("points") or []
             if len(pts) < 2:
                 continue
+            mode = str(p.get("mode") or "loop").lower()
+            if mode not in _PATROL_ROUTE_MODE_CS:
+                mode = "loop"
+            path_speed = _patrol_speed(p.get("speed"), 1.0)
+            wp_meta = p.get("waypoints") if isinstance(p.get("waypoints"), list) else []
+            speeds = []
+            for j, _pt in enumerate(pts):
+                wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
+                speeds.append(_patrol_speed(wp.get("speed"), path_speed))
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
+                "mode":    mode,
+                "mode_cs": _PATROL_ROUTE_MODE_CS[mode],
+                "speed":   path_speed,
+                "speeds":  speeds,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })
