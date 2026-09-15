@@ -275,6 +275,8 @@ class TestBuildTemplateContext:
             "ped_idx": 0,
             "mode": "loop",
             "mode_cs": "Loop",
+            "speed": 1.2,
+            "speeds": [1.0, 1.0, 1.2],
             "points": [
                 {"x": -1030.0, "y": -2710.0, "z": 13.8},
                 {"x": -1000.0, "y": -2685.0, "z": 13.8},
@@ -326,6 +328,24 @@ class TestBuildTemplateContext:
         ctx = _build_template_context(schema)
         assert ctx["editor_paths"][0]["mode"] == "loop"
         assert ctx["editor_paths"][0]["mode_cs"] == "Loop"
+
+    def test_editor_path_speed_falls_back_to_path_speed(self):
+        schema = self._schema(
+            meta={"editor": {"paths": [{
+                "id": "speed_route",
+                "ped_idx": None,
+                "speed": 2.5,
+                "points": [[-1, -2, 3], [4, 5, 6], [7, 8, 9]],
+                "waypoints": [
+                    {"speed": 1.25},
+                    {},
+                    {"speed": "bad"},
+                ],
+            }]}},
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["editor_paths"][0]["speed"] == 2.5
+        assert ctx["editor_paths"][0]["speeds"] == [1.25, 2.5, 2.5]
 
     def test_vehicle_offsets_present(self):
         schema = self._schema(vehicles=[
@@ -410,20 +430,30 @@ class TestCodeGeneratorGenerate:
         for token in (
             "private static readonly Vector3[] EditorPath_0",
             "new Vector3(-1030.0f, -2710.0f, 13.8f)",
+            "private static readonly float[] EditorPathSpeed_0",
+            "1.20f",
             "// id=dock_patrol_alpha pedIdx=0",
             "private static Vector3[] EditorPathByIndex(int idx)",
+            "private static float[] EditorPathSpeedByIndex(int idx)",
+            "private const float DefaultPatrolSpeed = 1.0f;",
             "private enum PatrolRouteMode { Once, Loop, PingPong }",
             "private enum PatrolRouteState { Moving, Complete }",
             "private class PatrolUnit",
+            "public float[] Speed;",
             "public PatrolRouteMode Mode;",
             "public PatrolRouteState State;",
             "public int Dir;",
             "private readonly List<PatrolUnit> _patrols",
             "if (_state == State.Active) UpdatePatrols();",
-            "p.Task.RunTo(_path[0], true);",
+            "Speed = EditorPathSpeedByIndex(0)",
             "Mode = PatrolRouteMode.Loop",
             "State = PatrolRouteState.Moving, Wp = 0, Dir = 1",
+            "IssuePatrolMove(_patrols[_patrols.Count - 1]);",
             "private void UpdatePatrols()",
+            "private float PatrolSpeedAt(PatrolUnit u)",
+            "private void IssuePatrolMove(PatrolUnit u)",
+            "Hash.TASK_FOLLOW_NAV_MESH_TO_COORD",
+            "u.Ped.Task.RunTo(target, true);",
             "private bool AdvancePatrol(PatrolUnit u)",
             "_patrols.Clear();",
         ):
@@ -472,6 +502,9 @@ class TestCodeGeneratorGenerate:
         for token in (
             "EditorPath_0",
             "EditorPathByIndex",
+            "EditorPathSpeed_0",
+            "EditorPathSpeedByIndex",
+            "DefaultPatrolSpeed",
             "PatrolRouteMode",
             "PatrolRouteState",
             "PatrolUnit",
@@ -499,6 +532,7 @@ class TestCodeGeneratorGenerate:
         )
         code = gen.generate(schema)
         assert "private static readonly Vector3[] EditorPath_0" in code
+        assert "private static readonly float[] EditorPathSpeed_0" in code
         assert "// id=missing_ped_route pedIdx=99" in code
         assert "private void UpdatePatrols()" in code
         assert "_patrols.Add(new PatrolUnit" not in code

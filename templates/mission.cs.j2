@@ -145,6 +145,11 @@ public class {{ class_name }} : Script
         new Vector3({{ "%.1f"|format(pt.x) }}f, {{ "%.1f"|format(pt.y) }}f, {{ "%.1f"|format(pt.z) }}f),
 {% endfor %}
     }; // id={{ path.id }} pedIdx={{ path.ped_idx if path.ped_idx is not none else -1 }}
+    private static readonly float[] EditorPathSpeed_{{ loop.index0 }} = new float[] {
+{% for speed in path.speeds %}
+        {{ "%.2f"|format(speed) }}f,
+{% endfor %}
+    };
 {% endfor %}
 
     private static Vector3[] EditorPathByIndex(int idx)
@@ -158,12 +163,25 @@ public class {{ class_name }} : Script
         }
     }
 
+    private static float[] EditorPathSpeedByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathSpeed_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private const float DefaultPatrolSpeed = 1.0f;
     private enum PatrolRouteMode { Once, Loop, PingPong }
     private enum PatrolRouteState { Moving, Complete }
     private class PatrolUnit
     {
         public Ped Ped;
         public Vector3[] Path;
+        public float[] Speed;
         public PatrolRouteMode Mode;
         public PatrolRouteState State;
         public int Wp;
@@ -644,10 +662,11 @@ public class {{ class_name }} : Script
                 var _path = EditorPathByIndex({{ ped.patrol_path_idx }});
                 if (_path != null && _path.Length > 0)
                 {
-                    p.Task.RunTo(_path[0], true);
                     _patrols.Add(new PatrolUnit {
-                        Ped = p, Path = _path, Mode = PatrolRouteMode.{{ editor_paths[ped.patrol_path_idx].mode_cs }},
+                        Ped = p, Path = _path, Speed = EditorPathSpeedByIndex({{ ped.patrol_path_idx }}),
+                        Mode = PatrolRouteMode.{{ editor_paths[ped.patrol_path_idx].mode_cs }},
                         State = PatrolRouteState.Moving, Wp = 0, Dir = 1 });
+                    IssuePatrolMove(_patrols[_patrols.Count - 1]);
                 }
             }
 {% elif ped.is_hostile %}
@@ -1146,15 +1165,38 @@ public class {{ class_name }} : Script
             {
                 if (AdvancePatrol(u))
                 {
-                    u.Ped.Task.RunTo(u.Path[u.Wp], true);
+                    IssuePatrolMove(u);
                 }
             }
             // If the ped was knocked off-task (e.g. ragdoll recovered), re-issue.
             else if (!u.Ped.IsWalking && !u.Ped.IsRunning)
             {
-                u.Ped.Task.RunTo(u.Path[u.Wp], true);
+                IssuePatrolMove(u);
             }
         }
+    }
+
+    private float PatrolSpeedAt(PatrolUnit u)
+    {
+        if (u == null || u.Speed == null || u.Wp < 0 || u.Wp >= u.Speed.Length)
+            return DefaultPatrolSpeed;
+        float speed = u.Speed[u.Wp];
+        return speed > 0.0f ? speed : DefaultPatrolSpeed;
+    }
+
+    private void IssuePatrolMove(PatrolUnit u)
+    {
+        if (u == null || u.Ped == null || !u.Ped.Exists() || u.Path == null || u.Wp < 0 || u.Wp >= u.Path.Length)
+            return;
+        var target = u.Path[u.Wp];
+        float speed = PatrolSpeedAt(u);
+        if (Math.Abs(speed - DefaultPatrolSpeed) < 0.01f)
+        {
+            u.Ped.Task.RunTo(target, true);
+            return;
+        }
+        Function.Call(Hash.TASK_FOLLOW_NAV_MESH_TO_COORD,
+            u.Ped, target.X, target.Y, target.Z, speed, -1, 1.0f, false, 0.0f);
     }
 
     private bool AdvancePatrol(PatrolUnit u)
