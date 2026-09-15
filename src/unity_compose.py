@@ -1944,6 +1944,7 @@ def subsystems_for(
     environment    = None,           # schema.environment: Optional[EnvironmentSpec]
     visual_style:  str              = "stylized",   # schema.visual_style
     palette_rgb:   dict | None      = None,         # {slot: {r,g,b}} — see unity_generator
+    cover_points:  dict | None      = None,         # schema.meta["cover_points"] — see unity_cover_points.py
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
@@ -2390,22 +2391,45 @@ def subsystems_for(
         )
         enemies_fly = (locomotion == "fly"
                        or any(w in prompt_low for w in _flying_enemy_words))
+        # cover_shooter drives a NavMeshAgent the same as navmesh_patrol (see
+        # ai.py's nav_backend rules) — a ground-combat variant, mutually
+        # exclusive with the racing/flying picks above it. Specific multi-word
+        # phrases, not a bare "cover" (a common word — "provides cover fire",
+        # "wide coverage" — that would false-positive constantly).
+        _cover_words = (
+            "take cover", "takes cover", "taking cover", "use cover",
+            "using cover", "behind cover", "cover shooter", "cover-shooter",
+            "cover-based", "duck behind", "peek out", "peeking out",
+            "pop out and shoot",
+        )
+        wants_cover = any(w in prompt_low for w in _cover_words)
         if genre == "racing":
             ai_var, ai_tgt = "waypoint_follow", "asset"
         elif enemies_fly:
             ai_var, ai_tgt = "flying_swarm", "world"
+        elif wants_cover:
+            ai_var, ai_tgt = "cover_shooter", "world"
         else:
             ai_var, ai_tgt = "navmesh_patrol", "world"
         # An enemy the brief actually DESCRIBES gets a state machine instead of a
         # stateless patroller: two or more distinct behaviour roles in
         # EntitySpec.behavior / CharacterSpec.npc_brain upgrade the variant to
-        # fsm_guard and become its real, named states. Racing rivals and flying
-        # swarms keep their own movement variants — their behaviour is the
-        # movement, and fsm_guard has neither a waypoint follower nor a hover rig.
+        # fsm_guard and become its real, named states. Racing rivals, flying
+        # swarms and cover shooters keep their own movement variants — their
+        # behaviour IS the movement, and fsm_guard has neither a waypoint
+        # follower, a hover rig, nor cover-point logic.
         ai_opts: dict = dict(dim_meta)
+        # Hoisted out of the `if gt == "2d":` block below (which used to only
+        # read this for sprite-animator naming) so a cover_shooter enemy in
+        # EITHER a 2D or 3D project can key into schema.meta["cover_points"]
+        # by entity name — see src/unity_cover_points.py.
+        _enemy_entity = next((e for e in (entities or []) if getattr(e, "kind", "") == "enemy"), None)
+        if ai_var == "cover_shooter" and _enemy_entity is not None:
+            ai_opts["cover_points"] = (cover_points or {}).get(_enemy_entity.name, [])
         ai_states = _ai_states_from_brief(entities, characters, scripts)
-        if ai_states and ai_var == "navmesh_patrol":
+        if ai_states and ai_var in ("navmesh_patrol", "cover_shooter"):
             ai_var = "fsm_guard"
+            ai_opts.pop("cover_points", None)   # fsm_guard has no cover-point logic to feed
             ai_opts["states"] = ai_states
             console.print(
                 "  [green]OK[/]    ai: brief describes "
@@ -2416,7 +2440,6 @@ def subsystems_for(
         subs.append(Subsystem(kind="spawner",      variant="wave_spawner",  target="world",   name="EnemySpawner"))
         subs.append(Subsystem(kind="statemachine", variant="enemy_fsm",     target=ai_tgt,    name="EnemyFSM"))
         if gt == "2d":
-            _enemy_entity = next((e for e in (entities or []) if getattr(e, "kind", "") == "enemy"), None)
             _enemy_name = to_pascal(getattr(_enemy_entity, "name", "") or "Enemy", "Enemy")
             subs.append(Subsystem(kind="sprite_animator", variant="enemy", target=ai_tgt,
                                   name=f"{_enemy_name}SpriteAnimator",

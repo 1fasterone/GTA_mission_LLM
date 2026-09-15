@@ -61,7 +61,12 @@ Use plain English for every "description" field (e.g. "universal render pipeline
 
 LIMITS (keep JSON concise):
 - packages:          max 10 entries (only what's genuinely needed)
-- scripts:           max 24 entries
+- scripts:           target 6-10 entries; hard max 24. Never repeat a script
+                     name. Prefer proven non-custom script types. Add at most
+                     4 custom scripts, and only when they contain real behavior
+                     in awake_extra/update_extra/fixed_update_extra/extra_methods.
+                     Do not write placeholder custom scripts with all behavior
+                     fields empty.
 - scenes:            max 8 scene names (no paths, just names like "Main", "MainMenu", "Level1")
 - scene_specs:       max 8 — ONE PER GAMEPLAY SCENE. What makes each scene distinct:
                      {{"name": "<must match a scenes entry>", "description": "one line",
@@ -158,6 +163,9 @@ CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
       "awake_extra": "for (int i = -1; i <= 1; i += 2) {{ var go = new GameObject(\\"Headlight\\"); go.transform.SetParent(transform, false); go.transform.localPosition = new Vector3(0.4f * i, 0.5f, 1.1f); var l = go.AddComponent<Light>(); l.type = LightType.Spot; l.range = 30f; l.intensity = lightIntensity; l.enabled = false; _lights.Add(l); }}",
       "update_extra": "if (Keyboard.current != null && Keyboard.current.hKey.wasPressedThisFrame) foreach (var l in _lights) l.enabled = !l.enabled;",
       "extra_methods": []}}
+  Do not repeat custom script objects. If a custom script would have empty
+  awake_extra, update_extra, fixed_update_extra, and extra_methods, omit it
+  entirely and describe the need in an objective/entity instead.
   CRITICAL: every identifier your fragments reference MUST be declared in extra_fields
   (each becomes a private member) or be a local declared inside the fragment itself.
   Referencing an undeclared variable (e.g. using `wheelSpeed` without declaring it)
@@ -200,9 +208,15 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
     behavior:   OPTIONAL — the PascalCase name of one of your `scripts` to attach to each
       (leave "" for kind="enemy" and the compiler auto-attaches the composed AI script;
       for any other kind, "" means no behavior script is attached)
-    model_hint: 2-5 plain words naming the PHYSICAL OBJECT ("pine tree", "wooden ramp",
-      "hanging banner") — matches the group to a real 3D model from the asset library,
-      so choose words a model file would be named after. Set it on EVERY entity group.
+    model_hint: REQUIRED 2-5 plain words naming the PHYSICAL OBJECT ("pine tree",
+      "wooden ramp", "hanging banner") — matches the group to a real 3D model
+      from the asset library, so choose words a model file would be named after.
+      Set it on EVERY entity group. Never use a bare generic kind word alone
+      ("vehicle", "prop", "enemy", "character"). Use "default <kind>" or
+      "default prop" only when a deliberately generic default model is wanted.
+    sketchfab_query: REQUIRED 2-5 plain marketplace-search words for the same
+      physical asset ("low poly race car", "wooden grandstand", "spectator
+      character"). Include style/material only when it helps find the right model.
     spacing/radius: MINIMUMS, not exact values — the engine widens them at spawn time
       to fit each group's actual model size, so instances never overlap. Guess a
       reasonable value; you do not need to know the model's real footprint.
@@ -225,9 +239,9 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
   Example: "a race with 6 rivals on a winding road, grandstands, and a crowd" →
     [{{"name":"RoadSegments","kind":"road","count":40,"shape":"cube","placement":"path","color_role":"secondary","scale":4,
        "path_points":[[0,0,0],[40,2,20],[60,5,60],[30,8,90],[-20,6,80],[-40,3,40],[-20,1,10],[0,0,0]]}},
-     {{"name":"Rivals","kind":"enemy","count":6,"shape":"capsule","placement":"line","color_role":"accent","tag":"Enemy","model_hint":"rival race car"}},
-     {{"name":"Stands","kind":"building","count":8,"shape":"cube","placement":"ring","color_role":"secondary","scale":3,"model_hint":"grandstand structure"}},
-     {{"name":"Crowd","kind":"crowd","count":40,"shape":"sphere","placement":"grid","color_role":"trim","scale":0.6,"model_hint":"spectator character"}}]
+     {{"name":"Rivals","kind":"enemy","count":6,"shape":"capsule","placement":"line","color_role":"accent","tag":"Enemy","model_hint":"rival race car","sketchfab_query":"low poly race car"}},
+     {{"name":"Stands","kind":"building","count":8,"shape":"cube","placement":"ring","color_role":"secondary","scale":3,"model_hint":"grandstand structure","sketchfab_query":"wooden grandstand"}},
+     {{"name":"Crowd","kind":"crowd","count":40,"shape":"sphere","placement":"grid","color_role":"trim","scale":0.6,"model_hint":"spectator character","sketchfab_query":"spectator character"}}]
 
 PROJECT CONCEPT:
 {concept}
@@ -323,6 +337,8 @@ OUTPUT this exact JSON structure, fully populated:
       "scale": 1.0,
       "tag": "Untagged",
       "behavior": "",
+      "model_hint": "2-5 concrete physical model words",
+      "sketchfab_query": "2-5 concrete marketplace search words",
       "path_points": []
     }}
   ]

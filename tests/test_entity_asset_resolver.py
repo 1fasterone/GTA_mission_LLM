@@ -85,13 +85,22 @@ def _default_models(tmp_path):
 
 # ── tier precedence ───────────────────────────────────────────────────────────
 
-def test_explicit_kind_wins_over_catalog(env, tmp_path):
+def test_unhinted_default_kind_tries_catalog_before_default(env, tmp_path):
     all_models = _default_models(tmp_path)
     used = {"tree": all_models["tree"]}
     paths = resolve_entity_assets(
         _schema([EntitySpec(name="Pines", kind="tree", count=3)]),
         used, all_models, lookups_dir=str(env))
-    assert paths["Pines"] == "Models/Default/Tree/Tree"
+    assert paths["Pines"].startswith("Models/Kenney/Nature/tree-")
+
+
+def test_unhinted_default_kind_falls_back_after_catalog_miss(env, tmp_path):
+    all_models = _default_models(tmp_path)
+    used = {"tree": all_models["tree"]}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="ZZZNoCatalog", kind="tree", count=1)]),
+        used, all_models, lookups_dir=str(env), strict=True)
+    assert paths["ZZZNoCatalog"] == "Models/Default/Tree/Tree"
 
 
 def test_default_prop_kind_goes_to_catalog_not_prop_fbx(env, tmp_path):

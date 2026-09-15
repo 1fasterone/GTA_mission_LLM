@@ -556,6 +556,27 @@ class TestCodeGeneratorGenerate:
         assert "p.Health = 300;" in code
         assert "p.ArmorFloat = 50.0f;" in code
 
+    def test_hostile_ped_gets_combat_attributes_before_task_combat(self, gen):
+        # CanUseCover/CombatAbility must be set BEFORE Task.Combat starts the
+        # AI, or GTA V's combat task won't pick them up for this engagement.
+        schema = MissionSchema(
+            mission_name="Ambush", location_name="docks", time_of_day=20,
+            weather="CLEAR", steps=[MissionStep(type="go_to", label="Go here")],
+            peds=[MissionPed(description="enforcer", model="s_m_y_cop_01",
+                             role="target", weapon="rifle")],
+            vehicles=[], objects=[], audio=[],
+        )
+        code = gen.generate(schema)
+        assert "SetCombatAttribute(CombatAttributes.CanUseCover, true);" in code
+        assert "CombatAbility = CombatAbility.Average;" in code
+        attr_idx = code.index("SetCombatAttribute(CombatAttributes.CanUseCover")
+        combat_idx = code.index("p.Task.Combat(Game.Player.Character);")
+        assert attr_idx < combat_idx
+
+    def test_non_hostile_ped_gets_no_combat_attributes(self, gen, gta_full_schema):
+        code = gen.generate(gta_full_schema)
+        assert "SetCombatAttribute" not in code
+
     def test_nondefault_ammo_emitted_for_armed_ped(self, gen):
         schema = MissionSchema(
             mission_name="Sniper Nest", location_name="docks", time_of_day=20,

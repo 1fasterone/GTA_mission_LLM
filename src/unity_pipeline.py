@@ -52,6 +52,7 @@ from .unity_concept_title import (inject_missing_concept_title,
                                   render_title_checklist)
 from .unity_concept_missions import inject_missing_concept_missions
 from .unity_layout        import compute_layout
+from .unity_cover_points  import compute_cover_points
 from .unity_scenebind     import apply_scene
 from .unity_playability   import PlayabilityGateError, gate as playability_gate
 from .unity_playability_artifact import evaluate_project
@@ -1579,6 +1580,16 @@ class UnityPipeline:
         for msg in compute_layout(schema):
             self._fix(msg)
 
+        # Cover-point sidecar (Step 5d, src/unity_cover_points.py) — bakes
+        # candidate cover points for enemy entities from BLOCKING_KINDS
+        # obstacle footprints. Must run AFTER compute_layout, which is what
+        # bakes instance_positions for both the obstacles this scans and the
+        # enemies it computes points for; BEFORE compose (below), which reads
+        # schema.meta["cover_points"] to give the cover_shooter AI variant
+        # real geometry instead of naive distance math.
+        for msg in compute_cover_points(schema):
+            self._fix(msg)
+
         # Capability graph: schema.capabilities → atoms (Step 5b)
         schema, cap_msgs = resolve_capabilities(schema)
         for msg in cap_msgs:
@@ -1736,7 +1747,8 @@ class UnityPipeline:
                                         behavior_trees=schema.behavior_trees,
                                         environment=schema.environment,
                                         visual_style=schema.visual_style,
-                                        palette_rgb=_compose_palette_rgb(schema))
+                                        palette_rgb=_compose_palette_rgb(schema),
+                                        cover_points=schema.meta.get("cover_points"))
 
         # STEP 3.5a — the same code-authoring step, for schema.scripts.
         #

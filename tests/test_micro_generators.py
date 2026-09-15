@@ -14,7 +14,7 @@ from src.micro.physics        import PhysicsPipeline,    PhysicsSchema
 from src.micro.hud            import HUDPipeline,        HUDSchema
 from src.micro.input_actions  import InputPipeline,      InputSchema, InputMap, InputAction
 from src.micro.audio          import AudioPipeline,      AudioSchema
-from src.micro.ai             import AIPipeline,         AISchema, AIState
+from src.micro.ai             import AIPipeline,         AISchema, AIState, CoverPoint
 from src.micro.spawner        import SpawnerPipeline,    SpawnerSchema
 from src.micro.saveload       import SaveLoadPipeline,   SaveLoadSchema
 from src.micro.inventory      import InventoryPipeline,  InventorySchema, InventoryItemSpec
@@ -666,6 +666,32 @@ def test_ai_2d_render_has_no_navmesh_agent(tmp_path, dummy_config):
     assert "using UnityEngine.AI;" not in cs
     assert "private void MoveTowards(" in cs
     assert "private void PatrolStep2D()" in cs
+
+
+def test_ai_cover_shooter_falls_back_naive_with_no_points(tmp_path, dummy_config):
+    p = AIPipeline(dummy_config)
+    s = AISchema(name="TestAI", variant="cover_shooter")
+    s = p.default_fix(s, "cover_shooter")
+    p.write_files(s, "cover_shooter", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestAI.cs").read_text(encoding="utf-8")
+    assert "_coverPoints = new Vector3[] {  };" in cs or "_coverPoints = new Vector3[] { };" in cs
+    assert "No cover geometry nearby" in cs
+    assert cs.count("{") == cs.count("}")
+
+
+def test_ai_cover_shooter_bakes_cover_points_array(tmp_path, dummy_config):
+    p = AIPipeline(dummy_config)
+    s = AISchema(name="TestAI", variant="cover_shooter", cover_points=[
+        CoverPoint(position=[5.5, 0.0, 3.2], cover_direction=[-0.7, 0.0, -0.7]),
+    ])
+    s = p.default_fix(s, "cover_shooter")
+    p.write_files(s, "cover_shooter", tmp_path)
+    cs = (tmp_path / "Scripts" / "TestAI.cs").read_text(encoding="utf-8")
+    assert "new Vector3(5.50f, 0.00f, 3.20f)" in cs
+    assert "_coverClaimed[i]" in cs                 # claim-nearest-unclaimed loop
+    assert "transform.forward = _coverDirections[_myCoverIndex];" in cs
+    assert "peekInterval" in cs and "peekDuration" in cs
+    assert cs.count("{") == cs.count("}")
 
 
 @pytest.mark.parametrize("variant", AIPipeline.variants)

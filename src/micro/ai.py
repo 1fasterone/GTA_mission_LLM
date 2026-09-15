@@ -169,6 +169,14 @@ class AITransition(BaseModel):
         return _WHEN_EXPR[self.when]
 
 
+class CoverPoint(BaseModel):
+    """One candidate cover spot for the `cover_shooter` variant — baked by
+    src/unity_cover_points.py (Step 5d), never authored by the LLM (schema-fill
+    runs before that pass). See AISchema.cover_points."""
+    position:        list[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])
+    cover_direction: list[float] = Field(default_factory=lambda: [0.0, 0.0, 1.0])
+
+
 class AISchema(CodeExtensibleSchema):
     name:               str  = "EnemyAI"
     variant:            str  = "navmesh_patrol"
@@ -221,6 +229,17 @@ class AISchema(CodeExtensibleSchema):
     # detour back to a plain last-known-position chase once the tip goes stale.
     squad_alert_decay_seconds: float = 5.0   # how long a secondhand report stays trusted before the responder stops treating it as fresh
     squad_flank_offset:        float = 3.0   # meters, lateral spread applied to a FlankLeft/FlankRight responder's approach point
+
+    # ── Cover (cover_shooter variant only) ─────────────────────────────────────
+    # Baked by src/unity_cover_points.py (Step 5d) from BLOCKING_KINDS obstacle
+    # footprints near this entity, threaded in by unity_compose.py — never
+    # authored by the LLM (population happens after schema-fill). Empty means
+    # either no nearby obstacles were found or the layout isn't ground-based;
+    # AI.cs.j2's cover_shooter branch falls back to its naive advance/retreat
+    # in that case rather than regressing a schema with nothing to work with.
+    cover_points:  list[CoverPoint] = Field(default_factory=list)
+    peek_interval: float = 1.2   # seconds spent in cover before peeking out to shoot
+    peek_duration: float = 0.8   # seconds exposed while peeking/attacking
 
     @field_validator("variant", mode="before")
     @classmethod
@@ -376,6 +395,9 @@ class AIPipeline(UnityMicroPipeline):
         # ApplySquadRoleOffset()/ReceiveAllyAlert())
         "squadalertdecayseconds", "squadflankoffset",
         "_squadrole", "_alerturgency", "_alertsourceid", "squadrole",
+        # Cover (cover_shooter variant — see AISchema.cover_points, AI.cs.j2)
+        "coverpoints", "coverdirections", "_coverclaimed", "_mycoverindex",
+        "_peektimer", "_incover", "peekinterval", "peekduration",
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.AI", "System.Collections.Generic"}
 
@@ -426,6 +448,8 @@ class AIPipeline(UnityMicroPipeline):
         schema.squad_alert_radius    = max(0.0, schema.squad_alert_radius)
         schema.squad_alert_decay_seconds = max(0.5, min(60.0, schema.squad_alert_decay_seconds))
         schema.squad_flank_offset        = max(0.0, schema.squad_flank_offset)
+        schema.peek_interval = max(0.1, min(30.0, schema.peek_interval))
+        schema.peek_duration = max(0.1, min(30.0, schema.peek_duration))
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
                         template_usings=self._TEMPLATE_USINGS)
         apply_extensions_safe_block(schema, reserved=self._RESERVED_FIELD_NAMES)

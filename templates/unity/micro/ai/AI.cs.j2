@@ -172,6 +172,26 @@ public class {{ s.name }} : MonoBehaviour
     // Per-instance phase so a swarm does not bob in lockstep.
     private float _bobPhase;
 {% endif %}
+{% if variant == "cover_shooter" %}
+
+    [Header("Cover")]
+    [Tooltip("Seconds tucked in cover before peeking out to attack.")]
+    [SerializeField] private float peekInterval = {{ "%.2f"|format(s.peek_interval) }}f;
+    [Tooltip("Seconds exposed while peeking/attacking before ducking back in.")]
+    [SerializeField] private float peekDuration = {{ "%.2f"|format(s.peek_duration) }}f;
+    // Baked by src/unity_cover_points.py from nearby obstacle footprints —
+    // empty when no obstacles were found near this entity, or the layout
+    // isn't ground-based. Empty falls back to the old naive advance/retreat
+    // below rather than regressing a schema with nothing to work with.
+    private static readonly Vector3[] _coverPoints = new Vector3[] { {% for cp in s.cover_points %}new Vector3({{ "%.2f"|format(cp.position[0]) }}f, {{ "%.2f"|format(cp.position[1]) }}f, {{ "%.2f"|format(cp.position[2]) }}f){{ "" if loop.last else ", " }}{% endfor %} };
+    private static readonly Vector3[] _coverDirections = new Vector3[] { {% for cp in s.cover_points %}new Vector3({{ "%.2f"|format(cp.cover_direction[0]) }}f, {{ "%.2f"|format(cp.cover_direction[1]) }}f, {{ "%.2f"|format(cp.cover_direction[2]) }}f){{ "" if loop.last else ", " }}{% endfor %} };
+    // Shared across every instance of this class — same static-sharing
+    // precedent as _squad above — so two enemies never claim the same point.
+    private static readonly bool[] _coverClaimed = new bool[{{ s.cover_points|length }}];
+    private int   _myCoverIndex = -1;
+    private bool  _inCover;
+    private float _peekTimer;
+{% endif %}
 
     private void OnEnable()
     {
@@ -204,6 +224,9 @@ public class {{ s.name }} : MonoBehaviour
 {% endif %}
 {% if _perception_variant and s.squad_alert_radius > 0 %}
         _squad.Remove(this);
+{% endif %}
+{% if variant == "cover_shooter" %}
+        if (_myCoverIndex >= 0) { _coverClaimed[_myCoverIndex] = false; _myCoverIndex = -1; }
 {% endif %}
     }
 
@@ -335,18 +358,76 @@ public class {{ s.name }} : MonoBehaviour
 {% elif variant == "cover_shooter" %}
         if (_target == null) return;
         float dist = Vector3.Distance(transform.position, _target.position);
-        // Naive: pop out at attack range, retreat at half-distance
-{% if s.nav_backend == "navmesh" %}
-        if (_agent != null)
+        if (_coverPoints.Length == 0)
         {
-            if (dist > attackRadius * 0.6f) _agent.SetDestination(_target.position);
-            else _agent.SetDestination(transform.position - (_target.position - transform.position).normalized * 2f);
+            // No cover geometry nearby (or the layout isn't ground-based) —
+            // naive fallback: pop out at attack range, retreat at half-distance.
+{% if s.nav_backend == "navmesh" %}
+            if (_agent != null)
+            {
+                if (dist > attackRadius * 0.6f) _agent.SetDestination(_target.position);
+                else _agent.SetDestination(transform.position - (_target.position - transform.position).normalized * 2f);
+            }
+{% else %}
+            if (dist > attackRadius * 0.6f) MoveTowards(_target.position);
+            else MoveTowards(transform.position - (_target.position - transform.position).normalized * 2f);
+{% endif %}
+            if (dist < attackRadius) TryAttack(dist);
+            return;
+        }
+
+        if (_myCoverIndex < 0)
+        {
+            float best = float.MaxValue;
+            for (int i = 0; i < _coverPoints.Length; i++)
+            {
+                if (_coverClaimed[i]) continue;
+                float d = Vector3.Distance(transform.position, _coverPoints[i]);
+                if (d < best) { best = d; _myCoverIndex = i; }
+            }
+            if (_myCoverIndex >= 0) _coverClaimed[_myCoverIndex] = true;
+        }
+        if (_myCoverIndex < 0)
+        {
+            // Every point already claimed by a squadmate — hold position and
+            // shoot from here rather than doing nothing.
+            if (dist < attackRadius) TryAttack(dist);
+            return;
+        }
+
+{% if s.nav_backend == "navmesh" %}
+        Vector3 coverPos = _coverPoints[_myCoverIndex];
+        float toCover = Vector3.Distance(transform.position, coverPos);
+        if (toCover > 0.5f)
+        {
+            _inCover = false;
+            if (_agent != null) _agent.SetDestination(coverPos);
+        }
+        else
+        {
+            _inCover = true;
+            transform.forward = _coverDirections[_myCoverIndex];
+            _peekTimer += Time.deltaTime;
+            bool peeking = (_peekTimer % (peekInterval + peekDuration)) >= peekInterval;
+            if (peeking && dist < attackRadius) TryAttack(dist);
         }
 {% else %}
-        if (dist > attackRadius * 0.6f) MoveTowards(_target.position);
-        else MoveTowards(transform.position - (_target.position - transform.position).normalized * 2f);
+        Vector3 coverPos = new Vector3(_coverPoints[_myCoverIndex].x, _coverPoints[_myCoverIndex].z, 0f);
+        float toCover = Vector3.Distance(transform.position, coverPos);
+        if (toCover > 0.5f)
+        {
+            _inCover = false;
+            MoveTowards(coverPos);
+        }
+        else
+        {
+            _inCover = true;
+            transform.right = new Vector3(_coverDirections[_myCoverIndex].x, _coverDirections[_myCoverIndex].z, 0f);
+            _peekTimer += Time.deltaTime;
+            bool peeking = (_peekTimer % (peekInterval + peekDuration)) >= peekInterval;
+            if (peeking && dist < attackRadius) TryAttack(dist);
+        }
 {% endif %}
-        if (dist < attackRadius) TryAttack(dist);
 {% elif variant == "waypoint_follow" %}
         if (_waypoints == null || _waypoints.Count == 0) { CollectWaypoints(); return; }
 

@@ -477,6 +477,65 @@ def test_walk_compose_keeps_grounded_bridge(tmp_path):
     assert "IsGrounded" in gw   # default third_person controller still bridges grounded
 
 
+# ── AI enemy-variant selection: cover_shooter ──────────────────────────────────
+
+def test_cover_words_select_cover_shooter_variant():
+    from src.unity_schema import EntitySpec
+    enemy = EntitySpec(name="Guard", kind="enemy")
+    subs = subsystems_for("3D", [], user_prompt="soldiers take cover behind crates and shoot",
+                          entities=[enemy])
+    ai = next(s for s in subs if s.kind == "ai")
+    assert ai.variant == "cover_shooter"
+
+
+def test_no_cover_words_keeps_navmesh_patrol_default():
+    from src.unity_schema import EntitySpec
+    enemy = EntitySpec(name="Guard", kind="enemy")
+    subs = subsystems_for("3D", [], user_prompt="guards patrol the warehouse", entities=[enemy])
+    ai = next(s for s in subs if s.kind == "ai")
+    assert ai.variant == "navmesh_patrol"
+
+
+def test_cover_words_do_not_override_racing_or_flying():
+    from src.unity_schema import EntitySpec
+    enemy = EntitySpec(name="Guard", kind="enemy")
+    racing = subsystems_for("3D", [], genre="racing", entities=[enemy],
+                            user_prompt="rivals take cover and race")
+    assert next(s for s in racing if s.kind == "ai").variant == "waypoint_follow"
+    flying = subsystems_for("3D", [], entities=[enemy],
+                            user_prompt="hovering drones take cover and shoot")
+    assert next(s for s in flying if s.kind == "ai").variant == "flying_swarm"
+
+
+def test_cover_points_threaded_from_meta_by_entity_name():
+    from src.unity_schema import EntitySpec
+    enemy = EntitySpec(name="Guard", kind="enemy")
+    baked = {"Guard": [{"position": [1.0, 0.0, 1.0], "cover_direction": [0.0, 0.0, -1.0]}]}
+    subs = subsystems_for("3D", [], user_prompt="guards take cover and shoot",
+                          entities=[enemy], cover_points=baked)
+    ai = next(s for s in subs if s.kind == "ai")
+    assert ai.options.get("cover_points") == baked["Guard"]
+
+
+def test_cover_shooter_compose_produces_valid_syntax(tmp_path):
+    """End-to-end: prompt -> cover_shooter selection -> cover_points baked
+    into the composed AI script -> the composer's own real C# syntax gate."""
+    from src.unity_schema import EntitySpec
+    enemy = EntitySpec(name="Guard", kind="enemy", instance_positions=[[6.0, 0.0, 6.0]])
+    obstacle = EntitySpec(name="Crate", kind="obstacle", scale=1.5, instance_positions=[[5.0, 0.0, 5.0]])
+    baked = {"Guard": [{"position": [6.7, 0.0, 6.7], "cover_direction": [-0.7, 0.0, -0.7]}]}
+    subs = subsystems_for("3D", [], user_prompt="guards take cover behind crates and shoot at the player",
+                          entities=[enemy, obstacle], cover_points=baked)
+    assert next(s for s in subs if s.kind == "ai").variant == "cover_shooter"
+    units = MicroComposer("CoverProof").emit(subs, Path(tmp_path) / "Assets")
+    ai_unit = next(u for u in units if u.kind == "ai")
+    ai_cs = (Path(tmp_path) / "Assets" / "Micros" / "ai" / "Scripts"
+            / f"{ai_unit.class_name}.cs").read_text(encoding="utf-8")
+    assert "6.70f" in ai_cs
+    assert "_coverClaimed[i]" in ai_cs
+    assert ai_cs.count("{") == ai_cs.count("}")
+
+
 # ── Content-based reachability: optional micros from schema content ───────────
 
 def _ns(**kw):

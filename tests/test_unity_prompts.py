@@ -136,6 +136,22 @@ class TestMultimodalFieldsAreAskedFor:
     def test_system_prompt_frames_the_schema_as_the_full_design(self):
         assert "characters" in UNITY_SCHEMA_FILL_SYSTEM
 
+    def test_entity_prompt_asks_for_asset_search_fields(self):
+        rendered = full_prompt(block())
+        assert "model_hint: REQUIRED" in rendered
+        assert "sketchfab_query: REQUIRED" in rendered
+        assert '"model_hint"' in rendered
+        assert '"sketchfab_query"' in rendered
+        assert "default <kind>" in rendered
+
+    def test_schema_prompt_discourages_runaway_custom_script_loops(self):
+        rendered = full_prompt(block())
+        assert "target 6-10 entries" in rendered
+        assert "Never repeat a script" in rendered
+        assert "at most\n                     4 custom scripts" in rendered
+        assert "Do not write placeholder custom scripts" in rendered
+        assert "If a custom script would have empty" in rendered
+
 
 # ── Gating: core always, optional on content ──────────────────────────────────
 

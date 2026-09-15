@@ -1,0 +1,60 @@
+TITLE
+Oddities Baggage Claim
+
+GENRE
+A fully 3D first-person exploration and sorting game set inside a flooded
+airport baggage claim that has become a black-market lost-and-found for cursed
+objects. The tone is strange, tactile, and cluttered rather than horror: more
+midnight flea market than haunted house.
+
+CORE PREMISE
+The player is the night-shift claims clerk in a terminal where luggage from
+impossible places keeps arriving on the carousel. Each round, the loudspeaker
+announces three specific lost objects that must be found, scanned, stamped, and
+loaded onto a rolling brass luggage cart before the terminal floods too high.
+The player walks through the claim hall, scans suspicious items with a handheld
+UV tag reader, carries one object at a time, and sorts each object onto the
+correct colored inspection table.
+
+The game should visibly fill the world with distinct physical clutter, not one
+generic prop pile. The claim hall has soaked blue benches, dented luggage carts,
+orange traffic cones, broken umbrella stands, rubber duck displays, brass
+gramophones, cracked vending machines, folding chairs, dripping potted palms,
+airport stanchions with velvet ropes, cardboard boxes, plastic security bins,
+payphones, wall clocks stuck at different times, tangled extension cords,
+janitor buckets, mop handles, wet floor signs, lost shoes, toy trains, porcelain
+swans, cassette tapes, fishbowls, mannequin hands, glass jars of buttons,
+passport kiosks, paper ticket rolls, coffee cups, newspapers, flashlight
+batteries, skull-shaped snow globes, ceramic frogs, old cameras, violin cases,
+rusted bird cages, red toolboxes, and stacks of striped suitcases.
+
+The impossible baggage carousel is the centerpiece: it slowly carries glowing
+suitcases, wooden crates, antique trunks, duffel bags, wrapped parcels, and a
+few obviously wrong things like a bathtub with airline tags, a giant chess
+knight, a miniature lighthouse, and a mossy stone doorway. A few harmless
+lost-property inspectors wander the aisles with clipboards. If the player
+scans an object that does not match the announcement, it rattles loudly and
+slides back onto the carousel.
+
+Do not try to include every object in the list above. Choose 18-24 distinct
+physical object groups that best communicate the terminal, and make each group
+a concrete thing such as "wet floor signs", "passport kiosks", or "ceramic
+frogs". Do not use vague groups named Props, Clutter, Decorations, LostItems,
+or SetDressing.
+
+Gameplay needs a clear loop: listen to the loudspeaker, identify the right
+objects by inspecting the clutter, scan them, carry them to the right table,
+stamp the claim ticket, and load them onto the cart. The win condition is
+sorting all announced objects before the water reaches the top of the benches.
+The lose condition is letting the claim hall flood or stamping too many wrong
+items. Use 3D models for the clutter wherever possible, including weird
+Sketchfab-style objects that are unlikely to exist in the default model pack.
+
+FEATURES
+input_system, ui_toolkit, audio
+
+PLATFORM
+PC
+
+UNITY VERSION
+6000.0
