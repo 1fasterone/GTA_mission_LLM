@@ -145,6 +145,11 @@ public class {{ class_name }} : Script
         new Vector3({{ "%.1f"|format(pt.x) }}f, {{ "%.1f"|format(pt.y) }}f, {{ "%.1f"|format(pt.z) }}f),
 {% endfor %}
     }; // id={{ path.id }} pedIdx={{ path.ped_idx if path.ped_idx is not none else -1 }}
+    private static readonly float[] EditorPathSpeed_{{ loop.index0 }} = new float[] {
+{% for speed in path.speeds %}
+        {{ "%.2f"|format(speed) }}f,
+{% endfor %}
+    };
 {% endfor %}
 
     private static Vector3[] EditorPathByIndex(int idx)
@@ -158,8 +163,30 @@ public class {{ class_name }} : Script
         }
     }
 
-    // A ped bound to a patrol path walks its waypoints in a loop.
-    private class PatrolUnit { public Ped Ped; public Vector3[] Path; public int Wp; }
+    private static float[] EditorPathSpeedByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathSpeed_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private const float DefaultPatrolSpeed = 1.0f;
+    private enum PatrolRouteMode { Once, Loop, PingPong }
+    private enum PatrolRouteState { Moving, Complete }
+    private class PatrolUnit
+    {
+        public Ped Ped;
+        public Vector3[] Path;
+        public float[] Speed;
+        public PatrolRouteMode Mode;
+        public PatrolRouteState State;
+        public int Wp;
+        public int Dir;
+    }
     private readonly List<PatrolUnit> _patrols = new List<PatrolUnit>();
 {% endif %}
 {% if editor_zones %}
@@ -630,13 +657,16 @@ public class {{ class_name }} : Script
               Function.Call(Hash.GIVE_WEAPON_TO_PED, p, _wh, {{ ped.ammo }}, false, true); }
 {% endif %}
 {% if ped.patrol_path_idx is not none %}
-            // Patrol path binding — walk the editor-authored waypoint loop.
+            // Patrol path binding — drive the editor-authored route state.
             {
                 var _path = EditorPathByIndex({{ ped.patrol_path_idx }});
                 if (_path != null && _path.Length > 0)
                 {
-                    p.Task.RunTo(_path[0], true);
-                    _patrols.Add(new PatrolUnit { Ped = p, Path = _path, Wp = 0 });
+                    _patrols.Add(new PatrolUnit {
+                        Ped = p, Path = _path, Speed = EditorPathSpeedByIndex({{ ped.patrol_path_idx }}),
+                        Mode = PatrolRouteMode.{{ editor_paths[ped.patrol_path_idx].mode_cs }},
+                        State = PatrolRouteState.Moving, Wp = 0, Dir = 1 });
+                    IssuePatrolMove(_patrols[_patrols.Count - 1]);
                 }
             }
 {% elif ped.is_hostile %}
@@ -1120,17 +1150,83 @@ public class {{ class_name }} : Script
         for (int i = 0; i < _patrols.Count; i++)
         {
             var u = _patrols[i];
-            if (u.Ped == null || !u.Ped.Exists() || u.Ped.IsDead) continue;
+            if (u.Ped == null || !u.Ped.Exists() || u.Ped.IsDead || u.State == PatrolRouteState.Complete) continue;
+            if (u.Path == null || u.Path.Length == 0) { u.State = PatrolRouteState.Complete; continue; }
+            if (u.Wp < 0) u.Wp = 0;
+            if (u.Wp >= u.Path.Length) u.Wp = u.Path.Length - 1;
+            if (u.Dir == 0) u.Dir = 1;
+
             if (u.Ped.Position.DistanceTo(u.Path[u.Wp]) < 3.0f)
             {
-                u.Wp = (u.Wp + 1) % u.Path.Length;     // loop the route
-                u.Ped.Task.RunTo(u.Path[u.Wp], true);
+                if (AdvancePatrol(u))
+                {
+                    IssuePatrolMove(u);
+                }
             }
             // If the ped was knocked off-task (e.g. ragdoll recovered), re-issue.
             else if (!u.Ped.IsWalking && !u.Ped.IsRunning)
             {
-                u.Ped.Task.RunTo(u.Path[u.Wp], true);
+                IssuePatrolMove(u);
             }
+        }
+    }
+
+    private float PatrolSpeedAt(PatrolUnit u)
+    {
+        if (u == null || u.Speed == null || u.Wp < 0 || u.Wp >= u.Speed.Length)
+            return DefaultPatrolSpeed;
+        float speed = u.Speed[u.Wp];
+        return speed > 0.0f ? speed : DefaultPatrolSpeed;
+    }
+
+    private void IssuePatrolMove(PatrolUnit u)
+    {
+        if (u == null || u.Ped == null || !u.Ped.Exists() || u.Path == null || u.Wp < 0 || u.Wp >= u.Path.Length)
+            return;
+        var target = u.Path[u.Wp];
+        float speed = PatrolSpeedAt(u);
+        if (Math.Abs(speed - DefaultPatrolSpeed) < 0.01f)
+        {
+            u.Ped.Task.RunTo(target, true);
+            return;
+        }
+        Function.Call(Hash.TASK_FOLLOW_NAV_MESH_TO_COORD,
+            u.Ped, target.X, target.Y, target.Z, speed, -1, 1.0f, false, 0.0f);
+    }
+
+    private bool AdvancePatrol(PatrolUnit u)
+    {
+        if (u == null || u.Path == null || u.Path.Length == 0) return false;
+        if (u.Path.Length == 1) { u.State = PatrolRouteState.Complete; return false; }
+
+        switch (u.Mode)
+        {
+            case PatrolRouteMode.Once:
+                if (u.Wp >= u.Path.Length - 1)
+                {
+                    u.State = PatrolRouteState.Complete;
+                    return false;
+                }
+                u.Wp++;
+                return true;
+            case PatrolRouteMode.PingPong:
+                int next = u.Wp + u.Dir;
+                if (next < 0 || next >= u.Path.Length)
+                {
+                    u.Dir = -u.Dir;
+                    next = u.Wp + u.Dir;
+                }
+                if (next < 0 || next >= u.Path.Length)
+                {
+                    u.State = PatrolRouteState.Complete;
+                    return false;
+                }
+                u.Wp = next;
+                return true;
+            case PatrolRouteMode.Loop:
+            default:
+                u.Wp = (u.Wp + 1) % u.Path.Length;
+                return true;
         }
     }
 {% endif %}

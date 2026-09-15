@@ -71,6 +71,56 @@ def gta_full_schema() -> MissionSchema:
 
 
 @pytest.fixture
+def gta_editor_patrol_schema() -> MissionSchema:
+    """Mission Editor patrol fixture: one ped bound to one authored path.
+
+    The path carries waypoint metadata that later bridge slices will lower into
+    runtime behavior; 4F.1 only asserts that the contract survives into the
+    compiler context and binds to the intended ped.
+    """
+    return MissionSchema(
+        mission_name="Editor Patrol Contract",
+        location_name="docks",
+        time_of_day=20,
+        weather="CLEAR",
+        steps=[MissionStep(type="go_to", label="Reach the patrol zone")],
+        peds=[
+            MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol", weapon="none"),
+        ],
+        vehicles=[],
+        objects=[],
+        audio=[],
+        meta={
+            "editor": {
+                "version": 1,
+                "peds": [
+                    {"pos": [-1040.0, -2705.0, 13.8, 90.0]},
+                ],
+                "paths": [
+                    {
+                        "id": "dock_patrol_alpha",
+                        "ped_idx": 0,
+                        "mode": "loop",
+                        "speed": 1.2,
+                        "wait_time": 0,
+                        "points": [
+                            [-1030.0, -2710.0, 13.8],
+                            [-1000.0, -2685.0, 13.8],
+                            [-970.0, -2710.0, 13.8],
+                        ],
+                        "waypoints": [
+                            {"wait_time": 0, "speed": 1.0, "behavior": "walk"},
+                            {"wait_time": 2, "speed": 1.0, "behavior": "scan"},
+                            {"wait_time": 1, "speed": 1.2, "behavior": "guard"},
+                        ],
+                    },
+                ],
+            },
+        },
+    )
+
+
+@pytest.fixture
 def gta_minigame_schema() -> MissionSchema:
     """Smallest valid minigame-skeleton schema (menu->round->results loop).
 

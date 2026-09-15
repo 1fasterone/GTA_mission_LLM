@@ -259,6 +259,94 @@ class TestBuildTemplateContext:
         p1 = (ctx["peds"][1]["base_x"], ctx["peds"][1]["base_y"])
         assert p0 != p1
 
+    def test_editor_patrol_fixture_preserves_metadata(self, gta_editor_patrol_schema):
+        path = gta_editor_patrol_schema.meta["editor"]["paths"][0]
+        assert path["id"] == "dock_patrol_alpha"
+        assert path["ped_idx"] == 0
+        assert path["mode"] == "loop"
+        assert path["speed"] == 1.2
+        assert path["waypoints"][1]["behavior"] == "scan"
+        assert path["waypoints"][2]["behavior"] == "guard"
+
+    def test_editor_patrol_path_context_binds_to_ped(self, gta_editor_patrol_schema):
+        ctx = _build_template_context(gta_editor_patrol_schema)
+        assert ctx["editor_paths"] == [{
+            "id": "dock_patrol_alpha",
+            "ped_idx": 0,
+            "mode": "loop",
+            "mode_cs": "Loop",
+            "speed": 1.2,
+            "speeds": [1.0, 1.0, 1.2],
+            "points": [
+                {"x": -1030.0, "y": -2710.0, "z": 13.8},
+                {"x": -1000.0, "y": -2685.0, "z": 13.8},
+                {"x": -970.0, "y": -2710.0, "z": 13.8},
+            ],
+        }]
+        assert ctx["peds"][0]["patrol_path_idx"] == 0
+        assert ctx["peds"][0]["is_hostile"] is False
+        assert ctx["peds"][0]["abs_x"] == -1040.0
+        assert ctx["peds"][0]["heading"] == 90.0
+
+    def test_unassigned_editor_path_emits_without_binding(self):
+        schema = self._schema(
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            meta={"editor": {"paths": [{
+                "id": "unassigned_route",
+                "ped_idx": None,
+                "points": [[-1, -2, 3], [4, 5, 6]],
+            }]}},
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["editor_paths"][0]["id"] == "unassigned_route"
+        assert ctx["editor_paths"][0]["ped_idx"] is None
+        assert ctx["peds"][0]["patrol_path_idx"] is None
+
+    def test_invalid_editor_path_binding_does_not_bind_ped(self):
+        schema = self._schema(
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            meta={"editor": {"paths": [{
+                "id": "missing_ped_route",
+                "ped_idx": 99,
+                "points": [[-1, -2, 3], [4, 5, 6]],
+            }]}},
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["editor_paths"][0]["id"] == "missing_ped_route"
+        assert ctx["editor_paths"][0]["ped_idx"] == 99
+        assert ctx["peds"][0]["patrol_path_idx"] is None
+
+    def test_unknown_editor_path_mode_falls_back_to_loop(self):
+        schema = self._schema(
+            meta={"editor": {"paths": [{
+                "id": "odd_route",
+                "ped_idx": None,
+                "mode": "spiral",
+                "points": [[-1, -2, 3], [4, 5, 6]],
+            }]}},
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["editor_paths"][0]["mode"] == "loop"
+        assert ctx["editor_paths"][0]["mode_cs"] == "Loop"
+
+    def test_editor_path_speed_falls_back_to_path_speed(self):
+        schema = self._schema(
+            meta={"editor": {"paths": [{
+                "id": "speed_route",
+                "ped_idx": None,
+                "speed": 2.5,
+                "points": [[-1, -2, 3], [4, 5, 6], [7, 8, 9]],
+                "waypoints": [
+                    {"speed": 1.25},
+                    {},
+                    {"speed": "bad"},
+                ],
+            }]}},
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["editor_paths"][0]["speed"] == 2.5
+        assert ctx["editor_paths"][0]["speeds"] == [1.25, 2.5, 2.5]
+
     def test_vehicle_offsets_present(self):
         schema = self._schema(vehicles=[
             MissionVehicle(description="van", model="burrito3", role="escape"),
@@ -336,6 +424,118 @@ class TestCodeGeneratorGenerate:
     def test_output_contains_weapon_string_for_armed_ped(self, gen, gta_full_schema):
         code = gen.generate(gta_full_schema)
         assert "weapon_pistol" in code
+
+    def test_editor_patrol_output_contains_runtime_contract(self, gen, gta_editor_patrol_schema):
+        code = gen.generate(gta_editor_patrol_schema)
+        for token in (
+            "private static readonly Vector3[] EditorPath_0",
+            "new Vector3(-1030.0f, -2710.0f, 13.8f)",
+            "private static readonly float[] EditorPathSpeed_0",
+            "1.20f",
+            "// id=dock_patrol_alpha pedIdx=0",
+            "private static Vector3[] EditorPathByIndex(int idx)",
+            "private static float[] EditorPathSpeedByIndex(int idx)",
+            "private const float DefaultPatrolSpeed = 1.0f;",
+            "private enum PatrolRouteMode { Once, Loop, PingPong }",
+            "private enum PatrolRouteState { Moving, Complete }",
+            "private class PatrolUnit",
+            "public float[] Speed;",
+            "public PatrolRouteMode Mode;",
+            "public PatrolRouteState State;",
+            "public int Dir;",
+            "private readonly List<PatrolUnit> _patrols",
+            "if (_state == State.Active) UpdatePatrols();",
+            "Speed = EditorPathSpeedByIndex(0)",
+            "Mode = PatrolRouteMode.Loop",
+            "State = PatrolRouteState.Moving, Wp = 0, Dir = 1",
+            "IssuePatrolMove(_patrols[_patrols.Count - 1]);",
+            "private void UpdatePatrols()",
+            "private float PatrolSpeedAt(PatrolUnit u)",
+            "private void IssuePatrolMove(PatrolUnit u)",
+            "Hash.TASK_FOLLOW_NAV_MESH_TO_COORD",
+            "u.Ped.Task.RunTo(target, true);",
+            "private bool AdvancePatrol(PatrolUnit u)",
+            "_patrols.Clear();",
+        ):
+            assert token in code, f"patrol C# missing {token}"
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
+
+    def test_editor_patrol_modes_emit_state_driven_executor(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Modes",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[
+                MissionPed(description="once ped", model="s_m_y_dockwork_01", role="patrol"),
+                MissionPed(description="loop ped", model="s_m_y_dockwork_01", role="patrol"),
+                MissionPed(description="ping pong ped", model="s_m_y_dockwork_01", role="patrol"),
+            ],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [
+                {"id": "once_route", "ped_idx": 0, "mode": "once", "points": [[0, 0, 0], [10, 0, 0]]},
+                {"id": "loop_route", "ped_idx": 1, "mode": "loop", "points": [[0, 10, 0], [10, 10, 0]]},
+                {"id": "ping_route", "ped_idx": 2, "mode": "ping_pong", "points": [[0, 20, 0], [10, 20, 0]]},
+            ]}},
+        )
+        code = gen.generate(schema)
+        for token in (
+            "Mode = PatrolRouteMode.Once",
+            "Mode = PatrolRouteMode.Loop",
+            "Mode = PatrolRouteMode.PingPong",
+            "case PatrolRouteMode.Once:",
+            "case PatrolRouteMode.PingPong:",
+            "u.State = PatrolRouteState.Complete;",
+            "u.Dir = -u.Dir;",
+            "u.Wp = (u.Wp + 1) % u.Path.Length;",
+        ):
+            assert token in code, f"route executor C# missing {token}"
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
+
+    def test_no_editor_paths_emit_no_patrol_runtime(self, gen, gta_full_schema):
+        code = gen.generate(gta_full_schema)
+        for token in (
+            "EditorPath_0",
+            "EditorPathByIndex",
+            "EditorPathSpeed_0",
+            "EditorPathSpeedByIndex",
+            "DefaultPatrolSpeed",
+            "PatrolRouteMode",
+            "PatrolRouteState",
+            "PatrolUnit",
+            "_patrols",
+            "UpdatePatrols",
+        ):
+            assert token not in code
+
+    def test_invalid_editor_path_binding_emits_path_without_runtime_unit(self, gen):
+        schema = MissionSchema(
+            mission_name="Invalid Patrol Binding",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "missing_ped_route",
+                "ped_idx": 99,
+                "points": [[-1, -2, 3], [4, 5, 6]],
+            }]}},
+        )
+        code = gen.generate(schema)
+        assert "private static readonly Vector3[] EditorPath_0" in code
+        assert "private static readonly float[] EditorPathSpeed_0" in code
+        assert "// id=missing_ped_route pedIdx=99" in code
+        assert "private void UpdatePatrols()" in code
+        assert "_patrols.Add(new PatrolUnit" not in code
 
     def test_default_health_and_armor_emit_no_lines(self, gen, gta_full_schema):
         # gta_full_schema's ped is default health=100/armor=0 — no line needed,
