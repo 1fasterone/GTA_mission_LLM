@@ -65,6 +65,26 @@ _PATROL_ROUTE_MODE_CS = {
     "ping_pong": "PingPong",
 }
 
+_PATROL_BEHAVIOR_CS = {
+    "walk": "Walk",
+    "jog": "Jog",
+    "sprint": "Sprint",
+    "scan": "Scan",
+    "guard": "Guard",
+}
+
+_PATROL_MOVEMENT_BEHAVIOR = {
+    "walk": "walk",
+    "jog": "jog",
+    "run": "sprint",
+}
+
+_PATROL_MOVEMENT_SPEED = {
+    "walk": 1.0,
+    "jog": 2.2,
+    "run": 3.5,
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -150,10 +170,116 @@ def _patrol_speed(value, default: float = 1.0) -> float:
     return max(0.25, min(speed, 8.0))
 
 
+def _patrol_wait_ms(value, default_seconds: float = 0.0) -> int:
+    seconds = _float_or_default(value, default_seconds)
+    if seconds <= 0:
+        return 0
+    return int(max(0, min(round(seconds * 1000), 600000)))
+
+
+def _patrol_behavior(value, default: str = "walk") -> str:
+    behavior = str(value or default or "walk").lower()
+    if behavior in _PATROL_BEHAVIOR_CS:
+        return behavior
+    if default in _PATROL_BEHAVIOR_CS:
+        return default
+    return "walk"
+
+
+def _patrol_movement(value, default: str = "inherit") -> str:
+    movement = str(value or default or "inherit").lower()
+    if movement in _PATROL_MOVEMENT_BEHAVIOR or movement == "inherit":
+        return movement
+    if default in _PATROL_MOVEMENT_BEHAVIOR or default == "inherit":
+        return default
+    return "inherit"
+
+
+def _patrol_behavior_with_movement(behavior: str, movement: str) -> str:
+    if behavior in {"walk", "jog", "sprint"} and movement in _PATROL_MOVEMENT_BEHAVIOR:
+        return _PATROL_MOVEMENT_BEHAVIOR[movement]
+    return behavior
+
+
+def _bool_or_default(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
+
+
 def _build_template_context(schema: MissionSchema) -> dict:
-    location    = _LOCATIONS.get(schema.location_name, _LOCATIONS["docks"])
+    location    = dict(_LOCATIONS.get(schema.location_name, _LOCATIONS["docks"]))
     class_name  = _to_class_name(schema.mission_name)
     weather_str = _WEATHER_NATIVE.get(schema.weather.upper(), "CLEAR")
+    _editor = (schema.meta or {}).get("editor") if isinstance(schema.meta, dict) else None
+
+    def _editor_point(value, fallback_z=None):
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            return {
+                "x": float(value[0]),
+                "y": float(value[1]),
+                "z": float(value[2]) if len(value) > 2 else float(fallback_z if fallback_z is not None else location["z"]),
+            }
+        if isinstance(value, dict):
+            return {
+                "x": float(value.get("x", 0.0)),
+                "y": float(value.get("y", 0.0)),
+                "z": float(value.get("z", fallback_z if fallback_z is not None else location["z"])),
+            }
+        return None
+
+    editor_blips: list[dict] = []
+    if isinstance(_editor, dict):
+        for blip in (_editor.get("blips") or []):
+            if not isinstance(blip, dict):
+                continue
+            point = _editor_point(blip.get("pos"), location["z"])
+            if point is None:
+                continue
+            point["label"] = str(blip.get("label") or "")
+            point["step_index"] = blip.get("step_index") if isinstance(blip.get("step_index"), int) else None
+            point["objective_id"] = str(blip.get("objective_id") or "")
+            editor_blips.append(point)
+    start_blip_idx = None
+    if editor_blips:
+        start_blip_idx = next(
+            (idx for idx, b in enumerate(editor_blips)
+             if b["label"].strip().lower() in {"start", "mission start"}),
+            0,
+        )
+        start_blip = editor_blips[start_blip_idx]
+        location.update({"x": start_blip["x"], "y": start_blip["y"], "z": start_blip["z"]})
+
+    # Step-linked editor blips are objective targets, separate from the mission
+    # start and from patrol points. Prefer the explicit step index, then the
+    # stable editor objective id.
+    step_editor_targets: dict[int, dict] = {}
+    linked_editor_blip_indices: set[int] = set()
+    for step_index, step in enumerate(schema.steps):
+        editor_id = str(step.params.get("editor_id") or "")
+        match = next(
+            ((idx, blip) for idx, blip in enumerate(editor_blips)
+             if blip.get("step_index") == step_index),
+            None,
+        )
+        if match is None and editor_id:
+            match = next(
+                ((idx, blip) for idx, blip in enumerate(editor_blips)
+                 if blip.get("objective_id") == editor_id),
+                None,
+            )
+        if match is not None:
+            idx, blip = match
+            step_editor_targets[step_index] = blip
+            linked_editor_blip_indices.add(idx)
 
     # ── Waypoints (one per go_to step) ───────────────────────────────────────
     waypoints: list[dict] = []
@@ -170,15 +296,38 @@ def _build_template_context(schema: MissionSchema) -> dict:
         (-45, -45),   # southwest
         ( 45, -45),   # southeast
     ]
+    used_editor_blips: set[int] = set(linked_editor_blip_indices)
+    if start_blip_idx is not None:
+        used_editor_blips.add(start_blip_idx)
+
+    def _editor_waypoint_for_step(step_index: int, step) -> dict | None:
+        linked = step_editor_targets.get(step_index)
+        if linked is not None:
+            return linked
+        for idx, blip in enumerate(editor_blips):
+            if idx not in used_editor_blips and blip.get("step_index") is None and not blip.get("objective_id"):
+                used_editor_blips.add(idx)
+                return blip
+        return None
+
     for i, step in enumerate(schema.steps):
         if step.type == "go_to":
-            dx, dy = _WP_DIRS[wp_counter % len(_WP_DIRS)]
-            waypoints.append({
-                "x":     location["x"] + dx,
-                "y":     location["y"] + dy,
-                "z":     location["z"],
-                "label": step.label,
-            })
+            editor_wp = _editor_waypoint_for_step(i, step)
+            if editor_wp is None:
+                dx, dy = _WP_DIRS[wp_counter % len(_WP_DIRS)]
+                waypoints.append({
+                    "x":     location["x"] + dx,
+                    "y":     location["y"] + dy,
+                    "z":     location["z"],
+                    "label": step.label,
+                })
+            else:
+                waypoints.append({
+                    "x":     editor_wp["x"],
+                    "y":     editor_wp["y"],
+                    "z":     editor_wp["z"],
+                    "label": step.label or editor_wp.get("label", ""),
+                })
             waypoint_idx[i] = wp_counter
             wp_counter += 1
 
@@ -204,7 +353,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                                     "z": float(q[2]) if len(q) > 2 else location["z"]})
                 elif isinstance(q, dict):
                     raw_pts.append({"x": float(q.get("x", 0.0)), "y": float(q.get("y", 0.0)),
-                                    "z": float(q.get("z", location["z"]))})
+                                    "z": float(q.get("z", float(location["z"])))})
             if len(raw_pts) >= 2:
                 race_checkpoints.append({
                     "array_name":      f"RaceCheckpoints{rc_counter}",
@@ -276,7 +425,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                                 "z": float(q[2]) if len(q) > 2 else location["z"]})
                 elif isinstance(q, dict):
                     pts.append({"x": float(q.get("x", 0.0)), "y": float(q.get("y", 0.0)),
-                                "z": float(q.get("z", location["z"]))})
+                                "z": float(q.get("z", float(location["z"])))})
             if len(pts) < 2:
                 pts = []
         if not pts:
@@ -312,6 +461,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
             "label":               _escape_cs_string(step.label),
             "waypoint_idx":        waypoint_idx.get(i),
             "next_waypoint":       next_wp,
+            "editor_target":       step_editor_targets.get(i),
             "race_checkpoint_idx": race_checkpoint_idx.get(i),          # None for non-racing steps
             "timer_seconds":       int(step.params.get("seconds", 120)) if step.type == "timer" else None,
             "scavenger_idx":       scavenger_idx.get(i),                # None for non-scavenger steps
@@ -322,8 +472,6 @@ def _build_template_context(schema: MissionSchema) -> dict:
     # editor.paths[i].ped_idx points at a schema ped; build ped_idx → path-slot so
     # SpawnPeds can hand that ped its waypoint loop. Computed here (pre-peds) so the
     # ped dict can carry a `patrol_path_idx`.
-    _editor = (schema.meta or {}).get("editor") if isinstance(schema.meta, dict) else None
-
     def _editor_pos(kind: str, idx: int):
         """Absolute [x,y,z,(heading)] the editor placed for entity `idx`, or None.
         This is what makes 'icon on the map' === 'spawn position in game'."""
@@ -589,19 +737,44 @@ def _build_template_context(schema: MissionSchema) -> dict:
             mode = str(p.get("mode") or "loop").lower()
             if mode not in _PATROL_ROUTE_MODE_CS:
                 mode = "loop"
-            path_speed = _patrol_speed(p.get("speed"), 1.0)
+            path_movement = _patrol_movement(p.get("movement"), "inherit")
+            path_speed_default = _PATROL_MOVEMENT_SPEED.get(path_movement, 1.0)
+            path_speed = _patrol_speed(p.get("speed"), path_speed_default)
+            path_wait_ms = _patrol_wait_ms(p.get("wait_time"), 0.0)
+            path_behavior = _patrol_behavior(p.get("behavior"), "walk")
+            path_behavior = _patrol_behavior_with_movement(path_behavior, path_movement)
+            path_guard_until_alert = _bool_or_default(p.get("guard_until_alert"), False)
             wp_meta = p.get("waypoints") if isinstance(p.get("waypoints"), list) else []
             speeds = []
+            waits_ms = []
+            behaviors = []
+            guard_until_alert = []
             for j, _pt in enumerate(pts):
                 wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
-                speeds.append(_patrol_speed(wp.get("speed"), path_speed))
+                movement = _patrol_movement(wp.get("movement"), path_movement)
+                speed_default = _PATROL_MOVEMENT_SPEED.get(movement, path_speed)
+                speeds.append(_patrol_speed(wp.get("speed"), speed_default))
+                waits_ms.append(_patrol_wait_ms(wp.get("wait_time"), path_wait_ms / 1000.0))
+                behavior = _patrol_behavior(wp.get("behavior"), path_behavior)
+                behavior = _patrol_behavior_with_movement(behavior, movement)
+                behaviors.append(_PATROL_BEHAVIOR_CS[behavior])
+                guard_until_alert.append(
+                    _bool_or_default(wp.get("guard_until_alert"), path_guard_until_alert)
+                )
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
                 "mode":    mode,
                 "mode_cs": _PATROL_ROUTE_MODE_CS[mode],
                 "speed":   path_speed,
+                "wait_ms": path_wait_ms,
+                "behavior": path_behavior,
+                "behavior_cs": _PATROL_BEHAVIOR_CS[path_behavior],
+                "guard_until_alert": path_guard_until_alert,
                 "speeds":  speeds,
+                "waits_ms": waits_ms,
+                "behaviors": behaviors,
+                "guard_until_alerts": guard_until_alert,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })
