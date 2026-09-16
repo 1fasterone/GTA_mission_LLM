@@ -55,9 +55,9 @@ def _patrol_behavior_schema() -> MissionSchema:
             "speed": 2.5,
             "points": [[-1030.0, -2710.0, 13.8], [-1000.0, -2685.0, 13.8], [-970.0, -2710.0, 13.8]],
             "waypoints": [
-                {"behavior": "walk", "speed": 1.0},
-                {"behavior": "scan", "wait_time": 2, "speed": 2.5},
-                {"behavior": "guard", "wait_time": 1, "guard_until_alert": True, "speed": 3.5},
+                {"behavior": "walk", "movement": "walk", "speed": 1.0},
+                {"behavior": "scan", "movement": "jog", "wait_time": 2},
+                {"behavior": "guard", "movement": "run", "wait_time": 1, "guard_until_alert": True},
             ],
         }]}}
     )

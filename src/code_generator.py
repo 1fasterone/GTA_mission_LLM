@@ -73,6 +73,18 @@ _PATROL_BEHAVIOR_CS = {
     "guard": "Guard",
 }
 
+_PATROL_MOVEMENT_BEHAVIOR = {
+    "walk": "walk",
+    "jog": "jog",
+    "run": "sprint",
+}
+
+_PATROL_MOVEMENT_SPEED = {
+    "walk": 1.0,
+    "jog": 2.2,
+    "run": 3.5,
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -172,6 +184,21 @@ def _patrol_behavior(value, default: str = "walk") -> str:
     if default in _PATROL_BEHAVIOR_CS:
         return default
     return "walk"
+
+
+def _patrol_movement(value, default: str = "inherit") -> str:
+    movement = str(value or default or "inherit").lower()
+    if movement in _PATROL_MOVEMENT_BEHAVIOR or movement == "inherit":
+        return movement
+    if default in _PATROL_MOVEMENT_BEHAVIOR or default == "inherit":
+        return default
+    return "inherit"
+
+
+def _patrol_behavior_with_movement(behavior: str, movement: str) -> str:
+    if behavior in {"walk", "jog", "sprint"} and movement in _PATROL_MOVEMENT_BEHAVIOR:
+        return _PATROL_MOVEMENT_BEHAVIOR[movement]
+    return behavior
 
 
 def _bool_or_default(value, default: bool = False) -> bool:
@@ -710,9 +737,12 @@ def _build_template_context(schema: MissionSchema) -> dict:
             mode = str(p.get("mode") or "loop").lower()
             if mode not in _PATROL_ROUTE_MODE_CS:
                 mode = "loop"
-            path_speed = _patrol_speed(p.get("speed"), 1.0)
+            path_movement = _patrol_movement(p.get("movement"), "inherit")
+            path_speed_default = _PATROL_MOVEMENT_SPEED.get(path_movement, 1.0)
+            path_speed = _patrol_speed(p.get("speed"), path_speed_default)
             path_wait_ms = _patrol_wait_ms(p.get("wait_time"), 0.0)
             path_behavior = _patrol_behavior(p.get("behavior"), "walk")
+            path_behavior = _patrol_behavior_with_movement(path_behavior, path_movement)
             path_guard_until_alert = _bool_or_default(p.get("guard_until_alert"), False)
             wp_meta = p.get("waypoints") if isinstance(p.get("waypoints"), list) else []
             speeds = []
@@ -721,9 +751,12 @@ def _build_template_context(schema: MissionSchema) -> dict:
             guard_until_alert = []
             for j, _pt in enumerate(pts):
                 wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
-                speeds.append(_patrol_speed(wp.get("speed"), path_speed))
+                movement = _patrol_movement(wp.get("movement"), path_movement)
+                speed_default = _PATROL_MOVEMENT_SPEED.get(movement, path_speed)
+                speeds.append(_patrol_speed(wp.get("speed"), speed_default))
                 waits_ms.append(_patrol_wait_ms(wp.get("wait_time"), path_wait_ms / 1000.0))
                 behavior = _patrol_behavior(wp.get("behavior"), path_behavior)
+                behavior = _patrol_behavior_with_movement(behavior, movement)
                 behaviors.append(_PATROL_BEHAVIOR_CS[behavior])
                 guard_until_alert.append(
                     _bool_or_default(wp.get("guard_until_alert"), path_guard_until_alert)

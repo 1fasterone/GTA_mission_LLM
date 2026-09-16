@@ -648,6 +648,50 @@ class TestCodeGeneratorGenerate:
         assert code.count("{") == code.count("}")
         assert code.count("(") == code.count(")")
 
+    def test_editor_patrol_movement_aliases_lower_to_speed_and_behavior(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Movement Modifiers",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "movement_route",
+                "ped_idx": 0,
+                "mode": "loop",
+                "movement": "jog",
+                "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0], [30, 0, 0]],
+                "waypoints": [
+                    {"movement": "walk"},
+                    {"movement": "jog"},
+                    {"movement": "run"},
+                    {"behavior": "scan", "movement": "run"},
+                ],
+            }]}}
+        )
+        ctx = _build_template_context(schema)
+        path = ctx["editor_paths"][0]
+        assert path["speed"] == 2.2
+        assert path["behavior"] == "jog"
+        assert path["speeds"] == [1.0, 2.2, 3.5, 3.5]
+        assert path["behaviors"] == ["Walk", "Jog", "Sprint", "Scan"]
+
+        code = gen.generate(schema)
+        for token in (
+            "PatrolWaypointBehavior.Walk",
+            "PatrolWaypointBehavior.Jog",
+            "PatrolWaypointBehavior.Sprint",
+            "PatrolWaypointBehavior.Scan",
+            "1.00f",
+            "2.20f",
+            "3.50f",
+        ):
+            assert token in code, f"movement alias C# missing {token}"
+
     def test_editor_patrol_stress_multiple_peds_and_transition_metadata(self, gen):
         schema = MissionSchema(
             mission_name="Patrol Stress",
