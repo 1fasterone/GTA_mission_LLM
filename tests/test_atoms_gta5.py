@@ -123,7 +123,6 @@ class TestGta5Snippets:
         assert "GIVE_WEAPON_TO_PED, _ped, _wh, 250, false, true" in snippet
 
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # Native-hash allowlist cross-check
 # ══════════════════════════════════════════════════════════════════════════════
