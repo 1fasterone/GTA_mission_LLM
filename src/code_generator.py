@@ -353,7 +353,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                                     "z": float(q[2]) if len(q) > 2 else location["z"]})
                 elif isinstance(q, dict):
                     raw_pts.append({"x": float(q.get("x", 0.0)), "y": float(q.get("y", 0.0)),
-                                    "z": float(q.get("z", location["z"]))})
+                                    "z": float(q.get("z", float(location["z"])))})
             if len(raw_pts) >= 2:
                 race_checkpoints.append({
                     "array_name":      f"RaceCheckpoints{rc_counter}",
@@ -425,7 +425,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                                 "z": float(q[2]) if len(q) > 2 else location["z"]})
                 elif isinstance(q, dict):
                     pts.append({"x": float(q.get("x", 0.0)), "y": float(q.get("y", 0.0)),
-                                "z": float(q.get("z", location["z"]))})
+                                "z": float(q.get("z", float(location["z"])))})
             if len(pts) < 2:
                 pts = []
         if not pts:
