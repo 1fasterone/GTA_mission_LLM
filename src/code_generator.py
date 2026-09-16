@@ -189,9 +189,70 @@ def _bool_or_default(value, default: bool = False) -> bool:
 
 
 def _build_template_context(schema: MissionSchema) -> dict:
-    location    = _LOCATIONS.get(schema.location_name, _LOCATIONS["docks"])
+    location    = dict(_LOCATIONS.get(schema.location_name, _LOCATIONS["docks"]))
     class_name  = _to_class_name(schema.mission_name)
     weather_str = _WEATHER_NATIVE.get(schema.weather.upper(), "CLEAR")
+    _editor = (schema.meta or {}).get("editor") if isinstance(schema.meta, dict) else None
+
+    def _editor_point(value, fallback_z=None):
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            return {
+                "x": float(value[0]),
+                "y": float(value[1]),
+                "z": float(value[2]) if len(value) > 2 else float(fallback_z if fallback_z is not None else location["z"]),
+            }
+        if isinstance(value, dict):
+            return {
+                "x": float(value.get("x", 0.0)),
+                "y": float(value.get("y", 0.0)),
+                "z": float(value.get("z", fallback_z if fallback_z is not None else location["z"])),
+            }
+        return None
+
+    editor_blips: list[dict] = []
+    if isinstance(_editor, dict):
+        for blip in (_editor.get("blips") or []):
+            if not isinstance(blip, dict):
+                continue
+            point = _editor_point(blip.get("pos"), location["z"])
+            if point is None:
+                continue
+            point["label"] = str(blip.get("label") or "")
+            point["step_index"] = blip.get("step_index") if isinstance(blip.get("step_index"), int) else None
+            point["objective_id"] = str(blip.get("objective_id") or "")
+            editor_blips.append(point)
+    start_blip_idx = None
+    if editor_blips:
+        start_blip_idx = next(
+            (idx for idx, b in enumerate(editor_blips)
+             if b["label"].strip().lower() in {"start", "mission start"}),
+            0,
+        )
+        start_blip = editor_blips[start_blip_idx]
+        location.update({"x": start_blip["x"], "y": start_blip["y"], "z": start_blip["z"]})
+
+    # Step-linked editor blips are objective targets, separate from the mission
+    # start and from patrol points. Prefer the explicit step index, then the
+    # stable editor objective id.
+    step_editor_targets: dict[int, dict] = {}
+    linked_editor_blip_indices: set[int] = set()
+    for step_index, step in enumerate(schema.steps):
+        editor_id = str(step.params.get("editor_id") or "")
+        match = next(
+            ((idx, blip) for idx, blip in enumerate(editor_blips)
+             if blip.get("step_index") == step_index),
+            None,
+        )
+        if match is None and editor_id:
+            match = next(
+                ((idx, blip) for idx, blip in enumerate(editor_blips)
+                 if blip.get("objective_id") == editor_id),
+                None,
+            )
+        if match is not None:
+            idx, blip = match
+            step_editor_targets[step_index] = blip
+            linked_editor_blip_indices.add(idx)
 
     # ── Waypoints (one per go_to step) ───────────────────────────────────────
     waypoints: list[dict] = []
@@ -208,15 +269,38 @@ def _build_template_context(schema: MissionSchema) -> dict:
         (-45, -45),   # southwest
         ( 45, -45),   # southeast
     ]
+    used_editor_blips: set[int] = set(linked_editor_blip_indices)
+    if start_blip_idx is not None:
+        used_editor_blips.add(start_blip_idx)
+
+    def _editor_waypoint_for_step(step_index: int, step) -> dict | None:
+        linked = step_editor_targets.get(step_index)
+        if linked is not None:
+            return linked
+        for idx, blip in enumerate(editor_blips):
+            if idx not in used_editor_blips and blip.get("step_index") is None and not blip.get("objective_id"):
+                used_editor_blips.add(idx)
+                return blip
+        return None
+
     for i, step in enumerate(schema.steps):
         if step.type == "go_to":
-            dx, dy = _WP_DIRS[wp_counter % len(_WP_DIRS)]
-            waypoints.append({
-                "x":     location["x"] + dx,
-                "y":     location["y"] + dy,
-                "z":     location["z"],
-                "label": step.label,
-            })
+            editor_wp = _editor_waypoint_for_step(i, step)
+            if editor_wp is None:
+                dx, dy = _WP_DIRS[wp_counter % len(_WP_DIRS)]
+                waypoints.append({
+                    "x":     location["x"] + dx,
+                    "y":     location["y"] + dy,
+                    "z":     location["z"],
+                    "label": step.label,
+                })
+            else:
+                waypoints.append({
+                    "x":     editor_wp["x"],
+                    "y":     editor_wp["y"],
+                    "z":     editor_wp["z"],
+                    "label": step.label or editor_wp.get("label", ""),
+                })
             waypoint_idx[i] = wp_counter
             wp_counter += 1
 
@@ -350,6 +434,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
             "label":               _escape_cs_string(step.label),
             "waypoint_idx":        waypoint_idx.get(i),
             "next_waypoint":       next_wp,
+            "editor_target":       step_editor_targets.get(i),
             "race_checkpoint_idx": race_checkpoint_idx.get(i),          # None for non-racing steps
             "timer_seconds":       int(step.params.get("seconds", 120)) if step.type == "timer" else None,
             "scavenger_idx":       scavenger_idx.get(i),                # None for non-scavenger steps
@@ -360,8 +445,6 @@ def _build_template_context(schema: MissionSchema) -> dict:
     # editor.paths[i].ped_idx points at a schema ped; build ped_idx → path-slot so
     # SpawnPeds can hand that ped its waypoint loop. Computed here (pre-peds) so the
     # ped dict can carry a `patrol_path_idx`.
-    _editor = (schema.meta or {}).get("editor") if isinstance(schema.meta, dict) else None
-
     def _editor_pos(kind: str, idx: int):
         """Absolute [x,y,z,(heading)] the editor placed for entity `idx`, or None.
         This is what makes 'icon on the map' === 'spawn position in game'."""

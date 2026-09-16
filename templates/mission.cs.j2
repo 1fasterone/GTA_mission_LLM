@@ -372,6 +372,13 @@ public class {{ class_name }} : Script
 
     // -- Start trigger --------------------------------------------------------
 
+    private static float HorizontalDistance(Vector3 a, Vector3 b)
+    {
+        float dx = a.X - b.X;
+        float dy = a.Y - b.Y;
+        return (float)Math.Sqrt((dx * dx) + (dy * dy));
+    }
+
     private void CheckStart()
     {
         if (!_startReady)
@@ -391,7 +398,8 @@ public class {{ class_name }} : Script
                 + "~n~~s~Go to the ~y~flashing yellow blip ~s~on your radar.", true);
         }
 
-        float _distToStart = Game.Player.Character.Position.DistanceTo(SpawnOrigin);
+        // Editor map placement reliably supplies X/Y, but may retain a placeholder Z.
+        float _distToStart = HorizontalDistance(Game.Player.Character.Position, SpawnOrigin);
 
         // Show a permanent subtitle hinting the key so player doesn't miss it
         if (_distToStart < 50f)
@@ -464,7 +472,7 @@ public class {{ class_name }} : Script
     {
 {% if step.type == "go_to" %}
 {% if step.waypoint_idx is not none %}
-        if (Game.Player.Character.Position.DistanceTo(Waypoints[{{ step.waypoint_idx }}]) < 3f)
+        if (HorizontalDistance(Game.Player.Character.Position, Waypoints[{{ step.waypoint_idx }}]) < 3f)
         {
             GTA.UI.Notification.PostTicker("{{ step.label }}", false);
             _step++;
@@ -496,7 +504,15 @@ public class {{ class_name }} : Script
             }
         }
 {% elif step.type == "deliver" %}
-        if (_blip != null && Game.Player.Character.Position.DistanceTo(_blip.Position) < 3f)
+{% if step.editor_target is not none %}
+        Vector3 _deliveryTarget = new Vector3(
+            {{ "%.1f"|format(step.editor_target.x) }}f,
+            {{ "%.1f"|format(step.editor_target.y) }}f,
+            {{ "%.1f"|format(step.editor_target.z) }}f);
+        if (HorizontalDistance(Game.Player.Character.Position, _deliveryTarget) < 3f)
+{% else %}
+        if (_blip != null && HorizontalDistance(Game.Player.Character.Position, _blip.Position) < 3f)
+{% endif %}
         {
             GTA.UI.Notification.PostTicker("~g~{{ step.label }}", false);
             _step++;
@@ -977,6 +993,11 @@ public class {{ class_name }} : Script
 {% elif step.type == "get_in_vehicle" %}
                 foreach (var _v in _vehicles)
                     if (_v != null) { _blip = _v.AddBlip(); break; }
+{% elif step.type == "deliver" and step.editor_target is not none %}
+                _blip = World.CreateBlip(new Vector3(
+                    {{ "%.1f"|format(step.editor_target.x) }}f,
+                    {{ "%.1f"|format(step.editor_target.y) }}f,
+                    {{ "%.1f"|format(step.editor_target.z) }}f));
 {% elif step.type == "deliver" and step.next_waypoint is not none %}
                 _blip = World.CreateBlip(Waypoints[{{ step.next_waypoint }}]);
 {% elif step.type in ("checkpoint", "race_lap") and step.race_checkpoint_idx is not none %}

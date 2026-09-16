@@ -172,6 +172,72 @@ class TestBuildTemplateContext:
         # The two waypoints must be different from each other
         assert (wp0["x"], wp0["y"]) != (wp1["x"], wp1["y"])
 
+    def test_editor_blip_overrides_mission_start(self):
+        schema = self._schema(
+            meta={
+                "editor": {
+                    "blips": [
+                        {"pos": [266.5, 5375.0, 13.8], "label": "Reach the meet point"},
+                    ],
+                },
+            },
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["location"]["x"] == 266.5
+        assert ctx["location"]["y"] == 5375.0
+        assert ctx["location"]["z"] == 13.8
+
+    def test_editor_blip_overrides_go_to_waypoint_by_step_index(self):
+        schema = self._schema(
+            steps=[
+                MissionStep(type="deliver", label="Setup", params={"editor_id": "obj_setup"}),
+                MissionStep(type="go_to", label="Move", params={"editor_id": "obj_move"}),
+            ],
+            meta={
+                "editor": {
+                    "blips": [
+                        {"pos": [-949.0, -2704.0, 13.8], "label": "Setup", "step_index": 0, "objective_id": "obj_setup"},
+                        {"pos": [-1039.0, -2756.0, 13.8], "label": "Move", "step_index": 1, "objective_id": "obj_move"},
+                    ],
+                },
+            },
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["waypoints"] == [{"x": -1039.0, "y": -2756.0, "z": 13.8, "label": "Move"}]
+
+    def test_editor_blip_overrides_go_to_waypoint_by_objective_id(self):
+        schema = self._schema(
+            steps=[
+                MissionStep(type="go_to", label="", params={"editor_id": "obj_move"}),
+            ],
+            meta={
+                "editor": {
+                    "blips": [
+                        {"pos": [111.0, 222.0, 33.0], "label": "Move", "objective_id": "obj_move"},
+                    ],
+                },
+            },
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["waypoints"] == [{"x": 111.0, "y": 222.0, "z": 33.0, "label": "Move"}]
+
+    def test_editor_blip_becomes_deliver_step_target(self):
+        schema = self._schema(
+            steps=[MissionStep(type="deliver", label="Drop", params={"editor_id": "obj_drop"})],
+            meta={
+                "editor": {
+                    "blips": [
+                        {"pos": [10.0, 20.0, 30.0], "label": "Start"},
+                        {"pos": [111.0, 222.0, 13.8], "label": "Drop", "step_index": 0,
+                         "objective_id": "obj_drop"},
+                    ],
+                },
+            },
+        )
+        ctx = _build_template_context(schema)
+        assert ctx["steps"][0]["editor_target"]["x"] == 111.0
+        assert ctx["steps"][0]["editor_target"]["y"] == 222.0
+
     def test_ped_weapon_name_none_for_no_weapon(self):
         schema = self._schema(peds=[
             MissionPed(description="cop", model="s_m_y_cop_01", role="guard", weapon="none"),
@@ -431,6 +497,27 @@ class TestCodeGeneratorGenerate:
     def test_output_starts_with_auto_generated_comment(self, gen, gta_full_schema):
         code = gen.generate(gta_full_schema)
         assert code.startswith("// Auto-generated")
+
+    def test_start_trigger_uses_horizontal_distance(self, gen, gta_full_schema):
+        code = gen.generate(gta_full_schema)
+        assert "HorizontalDistance(Game.Player.Character.Position, SpawnOrigin)" in code
+        assert "Game.Player.Character.Position.DistanceTo(SpawnOrigin)" not in code
+
+    def test_editor_deliver_target_drives_blip_and_arrival(self, gen):
+        schema = MissionSchema(
+            mission_name="Editor Delivery",
+            location_name="docks",
+            steps=[MissionStep(type="deliver", label="Drop", params={"editor_id": "obj_drop"})],
+            meta={"editor": {"blips": [
+                {"pos": [10.0, 20.0, 13.8], "label": "Start"},
+                {"pos": [111.0, 222.0, 13.8], "label": "Drop", "step_index": 0,
+                 "objective_id": "obj_drop"},
+            ]}},
+        )
+        code = gen.generate(schema)
+        assert code.count("111.0f") >= 2
+        assert code.count("222.0f") >= 2
+        assert "HorizontalDistance(Game.Player.Character.Position, _deliveryTarget)" in code
 
     def test_output_contains_using_gta(self, gen, gta_full_schema):
         code = gen.generate(gta_full_schema)
