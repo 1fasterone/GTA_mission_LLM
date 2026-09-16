@@ -65,6 +65,14 @@ _PATROL_ROUTE_MODE_CS = {
     "ping_pong": "PingPong",
 }
 
+_PATROL_BEHAVIOR_CS = {
+    "walk": "Walk",
+    "jog": "Jog",
+    "sprint": "Sprint",
+    "scan": "Scan",
+    "guard": "Guard",
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -148,6 +156,36 @@ def _patrol_speed(value, default: float = 1.0) -> float:
     if speed <= 0:
         speed = default
     return max(0.25, min(speed, 8.0))
+
+
+def _patrol_wait_ms(value, default_seconds: float = 0.0) -> int:
+    seconds = _float_or_default(value, default_seconds)
+    if seconds <= 0:
+        return 0
+    return int(max(0, min(round(seconds * 1000), 600000)))
+
+
+def _patrol_behavior(value, default: str = "walk") -> str:
+    behavior = str(value or default or "walk").lower()
+    if behavior in _PATROL_BEHAVIOR_CS:
+        return behavior
+    if default in _PATROL_BEHAVIOR_CS:
+        return default
+    return "walk"
+
+
+def _bool_or_default(value, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return default
 
 
 def _build_template_context(schema: MissionSchema) -> dict:
@@ -590,18 +628,37 @@ def _build_template_context(schema: MissionSchema) -> dict:
             if mode not in _PATROL_ROUTE_MODE_CS:
                 mode = "loop"
             path_speed = _patrol_speed(p.get("speed"), 1.0)
+            path_wait_ms = _patrol_wait_ms(p.get("wait_time"), 0.0)
+            path_behavior = _patrol_behavior(p.get("behavior"), "walk")
+            path_guard_until_alert = _bool_or_default(p.get("guard_until_alert"), False)
             wp_meta = p.get("waypoints") if isinstance(p.get("waypoints"), list) else []
             speeds = []
+            waits_ms = []
+            behaviors = []
+            guard_until_alert = []
             for j, _pt in enumerate(pts):
                 wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
                 speeds.append(_patrol_speed(wp.get("speed"), path_speed))
+                waits_ms.append(_patrol_wait_ms(wp.get("wait_time"), path_wait_ms / 1000.0))
+                behavior = _patrol_behavior(wp.get("behavior"), path_behavior)
+                behaviors.append(_PATROL_BEHAVIOR_CS[behavior])
+                guard_until_alert.append(
+                    _bool_or_default(wp.get("guard_until_alert"), path_guard_until_alert)
+                )
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
                 "mode":    mode,
                 "mode_cs": _PATROL_ROUTE_MODE_CS[mode],
                 "speed":   path_speed,
+                "wait_ms": path_wait_ms,
+                "behavior": path_behavior,
+                "behavior_cs": _PATROL_BEHAVIOR_CS[path_behavior],
+                "guard_until_alert": path_guard_until_alert,
                 "speeds":  speeds,
+                "waits_ms": waits_ms,
+                "behaviors": behaviors,
+                "guard_until_alerts": guard_until_alert,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })

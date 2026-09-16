@@ -276,7 +276,14 @@ class TestBuildTemplateContext:
             "mode": "loop",
             "mode_cs": "Loop",
             "speed": 1.2,
+            "wait_ms": 0,
+            "behavior": "walk",
+            "behavior_cs": "Walk",
+            "guard_until_alert": False,
             "speeds": [1.0, 1.0, 1.2],
+            "waits_ms": [0, 2000, 1000],
+            "behaviors": ["Walk", "Scan", "Guard"],
+            "guard_until_alerts": [False, False, False],
             "points": [
                 {"x": -1030.0, "y": -2710.0, "z": 13.8},
                 {"x": -1000.0, "y": -2685.0, "z": 13.8},
@@ -346,6 +353,31 @@ class TestBuildTemplateContext:
         ctx = _build_template_context(schema)
         assert ctx["editor_paths"][0]["speed"] == 2.5
         assert ctx["editor_paths"][0]["speeds"] == [1.25, 2.5, 2.5]
+
+    def test_editor_path_behavior_metadata_falls_back_to_path_defaults(self):
+        schema = self._schema(
+            meta={"editor": {"paths": [{
+                "id": "behavior_route",
+                "ped_idx": None,
+                "wait_time": 3,
+                "behavior": "guard",
+                "guard_until_alert": "true",
+                "points": [[-1, -2, 3], [4, 5, 6], [7, 8, 9]],
+                "waypoints": [
+                    {"wait_time": 1, "behavior": "scan", "guard_until_alert": False},
+                    {},
+                    {"wait_time": "bad", "behavior": "mystery", "guard_until_alert": "false"},
+                ],
+            }]}}
+        )
+        path = _build_template_context(schema)["editor_paths"][0]
+        assert path["wait_ms"] == 3000
+        assert path["behavior"] == "guard"
+        assert path["behavior_cs"] == "Guard"
+        assert path["guard_until_alert"] is True
+        assert path["waits_ms"] == [1000, 3000, 3000]
+        assert path["behaviors"] == ["Scan", "Guard", "Guard"]
+        assert path["guard_until_alerts"] == [False, True, False]
 
     def test_vehicle_offsets_present(self):
         schema = self._schema(vehicles=[
@@ -431,33 +463,190 @@ class TestCodeGeneratorGenerate:
             "private static readonly Vector3[] EditorPath_0",
             "new Vector3(-1030.0f, -2710.0f, 13.8f)",
             "private static readonly float[] EditorPathSpeed_0",
+            "private static readonly int[] EditorPathWaitMs_0",
+            "private static readonly PatrolWaypointBehavior[] EditorPathBehavior_0",
+            "private static readonly bool[] EditorPathGuardUntilAlert_0",
             "1.20f",
+            "2000",
+            "PatrolWaypointBehavior.Scan",
+            "PatrolWaypointBehavior.Guard",
             "// id=dock_patrol_alpha pedIdx=0",
             "private static Vector3[] EditorPathByIndex(int idx)",
             "private static float[] EditorPathSpeedByIndex(int idx)",
+            "private static int[] EditorPathWaitMsByIndex(int idx)",
+            "private static PatrolWaypointBehavior[] EditorPathBehaviorByIndex(int idx)",
+            "private static bool[] EditorPathGuardUntilAlertByIndex(int idx)",
             "private const float DefaultPatrolSpeed = 1.0f;",
+            "private const int DefaultScanMs = 2000;",
             "private enum PatrolRouteMode { Once, Loop, PingPong }",
-            "private enum PatrolRouteState { Moving, Complete }",
+            "private enum PatrolRouteState { Moving, Waiting, Scanning, Guarding, Complete }",
+            "private enum PatrolWaypointBehavior { Walk, Jog, Sprint, Scan, Guard }",
             "private class PatrolUnit",
             "public float[] Speed;",
+            "public int[] WaitMs;",
+            "public PatrolWaypointBehavior[] Behavior;",
+            "public bool[] GuardUntilAlert;",
             "public PatrolRouteMode Mode;",
             "public PatrolRouteState State;",
+            "public DateTime StateUntil;",
             "public int Dir;",
             "private readonly List<PatrolUnit> _patrols",
             "if (_state == State.Active) UpdatePatrols();",
             "Speed = EditorPathSpeedByIndex(0)",
+            "WaitMs = EditorPathWaitMsByIndex(0)",
+            "Behavior = EditorPathBehaviorByIndex(0)",
+            "GuardUntilAlert = EditorPathGuardUntilAlertByIndex(0)",
             "Mode = PatrolRouteMode.Loop",
-            "State = PatrolRouteState.Moving, Wp = 0, Dir = 1",
+            "State = PatrolRouteState.Moving, StateUntil = DateTime.MinValue, Wp = 0, Dir = 1",
             "IssuePatrolMove(_patrols[_patrols.Count - 1]);",
             "private void UpdatePatrols()",
             "private float PatrolSpeedAt(PatrolUnit u)",
+            "private int PatrolWaitMsAt(PatrolUnit u)",
+            "private PatrolWaypointBehavior PatrolBehaviorAt(PatrolUnit u)",
+            "private bool PatrolGuardUntilAlertAt(PatrolUnit u)",
             "private void IssuePatrolMove(PatrolUnit u)",
             "Hash.TASK_FOLLOW_NAV_MESH_TO_COORD",
             "u.Ped.Task.RunTo(target, true);",
+            "private void EnterPatrolWaypoint(PatrolUnit u, DateTime now)",
+            "private void BeginPatrolScan(PatrolUnit u, DateTime now, int durationMs)",
+            "private void BeginPatrolGuard(PatrolUnit u, DateTime now, int durationMs, bool guardUntilAlert)",
+            "Hash.TASK_STAND_STILL",
+            "Hash.TASK_LOOK_AT_COORD",
+            "Hash.TASK_GUARD_CURRENT_POSITION",
+            "DateTime.MaxValue",
             "private bool AdvancePatrol(PatrolUnit u)",
             "_patrols.Clear();",
         ):
             assert token in code, f"patrol C# missing {token}"
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
+
+    def test_editor_patrol_behaviors_emit_scan_and_timed_guard(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Behaviors",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "behavior_route",
+                "ped_idx": 0,
+                "mode": "loop",
+                "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0]],
+                "waypoints": [
+                    {"behavior": "walk"},
+                    {"behavior": "scan", "wait_time": 2},
+                    {"behavior": "guard", "wait_time": 1, "guard_until_alert": True},
+                ],
+            }]}}
+        )
+        code = gen.generate(schema)
+        for token in (
+            "if (behavior == PatrolWaypointBehavior.Scan)",
+            "BeginPatrolScan(u, now, waitMs > 0 ? waitMs : DefaultScanMs);",
+            "Function.Call(Hash.TASK_STAND_STILL, u.Ped, durationMs);",
+            "Function.Call(Hash.TASK_LOOK_AT_COORD,",
+            "if (behavior == PatrolWaypointBehavior.Guard)",
+            "bool guardUntilAlert = PatrolGuardUntilAlertAt(u);",
+            "BeginPatrolGuard(u, now, waitMs, guardUntilAlert);",
+            "u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(durationMs);",
+            "Function.Call(Hash.TASK_GUARD_CURRENT_POSITION, u.Ped, 10.0f, 10.0f, 1);",
+            "else if (u.StateUntil != DateTime.MaxValue && now >= u.StateUntil)",
+        ):
+            assert token in code, f"behavior C# missing {token}"
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
+
+    def test_editor_patrol_stress_multiple_peds_and_transition_metadata(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Stress",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the routes")],
+            peds=[
+                MissionPed(description="outer sentry", model="s_m_y_dockwork_01", role="patrol"),
+                MissionPed(description="inner guard", model="s_m_y_dockwork_01", role="guard"),
+                MissionPed(description="driver sentry", model="s_m_y_dockwork_01", role="patrol"),
+            ],
+            vehicles=[MissionVehicle(description="sentry car", model="sultan", role="parked")],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [
+                {
+                    "id": "outer_once",
+                    "ped_idx": 0,
+                    "mode": "once",
+                    "speed": 1.0,
+                    "points": [[0, 0, 0], [12, 0, 0], [24, 0, 0]],
+                    "waypoints": [
+                        {"behavior": "walk", "speed": 1.0},
+                        {"behavior": "scan", "wait_time": 0.5,
+                         "transition": {"kind": "interior", "name": "warehouse"}},
+                        {"behavior": "walk", "speed": 1.8},
+                    ],
+                },
+                {
+                    "id": "courtyard_loop",
+                    "ped_idx": 1,
+                    "mode": "loop",
+                    "speed": 1.4,
+                    "wait_time": 0.25,
+                    "points": [[0, 10, 0], [10, 10, 0], [10, 20, 0], [0, 20, 0]],
+                    "waypoints": [
+                        {"behavior": "guard", "wait_time": 1},
+                        {"behavior": "walk", "speed": 2.0},
+                        {"behavior": "scan"},
+                        {"behavior": "guard", "guard_until_alert": True},
+                    ],
+                },
+                {
+                    "id": "driver_ping",
+                    "ped_idx": 2,
+                    "mode": "ping_pong",
+                    "speed": 2.2,
+                    "points": [[0, 30, 0], [12, 30, 0], [24, 30, 0]],
+                    "waypoints": [
+                        {"behavior": "jog", "speed": 2.2},
+                        {"behavior": "sprint", "speed": 3.5,
+                         "vehicle_transition": {"vehicle_idx": 0, "seat": "driver"}},
+                        {"behavior": "scan", "wait_time": 2},
+                    ],
+                },
+            ]}},
+        )
+        ctx = _build_template_context(schema)
+        assert [p["patrol_path_idx"] for p in ctx["peds"]] == [0, 1, 2]
+        assert [p["mode_cs"] for p in ctx["editor_paths"]] == ["Once", "Loop", "PingPong"]
+        assert ctx["editor_paths"][0]["waits_ms"] == [0, 500, 0]
+        assert ctx["editor_paths"][1]["waits_ms"] == [1000, 250, 250, 250]
+        assert ctx["editor_paths"][2]["behaviors"] == ["Jog", "Sprint", "Scan"]
+        assert ctx["editor_paths"][1]["guard_until_alerts"] == [False, False, False, True]
+
+        code = gen.generate(schema)
+        assert code.count("_patrols.Add(new PatrolUnit") == 3
+        for token in (
+            "private static readonly Vector3[] EditorPath_0",
+            "private static readonly Vector3[] EditorPath_1",
+            "private static readonly Vector3[] EditorPath_2",
+            "Mode = PatrolRouteMode.Once",
+            "Mode = PatrolRouteMode.Loop",
+            "Mode = PatrolRouteMode.PingPong",
+            "PatrolWaypointBehavior.Jog",
+            "PatrolWaypointBehavior.Sprint",
+            "PatrolWaypointBehavior.Scan",
+            "PatrolWaypointBehavior.Guard",
+            "500",
+            "250",
+            "true",
+        ):
+            assert token in code, f"stress patrol C# missing {token}"
+        assert "warehouse" not in code
+        assert "vehicle_transition" not in code
         assert code.count("{") == code.count("}")
         assert code.count("(") == code.count(")")
 
@@ -504,9 +693,17 @@ class TestCodeGeneratorGenerate:
             "EditorPathByIndex",
             "EditorPathSpeed_0",
             "EditorPathSpeedByIndex",
+            "EditorPathWaitMs_0",
+            "EditorPathWaitMsByIndex",
+            "EditorPathBehavior_0",
+            "EditorPathBehaviorByIndex",
+            "EditorPathGuardUntilAlert_0",
+            "EditorPathGuardUntilAlertByIndex",
             "DefaultPatrolSpeed",
+            "DefaultScanMs",
             "PatrolRouteMode",
             "PatrolRouteState",
+            "PatrolWaypointBehavior",
             "PatrolUnit",
             "_patrols",
             "UpdatePatrols",
