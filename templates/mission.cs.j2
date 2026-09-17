@@ -175,6 +175,40 @@ public class {{ class_name }} : Script
         PatrolWeaponState.{{ weapon_state }},
 {% endfor %}
     };
+    private static readonly PatrolLookTargetKind[] EditorPathLookTargetKind_{{ loop.index0 }} = new PatrolLookTargetKind[] {
+{% for kind in path.look_target_kinds %}
+        PatrolLookTargetKind.{{ kind }},
+{% endfor %}
+    };
+    private static readonly int[] EditorPathLookTargetIndex_{{ loop.index0 }} = new int[] {
+{% for index in path.look_target_indices %}
+        {{ index }},
+{% endfor %}
+    };
+    private static readonly Vector3[] EditorPathLookTargetCoord_{{ loop.index0 }} = new Vector3[] {
+{% for coord in path.look_target_coords %}
+        new Vector3({{ "%.2f"|format(coord.x) }}f, {{ "%.2f"|format(coord.y) }}f, {{ "%.2f"|format(coord.z) }}f),
+{% endfor %}
+    };
+    private static readonly float[] EditorPathScanHeading_{{ loop.index0 }} = new float[] {
+{% for heading in path.scan_headings %}
+{% if heading is not none %}        {{ "%.2f"|format(heading) }}f,
+{% else %}        float.NaN,
+{% endif %}
+{% endfor %}
+    };
+    private static readonly float[] EditorPathScanArc_{{ loop.index0 }} = new float[] {
+{% for arc in path.scan_arcs %}
+{% if arc is not none %}        {{ "%.2f"|format(arc) }}f,
+{% else %}        float.NaN,
+{% endif %}
+{% endfor %}
+    };
+    private static readonly int[] EditorPathScanDurationMs_{{ loop.index0 }} = new int[] {
+{% for duration_ms in path.scan_durations_ms %}
+        {{ duration_ms }},
+{% endfor %}
+    };
 {% endfor %}
 
     private static Vector3[] EditorPathByIndex(int idx)
@@ -254,6 +288,72 @@ public class {{ class_name }} : Script
         }
     }
 
+    private static PatrolLookTargetKind[] EditorPathLookTargetKindByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathLookTargetKind_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private static int[] EditorPathLookTargetIndexByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathLookTargetIndex_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private static Vector3[] EditorPathLookTargetCoordByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathLookTargetCoord_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private static float[] EditorPathScanHeadingByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathScanHeading_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private static float[] EditorPathScanArcByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathScanArc_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
+    private static int[] EditorPathScanDurationMsByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathScanDurationMs_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
     private const float DefaultPatrolSpeed = 1.0f;
     private const int DefaultScanMs = 2000;
     private enum PatrolRouteMode { Once, Loop, PingPong }
@@ -261,6 +361,7 @@ public class {{ class_name }} : Script
     private enum PatrolWaypointBehavior { Walk, Jog, Sprint, Scan, Guard }
     private enum PatrolPosture { Normal, Cautious, Aggressive }
     private enum PatrolWeaponState { Unchanged, Drawn, Holstered }
+    private enum PatrolLookTargetKind { None, Coord, Ped, Vehicle, Object }
     private class PatrolUnit
     {
         public Ped Ped;
@@ -272,6 +373,14 @@ public class {{ class_name }} : Script
         public PatrolPosture[] Posture;
         public PatrolWeaponState[] WeaponState;
         public int WeaponHash;
+        public PatrolLookTargetKind[] LookTargetKind;
+        public int[] LookTargetIndex;
+        public Vector3[] LookTargetCoord;
+        public float[] ScanHeading;
+        public float[] ScanArc;
+        public int[] ScanDurationMs;
+        public int ScanSample;
+        public DateTime ScanNextAt;
         public PatrolRouteMode Mode;
         public PatrolRouteState State;
         public DateTime StateUntil;
@@ -777,6 +886,13 @@ public class {{ class_name }} : Script
                         Posture = EditorPathPostureByIndex({{ ped.patrol_path_idx }}),
                         WeaponState = EditorPathWeaponStateByIndex({{ ped.patrol_path_idx }}),
                         WeaponHash = {% if peds[ped.patrol_path_idx].weapon_name %}Function.Call<int>(Hash.GET_HASH_KEY, "{{ peds[ped.patrol_path_idx].weapon_name }}"){% else %}0{% endif %},
+                        LookTargetKind = EditorPathLookTargetKindByIndex({{ ped.patrol_path_idx }}),
+                        LookTargetIndex = EditorPathLookTargetIndexByIndex({{ ped.patrol_path_idx }}),
+                        LookTargetCoord = EditorPathLookTargetCoordByIndex({{ ped.patrol_path_idx }}),
+                        ScanHeading = EditorPathScanHeadingByIndex({{ ped.patrol_path_idx }}),
+                        ScanArc = EditorPathScanArcByIndex({{ ped.patrol_path_idx }}),
+                        ScanDurationMs = EditorPathScanDurationMsByIndex({{ ped.patrol_path_idx }}),
+                        ScanSample = 0, ScanNextAt = DateTime.MinValue,
                         Mode = PatrolRouteMode.{{ editor_paths[ped.patrol_path_idx].mode_cs }},
                         State = PatrolRouteState.Moving, StateUntil = DateTime.MinValue, Wp = 0, Dir = 1 });
                     ApplyPatrolWeaponState(_patrols[_patrols.Count - 1]);
@@ -1293,6 +1409,13 @@ public class {{ class_name }} : Script
                     IssuePatrolMove(u);
                 }
             }
+            else if (u.State == PatrolRouteState.Scanning)
+            {
+                if (u.StateUntil != DateTime.MaxValue && now >= u.StateUntil)
+                    AdvancePatrolAndMove(u);
+                else if (now >= u.ScanNextAt)
+                    IssuePatrolScanLook(u, now);
+            }
             else if (u.StateUntil != DateTime.MaxValue && now >= u.StateUntil)
             {
                 AdvancePatrolAndMove(u);
@@ -1357,6 +1480,171 @@ public class {{ class_name }} : Script
             ? u.WeaponHash
             : Function.Call<int>(Hash.GET_HASH_KEY, "weapon_unarmed");
         Function.Call(Hash.SET_CURRENT_PED_WEAPON, u.Ped, desiredHash, true);
+    }
+
+    private PatrolLookTargetKind PatrolLookTargetKindAt(PatrolUnit u)
+    {
+        if (u == null || u.LookTargetKind == null || u.Wp < 0 || u.Wp >= u.LookTargetKind.Length)
+            return PatrolLookTargetKind.None;
+        return u.LookTargetKind[u.Wp];
+    }
+
+    private int PatrolLookTargetIndexAt(PatrolUnit u)
+    {
+        if (u == null || u.LookTargetIndex == null || u.Wp < 0 || u.Wp >= u.LookTargetIndex.Length)
+            return -1;
+        return u.LookTargetIndex[u.Wp];
+    }
+
+    private Vector3 PatrolLookTargetCoordAt(PatrolUnit u)
+    {
+        if (u == null || u.LookTargetCoord == null || u.Wp < 0 || u.Wp >= u.LookTargetCoord.Length)
+            return new Vector3(0.0f, 0.0f, 0.0f);
+        return u.LookTargetCoord[u.Wp];
+    }
+
+    private Entity PatrolLookTargetEntityAt(PatrolUnit u)
+    {
+        int idx = PatrolLookTargetIndexAt(u);
+        if (idx < 0) return null;
+        switch (PatrolLookTargetKindAt(u))
+        {
+            case PatrolLookTargetKind.Ped:
+                return idx < _peds.Count ? _peds[idx] : null;
+            case PatrolLookTargetKind.Vehicle:
+                return idx < _vehicles.Count ? _vehicles[idx] : null;
+            case PatrolLookTargetKind.Object:
+                return idx < _props.Count ? _props[idx] : null;
+            default:
+                return null;
+        }
+    }
+
+    private bool PatrolHasExplicitLookTarget(PatrolUnit u)
+    {
+        return PatrolLookTargetKindAt(u) != PatrolLookTargetKind.None;
+    }
+
+    private Vector3 PatrolLookTarget(PatrolUnit u)
+    {
+        PatrolLookTargetKind kind = PatrolLookTargetKindAt(u);
+        if (kind == PatrolLookTargetKind.Coord)
+            return PatrolLookTargetCoordAt(u);
+        if (kind == PatrolLookTargetKind.Ped ||
+            kind == PatrolLookTargetKind.Vehicle ||
+            kind == PatrolLookTargetKind.Object)
+        {
+            var entity = PatrolLookTargetEntityAt(u);
+            if (entity != null && entity.Exists())
+                return entity.Position;
+            var fallback = PatrolLookTargetCoordAt(u);
+            if (fallback.X != 0.0f || fallback.Y != 0.0f || fallback.Z != 0.0f)
+                return fallback;
+        }
+        if (u == null || u.Path == null || u.Path.Length == 0)
+            return new Vector3(0.0f, 0.0f, 0.0f);
+        int next = u.Wp + (u.Dir == 0 ? 1 : u.Dir);
+        if (next >= 0 && next < u.Path.Length)
+            return u.Path[next];
+        int prev = u.Wp - (u.Dir == 0 ? 1 : u.Dir);
+        if (prev >= 0 && prev < u.Path.Length)
+            return u.Path[prev];
+        var origin = u.Path[u.Wp];
+        return new Vector3(origin.X + 5.0f, origin.Y, origin.Z);
+    }
+
+    private float PatrolScanHeadingAt(PatrolUnit u)
+    {
+        if (u == null || u.ScanHeading == null || u.Wp < 0 || u.Wp >= u.ScanHeading.Length)
+            return float.NaN;
+        return u.ScanHeading[u.Wp];
+    }
+
+    private float PatrolScanArcAt(PatrolUnit u)
+    {
+        if (u == null || u.ScanArc == null || u.Wp < 0 || u.Wp >= u.ScanArc.Length)
+            return float.NaN;
+        return u.ScanArc[u.Wp];
+    }
+
+    private int PatrolScanDurationMsAt(PatrolUnit u)
+    {
+        if (u == null || u.ScanDurationMs == null || u.Wp < 0 || u.Wp >= u.ScanDurationMs.Length)
+            return 0;
+        return Math.Max(0, u.ScanDurationMs[u.Wp]);
+    }
+
+    private float PatrolLookHeading(PatrolUnit u)
+    {
+        if (u == null || u.Ped == null || !u.Ped.Exists())
+            return 0.0f;
+        var origin = u.Ped.Position;
+        var target = PatrolLookTarget(u);
+        float dx = target.X - origin.X;
+        float dy = target.Y - origin.Y;
+        if (Math.Abs(dx) < 0.01f && Math.Abs(dy) < 0.01f)
+            return u.Ped.Heading;
+        return (float)(Math.Atan2(dx, dy) * 180.0 / Math.PI);
+    }
+
+    private void IssuePatrolLook(PatrolUnit u, int durationMs)
+    {
+        if (u == null || u.Ped == null || !u.Ped.Exists() || !PatrolHasExplicitLookTarget(u))
+            return;
+        var entity = PatrolLookTargetEntityAt(u);
+        if (entity != null && entity.Exists())
+        {
+            Function.Call(Hash.TASK_LOOK_AT_ENTITY, u.Ped, entity, durationMs, 0, 2);
+            return;
+        }
+        var target = PatrolLookTarget(u);
+        Function.Call(Hash.TASK_LOOK_AT_COORD,
+            u.Ped, target.X, target.Y, target.Z, durationMs, 0, 2);
+    }
+
+    private void IssuePatrolScanLook(PatrolUnit u, DateTime now)
+    {
+        if (u == null || u.Ped == null || !u.Ped.Exists()) return;
+        const int ScanSampleIntervalMs = 350;
+        const int ScanSampleCount = 5;
+        int lookMs = ScanSampleIntervalMs;
+        if (u.StateUntil != DateTime.MaxValue)
+        {
+            double remaining = (u.StateUntil - now).TotalMilliseconds;
+            if (remaining <= 0.0) return;
+            lookMs = Math.Max(1, Math.Min(lookMs, (int)remaining));
+        }
+        float heading = PatrolScanHeadingAt(u);
+        float arc = PatrolScanArcAt(u);
+        bool sweep = !float.IsNaN(heading) || (!float.IsNaN(arc) && arc > 0.0f);
+        if (sweep)
+        {
+            if (float.IsNaN(heading)) heading = PatrolLookHeading(u);
+            if (float.IsNaN(arc) || arc <= 0.0f) arc = 0.0f;
+            int sample = u.ScanSample % ScanSampleCount;
+            float progress = sample / (float)(ScanSampleCount - 1);
+            float sampleHeading = heading + (progress - 0.5f) * arc;
+            double radians = sampleHeading * Math.PI / 180.0;
+            var origin = u.Ped.Position;
+            var target = new Vector3(
+                origin.X + (float)Math.Sin(radians) * 8.0f,
+                origin.Y + (float)Math.Cos(radians) * 8.0f,
+                origin.Z + 1.2f);
+            Function.Call(Hash.TASK_LOOK_AT_COORD,
+                u.Ped, target.X, target.Y, target.Z, lookMs, 0, 2);
+            u.ScanSample = (u.ScanSample + 1) % ScanSampleCount;
+        }
+        else if (PatrolHasExplicitLookTarget(u))
+        {
+            IssuePatrolLook(u, lookMs);
+        }
+        else
+        {
+            var target = PatrolLookTarget(u);
+            Function.Call(Hash.TASK_LOOK_AT_COORD,
+                u.Ped, target.X, target.Y, target.Z, lookMs, 0, 2);
+        }
+        u.ScanNextAt = now.AddMilliseconds(ScanSampleIntervalMs);
     }
 
     private int PatrolAdjustedWaitMs(PatrolUnit u, int durationMs)
@@ -1433,18 +1721,21 @@ public class {{ class_name }} : Script
         u.State = PatrolRouteState.Waiting;
         u.StateUntil = now.AddMilliseconds(adjustedDurationMs);
         Function.Call(Hash.TASK_STAND_STILL, u.Ped, adjustedDurationMs);
+        IssuePatrolLook(u, adjustedDurationMs);
     }
 
     private void BeginPatrolScan(PatrolUnit u, DateTime now, int durationMs)
     {
+        int explicitDurationMs = PatrolScanDurationMsAt(u);
+        if (explicitDurationMs > 0) durationMs = explicitDurationMs;
         if (durationMs <= 0) durationMs = DefaultScanMs;
         int adjustedDurationMs = PatrolAdjustedWaitMs(u, durationMs);
         u.State = PatrolRouteState.Scanning;
         u.StateUntil = now.AddMilliseconds(adjustedDurationMs);
+        u.ScanSample = 0;
+        u.ScanNextAt = DateTime.MinValue;
         Function.Call(Hash.TASK_STAND_STILL, u.Ped, adjustedDurationMs);
-        var lookTarget = PatrolLookTarget(u);
-        Function.Call(Hash.TASK_LOOK_AT_COORD,
-            u.Ped, lookTarget.X, lookTarget.Y, lookTarget.Z, adjustedDurationMs, 0, 2);
+        IssuePatrolScanLook(u, now);
     }
 
     private void BeginPatrolGuard(PatrolUnit u, DateTime now, int durationMs, bool guardUntilAlert)
@@ -1458,20 +1749,7 @@ public class {{ class_name }} : Script
         u.State = PatrolRouteState.Guarding;
         u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(adjustedDurationMs);
         Function.Call(Hash.TASK_GUARD_CURRENT_POSITION, u.Ped, 10.0f, 10.0f, 1);
-    }
-
-    private Vector3 PatrolLookTarget(PatrolUnit u)
-    {
-        if (u == null || u.Path == null || u.Path.Length == 0)
-            return new Vector3(0.0f, 0.0f, 0.0f);
-        int next = u.Wp + (u.Dir == 0 ? 1 : u.Dir);
-        if (next >= 0 && next < u.Path.Length)
-            return u.Path[next];
-        int prev = u.Wp - (u.Dir == 0 ? 1 : u.Dir);
-        if (prev >= 0 && prev < u.Path.Length)
-            return u.Path[prev];
-        var origin = u.Path[u.Wp];
-        return new Vector3(origin.X + 5.0f, origin.Y, origin.Z);
+        IssuePatrolLook(u, guardUntilAlert ? -1 : adjustedDurationMs);
     }
 
     private void AdvancePatrolAndMove(PatrolUnit u)
