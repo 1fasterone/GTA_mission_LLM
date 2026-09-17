@@ -66,6 +66,41 @@ _PATROL_ROUTE_MODE_CS = {
     "ping_pong": "PingPong",
 }
 
+_PATROL_ROUTE_CONDITION_CS = {
+    "combat": "Combat",
+    "alert": "Alert",
+    "player_in_trigger": "PlayerInTrigger",
+    "objective_state": "ObjectiveState",
+}
+
+_PATROL_ROUTE_EDGE_CS = {
+    "": "Level",
+    "enter": "Enter",
+    "inside": "Inside",
+    "exit": "Exit",
+}
+
+_PATROL_ROUTE_OBJECTIVE_STATE_CS = {
+    "pending": "Pending",
+    "active": "Active",
+    "complete": "Complete",
+    "failed": "Failed",
+}
+
+_PATROL_ROUTE_REARM_CS = {
+    "clear": "Clear",
+    "once": "Once",
+}
+
+_PATROL_ROUTE_ACTION_CS = {
+    "none": "None",
+    "pause": "Pause",
+    "resume": "Resume",
+    "restart": "Restart",
+    "switch_path": "SwitchPath",
+    "guard": "Guard",
+}
+
 _PATROL_BEHAVIOR_CS = {
     "walk": "Walk",
     "jog": "Jog",
@@ -294,6 +329,178 @@ def _bool_or_default(value, default: bool = False) -> bool:
         if normalized in {"0", "false", "no", "off"}:
             return False
     return default
+
+
+def _unique_editor_id_map(items: list[dict]) -> dict[str, int]:
+    """Return exact stable-id bindings, excluding ambiguous or empty IDs."""
+    resolved: dict[str, int] = {}
+    duplicates: set[str] = set()
+    for idx, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        ident = str(item.get("id") or "").strip()
+        if not ident:
+            continue
+        if ident in resolved:
+            duplicates.add(ident)
+        else:
+            resolved[ident] = idx
+    for ident in duplicates:
+        resolved.pop(ident, None)
+    return resolved
+
+
+def _normalize_editor_route_logic(
+    raw_rules,
+    source_path_idx: int,
+    source_path: dict,
+    editor_paths: list[dict],
+    trigger_ids: dict[str, int],
+    objective_ids: dict[str, int],
+    objective_count: int,
+) -> list[dict]:
+    """Resolve editor route rules into fixed, audit-friendly runtime fields."""
+    if raw_rules is None:
+        return []
+    rules = raw_rules if isinstance(raw_rules, list) else [raw_rules]
+    authored_ids = [
+        str(rule.get("id") or "").strip() if isinstance(rule, dict) else ""
+        for rule in rules
+    ]
+    duplicate_ids = {
+        ident for ident in authored_ids if ident and authored_ids.count(ident) > 1
+    }
+
+    normalized: list[dict] = []
+    for rule_idx, raw_rule in enumerate(rules):
+        reasons: list[str] = []
+        rule = raw_rule if isinstance(raw_rule, dict) else {}
+        if not isinstance(raw_rule, dict):
+            reasons.append("rule must be an object")
+
+        rule_id = authored_ids[rule_idx] or f"route_rule_{rule_idx}"
+        if not authored_ids[rule_idx]:
+            reasons.append("rule needs a stable id")
+        if authored_ids[rule_idx] in duplicate_ids:
+            reasons.append(f'rule id "{authored_ids[rule_idx]}" is duplicated')
+
+        priority_value = rule.get("priority", 0)
+        try:
+            priority = int(priority_value)
+        except (TypeError, ValueError):
+            priority = 0
+            reasons.append("priority must be an integer from -1000 to 1000")
+        if priority < -1000 or priority > 1000:
+            reasons.append("priority must be an integer from -1000 to 1000")
+
+        when = rule.get("when") if isinstance(rule.get("when"), dict) else {}
+        condition = str(when.get("type") or "").strip().lower()
+        condition_cs = _PATROL_ROUTE_CONDITION_CS.get(condition, "None")
+        edge = str(when.get("edge") or "").strip().lower()
+        edge_cs = _PATROL_ROUTE_EDGE_CS.get(edge, "Level")
+        trigger_index = -1
+        objective_index = -1
+        objective_state_cs = "Pending"
+
+        if condition not in _PATROL_ROUTE_CONDITION_CS:
+            reasons.append(f'condition "{condition or "(missing)"}" is unsupported')
+        elif condition in {"combat", "alert"}:
+            if str(when.get("source") or "").strip().lower() != "self":
+                reasons.append(f"{condition} source must be self")
+            if edge:
+                reasons.append(f"{condition} does not use a trigger edge")
+        elif condition == "player_in_trigger":
+            trigger_ref = str(when.get("trigger_id") or "").strip()
+            trigger_index = trigger_ids.get(trigger_ref, -1)
+            if not trigger_ref:
+                reasons.append("player-in-trigger condition needs a trigger id")
+            elif trigger_index < 0:
+                reasons.append(f'trigger "{trigger_ref}" is missing or duplicated')
+            if edge not in {"enter", "inside", "exit"}:
+                reasons.append("trigger edge must be enter, inside, or exit")
+            edge_cs = _PATROL_ROUTE_EDGE_CS.get(edge, "Enter")
+        elif condition == "objective_state":
+            step_ref = when.get("step_ref")
+            if isinstance(step_ref, int) and not isinstance(step_ref, bool):
+                objective_index = step_ref if 0 <= step_ref < objective_count else -1
+            else:
+                step_text = str(step_ref or "").strip()
+                if step_text.isdigit():
+                    candidate = int(step_text)
+                    objective_index = candidate if 0 <= candidate < objective_count else -1
+                else:
+                    objective_index = objective_ids.get(step_text, -1)
+            if objective_index < 0:
+                reasons.append(f'objective "{step_ref}" is missing or duplicated')
+            objective_state = str(when.get("state") or "").strip().lower()
+            objective_state_cs = _PATROL_ROUTE_OBJECTIVE_STATE_CS.get(objective_state, "Pending")
+            if objective_state not in _PATROL_ROUTE_OBJECTIVE_STATE_CS:
+                reasons.append(
+                    "objective state must be pending, active, complete, or failed"
+                )
+            if edge:
+                reasons.append("objective state does not use a trigger edge")
+
+        def normalize_action(raw_action, phase: str) -> tuple[str, int]:
+            action = raw_action if isinstance(raw_action, dict) else {}
+            action_name = str(action.get("action") or "").strip().lower()
+            allowed = {"pause", "restart", "switch_path", "guard"} if phase == "enter" else {"none", "resume"}
+            action_cs = _PATROL_ROUTE_ACTION_CS.get(action_name, "None")
+            if action_name not in allowed:
+                reasons.append(
+                    f'on-{phase} action "{action_name or "(missing)"}" is unsupported'
+                )
+                return action_cs, -1
+            if action_name != "switch_path":
+                return action_cs, -1
+            path_ref = str(action.get("path_id") or "").strip()
+            target_matches = [
+                idx for idx, candidate in enumerate(editor_paths)
+                if str(candidate.get("id") or "").strip() == path_ref
+            ]
+            target_idx = target_matches[0] if len(target_matches) == 1 else -1
+            if not path_ref:
+                reasons.append("switch path has no destination")
+            elif not target_matches:
+                reasons.append(f'switch path "{path_ref}" is missing')
+            elif len(target_matches) > 1:
+                reasons.append(f'switch path "{path_ref}" is ambiguous')
+            elif (
+                source_path.get("ped_idx") is None
+                or editor_paths[target_idx].get("ped_idx") != source_path.get("ped_idx")
+            ):
+                reasons.append(f'switch path "{path_ref}" must use the same patrolling ped')
+                target_idx = -1
+            return action_cs, target_idx
+
+        on_enter_cs, target_path_index = normalize_action(rule.get("on_enter"), "enter")
+        on_exit_cs, exit_target_path_index = normalize_action(rule.get("on_exit"), "exit")
+        if exit_target_path_index >= 0:
+            target_path_index = exit_target_path_index
+
+        rearm = str(rule.get("rearm") or "").strip().lower()
+        rearm_cs = _PATROL_ROUTE_REARM_CS.get(rearm, "Clear")
+        if rearm not in _PATROL_ROUTE_REARM_CS:
+            reasons.append("rearm must be clear or once")
+
+        normalized.append({
+            "id": rule_id,
+            "id_cs": _escape_cs_string(rule_id),
+            "priority": priority,
+            "condition_cs": condition_cs,
+            "edge_cs": edge_cs,
+            "trigger_index": trigger_index,
+            "objective_index": objective_index,
+            "objective_state_cs": objective_state_cs,
+            "on_enter_cs": on_enter_cs,
+            "on_exit_cs": on_exit_cs,
+            "target_path_index": target_path_index,
+            "rearm_cs": rearm_cs,
+            "valid": not reasons,
+            "reason": "; ".join(dict.fromkeys(reasons)),
+            "source_path_idx": source_path_idx,
+        })
+    return normalized
 
 
 def _build_template_context(schema: MissionSchema) -> dict:
@@ -916,10 +1123,11 @@ def _build_template_context(schema: MissionSchema) -> dict:
     hero_row_index = next((i for i, r in enumerate(minigame_rows) if r["key"] == "hero"), -1)
 
     # ── Editor-authored shapes: triggers + patrol paths ──────────────────────
-    # Pulled from meta.editor.* (Day-2 of the GTA5 Mission Editor). Triggers wire
-    # into the OnTick loop; paths are emitted as Vector3 arrays for future use.
+    # Pulled from meta.editor.* (Day-2 of the GTA5 Mission Editor). Triggers and
+    # patrol paths are lowered into deterministic runtime data for the template.
     editor_triggers: list[dict] = []
     editor_paths:    list[dict] = []
+    editor_path_sources: list[dict] = []
     editor_zones:    list[dict] = []
     editor = (schema.meta or {}).get("editor") if isinstance(schema.meta, dict) else None
     if isinstance(editor, dict):
@@ -1003,7 +1211,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 scan_headings.append(scan_heading)
                 scan_arcs.append(scan_arc)
                 scan_durations_ms.append(scan_duration_ms)
-            editor_paths.append({
+            path_context = {
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
                 "mode":    mode,
@@ -1038,7 +1246,38 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "scan_durations_ms": scan_durations_ms,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
-            })
+            }
+            editor_paths.append(path_context)
+            editor_path_sources.append(p)
+
+        trigger_id_map = _unique_editor_id_map(editor_triggers)
+        objective_id_map: dict[str, int] = {}
+        duplicate_objective_ids: set[str] = set()
+        for step_idx, step in enumerate(schema.steps):
+            editor_id = str(step.params.get("editor_id") or "").strip()
+            if not editor_id:
+                continue
+            if editor_id in objective_id_map:
+                duplicate_objective_ids.add(editor_id)
+            else:
+                objective_id_map[editor_id] = step_idx
+        for editor_id in duplicate_objective_ids:
+            objective_id_map.pop(editor_id, None)
+
+        for path_idx, (path_context, path_source) in enumerate(
+            zip(editor_paths, editor_path_sources)
+        ):
+            raw_route_logic = path_source.get("route_logic")
+            if raw_route_logic is not None:
+                path_context["route_logic"] = _normalize_editor_route_logic(
+                    raw_route_logic,
+                    path_idx,
+                    path_context,
+                    editor_paths,
+                    trigger_id_map,
+                    objective_id_map,
+                    len(schema.steps),
+                )
         for i, z in enumerate(editor.get("zones") or []):
             pts = (z or {}).get("points") or []
             if len(pts) < 3:                       # need a real polygon
@@ -1072,6 +1311,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
         # came from the editor or someone hand-populated meta.editor.*.
         "editor_triggers":  editor_triggers,
         "editor_paths":     editor_paths,
+        "editor_route_logic": any(path.get("route_logic") for path in editor_paths),
         "editor_zones":     editor_zones,
         # AI rival difficulty curve + optional F10 config menu (HeliRace-style)
         "ai_rival_present":    ai_rival_present,

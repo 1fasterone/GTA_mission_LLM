@@ -384,6 +384,95 @@ class TestBuildTemplateContext:
         assert ctx["peds"][0]["abs_x"] == -1040.0
         assert ctx["peds"][0]["heading"] == 90.0
 
+    def test_editor_route_logic_resolves_exact_runtime_references(self):
+        schema = self._schema(
+            steps=[
+                MissionStep(type="go_to", label="Reach dock", params={"editor_id": "reach_dock"}),
+                MissionStep(type="kill_all", label="Clear ambush", params={"editor_id": "clear_ambush"}),
+            ],
+            peds=[
+                MissionPed(description="sentry", model="s_m_y_cop_01", role="patrol"),
+            ],
+            meta={"editor": {
+                "triggers": [{"id": "dock_trigger", "pos": [1, 2, 3], "radius": 6}],
+                "paths": [
+                    {
+                        "id": "main_route", "ped_idx": 0, "mode": "once",
+                        "points": [[0, 0, 0], [10, 0, 0]],
+                        "route_logic": [
+                            {
+                                "id": "pause_in_combat", "priority": 100,
+                                "when": {"type": "combat", "source": "self"},
+                                "on_enter": {"action": "pause"},
+                                "on_exit": {"action": "resume"}, "rearm": "clear",
+                            },
+                            {
+                                "id": "enter_dock", "priority": 90,
+                                "when": {"type": "player_in_trigger", "trigger_id": "dock_trigger", "edge": "enter"},
+                                "on_enter": {"action": "switch_path", "path_id": "alternate_route"},
+                                "on_exit": {"action": "none"}, "rearm": "once",
+                            },
+                            {
+                                "id": "restart_after_clear", "priority": 80,
+                                "when": {"type": "objective_state", "step_ref": "clear_ambush", "state": "complete"},
+                                "on_enter": {"action": "restart"},
+                                "on_exit": {"action": "none"}, "rearm": "once",
+                            },
+                        ],
+                    },
+                    {
+                        "id": "alternate_route", "ped_idx": 0, "mode": "ping_pong",
+                        "points": [[10, 0, 0], [20, 0, 0]],
+                    },
+                ],
+            }},
+        )
+        ctx = _build_template_context(schema)
+        rules = ctx["editor_paths"][0]["route_logic"]
+        assert ctx["editor_route_logic"] is True
+        assert [rule["condition_cs"] for rule in rules] == ["Combat", "PlayerInTrigger", "ObjectiveState"]
+        assert rules[1]["trigger_index"] == 0
+        assert rules[1]["target_path_index"] == 1
+        assert rules[2]["objective_index"] == 1
+        assert rules[2]["objective_state_cs"] == "Complete"
+        assert all(rule["valid"] for rule in rules)
+
+    def test_editor_route_logic_does_not_guess_missing_or_cross_ped_refs(self):
+        schema = self._schema(
+            peds=[
+                MissionPed(description="sentry", model="s_m_y_cop_01", role="patrol"),
+                MissionPed(description="other sentry", model="s_m_y_cop_01", role="patrol"),
+            ],
+            meta={"editor": {
+                "triggers": [
+                    {"id": "duplicate", "pos": [0, 0, 0]},
+                    {"id": "duplicate", "pos": [1, 1, 0]},
+                ],
+                "paths": [
+                    {
+                        "id": "source_route", "ped_idx": 0,
+                        "points": [[0, 0, 0], [1, 0, 0]],
+                        "route_logic": [{
+                            "id": "broken_refs", "priority": 0,
+                            "when": {"type": "player_in_trigger", "trigger_id": "duplicate", "edge": "enter"},
+                            "on_enter": {"action": "switch_path", "path_id": "other_route"},
+                            "on_exit": {"action": "none"}, "rearm": "once",
+                        }],
+                    },
+                    {
+                        "id": "other_route", "ped_idx": 1,
+                        "points": [[0, 1, 0], [1, 1, 0]],
+                    },
+                ],
+            }},
+        )
+        rule = _build_template_context(schema)["editor_paths"][0]["route_logic"][0]
+        assert rule["valid"] is False
+        assert rule["trigger_index"] == -1
+        assert rule["target_path_index"] == -1
+        assert "missing or duplicated" in rule["reason"]
+        assert "same patrolling ped" in rule["reason"]
+
     def test_unassigned_editor_path_emits_without_binding(self):
         schema = self._schema(
             peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
@@ -1060,6 +1149,75 @@ class TestCodeGeneratorGenerate:
             "u.Wp = (u.Wp + 1) % u.Path.Length;",
         ):
             assert token in code, f"route executor C# missing {token}"
+        assert code.count("{") == code.count("}")
+        assert code.count("(") == code.count(")")
+
+    def test_editor_route_logic_emits_signal_snapshot_and_resolver(self, gen):
+        schema = MissionSchema(
+            mission_name="Conditional Routes",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[
+                MissionStep(type="go_to", label="Reach dock", params={"editor_id": "reach_dock"}),
+                MissionStep(type="kill_all", label="Clear ambush", params={"editor_id": "clear_ambush"}),
+            ],
+            peds=[MissionPed(description="sentry", model="s_m_y_cop_01", role="patrol")],
+            vehicles=[], objects=[], audio=[],
+            meta={"editor": {
+                "triggers": [{"id": "dock_trigger", "pos": [0, 0, 0], "radius": 5}],
+                "paths": [
+                    {
+                        "id": "main_route", "ped_idx": 0, "mode": "loop",
+                        "points": [[0, 0, 0], [10, 0, 0]],
+                        "route_logic": [{
+                            "id": "combat_pause", "priority": 100,
+                            "when": {"type": "combat", "source": "self"},
+                            "on_enter": {"action": "pause"},
+                            "on_exit": {"action": "resume"}, "rearm": "clear",
+                        }],
+                    },
+                ],
+            }},
+        )
+        code = gen.generate(schema)
+        for token in (
+            "EditorPathRouteLogic_0",
+            "EditorPathRouteLogicByIndex",
+            "PatrolRouteState { Moving, Waiting, Scanning, Guarding, Complete, Interrupted }",
+            "PatrolRouteConditionKind",
+            "PatrolRouteSignalSnapshot",
+            "RouteRuleActive",
+            "RouteRuleWasActive",
+            "RouteRuleConsumed",
+            "SampleEditorTriggerOccupancy",
+            "ApplyEditorTriggerLinks",
+            "CapturePatrolRouteSnapshot",
+            "Hash.IS_PED_IN_COMBAT",
+            "PatrolRouteConditionActive",
+            "ResolvePatrolRouteRule",
+            "UpdatePatrolRouteSignals",
+            "_editorTriggers[ti].Inside",
+            "_editorTriggers[ti].WasInside",
+        ):
+            assert token in code, f"conditional route C# missing {token}"
+        for token in (
+            "ResolvePatrolRouteTransition",
+            "if (rising && u.RouteRuleConsumed != null && u.RouteRuleConsumed[ri]) continue;",
+            "EvaluatePatrolRouteLogic",
+            "ApplyPatrolRouteAction",
+            "LoadPatrolPath",
+            "PatrolRouteAction.Pause",
+            "PatrolRouteAction.Resume",
+            "PatrolRouteAction.Restart",
+            "PatrolRouteAction.SwitchPath",
+            "PatrolRouteAction.Guard",
+            "RouteTransitionThisTick",
+            "u.State = PatrolRouteState.Interrupted",
+            "u.Wp = 0",
+            "u.Dir = 1",
+        ):
+            assert token in code, f"route transition C# missing {token}"
         assert code.count("{") == code.count("}")
         assert code.count("(") == code.count(")")
 
