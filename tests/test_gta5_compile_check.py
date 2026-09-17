@@ -44,7 +44,10 @@ def _patrol_behavior_schema() -> MissionSchema:
         time_of_day=20,
         weather="CLEAR",
         steps=[MissionStep(type="go_to", label="Reach the route")],
-        peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+        peds=[MissionPed(
+            description="dock sentry", model="s_m_y_dockwork_01",
+            role="patrol", weapon="rifle",
+        )],
         vehicles=[],
         objects=[],
         audio=[],
@@ -54,12 +57,16 @@ def _patrol_behavior_schema() -> MissionSchema:
             "mode": "loop",
             "speed": 2.5,
             "posture": "cautious",
+            "weapon_state": "holstered",
             "points": [[-1030.0, -2710.0, 13.8], [-1000.0, -2685.0, 13.8], [-970.0, -2710.0, 13.8]],
             "waypoints": [
-                {"behavior": "walk", "movement": "walk", "speed": 1.0, "posture": "normal"},
-                {"behavior": "scan", "movement": "jog", "wait_time": 2, "posture": "cautious"},
+                {"behavior": "walk", "movement": "walk", "speed": 1.0,
+                 "posture": "normal", "weapon_state": "drawn"},
+                {"behavior": "scan", "movement": "jog", "wait_time": 2,
+                 "posture": "cautious", "weapon_state": "holstered"},
                 {"behavior": "guard", "movement": "run", "wait_time": 1,
-                 "guard_until_alert": True, "posture": "aggressive"},
+                 "guard_until_alert": True, "posture": "aggressive",
+                 "weapon_state": "drawn"},
             ],
         }]}}
     )

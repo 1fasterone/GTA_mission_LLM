@@ -345,6 +345,8 @@ class TestBuildTemplateContext:
             "wait_ms": 0,
             "posture": "normal",
             "posture_cs": "Normal",
+            "weapon_state": "unchanged",
+            "weapon_state_cs": "Unchanged",
             "behavior": "walk",
             "behavior_cs": "Walk",
             "guard_until_alert": False,
@@ -353,6 +355,7 @@ class TestBuildTemplateContext:
             "behaviors": ["Walk", "Scan", "Guard"],
             "guard_until_alerts": [False, False, False],
             "postures": ["Normal", "Normal", "Normal"],
+            "weapon_states": ["Unchanged", "Unchanged", "Unchanged"],
             "points": [
                 {"x": -1030.0, "y": -2710.0, "z": 13.8},
                 {"x": -1000.0, "y": -2685.0, "z": 13.8},
@@ -556,6 +559,7 @@ class TestCodeGeneratorGenerate:
             "private static readonly int[] EditorPathWaitMs_0",
             "private static readonly PatrolWaypointBehavior[] EditorPathBehavior_0",
             "private static readonly bool[] EditorPathGuardUntilAlert_0",
+            "private static readonly PatrolWeaponState[] EditorPathWeaponState_0",
             "1.20f",
             "2000",
             "PatrolWaypointBehavior.Scan",
@@ -566,16 +570,20 @@ class TestCodeGeneratorGenerate:
             "private static int[] EditorPathWaitMsByIndex(int idx)",
             "private static PatrolWaypointBehavior[] EditorPathBehaviorByIndex(int idx)",
             "private static bool[] EditorPathGuardUntilAlertByIndex(int idx)",
+            "private static PatrolWeaponState[] EditorPathWeaponStateByIndex(int idx)",
             "private const float DefaultPatrolSpeed = 1.0f;",
             "private const int DefaultScanMs = 2000;",
             "private enum PatrolRouteMode { Once, Loop, PingPong }",
             "private enum PatrolRouteState { Moving, Waiting, Scanning, Guarding, Complete }",
             "private enum PatrolWaypointBehavior { Walk, Jog, Sprint, Scan, Guard }",
+            "private enum PatrolWeaponState { Unchanged, Drawn, Holstered }",
             "private class PatrolUnit",
             "public float[] Speed;",
             "public int[] WaitMs;",
             "public PatrolWaypointBehavior[] Behavior;",
             "public bool[] GuardUntilAlert;",
+            "public PatrolWeaponState[] WeaponState;",
+            "public int WeaponHash;",
             "public PatrolRouteMode Mode;",
             "public PatrolRouteState State;",
             "public DateTime StateUntil;",
@@ -586,6 +594,8 @@ class TestCodeGeneratorGenerate:
             "WaitMs = EditorPathWaitMsByIndex(0)",
             "Behavior = EditorPathBehaviorByIndex(0)",
             "GuardUntilAlert = EditorPathGuardUntilAlertByIndex(0)",
+            "WeaponState = EditorPathWeaponStateByIndex(0)",
+            "ApplyPatrolWeaponState(_patrols[_patrols.Count - 1]);",
             "Mode = PatrolRouteMode.Loop",
             "State = PatrolRouteState.Moving, StateUntil = DateTime.MinValue, Wp = 0, Dir = 1",
             "IssuePatrolMove(_patrols[_patrols.Count - 1]);",
@@ -738,6 +748,51 @@ class TestCodeGeneratorGenerate:
             "factor = 0.75f;",
         ):
             assert token in code, f"posture lowering C# missing {token}"
+
+    def test_editor_patrol_weapon_state_lowers_to_native_selection(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Weapon States",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(
+                description="armed sentry", model="s_m_y_dockwork_01",
+                role="patrol", weapon="rifle",
+            )],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "weapon_route",
+                "ped_idx": 0,
+                "mode": "loop",
+                "weapon_state": "holstered",
+                "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0]],
+                "waypoints": [
+                    {},
+                    {"weapon_state": "drawn"},
+                    {"weapon_state": "holstered"},
+                ],
+            }]}}
+        )
+        path = _build_template_context(schema)["editor_paths"][0]
+        assert path["weapon_state"] == "holstered"
+        assert path["weapon_state_cs"] == "Holstered"
+        assert path["weapon_states"] == ["Holstered", "Drawn", "Holstered"]
+
+        code = gen.generate(schema)
+        for token in (
+            "private enum PatrolWeaponState { Unchanged, Drawn, Holstered }",
+            "PatrolWeaponState.Holstered",
+            "PatrolWeaponState.Drawn",
+            "private void ApplyPatrolWeaponState(PatrolUnit u)",
+            "WeaponHash = Function.Call<int>(Hash.GET_HASH_KEY, \"weapon_assaultrifle\")",
+            "Function.Call<int>(Hash.GET_HASH_KEY, \"weapon_unarmed\")",
+            "Function.Call(Hash.SET_CURRENT_PED_WEAPON, u.Ped, desiredHash, true);",
+            "ApplyPatrolWeaponState(u);",
+        ):
+            assert token in code, f"weapon state lowering C# missing {token}"
 
     def test_editor_patrol_stress_multiple_peds_and_transition_metadata(self, gen):
         schema = MissionSchema(

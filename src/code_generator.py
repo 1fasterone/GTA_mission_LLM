@@ -91,6 +91,12 @@ _PATROL_POSTURE_CS = {
     "aggressive": "Aggressive",
 }
 
+_PATROL_WEAPON_STATE_CS = {
+    "unchanged": "Unchanged",
+    "drawn": "Drawn",
+    "holstered": "Holstered",
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -208,6 +214,15 @@ def _patrol_posture(value, default: str = "normal") -> str:
     if default in _PATROL_POSTURE_CS:
         return default
     return "normal"
+
+
+def _patrol_weapon_state(value, default: str = "unchanged") -> str:
+    state = str(value or default or "unchanged").lower()
+    if state in _PATROL_WEAPON_STATE_CS:
+        return state
+    if default in _PATROL_WEAPON_STATE_CS:
+        return default
+    return "unchanged"
 
 
 def _patrol_behavior_with_movement(behavior: str, movement: str) -> str:
@@ -766,6 +781,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
             path_speed = _patrol_speed(p.get("speed"), path_speed_default)
             path_wait_ms = _patrol_wait_ms(p.get("wait_time"), 0.0)
             path_posture = _patrol_posture(p.get("posture"), "normal")
+            path_weapon_state = _patrol_weapon_state(p.get("weapon_state"), "unchanged")
             path_behavior = _patrol_behavior(p.get("behavior"), "walk")
             path_behavior = _patrol_behavior_with_movement(path_behavior, path_movement)
             path_behavior = _patrol_behavior_with_posture(path_behavior, path_posture)
@@ -776,6 +792,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
             behaviors = []
             guard_until_alert = []
             postures = []
+            weapon_states = []
             for j, _pt in enumerate(pts):
                 wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
                 movement = _patrol_movement(wp.get("movement"), path_movement)
@@ -783,6 +800,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 speeds.append(_patrol_speed(wp.get("speed"), speed_default))
                 waits_ms.append(_patrol_wait_ms(wp.get("wait_time"), path_wait_ms / 1000.0))
                 posture = _patrol_posture(wp.get("posture"), path_posture)
+                weapon_state = _patrol_weapon_state(wp.get("weapon_state"), path_weapon_state)
                 behavior = _patrol_behavior(wp.get("behavior"), path_behavior)
                 behavior = _patrol_behavior_with_movement(behavior, movement)
                 behavior = _patrol_behavior_with_posture(behavior, posture)
@@ -791,6 +809,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                     _bool_or_default(wp.get("guard_until_alert"), path_guard_until_alert)
                 )
                 postures.append(_PATROL_POSTURE_CS[posture])
+                weapon_states.append(_PATROL_WEAPON_STATE_CS[weapon_state])
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
@@ -800,6 +819,8 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "wait_ms": path_wait_ms,
                 "posture": path_posture,
                 "posture_cs": _PATROL_POSTURE_CS[path_posture],
+                "weapon_state": path_weapon_state,
+                "weapon_state_cs": _PATROL_WEAPON_STATE_CS[path_weapon_state],
                 "behavior": path_behavior,
                 "behavior_cs": _PATROL_BEHAVIOR_CS[path_behavior],
                 "guard_until_alert": path_guard_until_alert,
@@ -808,6 +829,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "behaviors": behaviors,
                 "guard_until_alerts": guard_until_alert,
                 "postures": postures,
+                "weapon_states": weapon_states,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })

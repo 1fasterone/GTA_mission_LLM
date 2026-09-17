@@ -170,6 +170,11 @@ public class {{ class_name }} : Script
         PatrolPosture.{{ posture }},
 {% endfor %}
     };
+    private static readonly PatrolWeaponState[] EditorPathWeaponState_{{ loop.index0 }} = new PatrolWeaponState[] {
+{% for weapon_state in path.weapon_states %}
+        PatrolWeaponState.{{ weapon_state }},
+{% endfor %}
+    };
 {% endfor %}
 
     private static Vector3[] EditorPathByIndex(int idx)
@@ -238,12 +243,24 @@ public class {{ class_name }} : Script
         }
     }
 
+    private static PatrolWeaponState[] EditorPathWeaponStateByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathWeaponState_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
     private const float DefaultPatrolSpeed = 1.0f;
     private const int DefaultScanMs = 2000;
     private enum PatrolRouteMode { Once, Loop, PingPong }
     private enum PatrolRouteState { Moving, Waiting, Scanning, Guarding, Complete }
     private enum PatrolWaypointBehavior { Walk, Jog, Sprint, Scan, Guard }
     private enum PatrolPosture { Normal, Cautious, Aggressive }
+    private enum PatrolWeaponState { Unchanged, Drawn, Holstered }
     private class PatrolUnit
     {
         public Ped Ped;
@@ -253,6 +270,8 @@ public class {{ class_name }} : Script
         public PatrolWaypointBehavior[] Behavior;
         public bool[] GuardUntilAlert;
         public PatrolPosture[] Posture;
+        public PatrolWeaponState[] WeaponState;
+        public int WeaponHash;
         public PatrolRouteMode Mode;
         public PatrolRouteState State;
         public DateTime StateUntil;
@@ -756,8 +775,11 @@ public class {{ class_name }} : Script
                         Behavior = EditorPathBehaviorByIndex({{ ped.patrol_path_idx }}),
                         GuardUntilAlert = EditorPathGuardUntilAlertByIndex({{ ped.patrol_path_idx }}),
                         Posture = EditorPathPostureByIndex({{ ped.patrol_path_idx }}),
+                        WeaponState = EditorPathWeaponStateByIndex({{ ped.patrol_path_idx }}),
+                        WeaponHash = {% if peds[ped.patrol_path_idx].weapon_name %}Function.Call<int>(Hash.GET_HASH_KEY, "{{ peds[ped.patrol_path_idx].weapon_name }}"){% else %}0{% endif %},
                         Mode = PatrolRouteMode.{{ editor_paths[ped.patrol_path_idx].mode_cs }},
                         State = PatrolRouteState.Moving, StateUntil = DateTime.MinValue, Wp = 0, Dir = 1 });
+                    ApplyPatrolWeaponState(_patrols[_patrols.Count - 1]);
                     IssuePatrolMove(_patrols[_patrols.Count - 1]);
                 }
             }
@@ -1317,6 +1339,26 @@ public class {{ class_name }} : Script
         }
     }
 
+    private PatrolWeaponState PatrolWeaponStateAt(PatrolUnit u)
+    {
+        if (u == null || u.WeaponState == null || u.Wp < 0 || u.Wp >= u.WeaponState.Length)
+            return PatrolWeaponState.Unchanged;
+        return u.WeaponState[u.Wp];
+    }
+
+    private void ApplyPatrolWeaponState(PatrolUnit u)
+    {
+        if (u == null || u.Ped == null || !u.Ped.Exists() || u.WeaponHash <= 0)
+            return;
+        PatrolWeaponState state = PatrolWeaponStateAt(u);
+        if (state == PatrolWeaponState.Unchanged)
+            return;
+        int desiredHash = state == PatrolWeaponState.Drawn
+            ? u.WeaponHash
+            : Function.Call<int>(Hash.GET_HASH_KEY, "weapon_unarmed");
+        Function.Call(Hash.SET_CURRENT_PED_WEAPON, u.Ped, desiredHash, true);
+    }
+
     private int PatrolAdjustedWaitMs(PatrolUnit u, int durationMs)
     {
         if (durationMs <= 0) return 0;
@@ -1355,6 +1397,7 @@ public class {{ class_name }} : Script
 
     private void EnterPatrolWaypoint(PatrolUnit u, DateTime now)
     {
+        ApplyPatrolWeaponState(u);
         int waitMs = PatrolWaitMsAt(u);
         PatrolWaypointBehavior behavior = PatrolBehaviorAt(u);
         if (behavior == PatrolWaypointBehavior.Scan)
