@@ -165,6 +165,11 @@ public class {{ class_name }} : Script
         {{ "true" if flag else "false" }},
 {% endfor %}
     };
+    private static readonly PatrolPosture[] EditorPathPosture_{{ loop.index0 }} = new PatrolPosture[] {
+{% for posture in path.postures %}
+        PatrolPosture.{{ posture }},
+{% endfor %}
+    };
 {% endfor %}
 
     private static Vector3[] EditorPathByIndex(int idx)
@@ -222,11 +227,23 @@ public class {{ class_name }} : Script
         }
     }
 
+    private static PatrolPosture[] EditorPathPostureByIndex(int idx)
+    {
+        switch (idx)
+        {
+{% for path in editor_paths %}
+            case {{ loop.index0 }}: return EditorPathPosture_{{ loop.index0 }};
+{% endfor %}
+            default: return null;
+        }
+    }
+
     private const float DefaultPatrolSpeed = 1.0f;
     private const int DefaultScanMs = 2000;
     private enum PatrolRouteMode { Once, Loop, PingPong }
     private enum PatrolRouteState { Moving, Waiting, Scanning, Guarding, Complete }
     private enum PatrolWaypointBehavior { Walk, Jog, Sprint, Scan, Guard }
+    private enum PatrolPosture { Normal, Cautious, Aggressive }
     private class PatrolUnit
     {
         public Ped Ped;
@@ -235,6 +252,7 @@ public class {{ class_name }} : Script
         public int[] WaitMs;
         public PatrolWaypointBehavior[] Behavior;
         public bool[] GuardUntilAlert;
+        public PatrolPosture[] Posture;
         public PatrolRouteMode Mode;
         public PatrolRouteState State;
         public DateTime StateUntil;
@@ -737,6 +755,7 @@ public class {{ class_name }} : Script
                         WaitMs = EditorPathWaitMsByIndex({{ ped.patrol_path_idx }}),
                         Behavior = EditorPathBehaviorByIndex({{ ped.patrol_path_idx }}),
                         GuardUntilAlert = EditorPathGuardUntilAlertByIndex({{ ped.patrol_path_idx }}),
+                        Posture = EditorPathPostureByIndex({{ ped.patrol_path_idx }}),
                         Mode = PatrolRouteMode.{{ editor_paths[ped.patrol_path_idx].mode_cs }},
                         State = PatrolRouteState.Moving, StateUntil = DateTime.MinValue, Wp = 0, Dir = 1 });
                     IssuePatrolMove(_patrols[_patrols.Count - 1]);
@@ -1281,6 +1300,35 @@ public class {{ class_name }} : Script
         return u.Behavior[u.Wp];
     }
 
+    private PatrolPosture PatrolPostureAt(PatrolUnit u)
+    {
+        if (u == null || u.Posture == null || u.Wp < 0 || u.Wp >= u.Posture.Length)
+            return PatrolPosture.Normal;
+        return u.Posture[u.Wp];
+    }
+
+    private float PatrolPostureSpeedFactor(PatrolUnit u)
+    {
+        switch (PatrolPostureAt(u))
+        {
+            case PatrolPosture.Cautious: return 0.75f;
+            case PatrolPosture.Aggressive: return 1.25f;
+            default: return 1.0f;
+        }
+    }
+
+    private int PatrolAdjustedWaitMs(PatrolUnit u, int durationMs)
+    {
+        if (durationMs <= 0) return 0;
+        float factor = 1.0f;
+        if (PatrolPostureAt(u) == PatrolPosture.Cautious &&
+            PatrolBehaviorAt(u) == PatrolWaypointBehavior.Scan)
+            factor = 1.25f;
+        else if (PatrolPostureAt(u) == PatrolPosture.Aggressive)
+            factor = 0.75f;
+        return Math.Max(1, (int)Math.Round(durationMs * factor));
+    }
+
     private bool PatrolGuardUntilAlertAt(PatrolUnit u)
     {
         if (u == null || u.GuardUntilAlert == null || u.Wp < 0 || u.Wp >= u.GuardUntilAlert.Length)
@@ -1295,7 +1343,7 @@ public class {{ class_name }} : Script
         u.State = PatrolRouteState.Moving;
         u.StateUntil = DateTime.MinValue;
         var target = u.Path[u.Wp];
-        float speed = PatrolSpeedAt(u);
+        float speed = PatrolSpeedAt(u) * PatrolPostureSpeedFactor(u);
         if (Math.Abs(speed - DefaultPatrolSpeed) < 0.01f)
         {
             u.Ped.Task.RunTo(target, true);
@@ -1338,20 +1386,22 @@ public class {{ class_name }} : Script
             AdvancePatrolAndMove(u);
             return;
         }
+        int adjustedDurationMs = PatrolAdjustedWaitMs(u, durationMs);
         u.State = PatrolRouteState.Waiting;
-        u.StateUntil = now.AddMilliseconds(durationMs);
-        Function.Call(Hash.TASK_STAND_STILL, u.Ped, durationMs);
+        u.StateUntil = now.AddMilliseconds(adjustedDurationMs);
+        Function.Call(Hash.TASK_STAND_STILL, u.Ped, adjustedDurationMs);
     }
 
     private void BeginPatrolScan(PatrolUnit u, DateTime now, int durationMs)
     {
         if (durationMs <= 0) durationMs = DefaultScanMs;
+        int adjustedDurationMs = PatrolAdjustedWaitMs(u, durationMs);
         u.State = PatrolRouteState.Scanning;
-        u.StateUntil = now.AddMilliseconds(durationMs);
-        Function.Call(Hash.TASK_STAND_STILL, u.Ped, durationMs);
+        u.StateUntil = now.AddMilliseconds(adjustedDurationMs);
+        Function.Call(Hash.TASK_STAND_STILL, u.Ped, adjustedDurationMs);
         var lookTarget = PatrolLookTarget(u);
         Function.Call(Hash.TASK_LOOK_AT_COORD,
-            u.Ped, lookTarget.X, lookTarget.Y, lookTarget.Z, durationMs, 0, 2);
+            u.Ped, lookTarget.X, lookTarget.Y, lookTarget.Z, adjustedDurationMs, 0, 2);
     }
 
     private void BeginPatrolGuard(PatrolUnit u, DateTime now, int durationMs, bool guardUntilAlert)
@@ -1361,8 +1411,9 @@ public class {{ class_name }} : Script
             AdvancePatrolAndMove(u);
             return;
         }
+        int adjustedDurationMs = PatrolAdjustedWaitMs(u, durationMs);
         u.State = PatrolRouteState.Guarding;
-        u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(durationMs);
+        u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(adjustedDurationMs);
         Function.Call(Hash.TASK_GUARD_CURRENT_POSITION, u.Ped, 10.0f, 10.0f, 1);
     }
 

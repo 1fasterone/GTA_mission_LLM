@@ -343,6 +343,8 @@ class TestBuildTemplateContext:
             "mode_cs": "Loop",
             "speed": 1.2,
             "wait_ms": 0,
+            "posture": "normal",
+            "posture_cs": "Normal",
             "behavior": "walk",
             "behavior_cs": "Walk",
             "guard_until_alert": False,
@@ -350,6 +352,7 @@ class TestBuildTemplateContext:
             "waits_ms": [0, 2000, 1000],
             "behaviors": ["Walk", "Scan", "Guard"],
             "guard_until_alerts": [False, False, False],
+            "postures": ["Normal", "Normal", "Normal"],
             "points": [
                 {"x": -1030.0, "y": -2710.0, "z": 13.8},
                 {"x": -1000.0, "y": -2685.0, "z": 13.8},
@@ -635,12 +638,12 @@ class TestCodeGeneratorGenerate:
         for token in (
             "if (behavior == PatrolWaypointBehavior.Scan)",
             "BeginPatrolScan(u, now, waitMs > 0 ? waitMs : DefaultScanMs);",
-            "Function.Call(Hash.TASK_STAND_STILL, u.Ped, durationMs);",
+            "Function.Call(Hash.TASK_STAND_STILL, u.Ped, adjustedDurationMs);",
             "Function.Call(Hash.TASK_LOOK_AT_COORD,",
             "if (behavior == PatrolWaypointBehavior.Guard)",
             "bool guardUntilAlert = PatrolGuardUntilAlertAt(u);",
             "BeginPatrolGuard(u, now, waitMs, guardUntilAlert);",
-            "u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(durationMs);",
+            "u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(adjustedDurationMs);",
             "Function.Call(Hash.TASK_GUARD_CURRENT_POSITION, u.Ped, 10.0f, 10.0f, 1);",
             "else if (u.StateUntil != DateTime.MaxValue && now >= u.StateUntil)",
         ):
@@ -691,6 +694,50 @@ class TestCodeGeneratorGenerate:
             "3.50f",
         ):
             assert token in code, f"movement alias C# missing {token}"
+
+    def test_editor_patrol_posture_lowers_to_runtime_modifiers(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Posture Modifiers",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "posture_route",
+                "ped_idx": 0,
+                "mode": "loop",
+                "movement": "run",
+                "posture": "cautious",
+                "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0]],
+                "waypoints": [
+                    {},
+                    {"posture": "aggressive", "movement": "walk", "behavior": "walk"},
+                    {"posture": "normal", "behavior": "sprint"},
+                ],
+            }]}}
+        )
+        path = _build_template_context(schema)["editor_paths"][0]
+        assert path["posture"] == "cautious"
+        assert path["posture_cs"] == "Cautious"
+        assert path["postures"] == ["Cautious", "Aggressive", "Normal"]
+        assert path["behaviors"] == ["Jog", "Walk", "Sprint"]
+
+        code = gen.generate(schema)
+        for token in (
+            "private enum PatrolPosture { Normal, Cautious, Aggressive }",
+            "PatrolPosture.Cautious",
+            "PatrolPosture.Aggressive",
+            "private float PatrolPostureSpeedFactor(PatrolUnit u)",
+            "case PatrolPosture.Cautious: return 0.75f;",
+            "case PatrolPosture.Aggressive: return 1.25f;",
+            "factor = 1.25f;",
+            "factor = 0.75f;",
+        ):
+            assert token in code, f"posture lowering C# missing {token}"
 
     def test_editor_patrol_stress_multiple_peds_and_transition_metadata(self, gen):
         schema = MissionSchema(

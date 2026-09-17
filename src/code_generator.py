@@ -85,6 +85,12 @@ _PATROL_MOVEMENT_SPEED = {
     "run": 3.5,
 }
 
+_PATROL_POSTURE_CS = {
+    "normal": "Normal",
+    "cautious": "Cautious",
+    "aggressive": "Aggressive",
+}
+
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
 def _load_tracks(lookups_dir: str = "lookups") -> dict:
     path = Path(lookups_dir) / "tracks.json"
@@ -195,9 +201,27 @@ def _patrol_movement(value, default: str = "inherit") -> str:
     return "inherit"
 
 
+def _patrol_posture(value, default: str = "normal") -> str:
+    posture = str(value or default or "normal").lower()
+    if posture in _PATROL_POSTURE_CS:
+        return posture
+    if default in _PATROL_POSTURE_CS:
+        return default
+    return "normal"
+
+
 def _patrol_behavior_with_movement(behavior: str, movement: str) -> str:
     if behavior in {"walk", "jog", "sprint"} and movement in _PATROL_MOVEMENT_BEHAVIOR:
         return _PATROL_MOVEMENT_BEHAVIOR[movement]
+    return behavior
+
+
+def _patrol_behavior_with_posture(behavior: str, posture: str) -> str:
+    # Cautious peds should not keep a sprint task even when the route alias
+    # asked for one. Aggressive speed is applied at runtime without rewriting
+    # the authored behavior tier.
+    if posture == "cautious" and behavior == "sprint":
+        return "jog"
     return behavior
 
 
@@ -741,26 +765,32 @@ def _build_template_context(schema: MissionSchema) -> dict:
             path_speed_default = _PATROL_MOVEMENT_SPEED.get(path_movement, 1.0)
             path_speed = _patrol_speed(p.get("speed"), path_speed_default)
             path_wait_ms = _patrol_wait_ms(p.get("wait_time"), 0.0)
+            path_posture = _patrol_posture(p.get("posture"), "normal")
             path_behavior = _patrol_behavior(p.get("behavior"), "walk")
             path_behavior = _patrol_behavior_with_movement(path_behavior, path_movement)
+            path_behavior = _patrol_behavior_with_posture(path_behavior, path_posture)
             path_guard_until_alert = _bool_or_default(p.get("guard_until_alert"), False)
             wp_meta = p.get("waypoints") if isinstance(p.get("waypoints"), list) else []
             speeds = []
             waits_ms = []
             behaviors = []
             guard_until_alert = []
+            postures = []
             for j, _pt in enumerate(pts):
                 wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
                 movement = _patrol_movement(wp.get("movement"), path_movement)
                 speed_default = _PATROL_MOVEMENT_SPEED.get(movement, path_speed)
                 speeds.append(_patrol_speed(wp.get("speed"), speed_default))
                 waits_ms.append(_patrol_wait_ms(wp.get("wait_time"), path_wait_ms / 1000.0))
+                posture = _patrol_posture(wp.get("posture"), path_posture)
                 behavior = _patrol_behavior(wp.get("behavior"), path_behavior)
                 behavior = _patrol_behavior_with_movement(behavior, movement)
+                behavior = _patrol_behavior_with_posture(behavior, posture)
                 behaviors.append(_PATROL_BEHAVIOR_CS[behavior])
                 guard_until_alert.append(
                     _bool_or_default(wp.get("guard_until_alert"), path_guard_until_alert)
                 )
+                postures.append(_PATROL_POSTURE_CS[posture])
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
@@ -768,6 +798,8 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "mode_cs": _PATROL_ROUTE_MODE_CS[mode],
                 "speed":   path_speed,
                 "wait_ms": path_wait_ms,
+                "posture": path_posture,
+                "posture_cs": _PATROL_POSTURE_CS[path_posture],
                 "behavior": path_behavior,
                 "behavior_cs": _PATROL_BEHAVIOR_CS[path_behavior],
                 "guard_until_alert": path_guard_until_alert,
@@ -775,6 +807,7 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "waits_ms": waits_ms,
                 "behaviors": behaviors,
                 "guard_until_alerts": guard_until_alert,
+                "postures": postures,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })

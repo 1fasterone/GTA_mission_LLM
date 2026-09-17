@@ -53,11 +53,13 @@ def _patrol_behavior_schema() -> MissionSchema:
             "ped_idx": 0,
             "mode": "loop",
             "speed": 2.5,
+            "posture": "cautious",
             "points": [[-1030.0, -2710.0, 13.8], [-1000.0, -2685.0, 13.8], [-970.0, -2710.0, 13.8]],
             "waypoints": [
-                {"behavior": "walk", "movement": "walk", "speed": 1.0},
-                {"behavior": "scan", "movement": "jog", "wait_time": 2},
-                {"behavior": "guard", "movement": "run", "wait_time": 1, "guard_until_alert": True},
+                {"behavior": "walk", "movement": "walk", "speed": 1.0, "posture": "normal"},
+                {"behavior": "scan", "movement": "jog", "wait_time": 2, "posture": "cautious"},
+                {"behavior": "guard", "movement": "run", "wait_time": 1,
+                 "guard_until_alert": True, "posture": "aggressive"},
             ],
         }]}}
     )
