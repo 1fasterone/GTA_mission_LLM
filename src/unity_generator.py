@@ -197,6 +197,13 @@ def entity_behavior_class_name(entity_name: str) -> str:
 
 # ── GUID generation ────────────────────────────────────────────────────────────
 # Deterministic MD5-based GUIDs keep .meta files stable across regenerations.
+# This digest is a COMPATIBILITY CONTRACT, not an identity hash: every project
+# already generated carries these GUIDs, so it deliberately stays md5 and does
+# NOT move onto src/ident (see src/ident/frozen.py). Any change to how
+# _make_guid/_make_uuid derive their output must bump GUID_SCHEME, and
+# tests/test_ident.py pins the scheme-1 outputs.
+GUID_SCHEME = 1
+
 
 def _make_guid(seed: str) -> str:
     return hashlib.md5(seed.encode("utf-8")).hexdigest()
