@@ -1,39 +1,51 @@
 # Scene-graph compiler (plan)
 
-Status: **Phase 0 built** (`src/ident/`); Tracks A-C planned. This document is
-the roadmap for three coupled pieces of work, and the tracker for which slice
-has landed:
+Status: **Phase 0 built** (`src/ident/`); Tracks A-C planned, re-scoped after
+checking every premise against the code (below). This document is the roadmap
+for three coupled pieces of work, and the tracker for which slice has landed:
 
-1. a deterministic **scene-graph compiler** — micro-types extended to a full
-   scene DAG;
-2. **deterministic asset hashing** shared by the Unity, Blender and GTA5
-   backends;
-3. **graph-first layout generation** — solve topology, then realize geometry.
+1. a deterministic **scene-graph compiler** — a scene DAG derived from the
+   schema;
+2. **one asset identity** shared by the Unity, Blender and GTA5 backends;
+3. **graph-first layout generation** — solve relations, then realize geometry.
 
-They are one project, in that order: the hashing substrate supplies node and
-asset identity, and the DAG is what the layout solver consumes. Everything here
-lands in Steps 4-7 and therefore stays **LLM-free and deterministic** — no step
-below may call the Pipeline LLM.
+The hashing substrate supplies node and asset identity, and the DAG is what the
+layout solver consumes. Everything here lands in Steps 4-7 and therefore stays
+**LLM-free and deterministic** — no step below may call the Pipeline LLM.
+
+---
+
+## Premises checked against the code
+
+The three goals arrived with framing attached. Each claim was checked against
+the code; where the framing was wrong, the plan follows the code.
+
+| stated premise | what the code shows | verdict |
+| --- | --- | --- |
+| "micro-types → extend to a full scene DAG" | micro-types (`src/micro/__init__.py` `REGISTRY`, 31 kinds) are **component** generators. Each composed unit attaches to one of five fixed targets (`ComposedUnit.target`: player / camera / ui / systems / world, `src/unity_compose.py`). There are no nodes or hierarchy in them to extend. Scene objects come from `EntitySpec` + `scene_specs` | **wrong framing.** The DAG's nodes come from entities and scenes; micros are components ON nodes; SEAMs are edges between components |
+| asset hashing is not yet deterministic across Unity / Blender / GTA5 | **GTA5** has no asset files: `ModelResolver.resolve` (`src/resolver.py`) returns a lowercase model name validated by `^[a-z][a-z0-9_]+$` — the name already is a deterministic id. **Blender** FBX is already byte-deterministic (constant `CreationTime`, `src/blender/normalize.py`) and already content-addressed (`BlenderCache.fingerprint` / `geo_fingerprint`). **Unity** picks are already deterministic (`_stable_seed` uses hashlib, not `hash()`) | **mostly wrong.** Determinism already holds per machine. Two digests hash an absolute path (see A4); only one of them changes emitted output, and only when two authored files share a stem. What is genuinely missing is a single id FORMAT — which only matters once something consumes it (Track B `asset_ref`) |
+| layout must become deterministic | string-seeded `random.Random(f"{entity.name}:{n}:{eff_spacing:.3f}")` hashes the string with sha512, independent of `PYTHONHASHSEED` (verified); `compute_layout` is documented idempotent; `tests/test_unity_layout_archetype.py` locks ArenaPlane positions byte-for-byte against `tests/fixtures/arenaplane_baseline.json` | **already true** |
+| layout is geometry-first — "start with graphs, not geometry" | two abstract stages already run BEFORE any coordinate: `select_archetype()` (axes → primitive) and `spatial_relationship_of()` (`src/unity_layout_archetype.py`), which classifies every group's relation to the primary route — `route_gate`, `edge_distributed`, `boundary_follow`, `formation`, `scenery_distributed` — and dispatches a packer per relation | **partly wrong.** A relation stage exists, but it is a STAR: every group relates only to one primary route. There are no group-to-group relations, and the classification is not persisted |
 
 ---
 
 ## Where the repo stood before Phase 0
 
-| goal | today | gap |
+| goal | before | gap |
 | --- | --- | --- |
-| scene DAG | no hierarchy anywhere. `EntitySpec` (`src/unity_schema.py`) is a flat list of <=40 groups with baked `instance_positions`. The only real graphs are `WiringMap.dependencies` (LLM-authored, advisory), `BTNode.children`, `DialogGraph`, and the hard-coded `SEAM N` blocks in `src/unity_compose.py` | no node identity, no parenting, no acyclicity gate, no single inspectable artifact |
-| asset hashing | four digests with four canonicalizations: md5 (`src/blender/cache.py`, `unity_generator._make_guid`), sha1 (`src/unity_entity_asset_resolver.py`, `src/unity_sceneinput.py`), sha256 (`BlenderCache.fingerprint`, `src/unity_terraingen.py`), blake2b (`src/vstack/canon.py`) | no cross-backend asset identity; GTA5 has none at all; raw floats enter some hashed payloads |
-| graph-first layout | `compute_layout()` (`src/unity_layout.py`) goes from schema text straight to circle packing; `_regions_for()` *describes* what packing already did | geometry-first, no coordinate-free solve stage, and layout is model-blind (it runs before asset resolution) |
+| scene DAG | the IR is flat: `EntitySpec` (`src/unity_schema.py`) is a list of <=40 groups with baked `instance_positions`. A runtime hierarchy DOES exist, fixed at two levels and implicit in `templates/unity/EntitySpawner.cs.j2`: spawner → one container per group → instances (plus `Waypoints` containers). Other graphs: `WiringMap.dependencies` (LLM-authored, advisory), `BTNode.children`, `DialogGraph`, the hard-coded `SEAM N` blocks in `src/unity_compose.py` | no node identity, no depth beyond group → instance (a prop cannot sit ON another group), no acyclicity gate, no single inspectable artifact |
+| asset identity | four digests with four canonicalizations: md5 (`src/blender/cache.py`, `unity_generator._make_guid`), sha1 (`src/unity_entity_asset_resolver.py`, `src/unity_sceneinput.py`), sha256 (`BlenderCache.fingerprint`, `src/unity_terraingen.py`), blake2b (`src/vstack/canon.py`) — each deterministic on its own | no shared id format; two absolute-path digests (A4) |
+| graph-first layout | `select_archetype()` + `spatial_relationship_of()` run before packing; `_regions_for()` *describes* what packing did; Step 6 re-runs `compute_layout` with measured catalog footprints (`unity_generator.py`, "Model-aware re-layout") | relations are a star around one route; regions are descriptive, not generative; Step 5 consumers see the pre-re-layout bake (C4) |
 
-**The substrate already exists and is unused.** `src/vstack/canon.py` is the
+**The substrate already existed and was unused.** `src/vstack/canon.py` was the
 correct hashing kernel — blake2b, domain-separated `chash(tag, payload)`,
 float-*rejecting*, `Decimal`-quantized, sorted keys, with no paths or wall-clock
-in any digest. It is imported by exactly one file, `tests/test_e2e_0001.py`.
-Phase 0 is promoting it, not writing it.
+in any digest. It was imported by exactly one file, `tests/test_e2e_0001.py`.
+Phase 0 promoted it rather than writing a new one.
 
 ---
 
-## Phase 0 — one identity substrate (`src/ident/`)
+## Phase 0 — one identity substrate (`src/ident/`) · built
 
 1. Move `src/vstack/canon.py` to `src/ident/canon.py`; `vstack` re-imports from
    the new home so `tests/test_e2e_0001.py` stays green untouched.
@@ -65,49 +77,51 @@ Phase 0 is promoting it, not writing it.
 
 ---
 
-## Track A — deterministic asset hashing (Unity / Blender / GTA5)
+## Track A — one asset identity (Unity / Blender / GTA5)
+
+Per-machine determinism already holds (see Premises). Track A is therefore NOT
+a determinism fix, except A4. A1-A3 exist to give Track B's `asset_ref` one id
+format, so they are worth building only together with Track B; A4 stands on
+its own.
 
 ### A1 — `AssetIdentity` (`src/ident/asset.py`)
 
-`id = chash("asset", payload)` over:
+The id must be derivable BEFORE measurement, because measured bounds are
+looked up by it — so bounds, scale and resolver tier are resolution facts
+recorded next to the id (A3), never inside it.
 
-| field | meaning |
-| --- | --- |
-| `bin_hash` | blake2b of the file's bytes, or `None` |
-| `recipe_hash` | how the asset was produced (see A2) |
-| `engine_owned` | `True` for GTA5 stock assets — an explicit state, never a zero hash |
-| `unit_scale_q` | quantized via `canon.q` |
-| `bounds_q` | quantized, from `src/unity_model_measure.py` |
-| `source_tier` | `A` \| `S` \| `1` \| `2` \| `fallback` |
+| producer | id derived from | why |
+| --- | --- | --- |
+| a found file (Kenney / catalog, Sketchfab download, authored layout model) | `fhash` of its bytes | the bytes are the input; the same file at two paths is one asset |
+| a Blender-produced model | the wrapped `BlenderCache.fingerprint` (recipe) | the recipe is the identity; its FBX bytes follow from it deterministically |
+| a GTA5 model | the canonical model name | engine-owned: no bytes exist in this tree — an explicit state, never a zero hash |
 
 ### A2 — one adapter per producer
 
-- **Unity catalog / Sketchfab** — `src/unity_entity_asset_resolver.py`, tiers
-  A/S/1/2.
-- **Blender** — wrap the existing `BlenderCache.fingerprint` /
-  `geo_fingerprint` as `recipe_hash`. Rename nothing; those fingerprints are
-  already correct and already cache-keyed.
-- **GTA5** — `src/resolver.py` + `src/gta_allowlists.py`. The lookup id *is* the
-  recipe; `bin_hash=None`, `engine_owned=True`.
+- **Unity** — `ResolvedModel` (`src/unity_model_resolver.py`) from
+  `src/unity_entity_asset_resolver.py`. Non-file routes in `entity_model_paths`
+  (`fx:`, `skip:`, `ui:`, schema procedural meshes) are routes, not assets.
+- **Blender** — wrap `BlenderCache.fingerprint` as the recipe. Rename nothing.
+- **GTA5** — `ModelResolver.resolve` output. `UNRESOLVED` is an abstain, never
+  an identity.
 
 ### A3 — `assets.lock.json`
 
-One per build, sorted by asset id: tier, source, `bin_hash`, measured bounds,
-and which entities bound it. This becomes the machine-readable record;
-`schema.meta.entity_model_paths` and `schema.meta.authored_models` stay as views
-over it.
+One per build, sorted by asset id: tier, source, measured bounds, and which
+entities bound it. `schema.meta.entity_model_paths` and
+`schema.meta.authored_models` stay as views over it.
 
 ### A4 — re-key the machine-bound keys
 
-Two digests hash an **absolute path**, so their result differs across machines
-and worktrees. Move both to asset ids (`frozen.py` marks them `migrate`):
+Two digests hash an **absolute path** (`frozen.py` marks them `migrate`):
 
+- `src/unity_entity_asset_resolver.py` `_register_authored` — sha1 of the
+  resolved absolute path lands in an **emitted** Resources file name whenever
+  two authored files share a stem. A real cross-machine output difference,
+  though only in that collision case.
 - `src/unity_sceneinput.py` `_cache_key` — the GLB-to-FBX conversion cache,
-  keyed on resolved path + size + mtime;
-- `src/unity_entity_asset_resolver.py` authored-file disambiguation tag — sha1
-  of the resolved absolute path, which lands in an **emitted** Resources file
-  name whenever two authored files share a stem. That is a cross-machine output
-  difference, not just a cache miss.
+  keyed on absolute path + size + mtime. A cache miss across machines, not
+  wrong output.
 
 Model measurement (cached into the catalog entry) and the semantic match cache
 (`catalog_content_hash`, over catalog-relative paths) are already
@@ -117,13 +131,15 @@ machine-stable and stay as they are.
 
 - the same file at two different paths gives the same id;
 - one flipped byte gives a different id;
-- a raw float in a payload raises `TypeError`;
-- a GTA5 engine-owned asset gets no fabricated `bin_hash`;
+- a GTA5 model gets no fabricated byte hash;
 - two processes under differing `PYTHONHASHSEED` produce identical ids.
 
 ---
 
 ## Track B — the scene DAG
+
+Nodes are entities and scenes, not micro-types (see Premises). Micros attach to
+nodes as components; SEAMs are `binds` edges between those components.
 
 ### B1 — IR (`src/scene_graph.py`)
 
@@ -177,7 +193,7 @@ byte-identical until the flip:
 | --- | --- |
 | `src/unity_playability.py` | its checks become graph queries; `entity_scene_coverage` is literally "has a scene ancestor" |
 | `src/unity_reachability.py` | occupancy grid built from graph nodes, not `schema.entities` |
-| `templates/unity/EntitySpawner.cs.j2` | emits real Unity parenting instead of a flat spawn list |
+| `templates/unity/EntitySpawner.cs.j2` | already parents instances under a per-group container; gains variable depth from `parent_of` edges (a group placed ON another group) |
 | `src/unity_compose.py` | SEAM results recorded as `binds` edges; the wiring report becomes a graph diff |
 
 ### B6 — artifacts
@@ -200,44 +216,58 @@ LLM-free" rule made executable rather than documented.
 
 ## Track C — graph-first layout
 
-### C1 — split `compute_layout()` into three phases
+Builds on the relation stage that already exists; it does not replace it.
+
+### C1 — persist and generalize the relation stage
 
 | phase | input | output | coordinates? |
 | --- | --- | --- | --- |
-| 1 relate | Track B graph + route zones | constraint graph (`near`, `on_surface`, ordinal along route) | none |
-| 2 solve | constraint graph | a region assignment per node (tier, ordinal, cell) | none |
-| 3 realize | regions + **measured asset bounds** | `instance_positions` / `instance_yaws` | yes |
+| 1 relate | `spatial_relationship_of()` (today's star around the primary route) + Track B `near` / `on_surface` edges | a persisted relation graph, including group-to-group relations | none |
+| 2 solve | relation graph | a region assignment per node (tier, ordinal, cell) | none |
+| 3 realize | regions + measured footprints | `instance_positions` / `instance_yaws` | yes |
 
 ### C2 — the primitives become realizers
 
 `_layout_arena_plane`, `_layout_vertical_corridor`, `_layout_bounded_volume`,
 `_layout_vertical_surface` and `_layout_ui_board` consume a solved assignment
-instead of re-deriving intent from schema text. `select_archetype()`
-(`src/unity_layout_archetype.py`) is untouched — it already *is* the axis
-derivation phase 1 wants.
+instead of re-deriving intent. `select_archetype()` and
+`spatial_relationship_of()` (`src/unity_layout_archetype.py`) stay — they
+already are phase 1's classifiers.
 
 ### C3 — generative regions
 
 Promote `WorldRegion` from descriptive to generative: solved in phase 2, packed
 into in phase 3. This inverts today's `_regions_for()`.
 
-### C4 — fix the model-blind clump
+### C4 — Step 5 layout consumers go stale after the Step 6 re-layout
 
-Insert a **measure-only pre-pass** between phases 2 and 3, cache-hit by Track A
-asset id, so phase 3 packs with real footprints. Moving full asset resolution
-ahead of layout is the riskier change and is not needed for this.
+The model-blind clump is **already fixed**: `unity_generator.py` re-runs
+`compute_layout` with measured catalog footprints after model resolution. But
+that re-layout runs inside `generator.write()`, AFTER Step 5 consumers of the
+first bake have already been used:
 
-### C5 — reseed
+- `compute_cover_points` (`src/unity_pipeline.py`, Step 5d) bakes cover points
+  from the Step 5 obstacle positions;
+- `subsystems_for(..., cover_points=schema.meta["cover_points"])` hands them to
+  the `cover_shooter` AI micro before `generator.write()` runs;
+- the re-layout then moves scatter / grid / ring / line groups that have
+  measured bounds — the obstacles included.
 
-Every `random.Random(f"{name}:{count}:{spacing:.3f}")` becomes
-`random.Random(chash("layout.scatter", node_id))` — stable under renames, which
-the current string seed is not. (Registers the `layout.scatter` tag.)
+So whenever catalog bounds exist for an obstacle group, the AI ships cover
+coordinates next to where the obstacles USED to be. Fix: one layout, sized
+once — either measure footprints before Step 5 (the lookup needs only the
+catalog pick, not a copied binary) or recompute cover points after the
+re-layout, before AI codegen.
 
-### C6 — gate
+### C5 — gate
 
 One baseline per archetype, extending `tests/fixtures/arenaplane_baseline.json`;
-plus a test that phase 3 is a pure function of (graph hash, asset bounds) and
-reads no schema prose.
+plus a test that phase 3 is a pure function of (relation graph, footprints)
+and reads no schema prose.
+
+(Dropped: the earlier "reseed layout RNG by node id" slice. The string seed is
+already deterministic across processes, and a node id that hashes the name
+would be no more stable under a rename.)
 
 ---
 
@@ -245,18 +275,21 @@ reads no schema prose.
 
 No slice is complete until it is PR'd.
 
-| # | scope | risk | landed |
-| --- | --- | --- | --- |
-| 1 | Phase 0: `src/ident/`, tags, frozen list, lint test | low | [x] |
-| 2 | A1-A2: `AssetIdentity` + three adapters | low | [ ] |
-| 3 | A3 `assets.lock.json` + A5 gate | low | [ ] |
-| 4 | A4 cache re-keying | med (one-time cache rebuild) | [ ] |
-| 5 | B1-B4 + B6: IR, derivation, strict gate, artifacts, CLI | med | [ ] |
-| 6 | B5: playability + reachability on the graph | med | [ ] |
-| 7 | B5: `EntitySpawner` real parenting | **high** (changes emitted scenes) | [ ] |
-| 8 | C1-C2: phase split, output byte-identical | med | [ ] |
-| 9 | C3-C4: generative regions + measure pre-pass | **high** (baselines churn) | [ ] |
-| 10 | C5 reseed + baseline regeneration | med, mechanical | [ ] |
+| # | scope | depends on | risk | landed |
+| --- | --- | --- | --- | --- |
+| 1 | Phase 0: `src/ident/`, tags, frozen list, lint test | — | low | [x] |
+| 2 | C4: stale cover points after the Step 6 re-layout | — | med | [ ] |
+| 3 | A4: re-key the two absolute-path digests | 1 | low | [ ] |
+| 4 | A1-A2 + A5: `AssetIdentity` + three adapters | 1, only with 6 | low | [ ] |
+| 5 | A3: `assets.lock.json` | 4 | low | [ ] |
+| 6 | B1-B4 + B6: IR, derivation, strict gate, artifacts, CLI | 5 | med | [ ] |
+| 7 | B5: playability + reachability on the graph | 6 | med | [ ] |
+| 8 | B5: variable-depth `EntitySpawner` parenting | 6 | **high** (changes emitted scenes) | [ ] |
+| 9 | C1-C2: persisted relation stage + realizer split, output byte-identical | 6 | med | [ ] |
+| 10 | C3: generative regions | 9 | **high** (baselines churn) | [ ] |
+
+Slices 2 and 3 fix real defects and stand alone. Slices 4-10 are one
+investment: they pay off only if the scene DAG is built.
 
 Baseline regeneration always lands in its own commit with the diff explained,
 never mixed with logic changes.
@@ -282,7 +315,7 @@ never mixed with logic changes.
 
 ## See also
 
-- `docs/LAYOUT_ARCHETYPES.md` — the five spatial primitives Track C rebuilds on
+- `docs/LAYOUT_ARCHETYPES.md` — the five spatial primitives Track C builds on
 - `docs/WIRING_SEAMS.md` — the seams that become `binds` edges
 - `docs/model-pipeline-architecture.md` — the asset chain Track A identifies
 - `docs/COMPILER_AUDIT.md` — the standing gap list
