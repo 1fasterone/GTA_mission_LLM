@@ -1,7 +1,8 @@
 # Scene-graph compiler (plan)
 
-Status: **plan / not built.** This document is the roadmap for three coupled
-pieces of work, and the tracker for which slice has landed:
+Status: **Phase 0 built** (`src/ident/`); Tracks A-C planned. This document is
+the roadmap for three coupled pieces of work, and the tracker for which slice
+has landed:
 
 1. a deterministic **scene-graph compiler** — micro-types extended to a full
    scene DAG;
@@ -16,7 +17,7 @@ below may call the Pipeline LLM.
 
 ---
 
-## Where the repo stands today
+## Where the repo stood before Phase 0
 
 | goal | today | gap |
 | --- | --- | --- |
@@ -45,7 +46,7 @@ Phase 0 is promoting it, not writing it.
    invented inline at a call site; a new one is added to the registry in the
    same PR as its first caller.
 4. `src/ident/frozen.py` — the **inventory of every digest outside
-   `src/ident/`**, one row per file: how many `hashlib` constructor calls it
+   `src/ident/`**, one row per enclosing function: how many `hashlib` calls it
    holds, a disposition, and why. Two dispositions:
    - `keep` — must NOT be unified. Contracts: `src/unity_package_cache.py`'s
      sha1 is the npm registry's own digest; `unity_generator._make_guid` /
@@ -56,10 +57,11 @@ Phase 0 is promoting it, not writing it.
      Wrapped: the `BlenderCache` fingerprints, which Track A wraps rather than
      replaces.
    - `migrate` — retired onto `src/ident/` by a named slice (below).
-5. Lint test (AST, like `src/naming_lint.py`): the actual `hashlib` call count
-   per file must equal the inventory exactly — a new digest anywhere in `src/`
-   fails, and so does a stale row. Covers every `hashlib` constructor, including
-   aliased imports, not just md5/sha1.
+5. Lint test (`src/ident/lint.py`, AST like `src/naming_lint.py`): the actual
+   `hashlib` call count per enclosing function in `src/` and `cli/` must equal
+   the inventory exactly — a new digest anywhere fails, and so does a stale row.
+   Covers every `hashlib` callable, including aliased and `from` imports, not
+   just md5/sha1.
 
 ---
 
@@ -245,7 +247,7 @@ No slice is complete until it is PR'd.
 
 | # | scope | risk | landed |
 | --- | --- | --- | --- |
-| 1 | Phase 0: `src/ident/`, tags, frozen list, lint test | low | [ ] |
+| 1 | Phase 0: `src/ident/`, tags, frozen list, lint test | low | [x] |
 | 2 | A1-A2: `AssetIdentity` + three adapters | low | [ ] |
 | 3 | A3 `assets.lock.json` + A5 gate | low | [ ] |
 | 4 | A4 cache re-keying | med (one-time cache rebuild) | [ ] |
