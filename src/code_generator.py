@@ -4,6 +4,7 @@ LLM never touches this. Jinja2 template + pre-processed schema data only.
 """
 
 import json
+import math
 import re
 from pathlib import Path
 
@@ -83,6 +84,30 @@ _PATROL_MOVEMENT_SPEED = {
     "walk": 1.0,
     "jog": 2.2,
     "run": 3.5,
+}
+
+_PATROL_POSTURE_CS = {
+    "normal": "Normal",
+    "cautious": "Cautious",
+    "aggressive": "Aggressive",
+}
+
+_PATROL_WEAPON_STATE_CS = {
+    "unchanged": "Unchanged",
+    "drawn": "Drawn",
+    "holstered": "Holstered",
+}
+
+_PATROL_LOOK_TARGET_KIND_CS = {
+    "none": "None",
+    "coord": "Coord",
+    "ped": "Ped",
+    "vehicle": "Vehicle",
+    "object": "Object",
+}
+
+_PATROL_LOOK_TARGET_TYPES = {
+    "none", "coord", "ped", "vehicle", "object", "trigger", "logic",
 }
 
 # ── Named tracks → ordered checkpoint arrays ─────────────────────────────────
@@ -195,9 +220,65 @@ def _patrol_movement(value, default: str = "inherit") -> str:
     return "inherit"
 
 
+def _patrol_posture(value, default: str = "normal") -> str:
+    posture = str(value or default or "normal").lower()
+    if posture in _PATROL_POSTURE_CS:
+        return posture
+    if default in _PATROL_POSTURE_CS:
+        return default
+    return "normal"
+
+
+def _patrol_weapon_state(value, default: str = "unchanged") -> str:
+    state = str(value or default or "unchanged").lower()
+    if state in _PATROL_WEAPON_STATE_CS:
+        return state
+    if default in _PATROL_WEAPON_STATE_CS:
+        return default
+    return "unchanged"
+
+
+def _patrol_look_target_type(value, default: str = "none") -> str:
+    target_type = str(value or default or "none").lower()
+    if target_type in _PATROL_LOOK_TARGET_TYPES:
+        return target_type
+    if default in _PATROL_LOOK_TARGET_TYPES:
+        return default
+    return "none"
+
+
+def _patrol_angle(value, default=None):
+    try:
+        angle = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(angle):
+        return default
+    return angle % 360.0
+
+
+def _patrol_arc(value, default=None):
+    try:
+        arc = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(arc):
+        return default
+    return max(0.0, min(arc, 360.0))
+
+
 def _patrol_behavior_with_movement(behavior: str, movement: str) -> str:
     if behavior in {"walk", "jog", "sprint"} and movement in _PATROL_MOVEMENT_BEHAVIOR:
         return _PATROL_MOVEMENT_BEHAVIOR[movement]
+    return behavior
+
+
+def _patrol_behavior_with_posture(behavior: str, posture: str) -> str:
+    # Cautious peds should not keep a sprint task even when the route alias
+    # asked for one. Aggressive speed is applied at runtime without rewriting
+    # the authored behavior tier.
+    if posture == "cautious" and behavior == "sprint":
+        return "jog"
     return behavior
 
 
@@ -235,6 +316,131 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "z": float(value.get("z", fallback_z if fallback_z is not None else location["z"])),
             }
         return None
+
+    def _coord_reference(value):
+        point = _editor_point(value, location["z"])
+        if point is not None:
+            return point
+        if not isinstance(value, str):
+            return None
+        parts = [part for part in re.split(r"[,\s]+", value.strip()) if part]
+        if len(parts) < 2:
+            return None
+        try:
+            return {
+                "x": float(parts[0]),
+                "y": float(parts[1]),
+                "z": float(parts[2]) if len(parts) > 2 else float(location["z"]),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    def _editor_entry(kind: str, idx: int) -> dict:
+        if not isinstance(_editor, dict):
+            return {}
+        entries = _editor.get(kind) or []
+        if 0 <= idx < len(entries) and isinstance(entries[idx], dict):
+            return entries[idx]
+        return {}
+
+    def _reference_matches(reference, kind: str, idx: int, item=None, meta=None) -> bool:
+        needle = str(reference or "").strip().lower()
+        if not needle:
+            return False
+        candidates = {str(idx), f"{kind}{idx}", f"{kind}_{idx}", f"{kind} {idx}"}
+        for source in (item, meta):
+            if isinstance(source, dict):
+                values = (source.get("id"), source.get("name"), source.get("description"),
+                          source.get("model"), source.get("label"))
+            else:
+                values = (getattr(source, "id", None), getattr(source, "name", None),
+                          getattr(source, "description", None), getattr(source, "model", None),
+                          getattr(source, "label", None))
+            candidates.update(str(value).strip().lower() for value in values if value)
+        return needle in candidates
+
+    def _runtime_entity_index(kind: str, idx: int) -> int:
+        if kind == "ped":
+            return sum(int(item.count) for item in schema.peds[:idx] if item.model)
+        if kind == "vehicle":
+            return sum(int(item.count) for item in schema.vehicles[:idx] if item.model)
+        if kind == "object":
+            return sum(1 for item in schema.objects[:idx] if item.model)
+        return -1
+
+    def _empty_look_target() -> dict:
+        return {
+            "kind": "none",
+            "kind_cs": "None",
+            "index": -1,
+            "coord": {"x": 0.0, "y": 0.0, "z": 0.0},
+        }
+
+    def _coord_look_target(point: dict) -> dict:
+        return {"kind": "coord", "kind_cs": "Coord", "index": -1, "coord": point}
+
+    def _trigger_coord(reference):
+        if not isinstance(_editor, dict):
+            return None
+        for idx, trigger in enumerate(_editor.get("triggers") or []):
+            if not isinstance(trigger, dict):
+                continue
+            if _reference_matches(reference, "trg", idx, meta=trigger):
+                return _editor_point(trigger.get("pos"), location["z"])
+        return None
+
+    def _logic_coord(reference):
+        if not isinstance(_editor, dict):
+            return None
+        logic = _editor.get("logic")
+        nodes = logic.get("nodes") if isinstance(logic, dict) else []
+        for idx, node in enumerate(nodes or []):
+            if not isinstance(node, dict) or not _reference_matches(reference, "logic", idx, meta=node):
+                continue
+            params = node.get("params") if isinstance(node.get("params"), dict) else {}
+            for value in (
+                node.get("pos"), node.get("position"), node.get("coord"),
+                params.get("pos"), params.get("position"), params.get("coord"),
+            ):
+                point = _coord_reference(value)
+                if point is not None:
+                    return point
+            trigger_point = _trigger_coord(params.get("ref") or params.get("trigger_id"))
+            if trigger_point is not None:
+                return trigger_point
+        return None
+
+    def _resolve_editor_look_target(target_type: str, reference) -> dict:
+        target_type = _patrol_look_target_type(target_type, "none")
+        if target_type == "none":
+            return _empty_look_target()
+        if target_type == "coord":
+            point = _coord_reference(reference)
+            return _coord_look_target(point) if point is not None else _empty_look_target()
+        if target_type == "trigger":
+            point = _trigger_coord(reference)
+            return _coord_look_target(point) if point is not None else _empty_look_target()
+        if target_type == "logic":
+            point = _logic_coord(reference)
+            return _coord_look_target(point) if point is not None else _empty_look_target()
+
+        items = getattr(schema, f"{target_type}s", [])
+        for idx, item in enumerate(items):
+            meta = _editor_entry(f"{target_type}s", idx)
+            if not _reference_matches(reference, target_type, idx, item=item, meta=meta):
+                continue
+            point = _editor_point(meta.get("pos"), location["z"])
+            runtime_idx = _runtime_entity_index(target_type, idx)
+            if getattr(item, "model", None) and runtime_idx >= 0:
+                return {
+                    "kind": target_type,
+                    "kind_cs": _PATROL_LOOK_TARGET_KIND_CS[target_type],
+                    "index": runtime_idx,
+                    "coord": point or {"x": 0.0, "y": 0.0, "z": 0.0},
+                }
+            if point is not None:
+                return _coord_look_target(point)
+        return _empty_look_target()
 
     editor_blips: list[dict] = []
     if isinstance(_editor, dict):
@@ -741,26 +947,62 @@ def _build_template_context(schema: MissionSchema) -> dict:
             path_speed_default = _PATROL_MOVEMENT_SPEED.get(path_movement, 1.0)
             path_speed = _patrol_speed(p.get("speed"), path_speed_default)
             path_wait_ms = _patrol_wait_ms(p.get("wait_time"), 0.0)
+            path_posture = _patrol_posture(p.get("posture"), "normal")
+            path_weapon_state = _patrol_weapon_state(p.get("weapon_state"), "unchanged")
+            path_look_type = _patrol_look_target_type(p.get("look_at_type"), "none")
+            path_look_ref = p.get("look_at")
+            path_look = _resolve_editor_look_target(path_look_type, path_look_ref)
+            path_scan_heading = _patrol_angle(p.get("scan_heading"))
+            path_scan_arc = _patrol_arc(p.get("scan_arc"))
+            path_scan_duration_ms = _patrol_wait_ms(p.get("scan_duration"), 0.0)
             path_behavior = _patrol_behavior(p.get("behavior"), "walk")
             path_behavior = _patrol_behavior_with_movement(path_behavior, path_movement)
+            path_behavior = _patrol_behavior_with_posture(path_behavior, path_posture)
             path_guard_until_alert = _bool_or_default(p.get("guard_until_alert"), False)
             wp_meta = p.get("waypoints") if isinstance(p.get("waypoints"), list) else []
             speeds = []
             waits_ms = []
             behaviors = []
             guard_until_alert = []
+            postures = []
+            weapon_states = []
+            look_target_kinds = []
+            look_target_indices = []
+            look_target_coords = []
+            scan_headings = []
+            scan_arcs = []
+            scan_durations_ms = []
             for j, _pt in enumerate(pts):
                 wp = wp_meta[j] if j < len(wp_meta) and isinstance(wp_meta[j], dict) else {}
                 movement = _patrol_movement(wp.get("movement"), path_movement)
                 speed_default = _PATROL_MOVEMENT_SPEED.get(movement, path_speed)
                 speeds.append(_patrol_speed(wp.get("speed"), speed_default))
                 waits_ms.append(_patrol_wait_ms(wp.get("wait_time"), path_wait_ms / 1000.0))
+                posture = _patrol_posture(wp.get("posture"), path_posture)
+                weapon_state = _patrol_weapon_state(wp.get("weapon_state"), path_weapon_state)
+                look_type = _patrol_look_target_type(wp.get("look_at_type"), path_look_type)
+                look_ref = wp.get("look_at", path_look_ref)
+                look_target = _resolve_editor_look_target(look_type, look_ref)
+                scan_heading = _patrol_angle(wp.get("scan_heading"), path_scan_heading)
+                scan_arc = _patrol_arc(wp.get("scan_arc"), path_scan_arc)
+                scan_duration_ms = _patrol_wait_ms(
+                    wp.get("scan_duration"), path_scan_duration_ms / 1000.0
+                )
                 behavior = _patrol_behavior(wp.get("behavior"), path_behavior)
                 behavior = _patrol_behavior_with_movement(behavior, movement)
+                behavior = _patrol_behavior_with_posture(behavior, posture)
                 behaviors.append(_PATROL_BEHAVIOR_CS[behavior])
                 guard_until_alert.append(
                     _bool_or_default(wp.get("guard_until_alert"), path_guard_until_alert)
                 )
+                postures.append(_PATROL_POSTURE_CS[posture])
+                weapon_states.append(_PATROL_WEAPON_STATE_CS[weapon_state])
+                look_target_kinds.append(look_target["kind_cs"])
+                look_target_indices.append(look_target["index"])
+                look_target_coords.append(look_target["coord"])
+                scan_headings.append(scan_heading)
+                scan_arcs.append(scan_arc)
+                scan_durations_ms.append(scan_duration_ms)
             editor_paths.append({
                 "id":      str(p.get("id") or f"path{i}"),
                 "ped_idx": p.get("ped_idx"),
@@ -768,6 +1010,17 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "mode_cs": _PATROL_ROUTE_MODE_CS[mode],
                 "speed":   path_speed,
                 "wait_ms": path_wait_ms,
+                "posture": path_posture,
+                "posture_cs": _PATROL_POSTURE_CS[path_posture],
+                "weapon_state": path_weapon_state,
+                "weapon_state_cs": _PATROL_WEAPON_STATE_CS[path_weapon_state],
+                "look_target_kind": path_look["kind"],
+                "look_target_kind_cs": path_look["kind_cs"],
+                "look_target_index": path_look["index"],
+                "look_target_coord": path_look["coord"],
+                "scan_heading": path_scan_heading,
+                "scan_arc": path_scan_arc,
+                "scan_duration_ms": path_scan_duration_ms,
                 "behavior": path_behavior,
                 "behavior_cs": _PATROL_BEHAVIOR_CS[path_behavior],
                 "guard_until_alert": path_guard_until_alert,
@@ -775,6 +1028,14 @@ def _build_template_context(schema: MissionSchema) -> dict:
                 "waits_ms": waits_ms,
                 "behaviors": behaviors,
                 "guard_until_alerts": guard_until_alert,
+                "postures": postures,
+                "weapon_states": weapon_states,
+                "look_target_kinds": look_target_kinds,
+                "look_target_indices": look_target_indices,
+                "look_target_coords": look_target_coords,
+                "scan_headings": scan_headings,
+                "scan_arcs": scan_arcs,
+                "scan_durations_ms": scan_durations_ms,
                 "points":  [{"x": float(q[0]), "y": float(q[1]),
                              "z": float(q[2]) if len(q) > 2 else 0.0} for q in pts],
             })

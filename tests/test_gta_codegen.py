@@ -343,6 +343,10 @@ class TestBuildTemplateContext:
             "mode_cs": "Loop",
             "speed": 1.2,
             "wait_ms": 0,
+            "posture": "normal",
+            "posture_cs": "Normal",
+            "weapon_state": "unchanged",
+            "weapon_state_cs": "Unchanged",
             "behavior": "walk",
             "behavior_cs": "Walk",
             "guard_until_alert": False,
@@ -350,6 +354,25 @@ class TestBuildTemplateContext:
             "waits_ms": [0, 2000, 1000],
             "behaviors": ["Walk", "Scan", "Guard"],
             "guard_until_alerts": [False, False, False],
+            "postures": ["Normal", "Normal", "Normal"],
+            "weapon_states": ["Unchanged", "Unchanged", "Unchanged"],
+            "look_target_kind": "none",
+            "look_target_kind_cs": "None",
+            "look_target_index": -1,
+            "look_target_coord": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "scan_heading": None,
+            "scan_arc": None,
+            "scan_duration_ms": 0,
+            "look_target_kinds": ["None", "None", "None"],
+            "look_target_indices": [-1, -1, -1],
+            "look_target_coords": [
+                {"x": 0.0, "y": 0.0, "z": 0.0},
+                {"x": 0.0, "y": 0.0, "z": 0.0},
+                {"x": 0.0, "y": 0.0, "z": 0.0},
+            ],
+            "scan_headings": [None, None, None],
+            "scan_arcs": [None, None, None],
+            "scan_durations_ms": [0, 0, 0],
             "points": [
                 {"x": -1030.0, "y": -2710.0, "z": 13.8},
                 {"x": -1000.0, "y": -2685.0, "z": 13.8},
@@ -553,8 +576,16 @@ class TestCodeGeneratorGenerate:
             "private static readonly int[] EditorPathWaitMs_0",
             "private static readonly PatrolWaypointBehavior[] EditorPathBehavior_0",
             "private static readonly bool[] EditorPathGuardUntilAlert_0",
+            "private static readonly PatrolWeaponState[] EditorPathWeaponState_0",
+            "private static readonly PatrolLookTargetKind[] EditorPathLookTargetKind_0",
+            "private static readonly int[] EditorPathLookTargetIndex_0",
+            "private static readonly Vector3[] EditorPathLookTargetCoord_0",
+            "private static readonly float[] EditorPathScanHeading_0",
+            "private static readonly float[] EditorPathScanArc_0",
+            "private static readonly int[] EditorPathScanDurationMs_0",
             "1.20f",
             "2000",
+            "float.NaN",
             "PatrolWaypointBehavior.Scan",
             "PatrolWaypointBehavior.Guard",
             "// id=dock_patrol_alpha pedIdx=0",
@@ -563,16 +594,35 @@ class TestCodeGeneratorGenerate:
             "private static int[] EditorPathWaitMsByIndex(int idx)",
             "private static PatrolWaypointBehavior[] EditorPathBehaviorByIndex(int idx)",
             "private static bool[] EditorPathGuardUntilAlertByIndex(int idx)",
+            "private static PatrolWeaponState[] EditorPathWeaponStateByIndex(int idx)",
+            "private static PatrolLookTargetKind[] EditorPathLookTargetKindByIndex(int idx)",
+            "private static int[] EditorPathLookTargetIndexByIndex(int idx)",
+            "private static Vector3[] EditorPathLookTargetCoordByIndex(int idx)",
+            "private static float[] EditorPathScanHeadingByIndex(int idx)",
+            "private static float[] EditorPathScanArcByIndex(int idx)",
+            "private static int[] EditorPathScanDurationMsByIndex(int idx)",
             "private const float DefaultPatrolSpeed = 1.0f;",
             "private const int DefaultScanMs = 2000;",
             "private enum PatrolRouteMode { Once, Loop, PingPong }",
             "private enum PatrolRouteState { Moving, Waiting, Scanning, Guarding, Complete }",
             "private enum PatrolWaypointBehavior { Walk, Jog, Sprint, Scan, Guard }",
+            "private enum PatrolWeaponState { Unchanged, Drawn, Holstered }",
+            "private enum PatrolLookTargetKind { None, Coord, Ped, Vehicle, Object }",
             "private class PatrolUnit",
             "public float[] Speed;",
             "public int[] WaitMs;",
             "public PatrolWaypointBehavior[] Behavior;",
             "public bool[] GuardUntilAlert;",
+            "public PatrolWeaponState[] WeaponState;",
+            "public int WeaponHash;",
+            "public PatrolLookTargetKind[] LookTargetKind;",
+            "public int[] LookTargetIndex;",
+            "public Vector3[] LookTargetCoord;",
+            "public float[] ScanHeading;",
+            "public float[] ScanArc;",
+            "public int[] ScanDurationMs;",
+            "public int ScanSample;",
+            "public DateTime ScanNextAt;",
             "public PatrolRouteMode Mode;",
             "public PatrolRouteState State;",
             "public DateTime StateUntil;",
@@ -583,6 +633,15 @@ class TestCodeGeneratorGenerate:
             "WaitMs = EditorPathWaitMsByIndex(0)",
             "Behavior = EditorPathBehaviorByIndex(0)",
             "GuardUntilAlert = EditorPathGuardUntilAlertByIndex(0)",
+            "WeaponState = EditorPathWeaponStateByIndex(0)",
+            "LookTargetKind = EditorPathLookTargetKindByIndex(0)",
+            "LookTargetIndex = EditorPathLookTargetIndexByIndex(0)",
+            "LookTargetCoord = EditorPathLookTargetCoordByIndex(0)",
+            "ScanHeading = EditorPathScanHeadingByIndex(0)",
+            "ScanArc = EditorPathScanArcByIndex(0)",
+            "ScanDurationMs = EditorPathScanDurationMsByIndex(0)",
+            "ScanSample = 0, ScanNextAt = DateTime.MinValue",
+            "ApplyPatrolWeaponState(_patrols[_patrols.Count - 1]);",
             "Mode = PatrolRouteMode.Loop",
             "State = PatrolRouteState.Moving, StateUntil = DateTime.MinValue, Wp = 0, Dir = 1",
             "IssuePatrolMove(_patrols[_patrols.Count - 1]);",
@@ -597,8 +656,13 @@ class TestCodeGeneratorGenerate:
             "private void EnterPatrolWaypoint(PatrolUnit u, DateTime now)",
             "private void BeginPatrolScan(PatrolUnit u, DateTime now, int durationMs)",
             "private void BeginPatrolGuard(PatrolUnit u, DateTime now, int durationMs, bool guardUntilAlert)",
+            "private void IssuePatrolLook(PatrolUnit u, int durationMs)",
+            "private void IssuePatrolScanLook(PatrolUnit u, DateTime now)",
             "Hash.TASK_STAND_STILL",
             "Hash.TASK_LOOK_AT_COORD",
+            "Hash.TASK_LOOK_AT_ENTITY",
+            "ScanSampleIntervalMs",
+            "u.ScanSample",
             "Hash.TASK_GUARD_CURRENT_POSITION",
             "DateTime.MaxValue",
             "private bool AdvancePatrol(PatrolUnit u)",
@@ -635,12 +699,12 @@ class TestCodeGeneratorGenerate:
         for token in (
             "if (behavior == PatrolWaypointBehavior.Scan)",
             "BeginPatrolScan(u, now, waitMs > 0 ? waitMs : DefaultScanMs);",
-            "Function.Call(Hash.TASK_STAND_STILL, u.Ped, durationMs);",
+            "Function.Call(Hash.TASK_STAND_STILL, u.Ped, adjustedDurationMs);",
             "Function.Call(Hash.TASK_LOOK_AT_COORD,",
             "if (behavior == PatrolWaypointBehavior.Guard)",
             "bool guardUntilAlert = PatrolGuardUntilAlertAt(u);",
             "BeginPatrolGuard(u, now, waitMs, guardUntilAlert);",
-            "u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(durationMs);",
+            "u.StateUntil = guardUntilAlert ? DateTime.MaxValue : now.AddMilliseconds(adjustedDurationMs);",
             "Function.Call(Hash.TASK_GUARD_CURRENT_POSITION, u.Ped, 10.0f, 10.0f, 1);",
             "else if (u.StateUntil != DateTime.MaxValue && now >= u.StateUntil)",
         ):
@@ -691,6 +755,188 @@ class TestCodeGeneratorGenerate:
             "3.50f",
         ):
             assert token in code, f"movement alias C# missing {token}"
+
+    def test_editor_patrol_posture_lowers_to_runtime_modifiers(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Posture Modifiers",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(description="dock sentry", model="s_m_y_dockwork_01", role="patrol")],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "posture_route",
+                "ped_idx": 0,
+                "mode": "loop",
+                "movement": "run",
+                "posture": "cautious",
+                "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0]],
+                "waypoints": [
+                    {},
+                    {"posture": "aggressive", "movement": "walk", "behavior": "walk"},
+                    {"posture": "normal", "behavior": "sprint"},
+                ],
+            }]}}
+        )
+        path = _build_template_context(schema)["editor_paths"][0]
+        assert path["posture"] == "cautious"
+        assert path["posture_cs"] == "Cautious"
+        assert path["postures"] == ["Cautious", "Aggressive", "Normal"]
+        assert path["behaviors"] == ["Jog", "Walk", "Sprint"]
+
+        code = gen.generate(schema)
+        for token in (
+            "private enum PatrolPosture { Normal, Cautious, Aggressive }",
+            "PatrolPosture.Cautious",
+            "PatrolPosture.Aggressive",
+            "private float PatrolPostureSpeedFactor(PatrolUnit u)",
+            "case PatrolPosture.Cautious: return 0.75f;",
+            "case PatrolPosture.Aggressive: return 1.25f;",
+            "factor = 1.25f;",
+            "factor = 0.75f;",
+        ):
+            assert token in code, f"posture lowering C# missing {token}"
+
+    def test_editor_patrol_weapon_state_lowers_to_native_selection(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Weapon States",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[MissionPed(
+                description="armed sentry", model="s_m_y_dockwork_01",
+                role="patrol", weapon="rifle",
+            )],
+            vehicles=[],
+            objects=[],
+            audio=[],
+            meta={"editor": {"paths": [{
+                "id": "weapon_route",
+                "ped_idx": 0,
+                "mode": "loop",
+                "weapon_state": "holstered",
+                "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0]],
+                "waypoints": [
+                    {},
+                    {"weapon_state": "drawn"},
+                    {"weapon_state": "holstered"},
+                ],
+            }]}}
+        )
+        path = _build_template_context(schema)["editor_paths"][0]
+        assert path["weapon_state"] == "holstered"
+        assert path["weapon_state_cs"] == "Holstered"
+        assert path["weapon_states"] == ["Holstered", "Drawn", "Holstered"]
+
+        code = gen.generate(schema)
+        for token in (
+            "private enum PatrolWeaponState { Unchanged, Drawn, Holstered }",
+            "PatrolWeaponState.Holstered",
+            "PatrolWeaponState.Drawn",
+            "private void ApplyPatrolWeaponState(PatrolUnit u)",
+            "WeaponHash = Function.Call<int>(Hash.GET_HASH_KEY, \"weapon_assaultrifle\")",
+            "Function.Call<int>(Hash.GET_HASH_KEY, \"weapon_unarmed\")",
+            "Function.Call(Hash.SET_CURRENT_PED_WEAPON, u.Ped, desiredHash, true);",
+            "ApplyPatrolWeaponState(u);",
+        ):
+            assert token in code, f"weapon state lowering C# missing {token}"
+
+    def test_editor_patrol_look_targets_and_scan_arcs_lower_to_runtime(self, gen):
+        schema = MissionSchema(
+            mission_name="Patrol Look Targets",
+            location_name="docks",
+            time_of_day=20,
+            weather="CLEAR",
+            steps=[MissionStep(type="go_to", label="Reach the route")],
+            peds=[
+                MissionPed(description="lead sentry", model="s_m_y_dockwork_01", role="patrol"),
+                MissionPed(description="watch ped", model="s_m_y_cop_01", role="guard"),
+            ],
+            vehicles=[MissionVehicle(description="escape van", model="burrito3", role="parked")],
+            objects=[MissionObject(description="cargo crate", model="prop_box_wood02a_pu", role="decoration")],
+            audio=[],
+            meta={"editor": {
+                "peds": [
+                    {"id": "lead_sentry", "pos": [0, 0, 0]},
+                    {"id": "watch_ped", "pos": [50, 50, 0]},
+                ],
+                "vehicles": [{"id": "escape_van", "pos": [60, 60, 0]}],
+                "objects": [{"id": "cargo_crate", "pos": [70, 70, 0]}],
+                "triggers": [{"id": "dock_trigger", "pos": [80, 80, 0]}],
+                "logic": {"nodes": [{"id": "look_logic", "pos": [90, 90, 0]}]},
+                "paths": [{
+                    "id": "look_route",
+                    "ped_idx": 0,
+                    "mode": "loop",
+                    "behavior": "scan",
+                    "look_at_type": "trigger",
+                    "look_at": "dock_trigger",
+                    "scan_heading": 450,
+                    "scan_arc": 480,
+                    "scan_duration": 3,
+                    "points": [[0, 0, 0], [10, 0, 0], [20, 0, 0], [30, 0, 0], [40, 0, 0], [50, 0, 0]],
+                    "waypoints": [
+                        {"look_at_type": "coord", "look_at": "-1030, -2710, 13.8",
+                         "scan_heading": -90, "scan_arc": -10, "scan_duration": 0.5},
+                        {"look_at_type": "ped", "look_at": "watch_ped"},
+                        {"look_at_type": "vehicle", "look_at": "escape_van"},
+                        {"look_at_type": "object", "look_at": "cargo_crate"},
+                        {"look_at_type": "trigger", "look_at": "dock_trigger"},
+                        {"look_at_type": "logic", "look_at": "look_logic"},
+                    ],
+                }],
+            }},
+        )
+
+        path = _build_template_context(schema)["editor_paths"][0]
+        assert path["look_target_kind"] == "coord"
+        assert path["look_target_kind_cs"] == "Coord"
+        assert path["look_target_coord"] == {"x": 80.0, "y": 80.0, "z": 0.0}
+        assert path["scan_heading"] == 90.0
+        assert path["scan_arc"] == 360.0
+        assert path["scan_duration_ms"] == 3000
+        assert path["look_target_kinds"] == ["Coord", "Ped", "Vehicle", "Object", "Coord", "Coord"]
+        assert path["look_target_indices"] == [-1, 1, 0, 0, -1, -1]
+        assert path["look_target_coords"] == [
+            {"x": -1030.0, "y": -2710.0, "z": 13.8},
+            {"x": 50.0, "y": 50.0, "z": 0.0},
+            {"x": 60.0, "y": 60.0, "z": 0.0},
+            {"x": 70.0, "y": 70.0, "z": 0.0},
+            {"x": 80.0, "y": 80.0, "z": 0.0},
+            {"x": 90.0, "y": 90.0, "z": 0.0},
+        ]
+        assert path["scan_headings"] == [270.0, 90.0, 90.0, 90.0, 90.0, 90.0]
+        assert path["scan_arcs"] == [0.0, 360.0, 360.0, 360.0, 360.0, 360.0]
+        assert path["scan_durations_ms"] == [500, 3000, 3000, 3000, 3000, 3000]
+
+        code = gen.generate(schema)
+        for token in (
+            "private enum PatrolLookTargetKind { None, Coord, Ped, Vehicle, Object }",
+            "private static readonly PatrolLookTargetKind[] EditorPathLookTargetKind_0",
+            "private static readonly int[] EditorPathLookTargetIndex_0",
+            "private static readonly Vector3[] EditorPathLookTargetCoord_0",
+            "private static readonly float[] EditorPathScanHeading_0",
+            "private static readonly float[] EditorPathScanArc_0",
+            "private static readonly int[] EditorPathScanDurationMs_0",
+            "PatrolLookTargetKind.Ped",
+            "PatrolLookTargetKind.Vehicle",
+            "PatrolLookTargetKind.Object",
+            "new Vector3(-1030.00f, -2710.00f, 13.80f)",
+            "90.00f",
+            "360.00f",
+            "500",
+            "private void IssuePatrolLook(PatrolUnit u, int durationMs)",
+            "private void IssuePatrolScanLook(PatrolUnit u, DateTime now)",
+            "Hash.TASK_LOOK_AT_ENTITY",
+            "Hash.TASK_LOOK_AT_COORD",
+            "ScanSampleIntervalMs",
+            "u.ScanSample",
+        ):
+            assert token in code, f"look/scan lowering C# missing {token}"
 
     def test_editor_patrol_stress_multiple_peds_and_transition_metadata(self, gen):
         schema = MissionSchema(
