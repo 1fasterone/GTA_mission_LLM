@@ -19,7 +19,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from src.vstack.canon import Q_ROT, chash, q
+from src.ident.canon import Q_ROT, chash, q
 
 # Static identity-chain keys, in canonical order (used for stability checks).
 IDENTITY_KEYS = [
