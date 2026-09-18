@@ -2907,6 +2907,39 @@ class UnityProjectGenerator:
                 out[e.name] = footprint
         return out
 
+    @staticmethod
+    def _model_aware_relayout(schema: UnitySchema,
+                              footprints: dict[str, float]) -> None:
+        """Redo Step 5's packing with real measured footprints, then re-bake
+        every Step 5 sidecar derived from the layout it just superseded.
+
+        Groups whose positions came from a deterministic scaffold (racetrack
+        start grids) keep them — they are anchored to real geometry, not to
+        this pass's packing. Everything with a measured footprint is re-packed.
+
+        The re-bake is the point of keeping this in one place. Step 5d's cover
+        points (src/unity_cover_points.py) were computed from the obstacle and
+        enemy positions this pass moves; left alone they point at where the
+        obstacles USED to be, and the cover_shooter AI ships them. Whoever
+        moves the layout re-derives what was computed from it.
+        """
+        from .unity_cover_points import META_KEY, compute_cover_points
+        from .unity_layout import compute_layout
+
+        for e in schema.entities:
+            if e.name in footprints and e.placement in ("scatter", "grid", "ring", "line"):
+                e.instance_positions = []
+        compute_layout(schema, footprints)
+
+        before = schema.meta.get(META_KEY) if isinstance(schema.meta, dict) else None
+        compute_cover_points(schema)
+        after = schema.meta.get(META_KEY) if isinstance(schema.meta, dict) else None
+        if before is not None and after != before:
+            _log.info("[relayout] cover points re-baked from the model-aware "
+                      "layout: %d -> %d point(s)",
+                      sum(len(v) for v in before.values()),
+                      sum(len(v) for v in (after or {}).values()))
+
     def _resolve_all_models(self, schema: UnitySchema, lookups_dir: str,
                             model_source_dir: str | None,
                             model_overrides: dict[str, str] | None,
@@ -3168,15 +3201,7 @@ class UnityProjectGenerator:
         _footprints = self._entity_footprints(schema, entity_model_paths,
                                               _by_resource_path, lookups_dir)
         if _footprints:
-            from .unity_layout import compute_layout as _relayout
-            for e in schema.entities:
-                # Drop the model-blind bake so the pass recomputes it; groups
-                # whose positions came from a deterministic scaffold (racetrack
-                # start grids) are left alone — they are anchored to real
-                # geometry, not to this pass's packing.
-                if e.name in _footprints and e.placement in ("scatter", "grid", "ring", "line"):
-                    e.instance_positions = []
-            _relayout(schema, _footprints)
+            self._model_aware_relayout(schema, _footprints)
 
         # ── Playable-player merge ──────────────────────────────────────────
         # The scene template ALWAYS builds a dedicated Player object (tag
