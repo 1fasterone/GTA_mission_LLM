@@ -113,7 +113,8 @@ entities bound it. `schema.meta.entity_model_paths` and
 
 ### A4 — re-key the machine-bound keys
 
-Two digests hash an **absolute path** (`frozen.py` marks them `migrate`):
+Two digests hashed an **absolute path**. Both now derive from content via
+`src/ident` (built; `frozen.py` has no open `migrate` rows):
 
 - `src/unity_entity_asset_resolver.py` `_register_authored` — sha1 of the
   resolved absolute path lands in an **emitted** Resources file name whenever
@@ -279,7 +280,7 @@ No slice is complete until it is PR'd.
 | --- | --- | --- | --- | --- |
 | 1 | Phase 0: `src/ident/`, tags, frozen list, lint test | — | low | [x] |
 | 2 | C4: stale cover points after the Step 6 re-layout | — | med | [ ] |
-| 3 | A4: re-key the two absolute-path digests | 1 | low | [ ] |
+| 3 | A4: re-key the two absolute-path digests | 1 | low | [x] |
 | 4 | A1-A2 + A5: `AssetIdentity` + three adapters | 1, only with 6 | low | [ ] |
 | 5 | A3: `assets.lock.json` | 4 | low | [ ] |
 | 6 | B1-B4 + B6: IR, derivation, strict gate, artifacts, CLI | 5 | med | [ ] |

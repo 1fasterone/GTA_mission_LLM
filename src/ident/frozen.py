@@ -14,8 +14,8 @@ its exact call count and one of two dispositions:
              wrapped — Track A adapts it rather than replacing it (the
                BlenderCache fingerprints), or it is a content-derived local
                cache key that is already machine-stable.
-  migrate  retired onto src.ident by the named plan slice. Both current rows
-           hash an ABSOLUTE path, so their result differs between machines.
+  migrate  retired onto src.ident by the named plan slice. None are open:
+           A4 retired the two that hashed an ABSOLUTE path.
 
 src/ident/lint.py holds this list to the real tree exactly: a new digest
 anywhere in src/ or cli/ fails the lint until it goes through src.ident or
@@ -113,11 +113,7 @@ SITES: tuple[DigestSite, ...] = (
                "machine-stable; changing it only renames outputs"),
 
     # ── migrate ───────────────────────────────────────────────────────────────
-    DigestSite("src/unity_sceneinput.py", "_cache_key", 1, "migrate",
-               "GLB->FBX conversion cache keyed on ABSOLUTE path + size + mtime "
-               "— misses across machines and worktrees", slice="A4"),
-    DigestSite("src/unity_entity_asset_resolver.py", "_register_authored", 1, "migrate",
-               "authored-file disambiguation tag over the ABSOLUTE path lands in "
-               "an emitted Resources file name — output differs per machine",
-               slice="A4"),
+    # None open. A4 retired the two absolute-path digests
+    # (unity_sceneinput._cache_key, unity_entity_asset_resolver.
+    # _register_authored) onto src.ident.fhash / chash.
 )

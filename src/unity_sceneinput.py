@@ -57,12 +57,15 @@ ordering, no RNG, no LLM.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import re
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote
+
+from .ident import HashRef, chash, fhash
+from .ident.tags import ASSET
 
 _log = logging.getLogger(__name__)
 
@@ -414,13 +417,35 @@ def default_models_dir(layout_path: str | Path) -> Path:
 
 # ── GLB -> FBX ───────────────────────────────────────────────────────────────
 
+def _gltf_external_uris(src: Path) -> list[str]:
+    """Relative URIs of every external buffer and image a .gltf references —
+    the files Blender reads alongside it. Embedded `data:` URIs are already
+    part of the .gltf's own bytes. Sorted and de-duplicated."""
+    doc = json.loads(src.read_text(encoding="utf-8"))
+    uris = {unquote(item["uri"])
+            for key in ("buffers", "images")
+            for item in (doc.get(key) or [])
+            if isinstance(item, dict) and isinstance(item.get("uri"), str)
+            and not item["uri"].startswith("data:")}
+    return sorted(uris)
+
+
 def _cache_key(src: Path) -> str:
-    try:
-        stat = src.stat()
-        sig = f"{src.resolve()}|{stat.st_size}|{int(stat.st_mtime)}"
-    except OSError:
-        sig = str(src)
-    return hashlib.sha1(sig.encode("utf-8")).hexdigest()[:12]
+    """Content identity of a conversion input (src/ident): what the model IS,
+    not where it lives. A .glb is its own bytes. A .gltf is its bytes plus the
+    bytes of every external buffer/image it references — an edited .bin
+    beside an untouched .gltf is a different model.
+
+    Replaces a sha1 of (absolute path, size, mtime), which missed the cache on
+    every other machine or worktree, missed it again after a checkout touched
+    the mtime, and never saw a .gltf's external files change at all.
+    Raises OSError / ValueError when the source or a referenced file cannot be
+    read or parsed.
+    """
+    if src.suffix.lower() != ".gltf":
+        return fhash(src)
+    external = [[uri, fhash(src.parent / uri)] for uri in _gltf_external_uris(src)]
+    return chash(ASSET, {"gltf": HashRef.of_file(src), "external": external})
 
 
 def convert_gltf_groups(scene: dict,
@@ -434,10 +459,11 @@ def convert_gltf_groups(scene: dict,
     this model by eye in the Scene Compiler and a downstream "correction"
     would silently relocate everything they placed.
 
-    Results are cached under `cache_dir/<sha1(src,size,mtime)>/`, so a second
-    build of the same layout does no Blender work at all. Returns log
-    messages. Raises SceneInputError when a conversion fails: a missing model
-    is not something to degrade around.
+    Results are cached under `cache_dir/<content key>/` (`_cache_key`), so a
+    second build of the same model does no Blender work at all — on any
+    machine, from any path. Returns log messages. Raises SceneInputError when
+    a source cannot be read or a conversion fails: a missing model is not
+    something to degrade around.
     """
     pending = [g for g in scene.get("groups", [])
                if Path(g["src"]).suffix.lower() in (".glb", ".gltf")]
@@ -449,6 +475,7 @@ def convert_gltf_groups(scene: dict,
     cache = Path(cache_dir)
     msgs: list[str] = []
     failed: list[str] = []
+    unreadable: list[str] = []
     done: dict[str, str] = {}          # src -> converted fbx path
     for g in pending:
         src = Path(g["src"])
@@ -456,7 +483,12 @@ def convert_gltf_groups(scene: dict,
             g["src"] = done[str(src)]
             g["file"] = Path(done[str(src)]).name
             continue
-        out_dir = cache / _cache_key(src)
+        try:
+            key = _cache_key(src)
+        except (OSError, ValueError) as exc:
+            unreadable.append(f"{src.name}: {exc}")
+            continue
+        out_dir = cache / key
         fbx_out = out_dir / f"{src.stem}.fbx"
         if fbx_out.is_file():
             msgs.append(f"scene: {src.name} -> cached FBX")
@@ -472,6 +504,12 @@ def convert_gltf_groups(scene: dict,
         g["src"] = str(fbx_out.resolve())
         g["file"] = fbx_out.name
 
+    if unreadable:
+        raise SceneInputError(
+            "GLB/glTF source could not be read:\n  " + "\n  ".join(sorted(unreadable))
+            + "\nremedy: re-export these items from the Scene Compiler — a .gltf "
+              "must ship with every external buffer/image it references, or "
+              "export a single-file .glb instead")
     if failed:
         raise SceneInputError(
             "GLB/glTF conversion failed for:\n  " + "\n  ".join(sorted(failed))

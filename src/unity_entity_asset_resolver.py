@@ -37,6 +37,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
+from .ident import fhash
 from .unity_asset_catalog import load_catalog, tokenize
 from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
 # One vocabulary decides what a group IS on a board, so the pass that LAYS IT
@@ -468,11 +469,15 @@ def _register_authored(entry: dict,
     name = src.name
     model_key = f"authored:{src.stem}"
     rm = used_models.get(model_key)
-    if rm is not None and Path(rm.src) != src.resolve():
-        # Same stem, different authored file — e.g. two placed groups each
+    if rm is not None and Path(rm.src) != src.resolve() and fhash(rm.src) != fhash(src):
+        # Same stem, different authored MODEL — e.g. two placed groups each
         # named car.fbx from different vendor folders. Same collision class
-        # as _register's asset: key; disambiguate the same way.
-        tag = hashlib.sha1(str(src.resolve()).encode("utf-8")).hexdigest()[:8]
+        # as _register's asset: key. The tag is the file's content identity
+        # (src/ident), not its path: it lands in the emitted Resources file
+        # name, and an absolute path made that name differ on every machine.
+        # Identical bytes at a second path are the same asset and fall
+        # through to reuse the first registration instead of a second copy.
+        tag = fhash(src)[:8]
         name = f"{src.stem}-{tag}{src.suffix}"
         model_key = f"authored:{Path(name).stem}"
         rm = used_models.get(model_key)
