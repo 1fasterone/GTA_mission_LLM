@@ -421,7 +421,7 @@ def unity_validate(
     subsystems: list = []
     if compose:
         from src.unity_compose import (MicroComposer, drop_owned_scripts,
-                                       subsystems_for)
+                                       refresh_cover_points, subsystems_for)
         from src.unity_micro_code import CODE_KEYS, merge_authored_code
         from src.unity_pipeline import _compose_palette_rgb
 
@@ -500,6 +500,15 @@ def unity_validate(
         # GameObject it can attach a relay to (see unity_compose.py's
         # WireReachTargetRelay pass). Same set unity_pipeline.run() builds.
         reach_target_entities = {e.name: e.count for e in schema.entities if e.name}
+        # Same re-point unity_pipeline.run() does at this point: gen.write()
+        # may have re-laid out the scene with measured footprints and re-baked
+        # schema.meta["cover_points"]; the cover_shooter unit was built before
+        # that. Before this call the recompile never handed the AI ANY cover
+        # points — subsystems_for() above is not given the table.
+        for msg in refresh_cover_points(
+                subsystems, schema.entities,
+                schema.meta.get("cover_points") if isinstance(schema.meta, dict) else None):
+            console.print(f"  [magenta]FIX[/]  {msg}")
         composer.emit(subsystems, root / "Assets",
                       has_game_manager=has_game_manager, wiring=schema.wiring,
                       objective_scenes=_objective_scene_map(

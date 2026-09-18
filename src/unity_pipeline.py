@@ -1720,7 +1720,7 @@ class UnityPipeline:
         # (composer.plan/module_deps/emit/wiring_report) rely on.
         if compose:
             from .unity_compose import (MicroComposer, subsystems_for,
-                                        drop_owned_scripts)
+                                        drop_owned_scripts, refresh_cover_points)
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
@@ -2053,6 +2053,14 @@ class UnityPipeline:
             reach_target_entities = {
                 e.name: e.count for e in schema.entities if e.name
             }
+            # generator.write() above may have re-laid out the scene with
+            # measured model footprints, moving the obstacles and enemies Step
+            # 5d baked cover points from (it re-bakes schema.meta["cover_points"]
+            # when it does). `subsystems` was built before that, so re-point the
+            # cover_shooter unit now — before emit renders its AI.cs.
+            for msg in refresh_cover_points(subsystems, schema.entities,
+                                            schema.meta.get("cover_points")):
+                self._fix(msg)
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,
                           objective_scenes=_objective_scene_map(

@@ -160,6 +160,45 @@ def drop_owned_scripts(scripts: list, composed_units: list) -> list:
             if s.type not in COVERED_SCRIPT_TYPES and s.name not in reserved_names]
 
 
+def cover_enemy(entities):
+    """The entity whose cover points a cover_shooter AI unit carries: the
+    first `kind == "enemy"` group. One definition shared by subsystems_for()
+    (which bakes the unit's options) and refresh_cover_points() (which
+    re-points them after the layout moves), so the two can never pick
+    different enemies."""
+    return next((e for e in (entities or []) if getattr(e, "kind", "") == "enemy"), None)
+
+
+def refresh_cover_points(subsystems: list, entities, cover_points: dict | None) -> list[str]:
+    """Re-point every cover_shooter AI unit at the FINAL layout's cover points.
+
+    subsystems_for() has to run before generator.write() — composer.plan()
+    needs it, and write() splices the planned units into the scenes — but
+    write() is also where the model-aware re-layout moves obstacle and enemy
+    groups (UnityProjectGenerator._model_aware_relayout re-bakes
+    schema.meta["cover_points"] when it does). Call this between write() and
+    composer.emit() so the AI.cs that emit renders reads the positions the
+    obstacles actually spawn at, not the Step 5 bake they were moved away
+    from. A unit carries a `cover_points` option only when subsystems_for
+    chose cover_shooter for a real enemy, so no variant logic repeats here.
+    Returns fixer-style messages, one per unit whose points changed.
+    """
+    enemy = cover_enemy(entities)
+    fresh = (cover_points or {}).get(enemy.name, []) if enemy is not None else []
+    messages: list[str] = []
+    for sub in subsystems:
+        if sub.kind != "ai" or "cover_points" not in sub.options:
+            continue
+        stale = sub.options["cover_points"]
+        if stale != fresh:
+            messages.append(
+                f"compose: {sub.name or sub.kind} cover points re-pointed at the final "
+                f"layout — {len(fresh)} point(s), was {len(stale or [])} from the "
+                "pre-re-layout bake")
+            sub.options["cover_points"] = fresh
+    return messages
+
+
 class MicroComposer:
     """Assemble micros into a project's Assets and report how to wire them."""
 
@@ -2423,7 +2462,7 @@ def subsystems_for(
         # read this for sprite-animator naming) so a cover_shooter enemy in
         # EITHER a 2D or 3D project can key into schema.meta["cover_points"]
         # by entity name — see src/unity_cover_points.py.
-        _enemy_entity = next((e for e in (entities or []) if getattr(e, "kind", "") == "enemy"), None)
+        _enemy_entity = cover_enemy(entities)
         if ai_var == "cover_shooter" and _enemy_entity is not None:
             ai_opts["cover_points"] = (cover_points or {}).get(_enemy_entity.name, [])
         ai_states = _ai_states_from_brief(entities, characters, scripts)
