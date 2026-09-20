@@ -7,6 +7,7 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
@@ -374,7 +375,7 @@ def _normalize_editor_route_logic(
     normalized: list[dict] = []
     for rule_idx, raw_rule in enumerate(rules):
         reasons: list[str] = []
-        rule = raw_rule if isinstance(raw_rule, dict) else {}
+        rule: dict[str, Any] = raw_rule if isinstance(raw_rule, dict) else {}
         if not isinstance(raw_rule, dict):
             reasons.append("rule must be an object")
 
@@ -393,7 +394,8 @@ def _normalize_editor_route_logic(
         if priority < -1000 or priority > 1000:
             reasons.append("priority must be an integer from -1000 to 1000")
 
-        when = rule.get("when") if isinstance(rule.get("when"), dict) else {}
+        raw_when = rule.get("when")
+        when: dict[str, Any] = raw_when if isinstance(raw_when, dict) else {}
         condition = str(when.get("type") or "").strip().lower()
         condition_cs = _PATROL_ROUTE_CONDITION_CS.get(condition, "None")
         edge = str(when.get("edge") or "").strip().lower()
