@@ -166,6 +166,58 @@ def unity_mechanics_playtest(
         raise typer.Exit(1)
 
 
+@app.command("unity-playtest-loop")
+def unity_playtest_loop(
+    schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),
+    config: str = typer.Option("config.yaml", "--config", "-c",
+                               help="Config file containing mechanics_playtest settings"),
+    compose: bool = typer.Option(False, "--compose",
+                                 help="Rebuild the deterministic composition/wiring plan"),
+    strict: bool = typer.Option(False, "--strict",
+                                help="Exit non-zero unless FINAL_READY_FOR_RESOLVER is true"),
+    output: str | None = typer.Option(None, "--output", "-o",
+                                      help="Write the complete loop result JSON here"),
+    json_output: bool = typer.Option(False, "--json",
+                                     help="Print the complete loop result JSON"),
+) -> None:
+    """Run the bounded deterministic mechanics loop before Unity IR.
+
+    This command never mutates the input schema or emits Unity files. Every
+    accepted patch is revalidated through the deterministic schema adapter;
+    iteration artifacts are written under ``mechanics_playtest.report_dir``.
+
+      python main.py unity-playtest-loop MyGame.schema.json --compose --strict
+    """
+    from src.unity_playtest_handoff import run_schema_playtest_loop
+
+    cfg = _cfg(config)
+    data = json.loads(Path(schema_file).read_text(encoding="utf-8"))
+    schema = UnitySchema.model_validate(data)
+    result = run_schema_playtest_loop(schema, cfg, compose=compose)
+    if output:
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        console.print(f"[green]OK[/]  mechanics loop result -> {output_path}")
+    if json_output:
+        console.print(json.dumps(result, indent=2), markup=False)
+    else:
+        console.print(
+            f"PLAYTEST_LOOP status={result.get('status')} "
+            f"iterations={result.get('iteration_count', 0)} "
+            f"FINAL_READY_FOR_RESOLVER={result.get('FINAL_READY_FOR_RESOLVER', False)}",
+            markup=False,
+        )
+        if result.get("reason"):
+            console.print(f"  reason: {result['reason']}", markup=False)
+    if result.get("status") == "disabled":
+        console.print("[yellow]SKIP[/] mechanics playtest disabled by config")
+        return
+    if strict and not result.get("FINAL_READY_FOR_RESOLVER", False):
+        console.print("[red]FAIL[/] mechanics loop did not approve Unity IR")
+        raise typer.Exit(1)
+
+
 @app.command("unity-playability")
 def unity_playability(
     schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),

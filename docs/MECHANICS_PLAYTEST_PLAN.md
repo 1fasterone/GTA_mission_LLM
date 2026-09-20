@@ -360,9 +360,16 @@ project has the structural ingredients of a game.
 - A failed improvement loop leaves the original input schema untouched and
   writes a complete failure artifact.
 
+The Slice 8 implementation is available through
+`src/unity_playtest_handoff.py` and the explicit command
+`python main.py unity-playtest-loop SCHEMA.json --compose --strict`. The live
+`UnityPipeline` path enables the same hard stop when
+`mechanics_playtest.gate: true`; the default remains advisory so existing
+report-only configurations do not silently change generation policy.
+
 ## Final planned command surface
 
-The implemented command remains the one-shot report:
+The one-shot report command remains available for report-only usage:
 
 ```text
 python main.py unity-mechanics-playtest SCHEMA.json --compose --json
@@ -380,7 +387,8 @@ python main.py unity-playtest-improve \
 python main.py unity-playtest-loop SCHEMA.json --compose --strict
 ```
 
-These commands are Slice 4–8 work; they are not claimed to exist in PR #203.
+The improvement-plan and bounded-loop commands are now implemented across
+Slices 4–8; report-only usage does not mutate its input schema.
 
 ## Definition of done
 

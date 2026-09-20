@@ -13,6 +13,7 @@ from src.unity_generator  import UnityProjectGenerator
 from src.unity_pipeline   import UnityPipeline
 from src.unity_resolver   import UnityResolver
 from src.unity_schema     import UnitySchema
+from src.unity_playtest_handoff import MechanicsPlaytestGateError
 
 from .common import app, console, _cfg, _load_authored_scene, _scene_cache_dir, _unity_pipe_cfg
 
@@ -106,6 +107,9 @@ def unity_create(
         # the message names every missing section plus the remedy.
         console.print(f"[red]{exc}[/]")
         raise typer.Exit(2)
+    except MechanicsPlaytestGateError as exc:
+        console.print(f"[red]Mechanics playtest gate failed:[/] {exc}")
+        raise typer.Exit(1) from exc
 
 
 @app.command("unity-path")

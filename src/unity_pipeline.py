@@ -61,6 +61,11 @@ from .unity_pathnorm      import normalize_paths
 from .unity_objective_targets import resolve_objective_targets
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
+from .unity_playtest_handoff import (
+    MechanicsPlaytestGateError,
+    mechanics_state_from_schema,
+    run_schema_playtest_loop,
+)
 
 console = Console()
 
@@ -1033,6 +1038,46 @@ class UnityPipeline:
     def _warn(self, msg: str) -> None: console.print(f"  [yellow]WARN[/] {msg}")
     def _fix(self, msg: str)  -> None: console.print(f"  [magenta]FIX[/]  {msg}")
 
+    def _rerun_mechanics_state(self, *, compose: bool, schemas: dict,
+                               **_snapshots) -> dict:
+        """Re-run deterministic resolver/fixer work after an accepted patch."""
+        candidate = UnitySchema.model_validate(schemas)
+        candidate = self.resolver.resolve_schema(candidate)
+        candidate = self.resolver.inject_required_packages(candidate)
+        candidate = _programmatic_fix(candidate, compose=compose)
+        candidate, _ = _check_consistency(candidate)
+        candidate = self.resolver.resolve_schema(candidate)
+        return mechanics_state_from_schema(candidate, self.config, compose=compose)
+
+    def _run_mechanics_gate(self, schema: UnitySchema, *, compose: bool) -> UnitySchema:
+        """Run Slice 8 before Step 6 when the config explicitly gates output."""
+        raw = self.config.get("mechanics_playtest", {}) or {}
+        if not isinstance(raw, dict):
+            raise MechanicsPlaytestGateError("mechanics_playtest config must be an object")
+        if raw.get("enabled", True) is False or not raw.get("gate", False):
+            return schema
+
+        self._step(5, "Mechanics playtest gate before Unity IR")
+        result = run_schema_playtest_loop(
+            schema,
+            self.config,
+            compose=compose,
+            state_rerun=lambda **kwargs: self._rerun_mechanics_state(
+                compose=compose, **kwargs),
+        )
+        if not result.get("FINAL_READY_FOR_RESOLVER", False):
+            artifact_dir = result.get("report_dir") or "not configured"
+            raise MechanicsPlaytestGateError(
+                "mechanics playtest failed before Unity IR: "
+                f"{result.get('reason', 'unknown failure')} "
+                f"(status={result.get('status')}, artifacts={artifact_dir})"
+            )
+        self._ok(
+            "Mechanics playtest passed — FINAL_READY_FOR_RESOLVER=true "
+            f"after {result.get('iteration_count', 0)} iteration(s)"
+        )
+        return UnitySchema.model_validate(result["SCHEMAS"])
+
     # ── main run ──────────────────────────────────────────────────────────────
 
     def _blender_model_overrides(self, schema, concept: str) -> dict[str, str]:
@@ -1658,7 +1703,13 @@ class UnityPipeline:
         for msg in _repairs:
             self._fix(msg)
 
-        # Re-resolve anything that consistency check added
+        # Slice 8 — optional strict mechanics handoff. It runs after the
+        # deterministic Step 5 tail and before any Step 6 asset/model work.
+        # The normal config remains advisory unless mechanics_playtest.gate is
+        # explicitly true; the standalone loop command is always explicit.
+        schema = self._run_mechanics_gate(schema, compose=compose)
+
+        # Re-resolve anything that consistency check or the mechanics loop added
         schema = self.resolver.resolve_schema(schema)
         manifest_deps = self.resolver.build_manifest_deps(
             schema, inject_mcp_bridge=self.inject_mcp_bridge

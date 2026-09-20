@@ -150,6 +150,16 @@ mechanics_playtest:
   enabled: true
   gate: false
   max_seconds: 300
+  max_iterations: 3
+  report_dir: output/mechanics_playtest
+  require_graded_scores: true
+  auto_apply: false
+  thresholds:
+    fun_min: 7
+    friction_max: 4
+    pacing_min: 6
+    readability_min: 7
+    systemic_coherence_min: 7
 
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve

@@ -25,6 +25,7 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
   python main.py unity-create "racing game" --compose         # + wire micro-generators
   python main.py unity-validate MyGame.schema.json            # recompile (no LLM)
   python main.py unity-mechanics-playtest MyGame.schema.json   # pre-IR mechanics QA
+  python main.py unity-playtest-loop MyGame.schema.json --compose --strict
   python main.py unity-migrate MyGame.schema.json             # upgrade v1 → v2 schema
   python main.py unity-resolve "universal render pipeline"    # look up package ID
 

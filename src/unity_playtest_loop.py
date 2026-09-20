@@ -215,7 +215,7 @@ def loop_config_from_mapping(config: Mapping[str, Any] | None) -> dict[str, Any]
         "max_iterations": int(raw.get("max_iterations", 3)),
         "auto_apply": bool(raw.get("auto_apply", False)),
         "require_graded_scores": bool(raw.get("require_graded_scores", True)),
-        "report_dir": raw.get("report_dir"),
+        "report_dir": raw.get("report_dir", "output/mechanics_playtest"),
         "thresholds": _thresholds(raw.get("thresholds")),
     }
 
@@ -244,11 +244,19 @@ def _failure_signature(report: Mapping[str, Any], gate: Mapping[str, Any]) -> st
     return hashlib.sha256(_canonical(payload).encode("utf-8")).hexdigest()
 
 
-def _state_hash(schemas: Any, atom_ir: Any, resolver_output: Any) -> str:
+def _state_hash(
+    schemas: Any,
+    atom_ir: Any,
+    resolver_output: Any,
+    world_atoms: Any = (),
+    character_atoms: Any = (),
+) -> str:
     return hashlib.sha256(_canonical({
         "SCHEMAS": schemas,
         "ATOM_IR": atom_ir,
         "RESOLVER_OUTPUT": resolver_output,
+        "WORLD_ATOMS": world_atoms,
+        "CHARACTER_ATOMS": character_atoms,
     }).encode("utf-8")).hexdigest()
 
 
@@ -380,6 +388,7 @@ def run_bounded_playtest_loop(
     character_atoms: Any = (),
     plan_builder: Callable[..., Any] = build_playtest_improvement_plan,
     resolver_rerun: Callable[..., Any] | None = None,
+    state_rerun: Callable[..., Any] | None = None,
     previous_schemas: Any | None = None,
     previous_atom_ir: Any | None = None,
     thresholds: Mapping[str, Any] | None = None,
@@ -393,13 +402,18 @@ def run_bounded_playtest_loop(
     ``max_iterations`` counts evaluation artifacts including iteration 000.
     ``auto_apply=False`` always stops after the first failed report with a
     review-required result.  In auto-apply mode, each accepted patch is
-    followed by the supplied deterministic ``resolver_rerun`` hook (or the
-    Slice 6 resolver-output projection fallback) before re-evaluation.
+    followed by the supplied deterministic ``state_rerun`` or
+    ``resolver_rerun`` hook (or the Slice 6 resolver-output projection
+    fallback) before re-evaluation.  ``state_rerun`` is the full handoff
+    contract: it returns refreshed ``SCHEMAS``, atom partitions, and resolver
+    output after the resolver/fixer pass.
     """
     if not callable(evaluator):
         raise PlaytestLoopError("evaluator must be callable")
     if not callable(plan_builder):
         raise PlaytestLoopError("plan_builder must be callable")
+    if resolver_rerun is not None and state_rerun is not None:
+        raise PlaytestLoopError("provide resolver_rerun or state_rerun, not both")
     if not isinstance(max_iterations, int) or isinstance(max_iterations, bool) or max_iterations < 1:
         raise PlaytestLoopError("max_iterations must be a positive integer")
     limits = _thresholds(thresholds)
@@ -407,8 +421,8 @@ def run_bounded_playtest_loop(
     current_schemas = _clone_json(schemas, "SCHEMAS")
     current_atoms = _clone_json(atom_ir, "ATOM_IR")
     current_resolver = _clone_json(resolver_output, "RESOLVER_OUTPUT")
-    world_snapshot = _clone_json(world_atoms, "WORLD_ATOMS")
-    character_snapshot = _clone_json(character_atoms, "CHARACTER_ATOMS")
+    current_world = _clone_json(world_atoms, "WORLD_ATOMS")
+    current_character = _clone_json(character_atoms, "CHARACTER_ATOMS")
     prior_schemas = _clone_json(previous_schemas, "PREVIOUS_SCHEMAS") if previous_schemas is not None else None
     prior_atoms = _clone_json(previous_atom_ir, "PREVIOUS_ATOM_IR") if previous_atom_ir is not None else None
 
@@ -419,7 +433,10 @@ def run_bounded_playtest_loop(
     status = "running"
 
     for iteration in range(max_iterations):
-        state_hash = _state_hash(current_schemas, current_atoms, current_resolver)
+        state_hash = _state_hash(
+            current_schemas, current_atoms, current_resolver,
+            current_world, current_character,
+        )
         if state_hash in seen_state_hashes:
             status = "blocked"
             final_reason = "repeated content hash before evaluation"
@@ -433,8 +450,8 @@ def run_bounded_playtest_loop(
             evaluator,
             schemas=current_schemas,
             atom_ir=current_atoms,
-            world_atoms=world_snapshot,
-            character_atoms=character_snapshot,
+            world_atoms=current_world,
+            character_atoms=current_character,
             resolver_output=current_resolver,
         )
         gate = evaluate_threshold_gate(
@@ -450,8 +467,8 @@ def run_bounded_playtest_loop(
             plan_value = plan_builder(
                 schemas=_clone_json(current_schemas, "SCHEMAS"),
                 atom_ir=_clone_json(current_atoms, "ATOM_IR"),
-                world_atoms=_clone_json(world_snapshot, "WORLD_ATOMS"),
-                character_atoms=_clone_json(character_snapshot, "CHARACTER_ATOMS"),
+                world_atoms=_clone_json(current_world, "WORLD_ATOMS"),
+                character_atoms=_clone_json(current_character, "CHARACTER_ATOMS"),
                 resolver_output=_clone_json(current_resolver, "RESOLVER_OUTPUT"),
                 playability_report=_clone_json(report, "PLAYABILITY_REPORT"),
                 previous_schemas=_clone_json(prior_schemas, "PREVIOUS_SCHEMAS") if prior_schemas is not None else None,
@@ -511,13 +528,15 @@ def run_bounded_playtest_loop(
                     current_atoms,
                     current_resolver,
                     plan,
-                    world_atoms=world_snapshot,
-                    character_atoms=character_snapshot,
+                    world_atoms=current_world,
+                    character_atoms=current_character,
                 )
                 next_hash = _state_hash(
                     next_state["SCHEMAS"],
                     next_state["ATOM_IR"],
                     next_state["RESOLVER_OUTPUT"],
+                    current_world,
+                    current_character,
                 )
                 if next_hash == state_hash:
                     status = "blocked"
@@ -526,18 +545,37 @@ def run_bounded_playtest_loop(
                     status = "blocked"
                     final_reason = "accepted patch repeated a previous content hash"
                 else:
-                    next_resolver = next_state["RESOLVER_OUTPUT"]
-                    if resolver_rerun is not None:
-                        next_resolver = _as_mapping(resolver_rerun(
+                    if state_rerun is not None:
+                        rerun_state = _as_mapping(state_rerun(
                             schemas=_clone_json(next_state["SCHEMAS"], "SCHEMAS"),
                             atom_ir=_clone_json(next_state["ATOM_IR"], "ATOM_IR"),
-                            resolver_output=_clone_json(next_resolver, "RESOLVER_OUTPUT"),
+                            world_atoms=_clone_json(current_world, "WORLD_ATOMS"),
+                            character_atoms=_clone_json(current_character, "CHARACTER_ATOMS"),
+                            resolver_output=_clone_json(next_state["RESOLVER_OUTPUT"], "RESOLVER_OUTPUT"),
+                        ), "state_rerun output")
+                        required = {"SCHEMAS", "ATOM_IR", "WORLD_ATOMS",
+                                    "CHARACTER_ATOMS", "RESOLVER_OUTPUT"}
+                        missing = sorted(required - set(rerun_state))
+                        if missing:
+                            raise PlaytestLoopBlocked(
+                                "state_rerun output is missing: " + ", ".join(missing))
+                        next_state = {
+                            key: rerun_state[key]
+                            for key in required
+                        }
+                        current_world = next_state["WORLD_ATOMS"]
+                        current_character = next_state["CHARACTER_ATOMS"]
+                    elif resolver_rerun is not None:
+                        next_state["RESOLVER_OUTPUT"] = _as_mapping(resolver_rerun(
+                            schemas=_clone_json(next_state["SCHEMAS"], "SCHEMAS"),
+                            atom_ir=_clone_json(next_state["ATOM_IR"], "ATOM_IR"),
+                            resolver_output=_clone_json(next_state["RESOLVER_OUTPUT"], "RESOLVER_OUTPUT"),
                         ), "resolver_rerun output")
-                    next_state["RESOLVER_OUTPUT"] = next_resolver
                     new_hash = _state_hash(
                         next_state["SCHEMAS"],
                         next_state["ATOM_IR"],
                         next_state["RESOLVER_OUTPUT"],
+                        current_world, current_character,
                     )
                     if new_hash == state_hash:
                         status = "blocked"
@@ -593,6 +631,8 @@ def run_bounded_playtest_loop(
         "FINAL_READY_FOR_RESOLVER": ready,
         "SCHEMAS": _clone_json(current_schemas, "SCHEMAS"),
         "ATOM_IR": _clone_json(current_atoms, "ATOM_IR"),
+        "WORLD_ATOMS": _clone_json(current_world, "WORLD_ATOMS"),
+        "CHARACTER_ATOMS": _clone_json(current_character, "CHARACTER_ATOMS"),
         "RESOLVER_OUTPUT": _clone_json(current_resolver, "RESOLVER_OUTPUT"),
         "thresholds": limits,
         "max_iterations": max_iterations,
