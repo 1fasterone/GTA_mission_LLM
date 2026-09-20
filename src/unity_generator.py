@@ -3427,6 +3427,11 @@ class UnityProjectGenerator:
             # (e.g. SceneSetup) defer UI to the GameHud/PauseMenu micros instead
             # of building a duplicate generic HUD.
             "composed_kinds":    sorted({u.kind for u in (composed_units or [])}),
+            "has_npc_dialog_runtime": any(
+                getattr(u, "kind", "") == "npc_dialog"
+                and getattr(u, "target", "") == "npc"
+                and bool(getattr(u, "dialog", {}).get("entity_name"))
+                for u in (composed_units or [])),
             "game_type":         schema.game_type,
             "platform":          schema.platform,
             "render_pipeline":   schema.render_pipeline,

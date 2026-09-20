@@ -98,7 +98,7 @@ def test_mapper_2d_picks_platformer_controller():
 
 def test_mapper_targets_are_valid():
     for s in subsystems_for("3D", ["ai", "audio"]):
-        assert s.target in {"player", "camera", "ui", "systems", "world"}
+        assert s.target in {"player", "camera", "ui", "systems", "world", "npc"}
 
 
 def test_scene_splices_composed_units():
@@ -882,7 +882,8 @@ def test_gamecontext_attached_in_scene():
 # Steps 4-6 never read them. These tests prove real authored content (not the
 # micro's own defaults) actually reaches the rendered output.
 
-from src.unity_schema import AudioSpec, VfxSpec, AnimationSpec, CharacterSpec, DialogGraph, DialogNode, DialogChoice
+from src.unity_schema import (AudioSpec, VfxSpec, AnimationSpec, CharacterSpec,
+                               DialogGraph, DialogNode, DialogChoice, EntitySpec)
 
 
 def test_audio_specs_flow_into_composed_cues():
@@ -1030,6 +1031,57 @@ def test_character_with_audio_ref_routes_to_npc_dialog():
     # No "skip_audio" meta — real authored voiced lines should render TTS clips,
     # not stay silent like the generic has_npcs fallback.
     assert "meta" not in npc.options or not npc.options["meta"].get("skip_audio")
+
+
+def test_authored_voiced_character_does_not_get_generic_dialog_fallback():
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Guard", text="Welcome to the checkpoint.",
+                   audio_ref="guard_greeting"),
+    ])
+    characters = [CharacterSpec(id="g1", name="Guard", dialog_graph=graph)]
+    entities = [EntitySpec(name="Guard", kind="npc")]
+    subs = [s for s in subsystems_for("3D", [], entities=entities,
+                                      characters=characters)
+            if s.kind == "npc_dialog"]
+    assert len(subs) == 1
+    assert subs[0].target == "npc"
+    assert subs[0].options["npc_entity"] == "Guard"
+
+
+def test_npc_dialog_runtime_binding_targets_spawned_entity(tmp_path):
+    graph = DialogGraph(start_node="n1", nodes=[
+        DialogNode(id="n1", speaker="Guard", text="Welcome to the checkpoint.",
+                   audio_ref="guard_greeting"),
+    ])
+    schema = UnitySchema(
+        project_name="DialogBinding", game_type="3D", platform="PC",
+        render_pipeline="builtin", scenes=["Main"],
+        entities=[EntitySpec(name="Guard", kind="npc")],
+        characters=[CharacterSpec(id="g1", name="Guard", dialog_graph=graph)],
+    )
+    subs = subsystems_for(schema.game_type, [], entities=schema.entities,
+                          characters=schema.characters)
+    assets = Path(tmp_path) / "Assets"
+    units = MicroComposer(
+        "DialogBinding", project_config={"audio": {"generate_clips": False}}
+    ).emit(subs, assets)
+
+    loader = assets / "Micros" / "context" / "Scripts" / "NpcDialogLoader.cs"
+    assert loader.exists()
+    loader_text = loader.read_text(encoding="utf-8")
+    assert "DialogRegistry" in loader_text
+    assert "Guard" in loader_text
+    assert "CapsuleCollider" in loader_text
+    state_machine = assets / "Micros" / "npc_dialog" / "Data" / "GuardNpcDialogStateMachine.json"
+    assert state_machine.exists()
+    assert '"dialog_role": "npc"' in state_machine.read_text(encoding="utf-8")
+
+    generated = UnityProjectGenerator().generate(schema, {}, composed_units=units)
+    spawner = generated["DialogBinding/Assets/Scripts/EntitySpawner.cs"]
+    scene = generated["DialogBinding/Assets/Scenes/Main.unity"]
+    assert "NpcDialogLoader.AttachIfBound" in spawner
+    npc_unit = next(u for u in units if u.kind == "npc_dialog")
+    assert npc_unit.guid not in scene
 
 
 def test_character_without_audio_ref_still_routes_to_dialogue():

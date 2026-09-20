@@ -71,6 +71,16 @@ public class GameWiring : MonoBehaviour
 
     {{ m | indent(4, False) }}
 {% endfor %}
+{% if has_npc_dialog_runtime %}
+
+    // Entity-scoped NPC dialog API.  NpcDialogLoader registers the concrete
+    // spawned NPC components; mission code can address them by deterministic id.
+    public bool RegisterNpcDialog(string npcId, string[] dialogLineIds)
+        => DialogRegistry.RegisterNpcDialog(npcId, dialogLineIds);
+
+    public bool StartNpcDialog(string npcId, string lineId = null)
+        => DialogRegistry.StartDialog(npcId, lineId);
+{% endif %}
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     private void OnDestroy()

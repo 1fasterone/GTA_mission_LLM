@@ -1331,9 +1331,9 @@ MonoBehaviour:
 {# input is a ScriptableObject (assigned to GameWiring._inputSO), never a scene
    component — excluding it avoids a phantom "missing script" on _Systems. #}
 {% if game_type == "VR" %}
-{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "asset"]) | rejectattr("kind", "equalto", "input") | list %}
+{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "asset", "npc"]) | rejectattr("kind", "equalto", "input") | list %}
 {% else %}
-{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "ui", "asset"]) | rejectattr("kind", "equalto", "input") | list %}
+{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "ui", "asset", "npc"]) | rejectattr("kind", "equalto", "input") | list %}
 {% endif %}
 {% for u in cam_units %}
 --- !u!114 &{{ u.file_id }}

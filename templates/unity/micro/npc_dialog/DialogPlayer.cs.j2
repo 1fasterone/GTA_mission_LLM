@@ -67,6 +67,29 @@ public class {{ s.name }}Player : MonoBehaviour
         _sequence = StartCoroutine(PlaySequence());
     }
 
+    /// <summary>Begin at a named line, used by deterministic mission seams.</summary>
+    public void StartDialogSequence(string lineId)
+    {
+        if (_data == null || _data.Lines == null || string.IsNullOrEmpty(lineId))
+        {
+            StartDialog();
+            return;
+        }
+        for (int i = 0; i < _data.Lines.Length; i++)
+        {
+            if (_data.Lines[i].lineId == lineId)
+            {
+                if (_playing) return;
+                _index = i;
+                _playing = true;
+                if (_sequence != null) StopCoroutine(_sequence);
+                _sequence = StartCoroutine(PlaySequence());
+                return;
+            }
+        }
+        StartDialog();
+    }
+
     /// <summary>Skip to the next line (call from "continue" UI button).</summary>
     public void Advance()
     {
@@ -135,12 +158,18 @@ public class {{ s.name }}Player : MonoBehaviour
 
     private AudioClip ResolveClip({{ s.name }}LineData line)
     {
-        if (line.clips == null || line.clips.Length == 0) return null;
-        // Find clip matching the current system language, fallback to first
-        string sysLang = System.Globalization.CultureInfo.CurrentCulture.TwoLetterISOLanguageName;
-        foreach (var c in line.clips)
-            if (c.language == sysLang) return c.clip;
-        return line.clips[0].clip;
+        // Runtime JSON supplies the Resources-relative audioPath.  Serialized
+        // clip arrays remain supported for hand-authored prefab data.
+        if (line.clips != null && line.clips.Length > 0)
+        {
+            string sysLang = System.Globalization.CultureInfo.CurrentCulture.TwoLetterISOLanguageName;
+            foreach (var c in line.clips)
+                if (c.language == sysLang) return c.clip;
+            if (line.clips[0].clip != null) return line.clips[0].clip;
+        }
+        if (!string.IsNullOrEmpty(line.audioPath))
+            return Resources.Load<AudioClip>(line.audioPath);
+        return null;
     }
 
     private void End()
@@ -171,6 +200,7 @@ public class {{ s.name }}LineData
     public string               text;
     public string               emotion;
     public string[]             tags;
+    public string               audioPath;
     public {{ s.name }}LineClip[] clips;
 }
 
