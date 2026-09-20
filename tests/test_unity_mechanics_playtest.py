@@ -78,6 +78,7 @@ def test_winnable_loop_passes_and_has_no_high_risk_findings():
     assert report.final_decision["decision"] == "PASS"
     assert report.mission_flow_validation[0]["status"] == "pass"
     assert report.playability_fixes == ()
+    assert report.friction_score.score == 0
     assert report.final_decision["simulation_seconds"] == 300
 
 

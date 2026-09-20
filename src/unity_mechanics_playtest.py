@@ -779,7 +779,10 @@ def evaluate_mechanics(
         int(has_control) + int(valid_objectives) + int(bool(rewards)) + int(feedback_signal),
         blocker_count * 2 + high_count,
     )
-    friction = _score(9, 0, blocker_count * 2 + high_count + medium_count)
+    # Friction is a burden score, not a quality score: zero means no detected
+    # friction and higher values mean more frustration risk. This direction is
+    # part of the improvement-loop contract (FRICTION_SCORE <= 4).
+    friction = min(10, blocker_count * 2 + high_count + medium_count)
     pacing = _score(
         4,
         int(len(transitions) >= max(1, objective_count)) + int(bool(cycles)),

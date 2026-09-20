@@ -21,9 +21,11 @@ The first three slices are already implemented as stacked PRs:
 Slices 1–3 are sufficient for a one-shot pre-IR judgment. They are not yet
 sufficient for the attached loop: they do not produce patch-ready schema/atom
 updates, previous-vs-updated diffs, resolver patches, or bounded CI retries.
-Slices 1 and 2 do not need to be rewritten. Slice 3 remains the report/gate
-surface, but the improvement loop needs the contract extensions in Slice 4
-before it can safely mutate anything.
+Slice 2 does not need to be rewritten. One Slice 1 compatibility correction
+is required before the loop: `FRICTION_SCORE` must be a friction-burden score
+where 0 is best, because the attached threshold is `FRICTION_SCORE <= 4`.
+Slice 3 remains the report/gate surface, but the improvement loop needs the
+contract extensions in Slice 4 before it can safely mutate anything.
 
 ## Non-negotiable contract
 
