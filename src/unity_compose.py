@@ -331,6 +331,31 @@ class MicroComposer:
             target="systems", file_id=_COMPOSED_FILE_ID_BASE + 10 * (len(subsystems) + 1)))
         return units
 
+    def plan_wiring(self, units: list[ComposedUnit], wiring_map=None,
+                    objective_scenes: "dict[str, str] | None" = None,
+                    escort_followed_entities: "set[str] | None" = None,
+                    reach_target_entities: "dict[str, int] | None" = None,
+                    game_type: str = "3D") -> dict:
+        """Return the exact objective/wiring report without writing C# files.
+
+        ``_emit_wiring`` already owns the deterministic seam decisions used by
+        ``emit()``.  The pre-IR mechanics playtest needs those decisions before
+        ``UnityProjectGenerator.write()`` runs, so this is a dry-run entry point
+        over the same implementation rather than a second prediction of the
+        wiring graph.  ``_emit_wiring`` skips its file/template write when the
+        output root is ``None``; all binding decisions still execute.
+        """
+        self._emit_wiring(
+            units,
+            None,
+            wiring_map=wiring_map,
+            objective_scenes=objective_scenes,
+            escort_followed_entities=escort_followed_entities,
+            reach_target_entities=reach_target_entities,
+            game_type=game_type,
+        )
+        return json.loads(json.dumps(self.wiring_report))
+
     def _folder_meta(self, path: Path) -> None:
         meta = path.with_name(path.name + ".meta")
         meta.write_text(_default_meta(_make_guid(f"{self.project_name}/{path.name}/dir"),
@@ -466,7 +491,7 @@ class MicroComposer:
                 f"script(s) left by a superseded run — " + ", ".join(removed[:4]))
         return removed
 
-    def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path, wiring_map=None,
+    def _emit_wiring(self, units: list[ComposedUnit], micros_root: Path | None, wiring_map=None,
                      objective_scenes: "dict[str, str] | None" = None,
                      escort_followed_entities: "set[str] | None" = None,
                      reach_target_entities: "dict[str, int] | None" = None,
@@ -479,11 +504,16 @@ class MicroComposer:
         wiring     = next(u for u in units if u.kind == "wiring")
         real_units = [u for u in units if u.kind not in _NON_SCENE_KINDS]
 
-        wdir = micros_root / "wiring"
-        sdir = wdir / "Scripts"
-        sdir.mkdir(parents=True, exist_ok=True)
-        env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
-                          undefined=StrictUndefined, keep_trailing_newline=True)
+        if micros_root is not None:
+            wdir = micros_root / "wiring"
+            sdir = wdir / "Scripts"
+            sdir.mkdir(parents=True, exist_ok=True)
+            env = Environment(loader=FileSystemLoader(str(self._wiring_template_dir())),
+                              undefined=StrictUndefined, keep_trailing_newline=True)
+        else:
+            wdir = None
+            sdir = None
+            env = None
 
         # ── Subsystem resolution ──────────────────────────────────────────────
         # When multiple units share a kind (e.g. two statemachine units), pick
@@ -1146,6 +1176,9 @@ class MicroComposer:
             "hud_objective": bool(hud and "SetObjective" in hud.setters
                                   and objective_units),
         }
+
+        if micros_root is None:
+            return
 
         # ── Render template ───────────────────────────────────────────────────
         content = env.get_template("GameWiring.cs.j2").render(

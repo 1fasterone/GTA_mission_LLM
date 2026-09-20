@@ -13,11 +13,12 @@ The contract is intentionally engine-neutral at this boundary:
     ``character_atoms`` are kept separate so findings can point to the right
     design layer.
 ``RESOLVER_OUTPUT``
-    A deterministic mapping containing the combined gameplay graph.  Slice 1
-    consumes the optional keys ``objectives``, ``entities``, ``transitions``,
-    ``rewards``, ``feedback``, ``affordances``, ``controls``, and
-    ``dependencies``.  The Unity adapter will populate these from existing
-    schema/composer data; this module does not add fields to ``UnitySchema``.
+    A deterministic mapping containing the combined gameplay graph.  The
+    evaluator consumes the optional keys ``objectives``, ``entities``,
+    ``transitions``, ``rewards``, ``feedback``, ``affordances``, ``controls``,
+    and ``dependencies``.  ``src/unity_mechanics_adapter.py`` populates these
+    from existing schema/composer data; this module does not add fields to
+    ``UnitySchema``.
 
 The evaluator is conservative.  Missing evidence becomes a finding or an
 explicitly ungraded score; it is never silently treated as a passing mechanic.
