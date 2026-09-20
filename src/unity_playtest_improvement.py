@@ -20,6 +20,8 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .unity_playtest_patches import diff_atom_ir, diff_schema_snapshots
+
 
 _DEFAULT_THRESHOLDS = {
     "fun_min": 7,
@@ -570,8 +572,12 @@ def build_playtest_improvement_plan(
     status_schema = "abstain" if schema_updates else "no_changes"
     status_atoms = "abstain" if atom_updates else "no_changes"
     status_resolver = "abstain" if resolver_updates else "no_changes"
-    schema_diff = _diff_snapshots(previous_schemas, current_schemas)
-    atom_diff = _diff_atoms(previous_atom_ir, current_atoms)
+    # Slice 5 owns the public diff contract.  Keeping the generator read-only
+    # while routing its blocks through the patch engine ensures every diff
+    # entry carries old/new values and provenance in the same shape the later
+    # applier consumes.
+    schema_diff = diff_schema_snapshots(previous_schemas, current_schemas)
+    atom_diff = diff_atom_ir(previous_atom_ir, current_atoms)
 
     return {
         "FAIL_SUMMARY": failures,
