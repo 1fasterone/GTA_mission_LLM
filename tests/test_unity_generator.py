@@ -2285,7 +2285,12 @@ class TestAtmosphere:
         cs = files["AT/Assets/Scripts/AtmosphereBootstrap.cs"]
         assert "AtmosphereEffect" in cs and "RuntimeInitializeOnLoadMethod" in cs
         off = gen.generate(self._schema(), {})
-        assert not any("Atmosphere" in p for p in off)
+        # The vendored scattering feature remains concept-gated, but the AAA
+        # Visual Atmosphere Pass is mandatory for every Unity output.
+        assert "AT/Assets/Scripts/AAAAtmosphere.cs" in off
+        assert "AT/Assets/Editor/SetupAAAVisualAtmosphere.cs" in off
+        assert "AT/Assets/Editor/SetupAtmosphere.cs" not in off
+        assert "AT/Assets/Scripts/AtmosphereBootstrap.cs" not in off
 
     def test_write_ships_vendored_feature_and_profile(self, gen, tmp_path):
         root, _ = gen.write(self._schema(locomotion="fly"), {},

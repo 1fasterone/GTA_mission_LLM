@@ -19,6 +19,10 @@
 - **SetupRenderPipeline** creates `Assets/Settings/{{ render_pipeline }}` pipeline + renderer
   assets and assigns them to Graphics/Quality settings.
 {% endif %}
+- **AAA Visual Atmosphere** is mandatory in every scene: `AAAAtmosphere.cs`
+  creates/repairs the global volume profile, cinematic physical camera, 6000K
+  soft-shadow sun, sky/fog/light shafts, ground density layers, decals, ambient
+  particles, and LUT-based filmic grade before gameplay logic runs.
 {% if has_atmosphere %}
 - **SetupAtmosphere** registers the atmospheric-scattering render feature on the
   URP renderer (log line: `[SetupAtmosphere] AtmosphereRenderFeature registered`).
