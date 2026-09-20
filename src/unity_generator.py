@@ -22,6 +22,7 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
+from .unity_atmosphere import assert_aaa_contract
 from .micro.code_fields import (CodeField, lint_extensible, _code_mask,
                                 _code_brace_depth, _code_paren_depth)
 
@@ -3426,6 +3427,11 @@ class UnityProjectGenerator:
             # (e.g. SceneSetup) defer UI to the GameHud/PauseMenu micros instead
             # of building a duplicate generic HUD.
             "composed_kinds":    sorted({u.kind for u in (composed_units or [])}),
+            "has_npc_dialog_runtime": any(
+                getattr(u, "kind", "") == "npc_dialog"
+                and getattr(u, "target", "") == "npc"
+                and bool(getattr(u, "dialog", {}).get("entity_name"))
+                for u in (composed_units or [])),
             "game_type":         schema.game_type,
             "platform":          schema.platform,
             "render_pipeline":   schema.render_pipeline,
@@ -3537,6 +3543,20 @@ class UnityProjectGenerator:
         )
         files[f"{pn}/Assets/Scripts/SceneSetup.cs.meta"] = _meta_file(_scene_setup_guid)
 
+        # Mandatory AAA Visual Atmosphere Pass.  This is emitted for every
+        # Unity pipeline and every gameplay context, not only sky/flight
+        # concepts.  The runtime bootstrap self-heals the volume/profile and
+        # pipeline-specific camera/light hooks; the scene template places it
+        # before gameplay objects so its DefaultExecutionOrder runs first.
+        _aaa_atmosphere_guid = _make_guid(f"{pn}/Scripts/AAAAtmosphere")
+        _aaa_template = ("scripts/AAAAtmosphere.cs.j2"
+                         if schema.render_pipeline in ("URP", "HDRP")
+                         else "scripts/AAAAtmosphereBuiltin.cs.j2")
+        files[f"{pn}/Assets/Scripts/AAAAtmosphere.cs"] = self._render(
+            _aaa_template, base_ctx)
+        files[f"{pn}/Assets/Scripts/AAAAtmosphere.cs.meta"] = _meta_file(
+            _aaa_atmosphere_guid)
+
         # A --compose build gets its own palette-tinted fill/rim/practical
         # light rig (the "lighting" core subsystem); a build without --compose
         # otherwise got only the single Directional Light + ambient gradient
@@ -3569,6 +3589,7 @@ class UnityProjectGenerator:
             "model_swap_guid": _make_guid(f"{pn}/Scripts/ModelSwap"),
             "character_controller_res": "Models/Default/DefaultCharacter",
             "scene_setup_guid": _scene_setup_guid,
+            "aaa_atmosphere_guid": _aaa_atmosphere_guid,
             "baseline_lighting_guid": _baseline_lighting_guid,
             "postprocess_profile_guid": _postprocess_profile_guid,
         }
@@ -3860,6 +3881,12 @@ class UnityProjectGenerator:
             files[f"{pn}/Assets/Editor.meta"] = _default_meta(
                 _make_guid(f"{pn}/Assets/Editor"), folder=True
             )
+
+            aaa_editor_path = f"{pn}/Assets/Editor/SetupAAAVisualAtmosphere.cs"
+            files[aaa_editor_path] = self._render(
+                "editor/SetupAAAVisualAtmosphere.cs.j2", base_ctx)
+            files[f"{aaa_editor_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Editor/SetupAAAVisualAtmosphere"))
             if schema.render_pipeline == "URP":
                 mp_path = f"{pn}/Assets/Editor/URPMaterialPostprocessor.cs"
                 files[mp_path] = self._render(
@@ -3959,6 +3986,12 @@ class UnityProjectGenerator:
             self._compile_map(schema, bool(kenney_assets)), indent=2
         )
 
+        # Regeneration is the deterministic repair action for a missing pass:
+        # re-emitting the canonical script/scene references is safe and stable.
+        # If the canonical output itself is incomplete, abstain loudly rather
+        # than shipping a blank URP/HDRP template.
+        assert_aaa_contract(files, pn, schema.scenes, schema.render_pipeline)
+
         return files
 
     # ── compile-map ────────────────────────────────────────────────────────────
@@ -3977,8 +4010,14 @@ class UnityProjectGenerator:
             m[f"Assets/Scripts/{mesh.name}Mesh.cs"] = "scripts/ProceduralMesh.cs.j2"
         if schema.render_pipeline in ("URP", "HDRP"):
             m["Assets/Editor/SetupRenderPipeline.cs"] = "editor/SetupRenderPipeline.cs.j2"
+            m["Assets/Editor/SetupAAAVisualAtmosphere.cs"] = (
+                "editor/SetupAAAVisualAtmosphere.cs.j2")
         if schema.render_pipeline == "URP":
             m["Assets/Editor/URPMaterialPostprocessor.cs"] = "editor/URPMaterialPostprocessor.cs.j2"
+        m["Assets/Scripts/AAAAtmosphere.cs"] = (
+            "scripts/AAAAtmosphere.cs.j2"
+            if schema.render_pipeline in ("URP", "HDRP")
+            else "scripts/AAAAtmosphereBuiltin.cs.j2")
         if has_kenney:
             m["Assets/Editor/KenneyImporter.cs"] = "editor/KenneyImporter.cs.j2"
         return m

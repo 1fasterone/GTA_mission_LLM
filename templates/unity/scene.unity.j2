@@ -189,7 +189,8 @@ Camera:
   m_FOVAxisMode: 0
   m_SensorSize: {x: 36, y: 24}
   m_LensShift: {x: 0, y: 0}
-  m_FocalLength: 50
+  m_UsePhysicalProperties: 1
+  m_FocalLength: 32
   m_NormalizedViewPortRect:
     serializedVersion: 2
     x: 0
@@ -341,8 +342,8 @@ Light:
   m_LightShadowCasterMode: 0
   m_AreaSize: {x: 1, y: 1}
   m_BounceIntensity: 1
-  m_ColorTemperature: 6570
-  m_UseColorTemperature: 0
+  m_ColorTemperature: 6000
+  m_UseColorTemperature: 1
   m_BoundingSphereOverride: {x: 0, y: 0, z: 0, w: 0}
   m_UseBoundingSphereOverride: 0
   m_UseViewFrustumForShadowCasterCull: 1
@@ -1330,9 +1331,9 @@ MonoBehaviour:
 {# input is a ScriptableObject (assigned to GameWiring._inputSO), never a scene
    component — excluding it avoids a phantom "missing script" on _Systems. #}
 {% if game_type == "VR" %}
-{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "asset"]) | rejectattr("kind", "equalto", "input") | list %}
+{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "asset", "npc"]) | rejectattr("kind", "equalto", "input") | list %}
 {% else %}
-{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "ui", "asset"]) | rejectattr("kind", "equalto", "input") | list %}
+{% set sys_units = composed_units | rejectattr("target", "in", ["camera", "player", "ui", "asset", "npc"]) | rejectattr("kind", "equalto", "input") | list %}
 {% endif %}
 {% for u in cam_units %}
 --- !u!114 &{{ u.file_id }}
@@ -1654,3 +1655,46 @@ MonoBehaviour:
   weight: 1
   sharedProfile: {fileID: 11400000, guid: {{ postprocess_profile_guid }}, type: 2}
 {% endif %}
+--- !u!1 &930000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 930000002}
+  - component: {fileID: 930000003}
+  m_Layer: 0
+  m_Name: AAA Visual Atmosphere
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &930000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 930000001}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_RootOrder: 101
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &930000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 930000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: {{ aaa_atmosphere_guid }}, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:

@@ -484,11 +484,35 @@ class NpcDialogPipeline(UnityMicroPipeline):
         # 3. DialogData.json — runtime data (all lines, emotions, paths)
         data_dir = out_dir / "Data"
         data_dir.mkdir(parents=True, exist_ok=True)
-        (data_dir / f"{schema.name}Data.json").write_text(
-            env.get_template("DialogData.json.j2").render(s=schema, variant=variant),
-            encoding="utf-8",
-        )
+        data_json = env.get_template("DialogData.json.j2").render(
+            s=schema, variant=variant)
+        (data_dir / f"{schema.name}Data.json").write_text(data_json, encoding="utf-8")
+        # Runtime-bound NPCs are copied by unity_pipeline.py from this
+        # Resources subtree into Assets/Resources, where NpcDialogLoader can
+        # hydrate the generated <name>Data MonoBehaviour at scene start.
+        if (getattr(schema, "meta", None) or {}).get("target") == "npc":
+            runtime_data_dir = out_dir / "Resources" / "Dialog"
+            runtime_data_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_data_dir / f"{schema.name}Data.json").write_text(
+                data_json, encoding="utf-8")
         count = 3
+
+        # Voiced CharacterSpec graphs arrive through the existing `meta`
+        # namespace.  Keep their choices/conditions as a deterministic sidecar
+        # instead of flattening them away when the audio bank is generated.
+        state_machine = (getattr(schema, "meta", None) or {}).get("state_machine")
+        if state_machine:
+            (data_dir / f"{schema.name}StateMachine.json").write_text(
+                json.dumps(state_machine, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            resource_dir = out_dir / "Resources" / "Dialog"
+            resource_dir.mkdir(parents=True, exist_ok=True)
+            (resource_dir / f"{schema.name}StateMachine.json").write_text(
+                json.dumps(state_machine, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            count += 2
 
         # 4. README
         (out_dir / "README.md").write_text(

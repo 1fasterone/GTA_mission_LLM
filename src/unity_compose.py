@@ -29,7 +29,7 @@ console = Console()
 
 
 # Where each subsystem attaches in the scene (used by P2's scene wiring).
-Target = str   # "player" | "camera" | "ui" | "systems" | "world"
+Target = str   # "player" | "camera" | "ui" | "systems" | "world" | "npc"
 
 
 class Subsystem(BaseModel):
@@ -101,6 +101,8 @@ class ComposedUnit(BaseModel):
                                                             # bridge must not reference
                                                             # AddAmmo on a class that never
                                                             # declares it (no "shoot").
+    dialog:     dict       = Field(default_factory=dict)   # npc_dialog only: deterministic
+                                                            # runtime binding metadata.
 
 
 # Base scene fileID for composed MonoBehaviours (well above the template's range).
@@ -313,11 +315,54 @@ class MicroComposer:
             # says whether AddAmmo/etc. actually render on this class.
             abilities = (list(getattr(schema, "abilities", []) or [])
                         if sub.kind == "controller" else [])
+            dialog = {}
+            if sub.kind == "npc_dialog":
+                # The runtime binding is derived only from the fixed schema and
+                # the deterministic subsystem target.  An empty entity_name is
+                # intentional: it keeps the legacy systems fallback for a
+                # dialog-only project with no bindable NPC entity.
+                speaker = str(getattr(schema, "speaker_name", "NPC") or "NPC")
+                lines = []
+                for line in getattr(schema, "lines", []) or []:
+                    line_id = str(getattr(line, "line_id", "line") or "line")
+                    language = str(getattr(line, "language", "en") or "en")
+                    speaker_slug = re.sub(
+                        r"[^a-z0-9]+", "_", speaker.strip().lower()).strip("_") or "npc"
+                    lines.append({
+                        "lineId": line_id,
+                        "speaker": speaker,
+                        "text": str(getattr(line, "text", "") or ""),
+                        "emotion": str(getattr(line, "emotion", "neutral") or "neutral"),
+                        "tags": list(getattr(line, "tags", []) or []),
+                        "audioPath": f"Audio/Dialog/{speaker_slug}/{line_id}_{language}",
+                    })
+                payload = {
+                    "speaker": speaker,
+                    "interactionType": str(
+                        getattr(schema, "interaction_type", "quest") or "quest"),
+                    "audioStyle": str(
+                        getattr(schema, "audio_style", "natural") or "natural"),
+                    "Lines": lines,
+                }
+                dialog = {
+                    "entity_name": str(sub.options.get("npc_entity") or ""),
+                    "npc_id": str(sub.options.get("npc_entity") or speaker),
+                    "player_type": class_name,
+                    "trigger_type": f"{schema.name}Trigger",
+                    "data_type": f"{schema.name}Data",
+                    "data_resource": f"Dialog/{schema.name}Data",
+                    "json": json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+                    "line_ids": [item["lineId"] for item in lines],
+                    "state_machine_resource": (
+                        f"Dialog/{schema.name}StateMachine"
+                        if (getattr(schema, "meta", None) or {}).get("state_machine")
+                        else ""),
+                }
             units.append(ComposedUnit(
                 kind=sub.kind, variant=variant, class_name=class_name, guid=guid,
                 target=sub.target, file_id=_COMPOSED_FILE_ID_BASE + 10 * i, cues=cues,
                 objectives=objs, widgets=widgets, setters=setters, states=states,
-                board=board, locked=locked, abilities=abilities))
+                board=board, locked=locked, abilities=abilities, dialog=dialog))
         # Synthetic GameWiring glue component (cross-micro event wiring), on _Systems.
         units.append(ComposedUnit(
             kind="wiring", variant="", class_name="GameWiring",
@@ -1162,6 +1207,9 @@ class MicroComposer:
             has_reach_relay=has_reach_relay,
             game_type=game_type,
             needs_scene_var=needs_scene_var,
+            has_npc_dialog_runtime=any(
+                u.kind == "npc_dialog" and u.target == "npc" and u.dialog.get("entity_name")
+                for u in real_units),
         )
         (sdir / "GameWiring.cs").write_text(content, encoding="utf-8")
         (sdir / "GameWiring.cs.meta").write_text(_meta_file(wiring.guid), encoding="utf-8")
@@ -1379,6 +1427,183 @@ class MicroComposer:
                 _meta_file(_make_guid("compose:StatModifier")), encoding="utf-8")
 
         (sdir / "GameContext.cs.meta").write_text(_meta_file(context.guid), encoding="utf-8")
+
+        # NPC dialog is entity-scoped, not a global _Systems collider.  The
+        # EntitySpawner is the first deterministic owner of the runtime NPC
+        # GameObjects, so emit one small reflection bridge here that attaches
+        # the already-generated per-dialog components and hydrates their data.
+        # Reflection keeps this shared loader independent of the LLM-selected
+        # PascalCase class names while the binding table remains fully fixed at
+        # compose time.
+        dialog_units = [u for u in real_units
+                        if u.kind == "npc_dialog" and u.target == "npc"
+                        and u.dialog.get("entity_name")]
+        if dialog_units:
+            def _cs_string(value: str) -> str:
+                return json.dumps(str(value), ensure_ascii=True)
+
+            binding_rows = []
+            for unit in dialog_units:
+                d = unit.dialog
+                line_ids = ", ".join(_cs_string(x) for x in d.get("line_ids", []))
+                binding_rows.append(
+                    "        new NpcDialogBinding\n"
+                    "        {\n"
+                    f"            npcId = {_cs_string(d['entity_name'])},\n"
+                    f"            playerType = {_cs_string(d['player_type'])},\n"
+                    f"            triggerType = {_cs_string(d['trigger_type'])},\n"
+                    f"            dataType = {_cs_string(d['data_type'])},\n"
+                    f"            dataResource = {_cs_string(d.get('data_resource', ''))},\n"
+                    f"            stateMachineResource = {_cs_string(d.get('state_machine_resource', ''))},\n"
+                    f"            json = {_cs_string(d['json'])},\n"
+                    f"            lineIds = new string[] {{ {line_ids} }}\n"
+                    "        }"
+                )
+            loader = (
+                "// Auto-generated by Unity Micro Pipeline — DO NOT EDIT\n"
+                "// Entity-scoped NPC dialog bootstrap and registry.\n"
+                "using System;\n"
+                "using System.Collections.Generic;\n"
+                "using System.Reflection;\n"
+                "using UnityEngine;\n\n"
+                "[Serializable]\n"
+                "public sealed class NpcDialogBinding\n"
+                "{\n"
+                "    public string npcId;\n"
+                "    public string playerType;\n"
+                "    public string triggerType;\n"
+                "    public string dataType;\n"
+                "    public string dataResource;\n"
+                "    public string stateMachineResource;\n"
+                "    public string json;\n"
+                "    public string[] lineIds;\n"
+                "}\n\n"
+                "public static class DialogRegistry\n"
+                "{\n"
+                "    private static readonly Dictionary<string, Component> _players =\n"
+                "        new Dictionary<string, Component>(StringComparer.OrdinalIgnoreCase);\n"
+                "    private static readonly Dictionary<string, string[]> _lineIds =\n"
+                "        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);\n\n"
+                "    private static readonly Dictionary<string, string> _stateMachines =\n"
+                "        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);\n\n"
+                "    public static void Register(string npcId, Component player, string[] lineIds)\n"
+                "    {\n"
+                "        if (string.IsNullOrEmpty(npcId) || player == null) return;\n"
+                "        _players[npcId] = player;\n"
+                "        _lineIds[npcId] = lineIds ?? new string[0];\n"
+                "    }\n\n"
+                "    public static void RegisterStateMachine(string npcId, string json)\n"
+                "    {\n"
+                "        if (!string.IsNullOrEmpty(npcId)) _stateMachines[npcId] = json ?? string.Empty;\n"
+                "    }\n\n"
+                "    public static string GetStateMachine(string npcId)\n"
+                "    {\n"
+                "        string json;\n"
+                "        return _stateMachines.TryGetValue(npcId ?? string.Empty, out json) ? json : string.Empty;\n"
+                "    }\n\n"
+                "    public static bool RegisterNpcDialog(string npcId, string[] lineIds)\n"
+                "    {\n"
+                "        if (string.IsNullOrEmpty(npcId)) return false;\n"
+                "        _lineIds[npcId] = lineIds ?? new string[0];\n"
+                "        return true;\n"
+                "    }\n\n"
+                "    public static Component Get(string npcId)\n"
+                "    {\n"
+                "        Component player;\n"
+                "        return _players.TryGetValue(npcId ?? string.Empty, out player) ? player : null;\n"
+                "    }\n\n"
+                "    public static bool StartDialog(string npcId, string lineId = null)\n"
+                "    {\n"
+                "        var player = Get(npcId);\n"
+                "        if (player == null) return false;\n"
+                "        try\n"
+                "        {\n"
+                "            if (!string.IsNullOrEmpty(lineId))\n"
+                "            {\n"
+                "                var sequence = player.GetType().GetMethod(\"StartDialogSequence\",\n"
+                "                    BindingFlags.Public | BindingFlags.Instance);\n"
+                "                if (sequence != null) { sequence.Invoke(player, new object[] { lineId }); return true; }\n"
+                "            }\n"
+                "            var start = player.GetType().GetMethod(\"StartDialog\",\n"
+                "                BindingFlags.Public | BindingFlags.Instance);\n"
+                "            if (start == null) return false;\n"
+                "            start.Invoke(player, null);\n"
+                "            return true;\n"
+                "        }\n"
+                "        catch (Exception ex)\n"
+                "        {\n"
+                "            Debug.LogWarning(\"[dialog.abstain] Could not start NPC dialog: \" + ex.Message);\n"
+                "            return false;\n"
+                "        }\n"
+                "    }\n"
+                "}\n\n"
+                "public static class NpcDialogLoader\n"
+                "{\n"
+                "    private static readonly Dictionary<string, NpcDialogBinding> _bindings =\n"
+                "        new Dictionary<string, NpcDialogBinding>(StringComparer.OrdinalIgnoreCase)\n"
+                "        {\n"
+                + ",\n".join(binding_rows) + "\n"
+                "        };\n\n"
+                "    public static bool IsBound(string groupName)\n"
+                "    {\n"
+                "        return !string.IsNullOrEmpty(groupName) && _bindings.ContainsKey(groupName);\n"
+                "    }\n\n"
+                "    public static void AttachIfBound(GameObject npc, string groupName, int index)\n"
+                "    {\n"
+                "        if (npc == null || string.IsNullOrEmpty(groupName)) return;\n"
+                "        NpcDialogBinding binding;\n"
+                "        if (!_bindings.TryGetValue(groupName, out binding)) return;\n"
+                "        string npcId = index == 0 ? groupName : groupName + \"_\" + index;\n"
+                "        var playerType = Resolve(binding.playerType);\n"
+                "        var triggerType = Resolve(binding.triggerType);\n"
+                "        var dataType = Resolve(binding.dataType);\n"
+                "        if (playerType == null || triggerType == null || dataType == null)\n"
+                "        {\n"
+                "            Debug.LogWarning(\"[dialog.abstain] Missing generated dialog type for \" + groupName);\n"
+                "            return;\n"
+                "        }\n"
+                "        var data = npc.GetComponent(dataType) ?? npc.AddComponent(dataType);\n"
+                "        var dataAsset = string.IsNullOrEmpty(binding.dataResource)\n"
+                "            ? null : Resources.Load<TextAsset>(binding.dataResource);\n"
+                "        string dataJson = dataAsset != null ? dataAsset.text : binding.json;\n"
+                "        try { JsonUtility.FromJsonOverwrite(dataJson, data); }\n"
+                "        catch (Exception ex)\n"
+                "        {\n"
+                "            Debug.LogWarning(\"[dialog.abstain] Data load failed for \" + groupName + \": \" + ex.Message);\n"
+                "            return;\n"
+                "        }\n"
+                "        var player = npc.GetComponent(playerType);\n"
+                "        if (player == null) player = npc.AddComponent(playerType);\n"
+                "        var trigger = npc.GetComponent(triggerType);\n"
+                "        if (trigger == null) npc.AddComponent(triggerType);\n"
+                "        bool hasTrigger = false;\n"
+                "        foreach (var existing in npc.GetComponents<CapsuleCollider>())\n"
+                "            if (existing.isTrigger) { hasTrigger = true; break; }\n"
+                "        if (!hasTrigger)\n"
+                "        {\n"
+                "            var proximity = npc.AddComponent<CapsuleCollider>();\n"
+                "            proximity.isTrigger = true;\n"
+                "            proximity.radius = 2.5f;\n"
+                "            proximity.height = 4.0f;\n"
+                "            proximity.center = new Vector3(0f, 2.0f, 0f);\n"
+                "        }\n"
+                "        DialogRegistry.Register(npcId, player, binding.lineIds);\n"
+                "        if (!string.IsNullOrEmpty(binding.stateMachineResource))\n"
+                "        {\n"
+                "            var state = Resources.Load<TextAsset>(binding.stateMachineResource);\n"
+                "            DialogRegistry.RegisterStateMachine(npcId, state != null ? state.text : string.Empty);\n"
+                "        }\n"
+                "    }\n\n"
+                "    private static Type Resolve(string typeName)\n"
+                "    {\n"
+                "        return Type.GetType(typeName + \", Assembly-CSharp\") ?? Type.GetType(typeName);\n"
+                "    }\n"
+                "}\n"
+            )
+            (sdir / "NpcDialogLoader.cs").write_text(loader, encoding="utf-8")
+            (sdir / "NpcDialogLoader.cs.meta").write_text(
+                _meta_file(_make_guid("compose:NpcDialogLoader")), encoding="utf-8")
+
         self._folder_meta(cdir)
         self._folder_meta(sdir)
 
@@ -1641,6 +1866,65 @@ def _npc_dialog_lines_for_character(char) -> list[dict]:
         "text":    n.text,
         "emotion": n.emotion,
     } for n in char.dialog_graph.nodes]
+
+
+def _npc_entity_for_character(char, entities) -> str:
+    """Choose the deterministic EntitySpec host for a voiced character.
+
+    Character and entity names are the only cross-schema identity available in
+    the current IR.  Exact normalized name matches win; otherwise a single NPC
+    is unambiguous.  Multiple unmatched NPCs abstain instead of attaching a
+    speaker to the wrong actor.
+    """
+    npcs = [e for e in (entities or [])
+            if str(getattr(e, "kind", "") or "").lower() == "npc"]
+    if not npcs:
+        return ""
+
+    def key(value) -> str:
+        return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+    char_keys = {key(getattr(char, "name", "")), key(getattr(char, "id", ""))}
+    exact = [e for e in npcs if key(getattr(e, "name", "")) in char_keys]
+    if len(exact) == 1:
+        return str(getattr(exact[0], "name", "") or "")
+    if len(npcs) == 1:
+        return str(getattr(npcs[0], "name", "") or "")
+    return ""
+
+
+def _dialog_state_machine_for_character(char) -> dict:
+    """Preserve the authored DialogGraph as deterministic runtime metadata.
+
+    NpcDialog's linear audio bank remains the playback fallback, while this
+    sidecar retains choices and conditions instead of silently discarding them
+    when voiced character dialogue is routed through the NPC micro.
+    """
+    graph = getattr(char, "dialog_graph", None)
+    nodes = []
+    for node in getattr(graph, "nodes", []) or []:
+        nodes.append({
+            "id": node.id,
+            "dialog_state": node.id,
+            "speaker": node.speaker,
+            "text": node.text,
+            "emotion": node.emotion,
+            "audio_ref": node.audio_ref,
+            "choices": [{
+                "text": choice.text,
+                "next_node": choice.next_node,
+                "condition": choice.condition,
+                "follow_up": choice.next_node,
+                "conditions": choice.condition,
+            } for choice in node.choices],
+        })
+    return {
+        "character_id": str(getattr(char, "id", "") or ""),
+        "speaker": str(getattr(char, "name", "NPC") or "NPC"),
+        "dialog_role": str(getattr(char, "role", "npc") or "npc"),
+        "start_node": getattr(graph, "start_node", "") or (nodes[0]["id"] if nodes else ""),
+        "nodes": nodes,
+    }
 
 
 def _board_objective_binding(board, objective: dict) -> tuple[str, str, int] | None:
@@ -2512,10 +2796,17 @@ def subsystems_for(
     for char in characters_with_dialogue:
         char_label = to_pascal(char.name, "Character")
         if _has_voiced_lines(char):
-            subs.append(Subsystem(kind="npc_dialog", variant="quest_giver", target="world",
-                                  name=f"{char_label}NpcDialog",
-                                  options={"speaker_name": char.name,
-                                           "lines": _npc_dialog_lines_for_character(char)}))
+            npc_entity = _npc_entity_for_character(char, entities)
+            subs.append(Subsystem(
+                kind="npc_dialog", variant="quest_giver",
+                target="npc" if npc_entity else "world",
+                name=f"{char_label}NpcDialog",
+                options={
+                    "speaker_name": char.name,
+                    "lines": _npc_dialog_lines_for_character(char),
+                    "meta": {"state_machine": _dialog_state_machine_for_character(char)},
+                    **({"npc_entity": npc_entity} if npc_entity else {}),
+                }))
         else:
             subs.append(Subsystem(kind="dialogue", variant="linear", target="systems",
                                   name=f"{char_label}Dialogue",
@@ -2556,14 +2847,23 @@ def subsystems_for(
     # unload, so `unity-create --compose` renders REAL, concept-driven Kokoro clips.
     # The speaker name is derived from the first NPC entity so clips/wiring aren't "NPC".
     # The <name>Player MonoBehaviour is the attach class.
-    if {"npc_dialog", "voiced_npcs", "npcs"} & feats or has_npcs:
+    if not characters_with_dialogue and ({"npc_dialog", "voiced_npcs", "npcs"} & feats or has_npcs):
         npc_name = "NPC"
         for _e in (entities or []):
             if str(getattr(_e, "kind", "") or "").lower() == "npc":
                 npc_name = str(getattr(_e, "name", "") or "NPC") or "NPC"
                 break
-        subs.append(Subsystem(kind="npc_dialog",   variant="quest_giver",   target="world",   name="NpcDialog",
-                              options={"speaker_name": npc_name, "meta": {"skip_audio": True}}))
+        _fallback_npc = next((str(getattr(_e, "name", "") or "")
+                              for _e in (entities or [])
+                              if str(getattr(_e, "kind", "") or "").lower() == "npc"), "")
+        subs.append(Subsystem(
+            kind="npc_dialog", variant="quest_giver",
+            target="npc" if _fallback_npc else "world", name="NpcDialog",
+            options={
+                "speaker_name": npc_name,
+                "meta": {"skip_audio": True},
+                **({"npc_entity": _fallback_npc} if _fallback_npc else {}),
+            }))
     # Scene transitions — meaningful for any multi-scene project (deterministic: > 1 scene).
     if {"levels", "multi_scene", "scene_transition"} & feats or scene_count > 1:
         subs.append(Subsystem(kind="transition",   variant="fade",          target="systems", name="SceneTransition"))

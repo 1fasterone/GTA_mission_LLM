@@ -469,6 +469,10 @@ public class EntitySpawner : MonoBehaviour
             }
             if (behaviorType != null && typeof(MonoBehaviour).IsAssignableFrom(behaviorType))
                 go.AddComponent(behaviorType);
+{% if has_npc_dialog_runtime %}
+            // NPC dialog is attached to the spawned entity, never to _Systems.
+            NpcDialogLoader.AttachIfBound(go, groupName, i);
+{% endif %}
             MountIfWeapon(go, kind);
         }
     }
@@ -806,6 +810,9 @@ public class EntitySpawner : MonoBehaviour
             }
             if (behaviorType != null && typeof(MonoBehaviour).IsAssignableFrom(behaviorType))
                 go.AddComponent(behaviorType);
+{% if has_npc_dialog_runtime %}
+            NpcDialogLoader.AttachIfBound(go, groupName, i);
+{% endif %}
         }
     }
 

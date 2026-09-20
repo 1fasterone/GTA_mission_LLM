@@ -40,6 +40,7 @@ import re
 from typing import Mapping, Optional
 
 from .unity_layout_archetype import pick_player_entity
+from .unity_atmosphere import AAA_SCRIPT_MARKERS
 from .unity_playability import (ERROR, WARN, Finding, PlayabilityReport,
                                 _is_objective, _objective_names, _ungraded,
                                 evaluate)
@@ -278,6 +279,46 @@ def _check_postprocessing_present(schema: UnitySchema, files: Mapping[str, str],
     rep.checks["postprocessing_present"] = present
 
 
+def _check_aaa_visual_atmosphere(schema: UnitySchema,
+                                  files: Mapping[str, str],
+                                  rep: PlayabilityReport) -> None:
+    """Every generated Unity scene carries the mandatory AAA atmosphere pass.
+
+    This is an artifact check, not a subjective visual-quality judgment.  It
+    catches the dangerous regression where a scene still opens but silently
+    falls back to an ungraded, blank pipeline template.
+    """
+    if schema.render_pipeline not in ("URP", "HDRP"):
+        _ungraded(rep, "aaa_visual_atmosphere",
+                  f"render_pipeline={schema.render_pipeline!r} — the full "
+                  "pipeline-aware pass is graded for URP/HDRP outputs")
+        return
+
+    script = next((c for p, c in files.items()
+                   if p.endswith("Assets/Scripts/AAAAtmosphere.cs")), "")
+    missing = [marker for marker in AAA_SCRIPT_MARKERS if marker not in script]
+    scenes = {p.rsplit("/", 1)[-1]: c for p, c in files.items()
+              if p.endswith(".unity")}
+    missing_scenes = [name for name in (schema.scenes or ())
+                      if "m_Name: AAA Visual Atmosphere" not in
+                      scenes.get(name + ".unity", "")]
+    present = bool(script) and not missing and not missing_scenes
+    if not present:
+        details = []
+        if not script:
+            details.append("AAAAtmosphere.cs is absent")
+        if missing:
+            details.append("missing markers: " + ", ".join(missing[:4]))
+        if missing_scenes:
+            details.append("scenes without the atmosphere GameObject: "
+                           + ", ".join(missing_scenes[:4]))
+        rep.findings.append(Finding(
+            "aaa_visual_atmosphere", ERROR,
+            "; ".join(details) + " — regenerate the Unity output",
+            "unity_generator mandatory AAA Visual Atmosphere Pass"))
+    rep.checks["aaa_visual_atmosphere"] = present
+
+
 def _check_lighting_rig_present(schema: UnitySchema, files: Mapping[str, str],
                                 rep: PlayabilityReport) -> None:
     """The palette-tinted fill/rim/practical light rig (beyond the single
@@ -366,6 +407,7 @@ def grade_artifact(schema: UnitySchema, files: Mapping[str, str],
     _check_avatar_not_duplicated(schema, files, rep)
     _check_objectives_spawned(schema, files, rep)
     _check_postprocessing_present(schema, files, rep)
+    _check_aaa_visual_atmosphere(schema, files, rep)
     _check_lighting_rig_present(schema, files, rep)
     _check_primitive_material_smoothness(schema, files, rep)
     _check_objective_marker_present(schema, files, rep)

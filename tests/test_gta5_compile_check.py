@@ -144,6 +144,106 @@ def _patrol_stress_schema() -> MissionSchema:
     )
 
 
+def _patrol_conditional_schema() -> MissionSchema:
+    schema = _patrol_behavior_schema()
+    schema.meta["editor"]["paths"][0]["route_logic"] = [
+        {
+            "id": "combat_pause",
+            "priority": 100,
+            "when": {"type": "combat", "source": "self"},
+            "on_enter": {"action": "pause"},
+            "on_exit": {"action": "resume"},
+            "rearm": "clear",
+        },
+        {
+            "id": "trigger_switch",
+            "priority": 90,
+            "when": {"type": "player_in_trigger", "trigger_id": "dock_trigger", "edge": "enter"},
+            "on_enter": {"action": "switch_path", "path_id": "behavior_probe_route"},
+            "on_exit": {"action": "none"},
+            "rearm": "once",
+        },
+        {
+            "id": "objective_restart",
+            "priority": 80,
+            "when": {"type": "objective_state", "step_ref": 0, "state": "active"},
+            "on_enter": {"action": "restart"},
+            "on_exit": {"action": "none"},
+            "rearm": "once",
+        },
+    ]
+    return schema
+
+
+def _patrol_route_probe_schema() -> MissionSchema:
+    return MissionSchema(
+        mission_name="Patrol Route Logic Probe",
+        location_name="docks",
+        time_of_day=20,
+        weather="CLEAR",
+        steps=[
+            MissionStep(type="go_to", label="Reach the dock", params={"editor_id": "reach_dock"}),
+            MissionStep(type="kill_all", label="Clear ambush", params={"editor_id": "clear_ambush"}),
+            MissionStep(type="deliver", label="Finish", params={"editor_id": "finish"}),
+        ],
+        peds=[
+            MissionPed(description="once sentry", model="s_m_y_dockwork_01", role="patrol"),
+            MissionPed(description="loop sentry", model="s_m_y_dockwork_01", role="patrol"),
+            MissionPed(description="ping sentry", model="s_m_y_dockwork_01", role="patrol"),
+        ],
+        vehicles=[],
+        objects=[],
+        audio=[],
+        meta={"editor": {
+            "triggers": [{"id": "dock_trigger", "pos": [-995.0, -2670.0, 13.8], "radius": 5}],
+            "paths": [
+                {
+                    "id": "once_route", "ped_idx": 0, "mode": "once",
+                    "points": [[-1030.0, -2710.0, 13.8], [-1000.0, -2685.0, 13.8]],
+                    "route_logic": [{
+                        "id": "combat_pause", "priority": 100,
+                        "when": {"type": "combat", "source": "self"},
+                        "on_enter": {"action": "pause"},
+                        "on_exit": {"action": "resume"}, "rearm": "clear",
+                    }],
+                },
+                {
+                    "id": "loop_route", "ped_idx": 1, "mode": "loop",
+                    "points": [[-1010.0, -2710.0, 13.8], [-980.0, -2685.0, 13.8]],
+                    "route_logic": [{
+                        "id": "trigger_switch", "priority": 90,
+                        "when": {"type": "player_in_trigger", "trigger_id": "dock_trigger", "edge": "enter"},
+                        "on_enter": {"action": "switch_path", "path_id": "loop_alt_route"},
+                        "on_exit": {"action": "none"}, "rearm": "once",
+                    }],
+                },
+                {
+                    "id": "loop_alt_route", "ped_idx": 1, "mode": "loop",
+                    "points": [[-980.0, -2685.0, 13.8], [-950.0, -2710.0, 13.8]],
+                },
+                {
+                    "id": "ping_route", "ped_idx": 2, "mode": "ping_pong",
+                    "points": [[-1030.0, -2660.0, 13.8], [-1000.0, -2640.0, 13.8]],
+                    "route_logic": [
+                        {
+                            "id": "objective_restart", "priority": 80,
+                            "when": {"type": "objective_state", "step_ref": "clear_ambush", "state": "complete"},
+                            "on_enter": {"action": "restart"},
+                            "on_exit": {"action": "none"}, "rearm": "once",
+                        },
+                        {
+                            "id": "alert_guard", "priority": 70,
+                            "when": {"type": "alert", "source": "self"},
+                            "on_enter": {"action": "guard"},
+                            "on_exit": {"action": "none"}, "rearm": "once",
+                        },
+                    ],
+                },
+            ],
+        }},
+    )
+
+
 # ── _find_arity_findings — pure text scan, runs everywhere, real lookups ─────
 # Uses the REAL lookups/gta_native_arity.json (via load_native_arity() inside
 # the function), not a mock — PLAY_SOUND_FRONTEND mines to a consistent arity
@@ -182,6 +282,37 @@ def test_generated_patrol_behavior_native_arities_are_clean(tmp_path):
     path = tmp_path / "PatrolBehaviorProbe.3.cs"
     path.write_text(code, encoding="utf-8")
     assert _find_arity_findings(str(path)) == []
+
+
+def test_generated_conditional_patrol_native_arities_are_clean(tmp_path):
+    schema = _patrol_conditional_schema()
+    code = CodeGenerator("templates/mission.cs.j2").generate(schema)
+    path = tmp_path / "ConditionalPatrolProbe.3.cs"
+    path.write_text(code, encoding="utf-8")
+    assert _find_arity_findings(str(path)) == []
+
+
+def test_generated_patrol_route_probe_preserves_modes_and_actions(tmp_path):
+    code = CodeGenerator("templates/mission.cs.j2").generate(_patrol_route_probe_schema())
+    path = tmp_path / "PatrolRouteLogicProbe.3.cs"
+    path.write_text(code, encoding="utf-8")
+    assert _find_arity_findings(str(path)) == []
+    for token in (
+        "Mode = PatrolRouteMode.Once",
+        "Mode = PatrolRouteMode.Loop",
+        "Mode = PatrolRouteMode.PingPong",
+        "EditorPathRouteLogic_0",
+        "EditorPathRouteLogic_1",
+        "EditorPathRouteLogic_3",
+        "PatrolRouteAction.Pause",
+        "PatrolRouteAction.Resume",
+        "PatrolRouteAction.SwitchPath",
+        "PatrolRouteAction.Restart",
+        "PatrolRouteAction.Guard",
+        "TargetPathIndex = 2",
+        "ObjectiveIndex = 1",
+    ):
+        assert token in code, f"route probe C# missing {token}"
 
 
 def test_generated_patrol_stress_native_arities_are_clean(tmp_path):
@@ -254,6 +385,26 @@ def test_generated_patrol_behavior_native_tasks_compile(tmp_path):
     path.write_text(code, encoding="utf-8")
     ok, findings, info = compile_check(str(path))
     assert ok is True
+    assert findings == []
+
+
+@_needs_toolchain
+def test_generated_conditional_patrol_tasks_compile(tmp_path):
+    code = CodeGenerator("templates/mission.cs.j2").generate(_patrol_conditional_schema())
+    path = tmp_path / "ConditionalPatrolProbe.3.cs"
+    path.write_text(code, encoding="utf-8")
+    ok, findings, info = compile_check(str(path))
+    assert ok is True, info
+    assert findings == []
+
+
+@_needs_toolchain
+def test_generated_patrol_route_probe_tasks_compile(tmp_path):
+    code = CodeGenerator("templates/mission.cs.j2").generate(_patrol_route_probe_schema())
+    path = tmp_path / "PatrolRouteLogicProbe.3.cs"
+    path.write_text(code, encoding="utf-8")
+    ok, findings, info = compile_check(str(path))
+    assert ok is True, info
     assert findings == []
 
 
