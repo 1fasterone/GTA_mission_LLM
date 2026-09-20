@@ -144,6 +144,13 @@ playability:
   # an ERROR-class check stops being gradable at all (see docs/TESTING.md A1).
   min_score: 0
 
+# Deterministic pre-IR mechanics playtest. The CLI is advisory by default;
+# set gate: true when a failing FINAL_DECISION should stop the invoking step.
+mechanics_playtest:
+  enabled: true
+  gate: false
+  max_seconds: 300
+
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve
   # to a REAL model — an explicit kind in the default pack

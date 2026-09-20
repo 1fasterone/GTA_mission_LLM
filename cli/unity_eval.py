@@ -8,7 +8,162 @@ import typer
 
 from src.unity_schema import UnitySchema
 
-from .common import app, console
+from .common import _cfg, app, console
+
+
+def _mechanics_composition(schema: UnitySchema, cfg: dict, compose: bool):
+    """Return deterministic composed units and the seam report for playtesting.
+
+    A saved composed schema normally carries ``meta.wiring`` from the real
+    pipeline. ``--compose`` reconstructs the plan and calls
+    ``MicroComposer.plan_wiring`` instead; that dry-run executes the exact
+    binding code used by emission without creating Unity files.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    saved_report = meta.get("wiring")
+    wiring_report = dict(saved_report) if isinstance(saved_report, dict) else {}
+    if not compose:
+        return (), wiring_report
+
+    from src.unity_compose import MicroComposer, subsystems_for
+    from src.unity_pipeline import (_compose_palette_rgb, _infer_mission_scenes,
+                                    _objective_scene_map)
+
+    pipe_cfg = cfg.get("unity_pipeline", cfg.get("pipeline", {})) or {}
+    features = list(schema.features or [])
+    if "audio" not in features:
+        # unity_pipeline.run() injects audio before composition. Mirror that
+        # deterministic input here without mutating the loaded schema.
+        features.append("audio")
+
+    mission_scenes = meta.get("mission_scenes")
+    if not isinstance(mission_scenes, dict):
+        mission_scenes, _ = _infer_mission_scenes(schema)
+
+    subsystems = subsystems_for(
+        schema.game_type,
+        features,
+        locomotion=schema.locomotion,
+        locomotion_modes=schema.locomotion_modes,
+        flying_abilities=meta.get("flying_abilities"),
+        capabilities=schema.capabilities,
+        user_prompt=meta.get("user_prompt", ""),
+        scenes=schema.scenes,
+        entities=schema.entities,
+        scripts=schema.scripts,
+        genre=meta.get("genre", "universal"),
+        audio_specs=schema.audio_specs,
+        vfx_specs=schema.vfx,
+        shaders=schema.shaders,
+        animations=schema.animations,
+        characters=schema.characters,
+        missions=schema.missions,
+        behavior_trees=schema.behavior_trees,
+        environment=schema.environment,
+        visual_style=schema.visual_style,
+        palette_rgb=_compose_palette_rgb(schema),
+        cover_points=meta.get("cover_points"),
+    )
+    composer = MicroComposer(
+        schema.project_name,
+        template_dir=pipe_cfg.get("unity_template_dir", "templates/unity"),
+        project_config=cfg,
+    )
+    units = composer.plan(subsystems)
+    escort_followed_entities = {
+        entity.name for entity in schema.entities
+        if entity.name and entity.behavior
+        and any(getattr(atom, "atom", "") == "Follow" for atom in (entity.atoms or []))
+    }
+    reach_target_entities = {
+        entity.name: entity.count for entity in schema.entities if entity.name
+    }
+    wiring_report = composer.plan_wiring(
+        units,
+        wiring_map=schema.wiring,
+        objective_scenes=_objective_scene_map(schema, mission_scenes),
+        escort_followed_entities=escort_followed_entities,
+        reach_target_entities=reach_target_entities,
+        game_type=schema.game_type,
+    )
+    return tuple(units), wiring_report
+
+
+@app.command("unity-mechanics-playtest")
+def unity_mechanics_playtest(
+    schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),
+    config: str = typer.Option("config.yaml", "--config", "-c",
+                               help="Config file containing mechanics_playtest settings"),
+    compose: bool = typer.Option(False, "--compose",
+                                 help="Rebuild the deterministic composition/wiring plan "
+                                      "without emitting Unity files"),
+    output: str | None = typer.Option(None, "--output", "-o",
+                                      help="Write the structured PLAYABILITY_REPORT JSON here"),
+    json_output: bool = typer.Option(False, "--json",
+                                     help="Print the structured PLAYABILITY_REPORT JSON"),
+    strict: bool = typer.Option(False, "--strict",
+                                help="Exit non-zero when FINAL_DECISION is FAIL"),
+    max_seconds: int | None = typer.Option(None, "--max-seconds",
+                                            help="Override the configured simulation horizon"),
+) -> None:
+    """Run the deterministic pre-IR mechanics playtest on a saved schema.
+
+    This command adapts the existing UnitySchema and, when requested, the
+    exact MicroComposer wiring plan into the engine-neutral evaluator. It does
+    not call the LLM, invoke Unity, or generate project files.
+
+      python main.py unity-mechanics-playtest MyGame.schema.json
+      python main.py unity-mechanics-playtest MyGame.schema.json --compose --strict
+      python main.py unity-mechanics-playtest MyGame.schema.json --json \
+          --output output/MyGame/mechanics_playability.json
+    """
+    cfg = _cfg(config)
+    mechanics_cfg = cfg.get("mechanics_playtest", {}) or {}
+    if not isinstance(mechanics_cfg, dict):
+        console.print("[yellow]ABSTAIN[/] mechanics_playtest config must be an object")
+        raise typer.Exit(2)
+    if mechanics_cfg.get("enabled", True) is False:
+        console.print("[yellow]SKIP[/] mechanics playtest disabled by config")
+        return
+
+    configured_seconds = mechanics_cfg.get("max_seconds", 300)
+    seconds = configured_seconds if max_seconds is None else max_seconds
+    try:
+        seconds = int(seconds)
+    except (TypeError, ValueError) as exc:
+        raise typer.BadParameter("max_seconds must be an integer") from exc
+    if seconds < 0:
+        raise typer.BadParameter("max_seconds must be non-negative")
+
+    data = json.loads(Path(schema_file).read_text(encoding="utf-8"))
+    schema = UnitySchema.model_validate(data)
+    units, wiring_report = _mechanics_composition(schema, cfg, compose)
+
+    from src.unity_mechanics_adapter import build_mechanics_playtest_input
+    from src.unity_mechanics_playtest import evaluate_mechanics
+
+    playtest_input = build_mechanics_playtest_input(
+        schema,
+        composed_units=units,
+        wiring_report=wiring_report,
+    )
+    report = evaluate_mechanics(playtest_input, max_seconds=seconds)
+    report_data = report.to_dict()
+    if output:
+        report_path = Path(output)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report_data, indent=2) + "\n",
+                               encoding="utf-8")
+        console.print(f"[green]OK[/]  mechanics report -> {report_path}")
+    if json_output:
+        console.print(json.dumps(report_data, indent=2), markup=False)
+    else:
+        console.print(report.render(), markup=False)
+
+    gate_enabled = strict or bool(mechanics_cfg.get("gate", False))
+    if gate_enabled and report.final_decision.get("decision") != "PASS":
+        console.print("[red]FAIL[/] mechanics playtest gate failed")
+        raise typer.Exit(1)
 
 
 @app.command("unity-playability")
