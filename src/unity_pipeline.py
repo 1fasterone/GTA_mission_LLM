@@ -9,6 +9,7 @@ STEP 5 — Programmatic fixer + schema validation
 STEP 6 — Generator compiles schema -> Unity project folder (no LLM)
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from .unity_resolver     import UnityResolver
 from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
     UNITY_CONCEPT_SYSTEM, UNITY_CONCEPT_USER,
+    UNITY_SEMANTIC_CONCEPT_SYSTEM, UNITY_SEMANTIC_CONCEPT_USER,
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
     GAMECONTEXT_SCHEMA_GUIDANCE, render_multimodal_block, brief_block,
 )
@@ -62,6 +64,15 @@ from .unity_objective_targets import resolve_objective_targets
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 from .unity_reference_image import ReferenceImageError, encode_reference_image
+from .visual_compiler_dictionary import (
+    VisualDictionaryError,
+    apply_visual_dictionary,
+    board_file_hash,
+    build_visual_dictionary,
+    concept_file_hash,
+    load_visual_dictionary,
+    write_visual_dictionary,
+)
 
 console = Console()
 
@@ -1036,6 +1047,45 @@ class UnityPipeline:
 
     # ── main run ──────────────────────────────────────────────────────────────
 
+    def run_concept_only(self, user_prompt: str, *, seed: int | None = None,
+                         no_think: bool = False,
+                         output: str | Path = "output/visual_compiler/Concept.txt",
+                         prompt_source: str | Path | None = None,
+                         config_file: str | Path | None = None) -> Path:
+        """Capture the semantic Concept and stop before schema generation.
+
+        This is the visual compiler's authority seam.  No reference image,
+        board, dictionary, schema, resolver, fixer, or generator is touched.
+        """
+        if not user_prompt.strip():
+            raise ValueError("[semantic-authority] source prompt is empty")
+        if seed is not None:
+            self.llm.seed = seed
+
+        self._step(2, "LLM compiles semantic Concept.txt only")
+        concept = self.llm.chat(
+            system=UNITY_SEMANTIC_CONCEPT_SYSTEM,
+            user=UNITY_SEMANTIC_CONCEPT_USER.format(user_prompt=user_prompt),
+            temperature=self.concept_temp,
+            thinking=not no_think,
+        )
+        self._ok(f"{len(concept)} chars of semantic Concept generated")
+
+        from .visual_compiler_authority import write_semantic_authority
+        concept_path, manifest_path = write_semantic_authority(
+            concept,
+            output,
+            prompt_text=user_prompt,
+            prompt_source=prompt_source,
+            config_file=config_file,
+            model=getattr(self.llm, "model", None),
+            seed=seed,
+            repo_root=Path.cwd(),
+        )
+        self._ok(f"Semantic authority frozen: {concept_path}")
+        self._ok(f"Authority provenance: {manifest_path}")
+        return concept_path
+
     def _blender_model_overrides(self, schema, concept: str) -> dict[str, str]:
         """Build procedural Blender models for every supported catalog kind and return
         {kind: fbx_path}.  Degrades silently per kind if a build fails — the generator
@@ -1127,7 +1177,12 @@ class UnityPipeline:
             no_think:    bool = False,
             micro_code:  bool = True,
             no_llm:      bool = False,
-            reference_image: Path | None = None) -> Path:
+            reference_image: Path | None = None,
+            concept_file: Path | None = None,
+            visual_board: Path | None = None,
+            visual_dictionary: Path | None = None,
+            visual_dictionary_output: Path | None = None,
+            visual_assets_only: bool = False) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -1138,6 +1193,61 @@ class UnityPipeline:
         if seed is not None:
             self.llm.seed = seed
 
+        if concept_file is not None and not concept_file.is_file():
+            raise VisualDictionaryError(
+                f"[visual-dictionary] missing immutable Concept.txt: {concept_file}"
+            )
+        if concept_file is not None and reference_image is not None:
+            raise ReferenceImageError(
+                "--concept-file is semantic authority and cannot be combined "
+                "with --reference-image"
+            )
+        if concept_file is not None and no_llm:
+            raise VisualDictionaryError(
+                "--concept-file requires the Step-3 schema LLM; use "
+                "--visual-dictionary with a normal full run instead of "
+                "--no-llm"
+            )
+        if visual_board is not None and not visual_board.is_file():
+            raise VisualDictionaryError(
+                f"[visual-dictionary] missing visual board: {visual_board}"
+            )
+        if visual_dictionary is not None and concept_file is None:
+            raise VisualDictionaryError(
+                "--visual-dictionary requires --concept-file so its semantic "
+                "hash can be verified"
+            )
+        if visual_dictionary is not None and visual_dictionary_output is not None:
+            raise VisualDictionaryError(
+                "use either --visual-dictionary or --visual-dictionary-output, "
+                "not both"
+            )
+        if visual_board is not None and concept_file is None:
+            raise VisualDictionaryError(
+                "--visual-board requires --concept-file; the board annotates "
+                "an immutable semantic authority"
+            )
+        if visual_assets_only:
+            if concept_file is None or visual_board is None:
+                raise VisualDictionaryError(
+                    "--visual-assets-only requires both --concept-file and "
+                    "--visual-board"
+                )
+            if visual_dictionary is not None:
+                raise VisualDictionaryError(
+                    "--visual-assets-only generates the dictionary; do not "
+                    "also pass --visual-dictionary"
+                )
+            if visual_dictionary_output is None:
+                raise VisualDictionaryError(
+                    "--visual-assets-only requires --visual-dictionary-output "
+                    "so the shopping-list artifact has an explicit destination"
+                )
+            if compose or blender_models or no_llm:
+                raise VisualDictionaryError(
+                    "--visual-assets-only does not support --compose, "
+                    "--blender-models, or --no-llm"
+                )
         if reference_image is not None and no_llm:
             raise ReferenceImageError(
                 "--reference-image requires the Concept LLM stage and cannot "
@@ -1147,20 +1257,41 @@ class UnityPipeline:
             encode_reference_image(reference_image)
             if reference_image is not None else None
         )
+        immutable_concept = ""
+        if concept_file is not None:
+            try:
+                immutable_concept = concept_file.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise VisualDictionaryError(
+                    f"[visual-dictionary] could not read Concept.txt: {exc}"
+                ) from exc
+            if not immutable_concept.strip():
+                raise VisualDictionaryError(
+                    "[visual-dictionary] empty immutable Concept.txt refused"
+                )
+        # Once an immutable Concept is supplied, all later deterministic
+        # concept-rescue passes must read that authority rather than a raw
+        # source prompt that could contain extra visual or semantic material.
+        semantic_user_prompt = (
+            immutable_concept.strip() if concept_file is not None else user_prompt
+        )
 
         # A fully-authored structured brief IS its own theme — auto-detected
         # themes + twist seeds only pollute it (hit live twice on
         # TerminalHorizon: "superhero_flying" grafted "flight burns calories" /
         # "rescue costs altitude" onto a complete skydiving design). Explicit
         # --theme still wins.
-        if theme is None and _is_structured_brief(user_prompt):
+        if concept_file is not None and theme is None:
+            theme = "none"
+            self._ok("Immutable Concept supplied — theme/twist inference skipped")
+        elif theme is None and _is_structured_brief(semantic_user_prompt):
             theme = "none"
             self._ok("Structured brief detected — theme autodetect skipped "
                      "(pass --theme <name> to force one)")
 
         # Resolve theme (may be None → behaves exactly as before)
         active_theme, rng, theme_meta = resolve_theme(
-            user_prompt = user_prompt,
+            user_prompt = semantic_user_prompt,
             theme_name  = theme,
             mashup_with = mashup_with,
             seed        = seed,
@@ -1178,7 +1309,7 @@ class UnityPipeline:
         # Deterministic intent detection — game_type / locomotion / genre from
         # keyword scoring, same weighting archetypes.py uses for GTA5 missions.
         # No LLM involved; runs once against the raw prompt.
-        intent = classify_intent(user_prompt)
+        intent = classify_intent(semantic_user_prompt)
         theme_block  += intent.concept_hint()
         schema_hints += intent.structure_hint()
         # Asset-library vocabulary (categories + top tags from the generated
@@ -1192,11 +1323,11 @@ class UnityPipeline:
         # already paraphrased the brief's explicit entity names away — a brief
         # that spells out its entities had no way to get them in front of the
         # schema-fill model at all (see render_entity_checklist).
-        _checklist = render_entity_checklist(user_prompt)
+        _checklist = render_entity_checklist(semantic_user_prompt)
         if _checklist:
             schema_hints += "\n" + _checklist + "\n"
             self._ok(
-                f"Brief names {len(extract_named_entities(user_prompt))} "
+                f"Brief names {len(extract_named_entities(semantic_user_prompt))} "
                 "entities explicitly — passed to schema-fill as a required "
                 "checklist"
             )
@@ -1205,11 +1336,11 @@ class UnityPipeline:
         # explicitly ("each is required; implement as its own module") and the
         # schema-fill model would never see the demand — 7 of 12 systems went
         # missing on the grandma run (see render_script_checklist).
-        _script_checklist = render_script_checklist(user_prompt)
+        _script_checklist = render_script_checklist(semantic_user_prompt)
         if _script_checklist:
             schema_hints += "\n" + _script_checklist + "\n"
             self._ok(
-                f"Brief names {len(extract_named_scripts(user_prompt))} "
+                f"Brief names {len(extract_named_scripts(semantic_user_prompt))} "
                 "scripts explicitly — passed to schema-fill as a required "
                 "checklist"
             )
@@ -1219,22 +1350,22 @@ class UnityPipeline:
         # names, 7/10 audio cues, 3/6 narrative beats and the project title to
         # invention, the same recall gap entities/scripts had before their own
         # checklists shipped.
-        _scene_checklist = render_scene_checklist(user_prompt)
+        _scene_checklist = render_scene_checklist(semantic_user_prompt)
         if _scene_checklist:
             schema_hints += "\n" + _scene_checklist + "\n"
             self._ok("Brief names scenes explicitly — passed to schema-fill "
                      "as a required checklist")
-        _audio_checklist = render_audio_checklist(user_prompt)
+        _audio_checklist = render_audio_checklist(semantic_user_prompt)
         if _audio_checklist:
             schema_hints += "\n" + _audio_checklist + "\n"
             self._ok("Brief names audio cues explicitly — passed to "
                      "schema-fill as a required checklist")
-        _narrative_checklist = render_narrative_checklist(user_prompt)
+        _narrative_checklist = render_narrative_checklist(semantic_user_prompt)
         if _narrative_checklist:
             schema_hints += "\n" + _narrative_checklist + "\n"
             self._ok("Brief numbers narrative beats explicitly — passed to "
                      "schema-fill as a required checklist")
-        _title_checklist = render_title_checklist(user_prompt)
+        _title_checklist = render_title_checklist(semantic_user_prompt)
         if _title_checklist:
             schema_hints += "\n" + _title_checklist + "\n"
             self._ok("Brief declares an explicit title — passed to "
@@ -1260,7 +1391,7 @@ class UnityPipeline:
         # is a nerve cluster 900m up" produced a schema with no height in it at
         # all, and the layout built its 60 m default wall. The number was never
         # missing from the brief — it just had no way past Step 3.
-        _spatial_facts = extract_spatial_facts(user_prompt)
+        _spatial_facts = extract_spatial_facts(semantic_user_prompt)
         if _spatial_facts:
             self._ok(
                 f"Brief states {len(_spatial_facts)} spatial fact(s) — "
@@ -1276,11 +1407,11 @@ class UnityPipeline:
         # measuring what the Pipeline LLM contributes — NOT a test of Step 3,
         # which does not run. See the module docstring on Eval Discipline.
         schema: UnitySchema | None = None
-        concept = ""
+        concept = immutable_concept
         if no_llm:
             self._step(2, "Deterministic brief parse (--no-llm — Steps 2-3 offline)")
             from .unity_briefparse import parse_brief
-            schema, parse_msgs = parse_brief(user_prompt)
+            schema, parse_msgs = parse_brief(semantic_user_prompt)
             for msg in parse_msgs:
                 self._fix(msg)
             self._step(3, "Schema filled from the brief (no model contacted)")
@@ -1290,49 +1421,54 @@ class UnityPipeline:
 
         else:
             # STEP 2 — concept ────────────────────────────────────────────────
-            self._step(2, "LLM generates project concept")
-            if no_think:
-                self._ok("--no-think: reasoning disabled for the whole run "
-                         "(concept quality/creativity trades for speed)")
-            concept_user = UNITY_CONCEPT_USER.format(
-                user_prompt=user_prompt,
-                theme_block=theme_block,
-            )
-            concept_images = None
-            if reference_image_uri is not None:
-                concept_user += (
-                    "\n\nREFERENCE IMAGE\n"
-                    "Use the attached image only as a visual target. Extract "
-                    "camera angle, horizon framing, lighting tone, palette, "
-                    "track composition, and environment density. Do not copy "
-                    "image metadata, HUD text, branding, or image contents "
-                    "into the schema. Do not write code.\n"
+            if concept_file is not None:
+                self._step(2, "Load immutable semantic Concept.txt")
+                concept = immutable_concept
+                self._ok(f"{len(concept)} chars loaded from {concept_file}")
+            else:
+                self._step(2, "LLM generates project concept")
+                if no_think:
+                    self._ok("--no-think: reasoning disabled for the whole run "
+                             "(concept quality/creativity trades for speed)")
+                concept_user = UNITY_CONCEPT_USER.format(
+                    user_prompt=user_prompt,
+                    theme_block=theme_block,
                 )
-                concept_images = [reference_image_uri]
-                self._ok("Reference image attached to Concept only")
-            concept = self.llm.chat(
-                system      = UNITY_CONCEPT_SYSTEM,
-                user        = concept_user,
-                temperature = self.concept_temp,
-                thinking    = not no_think,
-                images      = concept_images,
-            )
-            self._ok(f"{len(concept)} chars of project concept generated")
-            if self.show_prompts:
-                console.print(concept)
+                concept_images = None
+                if reference_image_uri is not None:
+                    concept_user += (
+                        "\n\nREFERENCE IMAGE\n"
+                        "Use the attached image only as a visual target. Extract "
+                        "camera angle, horizon framing, lighting tone, palette, "
+                        "track composition, and environment density. Do not copy "
+                        "image metadata, HUD text, branding, or image contents "
+                        "into the schema. Do not write code.\n"
+                    )
+                    concept_images = [reference_image_uri]
+                    self._ok("Reference image attached to Concept only")
+                concept = self.llm.chat(
+                    system      = UNITY_CONCEPT_SYSTEM,
+                    user        = concept_user,
+                    temperature = self.concept_temp,
+                    thinking    = not no_think,
+                    images      = concept_images,
+                )
+                self._ok(f"{len(concept)} chars of project concept generated")
+                if self.show_prompts:
+                    console.print(concept)
 
             # STEP 3 — fill schema ────────────────────────────────────────────
             self._step(3, "LLM fills project schema")
             # Multimodal IR ask: core sections always, optional ones gated on
             # the concept's own content so the prompt stays inside a local
             # model's context window (src/unity_prompts.py).
-            mm = render_multimodal_block(concept, user_prompt,
+            mm = render_multimodal_block(concept, semantic_user_prompt,
                                          max_optional=self.multimodal_max_sections)
             self._ok("Multimodal IR sections requested: " + ", ".join(mm.sections))
             schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept,
                                                         schema_hints=schema_hints,
                                                         multimodal_block=mm.text,
-                                                        brief_block=brief_block(user_prompt))
+                                                        brief_block=brief_block(semantic_user_prompt))
             # In --compose mode the micros + GameContext locator exist, so steer
             # the LLM to reach subsystems via GameContext.Instance.Get<T>()
             # instead of inventing singletons (which the fixer strips).
@@ -1412,7 +1548,9 @@ class UnityPipeline:
         # that gates on a concept must see that and skip rather than be handed
         # a synthesised one.
         schema.meta["concept"]     = concept
-        schema.meta["user_prompt"] = user_prompt
+        schema.meta["user_prompt"] = semantic_user_prompt
+        if concept_file is not None:
+            schema.meta["source_prompt"] = user_prompt
         schema.meta["fill"]        = "deterministic" if no_llm else "llm"
         # The brief's spatial facts ride alongside from here on. Written LAST
         # and unconditionally, so a model that decided to author its own
@@ -1427,6 +1565,75 @@ class UnityPipeline:
         # schema.meta (default "universal") regardless of confidence.
         for msg in apply_intent(schema, intent):
             self._fix(msg)
+
+        # STEP 3 visual annotation — the only query-generation call in the
+        # pipeline.  The sidecar is built before any Step 4+ resolver work so
+        # asset resolution consumes a frozen visual dictionary, never a late
+        # mutating LLM pass.  A supplied dictionary is read-only input; when a
+        # board is supplied, the LLM may annotate its appearance but may not
+        # add names outside this schema entity set.
+        visual_dictionary_data = None
+        if visual_dictionary is not None:
+            self._step(3, "Load visual_dictionary.json (deterministic input)")
+            visual_dictionary_data = load_visual_dictionary(visual_dictionary)
+            updated = apply_visual_dictionary(
+                schema,
+                visual_dictionary_data,
+                expected_concept_hash=concept_file_hash(concept_file),
+                expected_board_hash=(board_file_hash(visual_board)
+                                     if visual_board is not None else None),
+            )
+            self._ok(f"Visual dictionary consumed for {updated} entity entr"
+                     f"ies; Concept.txt remains read-only")
+        elif not no_llm and concept and schema.entities:
+            self._step(3, "LLM annotates declared entities -> visual_dictionary.json")
+            _llm_seed = getattr(self.llm, "seed", None)
+            _visual_seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
+            visual_dictionary_data = build_visual_dictionary(
+                concept,
+                schema.entities,
+                self.llm,
+                board_image=visual_board,
+                concept_file=concept_file,
+                board_file=visual_board,
+                seed=_visual_seed,
+                model=getattr(self.llm, "model", None),
+                repo_root=Path.cwd(),
+            )
+            dictionary_output = visual_dictionary_output
+            if dictionary_output is not None:
+                write_visual_dictionary(visual_dictionary_data, dictionary_output)
+                self._ok(f"Visual dictionary written: {dictionary_output}")
+            elif visual_dictionary_data.get("annotation_error"):
+                self._warn(
+                    "Visual annotation did not produce complete queries: "
+                    f"{visual_dictionary_data['annotation_error']}"
+                )
+            updated = apply_visual_dictionary(
+                schema,
+                visual_dictionary_data,
+                expected_concept_hash=(
+                    concept_file_hash(concept_file) if concept_file is not None else None
+                ),
+                expected_board_hash=(
+                    board_file_hash(visual_board) if visual_board is not None else None
+                ),
+            )
+            self._ok(f"Visual dictionary applied to {updated} entity entr"
+                     f"ies; no entities added")
+        if visual_dictionary_data is not None:
+            _vd_concept = visual_dictionary_data.get("concept") or {}
+            _vd_board = visual_dictionary_data.get("board") or {}
+            schema.meta["visual_dictionary"] = {
+                "format": visual_dictionary_data.get("format"),
+                "identity_hash": (visual_dictionary_data.get("identity") or {}).get("hash"),
+                "concept_hash": _vd_concept.get("hash"),
+                "board_hash": _vd_board.get("hash") if isinstance(_vd_board, dict) else None,
+                "entries": len(visual_dictionary_data.get("entries") or []),
+            }
+        elif visual_dictionary_output is not None:
+            self._warn("--visual-dictionary-output ignored: no Concept/LLM visual "
+                       "annotation was available")
 
         self._ok(
             f"Game: {schema.game_type}  Pipeline: {schema.render_pipeline}  "
@@ -1694,6 +1901,78 @@ class UnityPipeline:
         )
         self._ok(f"manifest.json will contain {len(manifest_deps)} packages")
 
+        # This is the deliberate visual-compiler stop boundary.  Run the same
+        # resolver used by generator.generate()/write(), including the normal
+        # deterministic Sketchfab catalog/cache/fetch path, but do not emit a
+        # Unity project, copy binaries, run the C# gate, or open the package
+        # cache.  The dictionary is already frozen above, so the resolver gets
+        # no LLM and cannot invent entities or queries here.
+        if visual_assets_only:
+            self._step(6, "Resolve/download visual candidates only")
+            _asset_cfg = self.config.get("assets", {}) or {}
+            _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
+            _used_models, _entity_model_paths = self.generator._resolve_all_models(
+                schema,
+                self.lookups_dir,
+                None,
+                None,
+                None,
+                bool(_asset_cfg.get("strict", True)),
+                _asset_cfg,
+                _sketchfab_cfg,
+                llm=None,
+            )
+            _output = Path(visual_dictionary_output)
+            _output.parent.mkdir(parents=True, exist_ok=True)
+            _schema_output = _output.with_name("schema.json")
+            _assets_output = _output.with_name("visual_assets.json")
+            def _write_new(_path: Path, _text: str) -> None:
+                if _path.exists():
+                    raise VisualDictionaryError(
+                        f"refusing to overwrite existing visual phase artifact: {_path}"
+                    )
+                _path.write_text(_text, encoding="utf-8")
+
+            _write_new(_schema_output, schema.model_dump_json(indent=2))
+            _entity_rows = []
+            for _entity in schema.entities:
+                _entity_rows.append({
+                    "entity": _entity.name,
+                    "kind": _entity.kind,
+                    "count": _entity.count,
+                    "model_hint": _entity.model_hint,
+                    "sketchfab_query": _entity.sketchfab_query,
+                    "resolved_resource_path": _entity_model_paths.get(_entity.name),
+                })
+            _models = {
+                _kind: _model.model_dump(mode="json")
+                for _kind, _model in _used_models.items()
+            }
+            _assets_report = {
+                "format": "visual-assets-only.v1",
+                "concept": {
+                    "path": str(concept_file),
+                    "sha256": concept_file_hash(concept_file),
+                },
+                "visual_board": {
+                    "path": str(visual_board),
+                    "sha256": board_file_hash(visual_board),
+                },
+                "visual_dictionary": {
+                    "path": str(_output),
+                    "sha256": concept_file_hash(_output),
+                },
+                "schema_path": str(_schema_output),
+                "entities": _entity_rows,
+                "models": _models,
+                "entity_model_paths": _entity_model_paths,
+            }
+            _write_new(_assets_output, json.dumps(_assets_report, indent=2) + "\n")
+            self._ok(f"Schema snapshot written: {_schema_output}")
+            self._ok(f"Resolved asset report written: {_assets_output}")
+            self._ok("Visual phase complete — Unity project generation skipped")
+            return _assets_output
+
         # STEP 6 — generate ───────────────────────────────────────────────────
         self._step(6, "Generator compiles schema -> Unity project folder")
         # Blender model fulfilment: build real models from the story and feed them
@@ -1701,37 +1980,9 @@ class UnityPipeline:
         model_overrides: dict[str, str] = {}
         if blender_models:
             model_overrides = self._blender_model_overrides(schema, concept)
-        # Step 6.5 — enrich entity sketchfab_query while the project LLM is
-        # STILL WARM (mirrors the audio concept-translator's placement, and the
-        # NPC dialog pre-extraction below: it MUST run before any Blender/
-        # Chromium-heavy phase cools the LLM). Deliberately placed ahead of the
-        # `if compose:` block below — the bulk Sketchfab collection nested in
-        # there runs 10-15 rounds of search+download+Blender-convert and
-        # previously ran BEFORE this step; by the time translate_concept ran,
-        # the local model had gone cold (LM Studio idle-unload), llm.chat()
-        # failed/timed out, translate_concept's try/except swallowed it, every
-        # entity kept an empty sketchfab_query, and per-entity Tier S had
-        # nothing to match on — silently falling through to Kenney. Runs
-        # regardless of `compose`/`subsystems`: the concept-translated query
-        # also drives the LOCAL catalog tiers (see _query_weights), so entity
-        # -> model matching is concept-aware even when Sketchfab is off or fails.
-        # --no-llm skips this: the enrichment is a model call, and its
-        # deterministic fallback (model_hint / entity name, both already parsed
-        # from the brief) is exactly what the offline arm is meant to exercise.
-        if schema.entities and not no_llm:
-            try:
-                from .unity_sketchfab_translator import translate_concept
-                _llm_seed = getattr(self.llm, "seed", None)
-                _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                n = translate_concept(concept, schema.entities, self.llm, _seed)
-                if n:
-                    self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
-                else:
-                    self._warn("Sketchfab query translation produced nothing — "
-                              "resolver falls back to model_hint / entity name")
-            except Exception as exc:  # noqa: BLE001
-                self._warn(f"Sketchfab query translation failed "
-                          f"({type(exc).__name__}: {exc}) — mechanical fallback used")
+        # Visual query generation has already completed at Step 3.  Keeping
+        # this marker here makes the LLM-free Steps 4-7 boundary explicit:
+        # generation and asset resolution only consume the frozen dictionary.
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
         # Computed BEFORE Step 3.5a (below) so script enrichment can show the
@@ -1762,7 +2013,7 @@ class UnityPipeline:
                                         locomotion_modes=schema.locomotion_modes,
                                         flying_abilities=schema.meta.get("flying_abilities"),
                                         capabilities=schema.capabilities,
-                                        user_prompt=user_prompt,
+                                        user_prompt=semantic_user_prompt,
                                         scenes=schema.scenes,
                                         entities=schema.entities,
                                         scripts=schema.scripts,
@@ -1797,7 +2048,7 @@ class UnityPipeline:
         if schema.scripts and micro_code and not no_llm:
             from .unity_micro_code import enrich_scripts
             for msg in enrich_scripts(schema.scripts, llm=self.llm,
-                                      concept=concept, user_prompt=user_prompt,
+                                      concept=concept, user_prompt=semantic_user_prompt,
                                       subsystems=subsystems or ()):
                 self._fix(msg)
 
@@ -1831,7 +2082,7 @@ class UnityPipeline:
                                 and (e.tag or "").strip() != "Untagged"})
                 for msg in enrich_subsystems(subsystems, llm=self.llm,
                                              concept=concept,
-                                             user_prompt=user_prompt,
+                                             user_prompt=semantic_user_prompt,
                                              tags=_tags):
                     self._fix(msg)
             elif no_llm:
@@ -2003,7 +2254,12 @@ class UnityPipeline:
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                project_config=self.config, llm=self.llm)
+                project_config=self.config,
+                # The visual dictionary is the complete Step-3 visual input.
+                # Do not let the later asset resolver invoke its optional
+                # vision LLM selector; candidate choice must remain
+                # deterministic for this authority flow.
+                llm=(None if visual_dictionary_data is not None else self.llm))
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library
@@ -2028,6 +2284,18 @@ class UnityPipeline:
             except OSError:
                 pass
             raise
+
+        # The default sidecar lives beside the generated project so ordinary
+        # legacy runs do not collide in the repository-level output folder.
+        # An explicit --visual-dictionary-output was already written before
+        # Step 4 and is never copied or overwritten here.
+        if visual_dictionary_data is not None and visual_dictionary_output is None:
+            try:
+                dictionary_path = Path(project_root) / "visual_dictionary.json"
+                write_visual_dictionary(visual_dictionary_data, dictionary_path)
+                self._ok(f"Visual dictionary written: {dictionary_path}")
+            except VisualDictionaryError as exc:
+                self._warn(str(exc))
 
         # Warm Unity's global package cache so first open resolves locally
         # instead of stalling on the registry. Best-effort by contract — any

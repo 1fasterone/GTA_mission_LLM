@@ -43,6 +43,41 @@ one mechanic, the brief is about that one mechanic.
 
 Do NOT write any code, JSON, or package IDs."""
 
+# The visual-compiler authority path deliberately has its own Step-2 prompt.
+# The normal creator prompt may receive theme/context hints for legacy full
+# builds; a semantic-authority capture must not receive a board, a prior
+# dictionary, or an implicit art direction.  The raw user prompt is the only
+# semantic input and the resulting text is frozen before any visual work.
+UNITY_SEMANTIC_CONCEPT_SYSTEM = """\
+You are the semantic authority for a game compiler. Produce a concise,
+implementation-ready gameplay brief in plain English. No code, JSON, package
+IDs, model names, art direction, palette, lighting, or image description.
+Preserve the requested game's meaning exactly; do not invent content."""
+
+UNITY_SEMANTIC_CONCEPT_USER = """\
+Compile this natural-language game prompt into the semantic Concept.txt that
+will govern all later visual and deterministic compiler stages:
+
+"{user_prompt}"
+
+Cover only gameplay truth:
+- game type and player role
+- declared entities, roles, and counts
+- player mechanics, controls, and required systems
+- win conditions, lose conditions, and progression
+- required scenes or spaces only when gameplay needs them
+
+When the prompt declares named entities, preserve their names in a compact
+ENTITIES section (one ``- Name: role and gameplay purpose`` line per entity;
+include kind/count when the prompt provides them). This is a semantic index,
+not a visual shopping list.
+
+Do not add entities, mechanics, objectives, or systems that the prompt did not
+declare. Avoid visual description except where it changes semantic identity
+(for example, toy car versus real car). Do not mention a board, reference
+image, catalog asset, model, material, palette, lighting, or visual style.
+Do not write code, JSON, or package IDs."""
+
 # ── STEP 3: Schema fill ───────────────────────────────────────────────────────
 
 UNITY_SCHEMA_FILL_SYSTEM = """\

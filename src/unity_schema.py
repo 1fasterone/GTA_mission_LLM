@@ -247,7 +247,7 @@ class EntitySpec(BaseModel):
     # deliberately SEPARATE from model_hint, which drives literal keyword-overlap
     # matching against Kenney's short curated tags (src/unity_asset_catalog.py);
     # an evocative multi-word phrase reused there would dilute that scoring.
-    # Normally filled by src/unity_sketchfab_translator.py (a shared project
+    # Filled from the Step-3 visual_dictionary.json sidecar (a shared project
     # style brief + this entity's noun phrase) so independently-sourced
     # Sketchfab picks read as one art direction instead of "constructed chaos".
     # Empty -> the resolver falls back to model_hint / tokenized entity name.

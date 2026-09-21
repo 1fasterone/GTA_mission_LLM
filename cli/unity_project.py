@@ -14,6 +14,7 @@ from src.unity_pipeline   import UnityPipeline
 from src.unity_resolver   import UnityResolver
 from src.unity_schema     import UnitySchema
 from src.unity_reference_image import ReferenceImageError
+from src.visual_compiler_dictionary import VisualDictionaryError
 
 from .common import app, console, _cfg, _load_authored_scene, _scene_cache_dir, _unity_pipe_cfg
 
@@ -44,6 +45,16 @@ def unity_create(
                                               help="Scene Compiler layout (layouts/<name>.json) or a scene file from `unity-scene` — the authored models AND their placement win over Sketchfab/Kenney"),
     reference_image: Optional[Path] = typer.Option(None, "--reference-image",
                                                     help="Visual reference image sent to the Concept stage only (PNG/JPEG/WEBP/GIF)"),
+    concept_file: Optional[Path] = typer.Option(None, "--concept-file",
+                                                help="Read-only semantic Concept.txt authority for a full E2E run"),
+    visual_board: Optional[Path] = typer.Option(None, "--visual-board",
+                                                help="Canonical planning board supplied to the Step-3 visual annotator"),
+    visual_dictionary: Optional[Path] = typer.Option(None, "--visual-dictionary",
+                                                     help="Precomputed visual_dictionary.json consumed deterministically"),
+    visual_dictionary_output: Optional[Path] = typer.Option(None, "--visual-dictionary-output",
+                                                            help="Write the Step-3 visual_dictionary.json to this new path"),
+    visual_assets_only: bool = typer.Option(False, "--visual-assets-only",
+                                             help="Stop after visual dictionary consumption and deterministic model resolution/download; do not generate a Unity project"),
     models_dir: Optional[Path] = typer.Option(None, "--models-dir",
                                               help="--scene only: the Scene Compiler's models/ folder (default: the layout's own ../models sibling)"),
     no_think:    bool          = typer.Option(False, "--no-think",
@@ -52,6 +63,10 @@ def unity_create(
                                               help="With --compose: let the LLM author prompt-specific C# into each composed micro (one focused call per subsystem). --no-micro-code keeps the deterministic baseline bodies and is faster."),
     no_llm:      bool          = typer.Option(False, "--no-llm",
                                               help="Run the compiler with NO model at all: Steps 2-3 are replaced by a deterministic parse of the brief's own sections (TITLE/SCENES/NARRATIVE/SCRIPTS/ENTITIES/AUDIO/...). Requires a structured brief and abstains loudly if one section is missing. This is the control arm for measuring what the Pipeline LLM contributes — it is NOT a test of Step 3, which does not run."),
+    concept_only: bool        = typer.Option(False, "--concept-only",
+                                              help="Stop after the semantic Concept.txt authority artifact; rejects reference images and does not generate a schema or project."),
+    concept_output: Path      = typer.Option(Path("output/visual_compiler/Concept.txt"), "--concept-output",
+                                              help="Destination for --concept-only Concept.txt; existing files are never overwritten."),
 ) -> None:
     """Generate a complete Unity project folder from a plain-English prompt.
 
@@ -74,11 +89,52 @@ def unity_create(
             raise typer.Exit(1)
         prompt = file.read_text(encoding="utf-8").strip()
 
+    if not prompt and concept_file is not None:
+        if not concept_file.exists():
+            console.print(f"[red]Error:[/] Concept.txt not found: {concept_file}")
+            raise typer.Exit(1)
+        prompt = concept_file.read_text(encoding="utf-8").strip()
+
     if not prompt:
         console.print("[red]Error:[/] provide a prompt or use --file <path>")
         console.print("  Example: python main.py unity-create \"A 2D platformer\"")
         console.print("  Example: python main.py unity-create --file prompts/neon_fugitive.txt")
         raise typer.Exit(1)
+
+    if concept_only:
+        if reference_image is not None:
+            console.print("[red]Error:[/] --concept-only is semantic-only and "
+                          "cannot receive --reference-image")
+            raise typer.Exit(2)
+        if any((concept_file is not None, visual_board is not None,
+                visual_dictionary is not None,
+                visual_dictionary_output is not None,
+                visual_assets_only)):
+            console.print("[red]Error:[/] --concept-only cannot be combined "
+                          "with --concept-file, --visual-board, "
+                          "--visual-dictionary, --visual-dictionary-output, "
+                          "or --visual-assets-only")
+            raise typer.Exit(2)
+        if any((compose, blender_models, route is not None, scene is not None,
+                no_llm)):
+            console.print("[red]Error:[/] --concept-only cannot be combined "
+                          "with --compose, --blender-models, --route, --scene, "
+                          "or --no-llm")
+            raise typer.Exit(2)
+        cfg = _cfg(config, model)
+        try:
+            UnityPipeline(cfg).run_concept_only(
+                prompt,
+                seed=seed,
+                no_think=no_think,
+                output=concept_output,
+                prompt_source=file,
+                config_file=Path(config),
+            )
+        except (ValueError, OSError) as exc:
+            console.print(f"[red]Semantic authority error:[/] {exc}")
+            raise typer.Exit(2) from exc
+        return
 
     route_data = None
     if route is not None:
@@ -103,9 +159,30 @@ def unity_create(
             raise typer.Exit(1)
 
     try:
-        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm, reference_image=reference_image)
+        UnityPipeline(cfg).run(
+            prompt,
+            theme=theme,
+            mashup_with=mashup_with,
+            seed=seed,
+            compose=compose,
+            blender_models=blender_models,
+            route=route_data,
+            scene=scene_data,
+            no_think=no_think,
+            micro_code=micro_code,
+            no_llm=no_llm,
+            reference_image=reference_image,
+            concept_file=concept_file,
+            visual_board=visual_board,
+            visual_dictionary=visual_dictionary,
+            visual_dictionary_output=visual_dictionary_output,
+            visual_assets_only=visual_assets_only,
+        )
     except ReferenceImageError as exc:
         console.print(f"[red]Reference image error:[/] {exc}")
+        raise typer.Exit(2)
+    except VisualDictionaryError as exc:
+        console.print(f"[red]Visual dictionary error:[/] {exc}")
         raise typer.Exit(2)
     except BriefParseError as exc:
         # Abstain, don't half-fill: the brief is too thin to compile offline and

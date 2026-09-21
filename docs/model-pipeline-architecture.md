@@ -140,11 +140,11 @@ a project reads as "constructed chaos": a realistic PBR knight next to a
 cartoon sword next to a toy-store wall. Two deliberately separate, composable
 mitigations, both empirically tuned against the live API (2026-07):
 
-1. **`src/unity_sketchfab_translator.py`** — a concept-translator pass (same
-   shape and pipeline placement as `src/audio/concept_translator.py`, run
-   while the project LLM is still loaded) that derives ONE shared style tag
-   for the whole project plus a plain query per entity, filling
-   `EntitySpec.sketchfab_query`. **Sketchfab's search is literal keyword
+1. **`src/visual_compiler_dictionary.py`** — the Step-3 visual dictionary
+   pass that derives ONE shared style tag for the whole project plus a plain
+   query per declared entity, writing a provenance-bound sidecar and filling
+   `EntitySpec.sketchfab_query` without mutating `Concept.txt`.
+   **Sketchfab's search is literal keyword
    match, not semantic** — verified live that a descriptive multi-word style
    sentence ("grim dark medieval siege setting, wet stone and rusted iron,
    muted palette...") returns **zero** results, while a 1-2 word style label

@@ -209,7 +209,7 @@ _SIGNAGE_TOKENS = frozenset({
 })
 
 # Style adjectives — how a model LOOKS, never what it IS. The concept
-# translator / style session prefixes nearly every sketchfab_query with the
+# visual dictionary / style session prefixes nearly every sketchfab_query with the
 # run's visual style ("realistic …", "low poly …"), and marketplace uploaders
 # tag the same words religiously, so a style word is guaranteed to co-occur on
 # both sides of almost any query/asset pair. Hit live
@@ -306,6 +306,31 @@ _GENERIC_PERSON_TOKENS = frozenset({
 _PERSON_KINDS = frozenset({"character", "characters", "human", "person",
                            "people", "npc", "crowd", "civilian"})
 
+# Catalog categories are coarse, but they are still a hard semantic floor for
+# typed visual-dictionary requests. Without this guard a collectible query can
+# accept a track pack because "track" appeared in the coin's placement hint,
+# and an NPC can accept furniture because "garage" appeared in its scene hint.
+_PERSON_ASSET_CATEGORIES = frozenset({
+    "character", "npc", "crowd", "enemy", "creature", "robot", "player",
+})
+_COLLECTIBLE_ASSET_CATEGORIES = frozenset({
+    "collectible", "pickup", "item", "object", "prop",
+})
+_VEHICLE_ASSET_CATEGORIES = frozenset({
+    "vehicle", "car", "bike", "aircraft", "ship", "watercraft",
+})
+_PROP_INCOMPATIBLE_ASSET_CATEGORIES = frozenset({
+    *_PERSON_ASSET_CATEGORIES, "collectible", "pickup", "item",
+    *_VEHICLE_ASSET_CATEGORIES, "track", "road", "building", "furniture",
+})
+_VISUAL_QUERY_NON_IDENTITY = frozenset({
+    "red", "blue", "green", "yellow", "black", "white", "orange",
+    "purple", "pink", "brown", "gray", "grey", "fast", "aggressive",
+    "sleek", "sport", "sports", "off", "road", "race", "racing",
+    "racer", "speed", "speedster", "toy", "voiced", "model", "game",
+    "asset", "ready", "launch", "springy", "spinning", "small", "large",
+})
+
 
 def _entry_tokens(entry: dict) -> set[str]:
     """Keyword tags + filename-stem tokens — the searchable identity of a
@@ -359,7 +384,7 @@ def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
 
 
 def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
-    """Token → weight for one entity. model_hint and the concept-translated
+    """Token → weight for one entity. model_hint and the visual-dictionary
     sketchfab_query count double, the scene description barely at all (it only
     breaks ties toward on-theme assets)."""
     weights: dict[str, float] = {}
@@ -1005,6 +1030,70 @@ def resolve_entity_assets(schema,
             concept_layers.json is absent (`layers is None`) — like every other
             layer branch, no taxonomy means no opinion.
             """
+            category = str(a.get("category", "")).lower()
+            hints = {str(h).lower() for h in a.get("kind_hints", [])}
+            asset_domains = {category} | hints
+            # A frozen visual-dictionary query is the entity's explicit object
+            # request. If none of its non-style/non-kind words appears in the
+            # candidate filename, a category match alone is not enough: this
+            # is what rejects a race taxi for "pit chief" or a BMW for a
+            # specifically toy/low-poly rival. Legacy entities without a
+            # sketchfab_query keep their historical catalog behavior.
+            explicit_query = str(getattr(e, "sketchfab_query", "") or "").strip()
+            if explicit_query and kind not in _SURFACE_KINDS:
+                query_identity = {
+                    t for t in tokenize(explicit_query)
+                    if len(t) > 1 and t not in _STYLE_TOKENS
+                    and t not in _STOPWORDS
+                    and t not in _GENERIC_PERSON_TOKENS
+                    and t not in {"vehicle", "vehicles", "prop", "props",
+                                  "collectible", "collectibles", "item", "items"}
+                    and t not in _VISUAL_QUERY_NON_IDENTITY
+                }
+                fname_tokens = {
+                    t for t in tokenize(Path(a.get("filename", "")).stem)
+                    if len(t) > 1
+                }
+                if query_identity and not (query_identity & fname_tokens):
+                    return False
+            if kind in (_PERSON_KINDS | {"player", "enemy", "boss"}):
+                if not (asset_domains & _PERSON_ASSET_CATEGORIES):
+                    return False
+            elif kind in {"collectible", "pickup", "coin", "gem", "item", "powerup"}:
+                if not (asset_domains & _COLLECTIBLE_ASSET_CATEGORIES):
+                    return False
+            elif kind == "vehicle":
+                if not (asset_domains & _VEHICLE_ASSET_CATEGORIES):
+                    return False
+            elif kind == "prop" and asset_domains & _PROP_INCOMPATIBLE_ASSET_CATEGORIES:
+                if str(a.get("format", "")).lower() == "png":
+                    # 2D sprite catalogs intentionally use a broader visual
+                    # category than 3D FBX assets; keep the established sprite
+                    # preference path intact.
+                    return True
+                if (category in {"road", "track"}
+                        and any(token in _tokens_with_plurals(
+                            getattr(e, "model_hint", "") or "")
+                                for token in _SIGNAGE_TOKENS)):
+                    # A prop explicitly asking for a sign may use the road
+                    # category; the object identity is the sign, not the road.
+                    return True
+                # A prop may intentionally ask for a named vehicle-like prop
+                # (e.g. Skateboards). Let that through only when the entity
+                # name or the explicit marketplace query identifies the asset;
+                # words in model_hint are often placement context ("launch
+                # cars forward" for BoostPad), not object identity.
+                object_tokens = (
+                    _tokens_with_plurals(e.name)
+                    | _tokens_with_plurals(getattr(e, "sketchfab_query", "") or "")
+                )
+                fname_tokens = {
+                    t for t in tokenize(Path(a.get("filename", "")).stem)
+                    if len(t) > 1
+                }
+                if not (object_tokens & fname_tokens):
+                    return False
+
             if layers is None:
                 return True
             strong_m = layers.membership(a)[1]
@@ -1012,6 +1101,18 @@ def resolve_entity_assets(schema,
                 return True
             fname = {t for t in tokenize(Path(a.get("filename", "")).stem)
                      if len(t) > 1}
+            # The old escape used every strong query token. That let a
+            # contextual noun in a visual hint (Coin "on the asphalt track",
+            # NPC "in a garage") certify an out-of-domain filename. Only a
+            # token from the entity's own concept-layer vocabulary is identity
+            # evidence here; scene context remains a ranking signal, never a
+            # domain override.
+            if layer_band:
+                band_vocab = set().union(*(
+                    layers.layers[layer][0] for layer in layer_band
+                    if layer in layers.layers
+                ))
+                return bool((specific_q & band_vocab) & fname)
             return bool(strong_q & fname)
 
         def _sk_contextual_guard(a: dict) -> bool:
@@ -1066,7 +1167,7 @@ def resolve_entity_assets(schema,
                     s += _genre_bias(layers.membership(a)[1])
                 return s
 
-            # sketchfab_query (src/unity_sketchfab_translator.py's concept +
+            # sketchfab_query (the Step-3 visual dictionary's concept +
             # shared-style-brief enrichment) wins when present; falls back to
             # today's mechanical model_hint / strong-token derivation,
             # genre-prefixed so a bare "vehicle" search in a racing project

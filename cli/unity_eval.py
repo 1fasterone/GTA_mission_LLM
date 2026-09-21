@@ -5,10 +5,194 @@ import json
 from pathlib import Path
 
 import typer
+import yaml
 
 from src.unity_schema import UnitySchema
 
 from .common import app, console
+
+
+@app.command("unity-visual-baseline")
+def unity_visual_baseline(
+    prompt_file: Path = typer.Option(..., "--prompt-file",
+                                     help="Unchanged natural-language brief used by both arms"),
+    reference_image: Path = typer.Option(..., "--reference-image",
+                                         help="Image supplied to Concept in the reference arm"),
+    text_project: Path = typer.Option(..., "--text-project",
+                                      help="Completed text-only Unity project directory"),
+    image_project: Path = typer.Option(..., "--image-project",
+                                       help="Completed reference-image Unity project directory"),
+    config_file: Path = typer.Option(Path("config.yaml"), "--config",
+                                     help="Frozen pipeline config used by both runs"),
+    catalog_file: Path = typer.Option(
+        Path("lookups/unity/asset_catalog.json"), "--catalog",
+        help="Frozen catalog snapshot used by both runs"),
+    output: Path = typer.Option(
+        Path("output/visual_compiler/baseline.json"), "--output",
+        help="Manifest destination"),
+    model: str = typer.Option(..., "--model",
+                              help="Pipeline model identifier used by both runs"),
+    seed: int = typer.Option(..., "--seed",
+                             help="Pipeline seed used by both runs"),
+) -> None:
+    """Capture hashes and lineage for the Phase 1 image-vs-text baseline.
+
+    This command records two completed runs; it does not invoke the LLM or
+    regenerate either project. Generate the arms first with the same prompt,
+    config, catalog, model, and seed.
+    """
+    from src.visual_compiler_baseline import (BaselineArtifactError,
+                                               build_baseline_manifest,
+                                               write_baseline_manifest)
+
+    try:
+        manifest = build_baseline_manifest(
+            prompt_file,
+            reference_image=reference_image,
+            text_project=text_project,
+            image_project=image_project,
+            config_file=config_file,
+            catalog_file=catalog_file,
+            repo_root=Path.cwd(),
+            model=model,
+            seed=seed,
+        )
+        path = write_baseline_manifest(manifest, output)
+    except BaselineArtifactError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+
+    console.print(
+        f"[green]Baseline captured[/] {path} "
+        f"(identity {manifest['identity']['hash']})"
+    )
+
+
+@app.command("unity-visual-baseline-import")
+def unity_visual_baseline_import(
+    concept_loop: Path = typer.Argument(
+        ..., help="Existing output/concept_loop directory containing lineage.json"),
+    output: Path = typer.Option(
+        Path("output/visual_compiler/concept_loop.baseline.json"), "--output",
+        help="Manifest destination"),
+) -> None:
+    """Import historical Concept-loop evidence without upgrading its status."""
+    from src.visual_compiler_baseline import (BaselineArtifactError,
+                                               build_concept_loop_manifest,
+                                               write_baseline_manifest)
+
+    try:
+        manifest = build_concept_loop_manifest(concept_loop, repo_root=Path.cwd())
+        path = write_baseline_manifest(manifest, output)
+    except BaselineArtifactError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+
+    strict = manifest["validity"]["strict_phase1"]
+    status = "strict" if strict else "partial historical evidence"
+    console.print(
+        f"[green]Baseline imported[/] {path} ({status}; "
+        f"identity {manifest['identity']['hash']})"
+    )
+
+
+@app.command("unity-visual-shopping-list")
+def unity_visual_shopping_list(
+    project: Path = typer.Argument(
+        ..., help="Completed Unity project directory containing a schema"
+    ),
+    board_image: Path = typer.Option(
+        None, "--board-image",
+        help="Exact image used for the Concept; retained as provenance"
+    ),
+    output: Path = typer.Option(
+        Path("output/visual_compiler/shopping_list.json"), "--output",
+        help="Shopping-list sidecar destination"
+    ),
+) -> None:
+    """Extract deterministic model-fulfilment demands from a Unity run.
+
+    The command reads declared entities and resolver paths only. It never
+    invokes the LLM, edits the schema, or treats an unresolved entity as a
+    default prop.
+    """
+    from src.visual_compiler_shopping_list import (
+        ShoppingListArtifactError,
+        build_shopping_list,
+        write_shopping_list,
+    )
+
+    try:
+        manifest = build_shopping_list(
+            project,
+            board_image=board_image,
+            repo_root=Path.cwd(),
+        )
+        path = write_shopping_list(manifest, output)
+    except ShoppingListArtifactError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
+
+    console.print(
+        f"[green]Shopping list captured[/] {path} "
+        f"({len(manifest['entries'])} entries; "
+        f"identity {manifest['identity']['hash']})"
+    )
+
+
+@app.command("unity-visual-board")
+def unity_visual_board(
+    concept_file: Path = typer.Argument(..., help="Immutable semantic Concept.txt"),
+    output: Path = typer.Option(..., "--output", "-o", help="Board PNG destination"),
+    manifest: Path = typer.Option(None, "--manifest",
+                                  help="Comfy workflow/provenance manifest destination"),
+    config_file: Path = typer.Option(Path("config.yaml"), "--config"),
+    checkpoint: str = typer.Option(
+        "sd15ModelLab_realV001_1651730.safetensors", "--checkpoint"),
+    seed: int = typer.Option(978075547277410, "--seed"),
+    width: int = typer.Option(768, "--width"),
+    height: int = typer.Option(768, "--height"),
+    steps: int = typer.Option(20, "--steps"),
+    cfg: float = typer.Option(8.0, "--cfg"),
+    sampler: str = typer.Option("dpmpp_2m_sde_gpu", "--sampler"),
+    scheduler: str = typer.Option("karras", "--scheduler"),
+) -> None:
+    """Generate one canonical visual board through ComfyUI's headless API."""
+    from src.visual_compiler_board import (
+        ComfyBoardClient, VisualBoardError, concept_board_prompt,
+    )
+
+    if not concept_file.is_file():
+        console.print(f"[red]Concept.txt not found:[/] {concept_file}")
+        raise typer.Exit(2)
+    try:
+        concept = concept_file.read_text(encoding="utf-8")
+        cfg_data = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
+        diffusion_cfg = ((cfg_data.get("blender") or {}).get("diffusion") or {})
+        client = ComfyBoardClient(
+            base_url=str(diffusion_cfg.get("base_url", "http://127.0.0.1:8188")),
+            timeout=float(diffusion_cfg.get("timeout", 180)),
+            poll_timeout=float(diffusion_cfg.get("poll_timeout", 900)),
+        )
+        prompt = concept_board_prompt(concept)
+        negative = (
+        "text, watermark, logo, UI, HUD, letters, numbers, collage, grid, "
+            "photorealistic, horror, gore, nsfw, deformed, blurry"
+        )
+        manifest_path = manifest or output.with_suffix(".comfy.json")
+        path = client.generate(
+            prompt=prompt, negative=negative, checkpoint=checkpoint, seed=seed,
+            width=width, height=height, steps=steps, cfg=cfg,
+            sampler_name=sampler, scheduler=scheduler, output=output,
+            manifest=manifest_path,
+        )
+        freed = client.free_models()
+        console.print(f"[green]Visual board written[/] {path}")
+        console.print(f"[green]Comfy manifest written[/] {manifest_path}")
+        console.print(f"[green]Comfy models freed:[/] {freed}")
+    except (OSError, ValueError, VisualBoardError) as exc:
+        console.print(f"[red]Visual board error:[/] {exc}")
+        raise typer.Exit(2) from exc
 
 
 @app.command("unity-playability")
