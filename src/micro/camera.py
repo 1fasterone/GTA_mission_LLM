@@ -116,6 +116,17 @@ class CameraRigPipeline(UnityMicroPipeline):
         if schema.fov_base    <= 0:    schema.fov_base    = 60.0
         if schema.fov_sprint  < schema.fov_base:
             schema.fov_sprint = schema.fov_base
+        # Racing keeps the existing camera schema but has a distinct visual
+        # baseline: low enough to read the bike and curbing, and wide enough
+        # to sell speed. Only replace the generic schema defaults; authored
+        # values remain authoritative.
+        if variant == "vehicle_chase":
+            if (schema.offset_x, schema.offset_y, schema.offset_z) == (0.0, 3.0, -6.0):
+                schema.offset_y = 1.35
+                schema.offset_z = -5.25
+            if (schema.fov_base, schema.fov_sprint) == (60.0, 70.0):
+                schema.fov_base = 78.0
+                schema.fov_sprint = 88.0
         # First-person rig is rooted on the head — zero out follow offsets
         if variant == "first_person":
             schema.offset_x = schema.offset_y = schema.offset_z = 0.0

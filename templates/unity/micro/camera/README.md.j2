@@ -23,3 +23,11 @@
 | `smoothTime`   | {{ "%.3f"|format(s.smooth_time) }} | higher = floatier follow |
 | `fovBase`      | {{ "%.1f"|format(s.fov_base) }} | resting field of view |
 | `fovSprint`    | {{ "%.1f"|format(s.fov_sprint) }} | widened FOV during sprint |
+{% if variant == "vehicle_chase" %}
+
+The racing chase variant uses the existing offset as a low trailing mount,
+adds a deterministic forward look-ahead, locks the horizon to world up, and
+applies only a bounded fraction of the generated vehicle visual lean. FOV and
+analytic shake are driven by Rigidbody forward speed; no random state or
+additional camera schema fields are required.
+{% endif %}
