@@ -1906,6 +1906,12 @@ _TYPE_NAMESPACES: "dict[str, str]" = {
     "Queue": "System.Collections.Generic",
     "Stack": "System.Collections.Generic",
     "IEnumerator": "System.Collections",
+    # Cinemachine 3.x renamed the old CM2 virtual-camera component.  A schema
+    # fill can still emit the legacy spelling, but the generated project uses
+    # the Unity.Cinemachine assembly where CinemachineCamera is the canonical
+    # runtime component.
+    "CinemachineCamera": "Unity.Cinemachine",
+    "CinemachineVirtualCamera": "Unity.Cinemachine",
     # UI Toolkit. Only the types with ONE sane answer: `Button`, `Label`,
     # `Image` and `Text` all exist in BOTH UnityEngine.UI and
     # UnityEngine.UIElements, so importing either for those is the CS0104
@@ -1930,6 +1936,22 @@ _TYPE_NAMESPACES: "dict[str, str]" = {
 
 # Every identifier inside a declared type — `List<VisualElement>[]` names two.
 _TYPE_TOKEN_RE = re.compile(r"[A-Za-z_]\w*")
+
+_DECLARED_TYPE_ALIASES: dict[str, str] = {
+    # Unity 6 ships Cinemachine 3.x.  Keep this repair deterministic and
+    # schema-local: the Pipeline LLM may still describe a virtual camera, but
+    # Step 6 emits the component name that the installed package exposes.
+    "CinemachineVirtualCamera": "CinemachineCamera",
+}
+
+
+def canonical_declared_type(type_name: str) -> str:
+    """Return the installed Unity package's spelling for a declared type."""
+    raw = str(type_name or "")
+    return _TYPE_TOKEN_RE.sub(
+        lambda match: _DECLARED_TYPE_ALIASES.get(match.group(0), match.group(0)),
+        raw,
+    )
 
 
 def usings_for_declared_types(types) -> "list[str]":
@@ -3710,6 +3732,11 @@ def lint_fields(fields: list[CodeField], *, reserved: set[str],
             console.print(f"  [yellow]FIX[/]  dropped duplicate/reserved field {f.name!r}")
             continue
         seen.add(key)
+        canonical_type = canonical_declared_type(f.type)
+        if canonical_type != f.type:
+            console.print(f"  [magenta]FIX[/]  canonicalized declared type on "
+                          f"`{f.name}`: {f.type!r} -> {canonical_type!r}")
+            f = f.model_copy(update={"type": canonical_type})
         # `default` is interpolated raw into the declaration, so anything wrong
         # with it is a compile error the syntax gate can only report after the
         # fact (`private int _seed = -1i;` and `= 0i;`, both live).
