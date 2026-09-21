@@ -455,6 +455,10 @@ C# RULES for extra_* bodies:
   For fighting: _isBlocking, _isDodging, _isInvincible, _primaryCooldown, _secondaryCooldown.
   No `using` inside method bodies — put them in extra_usings.
   No braces around method bodies in extra_methods.body — template adds them.
+  Unity 6 with Cinemachine 3 uses `CinemachineCamera` from the
+  `Unity.Cinemachine` namespace. Do not emit the obsolete
+  `CinemachineVirtualCamera` type; if a camera field is needed, declare
+  `CinemachineCamera` and put `Unity.Cinemachine` in extra_usings.
 
 ────────── FEW-SHOT: underwater scuba explorer ──────────
 {{

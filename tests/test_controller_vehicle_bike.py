@@ -23,6 +23,7 @@ from pathlib import Path
 
 from src.csharp_syntax_gate import check_files
 from src.micro.controller import ControllerPipeline, ControllerSchema
+from src.micro.code_fields import CodeField, lint_fields, usings_for_declared_types
 from src.unity_compose import subsystems_for
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -72,6 +73,15 @@ def test_drive_with_no_prompt_defaults_to_vehicle_car():
 def test_hover_words_still_win_their_own_lane():
     prompt = "A hovercar speeder race above a neon canyon."
     assert _controller_variant(user_prompt=prompt) == "vehicle_hover"
+
+
+def test_cinemachine_3_type_is_canonicalized_for_unity6():
+    fields = lint_fields(
+        [CodeField(name="_camera", type="CinemachineVirtualCamera", default="null")],
+        reserved=set(),
+    )
+    assert fields[0].type == "CinemachineCamera"
+    assert usings_for_declared_types([fields[0].type]) == ["Unity.Cinemachine"]
 
 
 # ── Template (Controller.cs.j2) ─────────────────────────────────────────────
