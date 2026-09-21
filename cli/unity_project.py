@@ -13,6 +13,7 @@ from src.unity_generator  import UnityProjectGenerator
 from src.unity_pipeline   import UnityPipeline
 from src.unity_resolver   import UnityResolver
 from src.unity_schema     import UnitySchema
+from src.unity_reference_image import ReferenceImageError
 
 from .common import app, console, _cfg, _load_authored_scene, _scene_cache_dir, _unity_pipe_cfg
 
@@ -41,6 +42,8 @@ def unity_create(
                                               help="Route file from `unity-path` (routes.json) — compose the circuit around this authored/traced course instead of the parametric oval"),
     scene: Optional[Path]      = typer.Option(None, "--scene",
                                               help="Scene Compiler layout (layouts/<name>.json) or a scene file from `unity-scene` — the authored models AND their placement win over Sketchfab/Kenney"),
+    reference_image: Optional[Path] = typer.Option(None, "--reference-image",
+                                                    help="Visual reference image sent to the Concept stage only (PNG/JPEG/WEBP/GIF)"),
     models_dir: Optional[Path] = typer.Option(None, "--models-dir",
                                               help="--scene only: the Scene Compiler's models/ folder (default: the layout's own ../models sibling)"),
     no_think:    bool          = typer.Option(False, "--no-think",
@@ -100,7 +103,10 @@ def unity_create(
             raise typer.Exit(1)
 
     try:
-        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm)
+        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm, reference_image=reference_image)
+    except ReferenceImageError as exc:
+        console.print(f"[red]Reference image error:[/] {exc}")
+        raise typer.Exit(2)
     except BriefParseError as exc:
         # Abstain, don't half-fill: the brief is too thin to compile offline and
         # the message names every missing section plus the remedy.

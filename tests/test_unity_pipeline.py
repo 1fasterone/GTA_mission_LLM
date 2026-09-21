@@ -28,6 +28,7 @@ import pytest
 from src.unity_pipeline import (UnityPipeline, _programmatic_fix, _check_consistency,
                                 _infer_mission_scenes, _objective_scene_map,
                                 _reconcile_scene_specs)
+from src.unity_reference_image import ReferenceImageError
 from src.unity_schema import UnityPackage, UnitySchema, UnityScript
 
 
@@ -129,6 +130,35 @@ def _run_pipeline(pipeline: UnityPipeline, concept: str, schema_json: str) -> Pa
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestUnityPipelineHappyPath2D:
+    def test_reference_image_reaches_concept_only(
+        self, unity_pipeline_config, unity_concept_text, unity_schema_json_2d, tmp_path
+    ):
+        image = tmp_path / "racing-reference.png"
+        image.write_bytes(b"png-bytes")
+        pipeline = _make_pipeline(unity_pipeline_config)
+        mock_chat = MagicMock(side_effect=[unity_concept_text, unity_schema_json_2d])
+        pipeline.llm.chat = mock_chat
+
+        pipeline.run("a racing game", reference_image=image)
+
+        concept_call, schema_call = mock_chat.call_args_list
+        assert concept_call.kwargs["images"] == [
+            "data:image/png;base64,cG5nLWJ5dGVz"
+        ]
+        assert "REFERENCE IMAGE" in concept_call.kwargs["user"]
+        assert schema_call.kwargs.get("images") is None
+        assert "REFERENCE IMAGE" not in schema_call.kwargs["user"]
+
+    def test_reference_image_is_invalid_for_no_llm_mode(
+        self, unity_pipeline_config, tmp_path
+    ):
+        image = tmp_path / "racing-reference.png"
+        image.write_bytes(b"png-bytes")
+        pipeline = _make_pipeline(unity_pipeline_config)
+
+        with pytest.raises(ReferenceImageError, match="requires the Concept LLM stage"):
+            pipeline.run("a structured brief", no_llm=True, reference_image=image)
+
     def test_run_returns_path_that_exists(
         self, unity_pipeline_config, unity_concept_text, unity_schema_json_2d
     ):

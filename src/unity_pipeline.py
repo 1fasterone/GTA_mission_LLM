@@ -61,6 +61,7 @@ from .unity_pathnorm      import normalize_paths
 from .unity_objective_targets import resolve_objective_targets
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
+from .unity_reference_image import ReferenceImageError, encode_reference_image
 
 console = Console()
 
@@ -1125,7 +1126,8 @@ class UnityPipeline:
             scene:       dict | None = None,
             no_think:    bool = False,
             micro_code:  bool = True,
-            no_llm:      bool = False) -> Path:
+            no_llm:      bool = False,
+            reference_image: Path | None = None) -> Path:
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -1135,6 +1137,16 @@ class UnityPipeline:
         # chain deterministic. None → server picks a random seed (today's default).
         if seed is not None:
             self.llm.seed = seed
+
+        if reference_image is not None and no_llm:
+            raise ReferenceImageError(
+                "--reference-image requires the Concept LLM stage and cannot "
+                "be used with --no-llm"
+            )
+        reference_image_uri = (
+            encode_reference_image(reference_image)
+            if reference_image is not None else None
+        )
 
         # A fully-authored structured brief IS its own theme — auto-detected
         # themes + twist seeds only pollute it (hit live twice on
@@ -1282,11 +1294,28 @@ class UnityPipeline:
             if no_think:
                 self._ok("--no-think: reasoning disabled for the whole run "
                          "(concept quality/creativity trades for speed)")
+            concept_user = UNITY_CONCEPT_USER.format(
+                user_prompt=user_prompt,
+                theme_block=theme_block,
+            )
+            concept_images = None
+            if reference_image_uri is not None:
+                concept_user += (
+                    "\n\nREFERENCE IMAGE\n"
+                    "Use the attached image only as a visual target. Extract "
+                    "camera angle, horizon framing, lighting tone, palette, "
+                    "track composition, and environment density. Do not copy "
+                    "image metadata, HUD text, branding, or image contents "
+                    "into the schema. Do not write code.\n"
+                )
+                concept_images = [reference_image_uri]
+                self._ok("Reference image attached to Concept only")
             concept = self.llm.chat(
                 system      = UNITY_CONCEPT_SYSTEM,
-                user        = UNITY_CONCEPT_USER.format(user_prompt=user_prompt, theme_block=theme_block),
+                user        = concept_user,
                 temperature = self.concept_temp,
                 thinking    = not no_think,
+                images      = concept_images,
             )
             self._ok(f"{len(concept)} chars of project concept generated")
             if self.show_prompts:
