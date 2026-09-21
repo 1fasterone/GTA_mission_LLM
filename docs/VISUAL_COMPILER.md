@@ -14,6 +14,10 @@ the final authority. It binds semantic game intent to visual identity, turns
 that binding into deterministic asset choices and layout inputs, and rejects
 outputs that do not satisfy the contract.
 
+**Visual compiler:** A deterministic system that binds semantic game intent to
+visual identity, produces validated asset and layout choices, and rejects
+outputs that violate meaning, appearance, or provenance constraints.
+
 This is an architectural target, not a claim that adjacent tools do not
 provide individual pieces of it. Renderers, procedural systems, scene
 description systems, image generators, and asset search services each solve a
@@ -45,7 +49,16 @@ The Pipeline LLM remains limited to Steps 2–3. It may interpret the Concept
 and visual board and fill the existing schema fields such as `model_hint` and
 `sketchfab_query`. Steps 4–7 remain deterministic and LLM-free.
 
+Within the visual-compilation boundary, **the LLM is an annotator, not a
+generator. It interprets; it does not invent.** It can annotate the declared
+entities with visual targets, but it cannot create gameplay entities, choose
+an unvalidated runtime asset, or replace deterministic layout and generation.
+
 ## Authority boundaries
+
+**Visual authority = the allowed space of appearance, not the allowed space
+of meaning.** A board can constrain what a declared entity should look like;
+it cannot decide what the game means or which mechanics exist.
 
 | Source | Owns | Does not own |
 | --- | --- | --- |
@@ -58,7 +71,8 @@ and visual board and fill the existing schema fields such as `model_hint` and
 When authorities disagree, semantic truth wins over visual suggestion. A board
 may show a toy block or rubber duck as an environmental motif, but it must not
 silently create a gameplay pickup, NPC, or objective that the Concept does not
-declare.
+declare. If the board contradicts the Concept, the board is wrong. That is a
+compiler error in the visual input, not permission to rewrite semantic truth.
 
 ## The visual dictionary / model shopping list
 
@@ -151,6 +165,11 @@ result:
 The resolver and compiler must be deterministic for fixed inputs. Missing or
 conflicting evidence must be reported as an abstention with a remedy, never
 silently converted into an unrelated model or stale output.
+
+The visual compiler is intentionally modular. New board types, similarity
+metrics, and catalog sources can be added without changing semantic truth or
+weakening the authority boundaries above. Each extension must still publish
+its inputs, deterministic policy, scores, provenance, and rejection behavior.
 
 ## Build plan
 
