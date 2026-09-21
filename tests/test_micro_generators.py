@@ -249,6 +249,25 @@ def test_camera_fixer_zeros_first_person_offset(dummy_config):
     assert (s.offset_x, s.offset_y, s.offset_z) == (0.0, 0.0, 0.0)
 
 
+def test_vehicle_chase_fixer_uses_low_wide_racing_defaults(dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = p.default_fix(CameraRigSchema(name="RaceCam", variant="vehicle_chase"), "vehicle_chase")
+    assert (s.offset_x, s.offset_y, s.offset_z) == (0.0, 1.35, -5.25)
+    assert (s.fov_base, s.fov_sprint) == (78.0, 88.0)
+
+
+def test_vehicle_chase_preserves_authored_camera_values(dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = CameraRigSchema(
+        name="RaceCam", variant="vehicle_chase",
+        offset_x=0.4, offset_y=2.1, offset_z=-7.0,
+        fov_base=72.0, fov_sprint=84.0,
+    )
+    s = p.default_fix(s, "vehicle_chase")
+    assert (s.offset_x, s.offset_y, s.offset_z) == (0.4, 2.1, -7.0)
+    assert (s.fov_base, s.fov_sprint) == (72.0, 84.0)
+
+
 def test_physics_fixer_trigger_zone_forces_trigger(dummy_config):
     p = PhysicsPipeline(dummy_config)
     s = PhysicsSchema(name="P", variant="trigger_zone", is_trigger=False)
@@ -332,6 +351,20 @@ def test_2_5d_camera_is_perspective_not_orthographic(tmp_path, dummy_config):
     assert "_cam.orthographic" not in cs
     assert "fovBase" in cs
     assert "LookAt" in cs
+
+
+def test_vehicle_chase_camera_renders_deterministic_racing_behaviour(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = p.default_fix(CameraRigSchema(name="RaceCam", variant="vehicle_chase"), "vehicle_chase")
+    p.write_files(s, "vehicle_chase", tmp_path)
+    cs = (tmp_path / "Scripts" / "RaceCam.cs").read_text(encoding="utf-8")
+    assert "private float fovSprint = 88.00f;" in cs
+    assert "Mathf.InverseLerp(0f, 70f, speed)" in cs
+    assert "Quaternion.LookRotation(lookVector, Vector3.up)" in cs
+    assert "Mathf.Sin(phase * 1.31f)" in cs
+    assert "Mathf.Clamp(visualLean * 0.28f, -7f, 7f)" in cs
+    assert "_cam.fieldOfView" in cs
+    assert cs.count("{") == cs.count("}")
 
 
 @pytest.mark.parametrize("variant", ["humanoid", "vehicle", "creature", "object", "ui"])

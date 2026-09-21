@@ -23,10 +23,21 @@ public class {{ s.name }} : MonoBehaviour
 {% if variant != "follow_2d" %}
     [SerializeField] private float fovBase   = {{ "%.2f"|format(s.fov_base) }}f;
 {% endif %}
+{% if variant == "vehicle_chase" %}
+    [SerializeField] private float fovSprint = {{ "%.2f"|format(s.fov_sprint) }}f;
+{% endif %}
 
     private Transform _target;
     private Vector3   _vel;
     private Camera    _cam;
+{% if variant == "vehicle_chase" %}
+    // Racing camera state is derived from the existing vehicle Rigidbody and
+    // the controller's generated Body pivot. No extra schema or runtime
+    // rendering system is required.
+    private Rigidbody _vehicleBody;
+    private Transform _vehicleVisual;
+    private float _vehicleSpeed01;
+{% endif %}
 {% if variant == "board_framing" %}
 
     [Header("Board")]
@@ -160,6 +171,10 @@ public class {{ s.name }} : MonoBehaviour
             var go = GameObject.FindWithTag(followTag);
             if (go == null) return;
             _target = go.transform;
+{% if variant == "vehicle_chase" %}
+            _vehicleBody = _target.GetComponent<Rigidbody>();
+            _vehicleVisual = _target.Find("Body");
+{% endif %}
 {% endif %}
         }
 
@@ -211,8 +226,61 @@ public class {{ s.name }} : MonoBehaviour
         Vector3 desired = _target.position + offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
         transform.LookAt(_target);
+{% elif variant == "vehicle_chase" %}
+        // Low, forward-facing motorcycle chase framing. The target root is
+        // kept as the physics anchor; the visual Body pivot supplies the
+        // already-authored bike lean without rotating the Rigidbody.
+        if (_vehicleBody == null) _vehicleBody = _target.GetComponent<Rigidbody>();
+        if (_vehicleVisual == null) _vehicleVisual = _target.Find("Body");
+
+        float speed = _vehicleBody != null
+            ? Mathf.Abs(Vector3.Dot(_vehicleBody.linearVelocity, _target.forward))
+            : 0f;
+        _vehicleSpeed01 = Mathf.InverseLerp(0f, 70f, speed);
+        float speedCurve = _vehicleSpeed01 * _vehicleSpeed01;
+
+        // Keep the authored local offset, but anchor its height in world-up
+        // so track banking and vehicle pitch do not roll the horizon.
+        Vector3 desired = _target.position
+                        + _target.right * offset.x
+                        + Vector3.up * offset.y
+                        + _target.forward * offset.z;
+        transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
+
+        float lookAhead = Mathf.Lerp(4.5f, 8.5f, speedCurve);
+        Vector3 lookPoint = _target.position
+                          + _target.forward * lookAhead
+                          + Vector3.up * 0.45f;
+        Vector3 lookVector = lookPoint - transform.position;
+        if (lookVector.sqrMagnitude > 0.001f)
+        {
+            // World-up LookRotation locks the horizon. Only the bounded roll
+            // below follows the bike, so banking never becomes camera drift.
+            Quaternion horizonRotation = Quaternion.LookRotation(lookVector, Vector3.up);
+            float visualLean = 0f;
+            if (_vehicleVisual != null)
+                visualLean = Mathf.DeltaAngle(0f, _vehicleVisual.localEulerAngles.z);
+            float cameraRoll = Mathf.Clamp(visualLean * 0.28f, -7f, 7f);
+            transform.rotation = Quaternion.Slerp(
+                transform.rotation,
+                horizonRotation * Quaternion.Euler(0f, 0f, cameraRoll),
+                1f - Mathf.Exp(-12f * Time.deltaTime));
+        }
+
+        // The shake is an analytic, speed-weighted curve: identical motion
+        // produces identical offsets and there is no random state to replay.
+        float phase = Time.time * Mathf.Lerp(7f, 13f, _vehicleSpeed01);
+        Vector3 shake = new Vector3(
+            Mathf.Sin(phase * 1.31f) * 0.018f,
+            Mathf.Sin(phase * 1.73f) * 0.012f,
+            0f) * speedCurve;
+        transform.position += transform.rotation * shake;
+
+        float targetFov = Mathf.Lerp(fovBase, fovSprint, speedCurve);
+        _cam.fieldOfView = Mathf.Lerp(
+            _cam.fieldOfView, targetFov, 1f - Mathf.Exp(-8f * Time.deltaTime));
 {% else %}
-        // follow / vehicle_chase
+        // follow
         Vector3 desired = _target.position + _target.rotation * offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
         transform.LookAt(_target);
