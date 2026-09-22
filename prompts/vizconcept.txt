@@ -1,0 +1,5 @@
+A 2D pixel art educational game screenshot teaching Git version control. A clean, readable commit graph floats in the center of the screen, made of glowing orb nodes connected by bright directional arrows. The graph shows an Initial Commit at the bottom, branching into Feature and Main branches, and merging at the top into a HEAD node. A small pixel-art character in a red hat and backpack stands on top of the HEAD node.
+
+UI Elements: A top bar showing "COMMITS MADE: 12 / 20", "GIT XP: 120" with hearts, and "BRANCHES" with a progress bar. The title "GIT ADVENTURE - The Branching Quest" is at the top center. A left panel reads "GIT STATUS: On branch: feature. Up to date!". A right panel reads "PROGRESS: HEAD -> FEATURE -> MERGED! -> MAIN BRANCH" with green checkmarks. A bottom action bar with three buttons: "[COMMIT]", "[BRANCH]", "[MERGE]".
+
+Background: A dark blue grid with glowing neon orange and teal circuit lines. Style: Crisp 16-bit pixel art, flat shading, neon glow, UI/UX design, educational software, trending on ArtStation.
