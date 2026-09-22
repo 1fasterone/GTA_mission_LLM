@@ -3,12 +3,113 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 import typer
 
 from src.unity_schema import UnitySchema
 
-from .common import app, console
+from .common import _cfg, app, console
+
+
+@app.command("unity-vizconcept-board")
+def unity_vizconcept_board(
+    vizconcept_file: Path = typer.Option(
+        ..., "--vizconcept-file", help="Visual concept prompt sent to ComfyUI"
+    ),
+    output: Path = typer.Option(..., "--output", "-o", help="Board PNG destination"),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Provenance manifest destination"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    checkpoint: str = typer.Option(
+        "sd15ModelLab_realV001_1651730.safetensors", "--checkpoint"
+    ),
+    seed: int = typer.Option(978075547277410, "--seed"),
+    width: int = typer.Option(768, "--width"),
+    height: int = typer.Option(512, "--height"),
+    steps: int = typer.Option(20, "--steps"),
+    cfg_scale: float = typer.Option(8.0, "--cfg"),
+    sampler: str = typer.Option("dpmpp_2m_sde_gpu", "--sampler"),
+    scheduler: str = typer.Option("karras", "--scheduler"),
+) -> None:
+    """Generate Slice 1: vizconcept.txt -> canonical ComfyUI board."""
+    from src.visual_reasoning_compiler import (
+        ComfyVizConceptClient,
+        VisualReasoningCompilerError,
+    )
+
+    if not vizconcept_file.is_file():
+        console.print(f"[red]vizconcept file not found:[/] {vizconcept_file}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]config file not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        cfg = _cfg(str(config))
+        diffusion = ((cfg.get("blender") or {}).get("diffusion") or {})
+        client = ComfyVizConceptClient(
+            base_url=str(diffusion.get("base_url", "http://127.0.0.1:8188")),
+            timeout=float(diffusion.get("timeout", 180)),
+            poll_timeout=float(diffusion.get("poll_timeout", 900)),
+        )
+        manifest_path = manifest or output.with_suffix(".comfy.json")
+        try:
+            path = client.generate(
+                vizconcept_file=vizconcept_file,
+                output=output,
+                manifest=manifest_path,
+                checkpoint=checkpoint,
+                seed=seed,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg=cfg_scale,
+                sampler=sampler,
+                scheduler=scheduler,
+            )
+        finally:
+            freed = client.free_models()
+        console.print(f"[green]Visual reasoning board written[/] {path}")
+        console.print(f"[green]Provenance manifest written[/] {manifest_path}")
+        console.print(f"[green]Comfy models freed:[/] {freed}")
+    except (OSError, ValueError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reasoning board error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-import")
+def unity_vizconcept_import(
+    board_image: Path = typer.Option(
+        ..., "--board-image", help="Existing PNG to import as the visual board"
+    ),
+    output: Path = typer.Option(..., "--output", "-o", help="Imported board destination"),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Import provenance manifest destination"
+    ),
+    vizconcept_file: Optional[Path] = typer.Option(
+        None, "--vizconcept-file", help="Optional visual concept linked to this board"
+    ),
+) -> None:
+    """Import a known-good render without regenerating it through ComfyUI."""
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError,
+        import_existing_board,
+    )
+
+    try:
+        manifest_path = manifest or output.with_suffix(".import.json")
+        path = import_existing_board(
+            board_image=board_image,
+            output=output,
+            manifest=manifest_path,
+            vizconcept_file=vizconcept_file,
+        )
+        console.print(f"[green]Visual reasoning board imported[/] {path}")
+        console.print(f"[green]Import manifest written[/] {manifest_path}")
+    except (OSError, ValueError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reasoning board import error:[/] {exc}")
+        raise typer.Exit(2) from exc
 
 
 @app.command("unity-playability")
