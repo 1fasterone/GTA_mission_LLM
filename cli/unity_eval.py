@@ -206,6 +206,62 @@ def unity_vizconcept_reconcile(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-vizconcept-fulfill-assets")
+def unity_vizconcept_fulfill_assets(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    reconciliation_manifest: Path = typer.Option(
+        ..., "--reconciliation-manifest",
+        help="Slice-3 reconciliation manifest used to verify the IR hash",
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-4 asset fulfilment JSON destination"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-4 fulfilment manifest destination"
+    ),
+    lookups_dir: Path = typer.Option(
+        Path("lookups"), "--lookups-dir", help="Frozen Unity catalog directory"
+    ),
+    asset_root: Optional[Path] = typer.Option(
+        None, "--asset-root",
+        help="Fallback root for catalog entries without an embedded root",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run deterministic Slice 4: closed image IR -> frozen asset manifest."""
+    from src.visual_asset_fulfilment import fulfil_image_assets
+
+    try:
+        accepted_licenses = None
+        if config.is_file():
+            cfg = _cfg(str(config))
+            accepted_licenses = ((cfg.get("sketchfab") or {}).get("accepted_licenses"))
+        manifest_path = manifest or output.with_suffix(".fulfilment.json")
+        path = fulfil_image_assets(
+            closed_ir=closed_ir,
+            reconciliation_manifest=reconciliation_manifest,
+            output=output,
+            manifest=manifest_path,
+            lookups_dir=str(lookups_dir),
+            asset_root=asset_root,
+            accepted_licenses=accepted_licenses,
+        )
+        result = json.loads(output.read_text(encoding="utf-8"))
+        console.print(f"[green]Slice-4 asset fulfilment written[/] {output}")
+        console.print(f"[green]Slice-4 manifest written[/] {path}")
+        console.print(f"[green]Fulfilled assets:[/] {len(result.get('assets', []))}")
+        console.print(f"[yellow]Rejected assets:[/] {len(result.get('rejections', []))}")
+        console.print("[green]LLM/network calls in Slice 4:[/] 0")
+        if result.get("status") != "fulfilled":
+            raise typer.Exit(1)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError,
+            VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual asset fulfilment error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-playability")
 def unity_playability(
     schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),

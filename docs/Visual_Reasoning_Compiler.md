@@ -9,7 +9,9 @@ JSON, one image-derived `Concept.txt`, and a provenance manifest linking both
 outputs to the board hash. Live smoke runs remain environment-dependent and
 must be reported separately from the checked-in contract and mocked tests.
 Slice 3 now closes those artifacts deterministically through an explicit
-Concept entity-reference block and a hash-checked closed image IR.
+Concept entity-reference block and a hash-checked closed image IR. Slice 4
+now fulfils that closed request set from frozen catalog data without adding a
+network or model call to the deterministic compiler.
 
 The existing semantic-first visual compiler work is not the contract described
 here. This mode starts from a visual seed and lets the rendered image direct
@@ -102,13 +104,22 @@ warnings. Generic prose outside the explicit reference block is not silently
 treated as a hidden entity channel. This produces the closed image-derived
 game/asset intermediate representation without an LLM call.
 
-### Step 4 — Resolve and download assets
+### Step 4 — Fulfil assets from frozen inputs
 
-The deterministic resolver consumes the validated Concept and visual
-dictionary. It performs catalog/Sketchfab search, semantic-kind checks, visual
-checks, license checks, download verification, and explicit fallback or
-rejection. Model filenames and hashes belong in asset metadata, never in
-`Concept.txt`.
+The deterministic fulfilment pass consumes the closed image IR and the
+Slice-3 reconciliation manifest. It reads the existing local asset catalog
+plus the frozen `lookups/unity/sketchfab_catalog.json` partition, performs
+stable semantic-kind scoring, license checks for Sketchfab entries, safe path
+checks, and byte hashing. A missing, ambiguous, incompatible, unlicensed, or
+unreadable candidate is recorded as an explicit rejection. It never searches
+Sketchfab, downloads a model, calls Qwen, or invents a fallback.
+
+Live Sketchfab search/download/Blender conversion remains an explicit
+preparation operation in `src/sketchfab_freeze.py`. After that operation has
+written a frozen catalog entry, rerun Slice 4. Board-to-mesh visual comparison
+is deliberately not claimed by this first fulfilment slice; the selected
+asset's catalog provenance and bytes are the checked evidence. Model filenames
+and hashes belong in asset metadata, never in `Concept.txt`.
 
 ### Step 5 — Compile the game
 
@@ -338,6 +349,39 @@ the contract that makes the closure claim honest.
   pass, and existing artifacts are never overwritten;
 - no source prompt, Sketchfab request, asset download, schema fill, or Unity
   generation occurs.
+
+### Slice 4 — detailed contract
+
+#### Command
+
+```powershell
+& .\.venv\Scripts\python.exe main.py unity-vizconcept-fulfill-assets `
+  --closed-ir 'output\visual_reasoning\git_run\closed_image_ir.json' `
+  --reconciliation-manifest 'output\visual_reasoning\git_run\reconciliation.json' `
+  --lookups-dir 'lookups' `
+  --output 'output\visual_reasoning\git_run\asset_fulfilment.json' `
+  --manifest 'output\visual_reasoning\git_run\asset_fulfilment.manifest.json'
+```
+
+The command requires the Slice-3 output hash recorded in its reconciliation
+manifest. It emits
+`visual-reasoning-compiler/asset-fulfilment/v1` with the closed request
+fingerprint, catalog-file hashes, selected relative asset paths, source and
+license metadata, file SHA-256/byte counts, and explicit rejections. A
+rejected result is written for inspection and exits non-zero; it is not
+silently downgraded to a generic prop.
+
+Slice 4 acceptance criteria:
+
+- the Slice-3 IR and reconciliation manifest must both be present and hash
+  matched;
+- no LLM, network, live Sketchfab search, download, or Blender conversion is
+  reachable from the fulfilment command;
+- all selected files must remain under their catalog root and be readable;
+- frozen Sketchfab entries must carry one of the configured accepted licenses;
+- equal best matches reject as ambiguous rather than choosing by accident;
+- the output records enough hashes and provenance to hand the resolved asset
+  map to the existing Unity asset-binding chain.
 
 ## Design rules
 
