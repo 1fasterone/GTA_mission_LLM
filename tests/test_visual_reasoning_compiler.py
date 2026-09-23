@@ -210,13 +210,13 @@ def _inventory_response() -> str:
             {
                 "label": "red-hat explorer",
                 "category": "character",
-                "description": "red-hat explorer backpack",
+                "description": "red-hat explorer",
                 "model_hint": "red-hat explorer backpack",
             },
             {
                 "label": "glowing commit nodes",
                 "category": "prop",
-                "description": "glowing orb node",
+                "description": "glowing commit nodes",
                 "model_hint": "glowing orb node",
             },
             {
@@ -265,8 +265,10 @@ def test_visual_inventory_rejects_commentary_and_inferred_roles() -> None:
 class FakeVisionLLM:
     model = "qwen3.5-9b"
 
-    def __init__(self, *, invalid_concept_once: bool = False) -> None:
+    def __init__(self, *, invalid_inventory_once: bool = False,
+                 invalid_concept_once: bool = False) -> None:
         self.calls: list[dict] = []
+        self.invalid_inventory_once = invalid_inventory_once
         self.invalid_concept_once = invalid_concept_once
 
     def chat(self, **kwargs: object) -> str:
@@ -277,6 +279,10 @@ class FakeVisionLLM:
         assert str(images[0]).startswith("data:image/png;base64,")
         assert "pixel-art Git graph" not in str(kwargs["system"])
         assert "pixel-art Git graph" not in str(kwargs["user"])
+        if self.invalid_inventory_once and len(self.calls) == 1:
+            return "{\"scene_summary\": \"river\"} trailing commentary"
+        if self.invalid_inventory_once and len(self.calls) == 2:
+            return _inventory_response()
         if len(self.calls) == 1:
             return _inventory_response()
         if self.invalid_concept_once and len(self.calls) == 2:
@@ -297,7 +303,7 @@ class FakeVisionLLM:
         )
 
 
-def test_reason_over_board_sends_only_image_and_writes_linked_artifacts(
+def test_reason_over_board_guides_concept_with_validated_nouns(
     tmp_path: Path,
 ) -> None:
     board = tmp_path / "board.png"
@@ -323,13 +329,23 @@ def test_reason_over_board_sends_only_image_and_writes_linked_artifacts(
     assert result == manifest
     assert len(llm.calls) == 2
     assert inventory.is_file()
+    assert "VALIDATED VISIBLE NOUN INVENTORY:" in llm.calls[1]["user"]
+    assert "- red-hat explorer" in llm.calls[1]["user"]
+    assert "- glowing commit nodes" in llm.calls[1]["user"]
+    assert "backpack" not in llm.calls[1]["user"]
     concept_text = concept.read_text(encoding="utf-8")
     assert concept_text.startswith("VISIBLE ENTITY REFERENCES:")
     assert "The player guides" in concept_text
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["format"] == "visual-reasoning-compiler/image-reasoning/v1"
     assert data["authority"]["original_vizconcept_sent_to_llm"] is False
-    assert data["authority"]["semantic_context_sent_to_llm"] is False
+    assert data["authority"]["semantic_context_sent_to_llm"] is True
+    assert data["authority"]["semantic_context_source"] == (
+        "validated_visual_inventory_labels"
+    )
+    assert data["authority"]["inventory_nouns_sent_to_concept"] == [
+        "red-hat explorer", "glowing commit nodes", "neon grid background",
+    ]
     assert data["board"]["sha256"] == sha256_file(board)
     assert data["board_manifest"]["board_sha256"] == sha256_file(board)
     assert data["outputs"]["visual_inventory"]["sha256"] == sha256_file(inventory)
@@ -357,6 +373,27 @@ def test_reason_over_board_retries_only_invalid_concept_format(
     assert llm.calls[2]["user"] != llm.calls[1]["user"]
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["llm"]["concept"]["format_retry_used"] is True
+
+
+def test_reason_over_board_retries_inventory_format_without_relaxing_validation(
+    tmp_path: Path,
+) -> None:
+    board = tmp_path / "board.png"
+    board.write_bytes(PNG_BYTES)
+    llm = FakeVisionLLM(invalid_inventory_once=True)
+
+    reason_over_board(
+        board_image=board,
+        inventory_output=tmp_path / "inventory.json",
+        concept_output=tmp_path / "Concept.txt",
+        manifest=tmp_path / "reasoning.json",
+        llm=llm,
+    )
+
+    assert len(llm.calls) == 3
+    assert llm.calls[1]["user"] != llm.calls[0]["user"]
+    data = json.loads((tmp_path / "reasoning.json").read_text(encoding="utf-8"))
+    assert data["llm"]["inventory"]["format_retry_used"] is True
 
 
 def test_reason_over_board_rejects_mismatched_board_manifest(tmp_path: Path) -> None:

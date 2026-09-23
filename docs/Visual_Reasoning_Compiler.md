@@ -79,13 +79,16 @@ remain loaded on an 8 GB card:
 
 The image must dictate the game direction. The inventory is strict JSON with
 visible elements, exact-label query references, legible visible text, and
-uncertainties. Inventory asset fields are short visible noun phrases: no
-commentary, inferred roles, gameplay terms, or query enrichment. The
-validator rejects query terms that are not present in that object's own label
-or model hint. `Concept.txt` is the natural-language interpretation pass and
-may make modest mechanics inferences, but it may not introduce unsupported
-named entities or pipeline context. Raw model responses are retained beside
-both canonical outputs for auditability.
+uncertainties. Its authoritative asset fields are short visible noun
+phrases: no commentary, inferred roles, gameplay terms, or query enrichment.
+The inventory description field is a compatibility mirror of the label, not a
+second prose channel.
+Scene summary and uncertainty text are audit metadata only and cannot create
+asset requests. The validator rejects query terms that are not present in
+that object's own label or model hint. `Concept.txt` is the natural-language
+interpretation pass and may make modest mechanics inferences, but it may not
+introduce unsupported named entities or pipeline context. Raw model responses
+are retained beside both canonical outputs for auditability.
 
 ### Step 3 — Reconcile image reasoning
 
@@ -281,11 +284,19 @@ response sidecars (`visual_inventory.raw.txt` and `Concept.raw.txt`).
 
 #### Request boundary
 
-- Each Qwen request contains exactly one `data:image/png` image and a fixed
-  checked-in instruction. No source prompt text, board-manifest text, Concept,
-  schema, asset catalog, or gameplay brief is sent.
+- The inventory Qwen request contains exactly one `data:image/png` image and a
+  fixed checked-in instruction. No source prompt text, board-manifest text,
+  Concept, schema, asset catalog, or gameplay brief is sent.
+- The Concept Qwen request contains that same image plus the ordered,
+  validator-approved visible noun labels from the inventory. The labels are a
+  closed structural alignment list: descriptions, model hints, Sketchfab
+  queries, scene summaries, and uncertainties are not forwarded. The image
+  remains the source for relationships, composition, setting, mood, and game
+  mechanics. Use `--image-only-concept` to run the independent legacy mode.
 - The inventory call uses JSON mode, fixed seed `731947`, temperature `0.0`,
-  and reasoning disabled. It must return the five-field inventory payload.
+  and reasoning disabled. It must return the five-field inventory payload. If
+  the first response has format drift, one format-only retry uses seed
+  `731950`; the same strict validator still decides acceptance.
 - The Concept call uses fixed seed `731948`, temperature `0.55`, and reasoning
   disabled. It must return plain prose of at least 120 characters.
 - Calls are sequential to keep the VRAM contract explicit.
@@ -296,8 +307,11 @@ response sidecars (`visual_inventory.raw.txt` and `Concept.raw.txt`).
 `visual-reasoning-compiler/visual-inventory/v2` artifact. Its
 `sketchfab_queries[].label` values must refer exactly to
 `visible_elements[].label` values. Labels, descriptions, model hints, and
-queries are validated as short visible noun phrases; a query cannot add
-semantic terms outside its object's own label/model hint. `Concept.txt` contains no model IDs,
+queries are validated as short visible noun phrases; the description mirrors
+its label; a query cannot add semantic terms outside its object's own
+label/model hint. A physical object's validated query is sufficient to create
+an asset request; `model_hint` remains optional. `Concept.txt`
+contains no model IDs,
 filenames, asset queries, or references to the pipeline itself. It begins with
 one deterministic reference block:
 
@@ -314,8 +328,9 @@ and descriptions.
 `reasoning.json` records the board hash, optional Slice-1 manifest hash, model,
 fixed request instructions and settings, raw-response hashes, canonical output
 hashes, and explicit authority flags proving that the original `vizconcept.txt`
-was not sent to Qwen. It does not copy the source prompt out of the Slice-1
-manifest.
+was not sent to Qwen. In the default guided mode it also records the exact
+validated inventory labels sent to the Concept call and verifies them again in
+Slice 3. It does not copy the source prompt out of the Slice-1 manifest.
 
 #### Slice 2 acceptance criteria
 

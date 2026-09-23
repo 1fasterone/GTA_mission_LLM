@@ -33,9 +33,13 @@ GENERIC_TERMS = frozenset({
     "corner", "distant", "for", "from", "in", "left", "near", "of",
     "on", "right", "showing", "sky", "the", "to", "top", "with",
     "asset", "background", "character", "element", "environment", "effect",
-    "entity", "game", "item", "object", "player", "prop", "scene", "thing",
-    "vehicle", "world",
+    "entity", "game", "hud", "item", "object", "player", "prop", "scene",
+    "thing", "ui", "vehicle", "world",
 })
+COMPOUND_ALIASES: dict[str, tuple[str, ...]] = {
+    "speedboat": ("speed", "boat"),
+    "jetski": ("jet", "ski"),
+}
 
 
 def _read_json(path: Path, *, label: str) -> tuple[dict[str, Any], bytes]:
@@ -82,6 +86,7 @@ def _normalise_terms(value: str) -> set[str]:
             token = token[:-1]
         if token and token not in GENERIC_TERMS:
             terms.add(token)
+            terms.update(COMPOUND_ALIASES.get(token, ()))
     return terms
 
 
@@ -158,11 +163,26 @@ def reconcile_image_reasoning(*, inventory_file: Path, concept_file: Path,
             "Slice-2 reasoning manifest has the wrong stage"
         )
     authority = _require_mapping(reasoning.get("authority"), label="authority")
+    semantic_context_sent = authority.get("semantic_context_sent_to_llm")
     if (authority.get("original_vizconcept_sent_to_llm") is not False
-            or authority.get("semantic_context_sent_to_llm") is not False):
+            or not isinstance(semantic_context_sent, bool)):
         raise VisualReasoningCompilerError(
-            "Slice-2 manifest does not prove an image-only input boundary"
+            "Slice-2 manifest does not prove a valid image-led input boundary"
         )
+    if semantic_context_sent:
+        if authority.get("semantic_context_source") != (
+                "validated_visual_inventory_labels"):
+            raise VisualReasoningCompilerError(
+                "Slice-2 guided Concept must identify validated inventory labels"
+            )
+        sent_nouns = authority.get("inventory_nouns_sent_to_concept")
+        if not isinstance(sent_nouns, list) or any(
+                not isinstance(noun, str) or not noun.strip()
+                for noun in sent_nouns
+        ):
+            raise VisualReasoningCompilerError(
+                "Slice-2 guided Concept has invalid inventory noun provenance"
+            )
     board = _require_mapping(reasoning.get("board"), label="board")
     board_hash = board.get("sha256")
     if not isinstance(board_hash, str) or not board_hash:
@@ -172,6 +192,14 @@ def reconcile_image_reasoning(*, inventory_file: Path, concept_file: Path,
         inventory_file, label="visual inventory"
     )
     inventory = validate_visual_inventory(inventory_payload)
+    if semantic_context_sent:
+        expected_nouns = [
+            str(element["label"]) for element in inventory["visible_elements"]
+        ]
+        if authority.get("inventory_nouns_sent_to_concept") != expected_nouns:
+            raise VisualReasoningCompilerError(
+                "Slice-2 guided Concept noun provenance does not match inventory"
+            )
     outputs = _require_mapping(reasoning.get("outputs"), label="outputs")
     inventory_hash = _verify_file_record(
         inventory_file, outputs.get("visual_inventory"), label="visual inventory"
@@ -217,10 +245,6 @@ def reconcile_image_reasoning(*, inventory_file: Path, concept_file: Path,
             errors.append(
                 f"Sketchfab query {label!r} targets non-asset category "
                 f"{element['category']!r}"
-            )
-        if element.get("model_hint") is None:
-            errors.append(
-                f"Sketchfab query {label!r} has no visual model hint"
             )
 
     required_labels = {

@@ -133,6 +133,14 @@ def unity_vizconcept_reason(
         None, "--board-manifest",
         help="Optional Slice-1 manifest to hash-check and link",
     ),
+    inventory_guided_concept: bool = typer.Option(
+        True,
+        "--inventory-guided-concept/--image-only-concept",
+        help=(
+            "Give Concept the validated visible noun labels plus the image; "
+            "use --image-only-concept for independent mode"
+        ),
+    ),
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Run Slice 2: board PNG -> visual inventory + Concept.txt."""
@@ -158,6 +166,7 @@ def unity_vizconcept_reason(
             concept_output=concept_output,
             manifest=manifest_path,
             board_manifest=board_manifest,
+            guide_concept_with_inventory=inventory_guided_concept,
             llm=llm,
         )
         console.print(f"[green]Visual inventory written[/] {inventory_output}")

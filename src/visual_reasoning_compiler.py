@@ -44,29 +44,34 @@ DEFAULT_NEGATIVE_PROMPT = (
 )
 
 # Slice 2 deliberately has no prompt-file input.  These instructions are
-# checked-in production policy: the board pixels are the only creative input
-# sent to the Pipeline LLM.  The original vizconcept is preserved by Slice 1
-# provenance, but it must not become hidden semantic context here.
+# checked-in production policy: the board pixels are the creative source sent
+# to the Pipeline LLM.  The original vizconcept is preserved by Slice 1
+# provenance, but it must not become hidden semantic context here.  The
+# Concept call may additionally receive validated noun labels from the
+# inventory call as explicit structural context.
 IMAGE_ONLY_SYSTEM = """\
 You are the image-reasoning stage of a deterministic game-content compiler.
 You receive exactly one rendered game board image. Treat its visible pixels,
 including legible UI text, as the only creative evidence. Do not infer or
 recover an unavailable source prompt, backstory, asset library, filenames,
 engine schema, or gameplay requirements. Distinguish what is visibly present
-from what is a cautious game-design inference. Never choose a specific local
-file, model ID, download URL, or Unity/GTA implementation.
+from what is a cautious game-design inference. If the user message includes
+a VALIDATED VISIBLE NOUN INVENTORY, it is a closed label list derived from
+this same image: use it to keep concrete references aligned, but do not treat
+it as hidden story, catalog, or gameplay instructions. Never choose a
+specific local file, model ID, download URL, or Unity/GTA implementation.
 """
 
 INVENTORY_USER = """\
 Inspect the attached board image and return ONLY one JSON object with exactly
 these keys:
 {
-  "scene_summary": "short noun-only visual phrase",
+  "scene_summary": "one concise image-grounded sentence for metadata only",
   "visible_elements": [
     {
       "label": "unique visible noun phrase",
-      "category": "character | vehicle | prop | environment | landmark | ui | effect | other",
-      "description": "same object's short visual noun phrase",
+      "category": "short visual category noun phrase such as vehicle or ui",
+      "description": "exact copy of label",
       "model_hint": "same object's visible noun phrase, or null when no 3D model is appropriate"
     }
   ],
@@ -83,9 +88,10 @@ these keys:
 List every discrete visible physical object, not abstract game systems. Use
 one short ordinary noun phrase per object. No commentary, explanations,
 sentences, inferred roles, gameplay terms, or hidden objects. Do not write
-"player", "rival", "enemy", "checkpoint", "objective", "race", or similar
-role/mechanic words unless the literal word is visible UI text; name the
-visible object instead, such as "archway". Preserve literal visible classes:
+"player", "rival", "enemy", "objective", "race", or similar role/mechanic
+words; name the visible object instead, such as "archway". A literal visible
+word such as CHECKPOINT may remain in a noun phrase when it is actually
+printed on the object. Preserve literal visible classes:
 write "speedboat" only when that visual class is actually clear, and write
 "boat" or "jet ski" when that is all the image supports. Visible modifiers
 such as color may remain in the noun phrase when they are clearly visible.
@@ -162,19 +168,72 @@ conditions. Do not mention prompts, models, pipelines, or this retry. Do not
 output JSON, code, or a markdown fenced block.
 """
 
+def _concept_user_with_inventory(inventory: dict[str, Any], *, retry: bool = False) -> str:
+    """Constrain Concept nouns with the already validated visual inventory."""
+    labels = [str(element["label"]) for element in inventory["visible_elements"]]
+    noun_lines = "\n".join(f"- {label}" for label in labels)
+    base = CONCEPT_FORMAT_RETRY_USER if retry else CONCEPT_USER
+    return (
+        base
+        + "\n\n"
+        + "VALIDATED VISIBLE NOUN INVENTORY:\n"
+        + noun_lines
+        + "\nEND VALIDATED VISIBLE NOUN INVENTORY\n\n"
+        + "Use the attached image for visual relationships, composition, setting, "
+        + "mood, and mechanics. Use the noun inventory to name the concrete "
+        + "objects in the game; do not add a concrete asset entity outside this "
+        + "validated list."
+    )
+
+
+INVENTORY_FORMAT_RETRY_USER = """\
+Re-read the attached image and return ONLY one valid JSON object. The
+outermost object MUST have exactly these five keys and no others:
+scene_summary, visible_elements, sketchfab_queries, visible_text,
+uncertainties. Do not wrap the object inside an "inventory" key and do not
+write a "Sketchfab_query" key. Do not write any text before or after the JSON
+object. Do not use markdown fences, commentary, explanations, sentences,
+inferred roles, gameplay terms, or unsupported identities. Every label,
+description, model_hint, and Sketchfab query must be a short visible noun
+phrase. Use one unique label for each distinct visible object. The
+scene_summary and uncertainties fields are metadata only and must not be used
+to create asset requests. A Sketchfab query may use only the object's own
+label/model_hint terms. Preserve literal visible classes such as boat versus
+jet ski. In asset fields never use the inferred-role words player, rival,
+enemy, race, finish, goal, mission, objective, target, or mechanic;
+put literal UI words in visible_text instead. Populate the empty arrays below
+with the actual visible objects and
+preserve this exact JSON shape; each visible_elements item must be an object
+with exactly label, category, description, and model_hint; description must
+repeat label exactly. Before returning, scan the entire image again and make
+one entry for every distinct visible object: every boat or jet ski, helicopter,
+checkpoint archway, waterfall, bridge, buoy/barrier, directional sign, ramp or
+walkway, spectator stand, cliff/rock feature, roofed structure, and visible UI
+readout. UI entries use category ui and model_hint null and never receive a
+Sketchfab query:
+{
+  "scene_summary": "brief image-grounded summary",
+  "visible_elements": [],
+  "sketchfab_queries": [],
+  "visible_text": [],
+  "uncertainties": []
+}
+"""
+
 INVENTORY_TEMPERATURE = 0.0
 CONCEPT_TEMPERATURE = 0.55
 INVENTORY_SEED = 731947
 CONCEPT_SEED = 731948
 CONCEPT_RETRY_SEED = 731949
+INVENTORY_RETRY_SEED = 731950
 INVENTORY_MAX_TOKENS = 3500
 CONCEPT_MAX_TOKENS = 2200
 INVENTORY_CATEGORIES = frozenset({
-    "character", "vehicle", "prop", "environment", "landmark", "ui",
-    "effect", "other",
+    "character", "vehicle", "prop", "environment", "landmark", "structure",
+    "ui", "effect", "other",
 })
 INVENTORY_ROLE_TERMS = frozenset({
-    "checkpoint", "enemy", "finish", "gameplay", "goal", "mechanic",
+    "enemy", "finish", "gameplay", "goal", "mechanic",
     "mission", "objective", "player", "race", "rival", "target",
 })
 INVENTORY_COMMENTARY_TERMS = frozenset({
@@ -377,7 +436,7 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
          "visible_text", "uncertainties"},
         label="visual inventory",
     )
-    scene_summary = _inventory_noun_phrase(
+    scene_summary = _require_string(
         payload["scene_summary"], label="scene_summary"
     )
 
@@ -402,10 +461,9 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
         category = _require_string(
             item["category"], label=f"visible_elements[{index}].category"
         )
-        if category not in INVENTORY_CATEGORIES:
-            raise VisualReasoningCompilerError(
-                f"visible_elements[{index}].category {category!r} is unsupported"
-            )
+        category = _inventory_noun_phrase(
+            category, label=f"visible_elements[{index}].category"
+        )
         allow_role_terms = category == "ui"
         label = _inventory_noun_phrase(
             item["label"], label=f"visible_elements[{index}].label",
@@ -420,6 +478,10 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
             item["description"], label=f"visible_elements[{index}].description",
             allow_role_terms=allow_role_terms,
         )
+        if description != label:
+            raise VisualReasoningCompilerError(
+                f"visible_elements[{index}].description must exactly repeat label"
+            )
         model_hint = item["model_hint"]
         if model_hint is not None:
             model_hint = _inventory_noun_phrase(
@@ -441,6 +503,11 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
     queries: list[dict[str, str]] = []
     query_labels: set[str] = set()
     for index, item in enumerate(queries_raw):
+        if isinstance(item, str):
+            # Some vision backends express the requested noun list compactly
+            # as strings. This is a structural normalization only: the same
+            # noun validator and exact-label checks still apply.
+            item = {"label": item, "query": item}
         if not isinstance(item, dict):
             raise VisualReasoningCompilerError(
                 f"sketchfab_queries[{index}] must be an object"
@@ -482,7 +549,7 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
         if len(value) > 64:
             raise VisualReasoningCompilerError(f"{label} has more than 64 entries")
         return [
-            _inventory_noun_phrase(item, label=f"{label}[{index}]")
+            _require_string(item, label=f"{label}[{index}]")
             for index, item in enumerate(value)
         ]
 
@@ -560,13 +627,16 @@ def _board_manifest_record(board_manifest: Path | None, board_hash: str) -> dict
 
 def reason_over_board(*, board_image: Path, inventory_output: Path,
                       concept_output: Path, manifest: Path,
-                      llm: Any, board_manifest: Path | None = None) -> Path:
-    """Run Slice 2 using only the board image and fixed instructions.
+                      llm: Any, board_manifest: Path | None = None,
+                      guide_concept_with_inventory: bool = True) -> Path:
+    """Run Slice 2 using the board image and fixed instructions.
 
     The two calls are sequential so one 9B vision model can remain loaded on
-    an 8 GB card.  Nothing from the Slice-1 source prompt is read or sent to
-    the model; an optional board manifest is checked only for hash agreement
-    and linked by metadata.
+    an 8 GB card. The inventory call sees only the board image. By default,
+    the Concept call sees that same image plus the validated visible noun
+    labels, so its game prose and entity block can agree without injecting
+    descriptions, queries, or hidden gameplay context. An optional board
+    manifest is checked only for hash agreement and linked by metadata.
     """
     if not board_image.is_file():
         raise VisualReasoningCompilerError(f"board image not found: {board_image}")
@@ -606,11 +676,37 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         max_tokens=INVENTORY_MAX_TOKENS,
         json_mode=True,
     )
-    inventory = validate_visual_inventory(inventory_raw)
+    inventory_retry_used = False
+    try:
+        inventory = validate_visual_inventory(inventory_raw)
+    except VisualReasoningCompilerError:
+        # Keep the boundary strict: retry the same image with a format-only
+        # instruction rather than stripping commentary or repairing nouns in
+        # Python. The retried response must pass the same validator.
+        inventory_retry_used = True
+        inventory_raw = llm.chat(
+            system=IMAGE_ONLY_SYSTEM,
+            user=INVENTORY_FORMAT_RETRY_USER,
+            images=[image_uri],
+            temperature=INVENTORY_TEMPERATURE,
+            thinking=False,
+            seed=INVENTORY_RETRY_SEED,
+            max_tokens=INVENTORY_MAX_TOKENS,
+            json_mode=True,
+        )
+        inventory = validate_visual_inventory(inventory_raw)
 
+    concept_user = (
+        _concept_user_with_inventory(inventory)
+        if guide_concept_with_inventory else CONCEPT_USER
+    )
+    concept_retry_user = (
+        _concept_user_with_inventory(inventory, retry=True)
+        if guide_concept_with_inventory else CONCEPT_FORMAT_RETRY_USER
+    )
     concept_raw = llm.chat(
         system=IMAGE_ONLY_SYSTEM,
-        user=CONCEPT_USER,
+        user=concept_user,
         images=[image_uri],
         temperature=CONCEPT_TEMPERATURE,
         thinking=False,
@@ -628,7 +724,7 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         concept_retry_used = True
         concept_raw = llm.chat(
             system=IMAGE_ONLY_SYSTEM,
-            user=CONCEPT_FORMAT_RETRY_USER,
+            user=concept_retry_user,
             images=[image_uri],
             temperature=CONCEPT_TEMPERATURE,
             thinking=False,
@@ -654,16 +750,23 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             "thinking": False,
             "seed": INVENTORY_SEED,
             "max_tokens": INVENTORY_MAX_TOKENS,
+            "format_retry": {
+                "user": INVENTORY_FORMAT_RETRY_USER,
+                "temperature": INVENTORY_TEMPERATURE,
+                "thinking": False,
+                "seed": INVENTORY_RETRY_SEED,
+                "max_tokens": INVENTORY_MAX_TOKENS,
+            },
         },
         "concept": {
             "system": IMAGE_ONLY_SYSTEM,
-            "user": CONCEPT_USER,
+            "user": concept_user,
             "temperature": CONCEPT_TEMPERATURE,
             "thinking": False,
             "seed": CONCEPT_SEED,
             "max_tokens": CONCEPT_MAX_TOKENS,
             "format_retry": {
-                "user": CONCEPT_FORMAT_RETRY_USER,
+                "user": concept_retry_user,
                 "temperature": CONCEPT_TEMPERATURE,
                 "thinking": False,
                 "seed": CONCEPT_RETRY_SEED,
@@ -678,7 +781,15 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             "input": "board.png",
             "board_role": "visual_intermediate_representation",
             "original_vizconcept_sent_to_llm": False,
-            "semantic_context_sent_to_llm": False,
+            "semantic_context_sent_to_llm": guide_concept_with_inventory,
+            "semantic_context_source": (
+                "validated_visual_inventory_labels"
+                if guide_concept_with_inventory else None
+            ),
+            "inventory_nouns_sent_to_concept": (
+                [str(element["label"]) for element in inventory["visible_elements"]]
+                if guide_concept_with_inventory else []
+            ),
             "llm_called_here": True,
         },
         "board": {
@@ -691,6 +802,7 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             "model": model,
             "inventory": {
                 "raw_response_sha256": sha256_bytes(inventory_raw_bytes),
+                "format_retry_used": inventory_retry_used,
                 "settings": request["inventory"],
             },
             "concept": {

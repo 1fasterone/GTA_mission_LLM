@@ -31,13 +31,13 @@ def _write_inputs(tmp_path: Path, *, extra_reference: str | None = None) -> tupl
             {
                 "label": "red-hat explorer",
                 "category": "character",
-                "description": "red-hat explorer backpack",
+                "description": "red-hat explorer",
                 "model_hint": "red-hat explorer backpack",
             },
             {
                 "label": "glowing commit nodes",
                 "category": "prop",
-                "description": "glowing orb node",
+                "description": "glowing commit nodes",
                 "model_hint": "glowing orb node",
             },
             {
@@ -157,7 +157,7 @@ def test_reconcile_matches_short_plural_buoys_to_buoy_inventory(tmp_path: Path) 
     inventory_data["visible_elements"].append({
         "label": "Red and White Buoys",
         "category": "prop",
-        "description": "red white striped buoys",
+        "description": "Red and White Buoys",
         "model_hint": "buoy",
     })
     inventory.write_text(json.dumps(inventory_data), encoding="utf-8")
@@ -187,6 +187,25 @@ def test_reconcile_matches_short_plural_buoys_to_buoy_inventory(tmp_path: Path) 
     assert "Red and White Buoys" in closed["coverage"]["covered_inventory_labels"]
 
 
+def test_reconcile_accepts_valid_query_without_model_hint(tmp_path: Path) -> None:
+    inventory, concept, reasoning = _write_inputs(tmp_path)
+    inventory_data = json.loads(inventory.read_text(encoding="utf-8"))
+    inventory_data["visible_elements"][0]["model_hint"] = None
+    inventory_data["sketchfab_queries"][0]["query"] = "red-hat explorer"
+    inventory.write_text(json.dumps(inventory_data), encoding="utf-8")
+    reasoning_data = json.loads(reasoning.read_text(encoding="utf-8"))
+    reasoning_data["outputs"]["visual_inventory"]["sha256"] = sha256_file(inventory)
+    reasoning.write_text(json.dumps(reasoning_data), encoding="utf-8")
+
+    reconcile_image_reasoning(
+        inventory_file=inventory,
+        concept_file=concept,
+        reasoning_manifest=reasoning,
+        output=tmp_path / "closed.json",
+        manifest=tmp_path / "reconcile.json",
+    )
+
+
 def test_reconcile_matches_modifier_heavy_reference_to_literal_label() -> None:
     elements = [{
         "label": "Bridge",
@@ -196,3 +215,14 @@ def test_reconcile_matches_modifier_heavy_reference_to_literal_label() -> None:
     }]
 
     assert _best_inventory_match("distant suspension bridge", elements) == "Bridge"
+
+
+def test_reconcile_matches_compound_speedboat_to_literal_boat_reference() -> None:
+    elements = [{
+        "label": "speedboat",
+        "category": "vehicle",
+        "description": "speedboat",
+        "model_hint": "speedboat",
+    }]
+
+    assert _best_inventory_match("boat", elements) == "speedboat"
