@@ -11,6 +11,7 @@ from src.visual_reasoning_compiler import (
     INVENTORY_FORMAT,
     ComfyVizConceptClient,
     VisualReasoningCompilerError,
+    build_concept_user,
     build_vizconcept_prompt,
     build_workflow,
     import_existing_board,
@@ -231,6 +232,14 @@ def test_visual_inventory_contract_is_strict_and_canonical() -> None:
     with pytest.raises(VisualReasoningCompilerError, match="unknown visible"):
         validate_visual_inventory(malformed)
 
+    malformed = json.loads(_inventory_response())
+    malformed["sketchfab_queries"].append({
+        "label": "neon grid background",
+        "query": "neon grid",
+    })
+    with pytest.raises(VisualReasoningCompilerError, match="no model hint"):
+        validate_visual_inventory(malformed)
+
 
 class FakeVisionLLM:
     model = "qwen3.5-9b"
@@ -248,10 +257,15 @@ class FakeVisionLLM:
         assert "pixel-art Git graph" not in str(kwargs["user"])
         if len(self.calls) == 1:
             return _inventory_response()
+        assert "CANONICAL VISIBLE ENTITY LABELS:" in str(kwargs["user"])
+        assert "- red-hat explorer" in str(kwargs["user"])
+        assert "- glowing commit nodes" in str(kwargs["user"])
+        assert "- neon grid background" in str(kwargs["user"])
         return (
             "VISIBLE ENTITY REFERENCES:\n"
             "- red-hat explorer\n"
             "- glowing commit nodes\n"
+            "- neon grid background\n"
             "END VISIBLE ENTITY REFERENCES\n\n"
             "The player guides a small explorer across a glowing commit graph.\n\n"
             "The core interaction is choosing a branch and moving from the initial "
@@ -264,7 +278,7 @@ class FakeVisionLLM:
         )
 
 
-def test_reason_over_board_sends_only_image_and_writes_linked_artifacts(
+def test_reason_over_board_sends_image_and_inventory_labels_and_writes_artifacts(
     tmp_path: Path,
 ) -> None:
     board = tmp_path / "board.png"
@@ -296,13 +310,35 @@ def test_reason_over_board_sends_only_image_and_writes_linked_artifacts(
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["format"] == "visual-reasoning-compiler/image-reasoning/v1"
     assert data["authority"]["original_vizconcept_sent_to_llm"] is False
-    assert data["authority"]["semantic_context_sent_to_llm"] is False
+    assert data["authority"]["semantic_context_sent_to_llm"] is True
+    assert data["authority"]["semantic_context_source"] == (
+        "validated_image_inventory_labels"
+    )
+    assert data["authority"]["external_semantic_context_sent_to_llm"] is False
+    assert data["llm"]["concept"]["settings"]["inventory_labels"] == [
+        "red-hat explorer", "glowing commit nodes", "neon grid background",
+    ]
     assert data["board"]["sha256"] == sha256_file(board)
     assert data["board_manifest"]["board_sha256"] == sha256_file(board)
     assert data["outputs"]["visual_inventory"]["sha256"] == sha256_file(inventory)
     assert data["outputs"]["concept"]["sha256"] == sha256_file(concept)
     assert inventory.with_suffix(".raw.txt").is_file()
     assert concept.with_suffix(".raw.txt").is_file()
+
+
+def test_build_concept_user_forces_exact_inventory_label_list() -> None:
+    prompt, labels = build_concept_user(json.loads(_inventory_response()))
+
+    assert labels == [
+        "red-hat explorer", "glowing commit nodes", "neon grid background",
+    ]
+    assert prompt.index("- red-hat explorer") < prompt.index(
+        "- glowing commit nodes"
+    )
+    assert prompt.index("- glowing commit nodes") < prompt.index(
+        "- neon grid background"
+    )
+    assert "copy every label above exactly once" in prompt
 
 
 def test_reason_over_board_rejects_mismatched_board_manifest(tmp_path: Path) -> None:

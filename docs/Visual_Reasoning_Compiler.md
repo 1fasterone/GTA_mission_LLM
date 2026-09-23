@@ -80,8 +80,11 @@ The image must dictate the game direction. The inventory is strict JSON with
 visible elements, exact-label query references, legible visible text, and
 uncertainties. `Concept.txt` is plain prose and may make modest mechanics
 inferences, but it may not introduce unsupported named entities or pipeline
-context. Raw model responses are retained beside both canonical outputs for
-auditability.
+context. Before the Concept call, the compiler injects the validated inventory
+labels as a closed noun list and requires the model to copy those labels
+exactly into the reference block. This is image-derived context only; the
+source prompt, catalog, and external semantic context remain excluded. Raw
+model responses are retained beside both canonical outputs for auditability.
 
 ### Step 3 — Reconcile image reasoning
 
@@ -274,12 +277,15 @@ response sidecars (`visual_inventory.raw.txt` and `Concept.raw.txt`).
 #### Request boundary
 
 - Each Qwen request contains exactly one `data:image/png` image and a fixed
-  checked-in instruction. No source prompt text, board-manifest text, Concept,
-  schema, asset catalog, or gameplay brief is sent.
+  checked-in instruction. The Concept request additionally receives the
+  validated `visible_elements[].label` list from the preceding image-derived
+  inventory, and no other semantic context. No source prompt text,
+  board-manifest text, schema, asset catalog, or gameplay brief is sent.
 - The inventory call uses JSON mode, fixed seed `731947`, temperature `0.2`,
   and reasoning disabled. It must return the five-field inventory payload.
 - The Concept call uses fixed seed `731948`, temperature `0.55`, and reasoning
-  disabled. It must return plain prose of at least 120 characters.
+  disabled. It must return plain prose of at least 120 characters whose
+  reference block copies every inventory label exactly once.
 - Calls are sequential to keep the VRAM contract explicit.
 
 #### Output and provenance contract
@@ -302,15 +308,17 @@ matches those phrases conservatively against inventory labels, model hints,
 and descriptions.
 
 `reasoning.json` records the board hash, optional Slice-1 manifest hash, model,
-fixed request instructions and settings, raw-response hashes, canonical output
-hashes, and explicit authority flags proving that the original `vizconcept.txt`
-was not sent to Qwen. It does not copy the source prompt out of the Slice-1
+fixed request instructions and settings, the injected inventory label list,
+raw-response hashes, canonical output hashes, and explicit authority flags
+proving that the original `vizconcept.txt` and external semantic context were
+not sent to Qwen. It does not copy the source prompt out of the Slice-1
 manifest.
 
 #### Slice 2 acceptance criteria
 
-- mocked tests prove both calls receive only one PNG data URI and no source
-  prompt text;
+- mocked tests prove both calls receive only one PNG data URI, while the
+  Concept call receives only the validated image-derived noun list in addition
+  to the fixed instruction;
 - malformed inventory fields, unknown query labels, empty inventories, and
   unsupported Concept formats abstain loudly;
 - canonical outputs, raw response sidecars, and the provenance manifest are
@@ -375,8 +383,9 @@ the contract that makes the closure claim honest.
 The command requires the Slice-3 output hash recorded in its reconciliation
 manifest. It emits
 `visual-reasoning-compiler/asset-fulfilment/v1` with the closed request
-fingerprint, catalog-file hashes, selected relative asset paths, source and
-license metadata, file SHA-256/byte counts, and explicit rejections. A
+fingerprint, catalog-file hashes and deterministic catalog provenance,
+selected relative asset paths, source and license metadata, file SHA-256/byte
+counts, and explicit rejections. A
 rejected result is written for inspection and exits non-zero; it is not
 silently downgraded to a generic prop.
 
@@ -388,9 +397,25 @@ Slice 4 acceptance criteria:
   reachable from the fulfilment command;
 - all selected files must remain under their catalog root and be readable;
 - frozen Sketchfab entries must carry one of the configured accepted licenses;
+- the catalog freshness preflight must find a readable, licensed,
+  category-compatible match for each high-signal visual noun; category-only
+  matches and cross-domain near-misses are rejected and recorded;
 - equal best matches reject as ambiguous rather than choosing by accident;
+- when a licensed Sketchfab entry was frozen for the exact closed request
+  query, that recorded query provenance outranks stale local lexical variants;
+  this is text/provenance only and never invokes thumbnail or CLIP judging;
+- byte-identical duplicate pack copies are collapsed before ambiguity is
+  evaluated, while distinct plausible model candidates remain refusals;
 - the output records enough hashes and provenance to hand the resolved asset
   map to the existing Unity asset-binding chain.
+
+The generated local catalog records source roots, a deterministic builder
+provenance block, and a content fingerprint over every scanned source asset.
+`unity-catalog --check` therefore detects both index changes and changed source
+bytes. The
+visual noun is not rewritten to fit the catalog: if a noun has no
+category-compatible indexed candidate, Slice 4 records a freshness/index
+failure and stops.
 
 ### Slice 5 — detailed contract (rewritten before implementation)
 
@@ -401,7 +426,7 @@ re-score the catalog instead of honouring Slice 4. Slice 5 therefore requires
 an explicit precomputed-Concept entry point and a first-class visual asset
 binding input.
 
-#### Proposed command boundary
+#### Implemented command boundary
 
 ```powershell
 & .\.venv\Scripts\python.exe main.py unity-vizconcept-compile `
@@ -411,6 +436,14 @@ binding input.
   --config 'config.yaml' `
   --output 'output\unity\visual_git_run'
 ```
+
+The command is implemented in `cli/unity_eval.py`. It reuses the validated
+Slice-2 Concept byte-for-byte, makes the existing Step-3 schema-fill call once,
+and then passes the seven (or fewer, for a different image) Slice-4 selections
+as explicit locked bindings into the generator. The compile handoff disables
+live Sketchfab fetch, semantic thumbnail selection, and CLIP selection. The
+output directory receives `visual_compile.manifest.json` linking the closed IR,
+Slice-4 artifacts, schema, and generated project.
 
 The command must:
 

@@ -504,7 +504,9 @@ def resolve_entity_assets(schema,
                           asset_cfg: Optional[dict] = None,
                           strict: bool = False,
                           sketchfab_cfg: Optional[dict] = None,
-                          llm: Optional[Any] = None) -> dict[str, str]:
+                          llm: Optional[Any] = None,
+                          locked_asset_bindings: Optional[dict[str, dict]] = None
+                          ) -> dict[str, str]:
     """Assign a real model to every entity group.
 
     Mutates `used_models` (adds catalog picks so the existing copy/.meta/
@@ -522,6 +524,12 @@ def resolve_entity_assets(schema,
     using it. That live fetch is the one deliberate, documented exception to
     this module otherwise being a pure, network-free lookup (see
     docs/model-pipeline-architecture.md's Sketchfab section).
+
+    `locked_asset_bindings` is the explicit Slice-5 handoff from the visual
+    compiler.  Its entries are verified against the catalog path and bytes,
+    then registered before every derived catalog tier.  Authored Scene
+    Compiler models still outrank these bindings.  A missing or mismatched
+    locked file raises instead of silently falling back to a second search.
 
     `llm` (the Pipeline LLM client, e.g. self.llm from UnityPipeline.run() —
     None from every caller that has none, including unity-validate's
@@ -572,6 +580,44 @@ def resolve_entity_assets(schema,
     # Tier S below.
     assets = [a for a in _all_assets if a.get("source") != "sketchfab"]
     sk_catalog_assets = [a for a in _all_assets if a.get("source") == "sketchfab"]
+
+    # Resolve Slice-5 selections once, before the entity loop.  The fulfilment
+    # artifact carries the file hash precisely so this handoff cannot drift to
+    # another file with the same filename or relpath.
+    locked_entries: dict[str, dict] = {}
+    for entity_name, selection in (locked_asset_bindings or {}).items():
+        if not isinstance(selection, dict):
+            raise ValueError(
+                f"locked visual binding for {entity_name!r} is not an object"
+            )
+        matches: list[dict] = []
+        for entry in _all_assets:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("filename") or "") != str(selection.get("filename") or ""):
+                continue
+            if str(entry.get("relpath") or "") != str(selection.get("relpath") or ""):
+                continue
+            if str(entry.get("source") or "") != str(selection.get("source") or ""):
+                continue
+            source = _entry_source(entry, asset_root)
+            if source is None:
+                continue
+            expected_hash = str(selection.get("file_sha256") or "")
+            if expected_hash:
+                digest = hashlib.sha256()
+                with source.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                if digest.hexdigest() != expected_hash:
+                    continue
+            matches.append(entry)
+        if len(matches) != 1:
+            raise ValueError(
+                f"locked visual binding for {entity_name!r} does not resolve "
+                f"to exactly one catalog file (matches={len(matches)})"
+            )
+        locked_entries[str(entity_name)] = matches[0]
 
     # Embedding-based catalog refinement (opt-in, default off — see
     # _DEFAULT_EMBEDDING_WEIGHT above and docs/COMPILER_AUDIT.md Gap E). A
@@ -790,6 +836,23 @@ def resolve_entity_assets(schema,
             _log.warning("[assets] authored model missing for %s: %s — "
                          "falling back to the catalog tiers",
                          e.name, _authored.get("src"))
+
+        # Slice-5 visual authority: after a hand-authored Scene Compiler model
+        # but before UI/default/semantic tiers.  `_register` copies the exact
+        # catalog file into the ordinary ModelSwap chain; it does not re-score
+        # or consult thumbnails.
+        _locked = locked_entries.get(e.name)
+        if _locked is not None:
+            _locked_path = _register([(1000000.0, _locked)])
+            if not _locked_path:
+                raise ValueError(
+                    f"locked visual asset for entity {e.name!r} disappeared "
+                    "before generator registration"
+                )
+            entity_model_paths[e.name] = _locked_path
+            if kind == "vehicle":
+                racing_core_seen = True
+            continue
 
         # ── Tier U: UI element (non-embodied games only) ──────────────────────
         # In a game that declared it has no avatar, a "CommitNode" or a

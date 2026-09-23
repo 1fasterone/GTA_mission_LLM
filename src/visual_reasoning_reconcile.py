@@ -148,10 +148,21 @@ def reconcile_image_reasoning(*, inventory_file: Path, concept_file: Path,
             "Slice-2 reasoning manifest has the wrong stage"
         )
     authority = _require_mapping(reasoning.get("authority"), label="authority")
-    if (authority.get("original_vizconcept_sent_to_llm") is not False
-            or authority.get("semantic_context_sent_to_llm") is not False):
+    image_only_boundary = (
+        authority.get("original_vizconcept_sent_to_llm") is False
+        and authority.get("external_semantic_context_sent_to_llm", False) is False
+        and (
+            authority.get("semantic_context_sent_to_llm") is False
+            or (
+                authority.get("semantic_context_sent_to_llm") is True
+                and authority.get("semantic_context_source")
+                == "validated_image_inventory_labels"
+            )
+        )
+    )
+    if not image_only_boundary:
         raise VisualReasoningCompilerError(
-            "Slice-2 manifest does not prove an image-only input boundary"
+            "Slice-2 manifest does not prove an image-derived input boundary"
         )
     board = _require_mapping(reasoning.get("board"), label="board")
     board_hash = board.get("sha256")

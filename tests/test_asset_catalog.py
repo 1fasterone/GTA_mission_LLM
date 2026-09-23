@@ -96,6 +96,16 @@ def test_noise_tokens_excluded_from_keywords(tmp_path):
     assert "slant" in entry["keywords"]
 
 
+def test_visual_compound_aliases_and_content_fingerprint(tmp_path):
+    root = _make_tree(tmp_path / "lib", ["boat-speed-a.fbx", "checkpoint-arch.fbx"])
+    boat = derive_entry(root / "boat-speed-a.fbx", root)
+    arch = derive_entry(root / "checkpoint-arch.fbx", root)
+    assert "speedboat" in boat["keywords"]
+    assert "archway" in arch["keywords"]
+    catalog = build_catalog([root])
+    assert len(catalog["provenance"]["source_tree_fingerprint"]) == 32
+
+
 def test_tokenize_camel_case():
     assert tokenize("PineTreeGrove") == ["pine", "tree", "grove"]
     assert tokenize("banner-hanging-double-high") == ["banner", "hanging", "double", "high"]
@@ -194,6 +204,17 @@ def test_write_and_staleness(tmp_path):
     write_catalog(catalog, out)
     assert not is_stale(catalog, out)      # fresh
     _make_tree(root, ["ramp-large.fbx"])   # library changed
+    assert is_stale(build_catalog([root]), out)
+
+
+def test_content_change_is_stale_even_when_paths_are_unchanged(tmp_path):
+    root = _make_tree(tmp_path / "lib", ["tree-pine.fbx"])
+    catalog = build_catalog([root])
+    out = tmp_path / "asset_catalog.json"
+    write_catalog(catalog, out)
+    assert catalog["provenance"]["builder"] == "src.unity_asset_catalog.build_catalog"
+    assert catalog["provenance"]["model_roots"] == [root.as_posix()]
+    (root / "tree-pine.fbx").write_bytes(b"changed source bytes")
     assert is_stale(build_catalog([root]), out)
 
 

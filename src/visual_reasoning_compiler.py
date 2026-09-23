@@ -83,8 +83,10 @@ these keys:
 List discrete, asset-worthy visible elements, not abstract game systems. Do
 not create a Sketchfab query for UI text, a glow, or an effect unless the
 image visibly contains a separate 3D object behind it. A query must refer to
-one listed visible element by its exact label. Use [] when a list has no
-honest entries. Output JSON only; do not add markdown or explanation.
+one listed visible element by its exact label, and every queried element must
+have a non-empty model_hint. Omit the query when no honest model hint exists;
+never emit an empty query string. Use [] when a list has no honest entries.
+Output JSON only; do not add markdown or explanation.
 """
 
 CONCEPT_USER = """\
@@ -126,6 +128,7 @@ INVENTORY_CATEGORIES = frozenset({
 })
 CONCEPT_REFERENCE_HEADER = "VISIBLE ENTITY REFERENCES:"
 CONCEPT_REFERENCE_END = "END VISIBLE ENTITY REFERENCES"
+CONCEPT_NOUN_LIST_HEADER = "CANONICAL VISIBLE ENTITY LABELS:"
 
 
 class VisualReasoningCompilerError(RuntimeError):
@@ -256,6 +259,65 @@ def extract_visible_entity_references(concept: str) -> tuple[list[str], str]:
     return references, prose
 
 
+def build_concept_user(inventory: dict[str, Any]) -> tuple[str, list[str]]:
+    """Constrain Concept entity references to the preceding image inventory.
+
+    The inventory is still image-derived Pipeline LLM output, not engineer or
+    catalog context. Passing its exact labels to the second call prevents the
+    two sequential image-only calls from inventing different names for the
+    same visible object.
+    """
+    elements = inventory.get("visible_elements")
+    if not isinstance(elements, list) or not elements:
+        raise VisualReasoningCompilerError(
+            "cannot build Concept prompt without visible inventory elements"
+        )
+    labels: list[str] = []
+    for index, element in enumerate(elements):
+        if not isinstance(element, dict):
+            raise VisualReasoningCompilerError(
+                f"visual inventory element {index} is not an object"
+            )
+        label = _require_string(
+            element.get("label"), label=f"visible_elements[{index}].label"
+        )
+        labels.append(label)
+    noun_list = "\n".join(f"- {label}" for label in labels)
+    prompt = (
+        CONCEPT_USER
+        + "\n\n"
+        + CONCEPT_NOUN_LIST_HEADER
+        + "\n"
+        + noun_list
+        + "\n\n"
+        + "Reference-block rules: copy every label above exactly once, in the "
+        + "same order, and do not add, remove, rename, or paraphrase a label. "
+        + "Use these labels as the only named visible entities in the concept."
+    )
+    return prompt, labels
+
+
+def _require_inventory_reference_labels(
+    concept: str, labels: list[str]
+) -> None:
+    """Reject a Concept that did not copy the canonical noun list."""
+    references, _ = extract_visible_entity_references(concept)
+    expected = set(labels)
+    actual = set(references)
+    if actual != expected or len(references) != len(labels):
+        missing = [label for label in labels if label not in actual]
+        extra = [reference for reference in references if reference not in expected]
+        detail: list[str] = []
+        if missing:
+            detail.append(f"missing={missing}")
+        if extra:
+            detail.append(f"extra={extra}")
+        raise VisualReasoningCompilerError(
+            "image-derived Concept.txt must copy the canonical inventory "
+            "labels exactly once (" + ", ".join(detail) + ")"
+        )
+
+
 def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
     """Validate and canonicalize the image-derived inventory contract.
 
@@ -323,6 +385,7 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
             "description": description,
             "model_hint": model_hint,
         })
+    elements_by_label = {str(element["label"]): element for element in elements}
 
     queries_raw = payload["sketchfab_queries"]
     if not isinstance(queries_raw, list):
@@ -349,6 +412,10 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
         if label in query_labels:
             raise VisualReasoningCompilerError(
                 f"visual inventory repeats Sketchfab query for {label!r}"
+            )
+        if elements_by_label[label]["model_hint"] is None:
+            raise VisualReasoningCompilerError(
+                f"Sketchfab query target {label!r} has no model hint"
             )
         query_labels.add(label)
         query = _require_string(
@@ -487,10 +554,11 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         json_mode=True,
     )
     inventory = validate_visual_inventory(inventory_raw)
+    concept_user, inventory_labels = build_concept_user(inventory)
 
     concept_raw = llm.chat(
         system=IMAGE_ONLY_SYSTEM,
-        user=CONCEPT_USER,
+        user=concept_user,
         images=[image_uri],
         temperature=CONCEPT_TEMPERATURE,
         thinking=False,
@@ -498,6 +566,7 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         max_tokens=CONCEPT_MAX_TOKENS,
     )
     concept = _clean_concept_response(concept_raw)
+    _require_inventory_reference_labels(concept, inventory_labels)
 
     inventory_bytes = (
         json.dumps(inventory, indent=2, ensure_ascii=False) + "\n"
@@ -519,7 +588,8 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         },
         "concept": {
             "system": IMAGE_ONLY_SYSTEM,
-            "user": CONCEPT_USER,
+            "user": concept_user,
+            "inventory_labels": inventory_labels,
             "temperature": CONCEPT_TEMPERATURE,
             "thinking": False,
             "seed": CONCEPT_SEED,
@@ -533,7 +603,9 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             "input": "board.png",
             "board_role": "visual_intermediate_representation",
             "original_vizconcept_sent_to_llm": False,
-            "semantic_context_sent_to_llm": False,
+            "semantic_context_sent_to_llm": True,
+            "semantic_context_source": "validated_image_inventory_labels",
+            "external_semantic_context_sent_to_llm": False,
             "llm_called_here": True,
         },
         "board": {

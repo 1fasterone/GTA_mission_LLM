@@ -141,6 +141,54 @@ def test_fulfilment_selects_local_and_frozen_assets(tmp_path: Path) -> None:
     )
     report = json.loads(manifest.read_text(encoding="utf-8"))
     assert report["outputs"]["asset_fulfilment"]["sha256"] == sha256_file(output)
+    assert report["inputs"]["catalog_files"][0]["metadata"]["entry_count"] == 1
+    assert report["catalog_preflight"]["status"] == "pass"
+
+
+def test_exact_frozen_query_beats_stale_local_variant(tmp_path: Path) -> None:
+    closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
+
+    stale = asset_root / "glowing-orb-local-variant.fbx"
+    stale.write_bytes(b"stale-local-orb")
+    catalog_path = lookups / "unity" / "asset_catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["assets"].append({
+        "filename": stale.name,
+        "relpath": stale.name,
+        "root": str(asset_root),
+        "format": "fbx",
+        "source": "kenney",
+        "category": "prop",
+        "keywords": ["glowing", "orb", "node", "prop", "game"],
+        "kind_hints": ["prop"],
+        "generic_score": 50,
+    })
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    sketchfab_path = lookups / "unity" / "sketchfab_catalog.json"
+    sketchfab = json.loads(sketchfab_path.read_text(encoding="utf-8"))
+    sketchfab["entries"][0]["query"] = "glowing orb game prop"
+    sketchfab_path.write_text(json.dumps(sketchfab), encoding="utf-8")
+
+    output = tmp_path / "asset_fulfilment.json"
+    manifest = tmp_path / "asset_fulfilment.manifest.json"
+    fulfil_image_assets(
+        closed_ir=closed,
+        reconciliation_manifest=reconciliation,
+        output=output,
+        manifest=manifest,
+        lookups_dir=str(lookups),
+        asset_root=asset_root,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    selection = next(
+        item["selection"] for item in data["assets"]
+        if item["inventory_label"] == "glowing commit nodes"
+    )
+    assert data["status"] == "fulfilled"
+    assert selection["filename"] == "glowing-orb.fbx"
+    assert selection["source"] == "sketchfab"
 
 
 def test_fulfilment_records_rejected_unlicensed_request(tmp_path: Path) -> None:
@@ -185,6 +233,54 @@ def test_fulfilment_rejects_equal_best_matches(tmp_path: Path) -> None:
         item.get("reason", "").startswith("ambiguous")
         for item in data["rejections"]
     )
+
+
+def test_fulfilment_collapses_byte_identical_pack_copies(tmp_path: Path) -> None:
+    closed, reconciliation, lookups, asset_root = _write_case(tmp_path, ambiguous=True)
+    (asset_root / "alt" / "red-explorer.fbx").write_bytes(b"character-fbx")
+    output = tmp_path / "asset_fulfilment.json"
+    manifest = tmp_path / "asset_fulfilment.manifest.json"
+
+    fulfil_image_assets(
+        closed_ir=closed,
+        reconciliation_manifest=reconciliation,
+        output=output,
+        manifest=manifest,
+        lookups_dir=str(lookups),
+        asset_root=asset_root,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["status"] == "fulfilled"
+    assert data["catalog_preflight"]["status"] == "pass"
+
+
+def test_fulfilment_rejects_catalog_without_visual_noun_match(tmp_path: Path) -> None:
+    closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
+    catalog_path = lookups / "unity" / "asset_catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["assets"][0]["filename"] = "character.fbx"
+    catalog["assets"][0]["keywords"] = ["character"]
+    catalog["assets"][0]["description"] = "character model"
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+    output = tmp_path / "asset_fulfilment.json"
+    manifest = tmp_path / "asset_fulfilment.manifest.json"
+
+    fulfil_image_assets(
+        closed_ir=closed,
+        reconciliation_manifest=reconciliation,
+        output=output,
+        manifest=manifest,
+        lookups_dir=str(lookups),
+        asset_root=asset_root,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    failures = data["catalog_preflight"]["failures"]
+    assert data["status"] == "rejected"
+    assert failures[0]["inventory_label"] == "red-hat explorer"
+    assert failures[0]["reason"].startswith("catalog freshness preflight:")
+    assert failures[0]["category_only_matches"][0]["filename"] == "character.fbx"
 
 
 def test_fulfilment_requires_reconciliation_hash(tmp_path: Path) -> None:

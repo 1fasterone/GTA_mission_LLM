@@ -232,6 +232,7 @@ def unity_vizconcept_fulfill_assets(
 ) -> None:
     """Run deterministic Slice 4: closed image IR -> frozen asset manifest."""
     from src.visual_asset_fulfilment import fulfil_image_assets
+    from src.visual_reasoning_compiler import VisualReasoningCompilerError
 
     try:
         accepted_licenses = None
@@ -259,6 +260,199 @@ def unity_vizconcept_fulfill_assets(
     except (OSError, ValueError, TypeError, json.JSONDecodeError,
             VisualReasoningCompilerError) as exc:
         console.print(f"[red]Visual asset fulfilment error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-compile")
+def unity_vizconcept_compile(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    asset_fulfilment: Path = typer.Option(
+        ..., "--asset-fulfilment", help="Slice-4 asset fulfilment JSON"
+    ),
+    asset_manifest: Path = typer.Option(
+        ..., "--asset-manifest", help="Slice-4 fulfilment manifest"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="New Unity project output directory"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    lookups_dir: Path = typer.Option(
+        Path("lookups"), "--lookups-dir", help="Frozen Unity catalog directory"
+    ),
+    no_think: bool = typer.Option(
+        False, "--no-think", help="Disable reasoning on the single schema-fill call"
+    ),
+) -> None:
+    """Run Slice 5: closed Concept + exact Slice-4 assets -> Unity project.
+
+    The Concept is reused byte-for-byte, so the normal Concept call is skipped.
+    The existing schema-fill call runs once; visual assets are then passed as
+    explicit locked bindings into the generator. This command never performs a
+    live Sketchfab search or thumbnail/CLIP selection.
+    """
+    from src.unity_pipeline import UnityPipeline
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError, sha256_file,
+    )
+    from src.visual_reasoning_reconcile import CLOSED_FORMAT
+    from src.visual_asset_fulfilment import FULFILMENT_FORMAT
+
+    try:
+        if output.exists():
+            raise VisualReasoningCompilerError(
+                f"refusing to compile into an existing output directory: {output}"
+            )
+        closed = json.loads(closed_ir.read_text(encoding="utf-8"))
+        reconciliation = closed_ir.with_name("reconciliation.json")
+        # The Slice-3 manifest is adjacent to the closed IR in the documented
+        # run layout.  The fulfilment manifest independently records the
+        # closed request fingerprint, so use that as the cross-stage check when
+        # a caller keeps the manifest under another name.
+        if not isinstance(closed, dict) or closed.get("format") != CLOSED_FORMAT:
+            raise VisualReasoningCompilerError("Slice-5 closed IR has the wrong format")
+        if closed.get("status") != "closed":
+            raise VisualReasoningCompilerError("Slice-5 requires a closed Slice-3 IR")
+
+        fulfilment = json.loads(asset_fulfilment.read_text(encoding="utf-8"))
+        manifest = json.loads(asset_manifest.read_text(encoding="utf-8"))
+        if not isinstance(fulfilment, dict) or fulfilment.get("format") != FULFILMENT_FORMAT:
+            raise VisualReasoningCompilerError(
+                "Slice-5 asset fulfilment has the wrong format"
+            )
+        if fulfilment.get("status") != "fulfilled":
+            raise VisualReasoningCompilerError(
+                "Slice-5 requires a fulfilled Slice-4 result; compile was not attempted"
+            )
+        if not isinstance(manifest, dict) or manifest.get("format") != FULFILMENT_FORMAT:
+            raise VisualReasoningCompilerError(
+                "Slice-5 asset manifest has the wrong format"
+            )
+        expected_output_hash = (
+            ((manifest.get("outputs") or {}).get("asset_fulfilment") or {})
+            .get("sha256")
+        )
+        if expected_output_hash != sha256_file(asset_fulfilment):
+            raise VisualReasoningCompilerError(
+                "Slice-4 asset manifest hash does not match asset fulfilment JSON"
+            )
+        request_fingerprint = closed.get("request_fingerprint")
+        if not request_fingerprint or (
+            fulfilment.get("closed_request_fingerprint") != request_fingerprint
+            or manifest.get("closed_request_fingerprint") != request_fingerprint
+        ):
+            raise VisualReasoningCompilerError(
+                "Slice-3 and Slice-4 request fingerprints do not match"
+            )
+        if manifest.get("fulfilment_fingerprint") != fulfilment.get(
+                "fulfilment_fingerprint"):
+            raise VisualReasoningCompilerError(
+                "Slice-4 fulfilment fingerprint does not match its manifest"
+            )
+
+        inventory = ((closed.get("inventory") or {}).get("visible_elements") or [])
+        by_label = {
+            str(element.get("label")): element for element in inventory
+            if isinstance(element, dict) and element.get("label")
+        }
+        records = []
+        for asset in fulfilment.get("assets") or []:
+            if not isinstance(asset, dict):
+                raise VisualReasoningCompilerError(
+                    "Slice-4 asset record is not an object"
+                )
+            label = str(asset.get("inventory_label") or "")
+            if label not in by_label:
+                raise VisualReasoningCompilerError(
+                    f"Slice-4 asset label is absent from the closed inventory: {label!r}"
+                )
+            record = dict(asset)
+            record["element"] = by_label[label]
+            records.append(record)
+        required_asset_labels = {
+            str(request.get("inventory_label"))
+            for request in (closed.get("asset_requests") or [])
+            if isinstance(request, dict) and request.get("inventory_label")
+        }
+        if {str(record.get("inventory_label")) for record in records} != \
+                required_asset_labels:
+            raise VisualReasoningCompilerError(
+                "Slice-4 did not provide one fulfilled record for every asset-worthy "
+                "closed-inventory element"
+            )
+
+        concept = str(((closed.get("concept") or {}).get("text") or "")).strip()
+        if not concept:
+            raise VisualReasoningCompilerError("closed IR carries no Concept text")
+        if not config.is_file():
+            raise VisualReasoningCompilerError(f"config file not found: {config}")
+
+        cfg = _cfg(str(config))
+        pipe_cfg = dict(cfg.get("unity_pipeline") or {})
+        pipe_cfg["unity_output_dir"] = str(output)
+        pipe_cfg["lookups_dir"] = str(lookups_dir)
+        cfg["unity_pipeline"] = pipe_cfg
+        # Slice 4 already performed the only authorized marketplace operation.
+        # Disable every live/thumbnail path for the Unity handoff; locked
+        # bindings are consumed directly by the generator.
+        sketchfab_cfg = dict(cfg.get("sketchfab") or {})
+        sketchfab_cfg.update({
+            "enabled": False,
+            "auto_fetch": False,
+            "vision_select": False,
+            "semantic_select": False,
+        })
+        cfg["sketchfab"] = sketchfab_cfg
+
+        project_root = UnityPipeline(cfg).run(
+            concept,
+            theme="none",
+            no_think=no_think,
+            precomputed_concept=concept,
+            visual_asset_bindings=records,
+        )
+        schema_path = project_root / f"{project_root.name}.schema.json"
+        compile_manifest = output / "visual_compile.manifest.json"
+        compile_manifest.write_text(json.dumps({
+            "format": "visual-reasoning-compiler/unity-compile/v1",
+            "stage": "5_unity_compile",
+            "status": "compiled",
+            "authority": {
+                "concept_source": "validated_slice_2_concept",
+                "concept_llm_called_here": False,
+                "schema_fill_calls": "existing_step_3_only",
+                "network_called_here": False,
+                "thumbnail_or_clip_selection_here": False,
+            },
+            "inputs": {
+                "closed_image_ir": {
+                    "path": str(closed_ir), "sha256": sha256_file(closed_ir),
+                },
+                "asset_fulfilment": {
+                    "path": str(asset_fulfilment),
+                    "sha256": sha256_file(asset_fulfilment),
+                },
+                "asset_manifest": {
+                    "path": str(asset_manifest),
+                    "sha256": sha256_file(asset_manifest),
+                },
+            },
+            "outputs": {
+                "project_root": str(project_root),
+                "schema": {
+                    "path": str(schema_path),
+                    "sha256": sha256_file(schema_path),
+                },
+            },
+            "fulfilled_count": len(records),
+        }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        console.print(f"[green]Unity visual project written[/] {project_root}")
+        console.print(f"[green]Slice-5 compile manifest written[/] {compile_manifest}")
+        console.print(f"[green]Exact visual bindings:[/] {len(records)}")
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError,
+            RuntimeError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual Unity compile error:[/] {exc}")
         raise typer.Exit(2) from exc
 
 

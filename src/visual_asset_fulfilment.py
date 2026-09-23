@@ -109,37 +109,79 @@ def _verify_closed_ir(closed: dict[str, Any], reconciliation: dict[str, Any],
         )
 
 
-def _catalog_file_records(lookups_dir: Path) -> list[dict[str, str]]:
-    """Return hashes for the exact catalog partitions used by load_catalog."""
-    records: list[dict[str, str]] = []
+def _catalog_metadata(data: dict[str, Any], *, partition: str) -> dict[str, Any]:
+    entries = data.get("assets") if partition == "asset_catalog" else data.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+    categories = sorted({
+        str(entry.get("category"))
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("category")
+    })
+    roots = sorted({
+        str(entry.get("root"))
+        for entry in entries
+        if isinstance(entry, dict) and entry.get("root")
+    })
+    metadata: dict[str, Any] = {
+        "partition": partition,
+        "version": data.get("version"),
+        "entry_count": len(entries),
+        "categories": categories,
+        "roots": roots,
+    }
+    provenance = data.get("provenance")
+    if isinstance(provenance, dict):
+        metadata["provenance"] = provenance
+    return metadata
+
+
+def _catalog_file_records(lookups_dir: Path) -> list[dict[str, Any]]:
+    """Return hashes and deterministic provenance for loaded catalog partitions."""
+    records: list[dict[str, Any]] = []
     base_path: Path | None = None
+    base_data: dict[str, Any] | None = None
     for relative in (CATALOG_RELPATH, CURATED_RELPATH):
         candidate = lookups_dir / relative
         if not candidate.is_file():
             continue
         try:
-            json.loads(candidate.read_text(encoding="utf-8"))
+            candidate_data = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError):
             continue
+        if not isinstance(candidate_data, dict):
+            continue
         base_path = candidate
+        base_data = candidate_data
         break
-    if base_path is not None:
+    if base_path is not None and base_data is not None:
         records.append({
             "path": base_path.as_posix(),
             "sha256": sha256_file(base_path),
+            "metadata": _catalog_metadata(
+                base_data,
+                partition=("asset_catalog"
+                           if base_path.name == CATALOG_RELPATH.name
+                           else "curated_catalog"),
+            ),
         })
 
     sketchfab_path = lookups_dir / SKETCHFAB_RELPATH
     if sketchfab_path.is_file():
         try:
-            json.loads(sketchfab_path.read_text(encoding="utf-8"))
+            sketchfab_data = json.loads(sketchfab_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise VisualReasoningCompilerError(
                 f"frozen Sketchfab catalog is not valid UTF-8 JSON: {sketchfab_path}"
             ) from exc
+        if not isinstance(sketchfab_data, dict):
+            raise VisualReasoningCompilerError(
+                f"frozen Sketchfab catalog must contain a JSON object: {sketchfab_path}"
+            )
         records.append({
             "path": sketchfab_path.as_posix(),
             "sha256": sha256_file(sketchfab_path),
+            "metadata": _catalog_metadata(sketchfab_data, partition="sketchfab_catalog"),
         })
     if not records:
         raise VisualReasoningCompilerError(
@@ -157,13 +199,40 @@ def _tokens(value: str) -> set[str]:
 
 def _entry_tokens(entry: dict[str, Any]) -> set[str]:
     result = _tokens(str(entry.get("filename") or ""))
-    result.update(
-        token for value in (entry.get("keywords") or [], entry.get("kind_hints") or [])
-        for token in _tokens(str(value))
-    )
+    for raw_values in (entry.get("keywords") or [], entry.get("kind_hints") or []):
+        values = (raw_values if isinstance(raw_values, (list, tuple, set))
+                  else [raw_values])
+        for value in values:
+            result.update(_tokens(str(value)))
     result.update(_tokens(str(entry.get("category") or "")))
     result.update(_tokens(str(entry.get("description") or "")))
     return result
+
+
+_GENERIC_VISUAL_TOKENS = frozenset({
+    "asset", "assets", "game", "model", "models", "object", "objects",
+    "scene", "world", "element", "elements", "feature", "natural",
+    "visual", "visible", "thing", "things",
+})
+
+
+def _visual_signal_tokens(request: dict[str, Any], element: dict[str, Any]) -> set[str]:
+    """Return noun/index terms, excluding category-only evidence.
+
+    Category words are intentionally excluded.  A vehicle request must not
+    pass freshness preflight merely because every car entry says ``vehicle``;
+    it needs a current noun match such as ``speedboat`` or ``helicopter``.
+    """
+    category_tokens = _tokens(str(element.get("category") or ""))
+    values = (
+        element.get("label"),
+        request.get("query"),
+        element.get("model_hint"),
+    )
+    return {
+        token for value in values for token in _tokens(str(value or ""))
+        if token not in category_tokens and token not in _GENERIC_VISUAL_TOKENS
+    }
 
 
 def _category_compatible(category: str, entry: dict[str, Any]) -> bool:
@@ -204,6 +273,19 @@ def _score_request(request: dict[str, Any], element: dict[str, Any],
         score += float(entry.get("generic_score") or 0) / 50.0
     except (TypeError, ValueError):
         pass
+    # A frozen Sketchfab result is the deterministic answer to the exact
+    # query that produced it.  Once the live freeze has selected a licensed
+    # model for that query, stale local pack variants must not reopen an
+    # equal/stronger lexical match during Slice 4.  This is deliberately a
+    # text/provenance rule: no thumbnail or CLIP signal is consulted here.
+    request_query = " ".join(_tokens(str(request.get("query") or "")))
+    frozen_query = " ".join(_tokens(str(entry.get("query") or "")))
+    if (
+        str(entry.get("source") or "").casefold() == "sketchfab"
+        and request_query
+        and request_query == frozen_query
+    ):
+        score += 100.0
     return score
 
 
@@ -233,6 +315,117 @@ def _license_ok(entry: dict[str, Any], accepted_licenses: set[str]) -> bool:
         return True
     license_slug = str(entry.get("license") or "").casefold()
     return bool(license_slug and license_slug in accepted_licenses)
+
+
+def _catalog_preflight(
+    *,
+    requests: list[Any],
+    elements_by_label: dict[str, dict[str, Any]],
+    catalog_assets: list[Any],
+    accepted_licenses: set[str],
+    asset_root: Path | None,
+) -> list[dict[str, Any]]:
+    """Find stale/index-misaligned nouns before semantic scoring can hide them."""
+    failures: list[dict[str, Any]] = []
+    seen_labels: set[str] = set()
+    for index, raw_request in enumerate(requests):
+        if not isinstance(raw_request, dict):
+            continue
+        label = raw_request.get("inventory_label")
+        if not isinstance(label, str) or not label.strip() or label in seen_labels:
+            continue
+        seen_labels.add(label)
+        element = elements_by_label.get(label)
+        if element is None:
+            continue
+        category = str(element.get("category") or "")
+        if category in NON_ASSET_CATEGORIES:
+            continue
+        signal_tokens = _visual_signal_tokens(raw_request, element)
+        if not signal_tokens:
+            continue
+
+        category_signal_matches: list[dict[str, Any]] = []
+        category_only_matches: list[dict[str, Any]] = []
+        cross_domain_matches: list[dict[str, Any]] = []
+        for raw_entry in catalog_assets:
+            if not isinstance(raw_entry, dict):
+                continue
+            fmt = str(raw_entry.get("format") or "fbx").casefold()
+            if fmt not in SUPPORTED_FORMATS or not _license_ok(raw_entry, accepted_licenses):
+                continue
+            try:
+                source = _entry_path(raw_entry, asset_root=asset_root)
+            except VisualReasoningCompilerError:
+                continue
+            if not source.is_file():
+                continue
+            compatible = _category_compatible(category, raw_entry)
+            overlap = sorted(signal_tokens & _entry_tokens(raw_entry))
+            if not overlap:
+                if compatible:
+                    category_only_matches.append({
+                        "filename": str(raw_entry.get("filename") or source.name),
+                        "category": str(raw_entry.get("category") or ""),
+                    })
+                continue
+            summary = {
+                "filename": str(raw_entry.get("filename") or source.name),
+                "category": str(raw_entry.get("category") or ""),
+                "matched_tokens": overlap,
+            }
+            cross_domain_matches.append(summary)
+            if compatible:
+                category_signal_matches.append(summary)
+
+        if category_signal_matches:
+            continue
+        cross_domain_matches.sort(key=lambda item: (
+            item["filename"], item["category"], item["matched_tokens"],
+        ))
+        reason = (
+            "catalog freshness preflight: no readable, licensed, "
+            f"category-compatible catalog asset matches visual noun tokens "
+            f"{sorted(signal_tokens)!r}"
+        )
+        if cross_domain_matches:
+            reason += "; cross-domain matches were refused"
+        if category_only_matches:
+            reason += "; category-only matches were refused"
+        category_only_matches.sort(key=lambda item: (
+            item["filename"], item["category"],
+        ))
+        failures.append({
+            "index": index,
+            "inventory_label": label,
+            "reason": reason,
+            "signal_tokens": sorted(signal_tokens),
+            "cross_domain_matches": cross_domain_matches[:5],
+            "category_only_matches": category_only_matches[:5],
+        })
+    return failures
+
+
+def _deduplicate_identical_candidates(
+    candidates: list[tuple[float, dict[str, Any], Path]],
+) -> list[tuple[float, dict[str, Any], Path]]:
+    """Collapse duplicate pack copies without hiding distinct model choices."""
+    unique: dict[str, tuple[float, dict[str, Any], Path]] = {}
+    for candidate in candidates:
+        score, entry, source = candidate
+        content_hash = sha256_file(source)
+        current = unique.get(content_hash)
+        if current is None or (
+            str(entry.get("filename") or source.name),
+            str(entry.get("source") or ""),
+            str(entry.get("relpath") or ""),
+        ) < (
+            str(current[1].get("filename") or current[2].name),
+            str(current[1].get("source") or ""),
+            str(current[1].get("relpath") or ""),
+        ):
+            unique[content_hash] = candidate
+    return list(unique.values())
 
 
 def _selection(entry: dict[str, Any], source: Path, score: float) -> dict[str, Any]:
@@ -303,7 +496,17 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
     }
 
     fulfilled: list[dict[str, Any]] = []
-    rejected: list[dict[str, Any]] = []
+    preflight_failures = _catalog_preflight(
+        requests=requests,
+        elements_by_label=elements_by_label,
+        catalog_assets=catalog_assets,
+        accepted_licenses=accepted,
+        asset_root=asset_root,
+    )
+    preflight_by_label = {
+        str(item["inventory_label"]): item for item in preflight_failures
+    }
+    rejected: list[dict[str, Any]] = list(preflight_failures)
     seen_labels: set[str] = set()
     for index, raw_request in enumerate(requests):
         request = _require_mapping(raw_request, label=f"asset_requests[{index}]")
@@ -315,6 +518,8 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
             rejected.append({"inventory_label": label, "reason": "duplicate asset request"})
             continue
         seen_labels.add(label)
+        if label in preflight_by_label:
+            continue
         element = elements_by_label.get(label)
         if element is None:
             rejected.append({"inventory_label": label, "reason": "request is not in the closed inventory"})
@@ -348,6 +553,13 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
             if score >= min_score:
                 candidates.append((score, entry, source))
 
+        candidates.sort(key=lambda item: (
+            -item[0],
+            str(item[1].get("filename") or ""),
+            str(item[1].get("source") or ""),
+            str(item[1].get("relpath") or ""),
+        ))
+        candidates = _deduplicate_identical_candidates(candidates)
         candidates.sort(key=lambda item: (
             -item[0],
             str(item[1].get("filename") or ""),
@@ -409,6 +621,11 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
         ),
         "assets": fulfilled,
         "rejections": rejected,
+        "catalog_preflight": {
+            "status": "pass" if not preflight_failures else "rejected",
+            "checked_request_count": len(requests),
+            "failures": preflight_failures,
+        },
         "warnings": [
             "Live marketplace search/download and LLM calls are disabled in Slice 4.",
             "Board-to-mesh visual comparison is not performed; this slice verifies "
@@ -434,6 +651,7 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
         },
         "fulfilled_count": len(fulfilled),
         "rejected_count": len(rejected),
+        "catalog_preflight": fulfilment_data["catalog_preflight"],
         "warnings": fulfilment_data["warnings"],
     }
     output.parent.mkdir(parents=True, exist_ok=True)
