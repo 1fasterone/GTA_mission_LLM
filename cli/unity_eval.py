@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Optional
 
@@ -259,6 +260,125 @@ def unity_vizconcept_fulfill_assets(
     except (OSError, ValueError, TypeError, json.JSONDecodeError,
             VisualReasoningCompilerError) as exc:
         console.print(f"[red]Visual asset fulfilment error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-compile")
+def unity_vizconcept_compile(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    asset_fulfilment: Path = typer.Option(
+        ..., "--asset-fulfilment", help="Slice-4 fulfilled asset JSON"
+    ),
+    asset_manifest: Path = typer.Option(
+        ..., "--asset-manifest", help="Slice-4 fulfilment manifest"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="New Unity project directory"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-5 compile manifest destination"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run Slice 5: closed image IR + exact assets -> Unity project."""
+    from src.unity_pipeline import UnityPipeline
+    from src.visual_reasoning_compile import load_visual_compile_plan
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError,
+        sha256_bytes,
+        sha256_file,
+    )
+
+    manifest_path = manifest or (output / "visual_compile.manifest.json")
+    try:
+        if not config.is_file():
+            raise VisualReasoningCompilerError(f"config file not found: {config}")
+        if manifest_path.exists():
+            raise VisualReasoningCompilerError(
+                f"refusing to overwrite Slice-5 manifest: {manifest_path}"
+            )
+        if output.exists() and any(output.iterdir()):
+            raise VisualReasoningCompilerError(
+                f"refusing to overwrite non-empty visual compile output: {output}"
+            )
+
+        cfg = deepcopy(_cfg(str(config)))
+        pipe_cfg = cfg.setdefault("unity_pipeline", {})
+        lookups_dir = Path(str(pipe_cfg.get("lookups_dir", "lookups")))
+        asset_cfg = cfg.get("assets") or {}
+        configured_root = asset_cfg.get("asset_root")
+        plan = load_visual_compile_plan(
+            closed_ir=closed_ir,
+            asset_fulfilment=asset_fulfilment,
+            asset_manifest=asset_manifest,
+            lookups_dir=str(lookups_dir),
+            asset_root=Path(configured_root) if configured_root else None,
+        )
+        concept_record = plan["closed"].get("concept")
+        if not isinstance(concept_record, dict) or not str(
+                concept_record.get("text") or "").strip():
+            raise VisualReasoningCompilerError(
+                "closed image IR has no non-empty Concept text"
+            )
+        concept = str(concept_record["text"]).strip()
+
+        pipe_cfg["unity_output_dir"] = str(output)
+        pipeline = UnityPipeline(cfg)
+        project_root = pipeline.run(
+            concept,
+            theme="none",
+            compose=False,
+            blender_models=False,
+            no_think=False,
+            micro_code=False,
+            no_llm=False,
+            reference_image=None,
+            precomputed_concept=concept,
+            visual_asset_plan=plan,
+        )
+        project_root = Path(project_root)
+        schema_path = project_root / f"{project_root.name}.schema.json"
+        if not schema_path.is_file():
+            raise VisualReasoningCompilerError(
+                f"Slice-5 compile did not write the schema sidecar: {schema_path}"
+            )
+        manifest_data = {
+            "format": "visual-reasoning-compiler/compile/v1",
+            "stage": "5_visual_compile",
+            "status": "compiled",
+            "authority": {
+                "precomputed_concept_used": True,
+                "concept_call_skipped": True,
+                "post_schema_llm_disabled": True,
+                "catalog_rescoring_or_substitution": False,
+                "authored_scene_compiler_outranks_exact_visual_binding": True,
+            },
+            "inputs": plan["inputs"],
+            "concept_sha256": sha256_bytes(concept.encode("utf-8")),
+            "binding_report": plan.get("binding_report"),
+            "outputs": {
+                "project_root": str(project_root),
+                "schema": {
+                    "path": str(schema_path),
+                    "sha256": sha256_file(schema_path),
+                },
+            },
+        }
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(manifest_data, indent=2, sort_keys=True, ensure_ascii=False)
+            + "\n",
+            encoding="utf-8",
+        )
+        console.print(f"[green]Slice-5 visual compile written[/] {project_root}")
+        console.print(f"[green]Slice-5 compile manifest written[/] {manifest_path}")
+        console.print("[green]Concept calls:[/] 0 (precomputed Concept)")
+        console.print("[green]Post-schema LLM calls:[/] 0")
+    except (OSError, ValueError, TypeError, RuntimeError, KeyError,
+            json.JSONDecodeError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual compile error:[/] {exc}")
         raise typer.Exit(2) from exc
 
 

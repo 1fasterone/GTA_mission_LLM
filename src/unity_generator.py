@@ -2955,7 +2955,9 @@ class UnityProjectGenerator:
                             strict_assets: bool,
                             asset_cfg: dict | None,
                             sketchfab_cfg: dict | None = None,
-                            llm: object | None = None) -> tuple[dict, dict[str, str]]:
+                            llm: object | None = None,
+                            visual_asset_bindings: dict[str, dict] | None = None
+                            ) -> tuple[dict, dict[str, str]]:
         """Resolve every model the project uses: default pack → Blender
         overrides → per-entity catalog picks → rig downgrades.
 
@@ -2986,7 +2988,8 @@ class UnityProjectGenerator:
         entity_model_paths = resolve_entity_assets(
             schema, used_models, all_models,
             lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=strict_assets,
-            sketchfab_cfg=sketchfab_cfg, llm=llm)
+            sketchfab_cfg=sketchfab_cfg, llm=llm,
+            visual_asset_bindings=visual_asset_bindings)
 
         # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
         # two independent cases:
@@ -3045,7 +3048,9 @@ class UnityProjectGenerator:
                  strict_assets: bool = False,
                  asset_cfg: dict | None = None,
                  sketchfab_cfg: dict | None = None,
-                 llm: object | None = None) -> dict[str, str]:
+                 llm: object | None = None,
+                 visual_asset_bindings: dict[str, dict] | None = None
+                 ) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
         Caller writes the dict to disk.
@@ -3187,7 +3192,8 @@ class UnityProjectGenerator:
         # ── Model resolution (default pack + per-entity catalog picks) ────────
         used_models, entity_model_paths = self._resolve_all_models(
             schema, lookups_dir, model_source_dir, model_overrides,
-            composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm)
+            composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm,
+            visual_asset_bindings)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
         # Entity name -> bounds-fit target (0.0 = no fit), for BoundsFit at
@@ -4069,7 +4075,9 @@ class UnityProjectGenerator:
               asset_cfg: dict | None = None,
               sketchfab_cfg: dict | None = None,
               project_config: dict | None = None,
-              llm: object | None = None) -> tuple[Path, int]:
+              llm: object | None = None,
+              visual_asset_bindings: dict[str, dict] | None = None
+              ) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
         files = self.generate(schema, manifest_deps,
                               lookups_dir=lookups_dir,
@@ -4080,7 +4088,8 @@ class UnityProjectGenerator:
                               strict_assets=strict_assets,
                               asset_cfg=asset_cfg,
                               sketchfab_cfg=sketchfab_cfg,
-                              llm=llm)
+                              llm=llm,
+                              visual_asset_bindings=visual_asset_bindings)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.
@@ -4144,7 +4153,8 @@ class UnityProjectGenerator:
         # for it at all.
         used_models, _ = self._resolve_all_models(
             schema, lookups_dir, model_source_dir, model_overrides,
-            composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm)
+            composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm,
+            visual_asset_bindings)
         n_models = 0
         for m in used_models.values():
             for item in [m] + list(m.clips.values()):

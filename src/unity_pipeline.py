@@ -1127,7 +1127,33 @@ class UnityPipeline:
             no_think:    bool = False,
             micro_code:  bool = True,
             no_llm:      bool = False,
-            reference_image: Path | None = None) -> Path:
+            reference_image: Path | None = None,
+            precomputed_concept: str | None = None,
+            visual_asset_plan: dict | None = None) -> Path:
+        visual_compile = visual_asset_plan is not None
+        if visual_compile:
+            if not precomputed_concept or not precomputed_concept.strip():
+                raise ValueError(
+                    "visual compile requires the non-empty Concept text from the closed image IR"
+                )
+            if no_llm or reference_image is not None:
+                raise ValueError(
+                    "visual compile requires Step-3 schema fill: --no-llm and "
+                    "--reference-image are not allowed"
+                )
+            if theme not in (None, "none"):
+                raise ValueError(
+                    "visual compile accepts only theme='none'; hidden creative context is disabled"
+                )
+            if compose or blender_models or micro_code:
+                raise ValueError(
+                    "visual compile disables compose, Blender model generation, and "
+                    "post-schema micro-code authoring"
+                )
+        elif precomputed_concept is not None and (no_llm or reference_image is not None):
+            raise ValueError(
+                "precomputed_concept requires the normal Step-3 LLM stage and no reference image"
+            )
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -1180,11 +1206,12 @@ class UnityPipeline:
         # No LLM involved; runs once against the raw prompt.
         intent = classify_intent(user_prompt)
         theme_block  += intent.concept_hint()
-        schema_hints += intent.structure_hint()
+        if not visual_compile:
+            schema_hints += intent.structure_hint()
         # Asset-library vocabulary (categories + top tags from the generated
         # catalog) so entity model_hints name models that actually exist.
         # Deterministic lookup; missing catalog → empty string, prompt unchanged.
-        _vocab = asset_vocabulary(self.lookups_dir)
+        _vocab = "" if visual_compile else asset_vocabulary(self.lookups_dir)
         if _vocab:
             schema_hints += "\n" + _vocab + "\n"
         # The brief's own ENTITIES bullets, verbatim, as a required checklist.
@@ -1192,7 +1219,7 @@ class UnityPipeline:
         # already paraphrased the brief's explicit entity names away — a brief
         # that spells out its entities had no way to get them in front of the
         # schema-fill model at all (see render_entity_checklist).
-        _checklist = render_entity_checklist(user_prompt)
+        _checklist = "" if visual_compile else render_entity_checklist(user_prompt)
         if _checklist:
             schema_hints += "\n" + _checklist + "\n"
             self._ok(
@@ -1205,7 +1232,7 @@ class UnityPipeline:
         # explicitly ("each is required; implement as its own module") and the
         # schema-fill model would never see the demand — 7 of 12 systems went
         # missing on the grandma run (see render_script_checklist).
-        _script_checklist = render_script_checklist(user_prompt)
+        _script_checklist = "" if visual_compile else render_script_checklist(user_prompt)
         if _script_checklist:
             schema_hints += "\n" + _script_checklist + "\n"
             self._ok(
@@ -1219,22 +1246,22 @@ class UnityPipeline:
         # names, 7/10 audio cues, 3/6 narrative beats and the project title to
         # invention, the same recall gap entities/scripts had before their own
         # checklists shipped.
-        _scene_checklist = render_scene_checklist(user_prompt)
+        _scene_checklist = "" if visual_compile else render_scene_checklist(user_prompt)
         if _scene_checklist:
             schema_hints += "\n" + _scene_checklist + "\n"
             self._ok("Brief names scenes explicitly — passed to schema-fill "
                      "as a required checklist")
-        _audio_checklist = render_audio_checklist(user_prompt)
+        _audio_checklist = "" if visual_compile else render_audio_checklist(user_prompt)
         if _audio_checklist:
             schema_hints += "\n" + _audio_checklist + "\n"
             self._ok("Brief names audio cues explicitly — passed to "
                      "schema-fill as a required checklist")
-        _narrative_checklist = render_narrative_checklist(user_prompt)
+        _narrative_checklist = "" if visual_compile else render_narrative_checklist(user_prompt)
         if _narrative_checklist:
             schema_hints += "\n" + _narrative_checklist + "\n"
             self._ok("Brief numbers narrative beats explicitly — passed to "
                      "schema-fill as a required checklist")
-        _title_checklist = render_title_checklist(user_prompt)
+        _title_checklist = "" if visual_compile else render_title_checklist(user_prompt)
         if _title_checklist:
             schema_hints += "\n" + _title_checklist + "\n"
             self._ok("Brief declares an explicit title — passed to "
@@ -1290,36 +1317,44 @@ class UnityPipeline:
 
         else:
             # STEP 2 — concept ────────────────────────────────────────────────
-            self._step(2, "LLM generates project concept")
-            if no_think:
-                self._ok("--no-think: reasoning disabled for the whole run "
-                         "(concept quality/creativity trades for speed)")
-            concept_user = UNITY_CONCEPT_USER.format(
-                user_prompt=user_prompt,
-                theme_block=theme_block,
-            )
-            concept_images = None
-            if reference_image_uri is not None:
-                concept_user += (
-                    "\n\nREFERENCE IMAGE\n"
-                    "Use the attached image only as a visual target. Extract "
-                    "camera angle, horizon framing, lighting tone, palette, "
-                    "track composition, and environment density. Do not copy "
-                    "image metadata, HUD text, branding, or image contents "
-                    "into the schema. Do not write code.\n"
+            if precomputed_concept is None:
+                self._step(2, "LLM generates project concept")
+                if no_think:
+                    self._ok("--no-think: reasoning disabled for the whole run "
+                             "(concept quality/creativity trades for speed)")
+                concept_user = UNITY_CONCEPT_USER.format(
+                    user_prompt=user_prompt,
+                    theme_block=theme_block,
                 )
-                concept_images = [reference_image_uri]
-                self._ok("Reference image attached to Concept only")
-            concept = self.llm.chat(
-                system      = UNITY_CONCEPT_SYSTEM,
-                user        = concept_user,
-                temperature = self.concept_temp,
-                thinking    = not no_think,
-                images      = concept_images,
-            )
-            self._ok(f"{len(concept)} chars of project concept generated")
-            if self.show_prompts:
-                console.print(concept)
+                concept_images = None
+                if reference_image_uri is not None:
+                    concept_user += (
+                        "\n\nREFERENCE IMAGE\n"
+                        "Use the attached image only as a visual target. Extract "
+                        "camera angle, horizon framing, lighting tone, palette, "
+                        "track composition, and environment density. Do not copy "
+                        "image metadata, HUD text, branding, or image contents "
+                        "into the schema. Do not write code.\n"
+                    )
+                    concept_images = [reference_image_uri]
+                    self._ok("Reference image attached to Concept only")
+                concept = self.llm.chat(
+                    system      = UNITY_CONCEPT_SYSTEM,
+                    user        = concept_user,
+                    temperature = self.concept_temp,
+                    thinking    = not no_think,
+                    images      = concept_images,
+                )
+                self._ok(f"{len(concept)} chars of project concept generated")
+                if self.show_prompts:
+                    console.print(concept)
+            else:
+                self._step(2, "Using precomputed image-derived Concept (no LLM)")
+                concept = precomputed_concept.strip()
+                self._ok(
+                    f"{len(concept)} chars of precomputed Concept accepted; "
+                    "Concept call skipped"
+                )
 
             # STEP 3 — fill schema ────────────────────────────────────────────
             self._step(3, "LLM fills project schema")
@@ -1689,6 +1724,23 @@ class UnityPipeline:
 
         # Re-resolve anything that consistency check added
         schema = self.resolver.resolve_schema(schema)
+        visual_asset_bindings = None
+        if visual_compile:
+            from .visual_reasoning_compile import bind_visual_assets
+            _visual_binding = bind_visual_assets(schema, visual_asset_plan)
+            visual_asset_bindings = _visual_binding["bindings"]
+            schema.meta["visual_reasoning_compiler"] = {
+                "format": "visual-reasoning-compiler/compile/v1",
+                "stage": "5_visual_compile",
+                "status": "bound",
+                "inputs": visual_asset_plan.get("inputs", {}),
+                "bindings": _visual_binding["report"]["bindings"],
+                "authority": _visual_binding["report"]["authority"],
+            }
+            self._ok(
+                f"Bound {len(visual_asset_bindings)} exact Slice-4 visual asset(s) "
+                "to schema entities"
+            )
         manifest_deps = self.resolver.build_manifest_deps(
             schema, inject_mcp_bridge=self.inject_mcp_bridge
         )
@@ -1718,7 +1770,7 @@ class UnityPipeline:
         # --no-llm skips this: the enrichment is a model call, and its
         # deterministic fallback (model_hint / entity name, both already parsed
         # from the brief) is exactly what the offline arm is meant to exercise.
-        if schema.entities and not no_llm:
+        if schema.entities and not no_llm and not visual_compile:
             try:
                 from .unity_sketchfab_translator import translate_concept
                 _llm_seed = getattr(self.llm, "seed", None)
@@ -1996,6 +2048,20 @@ class UnityPipeline:
                                    f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
+        _generator_llm = self.llm
+        if visual_compile:
+            # Slice 4 already chose and byte-verified every visual asset.  The
+            # generator must not run a live Sketchfab tier, vision selector, or
+            # any other post-schema model path on this compile.
+            _asset_cfg = {**_asset_cfg, "strict": True}
+            _sketchfab_cfg = {
+                **_sketchfab_cfg,
+                "enabled": False,
+                "auto_fetch": False,
+                "vision_select": False,
+                "semantic_select": False,
+            }
+            _generator_llm = None
         from .csharp_syntax_gate import CSharpSyntaxError
         try:
             project_root, file_count = self.generator.write(
@@ -2003,7 +2069,8 @@ class UnityPipeline:
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                project_config=self.config, llm=self.llm)
+                project_config=self.config, llm=_generator_llm,
+                visual_asset_bindings=visual_asset_bindings)
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library

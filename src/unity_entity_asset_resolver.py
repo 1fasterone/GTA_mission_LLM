@@ -504,7 +504,9 @@ def resolve_entity_assets(schema,
                           asset_cfg: Optional[dict] = None,
                           strict: bool = False,
                           sketchfab_cfg: Optional[dict] = None,
-                          llm: Optional[Any] = None) -> dict[str, str]:
+                          llm: Optional[Any] = None,
+                          visual_asset_bindings: Optional[dict[str, dict]] = None
+                          ) -> dict[str, str]:
     """Assign a real model to every entity group.
 
     Mutates `used_models` (adds catalog picks so the existing copy/.meta/
@@ -649,7 +651,7 @@ def resolve_entity_assets(schema,
     # checked after the loop when genre == "racing".
     racing_core_seen = False
 
-    def _register(scored: list[tuple[float, dict]]) -> Optional[str]:
+    def _register(scored: list[tuple[float, dict]], *, exact: bool = False) -> Optional[str]:
         """Variety-pick from a sorted (score, asset) list, register the pick in
         used_models, and return its Resources.Load path (None if empty).
 
@@ -672,7 +674,11 @@ def resolve_entity_assets(schema,
         """
         if not scored:
             return None
-        if sample_temp > 0.0:
+        if exact:
+            # Slice 5 already selected and byte-verified this catalog record.
+            # Do not rotate, rescore, sample, or substitute it here.
+            pick = scored[0][1]
+        elif sample_temp > 0.0:
             pool = scored[:sample_pool]
             key = tuple(a["filename"] for _, a in pool)
             idx = rotation.get(key, 0)
@@ -790,6 +796,36 @@ def resolve_entity_assets(schema,
             _log.warning("[assets] authored model missing for %s: %s — "
                          "falling back to the catalog tiers",
                          e.name, _authored.get("src"))
+
+        # ── Tier V: exact Slice-5 visual binding ────────────────────────────
+        # This is intentionally below an authored Scene Compiler model and
+        # above every normal resolver tier.  The compile pass has already
+        # matched the closed image IR to this schema entity and verified the
+        # selected catalog bytes.  A malformed binding is a loud failure — it
+        # must never fall through to a visually different catalog choice.
+        _visual = (visual_asset_bindings or {}).get(e.name)
+        if _visual is not None:
+            _entry = _visual.get("catalog_entry")
+            if not isinstance(_entry, dict):
+                raise ValueError(
+                    f"[visual.assets] exact binding for {e.name!r} has no catalog entry"
+                )
+            _format = str(_entry.get("format") or "fbx").casefold()
+            if _format not in allowed_formats:
+                raise ValueError(
+                    f"[visual.assets] exact binding for {e.name!r} uses unsupported "
+                    f"format {_format!r} for game type {schema.game_type!r}"
+                )
+            _vpath = _register([(1.0, _entry)], exact=True)
+            if _vpath is None:
+                raise ValueError(
+                    f"[visual.assets] exact binding for {e.name!r} is unreadable: "
+                    f"{_entry.get('filename') or _entry.get('relpath')}"
+                )
+            entity_model_paths[e.name] = _vpath
+            if kind == "vehicle":
+                racing_core_seen = True
+            continue
 
         # ── Tier U: UI element (non-embodied games only) ──────────────────────
         # In a game that declared it has no avatar, a "CommitNode" or a
