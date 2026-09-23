@@ -80,11 +80,19 @@ these keys:
   "uncertainties": ["brief visual ambiguities, if any"]
 }
 
-List discrete, asset-worthy visible elements, not abstract game systems. Do
-not create a Sketchfab query for UI text, a glow, or an effect unless the
-image visibly contains a separate 3D object behind it. A query must refer to
-one listed visible element by its exact label. Use [] when a list has no
-honest entries. Output JSON only; do not add markdown or explanation.
+List every discrete visible element, not abstract game systems. Include
+asset-worthy physical objects even when small, partly occluded, decorative, or
+part of a race course: list boats and other vehicles, ramps, buoys or barrier
+chains, checkpoint gates, signs, bridges, waterfalls, cliffs, spectator stands,
+and other discrete scene objects when visibly present. Represent readable HUD
+or other UI as visible_elements with category "ui" and model_hint null, even
+when the same words also appear in visible_text. For each vehicle, use its
+literal visible class (boat versus jet ski); do not flatten every watercraft
+to "speedboat". Do not create a Sketchfab query for UI text, a glow, or an
+effect unless the image visibly contains a separate 3D object behind it. A
+query must refer to one listed visible element by its exact label. Use [] when
+a list has no honest entries. Output JSON only; do not add markdown or
+explanation.
 """
 
 CONCEPT_USER = """\
@@ -92,9 +100,19 @@ Inspect the attached board image and write the contents of Concept.txt as
 plain natural-language prose. The image is the sole creative source.
 
 Before the prose, emit this exact plain-text reference block. Include every
-concrete visible entity that the game concept uses, one short image-grounded
-phrase per bullet. Do not list abstract mechanics or generic words such as
-"player" or "game":
+concrete visible entity that could need a 3D asset, including decorative
+landmarks, one short image-grounded phrase per bullet. Include the foreground
+player vehicle, every other visible vehicle, and course dressing such as
+stands, bridges, ramps, gates, signs, and buoy chains. Each bullet must name
+exactly one discrete visible object, landmark, UI element, or single
+environment feature. Do not combine separate objects or turn a broad setting
+into one entity: describe a rocky canyon river course in the prose, but use
+separate references for a visible ramp, buoys, a checkpoint arch, or a
+waterfall. Use the object's ordinary visible noun and keep the vehicle class
+literal (write "boat" for a boat and "jet ski" only for an unambiguous jet
+ski); add color or position as a modifier when useful. Do not replace the
+noun with an inferred role such as "player" or "rival", and do not list
+abstract mechanics or generic words such as "player" or "game":
 
 VISIBLE ENTITY REFERENCES:
 - <short visible entity phrase>
@@ -114,10 +132,32 @@ model files, asset IDs, Unity, GTA, or any unavailable context. Do not output
 JSON, code, or a markdown fenced block. Output only the Concept.txt text.
 """
 
+CONCEPT_FORMAT_RETRY_USER = """\
+Re-read the attached image and return ONLY a valid Concept.txt document.
+The previous response was rejected because it omitted the required ordered
+reference block. Start the response with these exact lines, include one '- '
+bullet for every visible physical object that could need a 3D asset (including
+the foreground boat, other vehicles, stands, bridges, ramps, gates, signs,
+buoys, and visible UI), then close the block with the exact ending line:
+
+VISIBLE ENTITY REFERENCES:
+- <one ordinary visible object noun phrase>
+END VISIBLE ENTITY REFERENCES
+
+Use literal visible nouns: say "boat" for a boat and "jet ski" only for an
+unambiguous jet ski. Do not combine objects, use inferred roles such as
+"player" or "rival" as the noun, or invent unsupported entities. After the
+block, write 3-6 short paragraphs describing a modest playable game grounded
+only in the image. Include the player's interaction, progression, and concise
+win/lose conditions. Do not mention prompts, models, pipelines, or this
+retry. Do not output JSON, code, or a markdown fenced block.
+"""
+
 INVENTORY_TEMPERATURE = 0.2
 CONCEPT_TEMPERATURE = 0.55
 INVENTORY_SEED = 731947
 CONCEPT_SEED = 731948
+CONCEPT_RETRY_SEED = 731949
 INVENTORY_MAX_TOKENS = 3500
 CONCEPT_MAX_TOKENS = 2200
 INVENTORY_CATEGORIES = frozenset({
@@ -497,7 +537,25 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         seed=CONCEPT_SEED,
         max_tokens=CONCEPT_MAX_TOKENS,
     )
-    concept = _clean_concept_response(concept_raw)
+    concept_retry_used = False
+    try:
+        concept = _clean_concept_response(concept_raw)
+    except VisualReasoningCompilerError:
+        # Keep the boundary strict: retry the same image with a format-only
+        # instruction rather than repairing or completing the model's prose
+        # in Python. No inventory, source prompt, or semantic context is
+        # added to the retry.
+        concept_retry_used = True
+        concept_raw = llm.chat(
+            system=IMAGE_ONLY_SYSTEM,
+            user=CONCEPT_FORMAT_RETRY_USER,
+            images=[image_uri],
+            temperature=CONCEPT_TEMPERATURE,
+            thinking=False,
+            seed=CONCEPT_RETRY_SEED,
+            max_tokens=CONCEPT_MAX_TOKENS,
+        )
+        concept = _clean_concept_response(concept_raw)
 
     inventory_bytes = (
         json.dumps(inventory, indent=2, ensure_ascii=False) + "\n"
@@ -524,6 +582,13 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             "thinking": False,
             "seed": CONCEPT_SEED,
             "max_tokens": CONCEPT_MAX_TOKENS,
+            "format_retry": {
+                "user": CONCEPT_FORMAT_RETRY_USER,
+                "temperature": CONCEPT_TEMPERATURE,
+                "thinking": False,
+                "seed": CONCEPT_RETRY_SEED,
+                "max_tokens": CONCEPT_MAX_TOKENS,
+            },
         },
     }
     manifest_data: dict[str, Any] = {
@@ -550,6 +615,7 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             },
             "concept": {
                 "raw_response_sha256": sha256_bytes(concept_raw_bytes),
+                "format_retry_used": concept_retry_used,
                 "settings": request["concept"],
             },
         },

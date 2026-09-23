@@ -8,7 +8,9 @@ import pytest
 from src.visual_reasoning_compiler import (
     DEFAULT_NEGATIVE_PROMPT,
     FORMAT,
+    CONCEPT_USER,
     INVENTORY_FORMAT,
+    INVENTORY_USER,
     ComfyVizConceptClient,
     VisualReasoningCompilerError,
     build_vizconcept_prompt,
@@ -35,6 +37,18 @@ def test_vizconcept_prompt_is_visual_only_and_preserves_source() -> None:
 def test_empty_vizconcept_is_rejected() -> None:
     with pytest.raises(VisualReasoningCompilerError, match="empty"):
         build_vizconcept_prompt(" \n\t")
+
+
+def test_image_reasoning_prompts_cover_discrete_course_objects() -> None:
+    assert "ramps, buoys or barrier" in INVENTORY_USER
+    assert 'category "ui" and model_hint null' in INVENTORY_USER
+    assert "literal visible class" in INVENTORY_USER
+    assert "exactly one discrete visible object" in CONCEPT_USER
+    assert "describe a rocky canyon" in CONCEPT_USER
+    assert "ordinary visible noun" in CONCEPT_USER
+    assert "Include the foreground" in CONCEPT_USER
+    assert 'write "boat" for a boat' in CONCEPT_USER
+    assert "stands, bridges, ramps" in CONCEPT_USER
 
 
 def test_workflow_wires_checkpoint_clip_and_sampler() -> None:
@@ -235,8 +249,9 @@ def test_visual_inventory_contract_is_strict_and_canonical() -> None:
 class FakeVisionLLM:
     model = "qwen3.5-9b"
 
-    def __init__(self) -> None:
+    def __init__(self, *, invalid_concept_once: bool = False) -> None:
         self.calls: list[dict] = []
+        self.invalid_concept_once = invalid_concept_once
 
     def chat(self, **kwargs: object) -> str:
         self.calls.append(kwargs)
@@ -248,6 +263,8 @@ class FakeVisionLLM:
         assert "pixel-art Git graph" not in str(kwargs["user"])
         if len(self.calls) == 1:
             return _inventory_response()
+        if self.invalid_concept_once and len(self.calls) == 2:
+            return "The image shows a racing course without the required block."
         return (
             "VISIBLE ENTITY REFERENCES:\n"
             "- red-hat explorer\n"
@@ -303,6 +320,27 @@ def test_reason_over_board_sends_only_image_and_writes_linked_artifacts(
     assert data["outputs"]["concept"]["sha256"] == sha256_file(concept)
     assert inventory.with_suffix(".raw.txt").is_file()
     assert concept.with_suffix(".raw.txt").is_file()
+
+
+def test_reason_over_board_retries_only_invalid_concept_format(
+    tmp_path: Path,
+) -> None:
+    board = tmp_path / "board.png"
+    board.write_bytes(PNG_BYTES)
+    llm = FakeVisionLLM(invalid_concept_once=True)
+
+    manifest = reason_over_board(
+        board_image=board,
+        inventory_output=tmp_path / "inventory.json",
+        concept_output=tmp_path / "Concept.txt",
+        manifest=tmp_path / "reasoning.json",
+        llm=llm,
+    )
+
+    assert len(llm.calls) == 3
+    assert llm.calls[2]["user"] != llm.calls[1]["user"]
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    assert data["llm"]["concept"]["format_retry_used"] is True
 
 
 def test_reason_over_board_rejects_mismatched_board_manifest(tmp_path: Path) -> None:

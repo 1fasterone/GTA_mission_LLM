@@ -29,6 +29,9 @@ CLOSED_FORMAT = "visual-reasoning-compiler/closed-image-ir/v1"
 RECONCILIATION_FORMAT = "visual-reasoning-compiler/reconciliation/v1"
 NON_ASSET_CATEGORIES = frozenset({"ui", "effect"})
 GENERIC_TERMS = frozenset({
+    "a", "about", "an", "and", "at", "behind", "bottom", "center",
+    "corner", "distant", "for", "from", "in", "left", "near", "of",
+    "on", "right", "showing", "sky", "the", "to", "top", "with",
     "asset", "background", "character", "element", "environment", "effect",
     "entity", "game", "item", "object", "player", "prop", "scene", "thing",
     "vehicle", "world",
@@ -73,9 +76,9 @@ def _normalise_terms(value: str) -> set[str]:
     folded = unicodedata.normalize("NFKC", value).casefold()
     terms: set[str] = set()
     for token in re.findall(r"[a-z0-9]+", folded):
-        if len(token) > 5 and token.endswith("ies"):
+        if len(token) > 4 and token.endswith("ies"):
             token = token[:-3] + "y"
-        elif len(token) > 5 and token.endswith("s") and not token.endswith("ss"):
+        elif len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
             token = token[:-1]
         if token and token not in GENERIC_TERMS:
             terms.add(token)
@@ -102,10 +105,17 @@ def _best_inventory_match(reference: str,
                 continue
             coverage = len(overlap) / len(reference_terms)
             # One distinctive shared token is enough only when it is an exact
-            # full label.  Otherwise require at least half of the reference's
-            # non-generic terms so "orb" cannot silently bind to any object.
-            exact_label = _normalise_terms(reference) == _normalise_terms(label)
-            if not exact_label and coverage < 0.5:
+            # full label or the inventory label is a complete noun phrase
+            # inside a modifier-heavy reference ("distant suspension bridge").
+            # Otherwise require at least half of the reference's non-generic
+            # terms so "orb" cannot silently bind to any object.
+            label_terms = _normalise_terms(label)
+            exact_label = reference_terms == label_terms
+            label_is_phrase_in_reference = (
+                rank == 0 and bool(label_terms) and label_terms <= reference_terms
+            )
+            if (not exact_label and not label_is_phrase_in_reference
+                    and coverage < 0.5):
                 continue
             candidates.append((exact_label, coverage, len(overlap), -rank, label))
 

@@ -14,6 +14,7 @@ from src.visual_reasoning_compiler import (
 from src.visual_reasoning_reconcile import (
     CLOSED_FORMAT,
     RECONCILIATION_FORMAT,
+    _best_inventory_match,
     reconcile_image_reasoning,
 )
 
@@ -148,3 +149,50 @@ def test_reconcile_rejects_omitted_asset_element(tmp_path: Path) -> None:
             output=tmp_path / "closed.json",
             manifest=tmp_path / "reconcile.json",
         )
+
+
+def test_reconcile_matches_short_plural_buoys_to_buoy_inventory(tmp_path: Path) -> None:
+    inventory, concept, reasoning = _write_inputs(tmp_path)
+    inventory_data = json.loads(inventory.read_text(encoding="utf-8"))
+    inventory_data["visible_elements"].append({
+        "label": "Red and White Buoys",
+        "category": "prop",
+        "description": "Several red and white striped buoys floating in the water.",
+        "model_hint": "buoy",
+    })
+    inventory.write_text(json.dumps(inventory_data), encoding="utf-8")
+    concept_text = concept.read_text(encoding="utf-8")
+    concept.write_text(
+        concept_text.replace(
+            "END VISIBLE ENTITY REFERENCES",
+            "- floating buoy barrier\nEND VISIBLE ENTITY REFERENCES",
+        ),
+        encoding="utf-8",
+    )
+    reasoning_data = json.loads(reasoning.read_text(encoding="utf-8"))
+    reasoning_data["outputs"]["visual_inventory"]["sha256"] = sha256_file(inventory)
+    reasoning_data["outputs"]["concept"]["sha256"] = sha256_file(concept)
+    reasoning.write_text(json.dumps(reasoning_data), encoding="utf-8")
+
+    output = tmp_path / "closed.json"
+    reconcile_image_reasoning(
+        inventory_file=inventory,
+        concept_file=concept,
+        reasoning_manifest=reasoning,
+        output=output,
+        manifest=tmp_path / "reconcile.json",
+    )
+
+    closed = json.loads(output.read_text(encoding="utf-8"))
+    assert "Red and White Buoys" in closed["coverage"]["covered_inventory_labels"]
+
+
+def test_reconcile_matches_modifier_heavy_reference_to_literal_label() -> None:
+    elements = [{
+        "label": "Bridge",
+        "category": "landmark",
+        "description": "Concrete bridge spanning the river.",
+        "model_hint": "bridge",
+    }]
+
+    assert _best_inventory_match("distant suspension bridge", elements) == "Bridge"
