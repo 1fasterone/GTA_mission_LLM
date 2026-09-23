@@ -528,12 +528,12 @@ def resolve_entity_assets(schema,
     `llm` (the Pipeline LLM client, e.g. self.llm from UnityPipeline.run() —
     None from every caller that has none, including unity-validate's
     no-LLM replay) is passed straight through to a Tier S live fetch as an
-    optional vision-based visual-QC step on top of that fetch's own keyword
-    ranking — see unity_sketchfab_vision.select_best_candidate's docstring
-    for what problem that closes and how it degrades. None (no LLM reachable,
-    `sketchfab.vision_select` not enabled, a text-only model, any failure)
-    leaves every existing Tier S behavior byte-for-byte unchanged; this
-    parameter adds a capability, it never removes one.
+    optional pre-freeze visual adjudication step on top of that fetch's own
+    keyword ranking — see unity_sketchfab_vision.select_best_candidate's
+    docstring. When the visual gate is enabled and reachable, it must select
+    one candidate or the live freeze rejects; it never falls back after a
+    refusal. If no LLM is reachable or the gate is disabled, no visual gate is
+    threaded and the existing keyword-only behavior remains available.
 
     Raises ValueError in strict mode when an entity matches nothing real.
     """
@@ -1166,8 +1166,9 @@ def resolve_entity_assets(schema,
                 # unity_sketchfab_vision.py's own docstring. Opt-in
                 # (`sketchfab.vision_select`) and only reachable when a
                 # caller actually threaded an `llm` through (unity-validate's
-                # no-LLM replay never does) — None either way leaves this
-                # exact Tier S behavior untouched.
+                # no-LLM replay never does). Once threaded, refusal or
+                # unavailable vision blocks this live freeze; it never becomes
+                # a keyword fallback.
                 vision_select_fn = None
                 if llm is not None and sk_cfg.get("vision_select"):
                     from .unity_sketchfab_vision import select_best_candidate
@@ -1177,8 +1178,7 @@ def resolve_entity_assets(schema,
                 # Deterministic sibling to vision_select above: CLIP/embedding
                 # cosine similarity between the search query and each
                 # candidate's own thumbnail + description, instead of an LLM
-                # chat call. Unlike vision_select_fn (reorder-only, never
-                # rejects), this can drop every candidate that fails the
+                # chat call. It can drop every candidate that fails the
                 # semantic floor — closing exactly the "realistic paratrooper"
                 # -> "Cartoon Character" miss keyword scoring cannot catch.
                 # Opt-in (`sketchfab.semantic_select`); no `llm` needed, so

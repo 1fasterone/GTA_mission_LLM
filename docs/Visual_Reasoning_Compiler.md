@@ -71,17 +71,21 @@ The original `vizconcept.txt` is deliberately not read by this stage. Produce
 two separate artifacts in sequential calls so one vision-capable 9B model can
 remain loaded on an 8 GB card:
 
-1. a visual inventory / dictionary containing discrete asset-worthy objects,
-   model hints, and Sketchfab queries;
-2. `Concept.txt`, describing a game whose mechanics and entities are built from
-   the objects visible in the image.
+1. a visual inventory / dictionary containing discrete visible objects and
+   noun-only Sketchfab queries;
+2. `Concept.txt`, describing what is visible, interpreting the setting and
+   mood, and proposing a game whose mechanics and entities are grounded in
+   those objects.
 
 The image must dictate the game direction. The inventory is strict JSON with
 visible elements, exact-label query references, legible visible text, and
-uncertainties. `Concept.txt` is plain prose and may make modest mechanics
-inferences, but it may not introduce unsupported named entities or pipeline
-context. Raw model responses are retained beside both canonical outputs for
-auditability.
+uncertainties. Inventory asset fields are short visible noun phrases: no
+commentary, inferred roles, gameplay terms, or query enrichment. The
+validator rejects query terms that are not present in that object's own label
+or model hint. `Concept.txt` is the natural-language interpretation pass and
+may make modest mechanics inferences, but it may not introduce unsupported
+named entities or pipeline context. Raw model responses are retained beside
+both canonical outputs for auditability.
 
 ### Step 3 — Reconcile image reasoning
 
@@ -115,11 +119,15 @@ unreadable candidate is recorded as an explicit rejection. It never searches
 Sketchfab, downloads a model, calls Qwen, or invents a fallback.
 
 Live Sketchfab search/download/Blender conversion remains an explicit
-preparation operation in `src/sketchfab_freeze.py`. After that operation has
-written a frozen catalog entry, rerun Slice 4. Board-to-mesh visual comparison
-is deliberately not claimed by this first fulfilment slice; the selected
-asset's catalog provenance and bytes are the checked evidence. Model filenames
-and hashes belong in asset metadata, never in `Concept.txt`.
+pre-freeze preparation operation in `src/sketchfab_freeze.py`. Its separate
+vision adjudicator may select one candidate or refuse all candidates after
+looking at the candidate previews. Refusal, unavailable vision, malformed
+vision output, and a selected UID that is not in the proposed pool all stop
+freezing; none may fall back to keyword order. The frozen entry records the
+decision, reason, candidate UIDs, and preview hashes. After that operation
+has written a frozen catalog entry, rerun Slice 4. Slice 4 itself remains
+offline, deterministic, and unaware of Qwen. Model filenames and hashes belong
+in asset metadata, never in `Concept.txt`.
 
 ### Step 5 — Compile from the frozen visual IR
 
@@ -276,7 +284,7 @@ response sidecars (`visual_inventory.raw.txt` and `Concept.raw.txt`).
 - Each Qwen request contains exactly one `data:image/png` image and a fixed
   checked-in instruction. No source prompt text, board-manifest text, Concept,
   schema, asset catalog, or gameplay brief is sent.
-- The inventory call uses JSON mode, fixed seed `731947`, temperature `0.2`,
+- The inventory call uses JSON mode, fixed seed `731947`, temperature `0.0`,
   and reasoning disabled. It must return the five-field inventory payload.
 - The Concept call uses fixed seed `731948`, temperature `0.55`, and reasoning
   disabled. It must return plain prose of at least 120 characters.
@@ -285,9 +293,11 @@ response sidecars (`visual_inventory.raw.txt` and `Concept.raw.txt`).
 #### Output and provenance contract
 
 `visual_inventory.json` is the canonical
-`visual-reasoning-compiler/visual-inventory/v1` artifact. Its
+`visual-reasoning-compiler/visual-inventory/v2` artifact. Its
 `sketchfab_queries[].label` values must refer exactly to
-`visible_elements[].label` values. `Concept.txt` contains no model IDs,
+`visible_elements[].label` values. Labels, descriptions, model hints, and
+queries are validated as short visible noun phrases; a query cannot add
+semantic terms outside its object's own label/model hint. `Concept.txt` contains no model IDs,
 filenames, asset queries, or references to the pipeline itself. It begins with
 one deterministic reference block:
 

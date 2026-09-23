@@ -25,7 +25,7 @@ from typing import Any
 FORMAT = "visual-reasoning-compiler/vizconcept-board/v1"
 IMPORT_FORMAT = "visual-reasoning-compiler/imported-board/v1"
 REASONING_FORMAT = "visual-reasoning-compiler/image-reasoning/v1"
-INVENTORY_FORMAT = "visual-reasoning-compiler/visual-inventory/v1"
+INVENTORY_FORMAT = "visual-reasoning-compiler/visual-inventory/v2"
 DEFAULT_CHECKPOINT = "sd15ModelLab_realV001_1651730.safetensors"
 DEFAULT_SEED = 978075547277410
 DEFAULT_WIDTH = 768
@@ -61,38 +61,44 @@ INVENTORY_USER = """\
 Inspect the attached board image and return ONLY one JSON object with exactly
 these keys:
 {
-  "scene_summary": "one concise description grounded in the image",
+  "scene_summary": "short noun-only visual phrase",
   "visible_elements": [
     {
-      "label": "unique human-readable name",
+      "label": "unique visible noun phrase",
       "category": "character | vehicle | prop | environment | landmark | ui | effect | other",
-      "description": "what this visible element looks like",
-      "model_hint": "plain visual noun phrase, or null when no 3D model is appropriate"
+      "description": "same object's short visual noun phrase",
+      "model_hint": "same object's visible noun phrase, or null when no 3D model is appropriate"
     }
   ],
   "sketchfab_queries": [
     {
       "label": "exact label from visible_elements",
-      "query": "short visual noun phrase suitable for a 3D model search"
+      "query": "exact visible noun phrase for a 3D model search"
     }
   ],
   "visible_text": ["legible text that is actually visible in the image"],
   "uncertainties": ["brief visual ambiguities, if any"]
 }
 
-List every discrete visible element, not abstract game systems. Include
-asset-worthy physical objects even when small, partly occluded, decorative, or
-part of a race course: list boats and other vehicles, ramps, buoys or barrier
-chains, checkpoint gates, signs, bridges, waterfalls, cliffs, spectator stands,
-and other discrete scene objects when visibly present. Represent readable HUD
-or other UI as visible_elements with category "ui" and model_hint null, even
-when the same words also appear in visible_text. For each vehicle, use its
-literal visible class (boat versus jet ski); do not flatten every watercraft
-to "speedboat". Do not create a Sketchfab query for UI text, a glow, or an
-effect unless the image visibly contains a separate 3D object behind it. A
-query must refer to one listed visible element by its exact label. Use [] when
-a list has no honest entries. Output JSON only; do not add markdown or
-explanation.
+List every discrete visible physical object, not abstract game systems. Use
+one short ordinary noun phrase per object. No commentary, explanations,
+sentences, inferred roles, gameplay terms, or hidden objects. Do not write
+"player", "rival", "enemy", "checkpoint", "objective", "race", or similar
+role/mechanic words unless the literal word is visible UI text; name the
+visible object instead, such as "archway". Preserve literal visible classes:
+write "speedboat" only when that visual class is actually clear, and write
+"boat" or "jet ski" when that is all the image supports. Visible modifiers
+such as color may remain in the noun phrase when they are clearly visible.
+
+Include boats and other vehicles, ramps, buoys or barrier chains, archways,
+signs, bridges, waterfalls, cliffs, spectator stands, and other discrete
+scene objects when visibly present. Represent readable HUD or other UI as
+visible_elements with category "ui" and model_hint null, even when the same
+words also appear in visible_text. Do not create a Sketchfab query for UI
+text, a glow, or an effect. Every Sketchfab query must be exactly a noun
+phrase assembled from that object's own label/model_hint; it may not add a
+role, mechanic, or unsupported identity. Use [] when a list has no honest
+entries. Output JSON only; do not add markdown or explanation.
 """
 
 CONCEPT_USER = """\
@@ -118,13 +124,15 @@ VISIBLE ENTITY REFERENCES:
 - <short visible entity phrase>
 END VISIBLE ENTITY REFERENCES
 
-Describe a small playable game built from the visible characters, objects,
-landmarks, environment, and readable UI. State the player's role, the core
-interaction, progression or objective, and concise win/lose conditions. You
-may infer mechanics from visible controls, composition, repetition, and UI,
-but do not invent a new named entity, location, faction, prop, vehicle, or
-system that has no visible support. If a detail is inferred rather than
-shown, keep the inference modest and grounded in the image.
+Describe what you see in the image. Interpret the scene. Explain the setting,
+mood, composition, and possible game mechanics. Then describe a small
+playable game built from the visible characters, objects, landmarks,
+environment, and readable UI. State the player's role, core interaction,
+progression or objective, and concise win/lose conditions. You may infer
+mechanics from visible controls, composition, repetition, and UI, but do not
+invent a new named entity, location, faction, prop, vehicle, or system that
+has no visible support. If a detail is inferred rather than shown, keep the
+inference modest and grounded in the image.
 
 After the reference block, write 3-6 short paragraphs. Do not mention this
 instruction, the board, the source prompt, visual reasoning, Qwen, Sketchfab,
@@ -147,13 +155,14 @@ END VISIBLE ENTITY REFERENCES
 Use literal visible nouns: say "boat" for a boat and "jet ski" only for an
 unambiguous jet ski. Do not combine objects, use inferred roles such as
 "player" or "rival" as the noun, or invent unsupported entities. After the
-block, write 3-6 short paragraphs describing a modest playable game grounded
-only in the image. Include the player's interaction, progression, and concise
-win/lose conditions. Do not mention prompts, models, pipelines, or this
-retry. Do not output JSON, code, or a markdown fenced block.
+block, describe what you see, interpret the setting and mood, and explain
+possible game mechanics in 3-6 short paragraphs grounded only in the image.
+Include the player's interaction, progression, and concise win/lose
+conditions. Do not mention prompts, models, pipelines, or this retry. Do not
+output JSON, code, or a markdown fenced block.
 """
 
-INVENTORY_TEMPERATURE = 0.2
+INVENTORY_TEMPERATURE = 0.0
 CONCEPT_TEMPERATURE = 0.55
 INVENTORY_SEED = 731947
 CONCEPT_SEED = 731948
@@ -163,6 +172,14 @@ CONCEPT_MAX_TOKENS = 2200
 INVENTORY_CATEGORIES = frozenset({
     "character", "vehicle", "prop", "environment", "landmark", "ui",
     "effect", "other",
+})
+INVENTORY_ROLE_TERMS = frozenset({
+    "checkpoint", "enemy", "finish", "gameplay", "goal", "mechanic",
+    "mission", "objective", "player", "race", "rival", "target",
+})
+INVENTORY_COMMENTARY_TERMS = frozenset({
+    "appears", "could", "located", "looks", "maybe", "might", "probably",
+    "seems", "showing", "shows", "this", "there", "used",
 })
 CONCEPT_REFERENCE_HEADER = "VISIBLE ENTITY REFERENCES:"
 CONCEPT_REFERENCE_END = "END VISIBLE ENTITY REFERENCES"
@@ -252,6 +269,50 @@ def _require_string(value: Any, *, label: str, allow_empty: bool = False) -> str
     return value.strip() if not allow_empty else value
 
 
+def _inventory_tokens(value: str) -> set[str]:
+    """Return simple canonical tokens for the noun-only inventory boundary."""
+    tokens: set[str] = set()
+    for token in re.findall(r"[a-z0-9]+", value.casefold()):
+        if len(token) > 4 and token.endswith("ies"):
+            token = token[:-3] + "y"
+        elif len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+            token = token[:-1]
+        tokens.add(token)
+    return tokens
+
+
+def _inventory_noun_phrase(value: Any, *, label: str,
+                           allow_role_terms: bool = False) -> str:
+    """Reject prose, roles, and commentary in searchable visual fields.
+
+    This is deliberately a conservative lexical gate, not a claim that
+    Python can prove whether a noun is actually visible in pixels.  Pixel
+    grounding remains Qwen's responsibility; this gate prevents its answer
+    from quietly becoming a game brief or catalog instruction.
+    """
+    text = _require_string(value, label=label)
+    if "\n" in text or "\r" in text:
+        raise VisualReasoningCompilerError(f"{label} must be one noun phrase")
+    if re.search(r"[.!?,:;()\[\]{}]", text):
+        raise VisualReasoningCompilerError(
+            f"{label} must contain a noun phrase, not commentary"
+        )
+    tokens = _inventory_tokens(text)
+    if not tokens or len(tokens) > 10:
+        raise VisualReasoningCompilerError(
+            f"{label} must be a short visible noun phrase"
+        )
+    forbidden = tokens & INVENTORY_COMMENTARY_TERMS
+    if not allow_role_terms:
+        forbidden |= tokens & INVENTORY_ROLE_TERMS
+    if forbidden:
+        raise VisualReasoningCompilerError(
+            f"{label} contains non-visible semantic/commentary terms: "
+            + ", ".join(sorted(forbidden))
+        )
+    return text
+
+
 def extract_visible_entity_references(concept: str) -> tuple[list[str], str]:
     """Parse the deterministic entity-reference block from Concept.txt."""
     lines = concept.replace("\r\n", "\n").split("\n")
@@ -316,7 +377,9 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
          "visible_text", "uncertainties"},
         label="visual inventory",
     )
-    scene_summary = _require_string(payload["scene_summary"], label="scene_summary")
+    scene_summary = _inventory_noun_phrase(
+        payload["scene_summary"], label="scene_summary"
+    )
 
     elements_raw = payload["visible_elements"]
     if not isinstance(elements_raw, list) or not elements_raw:
@@ -336,12 +399,6 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
             item, {"label", "category", "description", "model_hint"},
             label=f"visible_elements[{index}]",
         )
-        label = _require_string(item["label"], label=f"visible_elements[{index}].label")
-        if label in labels:
-            raise VisualReasoningCompilerError(
-                f"visual inventory repeats element label {label!r}"
-            )
-        labels.add(label)
         category = _require_string(
             item["category"], label=f"visible_elements[{index}].category"
         )
@@ -349,13 +406,25 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
             raise VisualReasoningCompilerError(
                 f"visible_elements[{index}].category {category!r} is unsupported"
             )
-        description = _require_string(
-            item["description"], label=f"visible_elements[{index}].description"
+        allow_role_terms = category == "ui"
+        label = _inventory_noun_phrase(
+            item["label"], label=f"visible_elements[{index}].label",
+            allow_role_terms=allow_role_terms,
+        )
+        if label in labels:
+            raise VisualReasoningCompilerError(
+                f"visual inventory repeats element label {label!r}"
+            )
+        labels.add(label)
+        description = _inventory_noun_phrase(
+            item["description"], label=f"visible_elements[{index}].description",
+            allow_role_terms=allow_role_terms,
         )
         model_hint = item["model_hint"]
         if model_hint is not None:
-            model_hint = _require_string(
-                model_hint, label=f"visible_elements[{index}].model_hint"
+            model_hint = _inventory_noun_phrase(
+                model_hint, label=f"visible_elements[{index}].model_hint",
+                allow_role_terms=allow_role_terms,
             )
         elements.append({
             "label": label,
@@ -391,9 +460,20 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
                 f"visual inventory repeats Sketchfab query for {label!r}"
             )
         query_labels.add(label)
-        query = _require_string(
+        query = _inventory_noun_phrase(
             item["query"], label=f"sketchfab_queries[{index}].query"
         )
+        element = next(element for element in elements if element["label"] == label)
+        allowed_terms = _inventory_tokens(str(element["label"]))
+        if element.get("model_hint"):
+            allowed_terms.update(_inventory_tokens(str(element["model_hint"])))
+        query_terms = _inventory_tokens(query)
+        if not query_terms <= allowed_terms:
+            added = sorted(query_terms - allowed_terms)
+            raise VisualReasoningCompilerError(
+                f"sketchfab_queries[{index}].query adds unsupported terms: "
+                + ", ".join(added)
+            )
         queries.append({"label": label, "query": query})
 
     def string_list(value: Any, *, label: str) -> list[str]:
@@ -402,7 +482,7 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
         if len(value) > 64:
             raise VisualReasoningCompilerError(f"{label} has more than 64 entries")
         return [
-            _require_string(item, label=f"{label}[{index}]")
+            _inventory_noun_phrase(item, label=f"{label}[{index}]")
             for index, item in enumerate(value)
         ]
 

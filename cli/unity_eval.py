@@ -232,6 +232,7 @@ def unity_vizconcept_fulfill_assets(
     config: Path = typer.Option(Path("config.yaml"), "--config"),
 ) -> None:
     """Run deterministic Slice 4: closed image IR -> frozen asset manifest."""
+    from src.visual_reasoning_compiler import VisualReasoningCompilerError
     from src.visual_asset_fulfilment import fulfil_image_assets
 
     try:

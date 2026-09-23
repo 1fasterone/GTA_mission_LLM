@@ -136,7 +136,7 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
                      max_candidates: int = 4,
                      search_params: Optional[dict] = None,
                      style_meta: Optional[dict] = None,
-                     vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None,
+                     vision_select_fn: Optional[Callable[[list[dict]], object]] = None,
                      semantic_filter_fn: Optional[Callable[[list[dict]], list[dict]]] = None
                      ) -> Optional[dict]:
     """Search Sketchfab for `query`, rank license-compliant hits with the
@@ -169,15 +169,12 @@ def fetch_and_freeze(query: str, score_fn: Callable[[dict], float], *,
     default to no-ops and behavior is byte-identical to before.
 
     `vision_select_fn` (typically unity_sketchfab_vision.select_best_candidate,
-    bound to one entity) is the visual-quality-control step text scoring
-    cannot do: called ONCE with the keyword-ranked candidate list (best-first,
-    the raw Sketchfab model dicts) after ranking and before download, it may
-    return a candidate `uid` to move to the front — text and vision AGREEING
-    is the common case (this only ever reorders within candidates that
-    already cleared min_score, never adds an off-target one the keyword pass
-    rejected). None (no vision model configured, no reachable thumbnails, an
-    explicit "none match" verdict, any failure) leaves the keyword order
-    exactly as it always was.
+    bound to one entity) is the separate pre-freeze visual adjudication step
+    text scoring cannot do. It is called once with the keyword-ranked raw
+    candidate list after ranking and before download. Its explicit decision
+    must select one candidate or refuse/unavailable; refusal and unavailable
+    are clean misses and NEVER fall through to keyword order. A selected UID
+    is the only candidate allowed to download and freeze.
 
     `semantic_filter_fn` (typically unity_semantic_embed.semantic_filter,
     bound to one entity) is `vision_select_fn`'s deterministic sibling —
@@ -221,7 +218,7 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
                             max_candidates: int = 4,
                             search_params: Optional[dict] = None,
                             style_meta: Optional[dict] = None,
-                            vision_select_fn: Optional[Callable[[list[dict]], Optional[str]]] = None,
+                            vision_select_fn: Optional[Callable[[list[dict]], object]] = None,
                             semantic_filter_fn: Optional[Callable[[list[dict]], list[dict]]] = None
                             ) -> Optional[dict]:
     if not client.available():
@@ -267,25 +264,57 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
         if not candidates:
             return None
 
-    # Visual quality control on top of the keyword ranking above: a "helmet"
-    # search returns everything tagged "helmet" regardless of what KIND, and
-    # text scoring can only ever pick the best of that pool, never notice the
-    # pool itself is off-target (see unity_sketchfab_vision.py's own
-    # docstring for the live regression this closes). Reorders WITHIN the
-    # already-min_score-cleared candidates only — never adds one the keyword
-    # pass rejected — and any failure (no vision model, no thumbnails, "none
-    # match") leaves this exact keyword order untouched.
-    if vision_select_fn is not None and len(candidates) > 1:
+    # Separate pre-freeze visual adjudication. Keyword ranking proposes the
+    # pool; it is never allowed to resolve an enabled visual gate. The
+    # canonical selector returns VisionSelection, but accepting a bare UID
+    # keeps older collection callers source-compatible while making refusal
+    # and unavailable strict (None is no longer a fallback signal).
+    visual_selection: dict | None = None
+    if vision_select_fn is not None and candidates:
         try:
-            picked_uid = vision_select_fn([m for _s, m in candidates])
-        except Exception as exc:  # noqa: BLE001 — vision is advisory, never fatal
+            decision = vision_select_fn([m for _s, m in candidates])
+        except Exception as exc:  # noqa: BLE001 — strict visual miss
             log.debug("sketchfab vision_select_fn(%r) failed: %s", query, exc)
+            return None
+
+        if hasattr(decision, "decision") and hasattr(decision, "uid"):
+            decision_name = str(getattr(decision, "decision"))
+            picked_uid = getattr(decision, "uid")
+            visual_selection = (
+                decision.as_dict() if hasattr(decision, "as_dict") else {
+                    "decision": decision_name,
+                    "uid": picked_uid,
+                    "reason": str(getattr(decision, "reason", "")),
+                }
+            )
+        elif isinstance(decision, str) and decision:
+            decision_name = "select"
+            picked_uid = decision
+            visual_selection = {
+                "decision": decision_name,
+                "uid": picked_uid,
+                "reason": "selected by pre-freeze visual adjudication",
+            }
+        else:
+            decision_name = "refuse"
             picked_uid = None
-        if picked_uid:
-            picked = [sm for sm in candidates if sm[1].get("uid") == picked_uid]
-            rest = [sm for sm in candidates if sm[1].get("uid") != picked_uid]
-            if picked:
-                candidates = picked + rest
+            visual_selection = {
+                "decision": decision_name,
+                "uid": None,
+                "reason": "visual adjudication did not select a candidate",
+            }
+
+        if decision_name != "select" or not picked_uid:
+            log.info("sketchfab visual adjudication refused %r: %s",
+                     query, visual_selection.get("reason", "no reason"))
+            return None
+        candidates = [
+            scored for scored in candidates
+            if scored[1].get("uid") == picked_uid
+        ]
+        if not candidates:
+            log.info("sketchfab visual adjudication selected unknown uid %r", picked_uid)
+            return None
 
     # Try the top-ranked candidates in order — the single best-scoring hit
     # sometimes has a broken archive (no gltf inside) or fails Blender convert;
@@ -359,6 +388,8 @@ def _fetch_and_freeze_inner(query: str, score_fn: Callable[[dict], float], *,
             "attribution": _attribution_text(model, license_slug),
             "fetched_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
+        if visual_selection is not None:
+            entry["visual_selection"] = visual_selection
         # Convert-time size diagnostics (bbox_meters / scale_corrected) —
         # additive keys every catalog reader ignores; see
         # _report_scale_correction.

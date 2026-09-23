@@ -42,13 +42,15 @@ def test_empty_vizconcept_is_rejected() -> None:
 def test_image_reasoning_prompts_cover_discrete_course_objects() -> None:
     assert "ramps, buoys or barrier" in INVENTORY_USER
     assert 'category "ui" and model_hint null' in INVENTORY_USER
-    assert "literal visible class" in INVENTORY_USER
+    assert "one short ordinary noun phrase" in INVENTORY_USER
+    assert "No commentary, explanations" in INVENTORY_USER
     assert "exactly one discrete visible object" in CONCEPT_USER
     assert "describe a rocky canyon" in CONCEPT_USER
     assert "ordinary visible noun" in CONCEPT_USER
     assert "Include the foreground" in CONCEPT_USER
     assert 'write "boat" for a boat' in CONCEPT_USER
     assert "stands, bridges, ramps" in CONCEPT_USER
+    assert "Describe what you see in the image" in CONCEPT_USER
 
 
 def test_workflow_wires_checkpoint_clip_and_sampler() -> None:
@@ -203,33 +205,33 @@ def test_import_rejects_non_png(tmp_path: Path) -> None:
 
 def _inventory_response() -> str:
     return json.dumps({
-        "scene_summary": "A neon commit graph fills a dark educational game screen.",
+        "scene_summary": "neon commit graph screen",
         "visible_elements": [
             {
                 "label": "red-hat explorer",
                 "category": "character",
-                "description": "Small pixel-art character wearing a red hat and backpack.",
-                "model_hint": "stylized explorer character with backpack",
+                "description": "red-hat explorer backpack",
+                "model_hint": "red-hat explorer backpack",
             },
             {
                 "label": "glowing commit nodes",
                 "category": "prop",
-                "description": "Glowing orb-like nodes joined by bright directional arrows.",
+                "description": "glowing orb node",
                 "model_hint": "glowing orb node",
             },
             {
                 "label": "neon grid background",
                 "category": "environment",
-                "description": "Dark blue gridded background with orange and teal circuit lines.",
+                "description": "neon grid background",
                 "model_hint": None,
             },
         ],
         "sketchfab_queries": [
-            {"label": "red-hat explorer", "query": "stylized explorer character backpack"},
-            {"label": "glowing commit nodes", "query": "glowing orb sci fi game prop"},
+            {"label": "red-hat explorer", "query": "red-hat explorer backpack"},
+            {"label": "glowing commit nodes", "query": "glowing orb node"},
         ],
         "visible_text": ["GIT ADVENTURE", "COMMIT", "BRANCH", "MERGE"],
-        "uncertainties": ["The exact depth of the orb nodes is unclear."],
+        "uncertainties": ["orb depth"],
     })
 
 
@@ -243,6 +245,20 @@ def test_visual_inventory_contract_is_strict_and_canonical() -> None:
     malformed = json.loads(_inventory_response())
     malformed["sketchfab_queries"][0]["label"] = "not-visible"
     with pytest.raises(VisualReasoningCompilerError, match="unknown visible"):
+        validate_visual_inventory(malformed)
+
+
+def test_visual_inventory_rejects_commentary_and_inferred_roles() -> None:
+    malformed = json.loads(_inventory_response())
+    malformed["visible_elements"][0]["label"] = "the player's boat"
+
+    with pytest.raises(VisualReasoningCompilerError, match="commentary|semantic"):
+        validate_visual_inventory(malformed)
+
+    malformed = json.loads(_inventory_response())
+    malformed["sketchfab_queries"][0]["query"] = "checkpoint explorer"
+
+    with pytest.raises(VisualReasoningCompilerError, match="unsupported terms|semantic"):
         validate_visual_inventory(malformed)
 
 

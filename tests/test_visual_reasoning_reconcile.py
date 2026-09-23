@@ -26,30 +26,30 @@ def _write_inputs(tmp_path: Path, *, extra_reference: str | None = None) -> tupl
     inventory = tmp_path / "visual_inventory.json"
     inventory.write_text(json.dumps({
         "format": INVENTORY_FORMAT,
-        "scene_summary": "A small explorer stands on a glowing commit graph.",
+        "scene_summary": "small explorer glowing commit graph",
         "visible_elements": [
             {
                 "label": "red-hat explorer",
                 "category": "character",
-                "description": "Small pixel-art explorer wearing a red hat and backpack.",
-                "model_hint": "stylized explorer character with backpack",
+                "description": "red-hat explorer backpack",
+                "model_hint": "red-hat explorer backpack",
             },
             {
                 "label": "glowing commit nodes",
                 "category": "prop",
-                "description": "Glowing orb-like nodes joined by directional arrows.",
+                "description": "glowing orb node",
                 "model_hint": "glowing orb node",
             },
             {
                 "label": "commit button",
                 "category": "ui",
-                "description": "Visible bottom action button labelled COMMIT.",
+                "description": "commit button",
                 "model_hint": None,
             },
         ],
         "sketchfab_queries": [
-            {"label": "red-hat explorer", "query": "stylized explorer backpack"},
-            {"label": "glowing commit nodes", "query": "glowing orb game prop"},
+            {"label": "red-hat explorer", "query": "red-hat explorer backpack"},
+            {"label": "glowing commit nodes", "query": "glowing orb node"},
         ],
         "visible_text": ["COMMIT"],
         "uncertainties": [],
@@ -157,7 +157,7 @@ def test_reconcile_matches_short_plural_buoys_to_buoy_inventory(tmp_path: Path) 
     inventory_data["visible_elements"].append({
         "label": "Red and White Buoys",
         "category": "prop",
-        "description": "Several red and white striped buoys floating in the water.",
+        "description": "red white striped buoys",
         "model_hint": "buoy",
     })
     inventory.write_text(json.dumps(inventory_data), encoding="utf-8")
@@ -165,7 +165,7 @@ def test_reconcile_matches_short_plural_buoys_to_buoy_inventory(tmp_path: Path) 
     concept.write_text(
         concept_text.replace(
             "END VISIBLE ENTITY REFERENCES",
-            "- floating buoy barrier\nEND VISIBLE ENTITY REFERENCES",
+                "- floating buoy\nEND VISIBLE ENTITY REFERENCES",
         ),
         encoding="utf-8",
     )

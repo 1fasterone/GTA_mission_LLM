@@ -5,7 +5,7 @@ translator.py's convention) and a fake client hands back canned thumbnail
 bytes, keyed by URL.
 """
 
-from src.unity_sketchfab_vision import select_best_candidate
+from src.unity_sketchfab_vision import VisionSelection, select_best_candidate
 
 
 class _FakeLLM:
@@ -49,7 +49,9 @@ def test_picks_the_named_candidate():
     picked = select_best_candidate(
         "LeadSkydiverJumpsuit", "player", "lead skydiver jumpsuit helmet",
         candidates, client=client, llm=llm)
-    assert picked == "skydive1"
+    assert isinstance(picked, VisionSelection)
+    assert picked.decision == "select"
+    assert picked.uid == "skydive1"
     # Both candidates' thumbnails were fetched and attached as images.
     assert len(llm.calls[0]["images"]) == 2
 
@@ -61,8 +63,10 @@ def test_none_match_verdict_returns_none():
     })
     candidates = [_candidate("a", "https://cdn.example/a.jpg"),
                  _candidate("b", "https://cdn.example/b.jpg")]
-    assert select_best_candidate(
-        "Thing", "prop", "a thing", candidates, client=client, llm=llm) is None
+    decision = select_best_candidate(
+        "Thing", "prop", "a thing", candidates, client=client, llm=llm)
+    assert decision.decision == "refuse"
+    assert decision.uid is None
 
 
 def test_out_of_range_pick_returns_none():
@@ -72,8 +76,9 @@ def test_out_of_range_pick_returns_none():
     })
     candidates = [_candidate("a", "https://cdn.example/a.jpg"),
                  _candidate("b", "https://cdn.example/b.jpg")]
-    assert select_best_candidate(
-        "Thing", "prop", "a thing", candidates, client=client, llm=llm) is None
+    decision = select_best_candidate(
+        "Thing", "prop", "a thing", candidates, client=client, llm=llm)
+    assert decision.decision == "unavailable"
 
 
 def test_malformed_json_returns_none():
@@ -83,8 +88,9 @@ def test_malformed_json_returns_none():
     })
     candidates = [_candidate("a", "https://cdn.example/a.jpg"),
                  _candidate("b", "https://cdn.example/b.jpg")]
-    assert select_best_candidate(
-        "Thing", "prop", "a thing", candidates, client=client, llm=llm) is None
+    decision = select_best_candidate(
+        "Thing", "prop", "a thing", candidates, client=client, llm=llm)
+    assert decision.decision == "unavailable"
 
 
 def test_strips_think_block_and_markdown_fence():
@@ -95,8 +101,10 @@ def test_strips_think_block_and_markdown_fence():
     })
     candidates = [_candidate("a", "https://cdn.example/a.jpg"),
                  _candidate("b", "https://cdn.example/b.jpg")]
-    assert select_best_candidate(
-        "Thing", "prop", "a thing", candidates, client=client, llm=llm) == "a"
+    decision = select_best_candidate(
+        "Thing", "prop", "a thing", candidates, client=client, llm=llm)
+    assert decision.decision == "select"
+    assert decision.uid == "a"
 
 
 def test_llm_exception_returns_none():
@@ -109,9 +117,10 @@ def test_llm_exception_returns_none():
     })
     candidates = [_candidate("a", "https://cdn.example/a.jpg"),
                  _candidate("b", "https://cdn.example/b.jpg")]
-    assert select_best_candidate(
+    decision = select_best_candidate(
         "Thing", "prop", "a thing", candidates,
-        client=client, llm=_Explodes()) is None
+        client=client, llm=_Explodes())
+    assert decision.decision == "unavailable"
 
 
 def test_fewer_than_two_fetchable_thumbnails_skips_the_llm_call():
@@ -124,8 +133,9 @@ def test_fewer_than_two_fetchable_thumbnails_skips_the_llm_call():
         {"uid": "no-thumb"},  # no "thumbnails" key at all
         _candidate("unfetchable", "https://cdn.example/missing.jpg"),
     ]
-    assert select_best_candidate(
-        "Thing", "prop", "a thing", candidates, client=client, llm=llm) is None
+    decision = select_best_candidate(
+        "Thing", "prop", "a thing", candidates, client=client, llm=llm)
+    assert decision.decision == "unavailable"
     assert llm.calls == []
 
 

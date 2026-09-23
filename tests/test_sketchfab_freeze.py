@@ -11,6 +11,7 @@ import json
 
 from src.sketchfab_freeze import fetch_and_freeze
 from src.unity_asset_catalog import SKETCHFAB_RELPATH
+from src.unity_sketchfab_vision import VisionSelection
 
 
 class _FakeClient:
@@ -282,13 +283,12 @@ def test_no_preferred_author_only_does_global_search(tmp_path, monkeypatch):
     assert client.search_calls == [{"query": "red high heel shoe", "user": None}]
 
 
-# ── visual QC: vision_select_fn reorders the keyword-ranked candidates ────────
+# ── visual QC: vision_select_fn is an authoritative pre-freeze decision ─────
 # Live regression: a keyword search for "helmet" returns every helmet on the
 # marketplace — sports, motorcycle, medieval, skydiving — all scoring
 # identically on the shared word. vision_select_fn is the honest visual check
-# text scoring cannot do; these pin that it only ever REORDERS what
-# min_match_score already accepted, and degrades to the untouched keyword
-# order on every failure path (no pick, an exception, too few candidates).
+# text scoring cannot do; these pin that a selected UID is the only candidate
+# that can freeze and refusal/unavailable never fall back to keyword order.
 
 _TWO_CANDIDATES = [
     {"uid": "baseball1", "name": "Baseball Helmet Sports Asset",
@@ -304,14 +304,17 @@ _TWO_CANDIDATES = [
 ]
 
 
-def test_vision_select_fn_promotes_its_pick_to_the_front(tmp_path, monkeypatch):
+def test_vision_select_fn_freezes_only_its_pick(tmp_path, monkeypatch):
     _install_fake_convert(monkeypatch)
     client = _FakeClient(results=_TWO_CANDIDATES)
     seen_pool = []
 
     def _vision(pool):
         seen_pool.append(pool)
-        return "skydive1"  # the SECOND-ranked (equal-score) candidate
+        return VisionSelection(
+            "select", uid="skydive1", reason="thumbnail is a skydiving helmet",
+            candidate_uids=tuple(m["uid"] for m in pool),
+        )
 
     entry = fetch_and_freeze(
         "helmet", _score_all_equal, client=client,
@@ -320,15 +323,15 @@ def test_vision_select_fn_promotes_its_pick_to_the_front(tmp_path, monkeypatch):
 
     assert entry is not None
     assert entry["sketchfab_uid"] == "skydive1"
+    assert entry["visual_selection"]["decision"] == "select"
+    assert entry["visual_selection"]["reason"] == "thumbnail is a skydiving helmet"
     # Handed the full keyword-ranked pool (raw model dicts), not a subset.
     assert len(seen_pool) == 1
     assert {m["uid"] for m in seen_pool[0]} == {"baseball1", "skydive1"}
 
 
-def test_vision_select_fn_none_keeps_keyword_order(tmp_path, monkeypatch):
-    """An explicit 'none of these match' verdict must NOT fall back to
-    picking anything — it leaves the keyword-tied order (uid as the
-    deterministic tiebreak) exactly as fetch_and_freeze always resolved it."""
+def test_vision_select_fn_none_refuses_without_keyword_fallback(tmp_path, monkeypatch):
+    """An explicit 'none of these match' verdict must stop the freeze."""
     _install_fake_convert(monkeypatch)
     client = _FakeClient(results=_TWO_CANDIDATES)
 
@@ -337,11 +340,11 @@ def test_vision_select_fn_none_keeps_keyword_order(tmp_path, monkeypatch):
         cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
         vision_select_fn=lambda pool: None)
 
-    assert entry is not None
-    assert entry["sketchfab_uid"] == "baseball1"  # uid-sorted tiebreak, unchanged
+    assert entry is None
+    assert client.download_calls == 0
 
 
-def test_vision_select_fn_unrecognized_uid_keeps_keyword_order(tmp_path, monkeypatch):
+def test_vision_select_fn_unrecognized_uid_refuses_without_keyword_fallback(tmp_path, monkeypatch):
     """A pick that doesn't match any candidate in the pool (a stale/garbled
     response) is treated the same as no pick — never an error."""
     _install_fake_convert(monkeypatch)
@@ -352,13 +355,12 @@ def test_vision_select_fn_unrecognized_uid_keeps_keyword_order(tmp_path, monkeyp
         cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
         vision_select_fn=lambda pool: "nonexistent-uid")
 
-    assert entry is not None
-    assert entry["sketchfab_uid"] == "baseball1"
+    assert entry is None
+    assert client.download_calls == 0
 
 
-def test_vision_select_fn_exception_degrades_to_keyword_order(tmp_path, monkeypatch):
-    """Vision is advisory, never fatal — a raising vision_select_fn must not
-    take down the whole fetch, matching every other best-effort path here."""
+def test_vision_select_fn_exception_refuses_without_keyword_fallback(tmp_path, monkeypatch):
+    """A visual gate failure must not silently become a keyword pick."""
     _install_fake_convert(monkeypatch)
     client = _FakeClient(results=_TWO_CANDIDATES)
 
@@ -370,14 +372,12 @@ def test_vision_select_fn_exception_degrades_to_keyword_order(tmp_path, monkeypa
         cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
         vision_select_fn=_explodes)
 
-    assert entry is not None
-    assert entry["sketchfab_uid"] == "baseball1"
+    assert entry is None
+    assert client.download_calls == 0
 
 
-def test_vision_select_fn_not_called_with_a_single_candidate(tmp_path, monkeypatch):
-    """Nothing to compare — calling out to a vision model over one candidate
-    would just spend a round-trip confirming what min_match_score already
-    decided."""
+def test_vision_select_fn_is_called_even_with_a_single_candidate(tmp_path, monkeypatch):
+    """A visual gate must be allowed to refuse even its only candidate."""
     _install_fake_convert(monkeypatch)
     client = _FakeClient()  # the default single-result fixture
     calls = []
@@ -387,8 +387,8 @@ def test_vision_select_fn_not_called_with_a_single_candidate(tmp_path, monkeypat
         cache_dir=tmp_path / "cache", lookups_dir=str(tmp_path / "lookups"),
         vision_select_fn=lambda pool: calls.append(pool) or None)
 
-    assert entry is not None
-    assert calls == []
+    assert entry is None
+    assert len(calls) == 1
 
 
 def test_no_vision_select_fn_is_byte_identical_to_before(tmp_path, monkeypatch):
@@ -464,12 +464,11 @@ def test_semantic_filter_fn_runs_before_vision_select_fn(tmp_path, monkeypatch):
         semantic_filter_fn=lambda pool: [m for m in pool if m["uid"] == "skydive1"],
         vision_select_fn=lambda pool: vision_seen.append(pool) or None)
 
-    assert entry is not None
-    assert entry["sketchfab_uid"] == "skydive1"
-    # vision_select_fn is only ever called with >1 candidate (see the
-    # existing vision_select_fn tests above) — the semantic gate narrowed
-    # this pool to exactly one, so vision never even runs.
-    assert vision_seen == []
+    assert entry is None
+    # The visual gate still runs on the single surviving candidate and can
+    # refuse it; semantic filtering does not become an implicit acceptance.
+    assert len(vision_seen) == 1
+    assert vision_seen[0][0]["uid"] == "skydive1"
 
 
 def test_semantic_filter_fn_exception_degrades_to_keyword_order(tmp_path, monkeypatch):

@@ -19,22 +19,52 @@ actually looks like the entity, before the download+Blender-convert loop in
 sketchfab_freeze.py spends real time on a keyword-plausible but
 visually-wrong pick.
 
-Opt-in and fully degrading, same contract as unity_sketchfab_translator.py:
-no vision-capable model configured, no reachable thumbnail, a "none match"
-verdict, or any network/parse failure all fall through to None — the
-caller's own keyword-ranked order is the fallback this function would
-otherwise reorder, never something it can leave broken.
+The result is an explicit pre-freeze decision. A "none match" verdict is a
+refusal, and a missing thumbnail/model/parse result is unavailable. Both
+block freezing; neither falls through to the caller's keyword-ranked order.
+Keyword ranking may propose the candidate pool, but it may not make the
+visual decision.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import re
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class VisionSelection:
+    """Authoritative result of pre-freeze visual adjudication."""
+
+    decision: str
+    uid: Optional[str] = None
+    reason: str = ""
+    candidate_uids: tuple[str, ...] = ()
+    preview_sha256: dict[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.decision not in {"select", "refuse", "unavailable"}:
+            raise ValueError(f"unsupported visual decision: {self.decision!r}")
+        if self.decision == "select" and not self.uid:
+            raise ValueError("select decision requires a candidate uid")
+        if self.decision != "select" and self.uid is not None:
+            raise ValueError("non-select visual decision cannot carry a uid")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "decision": self.decision,
+            "uid": self.uid,
+            "reason": self.reason,
+            "candidate_uids": list(self.candidate_uids),
+            "preview_sha256": dict(sorted(self.preview_sha256.items())),
+        }
 
 
 _SYSTEM = """\
@@ -109,22 +139,16 @@ def _extract_json(raw: str) -> Optional[dict]:
 
 def select_best_candidate(entity_name: str, entity_kind: str, description: str,
                           candidates: list[dict], *, client: Any, llm: Any,
-                          max_images: int = 6, seed: int = 0) -> Optional[str]:
+                          max_images: int = 6, seed: int = 0) -> VisionSelection:
     """Ask the vision LLM which of `candidates` (raw Sketchfab model dicts,
     already keyword-ranked best-first by the caller) visually matches the
-    entity. Returns the chosen candidate's `uid` to move to the front of the
-    caller's list, or None to leave that keyword order untouched.
-
-    None covers every non-match path alike — no vision-capable `llm`, fewer
-    than two candidates with a fetchable thumbnail (nothing to meaningfully
-    compare), an explicit "none match" verdict, or any network/parse
-    failure. The caller's existing keyword order already degrades safely on
-    its own; this function only ever narrows it further, never replaces it
-    with something worse.
+    entity. Returns a `VisionSelection` decision. The caller must freeze only
+    the selected UID and must reject both refusal and unavailable decisions.
     """
     pool = candidates[:max(1, max_images)]
     images: list[str] = []
     uids: list[str] = []
+    preview_sha256: dict[str, str] = {}
     for model in pool:
         url = _thumbnail_url(model)
         if not url:
@@ -132,11 +156,18 @@ def select_best_candidate(entity_name: str, entity_kind: str, description: str,
         raw_bytes = client.fetch_image_bytes(url)
         if not raw_bytes:
             continue
+        uid = str(model.get("uid") or "")
+        if not uid:
+            continue
         images.append(_encode_data_uri(raw_bytes))
-        uids.append(str(model.get("uid") or ""))
+        uids.append(uid)
+        preview_sha256[uid] = hashlib.sha256(raw_bytes).hexdigest()
 
-    if len(images) < 2:
-        return None
+    if len(images) < 1:
+        return VisionSelection(
+            "unavailable", reason="no candidate thumbnail was available",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
 
     try:
         reply = llm.chat(
@@ -151,26 +182,54 @@ def select_best_candidate(entity_name: str, entity_kind: str, description: str,
             seed=seed or None,
         )
     except Exception as exc:  # noqa: BLE001 — a model with no attached mmproj,
-        # a server that rejects image_url content, a timeout on a slower
-        # vision pass — all land here; degrade to "no opinion", not a crash.
+        # a server that rejects image_url content, or a timeout on a slower
+        # vision pass — all land here as an unavailable decision.
         log.debug("sketchfab vision select(%r) LLM call failed: %s", entity_name, exc)
-        return None
+        return VisionSelection(
+            "unavailable", reason="vision model call failed",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
 
     payload = _extract_json(reply)
     if payload is None:
-        return None
+        return VisionSelection(
+            "unavailable", reason="vision response was not valid JSON",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
+    if set(payload) != {"pick", "reason"}:
+        return VisionSelection(
+            "unavailable", reason="vision response had the wrong fields",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
     reason = str(payload.get("reason") or "").strip()
     pick = payload.get("pick")
+    if pick is None:
+        log.debug("sketchfab vision select(%r): explicit refusal (%s)",
+                  entity_name, reason or "no reason given")
+        return VisionSelection(
+            "refuse", reason=reason or "no candidate visually matches",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
+    if isinstance(pick, bool):
+        return VisionSelection(
+            "unavailable", reason="vision pick must be an integer or null",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
     try:
-        if pick is None:
-            raise TypeError("missing 'pick' field")
         idx = int(pick) - 1
     except (TypeError, ValueError):
-        log.debug("sketchfab vision select(%r): no match among %d candidates (%s)",
-                  entity_name, len(images), reason or "no reason given")
-        return None
+        return VisionSelection(
+            "unavailable", reason="vision pick was not an integer",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
     if not (0 <= idx < len(uids)) or not uids[idx]:
-        return None
+        return VisionSelection(
+            "unavailable", reason="vision pick was outside the candidate list",
+            candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+        )
     log.debug("sketchfab vision select(%r): picked candidate %d/%d (%s)",
               entity_name, idx + 1, len(images), reason or "no reason given")
-    return uids[idx]
+    return VisionSelection(
+        "select", uid=uids[idx], reason=reason or "visual match",
+        candidate_uids=tuple(uids), preview_sha256=preview_sha256,
+    )
