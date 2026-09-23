@@ -1,15 +1,18 @@
-"""Slice 1 of the image-led Visual Reasoning Compiler.
+"""Slices 1-2 of the image-led Visual Reasoning Compiler.
 
 This module owns the boundary from a visual concept prompt to one canonical
-ComfyUI screenshot.  It deliberately does not call an LLM, inspect gameplay,
-resolve assets, or create a Unity project.  Later slices consume the recorded
-board artifact and its provenance manifest.
+ComfyUI screenshot and the subsequent image-only Qwen reasoning boundary.
+It does not inspect gameplay, resolve assets, or create a Unity project. Later
+slices consume the recorded board, inventory, Concept, and provenance
+artifacts.
 """
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -21,6 +24,8 @@ from typing import Any
 
 FORMAT = "visual-reasoning-compiler/vizconcept-board/v1"
 IMPORT_FORMAT = "visual-reasoning-compiler/imported-board/v1"
+REASONING_FORMAT = "visual-reasoning-compiler/image-reasoning/v1"
+INVENTORY_FORMAT = "visual-reasoning-compiler/visual-inventory/v1"
 DEFAULT_CHECKPOINT = "sd15ModelLab_realV001_1651730.safetensors"
 DEFAULT_SEED = 978075547277410
 DEFAULT_WIDTH = 768
@@ -38,9 +43,93 @@ DEFAULT_NEGATIVE_PROMPT = (
     "cropped major objects, watermark, signature, gore, nsfw"
 )
 
+# Slice 2 deliberately has no prompt-file input.  These instructions are
+# checked-in production policy: the board pixels are the only creative input
+# sent to the Pipeline LLM.  The original vizconcept is preserved by Slice 1
+# provenance, but it must not become hidden semantic context here.
+IMAGE_ONLY_SYSTEM = """\
+You are the image-reasoning stage of a deterministic game-content compiler.
+You receive exactly one rendered game board image. Treat its visible pixels,
+including legible UI text, as the only creative evidence. Do not infer or
+recover an unavailable source prompt, backstory, asset library, filenames,
+engine schema, or gameplay requirements. Distinguish what is visibly present
+from what is a cautious game-design inference. Never choose a specific local
+file, model ID, download URL, or Unity/GTA implementation.
+"""
+
+INVENTORY_USER = """\
+Inspect the attached board image and return ONLY one JSON object with exactly
+these keys:
+{
+  "scene_summary": "one concise description grounded in the image",
+  "visible_elements": [
+    {
+      "label": "unique human-readable name",
+      "category": "character | vehicle | prop | environment | landmark | ui | effect | other",
+      "description": "what this visible element looks like",
+      "model_hint": "plain visual noun phrase, or null when no 3D model is appropriate"
+    }
+  ],
+  "sketchfab_queries": [
+    {
+      "label": "exact label from visible_elements",
+      "query": "short visual noun phrase suitable for a 3D model search"
+    }
+  ],
+  "visible_text": ["legible text that is actually visible in the image"],
+  "uncertainties": ["brief visual ambiguities, if any"]
+}
+
+List discrete, asset-worthy visible elements, not abstract game systems. Do
+not create a Sketchfab query for UI text, a glow, or an effect unless the
+image visibly contains a separate 3D object behind it. A query must refer to
+one listed visible element by its exact label. Use [] when a list has no
+honest entries. Output JSON only; do not add markdown or explanation.
+"""
+
+CONCEPT_USER = """\
+Inspect the attached board image and write the contents of Concept.txt as
+plain natural-language prose. The image is the sole creative source.
+
+Before the prose, emit this exact plain-text reference block. Include every
+concrete visible entity that the game concept uses, one short image-grounded
+phrase per bullet. Do not list abstract mechanics or generic words such as
+"player" or "game":
+
+VISIBLE ENTITY REFERENCES:
+- <short visible entity phrase>
+END VISIBLE ENTITY REFERENCES
+
+Describe a small playable game built from the visible characters, objects,
+landmarks, environment, and readable UI. State the player's role, the core
+interaction, progression or objective, and concise win/lose conditions. You
+may infer mechanics from visible controls, composition, repetition, and UI,
+but do not invent a new named entity, location, faction, prop, vehicle, or
+system that has no visible support. If a detail is inferred rather than
+shown, keep the inference modest and grounded in the image.
+
+After the reference block, write 3-6 short paragraphs. Do not mention this
+instruction, the board, the source prompt, visual reasoning, Qwen, Sketchfab,
+model files, asset IDs, Unity, GTA, or any unavailable context. Do not output
+JSON, code, or a markdown fenced block. Output only the Concept.txt text.
+"""
+
+INVENTORY_TEMPERATURE = 0.2
+CONCEPT_TEMPERATURE = 0.55
+INVENTORY_SEED = 731947
+CONCEPT_SEED = 731948
+INVENTORY_MAX_TOKENS = 3500
+CONCEPT_MAX_TOKENS = 2200
+INVENTORY_CATEGORIES = frozenset({
+    "character", "vehicle", "prop", "environment", "landmark", "ui",
+    "effect", "other",
+})
+CONCEPT_REFERENCE_HEADER = "VISIBLE ENTITY REFERENCES:"
+CONCEPT_REFERENCE_END = "END VISIBLE ENTITY REFERENCES"
+
 
 class VisualReasoningCompilerError(RuntimeError):
-    """Raised when the Slice-1 visual-board contract cannot be completed."""
+    """Raised when an image-led compiler contract cannot be completed."""
 
 
 def build_vizconcept_prompt(source_text: str) -> str:
@@ -71,6 +160,425 @@ def sha256_file(path: Path) -> str:
 def _canonical_hash(value: Any) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
     return sha256_bytes(encoded)
+
+
+def _encode_image_data_uri(image_bytes: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+
+
+def _extract_json_object(raw: str) -> dict[str, Any]:
+    """Extract one JSON object without repairing an invalid model response."""
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    start = text.find("{")
+    if start < 0:
+        raise VisualReasoningCompilerError(
+            "visual inventory response contained no JSON object"
+        )
+    try:
+        value, end = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError as exc:
+        raise VisualReasoningCompilerError(
+            f"visual inventory response is not valid JSON: {exc}"
+        ) from exc
+    if text[start + end:].strip():
+        raise VisualReasoningCompilerError(
+            "visual inventory response contains text outside the JSON object"
+        )
+    if not isinstance(value, dict):
+        raise VisualReasoningCompilerError(
+            "visual inventory response must be a JSON object"
+        )
+    return value
+
+
+def _require_exact_keys(value: dict[str, Any], expected: set[str], *, label: str) -> None:
+    actual = set(value)
+    if actual != expected:
+        missing = sorted(expected - actual)
+        extra = sorted(actual - expected)
+        detail = []
+        if missing:
+            detail.append(f"missing={missing}")
+        if extra:
+            detail.append(f"extra={extra}")
+        raise VisualReasoningCompilerError(
+            f"{label} has the wrong fields ({', '.join(detail)})"
+        )
+
+
+def _require_string(value: Any, *, label: str, allow_empty: bool = False) -> str:
+    if not isinstance(value, str) or (not allow_empty and not value.strip()):
+        raise VisualReasoningCompilerError(f"{label} must be a non-empty string")
+    return value.strip() if not allow_empty else value
+
+
+def extract_visible_entity_references(concept: str) -> tuple[list[str], str]:
+    """Parse the deterministic entity-reference block from Concept.txt."""
+    lines = concept.replace("\r\n", "\n").split("\n")
+    headers = [
+        index for index, line in enumerate(lines)
+        if line.strip() == CONCEPT_REFERENCE_HEADER
+    ]
+    endings = [
+        index for index, line in enumerate(lines)
+        if line.strip() == CONCEPT_REFERENCE_END
+    ]
+    if len(headers) != 1 or len(endings) != 1 or endings[0] <= headers[0]:
+        raise VisualReasoningCompilerError(
+            "Concept.txt must contain one ordered VISIBLE ENTITY REFERENCES block"
+        )
+    header, end = headers[0], endings[0]
+    references: list[str] = []
+    for index, line in enumerate(lines[header + 1:end], start=header + 2):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if not stripped.startswith("- "):
+            raise VisualReasoningCompilerError(
+                f"Concept.txt entity reference line {index} must start with '- '")
+        reference = _require_string(
+            stripped[2:], label=f"Concept.txt entity reference line {index}"
+        )
+        if reference in references:
+            raise VisualReasoningCompilerError(
+                f"Concept.txt repeats entity reference {reference!r}"
+            )
+        references.append(reference)
+    if not references:
+        raise VisualReasoningCompilerError(
+            "Concept.txt entity reference block is empty"
+        )
+    prose = "\n".join(lines[end + 1:]).strip()
+    if not prose:
+        raise VisualReasoningCompilerError(
+            "Concept.txt has no prose after the entity reference block"
+        )
+    return references, prose
+
+
+def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
+    """Validate and canonicalize the image-derived inventory contract.
+
+    This is intentionally a strict boundary.  It does not infer missing
+    fields, rename labels, or turn malformed LLM output into a partial asset
+    list; later reconciliation needs to know exactly what the model claimed.
+    """
+    payload = _extract_json_object(raw) if isinstance(raw, str) else raw
+    if payload.get("format") == INVENTORY_FORMAT:
+        payload = {key: value for key, value in payload.items() if key != "format"}
+    elif "format" in payload:
+        raise VisualReasoningCompilerError(
+            f"visual inventory format must be {INVENTORY_FORMAT!r}"
+        )
+    _require_exact_keys(
+        payload,
+        {"scene_summary", "visible_elements", "sketchfab_queries",
+         "visible_text", "uncertainties"},
+        label="visual inventory",
+    )
+    scene_summary = _require_string(payload["scene_summary"], label="scene_summary")
+
+    elements_raw = payload["visible_elements"]
+    if not isinstance(elements_raw, list) or not elements_raw:
+        raise VisualReasoningCompilerError(
+            "visual inventory must contain at least one visible element"
+        )
+    if len(elements_raw) > 64:
+        raise VisualReasoningCompilerError("visual inventory has more than 64 elements")
+    elements: list[dict[str, Any]] = []
+    labels: set[str] = set()
+    for index, item in enumerate(elements_raw):
+        if not isinstance(item, dict):
+            raise VisualReasoningCompilerError(
+                f"visible_elements[{index}] must be an object"
+            )
+        _require_exact_keys(
+            item, {"label", "category", "description", "model_hint"},
+            label=f"visible_elements[{index}]",
+        )
+        label = _require_string(item["label"], label=f"visible_elements[{index}].label")
+        if label in labels:
+            raise VisualReasoningCompilerError(
+                f"visual inventory repeats element label {label!r}"
+            )
+        labels.add(label)
+        category = _require_string(
+            item["category"], label=f"visible_elements[{index}].category"
+        )
+        if category not in INVENTORY_CATEGORIES:
+            raise VisualReasoningCompilerError(
+                f"visible_elements[{index}].category {category!r} is unsupported"
+            )
+        description = _require_string(
+            item["description"], label=f"visible_elements[{index}].description"
+        )
+        model_hint = item["model_hint"]
+        if model_hint is not None:
+            model_hint = _require_string(
+                model_hint, label=f"visible_elements[{index}].model_hint"
+            )
+        elements.append({
+            "label": label,
+            "category": category,
+            "description": description,
+            "model_hint": model_hint,
+        })
+
+    queries_raw = payload["sketchfab_queries"]
+    if not isinstance(queries_raw, list):
+        raise VisualReasoningCompilerError("sketchfab_queries must be a list")
+    if len(queries_raw) > 64:
+        raise VisualReasoningCompilerError("visual inventory has more than 64 queries")
+    queries: list[dict[str, str]] = []
+    query_labels: set[str] = set()
+    for index, item in enumerate(queries_raw):
+        if not isinstance(item, dict):
+            raise VisualReasoningCompilerError(
+                f"sketchfab_queries[{index}] must be an object"
+            )
+        _require_exact_keys(
+            item, {"label", "query"}, label=f"sketchfab_queries[{index}]"
+        )
+        label = _require_string(
+            item["label"], label=f"sketchfab_queries[{index}].label"
+        )
+        if label not in labels:
+            raise VisualReasoningCompilerError(
+                f"Sketchfab query refers to unknown visible element {label!r}"
+            )
+        if label in query_labels:
+            raise VisualReasoningCompilerError(
+                f"visual inventory repeats Sketchfab query for {label!r}"
+            )
+        query_labels.add(label)
+        query = _require_string(
+            item["query"], label=f"sketchfab_queries[{index}].query"
+        )
+        queries.append({"label": label, "query": query})
+
+    def string_list(value: Any, *, label: str) -> list[str]:
+        if not isinstance(value, list):
+            raise VisualReasoningCompilerError(f"{label} must be a list")
+        if len(value) > 64:
+            raise VisualReasoningCompilerError(f"{label} has more than 64 entries")
+        return [
+            _require_string(item, label=f"{label}[{index}]")
+            for index, item in enumerate(value)
+        ]
+
+    return {
+        "format": INVENTORY_FORMAT,
+        "scene_summary": scene_summary,
+        "visible_elements": elements,
+        "sketchfab_queries": queries,
+        "visible_text": string_list(payload["visible_text"], label="visible_text"),
+        "uncertainties": string_list(
+            payload["uncertainties"], label="uncertainties"
+        ),
+    }
+
+
+def _clean_concept_response(raw: str) -> str:
+    """Remove a hidden reasoning block while rejecting format drift."""
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    if not text:
+        raise VisualReasoningCompilerError("image-derived Concept.txt is empty")
+    if "```" in text or text.startswith("{") or text.startswith("["):
+        raise VisualReasoningCompilerError(
+            "image-derived Concept.txt must be plain prose, not code or JSON"
+        )
+    forbidden = ("vizconcept.txt", "sketchfab", "qwen", "board.png")
+    lowered = text.lower()
+    found = [term for term in forbidden if term in lowered]
+    if found:
+        raise VisualReasoningCompilerError(
+            "image-derived Concept.txt mentions forbidden pipeline context: "
+            + ", ".join(found)
+        )
+    extract_visible_entity_references(text)
+    if len(text) < 120:
+        raise VisualReasoningCompilerError(
+            "image-derived Concept.txt is too short to describe a playable game"
+        )
+    return text.replace("\r\n", "\n")
+
+
+def _board_manifest_record(board_manifest: Path | None, board_hash: str) -> dict[str, str] | None:
+    if board_manifest is None:
+        return None
+    if not board_manifest.is_file():
+        raise VisualReasoningCompilerError(
+            f"board manifest not found: {board_manifest}"
+        )
+    raw = board_manifest.read_bytes()
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise VisualReasoningCompilerError(
+            f"board manifest is not valid UTF-8 JSON: {board_manifest}"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise VisualReasoningCompilerError(
+            f"board manifest must contain a JSON object: {board_manifest}"
+        )
+    board_record = payload.get("board")
+    if not isinstance(board_record, dict):
+        raise VisualReasoningCompilerError(
+            f"board manifest has no board hash record: {board_manifest}"
+        )
+    recorded_hash = board_record.get("sha256")
+    if recorded_hash != board_hash:
+        raise VisualReasoningCompilerError(
+            "board manifest hash does not match the supplied board image"
+        )
+    return {
+        "path": str(board_manifest),
+        "sha256": sha256_bytes(raw),
+        "board_sha256": board_hash,
+    }
+
+
+def reason_over_board(*, board_image: Path, inventory_output: Path,
+                      concept_output: Path, manifest: Path,
+                      llm: Any, board_manifest: Path | None = None) -> Path:
+    """Run Slice 2 using only the board image and fixed instructions.
+
+    The two calls are sequential so one 9B vision model can remain loaded on
+    an 8 GB card.  Nothing from the Slice-1 source prompt is read or sent to
+    the model; an optional board manifest is checked only for hash agreement
+    and linked by metadata.
+    """
+    if not board_image.is_file():
+        raise VisualReasoningCompilerError(f"board image not found: {board_image}")
+    image_bytes = board_image.read_bytes()
+    if not _looks_like_png(image_bytes):
+        raise VisualReasoningCompilerError("board image must be a valid-looking PNG")
+
+    raw_paths = (
+        inventory_output.with_suffix(".raw.txt"),
+        concept_output.with_suffix(".raw.txt"),
+    )
+    requested = [inventory_output, concept_output, manifest, *raw_paths]
+    resolved: list[Path] = []
+    for path in requested:
+        path_resolved = path.resolve()
+        if path_resolved in resolved:
+            raise VisualReasoningCompilerError(
+                f"Slice-2 output paths collide: {path}"
+            )
+        resolved.append(path_resolved)
+        if path.exists():
+            raise VisualReasoningCompilerError(
+                f"refusing to overwrite visual-reasoning artifact: {path}"
+            )
+
+    board_hash = sha256_bytes(image_bytes)
+    source_manifest = _board_manifest_record(board_manifest, board_hash)
+    image_uri = _encode_image_data_uri(image_bytes)
+
+    inventory_raw = llm.chat(
+        system=IMAGE_ONLY_SYSTEM,
+        user=INVENTORY_USER,
+        images=[image_uri],
+        temperature=INVENTORY_TEMPERATURE,
+        thinking=False,
+        seed=INVENTORY_SEED,
+        max_tokens=INVENTORY_MAX_TOKENS,
+        json_mode=True,
+    )
+    inventory = validate_visual_inventory(inventory_raw)
+
+    concept_raw = llm.chat(
+        system=IMAGE_ONLY_SYSTEM,
+        user=CONCEPT_USER,
+        images=[image_uri],
+        temperature=CONCEPT_TEMPERATURE,
+        thinking=False,
+        seed=CONCEPT_SEED,
+        max_tokens=CONCEPT_MAX_TOKENS,
+    )
+    concept = _clean_concept_response(concept_raw)
+
+    inventory_bytes = (
+        json.dumps(inventory, indent=2, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+    concept_bytes = (concept + "\n").encode("utf-8")
+    inventory_raw_bytes = inventory_raw.encode("utf-8")
+    concept_raw_bytes = concept_raw.encode("utf-8")
+    model = str(getattr(llm, "model", "unknown"))
+    request = {
+        "board_sha256": board_hash,
+        "model": model,
+        "inventory": {
+            "system": IMAGE_ONLY_SYSTEM,
+            "user": INVENTORY_USER,
+            "temperature": INVENTORY_TEMPERATURE,
+            "thinking": False,
+            "seed": INVENTORY_SEED,
+            "max_tokens": INVENTORY_MAX_TOKENS,
+        },
+        "concept": {
+            "system": IMAGE_ONLY_SYSTEM,
+            "user": CONCEPT_USER,
+            "temperature": CONCEPT_TEMPERATURE,
+            "thinking": False,
+            "seed": CONCEPT_SEED,
+            "max_tokens": CONCEPT_MAX_TOKENS,
+        },
+    }
+    manifest_data: dict[str, Any] = {
+        "format": REASONING_FORMAT,
+        "stage": "2_image_reasoning",
+        "authority": {
+            "input": "board.png",
+            "board_role": "visual_intermediate_representation",
+            "original_vizconcept_sent_to_llm": False,
+            "semantic_context_sent_to_llm": False,
+            "llm_called_here": True,
+        },
+        "board": {
+            "path": str(board_image),
+            "mime_type": "image/png",
+            "sha256": board_hash,
+        },
+        "board_manifest": source_manifest,
+        "llm": {
+            "model": model,
+            "inventory": {
+                "raw_response_sha256": sha256_bytes(inventory_raw_bytes),
+                "settings": request["inventory"],
+            },
+            "concept": {
+                "raw_response_sha256": sha256_bytes(concept_raw_bytes),
+                "settings": request["concept"],
+            },
+        },
+        "request_fingerprint": _canonical_hash(request),
+        "outputs": {
+            "visual_inventory": {
+                "path": str(inventory_output),
+                "sha256": sha256_bytes(inventory_bytes),
+                "raw_response_path": str(raw_paths[0]),
+            },
+            "concept": {
+                "path": str(concept_output),
+                "sha256": sha256_bytes(concept_bytes),
+                "raw_response_path": str(raw_paths[1]),
+            },
+        },
+    }
+
+    for path in (inventory_output, concept_output, *raw_paths, manifest):
+        path.parent.mkdir(parents=True, exist_ok=True)
+    inventory_output.write_bytes(inventory_bytes)
+    concept_output.write_bytes(concept_bytes)
+    raw_paths[0].write_bytes(inventory_raw_bytes)
+    raw_paths[1].write_bytes(concept_raw_bytes)
+    manifest.write_text(
+        json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
 
 
 def _looks_like_png(data: bytes) -> bool:

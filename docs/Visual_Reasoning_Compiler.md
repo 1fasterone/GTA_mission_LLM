@@ -2,11 +2,14 @@
 
 ## Status
 
-This document defines the image-led compiler mode. Slice 1 is implemented
-locally: `vizconcept.txt` to one canonical ComfyUI board and a complete
-provenance manifest. Its live smoke run remains pending a user-authored
-`vizconcept.txt`. Later slices remain deliberately open until that board has
-been produced and inspected.
+This document defines the image-led compiler mode. Slice 1 is implemented:
+`vizconcept.txt` to one canonical ComfyUI board and a complete provenance
+manifest. Slice 2 now adds the image-only Qwen boundary: one visual inventory
+JSON, one image-derived `Concept.txt`, and a provenance manifest linking both
+outputs to the board hash. Live smoke runs remain environment-dependent and
+must be reported separately from the checked-in contract and mocked tests.
+Slice 3 now closes those artifacts deterministically through an explicit
+Concept entity-reference block and a hash-checked closed image IR.
 
 The existing semantic-first visual compiler work is not the contract described
 here. This mode starts from a visual seed and lets the rendered image direct
@@ -61,29 +64,43 @@ models, fill a schema, or generate Unity files.
 
 ### Step 2 — Reason over the image
 
-Send only `board.png` plus fixed production instructions to Qwen. Produce two
-separate artifacts:
+Send only `board.png` plus fixed, checked-in production instructions to Qwen.
+The original `vizconcept.txt` is deliberately not read by this stage. Produce
+two separate artifacts in sequential calls so one vision-capable 9B model can
+remain loaded on an 8 GB card:
 
 1. a visual inventory / dictionary containing discrete asset-worthy objects,
    model hints, and Sketchfab queries;
 2. `Concept.txt`, describing a game whose mechanics and entities are built from
    the objects visible in the image.
 
-The original `vizconcept.txt` is not sent to Qwen. The image must dictate the
-game direction. The exact output contract will be revised after Slice 1 shows
-what information the board actually carries.
+The image must dictate the game direction. The inventory is strict JSON with
+visible elements, exact-label query references, legible visible text, and
+uncertainties. `Concept.txt` is plain prose and may make modest mechanics
+inferences, but it may not introduce unsupported named entities or pipeline
+context. Raw model responses are retained beside both canonical outputs for
+auditability.
 
 ### Step 3 — Reconcile image reasoning
 
-Check that the visual inventory and `Concept.txt` describe the same visible
-world. Flag or reject:
+Run deterministic reconciliation over the Slice-2 inventory, `Concept.txt`,
+and its provenance manifest. Slice 3 does not look at the original prompt and
+does not ask Qwen to judge its own output. `Concept.txt` carries an explicit
+plain-text `VISIBLE ENTITY REFERENCES` block so the compiler has a bounded,
+auditable entity channel instead of pretending that arbitrary prose can be
+parsed perfectly.
 
-- Concept entities with no visual support;
-- inventory objects omitted from the game concept;
-- invented objects not present in the image;
-- queries that do not correspond to an asset-worthy object.
+Reject:
 
-This produces the closed image-derived game/asset intermediate representation.
+- Concept entity references with no unique inventory match;
+- asset-worthy inventory elements omitted from the reference block;
+- Sketchfab queries that target UI/effects or have no model hint;
+- any input whose hashes do not match the Slice-2 manifest.
+
+Optional UI/effect elements may remain unreferenced, but are recorded as
+warnings. Generic prose outside the explicit reference block is not silently
+treated as a hidden entity channel. This produces the closed image-derived
+game/asset intermediate representation without an LLM call.
 
 ### Step 4 — Resolve and download assets
 
@@ -216,6 +233,111 @@ The slice is complete when:
 - no Qwen call, Concept file, Sketchfab request, model download, schema, or
   Unity project is created;
 - the generated board is inspected before Step 2 is finalized.
+
+### Slice 2 — detailed contract
+
+#### Command
+
+```powershell
+& .\.venv\Scripts\python.exe main.py unity-vizconcept-reason `
+  --board-image 'output\visual_reasoning\git_run\board.png' `
+  --board-manifest 'output\visual_reasoning\git_run\board.import.json' `
+  --inventory-output 'output\visual_reasoning\git_run\visual_inventory.json' `
+  --concept-output 'output\visual_reasoning\git_run\Concept.txt' `
+  --manifest 'output\visual_reasoning\git_run\reasoning.json'
+```
+
+`--board-manifest` is optional, but when supplied its recorded board hash must
+match the PNG. The command refuses to overwrite any output, including the raw
+response sidecars (`visual_inventory.raw.txt` and `Concept.raw.txt`).
+
+#### Request boundary
+
+- Each Qwen request contains exactly one `data:image/png` image and a fixed
+  checked-in instruction. No source prompt text, board-manifest text, Concept,
+  schema, asset catalog, or gameplay brief is sent.
+- The inventory call uses JSON mode, fixed seed `731947`, temperature `0.2`,
+  and reasoning disabled. It must return the five-field inventory payload.
+- The Concept call uses fixed seed `731948`, temperature `0.55`, and reasoning
+  disabled. It must return plain prose of at least 120 characters.
+- Calls are sequential to keep the VRAM contract explicit.
+
+#### Output and provenance contract
+
+`visual_inventory.json` is the canonical
+`visual-reasoning-compiler/visual-inventory/v1` artifact. Its
+`sketchfab_queries[].label` values must refer exactly to
+`visible_elements[].label` values. `Concept.txt` contains no model IDs,
+filenames, asset queries, or references to the pipeline itself. It begins with
+one deterministic reference block:
+
+```text
+VISIBLE ENTITY REFERENCES:
+- <short visible entity phrase>
+END VISIBLE ENTITY REFERENCES
+```
+
+Every concrete entity used by the concept must be listed there. Slice 3
+matches those phrases conservatively against inventory labels, model hints,
+and descriptions.
+
+`reasoning.json` records the board hash, optional Slice-1 manifest hash, model,
+fixed request instructions and settings, raw-response hashes, canonical output
+hashes, and explicit authority flags proving that the original `vizconcept.txt`
+was not sent to Qwen. It does not copy the source prompt out of the Slice-1
+manifest.
+
+#### Slice 2 acceptance criteria
+
+- mocked tests prove both calls receive only one PNG data URI and no source
+  prompt text;
+- malformed inventory fields, unknown query labels, empty inventories, and
+  unsupported Concept formats abstain loudly;
+- canonical outputs, raw response sidecars, and the provenance manifest are
+  written only after both calls validate;
+- a live run with the imported board is inspected before reconciliation is
+  designed;
+- no Sketchfab request, asset download, schema fill, or Unity generation occurs.
+
+### Slice 3 — detailed contract
+
+#### Command
+
+```powershell
+& .\.venv\Scripts\python.exe main.py unity-vizconcept-reconcile `
+  --inventory 'output\visual_reasoning\git_run\visual_inventory.json' `
+  --concept 'output\visual_reasoning\git_run\Concept.txt' `
+  --reasoning-manifest 'output\visual_reasoning\git_run\reasoning.json' `
+  --output 'output\visual_reasoning\git_run\closed_image_ir.json' `
+  --manifest 'output\visual_reasoning\git_run\reconciliation.json'
+```
+
+Slice 3 is deterministic and makes zero LLM calls. It validates the Slice-2
+manifest authority flags and hashes, revalidates the inventory contract,
+parses the explicit Concept entity-reference block, and emits a self-contained
+`visual-reasoning-compiler/closed-image-ir/v1` artifact. The closed IR carries
+the board record, validated inventory, Concept text/prose, entity matches, and
+asset requests with their matched Concept references.
+
+Entity matching is intentionally conservative: normalized distinctive tokens
+from a reference must match a unique inventory label, model hint, or
+description. Ties and weak matches abstain. Every queried or otherwise
+model-worthy inventory element must be referenced. UI/effect elements may be
+unreferenced, but the closed IR records them as warnings. Slice 3 does not
+attempt unrestricted noun-phrase extraction from prose; the explicit block is
+the contract that makes the closure claim honest.
+
+#### Slice 3 acceptance criteria
+
+- a valid Slice-2 manifest and matching inventory/Concept hashes are required;
+- an unmatched or ambiguous Concept entity reference rejects the run;
+- an omitted asset-worthy inventory element rejects the run;
+- a query for UI/effect content or an element without a model hint rejects the
+  run;
+- the output and reconciliation manifest are written only after all checks
+  pass, and existing artifacts are never overwritten;
+- no source prompt, Sketchfab request, asset download, schema fill, or Unity
+  generation occurs.
 
 ## Design rules
 

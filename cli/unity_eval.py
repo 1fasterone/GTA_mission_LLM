@@ -112,6 +112,100 @@ def unity_vizconcept_import(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-vizconcept-reason")
+def unity_vizconcept_reason(
+    board_image: Path = typer.Option(
+        ..., "--board-image", help="Canonical Slice-1 board PNG"
+    ),
+    inventory_output: Path = typer.Option(
+        ..., "--inventory-output", "--inventory",
+        help="Image-derived visual inventory JSON destination",
+    ),
+    concept_output: Path = typer.Option(
+        ..., "--concept-output", "--concept",
+        help="Image-derived Concept.txt destination",
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-2 provenance manifest destination"
+    ),
+    board_manifest: Optional[Path] = typer.Option(
+        None, "--board-manifest",
+        help="Optional Slice-1 manifest to hash-check and link",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run Slice 2: board PNG -> visual inventory + Concept.txt."""
+    from src.backends import make_chat_client
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError,
+        reason_over_board,
+    )
+
+    if not board_image.is_file():
+        console.print(f"[red]Visual reasoning board not found:[/] {board_image}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]Config file not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        cfg = _cfg(str(config))
+        llm = make_chat_client(cfg)
+        manifest_path = manifest or concept_output.with_suffix(".reasoning.json")
+        path = reason_over_board(
+            board_image=board_image,
+            inventory_output=inventory_output,
+            concept_output=concept_output,
+            manifest=manifest_path,
+            board_manifest=board_manifest,
+            llm=llm,
+        )
+        console.print(f"[green]Visual inventory written[/] {inventory_output}")
+        console.print(f"[green]Image-derived Concept.txt written[/] {concept_output}")
+        console.print(f"[green]Slice-2 provenance manifest written[/] {path}")
+    except (OSError, ValueError, RuntimeError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reasoning error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-reconcile")
+def unity_vizconcept_reconcile(
+    inventory_file: Path = typer.Option(
+        ..., "--inventory", help="Slice-2 visual inventory JSON"
+    ),
+    concept_file: Path = typer.Option(
+        ..., "--concept", help="Slice-2 image-derived Concept.txt"
+    ),
+    reasoning_manifest: Path = typer.Option(
+        ..., "--reasoning-manifest", help="Slice-2 provenance manifest"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Closed image IR JSON destination"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-3 reconciliation manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 3: reconcile the image-derived artifacts."""
+    from src.visual_reasoning_compiler import VisualReasoningCompilerError
+    from src.visual_reasoning_reconcile import reconcile_image_reasoning
+
+    try:
+        manifest_path = manifest or output.with_suffix(".reconcile.json")
+        path = reconcile_image_reasoning(
+            inventory_file=inventory_file,
+            concept_file=concept_file,
+            reasoning_manifest=reasoning_manifest,
+            output=output,
+            manifest=manifest_path,
+        )
+        console.print(f"[green]Closed image IR written[/] {output}")
+        console.print(f"[green]Slice-3 reconciliation manifest written[/] {path}")
+        console.print("[green]LLM calls in Slice 3:[/] 0")
+    except (OSError, ValueError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reconciliation error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-playability")
 def unity_playability(
     schema_file: str = typer.Argument(..., help="Path to a Unity schema JSON file"),
