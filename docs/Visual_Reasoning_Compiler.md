@@ -121,11 +121,20 @@ is deliberately not claimed by this first fulfilment slice; the selected
 asset's catalog provenance and bytes are the checked evidence. Model filenames
 and hashes belong in asset metadata, never in `Concept.txt`.
 
-### Step 5 — Compile the game
+### Step 5 — Compile from the frozen visual IR
 
-The existing Unity schema/compiler consumes the image-derived Concept and the
-resolved asset map. The generated project wiring receives the downloaded model
-paths through the normal asset-binding contract.
+Slice 5 is an explicit precomputed-Concept adapter around the existing Unity
+pipeline. It must not call the normal Step-2 Concept writer: that would turn
+the image-derived Concept into a second, untracked interpretation. The only
+Pipeline LLM work in this slice is the existing Step-3 schema fill, using the
+validated image-derived `Concept.txt` as its Step-2 result.
+
+After schema fill, deterministic binding maps schema entities to the closed
+IR's visual references and the exact Slice-4 selections. The generator then
+copies those selected files through the normal Unity asset-binding chain; it
+does not score the catalog again or silently substitute another model. An
+authored Scene Compiler model remains higher authority. A missing or
+ambiguous required visual binding rejects before generation.
 
 ### Step 6 — Validate and preserve evidence
 
@@ -382,6 +391,78 @@ Slice 4 acceptance criteria:
 - equal best matches reject as ambiguous rather than choosing by accident;
 - the output records enough hashes and provenance to hand the resolved asset
   map to the existing Unity asset-binding chain.
+
+### Slice 5 — detailed contract (rewritten before implementation)
+
+The stale version of this step said that `unity-create --file Concept.txt`
+was sufficient. It is not: `UnityPipeline.run()` would treat that file as a
+new user brief, call the normal Concept stage again, and the generator would
+re-score the catalog instead of honouring Slice 4. Slice 5 therefore requires
+an explicit precomputed-Concept entry point and a first-class visual asset
+binding input.
+
+#### Proposed command boundary
+
+```powershell
+& .\.venv\Scripts\python.exe main.py unity-vizconcept-compile `
+  --closed-ir 'output\visual_reasoning\git_run\closed_image_ir.json' `
+  --asset-fulfilment 'output\visual_reasoning\git_run\asset_fulfilment.json' `
+  --asset-manifest 'output\visual_reasoning\git_run\asset_fulfilment.manifest.json' `
+  --config 'config.yaml' `
+  --output 'output\unity\visual_git_run'
+```
+
+The command must:
+
+1. verify the Slice-3 closed IR hash and the Slice-4 fulfilment-manifest
+   hash/fingerprint before contacting the schema-fill model;
+2. use the Concept text carried by the closed IR as the precomputed Step-2
+   concept and make exactly the existing Step-3 schema-fill call (plus its
+   existing bounded retry when validation fails);
+3. send no board image, original `vizconcept.txt`, raw catalog, asset
+   filenames, asset IDs, or hidden gameplay context to that model;
+4. deterministically bind schema entities to the closed IR visual references,
+   then to the exact fulfilled asset selections; ties, omissions, and
+   invented required visual entities abstain before generation;
+5. pass those bindings through an explicit resolver/generator parameter. Do
+   not smuggle them through `schema.meta`, a fake Scene Compiler layout, or a
+   second catalog search; and
+6. run the existing deterministic Steps 4-7 tail, write the schema/project,
+   and preserve one run manifest linking every input, prompt/output hash,
+   schema hash, asset-file hash, and validation result.
+
+#### Authority and binding order
+
+The authority order for a visual entity is:
+
+```text
+authored Scene Compiler model
+    -> exact Slice-4 visual asset binding
+    -> existing deterministic catalog resolver for non-visual engine content
+    -> explicit rejection in visual-strict mode
+```
+
+The selected asset is identified by catalog source, relative path, source
+hash, and license metadata. Entity matching is deterministic and conservative
+over the entity name, kind, model hint, and the closed inventory label/model
+hint. A category word alone is not enough. UI/effect entities stay on their
+existing engine-native paths and are not forced into mesh assets.
+
+#### Slice 5 acceptance criteria
+
+- `unity-create --file` remains unchanged; the precomputed-Concept path is a
+  separate command and has its own tests;
+- the Slice-2 Concept is preserved byte-for-byte and the normal Concept call is
+  provably skipped;
+- the schema-fill prompt contains the image-derived Concept but no board,
+  source visual prompt, catalog filenames, or asset identifiers;
+- every required visual reference has one unique schema-entity binding and
+  one exact Slice-4 asset selection, or the run rejects before generation;
+- generated files include the selected asset bytes through the existing
+  resolver/generator copy path, with no second scoring decision;
+- Steps 4-7 remain deterministic and LLM-free after schema fill;
+- the run manifest makes the precomputed-Concept transformation explicit,
+  including all source and output hashes.
 
 ## Design rules
 
