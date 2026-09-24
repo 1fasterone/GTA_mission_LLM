@@ -451,12 +451,12 @@ def validate_image_spatial_response(
                 f"clusters[{index}].members must be unique closed image labels"
             )
         members.sort()
-        key = tuple(members)
-        if key in cluster_keys:
+        cluster_key = tuple(members)
+        if cluster_key in cluster_keys:
             raise VisualReasoningCompilerError(
                 f"spatial response repeats cluster {members!r}"
             )
-        cluster_keys.add(key)
+        cluster_keys.add(cluster_key)
         cohesion = _string(item["cohesion"], label=f"clusters[{index}].cohesion")
         if cohesion not in _COHESION:
             raise VisualReasoningCompilerError(

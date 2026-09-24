@@ -1132,6 +1132,7 @@ class UnityPipeline:
             reference_image: Path | None = None,
             precomputed_concept: str | None = None,
             visual_asset_bindings: list[dict] | None = None) -> Path:
+        locked_asset_bindings: dict[str, dict] | None = None
         precomputed_mode = precomputed_concept is not None
         if precomputed_mode:
             if no_llm:
@@ -1425,11 +1426,11 @@ class UnityPipeline:
                 self._fix(msg)
 
         if visual_asset_bindings is not None:
-            visual_asset_bindings = bind_visual_assets(
+            locked_asset_bindings = bind_visual_assets(
                 schema, visual_asset_bindings
             )
             self._ok(
-                f"Locked {len(visual_asset_bindings)} Slice-4 visual asset "
+                f"Locked {len(locked_asset_bindings)} Slice-4 visual asset "
                 "binding(s) before deterministic generation"
             )
 
@@ -2038,7 +2039,7 @@ class UnityPipeline:
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
                 project_config=self.config, llm=self.llm,
-                locked_asset_bindings=visual_asset_bindings)
+                locked_asset_bindings=locked_asset_bindings)
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library

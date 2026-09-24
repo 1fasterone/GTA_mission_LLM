@@ -386,7 +386,6 @@ def unity_vizconcept_compile(
                 f"refusing to compile into an existing output directory: {output}"
             )
         closed = json.loads(closed_ir.read_text(encoding="utf-8"))
-        reconciliation = closed_ir.with_name("reconciliation.json")
         # The Slice-3 manifest is adjacent to the closed IR in the documented
         # run layout.  The fulfilment manifest independently records the
         # closed request fingerprint, so use that as the cross-stage check when

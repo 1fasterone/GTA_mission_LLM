@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from .visual_reasoning_compiler import (
-    INVENTORY_FORMAT,
     REASONING_FORMAT,
     VisualReasoningCompilerError,
     extract_visible_entity_references,
