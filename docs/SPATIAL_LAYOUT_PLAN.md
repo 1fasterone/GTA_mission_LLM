@@ -1,7 +1,8 @@
 # Slice 6 — Hybrid spatial layout engine
 
-Status: **6.1 implemented as a frozen image-space evidence pass.** The Unity
-world-layout consumer is intentionally not part of 6.1 yet.
+Status: **6.1 implemented as a frozen image-space evidence pass; 6.2
+implemented as a deterministic closed schema-role pass.** The Unity
+world-layout consumer is intentionally not part of 6.1 or 6.2 yet.
 
 Slice 6 solves the scattered-scene problem by keeping three authorities
 separate:
@@ -68,7 +69,7 @@ The artifact is visual evidence only. It must not be read as Unity metres,
 world-space Y, route order, reachability, collider size, or a parent/child
 relationship.
 
-### 6.2 — Concept/schema spatial roles (deterministic)
+### 6.2 — Concept/schema spatial roles (deterministic) · implemented
 
 Derive roles from the existing schema, mission objectives, route/path fields,
 locomotion, medium, and the Concept lineage already present in `schema.meta`.
@@ -76,6 +77,33 @@ Do not add an LLM call and do not add production schema fields. Produce a
 closed role table such as `player_path`, `checkpoint`, `hazard`,
 `navigation_marker`, `scenery`, `airborne_hazard`, or `ui_only`, with an
 explicit abstention when a role cannot be proven from declared content.
+
+The implementation is `src/unity_spatial_roles.py` and emits one row for every
+declared `EntitySpec`, including the closed `abstain` role. It also emits
+objective target bindings and named adjacency requirements, but never creates
+an entity for an unbound `target_ref` and never emits world coordinates. The
+schema is not mutated. Concept prose is only a lineage/evidence source after
+the entity is already declared by the schema; it is not an inventory.
+
+Artifacts are hash-linked as:
+
+```text
+<schema>.spatial-roles.json
+<schema>.spatial-roles.manifest.json
+```
+
+Run it with:
+
+```text
+python main.py unity-vizconcept-spatial-roles \
+  --schema rallyboat.schema.json \
+  --output rallyboat.spatial-roles.json
+```
+
+The manifest records the exact schema hash, semantic schema hash, Concept and
+brief lineage hashes, the closed role vocabulary, and any explicit
+abstentions/warnings. Focused coverage is in
+`tests/test_unity_spatial_roles.py`.
 
 This stage owns gameplay adjacency requirements. For example, a checkpoint
 objective may require a declared checkpoint entity to lie on the player route;

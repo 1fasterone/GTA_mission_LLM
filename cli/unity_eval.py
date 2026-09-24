@@ -217,6 +217,37 @@ def unity_vizconcept_spatial(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-vizconcept-spatial-roles")
+def unity_vizconcept_spatial_roles(
+    schema_file: Path = typer.Option(
+        ..., "--schema", help="Validated Unity .schema.json input"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.2 schema spatial-role JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.2 provenance manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 6.2: schema -> closed spatial roles."""
+    from src.unity_spatial_roles import SpatialRoleError, write_spatial_roles
+
+    if not schema_file.is_file():
+        console.print(f"[red]Spatial-role schema not found:[/] {schema_file}")
+        raise typer.Exit(2)
+    try:
+        path = write_spatial_roles(
+            schema_path=schema_file,
+            output=output,
+            manifest=manifest,
+        )
+        console.print(f"[green]Schema spatial roles written[/] {output}")
+        console.print(f"[green]Slice-6.2 provenance manifest written[/] {path}")
+    except (OSError, ValueError, TypeError, SpatialRoleError) as exc:
+        console.print(f"[red]Schema spatial-role error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-vizconcept-reconcile")
 def unity_vizconcept_reconcile(
     inventory_file: Path = typer.Option(
