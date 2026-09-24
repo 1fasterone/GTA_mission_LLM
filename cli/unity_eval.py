@@ -248,6 +248,74 @@ def unity_vizconcept_spatial_roles(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-vizconcept-spatial-fuse")
+def unity_vizconcept_spatial_fuse(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Closed Slice-3 image IR JSON"
+    ),
+    evidence: Path = typer.Option(
+        ..., "--evidence", help="Slice-6.1 image spatial evidence JSON"
+    ),
+    evidence_manifest: Path = typer.Option(
+        ..., "--evidence-manifest", help="Slice-6.1 evidence provenance manifest"
+    ),
+    schema_file: Path = typer.Option(
+        ..., "--schema", help="Validated Unity .schema.json input"
+    ),
+    roles: Path = typer.Option(
+        ..., "--roles", help="Slice-6.2 schema spatial-role JSON"
+    ),
+    roles_manifest: Path = typer.Option(
+        ..., "--roles-manifest", help="Slice-6.2 roles provenance manifest"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.3 hybrid spatial fusion JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.3 fusion provenance manifest"
+    ),
+) -> None:
+    """Run deterministic Slice 6.3: image evidence + schema roles -> constraints."""
+    from src.unity_spatial_fusion import SpatialFusionError, fuse_spatial_evidence
+
+    required = {
+        "closed image IR": closed_ir,
+        "image spatial evidence": evidence,
+        "image spatial manifest": evidence_manifest,
+        "schema": schema_file,
+        "schema spatial roles": roles,
+        "schema spatial manifest": roles_manifest,
+    }
+    missing = [f"{label}: {path}" for label, path in required.items() if not path.is_file()]
+    if missing:
+        console.print("[red]Spatial fusion input not found:[/] " + "; ".join(missing))
+        raise typer.Exit(2)
+    try:
+        manifest_path = fuse_spatial_evidence(
+            closed_ir=closed_ir,
+            evidence=evidence,
+            evidence_manifest=evidence_manifest,
+            schema=schema_file,
+            roles=roles,
+            roles_manifest=roles_manifest,
+            output=output,
+            manifest=manifest,
+        )
+        result = json.loads(output.read_text(encoding="utf-8"))
+        console.print(f"[green]Hybrid spatial fusion written[/] {output}")
+        console.print(f"[green]Slice-6.3 provenance manifest written[/] {manifest_path}")
+        console.print(
+            f"[green]Bound entities:[/] {result.get('counts', {}).get('bound_entities', 0)}"
+        )
+        console.print(
+            f"[yellow]Defaulted entities:[/] "
+            f"{result.get('counts', {}).get('defaulted_entities', 0)}"
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, SpatialFusionError) as exc:
+        console.print(f"[red]Spatial fusion error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-vizconcept-reconcile")
 def unity_vizconcept_reconcile(
     inventory_file: Path = typer.Option(

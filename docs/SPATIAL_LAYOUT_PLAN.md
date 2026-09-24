@@ -1,8 +1,9 @@
 # Slice 6 — Hybrid spatial layout engine
 
 Status: **6.1 implemented as a frozen image-space evidence pass; 6.2
-implemented as a deterministic closed schema-role pass.** The Unity
-world-layout consumer is intentionally not part of 6.1 or 6.2 yet.
+implemented as a deterministic closed schema-role pass; 6.3 implemented as a
+unit-free hybrid evidence-fusion pass.** Unity world-layout realization is
+intentionally not part of 6.3 yet.
 
 Slice 6 solves the scattered-scene problem by keeping three authorities
 separate:
@@ -109,7 +110,7 @@ This stage owns gameplay adjacency requirements. For example, a checkpoint
 objective may require a declared checkpoint entity to lie on the player route;
 it may not manufacture one because the image contains an arch.
 
-### 6.3 — Hybrid evidence fusion (deterministic)
+### 6.3 — Hybrid evidence fusion (deterministic) · implemented
 
 Join 6.1 evidence to 6.2 roles using the existing closed visual binding and
 schema-entity binding contracts. The fusion pass must:
@@ -122,6 +123,39 @@ schema-entity binding contracts. The fusion pass must:
 
 The output is a solved, unit-free region/constraint IR. It is not yet a list
 of Unity transforms.
+
+The implementation is `src/unity_spatial_fusion.py`. It verifies the hashes of
+the closed Slice-3 IR, 6.1 evidence and manifest, schema, and 6.2 role table
+and manifest before fusing them. Declared entities with no unique image
+anchor receive a named role default plus a warning; visual labels that are not
+declared entity matches remain evidence-only. Ambiguous declared-entity
+matches abstain loudly. Schema/archetype surface constraints win over a
+conflicting image surface, while the original image observation remains
+recorded for audit.
+
+Artifacts are hash-linked as:
+
+```text
+<project>.spatial-fusion.json
+<project>.spatial-fusion.manifest.json
+```
+
+Run it with:
+
+```text
+python main.py unity-vizconcept-spatial-fuse \
+  --closed-ir rallyboat.v5.closed-image-ir.json \
+  --evidence rallyboat.v5.image-spatial-evidence.json \
+  --evidence-manifest rallyboat.v5.image-spatial.json \
+  --schema RallyBoat.schema.json \
+  --roles RallyBoat.spatial-roles.json \
+  --roles-manifest RallyBoat.spatial-roles.manifest.json \
+  --output RallyBoat.spatial-fusion.json
+```
+
+Focused coverage is in `tests/test_unity_spatial_fusion.py`. The output is a
+deterministic composition/constraint sidecar only: 6.4 owns relation-graph
+construction and 6.5 owns world-space realization.
 
 ### 6.4 — Scene and relation graph construction
 
