@@ -62,6 +62,8 @@ from .unity_objective_targets import resolve_objective_targets
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 from .unity_reference_image import ReferenceImageError, encode_reference_image
+from .unity_visual_bindings import (bind_visual_assets,
+                                    ensure_visual_scene_coverage)
 
 console = Console()
 
@@ -1127,7 +1129,22 @@ class UnityPipeline:
             no_think:    bool = False,
             micro_code:  bool = True,
             no_llm:      bool = False,
-            reference_image: Path | None = None) -> Path:
+            reference_image: Path | None = None,
+            precomputed_concept: str | None = None,
+            visual_asset_bindings: list[dict] | None = None) -> Path:
+        locked_asset_bindings: dict[str, dict] | None = None
+        precomputed_mode = precomputed_concept is not None
+        if precomputed_mode:
+            if no_llm:
+                raise ValueError(
+                    "precomputed Concept handoff requires the existing Step-3 "
+                    "schema-fill call; --no-llm is not compatible"
+                )
+            if not str(precomputed_concept).strip():
+                raise ValueError("precomputed Concept handoff is empty")
+            # A closed image Concept is already the semantic authority.  Theme
+            # twists would add an unrelated instruction before schema-fill.
+            theme = "none"
         console.print(Panel(
             f"[bold]Unity Project Creator Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -1184,7 +1201,7 @@ class UnityPipeline:
         # Asset-library vocabulary (categories + top tags from the generated
         # catalog) so entity model_hints name models that actually exist.
         # Deterministic lookup; missing catalog → empty string, prompt unchanged.
-        _vocab = asset_vocabulary(self.lookups_dir)
+        _vocab = "" if precomputed_mode else asset_vocabulary(self.lookups_dir)
         if _vocab:
             schema_hints += "\n" + _vocab + "\n"
         # The brief's own ENTITIES bullets, verbatim, as a required checklist.
@@ -1290,36 +1307,41 @@ class UnityPipeline:
 
         else:
             # STEP 2 — concept ────────────────────────────────────────────────
-            self._step(2, "LLM generates project concept")
-            if no_think:
-                self._ok("--no-think: reasoning disabled for the whole run "
-                         "(concept quality/creativity trades for speed)")
-            concept_user = UNITY_CONCEPT_USER.format(
-                user_prompt=user_prompt,
-                theme_block=theme_block,
-            )
-            concept_images = None
-            if reference_image_uri is not None:
-                concept_user += (
-                    "\n\nREFERENCE IMAGE\n"
-                    "Use the attached image only as a visual target. Extract "
-                    "camera angle, horizon framing, lighting tone, palette, "
-                    "track composition, and environment density. Do not copy "
-                    "image metadata, HUD text, branding, or image contents "
-                    "into the schema. Do not write code.\n"
+            if precomputed_mode:
+                self._step(2, "Precomputed Concept accepted (Concept LLM skipped)")
+                concept = str(precomputed_concept).strip()
+                self._ok(f"{len(concept)} chars of validated Slice-2 Concept reused")
+            else:
+                self._step(2, "LLM generates project concept")
+                if no_think:
+                    self._ok("--no-think: reasoning disabled for the whole run "
+                             "(concept quality/creativity trades for speed)")
+                concept_user = UNITY_CONCEPT_USER.format(
+                    user_prompt=user_prompt,
+                    theme_block=theme_block,
                 )
-                concept_images = [reference_image_uri]
-                self._ok("Reference image attached to Concept only")
-            concept = self.llm.chat(
-                system      = UNITY_CONCEPT_SYSTEM,
-                user        = concept_user,
-                temperature = self.concept_temp,
-                thinking    = not no_think,
-                images      = concept_images,
-            )
-            self._ok(f"{len(concept)} chars of project concept generated")
-            if self.show_prompts:
-                console.print(concept)
+                concept_images = None
+                if reference_image_uri is not None:
+                    concept_user += (
+                        "\n\nREFERENCE IMAGE\n"
+                        "Use the attached image only as a visual target. Extract "
+                        "camera angle, horizon framing, lighting tone, palette, "
+                        "track composition, and environment density. Do not copy "
+                        "image metadata, HUD text, branding, or image contents "
+                        "into the schema. Do not write code.\n"
+                    )
+                    concept_images = [reference_image_uri]
+                    self._ok("Reference image attached to Concept only")
+                concept = self.llm.chat(
+                    system      = UNITY_CONCEPT_SYSTEM,
+                    user        = concept_user,
+                    temperature = self.concept_temp,
+                    thinking    = not no_think,
+                    images      = concept_images,
+                )
+                self._ok(f"{len(concept)} chars of project concept generated")
+                if self.show_prompts:
+                    console.print(concept)
 
             # STEP 3 — fill schema ────────────────────────────────────────────
             self._step(3, "LLM fills project schema")
@@ -1402,6 +1424,15 @@ class UnityPipeline:
                 ) from last_err
             for msg in clamp_msgs:
                 self._fix(msg)
+
+        if visual_asset_bindings is not None:
+            locked_asset_bindings = bind_visual_assets(
+                schema, visual_asset_bindings
+            )
+            self._ok(
+                f"Locked {len(locked_asset_bindings)} Slice-4 visual asset "
+                "binding(s) before deterministic generation"
+            )
 
         # Shared tail of Steps 2-3 — runs for both fills. The offline fill has
         # already written meta.user_prompt/concept/fill; re-writing them here
@@ -1686,6 +1717,10 @@ class UnityPipeline:
         _pre_report, _repairs = repair_and_regrade(schema)
         for msg in _repairs:
             self._fix(msg)
+
+        if visual_asset_bindings is not None:
+            for msg in ensure_visual_scene_coverage(schema):
+                self._fix(msg)
 
         # Re-resolve anything that consistency check added
         schema = self.resolver.resolve_schema(schema)
@@ -2003,7 +2038,8 @@ class UnityPipeline:
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                project_config=self.config, llm=self.llm)
+                project_config=self.config, llm=self.llm,
+                locked_asset_bindings=locked_asset_bindings)
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library

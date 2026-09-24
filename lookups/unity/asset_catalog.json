@@ -126,7 +126,8 @@
         "arch",
         "checkpoint",
         "finish line",
-        "portal"
+        "portal",
+        "archway"
       ],
       "kind_hints": [
         "prop"
@@ -7708,7 +7709,8 @@
         "arch",
         "checkpoint",
         "finish line",
-        "portal"
+        "portal",
+        "archway"
       ],
       "kind_hints": [
         "prop"
@@ -38942,6 +38944,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -38975,6 +38978,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39008,6 +39012,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39041,6 +39046,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39074,6 +39080,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39107,6 +39114,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39140,6 +39148,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39173,6 +39182,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39206,6 +39216,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -39239,6 +39250,7 @@
         "vessel",
         "water",
         "speed",
+        "speedboat",
         "vehicle"
       ],
       "kind_hints": [
@@ -86970,6 +86982,53 @@
       "source": "kenney"
     }
   ],
+  "provenance": {
+    "asset_count": 2953,
+    "builder": "src.unity_asset_catalog.build_catalog",
+    "category_counts": {
+      "background": 22,
+      "character": 6,
+      "creature": 144,
+      "decoration": 8,
+      "environment": 522,
+      "floor": 2,
+      "fx": 57,
+      "mechanism": 26,
+      "nature": 294,
+      "object": 6,
+      "obstacle": 25,
+      "platform": 2,
+      "prop": 909,
+      "rail": 4,
+      "ramp": 4,
+      "ship": 250,
+      "stairs": 1,
+      "structure": 277,
+      "track": 251,
+      "ui": 15,
+      "vegetation": 24,
+      "vehicle": 86,
+      "weapon": 18
+    },
+    "curated_catalog": "lookups/unity/kenney_catalog.json",
+    "format": "unity-asset-catalog/provenance/v1",
+    "model_formats": [
+      "fbx"
+    ],
+    "model_roots": [
+      "Models/FBX format"
+    ],
+    "source_tree_fingerprint": "d09370211645468f33700ce7a9b25930",
+    "sprite_formats": [
+      "png"
+    ],
+    "sprite_roots": [
+      "Models/2d-space-kit",
+      "Models/FishPack/PNG/Default",
+      "Models/space-shooter-pack/PNG",
+      "Models/space-shooter-remastered/PNG"
+    ]
+  },
   "roots": [
     "Models/FBX format"
   ],

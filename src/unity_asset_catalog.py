@@ -19,6 +19,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Iterable, Optional
 
+from src.ident import chash, fhash
+
 CATALOG_VERSION = 1
 DEFAULT_ROOTS = ("Models/FBX format",)
 DEFAULT_FORMATS = ("fbx",)
@@ -39,6 +41,7 @@ CURATED_RELPATH = Path("unity") / "kenney_catalog.json"
 # byte-identical to today, and resetting the Sketchfab cache is a single-file
 # delete.
 SKETCHFAB_RELPATH = Path("unity") / "sketchfab_catalog.json"
+CATALOG_PROVENANCE_FORMAT = "unity-asset-catalog/provenance/v1"
 
 # Directories that never contain spawnable scene models: shared textures,
 # animation clip libraries, and the static default pack (already covered by
@@ -198,6 +201,7 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     "marble":     ("ball", "sphere", "toy"),
     "fan":        ("spinner", "propeller", "rotor", "windmill"),
     "banner":     ("flag", "sign", "pennant", "decoration"),
+    "arch":       ("archway",),
     "pallet":     ("crate", "box", "warehouse", "cargo"),
     "obstacle":   ("barrier", "block", "hazard", "cover"),
     "character":  ("person", "human", "npc", "skater", "figure"),
@@ -281,6 +285,44 @@ _SYNONYMS: dict[str, tuple[str, ...]] = {
     "rifle":      ("gun", "weapon", "firearm"),
     "shield":     ("armor", "defense", "weapon"),
 }
+
+
+def _source_tree_fingerprint(entries: Iterable[dict]) -> str:
+    """Hash source paths and bytes without bloating every catalog row."""
+    records: list[tuple[str, str, str]] = []
+    for entry in entries:
+        root = str(entry.get("root") or "")
+        relpath = str(entry.get("relpath") or "")
+        path = Path(root) / relpath
+        records.append((root, relpath, fhash(path)))
+    return chash("asset", {"sources": sorted(records)})
+
+
+def _augment_keywords(keywords: Iterable[str]) -> list[str]:
+    """Add deterministic visual aliases without changing authored nouns.
+
+    The asset filenames are sometimes tokenized as two words while a visual
+    inventory uses their normal compound noun (``boat-speed`` ->
+    ``speedboat``).  Keep both forms in the catalog index.  This is an index
+    repair, not a rewrite of the visual inventory or of a Sketchfab query.
+    """
+    result: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+
+    for value in keywords:
+        add(str(value))
+
+    tokens = {token for value in result for token in tokenize(value)}
+    if "arch" in tokens:
+        add("archway")
+    if {"boat", "speed"} <= tokens:
+        add("speedboat")
+    return result
 
 # Category → entity kinds (default_models.json vocabulary) the asset can serve.
 _KIND_HINTS: dict[str, tuple[str, ...]] = {
@@ -454,6 +496,7 @@ def derive_entry(path: Path, root: Path) -> dict:
             _add(tok)
         for syn in _SYNONYMS.get(tok, ()):
             _add(syn)
+    keywords = _augment_keywords(keywords)
     _add(category)
 
     kind_hints = list(_TOKEN_KIND_HINTS.get(first, _KIND_HINTS.get(category, ("prop",))))
@@ -500,6 +543,7 @@ def derive_sprite_entry(path: Path, root: Path) -> dict:
             _add(tok)
         for syn in _SPRITE_SYNONYMS.get(tok, ()):
             _add(syn)
+    keywords = _augment_keywords(keywords)
     _add(category)
 
     return {
@@ -561,6 +605,7 @@ def build_catalog(roots: Iterable[str | Path],
     `format` field (fbx vs png) so the resolver can filter by game type.
     """
     root_paths = [Path(r) for r in roots]
+    sprite_root_paths = [Path(r) for r in sprite_roots]
     curated = _load_curated(curated_path) if curated_path else {}
 
     assets: list[dict] = []
@@ -571,10 +616,11 @@ def build_catalog(roots: Iterable[str | Path],
             for field in _CURATED_FIELDS:
                 if field in cur:
                     entry[field] = cur[field]
+            entry["keywords"] = _augment_keywords(entry.get("keywords") or [])
             entry["curated"] = True
         assets.append(entry)
 
-    for path, root in scan_assets([Path(r) for r in sprite_roots], SPRITE_FORMATS):
+    for path, root in scan_assets(sprite_root_paths, SPRITE_FORMATS):
         assets.append(derive_sprite_entry(path, root))
 
     categories = sorted({a["category"] for a in assets})
@@ -588,6 +634,21 @@ def build_catalog(roots: Iterable[str | Path],
     return {
         "version": CATALOG_VERSION,
         "roots": sorted(p.as_posix() for p in root_paths),
+        "provenance": {
+            "format": CATALOG_PROVENANCE_FORMAT,
+            "builder": "src.unity_asset_catalog.build_catalog",
+            "model_roots": sorted(p.as_posix() for p in root_paths),
+            "sprite_roots": sorted(p.as_posix() for p in sprite_root_paths),
+            "model_formats": list(formats),
+            "sprite_formats": list(SPRITE_FORMATS),
+            "curated_catalog": curated_path.as_posix() if curated_path else None,
+            "asset_count": len(assets),
+            "source_tree_fingerprint": _source_tree_fingerprint(assets),
+            "category_counts": {
+                category: sum(1 for asset in assets if asset["category"] == category)
+                for category in categories
+            },
+        },
         "vocabulary": {"categories": categories, "tags": sorted(top_tags)},
         "assets": assets,
     }

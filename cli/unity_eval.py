@@ -3,12 +3,537 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Optional
 
 import typer
 
 from src.unity_schema import UnitySchema
 
-from .common import app, console
+from .common import _cfg, app, console
+
+
+@app.command("unity-vizconcept-board")
+def unity_vizconcept_board(
+    vizconcept_file: Path = typer.Option(
+        ..., "--vizconcept-file", help="Visual concept prompt sent to ComfyUI"
+    ),
+    output: Path = typer.Option(..., "--output", "-o", help="Board PNG destination"),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Provenance manifest destination"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    checkpoint: str = typer.Option(
+        "sd15ModelLab_realV001_1651730.safetensors", "--checkpoint"
+    ),
+    seed: int = typer.Option(978075547277410, "--seed"),
+    width: int = typer.Option(768, "--width"),
+    height: int = typer.Option(512, "--height"),
+    steps: int = typer.Option(20, "--steps"),
+    cfg_scale: float = typer.Option(8.0, "--cfg"),
+    sampler: str = typer.Option("dpmpp_2m_sde_gpu", "--sampler"),
+    scheduler: str = typer.Option("karras", "--scheduler"),
+) -> None:
+    """Generate Slice 1: vizconcept.txt -> canonical ComfyUI board."""
+    from src.visual_reasoning_compiler import (
+        ComfyVizConceptClient,
+        VisualReasoningCompilerError,
+    )
+
+    if not vizconcept_file.is_file():
+        console.print(f"[red]vizconcept file not found:[/] {vizconcept_file}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]config file not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        cfg = _cfg(str(config))
+        diffusion = ((cfg.get("blender") or {}).get("diffusion") or {})
+        client = ComfyVizConceptClient(
+            base_url=str(diffusion.get("base_url", "http://127.0.0.1:8188")),
+            timeout=float(diffusion.get("timeout", 180)),
+            poll_timeout=float(diffusion.get("poll_timeout", 900)),
+        )
+        manifest_path = manifest or output.with_suffix(".comfy.json")
+        try:
+            path = client.generate(
+                vizconcept_file=vizconcept_file,
+                output=output,
+                manifest=manifest_path,
+                checkpoint=checkpoint,
+                seed=seed,
+                width=width,
+                height=height,
+                steps=steps,
+                cfg=cfg_scale,
+                sampler=sampler,
+                scheduler=scheduler,
+            )
+        finally:
+            freed = client.free_models()
+        console.print(f"[green]Visual reasoning board written[/] {path}")
+        console.print(f"[green]Provenance manifest written[/] {manifest_path}")
+        console.print(f"[green]Comfy models freed:[/] {freed}")
+    except (OSError, ValueError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reasoning board error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-import")
+def unity_vizconcept_import(
+    board_image: Path = typer.Option(
+        ..., "--board-image", help="Existing PNG to import as the visual board"
+    ),
+    output: Path = typer.Option(..., "--output", "-o", help="Imported board destination"),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Import provenance manifest destination"
+    ),
+    vizconcept_file: Optional[Path] = typer.Option(
+        None, "--vizconcept-file", help="Optional visual concept linked to this board"
+    ),
+) -> None:
+    """Import a known-good render without regenerating it through ComfyUI."""
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError,
+        import_existing_board,
+    )
+
+    try:
+        manifest_path = manifest or output.with_suffix(".import.json")
+        path = import_existing_board(
+            board_image=board_image,
+            output=output,
+            manifest=manifest_path,
+            vizconcept_file=vizconcept_file,
+        )
+        console.print(f"[green]Visual reasoning board imported[/] {path}")
+        console.print(f"[green]Import manifest written[/] {manifest_path}")
+    except (OSError, ValueError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reasoning board import error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-reason")
+def unity_vizconcept_reason(
+    board_image: Path = typer.Option(
+        ..., "--board-image", help="Canonical Slice-1 board PNG"
+    ),
+    inventory_output: Path = typer.Option(
+        ..., "--inventory-output", "--inventory",
+        help="Image-derived visual inventory JSON destination",
+    ),
+    concept_output: Path = typer.Option(
+        ..., "--concept-output", "--concept",
+        help="Image-derived Concept.txt destination",
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-2 provenance manifest destination"
+    ),
+    board_manifest: Optional[Path] = typer.Option(
+        None, "--board-manifest",
+        help="Optional Slice-1 manifest to hash-check and link",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run Slice 2: board PNG -> visual inventory + Concept.txt."""
+    from src.backends import make_chat_client
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError,
+        reason_over_board,
+    )
+
+    if not board_image.is_file():
+        console.print(f"[red]Visual reasoning board not found:[/] {board_image}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]Config file not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        cfg = _cfg(str(config))
+        llm = make_chat_client(cfg)
+        manifest_path = manifest or concept_output.with_suffix(".reasoning.json")
+        path = reason_over_board(
+            board_image=board_image,
+            inventory_output=inventory_output,
+            concept_output=concept_output,
+            manifest=manifest_path,
+            board_manifest=board_manifest,
+            llm=llm,
+        )
+        console.print(f"[green]Visual inventory written[/] {inventory_output}")
+        console.print(f"[green]Image-derived Concept.txt written[/] {concept_output}")
+        console.print(f"[green]Slice-2 provenance manifest written[/] {path}")
+    except (OSError, ValueError, RuntimeError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reasoning error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-spatial")
+def unity_vizconcept_spatial(
+    board_image: Path = typer.Option(
+        ..., "--board-image", help="Canonical Slice-1 board PNG"
+    ),
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Closed Slice-3 image IR JSON"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.1 image spatial evidence JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.1 provenance manifest destination"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run Slice 6.1: board pixels -> frozen image-space evidence."""
+    from src.backends import make_chat_client
+    from src.visual_spatial_extraction import (
+        VisualSpatialExtractionError,
+        extract_image_spatial_evidence,
+    )
+
+    if not board_image.is_file():
+        console.print(f"[red]Spatial board not found:[/] {board_image}")
+        raise typer.Exit(2)
+    if not closed_ir.is_file():
+        console.print(f"[red]Closed image IR not found:[/] {closed_ir}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]Config file not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        cfg = _cfg(str(config))
+        llm = make_chat_client(cfg)
+        manifest_path = manifest or output.with_suffix(".spatial.json")
+        path = extract_image_spatial_evidence(
+            board_image=board_image,
+            closed_ir=closed_ir,
+            output=output,
+            manifest=manifest_path,
+            llm=llm,
+        )
+        console.print(f"[green]Image spatial evidence written[/] {output}")
+        console.print(f"[green]Slice-6.1 provenance manifest written[/] {path}")
+    except (OSError, ValueError, RuntimeError, VisualSpatialExtractionError) as exc:
+        console.print(f"[red]Image spatial extraction error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-spatial-roles")
+def unity_vizconcept_spatial_roles(
+    schema_file: Path = typer.Option(
+        ..., "--schema", help="Validated Unity .schema.json input"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.2 schema spatial-role JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.2 provenance manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 6.2: schema -> closed spatial roles."""
+    from src.unity_spatial_roles import SpatialRoleError, write_spatial_roles
+
+    if not schema_file.is_file():
+        console.print(f"[red]Spatial-role schema not found:[/] {schema_file}")
+        raise typer.Exit(2)
+    try:
+        path = write_spatial_roles(
+            schema_path=schema_file,
+            output=output,
+            manifest=manifest,
+        )
+        console.print(f"[green]Schema spatial roles written[/] {output}")
+        console.print(f"[green]Slice-6.2 provenance manifest written[/] {path}")
+    except (OSError, ValueError, TypeError, SpatialRoleError) as exc:
+        console.print(f"[red]Schema spatial-role error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-reconcile")
+def unity_vizconcept_reconcile(
+    inventory_file: Path = typer.Option(
+        ..., "--inventory", help="Slice-2 visual inventory JSON"
+    ),
+    concept_file: Path = typer.Option(
+        ..., "--concept", help="Slice-2 image-derived Concept.txt"
+    ),
+    reasoning_manifest: Path = typer.Option(
+        ..., "--reasoning-manifest", help="Slice-2 provenance manifest"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Closed image IR JSON destination"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-3 reconciliation manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 3: reconcile the image-derived artifacts."""
+    from src.visual_reasoning_compiler import VisualReasoningCompilerError
+    from src.visual_reasoning_reconcile import reconcile_image_reasoning
+
+    try:
+        manifest_path = manifest or output.with_suffix(".reconcile.json")
+        path = reconcile_image_reasoning(
+            inventory_file=inventory_file,
+            concept_file=concept_file,
+            reasoning_manifest=reasoning_manifest,
+            output=output,
+            manifest=manifest_path,
+        )
+        console.print(f"[green]Closed image IR written[/] {output}")
+        console.print(f"[green]Slice-3 reconciliation manifest written[/] {path}")
+        console.print("[green]LLM calls in Slice 3:[/] 0")
+    except (OSError, ValueError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual reconciliation error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-fulfill-assets")
+def unity_vizconcept_fulfill_assets(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    reconciliation_manifest: Path = typer.Option(
+        ..., "--reconciliation-manifest",
+        help="Slice-3 reconciliation manifest used to verify the IR hash",
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-4 asset fulfilment JSON destination"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-4 fulfilment manifest destination"
+    ),
+    lookups_dir: Path = typer.Option(
+        Path("lookups"), "--lookups-dir", help="Frozen Unity catalog directory"
+    ),
+    asset_root: Optional[Path] = typer.Option(
+        None, "--asset-root",
+        help="Fallback root for catalog entries without an embedded root",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run deterministic Slice 4: closed image IR -> frozen asset manifest."""
+    from src.visual_asset_fulfilment import fulfil_image_assets
+    from src.visual_reasoning_compiler import VisualReasoningCompilerError
+
+    try:
+        accepted_licenses = None
+        if config.is_file():
+            cfg = _cfg(str(config))
+            accepted_licenses = ((cfg.get("sketchfab") or {}).get("accepted_licenses"))
+        manifest_path = manifest or output.with_suffix(".fulfilment.json")
+        path = fulfil_image_assets(
+            closed_ir=closed_ir,
+            reconciliation_manifest=reconciliation_manifest,
+            output=output,
+            manifest=manifest_path,
+            lookups_dir=str(lookups_dir),
+            asset_root=asset_root,
+            accepted_licenses=accepted_licenses,
+        )
+        result = json.loads(output.read_text(encoding="utf-8"))
+        console.print(f"[green]Slice-4 asset fulfilment written[/] {output}")
+        console.print(f"[green]Slice-4 manifest written[/] {path}")
+        console.print(f"[green]Fulfilled assets:[/] {len(result.get('assets', []))}")
+        console.print(f"[yellow]Rejected assets:[/] {len(result.get('rejections', []))}")
+        console.print("[green]LLM/network calls in Slice 4:[/] 0")
+        if result.get("status") != "fulfilled":
+            raise typer.Exit(1)
+    except (OSError, ValueError, TypeError, json.JSONDecodeError,
+            VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual asset fulfilment error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-compile")
+def unity_vizconcept_compile(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    asset_fulfilment: Path = typer.Option(
+        ..., "--asset-fulfilment", help="Slice-4 asset fulfilment JSON"
+    ),
+    asset_manifest: Path = typer.Option(
+        ..., "--asset-manifest", help="Slice-4 fulfilment manifest"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="New Unity project output directory"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    lookups_dir: Path = typer.Option(
+        Path("lookups"), "--lookups-dir", help="Frozen Unity catalog directory"
+    ),
+    no_think: bool = typer.Option(
+        False, "--no-think", help="Disable reasoning on the single schema-fill call"
+    ),
+) -> None:
+    """Run Slice 5: closed Concept + exact Slice-4 assets -> Unity project.
+
+    The Concept is reused byte-for-byte, so the normal Concept call is skipped.
+    The existing schema-fill call runs once; visual assets are then passed as
+    explicit locked bindings into the generator. This command never performs a
+    live Sketchfab search or thumbnail/CLIP selection.
+    """
+    from src.unity_pipeline import UnityPipeline
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError, sha256_file,
+    )
+    from src.visual_reasoning_reconcile import CLOSED_FORMAT
+    from src.visual_asset_fulfilment import FULFILMENT_FORMAT
+
+    try:
+        if output.exists():
+            raise VisualReasoningCompilerError(
+                f"refusing to compile into an existing output directory: {output}"
+            )
+        closed = json.loads(closed_ir.read_text(encoding="utf-8"))
+        # The Slice-3 manifest is adjacent to the closed IR in the documented
+        # run layout.  The fulfilment manifest independently records the
+        # closed request fingerprint, so use that as the cross-stage check when
+        # a caller keeps the manifest under another name.
+        if not isinstance(closed, dict) or closed.get("format") != CLOSED_FORMAT:
+            raise VisualReasoningCompilerError("Slice-5 closed IR has the wrong format")
+        if closed.get("status") != "closed":
+            raise VisualReasoningCompilerError("Slice-5 requires a closed Slice-3 IR")
+
+        fulfilment = json.loads(asset_fulfilment.read_text(encoding="utf-8"))
+        manifest = json.loads(asset_manifest.read_text(encoding="utf-8"))
+        if not isinstance(fulfilment, dict) or fulfilment.get("format") != FULFILMENT_FORMAT:
+            raise VisualReasoningCompilerError(
+                "Slice-5 asset fulfilment has the wrong format"
+            )
+        if fulfilment.get("status") != "fulfilled":
+            raise VisualReasoningCompilerError(
+                "Slice-5 requires a fulfilled Slice-4 result; compile was not attempted"
+            )
+        if not isinstance(manifest, dict) or manifest.get("format") != FULFILMENT_FORMAT:
+            raise VisualReasoningCompilerError(
+                "Slice-5 asset manifest has the wrong format"
+            )
+        expected_output_hash = (
+            ((manifest.get("outputs") or {}).get("asset_fulfilment") or {})
+            .get("sha256")
+        )
+        if expected_output_hash != sha256_file(asset_fulfilment):
+            raise VisualReasoningCompilerError(
+                "Slice-4 asset manifest hash does not match asset fulfilment JSON"
+            )
+        request_fingerprint = closed.get("request_fingerprint")
+        if not request_fingerprint or (
+            fulfilment.get("closed_request_fingerprint") != request_fingerprint
+            or manifest.get("closed_request_fingerprint") != request_fingerprint
+        ):
+            raise VisualReasoningCompilerError(
+                "Slice-3 and Slice-4 request fingerprints do not match"
+            )
+        if manifest.get("fulfilment_fingerprint") != fulfilment.get(
+                "fulfilment_fingerprint"):
+            raise VisualReasoningCompilerError(
+                "Slice-4 fulfilment fingerprint does not match its manifest"
+            )
+
+        inventory = ((closed.get("inventory") or {}).get("visible_elements") or [])
+        by_label = {
+            str(element.get("label")): element for element in inventory
+            if isinstance(element, dict) and element.get("label")
+        }
+        records = []
+        for asset in fulfilment.get("assets") or []:
+            if not isinstance(asset, dict):
+                raise VisualReasoningCompilerError(
+                    "Slice-4 asset record is not an object"
+                )
+            label = str(asset.get("inventory_label") or "")
+            if label not in by_label:
+                raise VisualReasoningCompilerError(
+                    f"Slice-4 asset label is absent from the closed inventory: {label!r}"
+                )
+            record = dict(asset)
+            record["element"] = by_label[label]
+            records.append(record)
+        required_asset_labels = {
+            str(request.get("inventory_label"))
+            for request in (closed.get("asset_requests") or [])
+            if isinstance(request, dict) and request.get("inventory_label")
+        }
+        if {str(record.get("inventory_label")) for record in records} != \
+                required_asset_labels:
+            raise VisualReasoningCompilerError(
+                "Slice-4 did not provide one fulfilled record for every asset-worthy "
+                "closed-inventory element"
+            )
+
+        concept = str(((closed.get("concept") or {}).get("text") or "")).strip()
+        if not concept:
+            raise VisualReasoningCompilerError("closed IR carries no Concept text")
+        if not config.is_file():
+            raise VisualReasoningCompilerError(f"config file not found: {config}")
+
+        cfg = _cfg(str(config))
+        pipe_cfg = dict(cfg.get("unity_pipeline") or {})
+        pipe_cfg["unity_output_dir"] = str(output)
+        pipe_cfg["lookups_dir"] = str(lookups_dir)
+        cfg["unity_pipeline"] = pipe_cfg
+        # Slice 4 already performed the only authorized marketplace operation.
+        # Disable every live/thumbnail path for the Unity handoff; locked
+        # bindings are consumed directly by the generator.
+        sketchfab_cfg = dict(cfg.get("sketchfab") or {})
+        sketchfab_cfg.update({
+            "enabled": False,
+            "auto_fetch": False,
+            "vision_select": False,
+            "semantic_select": False,
+        })
+        cfg["sketchfab"] = sketchfab_cfg
+
+        project_root = UnityPipeline(cfg).run(
+            concept,
+            theme="none",
+            no_think=no_think,
+            precomputed_concept=concept,
+            visual_asset_bindings=records,
+        )
+        schema_path = project_root / f"{project_root.name}.schema.json"
+        compile_manifest = output / "visual_compile.manifest.json"
+        compile_manifest.write_text(json.dumps({
+            "format": "visual-reasoning-compiler/unity-compile/v1",
+            "stage": "5_unity_compile",
+            "status": "compiled",
+            "authority": {
+                "concept_source": "validated_slice_2_concept",
+                "concept_llm_called_here": False,
+                "schema_fill_calls": "existing_step_3_only",
+                "network_called_here": False,
+                "thumbnail_or_clip_selection_here": False,
+            },
+            "inputs": {
+                "closed_image_ir": {
+                    "path": str(closed_ir), "sha256": sha256_file(closed_ir),
+                },
+                "asset_fulfilment": {
+                    "path": str(asset_fulfilment),
+                    "sha256": sha256_file(asset_fulfilment),
+                },
+                "asset_manifest": {
+                    "path": str(asset_manifest),
+                    "sha256": sha256_file(asset_manifest),
+                },
+            },
+            "outputs": {
+                "project_root": str(project_root),
+                "schema": {
+                    "path": str(schema_path),
+                    "sha256": sha256_file(schema_path),
+                },
+            },
+            "fulfilled_count": len(records),
+        }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        console.print(f"[green]Unity visual project written[/] {project_root}")
+        console.print(f"[green]Slice-5 compile manifest written[/] {compile_manifest}")
+        console.print(f"[green]Exact visual bindings:[/] {len(records)}")
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError,
+            RuntimeError, VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual Unity compile error:[/] {exc}")
+        raise typer.Exit(2) from exc
 
 
 @app.command("unity-playability")

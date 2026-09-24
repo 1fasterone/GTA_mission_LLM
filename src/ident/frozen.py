@@ -64,6 +64,13 @@ SITES: tuple[DigestSite, ...] = (
     DigestSite("src/unity_package_cache.py", "download", 1, "keep",
                "contract: verifies a tarball against the npm registry's own "
                "sha1 `shasum` field — the registry chooses the algorithm"),
+    DigestSite("src/visual_reasoning_compiler.py", "sha256_bytes", 1, "keep",
+               "contract: exact SHA-256 hashes recorded for visual-board, "
+               "Qwen-output, and provenance artifacts"),
+    DigestSite("src/unity_entity_asset_resolver.py", "resolve_entity_assets", 1,
+               "keep",
+               "contract: exact SHA-256 verifies a locked visual asset binding "
+               "against its fulfilment manifest"),
 
     # ── output seeds ──────────────────────────────────────────────────────────
     DigestSite("src/audio/content.py", "_seed_for", 1, "keep",

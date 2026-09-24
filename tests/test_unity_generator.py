@@ -2012,7 +2012,9 @@ class TestAtomicWrite:
         prefab = root / "Assets" / "Prefabs" / "PlayerController.prefab"
         assert prefab.exists()
         content = prefab.read_text(encoding="utf-8")
-        assert "PrefabAsset:" in content
+        assert "\nPrefabAsset:\n" not in content
+        assert "--- !u!1001" not in content
+        assert "m_PrefabAsset: {fileID: 0}" in content
         assert content.count("{") == content.count("}")
 
     def test_regenerating_over_existing_project_replaces_atomically(self, gen, tmp_path):
@@ -2023,8 +2025,8 @@ class TestAtomicWrite:
         root, _ = gen.write(self._schema(), {}, output_dir=str(tmp_path))
         prefab = root / "Assets" / "Prefabs" / "PlayerController.prefab"
         content = prefab.read_text(encoding="utf-8")
-        # A torn/duplicated write would double the PrefabAsset document header.
-        assert content.count("--- !u!1001 &1001000000") == 1
+        # A torn/duplicated write would duplicate the prefab root document.
+        assert content.count("--- !u!1 &100100000") == 1
 
 
 # ── Stale-output sweep ────────────────────────────────────────────────────────
