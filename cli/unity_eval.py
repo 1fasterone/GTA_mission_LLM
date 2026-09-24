@@ -374,6 +374,7 @@ def unity_vizconcept_compile(
     live Sketchfab search or thumbnail/CLIP selection.
     """
     from src.unity_pipeline import UnityPipeline
+    from src.visual_reasoning_compile import load_visual_compile_plan
     from src.visual_reasoning_compiler import (
         VisualReasoningCompilerError, sha256_file,
     )
@@ -469,6 +470,15 @@ def unity_vizconcept_compile(
             raise VisualReasoningCompilerError(f"config file not found: {config}")
 
         cfg = _cfg(str(config))
+        asset_cfg = cfg.get("assets") or {}
+        configured_root = asset_cfg.get("asset_root")
+        plan = load_visual_compile_plan(
+            closed_ir=closed_ir,
+            asset_fulfilment=asset_fulfilment,
+            asset_manifest=asset_manifest,
+            lookups_dir=str(lookups_dir),
+            asset_root=Path(configured_root) if configured_root else None,
+        )
         pipe_cfg = dict(cfg.get("unity_pipeline") or {})
         pipe_cfg["unity_output_dir"] = str(output)
         pipe_cfg["lookups_dir"] = str(lookups_dir)
@@ -488,15 +498,19 @@ def unity_vizconcept_compile(
         project_root = UnityPipeline(cfg).run(
             concept,
             theme="none",
+            compose=False,
+            blender_models=False,
             no_think=no_think,
+            micro_code=False,
             precomputed_concept=concept,
-            visual_asset_bindings=records,
+            visual_compile_plan=plan,
         )
         schema_path = project_root / f"{project_root.name}.schema.json"
+        schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
         compile_manifest = output / "visual_compile.manifest.json"
         compile_manifest.write_text(json.dumps({
-            "format": "visual-reasoning-compiler/unity-compile/v1",
-            "stage": "5_unity_compile",
+            "format": "visual-reasoning-compiler/compile/v1",
+            "stage": "5_visual_compile",
             "status": "compiled",
             "authority": {
                 "concept_source": "validated_slice_2_concept",
@@ -505,19 +519,9 @@ def unity_vizconcept_compile(
                 "network_called_here": False,
                 "thumbnail_or_clip_selection_here": False,
             },
-            "inputs": {
-                "closed_image_ir": {
-                    "path": str(closed_ir), "sha256": sha256_file(closed_ir),
-                },
-                "asset_fulfilment": {
-                    "path": str(asset_fulfilment),
-                    "sha256": sha256_file(asset_fulfilment),
-                },
-                "asset_manifest": {
-                    "path": str(asset_manifest),
-                    "sha256": sha256_file(asset_manifest),
-                },
-            },
+            "inputs": plan["inputs"],
+            "binding_report": (schema_data.get("meta") or {})
+            .get("visual_reasoning_compiler"),
             "outputs": {
                 "project_root": str(project_root),
                 "schema": {
@@ -525,7 +529,7 @@ def unity_vizconcept_compile(
                     "sha256": sha256_file(schema_path),
                 },
             },
-            "fulfilled_count": len(records),
+            "fulfilled_count": len(plan["assets"]),
         }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         console.print(f"[green]Unity visual project written[/] {project_root}")
         console.print(f"[green]Slice-5 compile manifest written[/] {compile_manifest}")
