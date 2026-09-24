@@ -42,8 +42,10 @@ def unity_create(
                                               help="Route file from `unity-path` (routes.json) — compose the circuit around this authored/traced course instead of the parametric oval"),
     scene: Optional[Path]      = typer.Option(None, "--scene",
                                               help="Scene Compiler layout (layouts/<name>.json) or a scene file from `unity-scene` — the authored models AND their placement win over Sketchfab/Kenney"),
-    reference_image: Optional[Path] = typer.Option(None, "--reference-image",
-                                                    help="Visual reference image sent to the Concept stage only (PNG/JPEG/WEBP/GIF)"),
+    reference_image: Optional[Path] = typer.Option(
+        None, "--reference-image", "--image",
+        help="Visual reference image sent to the Concept stage only; any PNG/JPEG/WEBP/GIF filename",
+    ),
     models_dir: Optional[Path] = typer.Option(None, "--models-dir",
                                               help="--scene only: the Scene Compiler's models/ folder (default: the layout's own ../models sibling)"),
     no_think:    bool          = typer.Option(False, "--no-think",
@@ -74,10 +76,20 @@ def unity_create(
             raise typer.Exit(1)
         prompt = file.read_text(encoding="utf-8").strip()
 
+    if not prompt and reference_image is not None:
+        # The Concept stage still needs a user message for the OpenAI-compatible
+        # chat contract, but this carrier deliberately contributes no semantic
+        # game brief. The image remains the only creative input.
+        prompt = (
+            "Create a complete game from the attached visual reference image. "
+            "Treat the image as the only creative input."
+        )
+
     if not prompt:
-        console.print("[red]Error:[/] provide a prompt or use --file <path>")
+        console.print("[red]Error:[/] provide a prompt, use --file <path>, or pass --image <path>")
         console.print("  Example: python main.py unity-create \"A 2D platformer\"")
         console.print("  Example: python main.py unity-create --file prompts/neon_fugitive.txt")
+        console.print("  Example: python main.py unity-create --image racing-reference.png")
         raise typer.Exit(1)
 
     route_data = None
