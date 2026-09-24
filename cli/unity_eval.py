@@ -167,6 +167,56 @@ def unity_vizconcept_reason(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-vizconcept-spatial")
+def unity_vizconcept_spatial(
+    board_image: Path = typer.Option(
+        ..., "--board-image", help="Canonical Slice-1 board PNG"
+    ),
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Closed Slice-3 image IR JSON"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.1 image spatial evidence JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.1 provenance manifest destination"
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Run Slice 6.1: board pixels -> frozen image-space evidence."""
+    from src.backends import make_chat_client
+    from src.visual_spatial_extraction import (
+        VisualSpatialExtractionError,
+        extract_image_spatial_evidence,
+    )
+
+    if not board_image.is_file():
+        console.print(f"[red]Spatial board not found:[/] {board_image}")
+        raise typer.Exit(2)
+    if not closed_ir.is_file():
+        console.print(f"[red]Closed image IR not found:[/] {closed_ir}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]Config file not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        cfg = _cfg(str(config))
+        llm = make_chat_client(cfg)
+        manifest_path = manifest or output.with_suffix(".spatial.json")
+        path = extract_image_spatial_evidence(
+            board_image=board_image,
+            closed_ir=closed_ir,
+            output=output,
+            manifest=manifest_path,
+            llm=llm,
+        )
+        console.print(f"[green]Image spatial evidence written[/] {output}")
+        console.print(f"[green]Slice-6.1 provenance manifest written[/] {path}")
+    except (OSError, ValueError, RuntimeError, VisualSpatialExtractionError) as exc:
+        console.print(f"[red]Image spatial extraction error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-vizconcept-reconcile")
 def unity_vizconcept_reconcile(
     inventory_file: Path = typer.Option(
