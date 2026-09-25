@@ -46,7 +46,12 @@ _CATEGORY_HINTS: dict[str, frozenset[str]] = {
     "character": frozenset({"character", "human", "person", "npc", "avatar"}),
     "vehicle": frozenset({"vehicle", "car", "truck", "bike", "boat", "plane", "aircraft"}),
     "environment": frozenset({"environment", "nature", "structure", "terrain", "track", "road", "ground"}),
-    "landmark": frozenset({"landmark", "structure", "building", "tower", "monument"}),
+    # Natural landmarks such as mountains are represented by nature/terrain
+    # catalog entries.  The noun and score gates still apply; this only keeps
+    # the semantic category contract from rejecting a correct physical domain.
+    "landmark": frozenset({
+        "landmark", "structure", "building", "tower", "monument", "nature", "terrain",
+    }),
     # Props are deliberately broad: catalog categories such as weapon,
     # mechanism, obstacle, nature, and structure can all be visible props.
     "prop": frozenset(),
