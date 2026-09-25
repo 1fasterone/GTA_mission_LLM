@@ -150,6 +150,8 @@ def test_landmark_accepts_nature_or_terrain_catalog_domain(tmp_path: Path) -> No
 
     mountain = asset_root / "mountain-landmark.fbx"
     mountain.write_bytes(b"mountain-fbx")
+    archway = asset_root / "rough-archway.fbx"
+    archway.write_bytes(b"archway-fbx")
     catalog_path = lookups / "unity" / "asset_catalog.json"
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     catalog["assets"].append({
@@ -162,6 +164,17 @@ def test_landmark_accepts_nature_or_terrain_catalog_domain(tmp_path: Path) -> No
         "keywords": ["mountain", "landmark"],
         "kind_hints": ["nature"],
         "generic_score": 0,
+    })
+    catalog["assets"].append({
+        "filename": archway.name,
+        "relpath": archway.name,
+        "root": str(asset_root),
+        "format": "fbx",
+        "source": "kenney",
+        "category": "structure",
+        "keywords": ["archway", "structure"],
+        "kind_hints": ["landmark"],
+        "generic_score": 50,
     })
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
 

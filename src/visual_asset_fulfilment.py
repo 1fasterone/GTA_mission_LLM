@@ -539,11 +539,18 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
 
         candidates: list[tuple[float, dict[str, Any], Path]] = []
         path_errors: list[str] = []
+        signal_tokens = _visual_signal_tokens(request, element)
         for entry in catalog_assets:
             if not isinstance(entry, dict):
                 continue
             fmt = str(entry.get("format") or "fbx").casefold()
             if fmt not in SUPPORTED_FORMATS or not _category_compatible(category, entry):
+                continue
+            # Category compatibility is necessary but never sufficient.  A
+            # landmark request for "mountain" must not select an unrelated
+            # landmark such as an archway merely because both share a broad
+            # category hint; the noun signal must also be present.
+            if signal_tokens and not (signal_tokens & _entry_tokens(entry)):
                 continue
             if not _license_ok(entry, accepted):
                 continue
