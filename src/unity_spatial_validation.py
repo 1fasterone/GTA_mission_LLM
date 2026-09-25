@@ -14,6 +14,7 @@ from .unity_spatial_fusion import (
     _schema_hash as fusion_schema_hash,
 )
 from .unity_spatial_realization import (
+    LEGACY_SPATIAL_FUSION_FORMAT,
     SPATIAL_REALIZATION_FORMAT,
     _validate_spatial_fusion,
 )
@@ -151,7 +152,10 @@ def validate_spatial_layout(
     fusion = None
     fusion_hash = None
     if spatial_fusion is not None:
-        if spatial_fusion.get("format") != SPATIAL_FUSION_FORMAT:
+        if spatial_fusion.get("format") not in {
+            SPATIAL_FUSION_FORMAT,
+            LEGACY_SPATIAL_FUSION_FORMAT,
+        }:
             raise SpatialValidationError("spatial fusion has the wrong format")
         fusion, fusion_hash = _validate_spatial_fusion(schema, spatial_fusion)
         if ((world_layout.get("inputs") or {}).get("spatial_fusion_sha256")) != fusion_hash:
@@ -173,8 +177,12 @@ def validate_spatial_layout(
     if fusion is None:
         check("fused_image_bindings", "warn", "no Slice-6.3 fusion artifact was supplied")
     else:
-        bound = [row for row in fusion.get("bindings", [])
-                 if isinstance(row, Mapping) and row.get("status") == "bound"]
+        raw_rows = fusion.get("bindings")
+        if not isinstance(raw_rows, list):
+            raw_rows = fusion.get("entity_regions") or []
+        bound = [row for row in raw_rows
+                 if isinstance(row, Mapping)
+                 and (row.get("status") == "bound" or row.get("binding_status") == "bound")]
         check("fused_image_bindings", "pass", f"{len(bound)} fused visual references bind uniquely")
 
     group_overlap = 0

@@ -1139,8 +1139,33 @@ class UnityPipeline:
             precomputed_concept: str | None = None,
             visual_asset_bindings: list[dict] | None = None,
             closed_image_ir: Path | None = None,
-            image_spatial_evidence: Path | None = None) -> Path:
+            image_spatial_evidence: Path | None = None,
+            visual_compile_plan: dict | None = None) -> Path:
         locked_asset_bindings: dict[str, dict] | None = None
+        visual_compile = visual_compile_plan is not None
+        if visual_compile:
+            if visual_asset_bindings is not None:
+                raise ValueError(
+                    "visual compile accepts a validated plan, not raw asset bindings"
+                )
+            if not precomputed_concept or not precomputed_concept.strip():
+                raise ValueError(
+                    "visual compile requires the non-empty Concept text from the closed image IR"
+                )
+            if no_llm or reference_image is not None:
+                raise ValueError(
+                    "visual compile requires Step-3 schema fill; --no-llm and "
+                    "--reference-image are not allowed"
+                )
+            if theme not in (None, "none"):
+                raise ValueError(
+                    "visual compile accepts only theme='none'; hidden creative context is disabled"
+                )
+            if compose or blender_models or micro_code:
+                raise ValueError(
+                    "visual compile disables compose, Blender model generation, "
+                    "and post-schema micro-code authoring"
+                )
         precomputed_mode = precomputed_concept is not None
         if precomputed_mode:
             if no_llm:
@@ -1204,12 +1229,13 @@ class UnityPipeline:
         # keyword scoring, same weighting archetypes.py uses for GTA5 missions.
         # No LLM involved; runs once against the raw prompt.
         intent = classify_intent(user_prompt)
-        theme_block  += intent.concept_hint()
-        schema_hints += intent.structure_hint()
+        if not visual_compile:
+            theme_block  += intent.concept_hint()
+            schema_hints += intent.structure_hint()
         # Asset-library vocabulary (categories + top tags from the generated
         # catalog) so entity model_hints name models that actually exist.
         # Deterministic lookup; missing catalog → empty string, prompt unchanged.
-        _vocab = "" if precomputed_mode else asset_vocabulary(self.lookups_dir)
+        _vocab = "" if (precomputed_mode or visual_compile) else asset_vocabulary(self.lookups_dir)
         if _vocab:
             schema_hints += "\n" + _vocab + "\n"
         # The brief's own ENTITIES bullets, verbatim, as a required checklist.
@@ -1217,7 +1243,7 @@ class UnityPipeline:
         # already paraphrased the brief's explicit entity names away — a brief
         # that spells out its entities had no way to get them in front of the
         # schema-fill model at all (see render_entity_checklist).
-        _checklist = render_entity_checklist(user_prompt)
+        _checklist = "" if visual_compile else render_entity_checklist(user_prompt)
         if _checklist:
             schema_hints += "\n" + _checklist + "\n"
             self._ok(
@@ -1230,7 +1256,7 @@ class UnityPipeline:
         # explicitly ("each is required; implement as its own module") and the
         # schema-fill model would never see the demand — 7 of 12 systems went
         # missing on the grandma run (see render_script_checklist).
-        _script_checklist = render_script_checklist(user_prompt)
+        _script_checklist = "" if visual_compile else render_script_checklist(user_prompt)
         if _script_checklist:
             schema_hints += "\n" + _script_checklist + "\n"
             self._ok(
@@ -1244,22 +1270,22 @@ class UnityPipeline:
         # names, 7/10 audio cues, 3/6 narrative beats and the project title to
         # invention, the same recall gap entities/scripts had before their own
         # checklists shipped.
-        _scene_checklist = render_scene_checklist(user_prompt)
+        _scene_checklist = "" if visual_compile else render_scene_checklist(user_prompt)
         if _scene_checklist:
             schema_hints += "\n" + _scene_checklist + "\n"
             self._ok("Brief names scenes explicitly — passed to schema-fill "
                      "as a required checklist")
-        _audio_checklist = render_audio_checklist(user_prompt)
+        _audio_checklist = "" if visual_compile else render_audio_checklist(user_prompt)
         if _audio_checklist:
             schema_hints += "\n" + _audio_checklist + "\n"
             self._ok("Brief names audio cues explicitly — passed to "
                      "schema-fill as a required checklist")
-        _narrative_checklist = render_narrative_checklist(user_prompt)
+        _narrative_checklist = "" if visual_compile else render_narrative_checklist(user_prompt)
         if _narrative_checklist:
             schema_hints += "\n" + _narrative_checklist + "\n"
             self._ok("Brief numbers narrative beats explicitly — passed to "
                      "schema-fill as a required checklist")
-        _title_checklist = render_title_checklist(user_prompt)
+        _title_checklist = "" if visual_compile else render_title_checklist(user_prompt)
         if _title_checklist:
             schema_hints += "\n" + _title_checklist + "\n"
             self._ok("Brief declares an explicit title — passed to "
@@ -1433,7 +1459,7 @@ class UnityPipeline:
             for msg in clamp_msgs:
                 self._fix(msg)
 
-        if visual_asset_bindings is not None:
+        if visual_asset_bindings is not None and not visual_compile:
             locked_asset_bindings = bind_visual_assets(
                 schema, visual_asset_bindings
             )
@@ -1726,7 +1752,7 @@ class UnityPipeline:
         for msg in _repairs:
             self._fix(msg)
 
-        if visual_asset_bindings is not None:
+        if visual_asset_bindings is not None or visual_compile:
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
 
@@ -1735,6 +1761,29 @@ class UnityPipeline:
         # are deterministic schema mutations; running them after Slice 6.3
         # would make the fusion hash stale before the generator consumes it.
         schema = self.resolver.resolve_schema(schema)
+        if visual_compile:
+            from .visual_reasoning_compile import (
+                bind_visual_assets as bind_visual_compile_assets,
+            )
+
+            assert visual_compile_plan is not None
+            visual_binding = bind_visual_compile_assets(schema, visual_compile_plan)
+            locked_asset_bindings = {
+                name: dict(binding["selection"])
+                for name, binding in visual_binding["bindings"].items()
+            }
+            schema.meta["visual_reasoning_compiler"] = {
+                "format": "visual-reasoning-compiler/compile/v1",
+                "stage": "5_visual_compile",
+                "status": "bound",
+                "inputs": visual_compile_plan.get("inputs", {}),
+                "bindings": visual_binding["report"]["bindings"],
+                "authority": visual_binding["report"]["authority"],
+            }
+            self._ok(
+                f"Bound {len(locked_asset_bindings)} exact Slice-4 visual asset(s) "
+                "to schema entities"
+            )
         manifest_deps = self.resolver.build_manifest_deps(
             schema, inject_mcp_bridge=self.inject_mcp_bridge
         )

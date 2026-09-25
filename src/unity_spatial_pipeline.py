@@ -22,7 +22,11 @@ from typing import Any, Mapping, Optional
 
 from .scene_graph import build_scene_graph
 from .unity_schema import UnitySchema
-from .unity_spatial_fusion import fuse_spatial_evidence
+from .unity_spatial_fusion import (
+    SPATIAL_FUSION_MANIFEST_FORMAT,
+    SPATIAL_FUSION_STAGE,
+    fuse_spatial_evidence_data,
+)
 from .unity_spatial_identity import semantic_schema_hash
 from .unity_spatial_realization import realize_spatial_layout
 from .unity_spatial_roles import derive_spatial_roles
@@ -82,7 +86,7 @@ def prepare_spatial_layout(
     graph = build_scene_graph(schema, roles)
     fusion = None
     if closed_image_ir is not None and image_spatial_evidence is not None:
-        fusion = fuse_spatial_evidence(
+        fusion = fuse_spatial_evidence_data(
             schema,
             closed_ir=closed_image_ir,
             image_evidence=image_spatial_evidence,
@@ -92,13 +96,17 @@ def prepare_spatial_layout(
         authored = {
             str(name) for name in ((schema.meta or {}).get("authored_models") or {})
         } if isinstance(schema.meta, dict) else set()
-        composition_targets = {
-            str(row.get("entity"))
-            for row in (fusion or {}).get("bindings", [])
-            if isinstance(row, Mapping)
-            and row.get("status") == "bound"
-            and ((row.get("schema_constraints") or {}).get("role") == "scenery")
-        }
+        fusion_rows = (fusion or {}).get("bindings")
+        if not isinstance(fusion_rows, list):
+            fusion_rows = (fusion or {}).get("entity_regions") or []
+        composition_targets = set()
+        for row in fusion_rows:
+            if not isinstance(row, Mapping):
+                continue
+            status = row.get("status") or row.get("binding_status")
+            role = (row.get("schema_constraints") or {}).get("role") or row.get("role")
+            if status == "bound" and role == "scenery" and row.get("entity"):
+                composition_targets.add(str(row["entity"]))
         for entity in schema.entities:
             # Existing deterministic scaffolds (for example the racing start
             # grid) are already authoritative. Only scenery explicitly bound
@@ -185,7 +193,7 @@ def freeze_spatial_sidecars(
     graph = build_scene_graph(schema, roles)
     fusion = None
     if closed_image_ir is not None and image_spatial_evidence is not None:
-        fusion = fuse_spatial_evidence(
+        fusion = fuse_spatial_evidence_data(
             schema,
             closed_ir=closed_image_ir,
             image_evidence=image_spatial_evidence,
@@ -245,9 +253,9 @@ def freeze_spatial_sidecars(
             project_name=project_name(schema),
             suffix="spatial-fusion",
             payload=fusion,
-            stage="6.3_hybrid_evidence_fusion",
-            manifest_format="visual-reasoning-compiler/spatial-fusion-manifest/v1",
-            status=str(fusion.get("status")),
+            stage=SPATIAL_FUSION_STAGE,
+            manifest_format=SPATIAL_FUSION_MANIFEST_FORMAT,
+            status="complete",
             inputs={**base_inputs, "closed_visual_inputs": True},
         )
     world_path = _write_sidecar(

@@ -32,6 +32,9 @@ from .unity_spatial_identity import semantic_schema_hash
 from .visual_reasoning_compiler import sha256_bytes
 
 
+LEGACY_SPATIAL_FUSION_FORMAT = "visual-reasoning-compiler/spatial-fusion/v1"
+
+
 SPATIAL_REALIZATION_FORMAT = "visual-reasoning-compiler/world-layout/v1"
 SPATIAL_REALIZATION_MANIFEST_FORMAT = (
     "visual-reasoning-compiler/world-layout-manifest/v1"
@@ -171,36 +174,45 @@ def _validate_spatial_fusion(
         raise SpatialRealizationError(
             "[spatial.strict] spatial fusion must be a JSON object"
         )
-    if spatial_fusion.get("format") != SPATIAL_FUSION_FORMAT:
+    if spatial_fusion.get("format") not in {
+        SPATIAL_FUSION_FORMAT,
+        LEGACY_SPATIAL_FUSION_FORMAT,
+    }:
         raise SpatialRealizationError(
-            "[spatial.strict] spatial fusion is not a spatial-fusion/v1 artifact"
+            "[spatial.strict] spatial fusion has an unsupported artifact format"
         )
-    if spatial_fusion.get("status") != "complete":
+    if spatial_fusion.get("status") not in {"complete", "closed"}:
         raise SpatialRealizationError(
             "[spatial.strict] spatial fusion contains unresolved required "
             "visual/schema bindings; resolve Slice 6.3 abstentions first"
         )
     expected = _schema_hash(schema)
-    actual = ((spatial_fusion.get("inputs") or {}).get("schema_sha256"))
+    fusion_inputs = spatial_fusion.get("inputs") or {}
+    actual = fusion_inputs.get("schema_sha256")
+    if actual != expected:
+        actual = fusion_inputs.get("schema_semantic_sha256")
     if actual != expected:
         raise SpatialRealizationError(
             "[spatial.strict] spatial fusion belongs to a different schema; "
             "rebuild Slice 6.3"
         )
     bindings = spatial_fusion.get("bindings")
-    if not isinstance(bindings, list):
+    entity_regions = spatial_fusion.get("entity_regions")
+    rows = bindings if isinstance(bindings, list) else entity_regions
+    if not isinstance(rows, list):
         raise SpatialRealizationError(
-            "[spatial.strict] spatial fusion has no bindings list"
+            "[spatial.strict] spatial fusion has no bindings or entity regions list"
         )
     declared = {str(entity.name) for entity in schema.entities}
     seen: set[str] = set()
-    for index, row in enumerate(bindings):
+    for index, row in enumerate(rows):
         if not isinstance(row, Mapping):
             raise SpatialRealizationError(
-                f"[spatial.strict] spatial fusion bindings[{index}] must be an object"
+                f"[spatial.strict] spatial fusion rows[{index}] must be an object"
             )
         entity = row.get("entity")
-        if row.get("status") != "bound":
+        bound = row.get("status") == "bound" or row.get("binding_status") == "bound"
+        if not bound:
             continue
         if not isinstance(entity, str) or entity not in declared:
             raise SpatialRealizationError(
@@ -211,6 +223,11 @@ def _validate_spatial_fusion(
                 f"[spatial.strict] spatial fusion binds entity {entity!r} more than once"
             )
         visual = row.get("visual_constraints")
+        if visual is None and isinstance(row.get("composition"), Mapping):
+            composition = row["composition"]
+            center = composition.get("center")
+            if isinstance(center, Mapping):
+                visual = {"center_xy": [center.get("x"), center.get("y")]}
         if not isinstance(visual, Mapping):
             raise SpatialRealizationError(
                 f"[spatial.strict] spatial fusion has no visual constraints for {entity!r}"
@@ -260,6 +277,10 @@ def _world_bounds(schema: UnitySchema) -> tuple[float, float, float, float]:
 
 def _composition_center(row: Mapping[str, Any]) -> Optional[tuple[float, float]]:
     visual = row.get("visual_constraints")
+    if visual is None and isinstance(row.get("composition"), Mapping):
+        center = row["composition"].get("center")
+        if isinstance(center, Mapping):
+            visual = {"center_xy": [center.get("x"), center.get("y")]}
     if not isinstance(visual, Mapping):
         return None
     center = visual.get("center_xy")
@@ -281,10 +302,14 @@ def _apply_composition_constraints(
     Compiler transforms are never moved here.  A candidate that would overlap
     an existing group is recorded as an abstention instead of being forced.
     """
+    raw_rows = spatial_fusion.get("bindings")
+    if not isinstance(raw_rows, list):
+        raw_rows = spatial_fusion.get("entity_regions") or []
     by_entity = {
         str(row.get("entity")): row
-        for row in spatial_fusion.get("bindings", [])
-        if isinstance(row, Mapping) and row.get("status") == "bound"
+        for row in raw_rows
+        if isinstance(row, Mapping)
+        and (row.get("status") == "bound" or row.get("binding_status") == "bound")
         and isinstance(row.get("entity"), str)
     }
     xmin, zmin, xmax, zmax = _world_bounds(schema)
@@ -296,6 +321,7 @@ def _apply_composition_constraints(
     for name in sorted(by_entity):
         entity = entities[name]
         role = ((by_entity[name].get("schema_constraints") or {}).get("role"))
+        role = role or by_entity[name].get("role")
         center = _composition_center(by_entity[name])
         if center is None:
             continue

@@ -130,23 +130,25 @@ of Unity transforms.
 
 The local implementation is `src/unity_spatial_fusion.py`. It validates the
 closed Slice-3 inventory/entity matches, revalidates Slice-6.1 evidence,
-requires the Slice-6.2 schema hash and complete role coverage, and emits one
-`spatial-fusion/v1` artifact. Each bound reference carries normalized bbox,
-center, size, area/aspect ratios, layer, surface, facing, and confidence,
-alongside the schema role and gameplay adjacency requirements. Image
-relations are retained only as composition constraints. Missing optional frame
-values receive named centerline defaults with warnings; ambiguous or missing
-required schema matches become explicit abstentions and are never silently
-rebound.
+requires the Slice-6.2 schema hash and complete role coverage, and emits the
+canonical `hybrid-spatial-fusion/v1` artifact with a
+`hybrid-spatial-fusion-manifest/v1` provenance record. Each bound reference
+carries normalized composition, layer, surface, facing, and confidence
+alongside the schema role and gameplay adjacency requirements. Image relations
+are retained only as composition constraints. Missing evidence receives named
+role defaults with warnings; ambiguous schema matches are rejected rather than
+silently rebound.
 
 CLI:
 
 ```text
-python main.py unity-spatial-fuse \
+python main.py unity-vizconcept-spatial-fuse \
   --schema rallyboat.schema.json \
   --closed-ir closed_image_ir.json \
-  --image-evidence image_spatial_evidence.json \
-  --spatial-roles rallyboat.spatial-roles.json \
+  --evidence image_spatial_evidence.json \
+  --evidence-manifest image_spatial.json \
+  --roles rallyboat.spatial-roles.json \
+  --roles-manifest rallyboat.spatial-roles.manifest.json \
   --output rallyboat.spatial-fusion.json
 ```
 

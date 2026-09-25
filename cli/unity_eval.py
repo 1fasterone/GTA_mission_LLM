@@ -296,6 +296,7 @@ def unity_scenegraph(
 
 
 @app.command("unity-spatial-fuse")
+@app.command("unity-vizconcept-spatial-fuse")
 def unity_spatial_fuse(
     schema_file: Path = typer.Option(
         ..., "--schema", help="Validated Unity .schema.json input"
@@ -304,10 +305,18 @@ def unity_spatial_fuse(
         ..., "--closed-ir", help="Closed Slice-3 image IR JSON"
     ),
     image_evidence: Path = typer.Option(
-        ..., "--image-evidence", help="Frozen Slice-6.1 image spatial evidence JSON"
+        ..., "--image-evidence", "--evidence",
+        help="Frozen Slice-6.1 image spatial evidence JSON"
     ),
     spatial_roles: Path = typer.Option(
-        ..., "--spatial-roles", help="Frozen Slice-6.2 schema spatial roles JSON"
+        ..., "--spatial-roles", "--roles",
+        help="Frozen Slice-6.2 schema spatial roles JSON"
+    ),
+    evidence_manifest: Path = typer.Option(
+        ..., "--evidence-manifest", help="Slice-6.1 evidence provenance manifest"
+    ),
+    roles_manifest: Path = typer.Option(
+        ..., "--roles-manifest", help="Slice-6.2 roles provenance manifest"
     ),
     output: Path = typer.Option(
         ..., "--output", "-o", help="Slice-6.3 spatial fusion JSON"
@@ -317,27 +326,31 @@ def unity_spatial_fuse(
     ),
 ) -> None:
     """Run deterministic Slice 6.3: image evidence + schema roles -> unit-free constraints."""
-    from src.unity_spatial_fusion import SpatialFusionError, write_spatial_fusion
+    from src.unity_spatial_fusion import SpatialFusionError, fuse_spatial_evidence
 
     for label, path in (
         ("schema", schema_file),
         ("closed image IR", closed_ir),
         ("image evidence", image_evidence),
         ("spatial roles", spatial_roles),
+        ("evidence manifest", evidence_manifest),
+        ("roles manifest", roles_manifest),
     ):
         if not path.is_file():
             console.print(f"[red]Spatial-fusion {label} not found:[/] {path}")
             raise typer.Exit(2)
     try:
-        manifest_path = write_spatial_fusion(
-            schema_path=schema_file,
-            closed_ir_path=closed_ir,
-            image_evidence_path=image_evidence,
-            spatial_roles_path=spatial_roles,
+        manifest_path = fuse_spatial_evidence(
+            closed_ir=closed_ir,
+            evidence=image_evidence,
+            evidence_manifest=evidence_manifest,
+            schema=schema_file,
+            roles=spatial_roles,
+            roles_manifest=roles_manifest,
             output=output,
             manifest=manifest,
         )
-        console.print(f"[green]Spatial fusion written[/] {output}")
+        console.print(f"[green]Hybrid spatial fusion written[/] {output}")
         console.print(f"[green]Slice-6.3 provenance manifest written[/] {manifest_path}")
     except (OSError, ValueError, TypeError, SpatialFusionError) as exc:
         console.print(f"[red]Spatial-fusion error:[/] {exc}")
@@ -584,6 +597,7 @@ def unity_vizconcept_compile(
     carry the closed board composition through the deterministic 6.3–6.6 path.
     """
     from src.unity_pipeline import UnityPipeline
+    from src.visual_reasoning_compile import load_visual_compile_plan
     from src.visual_reasoning_compiler import (
         VisualReasoningCompilerError, sha256_file,
     )
@@ -683,6 +697,15 @@ def unity_vizconcept_compile(
             raise VisualReasoningCompilerError(f"config file not found: {config}")
 
         cfg = _cfg(str(config))
+        asset_cfg = cfg.get("assets") or {}
+        configured_root = asset_cfg.get("asset_root")
+        plan = load_visual_compile_plan(
+            closed_ir=closed_ir,
+            asset_fulfilment=asset_fulfilment,
+            asset_manifest=asset_manifest,
+            lookups_dir=str(lookups_dir),
+            asset_root=Path(configured_root) if configured_root else None,
+        )
         pipe_cfg = dict(cfg.get("unity_pipeline") or {})
         pipe_cfg["unity_output_dir"] = str(output)
         pipe_cfg["lookups_dir"] = str(lookups_dir)
@@ -702,17 +725,21 @@ def unity_vizconcept_compile(
         project_root = UnityPipeline(cfg).run(
             concept,
             theme="none",
+            compose=False,
+            blender_models=False,
             no_think=no_think,
+            micro_code=False,
             precomputed_concept=concept,
-            visual_asset_bindings=records,
+            visual_compile_plan=plan,
             closed_image_ir=closed_ir if image_evidence is not None else None,
             image_spatial_evidence=image_evidence,
         )
         schema_path = project_root / f"{project_root.name}.schema.json"
+        schema_data = json.loads(schema_path.read_text(encoding="utf-8"))
         compile_manifest = output / "visual_compile.manifest.json"
         compile_manifest.write_text(json.dumps({
-            "format": "visual-reasoning-compiler/unity-compile/v1",
-            "stage": "5_unity_compile",
+            "format": "visual-reasoning-compiler/compile/v1",
+            "stage": "5_visual_compile",
             "status": "compiled",
             "authority": {
                 "concept_source": "validated_slice_2_concept",
@@ -721,19 +748,9 @@ def unity_vizconcept_compile(
                 "network_called_here": False,
                 "thumbnail_or_clip_selection_here": False,
             },
-            "inputs": {
-                "closed_image_ir": {
-                    "path": str(closed_ir), "sha256": sha256_file(closed_ir),
-                },
-                "asset_fulfilment": {
-                    "path": str(asset_fulfilment),
-                    "sha256": sha256_file(asset_fulfilment),
-                },
-                "asset_manifest": {
-                    "path": str(asset_manifest),
-                    "sha256": sha256_file(asset_manifest),
-                },
-            },
+            "inputs": plan["inputs"],
+            "binding_report": (schema_data.get("meta") or {})
+            .get("visual_reasoning_compiler"),
             "outputs": {
                 "project_root": str(project_root),
                 "schema": {
@@ -741,11 +758,10 @@ def unity_vizconcept_compile(
                     "sha256": sha256_file(schema_path),
                 },
             },
-            "fulfilled_count": len(records),
         }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         console.print(f"[green]Unity visual project written[/] {project_root}")
         console.print(f"[green]Slice-5 compile manifest written[/] {compile_manifest}")
-        console.print(f"[green]Exact visual bindings:[/] {len(records)}")
+        console.print(f"[green]Exact visual bindings:[/] {len(plan['assets'])}")
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError,
             RuntimeError, VisualReasoningCompilerError) as exc:
         console.print(f"[red]Visual Unity compile error:[/] {exc}")
