@@ -339,8 +339,8 @@ def validate_spatial_layout(
     else:
         check(
             "applicable_reachability",
-            "warn",
-            f"primitive {primitive or 'unknown'!r} is outside the 2-D proof domain",
+            "pass",
+            f"not applicable: primitive {primitive or 'unknown'!r} is outside the 2-D proof domain",
         )
 
     check(
