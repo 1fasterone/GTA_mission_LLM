@@ -145,6 +145,80 @@ def test_fulfilment_selects_local_and_frozen_assets(tmp_path: Path) -> None:
     assert report["catalog_preflight"]["status"] == "pass"
 
 
+def test_landmark_accepts_nature_or_terrain_catalog_domain(tmp_path: Path) -> None:
+    closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
+
+    mountain = asset_root / "mountain-landmark.fbx"
+    mountain.write_bytes(b"mountain-fbx")
+    archway = asset_root / "rough-archway.fbx"
+    archway.write_bytes(b"archway-fbx")
+    catalog_path = lookups / "unity" / "asset_catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["assets"].append({
+        "filename": mountain.name,
+        "relpath": mountain.name,
+        "root": str(asset_root),
+        "format": "fbx",
+        "source": "kenney",
+        "category": "nature",
+        "keywords": ["mountain", "landmark"],
+        "kind_hints": ["nature"],
+        "generic_score": 0,
+    })
+    catalog["assets"].append({
+        "filename": archway.name,
+        "relpath": archway.name,
+        "root": str(asset_root),
+        "format": "fbx",
+        "source": "kenney",
+        "category": "structure",
+        "keywords": ["archway", "structure"],
+        "kind_hints": ["landmark"],
+        "generic_score": 50,
+    })
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    closed_data = json.loads(closed.read_text(encoding="utf-8"))
+    closed_data["inventory"]["visible_elements"].append({
+        "label": "mountain",
+        "category": "landmark",
+        "description": "A mountain landmark.",
+        "model_hint": "mountain",
+    })
+    closed_data["asset_requests"].append({
+        "inventory_label": "mountain",
+        "query": "mountain",
+        "concept_reference": "mountain",
+    })
+    closed.write_text(json.dumps(closed_data), encoding="utf-8")
+    reconciliation.write_text(json.dumps({
+        "format": RECONCILIATION_FORMAT,
+        "stage": "3_image_reasoning_reconciliation",
+        "status": "closed",
+        "request_fingerprint": "request-fingerprint",
+        "outputs": {"closed_image_ir": {
+            "path": str(closed), "sha256": sha256_file(closed),
+        }},
+    }), encoding="utf-8")
+
+    output = tmp_path / "asset_fulfilment.json"
+    manifest = tmp_path / "asset_fulfilment.manifest.json"
+    fulfil_image_assets(
+        closed_ir=closed,
+        reconciliation_manifest=reconciliation,
+        output=output,
+        manifest=manifest,
+        lookups_dir=str(lookups),
+        asset_root=asset_root,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["status"] == "fulfilled"
+    mountain_asset = next(item for item in data["assets"]
+                          if item["inventory_label"] == "mountain")
+    assert mountain_asset["selection"]["filename"] == mountain.name
+
+
 def test_exact_frozen_query_beats_stale_local_variant(tmp_path: Path) -> None:
     closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
 

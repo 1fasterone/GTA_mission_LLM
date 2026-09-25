@@ -151,11 +151,14 @@ class FakeSpatialLLM:
 
 def test_prompt_is_image_only_with_closed_label_whitelist() -> None:
     prompt = build_spatial_prompt(LABELS)
+    normalized_prompt = " ".join(prompt.split())
 
     assert "SUPPLIED VISIBLE LABELS:" in prompt
     assert "- Player Boat" in prompt
     assert "metres" not in prompt
-    assert "not emit any other anchor" in prompt
+    assert "Do not emit any other anchor" in normalized_prompt
+    assert "x + w <= 1 and y + h <= 1" in normalized_prompt
+    assert "do not close the JSON object until every supplied label is present" in normalized_prompt
 
 
 def test_spatial_response_is_canonical_and_strict() -> None:

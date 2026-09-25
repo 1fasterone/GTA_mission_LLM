@@ -46,7 +46,12 @@ _CATEGORY_HINTS: dict[str, frozenset[str]] = {
     "character": frozenset({"character", "human", "person", "npc", "avatar"}),
     "vehicle": frozenset({"vehicle", "car", "truck", "bike", "boat", "plane", "aircraft"}),
     "environment": frozenset({"environment", "nature", "structure", "terrain", "track", "road", "ground"}),
-    "landmark": frozenset({"landmark", "structure", "building", "tower", "monument"}),
+    # Natural landmarks such as mountains are represented by nature/terrain
+    # catalog entries.  The noun and score gates still apply; this only keeps
+    # the semantic category contract from rejecting a correct physical domain.
+    "landmark": frozenset({
+        "landmark", "structure", "building", "tower", "monument", "nature", "terrain",
+    }),
     # Props are deliberately broad: catalog categories such as weapon,
     # mechanism, obstacle, nature, and structure can all be visible props.
     "prop": frozenset(),
@@ -534,11 +539,18 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
 
         candidates: list[tuple[float, dict[str, Any], Path]] = []
         path_errors: list[str] = []
+        signal_tokens = _visual_signal_tokens(request, element)
         for entry in catalog_assets:
             if not isinstance(entry, dict):
                 continue
             fmt = str(entry.get("format") or "fbx").casefold()
             if fmt not in SUPPORTED_FORMATS or not _category_compatible(category, entry):
+                continue
+            # Category compatibility is necessary but never sufficient.  A
+            # landmark request for "mountain" must not select an unrelated
+            # landmark such as an archway merely because both share a broad
+            # category hint; the noun signal must also be present.
+            if signal_tokens and not (signal_tokens & _entry_tokens(entry)):
                 continue
             if not _license_ok(entry, accepted):
                 continue
