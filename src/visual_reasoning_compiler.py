@@ -64,27 +64,34 @@ these keys:
   "scene_summary": "one concise description grounded in the image",
   "visible_elements": [
     {
-      "label": "unique human-readable name",
+      "label": "one literal visible noun; add a numeric suffix only to distinguish duplicate nouns",
       "category": "character | vehicle | prop | environment | landmark | ui | effect | other",
       "description": "what this visible element looks like",
-      "model_hint": "plain visual noun phrase, or null when no 3D model is appropriate"
+      "model_hint": "noun-only visual asset phrase, or null when no 3D model is appropriate"
     }
   ],
   "sketchfab_queries": [
     {
       "label": "exact label from visible_elements",
-      "query": "short visual noun phrase suitable for a 3D model search"
+      "query": "noun-only visual phrase suitable for a 3D model search"
     }
   ],
   "visible_text": ["legible text that is actually visible in the image"],
   "uncertainties": ["brief visual ambiguities, if any"]
 }
 
-List discrete, asset-worthy visible elements, not abstract game systems. Do
-not create a Sketchfab query for UI text, a glow, or an effect unless the
-image visibly contains a separate 3D object behind it. A query must refer to
-one listed visible element by its exact label, and every queried element must
-have a non-empty model_hint. Omit the query when no honest model hint exists;
+List discrete, asset-worthy visible elements, not abstract game systems. For
+every visible element, the label must be one literal visible noun (or the same
+noun with a numeric suffix when duplicate instances need distinct labels).
+Do not use adjectives, pronouns, articles, spatial/depth modifiers, gameplay
+roles, or inferred names in labels. Examples include "aircraft", "missile",
+"warship", "mountain", "ocean", "smoke", "explosion", and "watermark".
+Keep visual detail in description. Keep model_hint and query noun-only too;
+do not use style, era, color, distance, or combat adjectives in them. Do not
+create a Sketchfab query for UI text, a glow, or an effect unless the image
+visibly contains a separate 3D object behind it. A query must refer to one
+listed visible element by its exact label, and every queried element must have
+a non-empty model_hint. Omit the query when no honest model hint exists;
 never emit an empty query string. Use [] when a list has no honest entries.
 Output JSON only; do not add markdown or explanation.
 """

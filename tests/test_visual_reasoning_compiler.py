@@ -256,6 +256,8 @@ class FakeVisionLLM:
         assert "pixel-art Git graph" not in str(kwargs["system"])
         assert "pixel-art Git graph" not in str(kwargs["user"])
         if len(self.calls) == 1:
+            assert "one literal visible noun" in str(kwargs["user"])
+            assert "Do not use adjectives, pronouns" in str(kwargs["user"])
             return _inventory_response()
         assert "CANONICAL VISIBLE ENTITY LABELS:" in str(kwargs["user"])
         assert "- red-hat explorer" in str(kwargs["user"])
