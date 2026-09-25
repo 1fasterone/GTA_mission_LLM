@@ -1078,6 +1078,14 @@ _PLAYER_KINDS: frozenset[str] = frozenset({
 })
 # "Player", "PlayerDiver", "PlayerAvatar" — the schema-fill's own naming.
 _PLAYER_NAME_RE = re.compile(r"^\s*(?:the\s+)?player\b", re.IGNORECASE)
+# Qwen commonly emits compact PascalCase avatar names such as PlayerCraft or
+# PlayerAircraft.  They are semantically player names even though there is no
+# word boundary after "Player"; keep the suffix vocabulary narrow so scenery
+# names such as PlayerStatues do not become avatars by prefix alone.
+_PLAYER_COMPOUND_RE = re.compile(
+    r"^\s*(?:the\s+)?player(?:craft|aircraft|plane|bike|car|kart|diver|pilot|"
+    r"hero|avatar)\b", re.IGNORECASE
+)
 _PLAYER_ALIASES: tuple[str, ...] = ("avatar", "protagonist", "hero", "pc")
 
 
@@ -1105,7 +1113,8 @@ def player_rank(entity) -> int:
     kind = (entity.kind or "").lower().strip()
     if _is_player_tag(tag):
         return 3 if kind in _PLAYER_KINDS else 2
-    if _PLAYER_NAME_RE.match(entity.name or ""):
+    if (_PLAYER_NAME_RE.match(entity.name or "")
+            or _PLAYER_COMPOUND_RE.match(entity.name or "")):
         return 1
     if kind in _PLAYER_KINDS and _hits(_entity_words(entity), _PLAYER_ALIASES):
         return 1
