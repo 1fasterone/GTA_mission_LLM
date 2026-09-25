@@ -46,6 +46,12 @@ _GENERATED_META_FIELDS = (
     "wiring",
     "entity_model_paths",
 )
+_GENERATED_SCHEMA_FIELDS = (
+    # Generator sanitization and composition can rewrite these codegen-only
+    # collections after 6.3 prepares its fusion artifact.  They do not affect
+    # entity roles, relations, or world placement.
+    "scripts",
+)
 
 
 def semantic_schema_payload(schema: UnitySchema) -> dict[str, Any]:
@@ -61,6 +67,8 @@ def semantic_schema_payload(schema: UnitySchema) -> dict[str, Any]:
     # World realization is the authority for that geometry, so the whole
     # mutable world envelope is intentionally outside the sidecar identity.
     payload.pop("world_spec", None)
+    for field in _GENERATED_SCHEMA_FIELDS:
+        payload.pop(field, None)
 
     meta = payload.get("meta")
     if isinstance(meta, dict):

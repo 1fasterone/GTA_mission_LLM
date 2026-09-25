@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.unity_schema import EntitySpec, UnitySchema
+from src.unity_schema import EntitySpec, UnitySchema, UnityScript
 from src.unity_spatial_identity import semantic_schema_hash
 from src.unity_spatial_pipeline import (
     freeze_spatial_sidecars,
@@ -76,6 +76,21 @@ def test_post_schema_asset_query_enrichment_does_not_stale_spatial_identity() ->
     before_hash = semantic_schema_hash(schema)
 
     schema.entities[0].sketchfab_query = "low poly racing bike"
+
+    assert semantic_schema_hash(schema) == before_hash
+
+
+def test_generator_script_sanitization_does_not_stale_spatial_identity() -> None:
+    schema = _schema()
+    schema.scripts = [UnityScript(
+        name="CustomBehaviour",
+        type="custom",
+        description="generated code",
+        update_extra="transform.position += Vector3.forward;",
+    )]
+    before_hash = semantic_schema_hash(schema)
+
+    schema.scripts[0].update_extra = "transform.position += Vector3.back;"
 
     assert semantic_schema_hash(schema) == before_hash
 
