@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .unity_schema import UnitySchema
 from .unity_spatial_roles import (
@@ -30,6 +30,7 @@ from .unity_spatial_roles import (
     SPATIAL_ROLES_FORMAT,
     SPATIAL_ROLES_MANIFEST_FORMAT,
 )
+from .unity_spatial_identity import semantic_schema_hash
 from .unity_visual_bindings import bind_visual_assets
 from .visual_reasoning_compiler import (
     VisualReasoningCompilerError,
@@ -160,13 +161,12 @@ def _manifest_output_hash(
 
 
 def _schema_semantic_hash(schema: UnitySchema) -> str:
-    payload = json.dumps(
-        schema.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return sha256_bytes(payload)
+    return semantic_schema_hash(schema)
+
+
+def _schema_hash(schema: UnitySchema) -> str:
+    """Compatibility name used by the deterministic spatial consumers."""
+    return semantic_schema_hash(schema)
 
 
 def _closed_labels(closed: dict[str, Any]) -> tuple[list[str], dict[str, dict[str, Any]]]:
@@ -475,6 +475,8 @@ def _fuse(data: dict[str, Any]) -> dict[str, Any]:
     anchors = {
         str(anchor["label"]): anchor for anchor in evidence["anchors"]
     }
+
+
     medium = (data["roles"].get("inputs") or {}).get("archetype", {}).get("medium")
     warnings: list[str] = list(data["roles"].get("warnings") or [])
     abstentions: list[dict[str, Any]] = []
@@ -663,6 +665,84 @@ def _fuse(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def fuse_spatial_evidence_data(
+    schema: UnitySchema,
+    *,
+    closed_ir: Mapping[str, Any],
+    image_evidence: Mapping[str, Any],
+    spatial_roles: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Fuse already-loaded inputs for the in-process Unity sidecar pipeline.
+
+    The file-based :func:`fuse_spatial_evidence` function remains the canonical
+    Slice-6.3 API and provenance boundary. This adapter reuses the same
+    validation and fusion core when the generator has already loaded the
+    closed artifacts, so the 6.4–6.6 pipeline emits the canonical format.
+    """
+    closed = dict(closed_ir)
+    evidence_data = dict(image_evidence)
+    roles = dict(spatial_roles)
+    labels, elements = _closed_labels(closed)
+    try:
+        evidence = validate_image_spatial_response(evidence_data, labels)
+    except (ValueError, TypeError) as exc:
+        raise SpatialFusionError(f"Slice-6.1 evidence is not valid: {exc}") from exc
+
+    if (
+        roles.get("format") != SPATIAL_ROLES_FORMAT
+        or roles.get("stage") != "6.2_schema_spatial_roles"
+        or roles.get("status") != "closed"
+    ):
+        raise SpatialFusionError("Slice-6.2 roles are not a closed role artifact")
+    role_rows = roles.get("role_table")
+    if not isinstance(role_rows, list):
+        raise SpatialFusionError("Slice-6.2 role table is not a list")
+    entity_names = [str(entity.name) for entity in schema.entities]
+    role_by_entity: dict[str, dict[str, Any]] = {}
+    for index, raw in enumerate(role_rows):
+        row = _mapping(raw, label=f"Slice-6.2 role_table[{index}]")
+        entity = row.get("entity")
+        role = row.get("role")
+        if not isinstance(entity, str) or not entity:
+            raise SpatialFusionError(f"Slice-6.2 role_table[{index}] has no entity")
+        if entity in role_by_entity or entity not in entity_names:
+            raise SpatialFusionError(
+                f"Slice-6.2 role names undeclared or repeated: {entity!r}"
+            )
+        if not isinstance(role, str) or not role:
+            raise SpatialFusionError(f"Slice-6.2 role for {entity!r} is empty")
+        role_by_entity[entity] = row
+    if set(role_by_entity) != set(entity_names):
+        missing = sorted(set(entity_names) - set(role_by_entity))
+        raise SpatialFusionError(
+            "Slice-6.2 role table does not cover schema entities: "
+            + ", ".join(missing)
+        )
+    expected_hash = _schema_hash(schema)
+    if (roles.get("inputs") or {}).get("schema_sha256") != expected_hash:
+        raise SpatialFusionError("Slice-6.2 role table schema hash does not match")
+
+    def canonical(value: Mapping[str, Any]) -> bytes:
+        return json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+
+    data = {
+        "closed": closed,
+        "closed_raw": canonical(closed),
+        "labels": labels,
+        "elements": elements,
+        "evidence": evidence,
+        "evidence_raw": canonical(evidence_data),
+        "schema": schema,
+        "schema_raw": canonical(schema.model_dump(mode="json")),
+        "roles": roles,
+        "roles_raw": canonical(roles),
+        "role_by_entity": role_by_entity,
+    }
+    return _fuse(data)
+
+
 def fuse_spatial_evidence(
     *,
     closed_ir: Path,
@@ -751,4 +831,5 @@ __all__ = [
     "SPATIAL_FUSION_STAGE",
     "SpatialFusionError",
     "fuse_spatial_evidence",
+    "fuse_spatial_evidence_data",
 ]

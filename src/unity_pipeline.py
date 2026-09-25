@@ -64,6 +64,12 @@ from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 from .unity_reference_image import ReferenceImageError, encode_reference_image
 from .unity_visual_bindings import (bind_visual_assets,
                                     ensure_visual_scene_coverage)
+from .unity_spatial_pipeline import (
+    SpatialPipelineError,
+    freeze_spatial_sidecars,
+    load_spatial_inputs,
+    prepare_spatial_layout,
+)
 
 console = Console()
 
@@ -1132,6 +1138,8 @@ class UnityPipeline:
             reference_image: Path | None = None,
             precomputed_concept: str | None = None,
             visual_asset_bindings: list[dict] | None = None,
+            closed_image_ir: Path | None = None,
+            image_spatial_evidence: Path | None = None,
             visual_compile_plan: dict | None = None) -> Path:
         locked_asset_bindings: dict[str, dict] | None = None
         visual_compile = visual_compile_plan is not None
@@ -1146,7 +1154,7 @@ class UnityPipeline:
                 )
             if no_llm or reference_image is not None:
                 raise ValueError(
-                    "visual compile requires Step-3 schema fill: --no-llm and "
+                    "visual compile requires Step-3 schema fill; --no-llm and "
                     "--reference-image are not allowed"
                 )
             if theme not in (None, "none"):
@@ -1227,7 +1235,7 @@ class UnityPipeline:
         # Asset-library vocabulary (categories + top tags from the generated
         # catalog) so entity model_hints name models that actually exist.
         # Deterministic lookup; missing catalog → empty string, prompt unchanged.
-        _vocab = "" if precomputed_mode else asset_vocabulary(self.lookups_dir)
+        _vocab = "" if (precomputed_mode or visual_compile) else asset_vocabulary(self.lookups_dir)
         if _vocab:
             schema_hints += "\n" + _vocab + "\n"
         # The brief's own ENTITIES bullets, verbatim, as a required checklist.
@@ -1748,7 +1756,10 @@ class UnityPipeline:
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
 
-        # Re-resolve anything that consistency check added
+        # Re-resolve anything that consistency check added before deriving the
+        # spatial identity. Package/version resolution and behavior expansion
+        # are deterministic schema mutations; running them after Slice 6.3
+        # would make the fusion hash stale before the generator consumes it.
         schema = self.resolver.resolve_schema(schema)
         if visual_compile:
             from .visual_reasoning_compile import (
@@ -1778,6 +1789,36 @@ class UnityPipeline:
         )
         self._ok(f"manifest.json will contain {len(manifest_deps)} packages")
 
+        # Final post-schema spatial handoff.  Earlier Step-5 passes may have
+        # baked an ordinary layout for playability repair; reset only that
+        # generated geometry so the closed sidecars now see the FINAL entity
+        # list (including visual-scene coverage) and can apply optional image
+        # composition before generator model resolution.
+        _closed_spatial_ir, _image_spatial_evidence = load_spatial_inputs(
+            closed_image_ir=closed_image_ir,
+            image_spatial_evidence=image_spatial_evidence,
+        )
+        _spatial_bundle = prepare_spatial_layout(
+            schema,
+            closed_image_ir=_closed_spatial_ir,
+            image_spatial_evidence=_image_spatial_evidence,
+            reset_generated_layout=True,
+        )
+        for msg in _spatial_bundle["world_layout"]["layout"]["messages"]:
+            self._fix(msg)
+        # Cover points are geometry-derived, so the final sidecar layout owns
+        # the re-bake that follows its optional composition translation.
+        for msg in compute_cover_points(schema):
+            self._fix(msg)
+        _spatial_status = _spatial_bundle["spatial_validation"]["status"]
+        if _spatial_status == "fail":
+            self._warn(
+                "Spatial validation preflight found hard findings; the report "
+                "will be persisted and the project remains spatially unaccepted"
+            )
+        else:
+            self._ok(f"Spatial sidecars 6.2–6.6 prepared ({_spatial_status})")
+
         # STEP 6 — generate ───────────────────────────────────────────────────
         self._step(6, "Generator compiles schema -> Unity project folder")
         # Blender model fulfilment: build real models from the story and feed them
@@ -1802,7 +1843,7 @@ class UnityPipeline:
         # --no-llm skips this: the enrichment is a model call, and its
         # deterministic fallback (model_hint / entity name, both already parsed
         # from the brief) is exactly what the offline arm is meant to exercise.
-        if schema.entities and not no_llm and not visual_compile:
+        if schema.entities and not no_llm:
             try:
                 from .unity_sketchfab_translator import translate_concept
                 _llm_seed = getattr(self.llm, "seed", None)
@@ -2088,7 +2129,8 @@ class UnityPipeline:
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
                 project_config=self.config, llm=self.llm,
-                locked_asset_bindings=locked_asset_bindings)
+                locked_asset_bindings=locked_asset_bindings,
+                spatial_fusion=_spatial_bundle["spatial_fusion"])
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library
@@ -2323,6 +2365,27 @@ class UnityPipeline:
                 schema.model_dump_json(indent=2), encoding="utf-8")
         except Exception:  # noqa: BLE001 — sidecar failure shouldn't break the run
             self._warn("Could not write schema.json sidecar")
+        try:
+            _frozen_spatial = freeze_spatial_sidecars(
+                project_root,
+                schema,
+                closed_image_ir=_closed_spatial_ir,
+                image_spatial_evidence=_image_spatial_evidence,
+                measured_footprints=self.generator.last_measured_footprints,
+            )
+            _final_spatial_status = _frozen_spatial["spatial_validation"]["status"]
+            if _final_spatial_status == "fail":
+                self._warn(
+                    "Final spatial validation failed; inspect "
+                    f"{_frozen_spatial['paths']['spatial_validation']}"
+                )
+            else:
+                self._ok(
+                    "Spatial sidecars frozen beside the Unity project "
+                    f"(validation={_final_spatial_status})"
+                )
+        except (OSError, ValueError, TypeError, SpatialPipelineError) as exc:
+            raise RuntimeError(f"spatial sidecar freeze failed: {exc}") from exc
         self._ok(f"Project written to: {project_root}")
 
         # STEP 7 — grade the output ───────────────────────────────────────────

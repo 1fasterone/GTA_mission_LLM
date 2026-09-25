@@ -1081,6 +1081,11 @@ _PLAYER_NAME_RE = re.compile(r"^\s*(?:the\s+)?player\b", re.IGNORECASE)
 _PLAYER_ALIASES: tuple[str, ...] = ("avatar", "protagonist", "hero", "pc")
 
 
+def _is_player_tag(tag: str) -> bool:
+    """Recognize the schema-fill's explicit Player-prefixed tag aliases."""
+    return tag == "player" or tag.startswith("player")
+
+
 def player_rank(entity) -> int:
     """How strongly this entity claims to be the player's own group.
 
@@ -1098,7 +1103,7 @@ def player_rank(entity) -> int:
     """
     tag  = _tag_of(entity)
     kind = (entity.kind or "").lower().strip()
-    if tag == "player":
+    if _is_player_tag(tag):
         return 3 if kind in _PLAYER_KINDS else 2
     if _PLAYER_NAME_RE.match(entity.name or ""):
         return 1
@@ -1116,7 +1121,8 @@ def pick_player_entity(entities: Sequence[_Entity]) -> tuple[Optional[_Entity], 
         rank = player_rank(e)
         if rank > best_rank:
             best, best_rank = e, rank
-    why = {3: "tag='Player' + avatar kind", 2: "tag='Player'",
+    why = {3: "tag='Player' or Player-prefixed alias + avatar kind",
+           2: "tag='Player' or Player-prefixed alias",
            1: "name/alias"}.get(best_rank, "")
     return best, why
 

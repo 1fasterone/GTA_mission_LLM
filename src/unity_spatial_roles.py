@@ -30,6 +30,7 @@ from .unity_layout_archetype import (
     is_ui_backdrop,
 )
 from .unity_schema import UnitySchema
+from .unity_spatial_identity import semantic_schema_hash
 from .visual_reasoning_compiler import sha256_bytes
 
 
@@ -191,13 +192,7 @@ def _meta_lineage(meta: Any) -> dict[str, Any]:
 
 
 def _schema_hash(schema: UnitySchema) -> str:
-    data = json.dumps(
-        schema.model_dump(mode="json"),
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
-    return sha256_bytes(data)
+    return semantic_schema_hash(schema)
 
 
 def _route_field_evidence(entity: Any) -> list[str]:
