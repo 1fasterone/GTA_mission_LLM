@@ -223,9 +223,14 @@ def _inventory_response() -> str:
 def test_visual_inventory_contract_is_strict_and_canonical() -> None:
     inventory = validate_visual_inventory(_inventory_response())
 
+    fenced_inventory = validate_visual_inventory(
+        "```json\n" + _inventory_response() + "\n```"
+    )
+
     assert inventory["format"] == INVENTORY_FORMAT
     assert inventory["visible_elements"][0]["label"] == "red-hat explorer"
     assert inventory["sketchfab_queries"][1]["label"] == "glowing commit nodes"
+    assert fenced_inventory["visible_elements"] == inventory["visible_elements"]
 
     malformed = json.loads(_inventory_response())
     malformed["sketchfab_queries"][0]["label"] = "not-visible"

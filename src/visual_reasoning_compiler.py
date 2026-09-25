@@ -177,8 +177,17 @@ def _encode_image_data_uri(image_bytes: bytes) -> str:
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
-    """Extract one JSON object without repairing an invalid model response."""
+    """Extract one JSON object without repairing its semantic contents.
+
+    Some OpenAI-compatible local servers ignore ``response_format`` and Qwen
+    still wraps an otherwise valid JSON response in one Markdown code fence.
+    Accept that exact envelope, but continue rejecting any other text around
+    the object and leave all field validation to ``validate_visual_inventory``.
+    """
     text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fenced is not None:
+        text = fenced.group(1).strip()
     start = text.find("{")
     if start < 0:
         raise VisualReasoningCompilerError(
