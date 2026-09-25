@@ -32,6 +32,11 @@ _GENERATED_ENTITY_FIELDS = (
     # state, not a spatial constraint, so it must not invalidate a frozen
     # 6.3 fusion artifact during the final post-generation freeze.
     "behavior",
+    # The post-schema asset-query enrichment may add this field while the
+    # generator is resolving models.  It is resolver metadata, not spatial
+    # meaning; including it would make a valid 6.3 fusion stale before the
+    # model-aware 6.5 relayout consumes it.
+    "sketchfab_query",
 )
 _GENERATED_META_FIELDS = (
     "cover_points",

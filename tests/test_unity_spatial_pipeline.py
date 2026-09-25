@@ -71,6 +71,15 @@ def test_runtime_behavior_reconciliation_does_not_stale_spatial_identity() -> No
     assert semantic_schema_hash(schema) == before_hash
 
 
+def test_post_schema_asset_query_enrichment_does_not_stale_spatial_identity() -> None:
+    schema = _schema()
+    before_hash = semantic_schema_hash(schema)
+
+    schema.entities[0].sketchfab_query = "low poly racing bike"
+
+    assert semantic_schema_hash(schema) == before_hash
+
+
 def test_final_freeze_can_consume_generator_measured_footprints(tmp_path: Path) -> None:
     schema = _schema()
     project_root = tmp_path / schema.project_name
