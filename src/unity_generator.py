@@ -2857,6 +2857,10 @@ class UnityProjectGenerator:
             keep_trailing_newline = True,
         )
         self.template_dir = tpl_path
+        # Exposed for the post-generator spatial freeze.  The generator is the
+        # only authority that sees measured catalog bounds, so the persisted
+        # 6.5 artifact must use this exact table rather than re-discovering it.
+        self.last_measured_footprints: dict[str, float] = {}
 
     # ── model resolution (single source of truth) ──────────────────────────────
 
@@ -2917,7 +2921,8 @@ class UnityProjectGenerator:
 
     @staticmethod
     def _model_aware_relayout(schema: UnitySchema,
-                              footprints: dict[str, float]) -> None:
+                              footprints: dict[str, float],
+                              spatial_fusion: dict | None = None) -> None:
         """Redo Step 5's packing with real measured footprints, then re-bake
         every Step 5 sidecar derived from the layout it just superseded.
 
@@ -2937,7 +2942,19 @@ class UnityProjectGenerator:
         for e in schema.entities:
             if e.name in footprints and e.placement in ("scatter", "grid", "ring", "line"):
                 e.instance_positions = []
-        compute_layout(schema, footprints)
+        if spatial_fusion is None:
+            compute_layout(schema, footprints)
+        else:
+            # Re-run the same 6.5 authority used by the main pipeline so a
+            # measured-footprint relayout cannot discard fused composition.
+            # Measured scenery groups are cleared above, which makes them
+            # eligible for the safe non-authored composition translation.
+            from .unity_spatial_realization import realize_spatial_layout
+            realize_spatial_layout(
+                schema,
+                footprints=footprints,
+                spatial_fusion=spatial_fusion,
+            )
 
         before = schema.meta.get(META_KEY) if isinstance(schema.meta, dict) else None
         compute_cover_points(schema)
@@ -3049,7 +3066,8 @@ class UnityProjectGenerator:
                  asset_cfg: dict | None = None,
                  sketchfab_cfg: dict | None = None,
                  llm: object | None = None,
-                 locked_asset_bindings: dict[str, dict] | None = None
+                 locked_asset_bindings: dict[str, dict] | None = None,
+                 spatial_fusion: dict | None = None
                  ) -> dict[str, str]:
         """
         Returns {relative_path: file_content} for every file in the project.
@@ -3214,8 +3232,9 @@ class UnityProjectGenerator:
         # available it is a no-op and output stays byte-identical.
         _footprints = self._entity_footprints(schema, entity_model_paths,
                                               _by_resource_path, lookups_dir)
+        self.last_measured_footprints = dict(_footprints)
         if _footprints:
-            self._model_aware_relayout(schema, _footprints)
+            self._model_aware_relayout(schema, _footprints, spatial_fusion)
 
         # ── Playable-player merge ──────────────────────────────────────────
         # The scene template ALWAYS builds a dedicated Player object (tag
@@ -4076,7 +4095,8 @@ class UnityProjectGenerator:
               sketchfab_cfg: dict | None = None,
               project_config: dict | None = None,
               llm: object | None = None,
-              locked_asset_bindings: dict[str, dict] | None = None
+              locked_asset_bindings: dict[str, dict] | None = None,
+              spatial_fusion: dict | None = None
               ) -> tuple[Path, int]:
         """Write the project to disk; return (project_root, file_count)."""
         files = self.generate(schema, manifest_deps,
@@ -4089,7 +4109,8 @@ class UnityProjectGenerator:
                               asset_cfg=asset_cfg,
                               sketchfab_cfg=sketchfab_cfg,
                               llm=llm,
-                              locked_asset_bindings=locked_asset_bindings)
+                              locked_asset_bindings=locked_asset_bindings,
+                              spatial_fusion=spatial_fusion)
         root  = Path(output_dir)
 
         # Create all unique parent directories in one pass before writing files.

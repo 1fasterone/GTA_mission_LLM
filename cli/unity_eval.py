@@ -248,6 +248,210 @@ def unity_vizconcept_spatial_roles(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-scenegraph")
+def unity_scenegraph(
+    schema_file: Path = typer.Argument(..., help="Validated Unity .schema.json input"),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Slice-6.4 scene/relation graph JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.4 provenance manifest destination"
+    ),
+    spatial_roles: Optional[Path] = typer.Option(
+        None, "--spatial-roles", help="Optional hash-linked Slice-6.2 role sidecar"
+    ),
+    dot: bool = typer.Option(False, "--dot", help="Also write a sibling Graphviz DOT view"),
+    dot_output: Optional[Path] = typer.Option(
+        None, "--dot-output", help="Graphviz DOT destination (implies --dot)"
+    ),
+) -> None:
+    """Run deterministic Slice 6.4: schema -> scene/relation graph."""
+    from src.scene_graph import SceneGraphError, write_scene_graph
+
+    if not schema_file.is_file():
+        console.print(f"[red]Scene-graph schema not found:[/] {schema_file}")
+        raise typer.Exit(2)
+    if spatial_roles is not None and not spatial_roles.is_file():
+        console.print(f"[red]Spatial-role sidecar not found:[/] {spatial_roles}")
+        raise typer.Exit(2)
+    destination = output or schema_file.with_suffix(".scene-graph.json")
+    dot_destination = dot_output or (
+        destination.with_suffix(".dot") if dot else None
+    )
+    try:
+        manifest_path = write_scene_graph(
+            schema_path=schema_file,
+            output=destination,
+            manifest=manifest,
+            spatial_roles_path=spatial_roles,
+            dot_output=dot_destination,
+        )
+        console.print(f"[green]Scene/relation graph written[/] {destination}")
+        console.print(f"[green]Slice-6.4 provenance manifest written[/] {manifest_path}")
+        if dot_destination is not None:
+            console.print(f"[green]Graphviz view written[/] {dot_destination}")
+    except (OSError, ValueError, TypeError, SceneGraphError) as exc:
+        console.print(f"[red]Scene-graph error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-spatial-fuse")
+def unity_spatial_fuse(
+    schema_file: Path = typer.Option(
+        ..., "--schema", help="Validated Unity .schema.json input"
+    ),
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Closed Slice-3 image IR JSON"
+    ),
+    image_evidence: Path = typer.Option(
+        ..., "--image-evidence", help="Frozen Slice-6.1 image spatial evidence JSON"
+    ),
+    spatial_roles: Path = typer.Option(
+        ..., "--spatial-roles", help="Frozen Slice-6.2 schema spatial roles JSON"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.3 spatial fusion JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.3 provenance manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 6.3: image evidence + schema roles -> unit-free constraints."""
+    from src.unity_spatial_fusion import SpatialFusionError, write_spatial_fusion
+
+    for label, path in (
+        ("schema", schema_file),
+        ("closed image IR", closed_ir),
+        ("image evidence", image_evidence),
+        ("spatial roles", spatial_roles),
+    ):
+        if not path.is_file():
+            console.print(f"[red]Spatial-fusion {label} not found:[/] {path}")
+            raise typer.Exit(2)
+    try:
+        manifest_path = write_spatial_fusion(
+            schema_path=schema_file,
+            closed_ir_path=closed_ir,
+            image_evidence_path=image_evidence,
+            spatial_roles_path=spatial_roles,
+            output=output,
+            manifest=manifest,
+        )
+        console.print(f"[green]Spatial fusion written[/] {output}")
+        console.print(f"[green]Slice-6.3 provenance manifest written[/] {manifest_path}")
+    except (OSError, ValueError, TypeError, SpatialFusionError) as exc:
+        console.print(f"[red]Spatial-fusion error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-spatial-realize")
+def unity_spatial_realize(
+    schema_file: Path = typer.Argument(..., help="Validated Unity .schema.json input"),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.5 world-layout JSON"
+    ),
+    footprints: Optional[Path] = typer.Option(
+        None, "--footprints", help="Measured entity-footprint sidecar JSON"
+    ),
+    relation_graph: Optional[Path] = typer.Option(
+        None, "--relation-graph", help="Hash-linked Slice-6.4 scene graph JSON"
+    ),
+    spatial_fusion: Optional[Path] = typer.Option(
+        None, "--spatial-fusion", help="Hash-linked Slice-6.3 spatial fusion JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.5 provenance manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 6.5: frozen inputs -> Unity world layout."""
+    from src.unity_spatial_realization import (
+        SpatialRealizationError,
+        write_spatial_realization,
+    )
+
+    if not schema_file.is_file():
+        console.print(f"[red]Spatial-realization schema not found:[/] {schema_file}")
+        raise typer.Exit(2)
+    for label, path in (
+        ("footprint", footprints),
+        ("relation graph", relation_graph),
+        ("spatial fusion", spatial_fusion),
+    ):
+        if path is not None and not path.is_file():
+            console.print(f"[red]Spatial-realization {label} not found:[/] {path}")
+            raise typer.Exit(2)
+    try:
+        manifest_path = write_spatial_realization(
+            schema_path=schema_file,
+            output=output,
+            footprints_path=footprints,
+            relation_graph_path=relation_graph,
+            spatial_fusion_path=spatial_fusion,
+            manifest=manifest,
+        )
+        console.print(f"[green]World layout written[/] {output}")
+        console.print(f"[green]Slice-6.5 provenance manifest written[/] {manifest_path}")
+    except (OSError, ValueError, TypeError, SpatialRealizationError) as exc:
+        console.print(f"[red]Spatial-realization error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("unity-spatial-validate")
+def unity_spatial_validate(
+    schema_file: Path = typer.Option(
+        ..., "--schema", help="Validated Unity .schema.json input"
+    ),
+    world_layout: Path = typer.Option(
+        ..., "--world-layout", help="Slice-6.5 world-layout JSON"
+    ),
+    spatial_roles: Path = typer.Option(
+        ..., "--spatial-roles", help="Slice-6.2 schema spatial roles JSON"
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Slice-6.6 validation report JSON"
+    ),
+    spatial_fusion: Optional[Path] = typer.Option(
+        None, "--spatial-fusion", help="Optional Slice-6.3 spatial fusion JSON"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.6 provenance manifest destination"
+    ),
+) -> None:
+    """Run deterministic Slice 6.6 spatial validation."""
+    from src.unity_spatial_validation import (
+        SpatialValidationError,
+        write_spatial_validation,
+    )
+
+    for label, path in (
+        ("schema", schema_file),
+        ("world layout", world_layout),
+        ("spatial roles", spatial_roles),
+        ("spatial fusion", spatial_fusion),
+    ):
+        if path is not None and not path.is_file():
+            console.print(f"[red]Spatial-validation {label} not found:[/] {path}")
+            raise typer.Exit(2)
+    try:
+        manifest_path = write_spatial_validation(
+            schema_path=schema_file,
+            world_layout_path=world_layout,
+            spatial_roles_path=spatial_roles,
+            spatial_fusion_path=spatial_fusion,
+            output=output,
+            manifest=manifest,
+        )
+        report = json.loads(output.read_text(encoding="utf-8"))
+        console.print(f"[green]Spatial validation written[/] {output}")
+        console.print(f"[green]Slice-6.6 provenance manifest written[/] {manifest_path}")
+        console.print(f"[green]Spatial validation status:[/] {report.get('status')}")
+        if report.get("status") == "fail":
+            raise typer.Exit(2)
+    except (OSError, ValueError, TypeError, SpatialValidationError) as exc:
+        console.print(f"[red]Spatial-validation error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-vizconcept-reconcile")
 def unity_vizconcept_reconcile(
     inventory_file: Path = typer.Option(
@@ -349,6 +553,11 @@ def unity_vizconcept_compile(
     closed_ir: Path = typer.Option(
         ..., "--closed-ir", help="Slice-3 closed image IR JSON"
     ),
+    image_evidence: Optional[Path] = typer.Option(
+        None, "--image-evidence",
+        help="Optional frozen Slice-6.1 image spatial evidence JSON; when supplied, "
+             "the main Unity pipeline runs Slice-6.3 fusion",
+    ),
     asset_fulfilment: Path = typer.Option(
         ..., "--asset-fulfilment", help="Slice-4 asset fulfilment JSON"
     ),
@@ -371,7 +580,8 @@ def unity_vizconcept_compile(
     The Concept is reused byte-for-byte, so the normal Concept call is skipped.
     The existing schema-fill call runs once; visual assets are then passed as
     explicit locked bindings into the generator. This command never performs a
-    live Sketchfab search or thumbnail/CLIP selection.
+    live Sketchfab search or thumbnail/CLIP selection. Pass --image-evidence to
+    carry the closed board composition through the deterministic 6.3–6.6 path.
     """
     from src.unity_pipeline import UnityPipeline
     from src.visual_reasoning_compiler import (
@@ -384,6 +594,10 @@ def unity_vizconcept_compile(
         if output.exists():
             raise VisualReasoningCompilerError(
                 f"refusing to compile into an existing output directory: {output}"
+            )
+        if image_evidence is not None and not image_evidence.is_file():
+            raise VisualReasoningCompilerError(
+                f"Slice-6.1 image evidence not found: {image_evidence}"
             )
         closed = json.loads(closed_ir.read_text(encoding="utf-8"))
         # The Slice-3 manifest is adjacent to the closed IR in the documented
@@ -491,6 +705,8 @@ def unity_vizconcept_compile(
             no_think=no_think,
             precomputed_concept=concept,
             visual_asset_bindings=records,
+            closed_image_ir=closed_ir if image_evidence is not None else None,
+            image_spatial_evidence=image_evidence,
         )
         schema_path = project_root / f"{project_root.name}.schema.json"
         compile_manifest = output / "visual_compile.manifest.json"

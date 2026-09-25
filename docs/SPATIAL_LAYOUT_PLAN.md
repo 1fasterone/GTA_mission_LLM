@@ -1,8 +1,13 @@
 # Slice 6 — Hybrid spatial layout engine
 
 Status: **6.1 implemented as a frozen image-space evidence pass; 6.2
-implemented as a deterministic closed schema-role pass.** The Unity
-world-layout consumer is intentionally not part of 6.1 or 6.2 yet.
+implemented as a deterministic closed schema-role pass; 6.3 implemented as a
+unit-free hybrid fusion sidecar; 6.4 implemented as a coordinate-free
+scene/relation graph sidecar; 6.5 implemented as the validated world-layout
+consumer; 6.6 implemented as the deterministic spatial validation report and
+wired into the main Unity generation pipeline.** Slice 6.7 spatial freeze
+remains the next phase. The Unity world-layout consumer is intentionally not
+part of 6.1 or 6.2.
 
 Slice 6 solves the scattered-scene problem by keeping three authorities
 separate:
@@ -123,6 +128,30 @@ schema-entity binding contracts. The fusion pass must:
 The output is a solved, unit-free region/constraint IR. It is not yet a list
 of Unity transforms.
 
+The local implementation is `src/unity_spatial_fusion.py`. It validates the
+closed Slice-3 inventory/entity matches, revalidates Slice-6.1 evidence,
+requires the Slice-6.2 schema hash and complete role coverage, and emits one
+`spatial-fusion/v1` artifact. Each bound reference carries normalized bbox,
+center, size, area/aspect ratios, layer, surface, facing, and confidence,
+alongside the schema role and gameplay adjacency requirements. Image
+relations are retained only as composition constraints. Missing optional frame
+values receive named centerline defaults with warnings; ambiguous or missing
+required schema matches become explicit abstentions and are never silently
+rebound.
+
+CLI:
+
+```text
+python main.py unity-spatial-fuse \
+  --schema rallyboat.schema.json \
+  --closed-ir closed_image_ir.json \
+  --image-evidence image_spatial_evidence.json \
+  --spatial-roles rallyboat.spatial-roles.json \
+  --output rallyboat.spatial-fusion.json
+```
+
+Focused coverage is in `tests/test_unity_spatial_fusion.py`.
+
 ### 6.4 — Scene and relation graph construction
 
 Reuse the graph-first work described in `docs/SCENE_GRAPH_COMPILER.md`:
@@ -130,6 +159,29 @@ entities and scenes are nodes; gameplay and spatial relationships are closed
 edges. Persist the relation stage before coordinates are realized. Do not
 create parallel `AdjacencyGraph.json` and `AnchorGraph.json` dialects; the
 scene graph and its relation view are the canonical artifacts.
+
+The local implementation is `src/scene_graph.py` and is deliberately
+coordinate-free. It emits one `scene-relation-graph/v1` artifact containing
+project, scene, entity, mission, and objective nodes plus the closed
+`parent_of`, `spawns`, `targets`, `triggers`, `requires`, `near`,
+`on_surface`, `binds`, and `reaches` relations. Objective target edges resolve
+only to declared entities; unresolved targets are named warnings and never
+become invented nodes. Parent and requirement cycles, duplicate endpoints,
+missing scene ancestors, and unresolved edge endpoints are strict errors.
+The graph hash uses the shared `src/ident` substrate, and the writer emits a
+hash-linked manifest plus an optional DOT inspection view.
+
+CLI:
+
+```text
+python main.py unity-scenegraph rallyboat.schema.json \
+  --spatial-roles rallyboat.spatial-roles.json --output rallyboat.scene-graph.json \
+  --dot
+```
+
+Focused coverage is in `tests/test_scene_graph.py`. The main Unity pipeline
+now consumes the in-memory graph before generation and persists the final
+graph beside the generated project.
 
 ### 6.5 — World realization and Unity placement
 
@@ -144,6 +196,38 @@ Authored Scene Compiler transforms remain Tier A and are never repacked by the
 hybrid solver. Water, ground, air, and vertical-surface rules remain owned by
 the existing layout archetypes; 6.5 supplies constraints to them rather than
 duplicating their geometry rules.
+
+The 6.5 implementation is `src/unity_spatial_realization.py`. It
+validates optional measured-footprint input and an optional 6.4 relation graph,
+checks their schema hashes, calls the existing deterministic
+`compute_layout()`/archetype path, verifies that authored Scene Compiler
+transforms survive, and emits a hash-linked world-layout artifact. The output
+records the existing placement contracts (`origin_offset`, `group_radius`,
+`elevation`, `instance_positions`, `instance_yaws`, and `path_points`) rather
+than inventing a parallel transform schema. It consumes image constraints when
+the optional 6.3 artifacts are supplied; those normalized composition
+constraints never become gameplay semantics.
+
+CLI:
+
+```text
+python main.py unity-spatial-realize rallyboat.schema.json \
+  --relation-graph rallyboat.scene-graph.json \
+  --footprints rallyboat.footprints.json \
+  --output rallyboat.world-layout.json \
+  --manifest rallyboat.world-layout.manifest.json
+```
+
+The 6.5 consumer now accepts `--spatial-fusion`. After the existing
+archetype realizes world geometry, normalized composition centers are mapped
+into the realized envelope only for non-authored `scenery` groups. Player,
+route, checkpoint, hazard, navigation, preplaced, and authored Scene Compiler
+groups remain protected by schema/archetype authority. Candidate moves that
+would overlap a realized group are named abstentions. This keeps image
+composition useful without allowing it to rewrite gameplay placement.
+
+Focused coverage is in `tests/test_unity_spatial_realization.py` and
+`tests/test_unity_spatial_pipeline.py`.
 
 ### 6.6 — Spatial validation
 
@@ -161,6 +245,35 @@ Run before generation and again after model-aware footprint realization. Check:
 
 Failures are named `[spatial.strict]` rejections with a remedy. Visual
 uncertainty remains a warning unless it makes a required binding ambiguous.
+
+The 6.6 implementation is `src/unity_spatial_validation.py`. It
+validates schema/role/fusion/world-layout hashes, entity-role coverage, group
+and within-group footprint overlap, realized world bounds, required route
+adjacency, airborne elevation restrictions, and 2-D reachability where the
+archetype exposes that proof domain. It writes a hash-linked
+`spatial-validation/v1` report and never emits or mutates world coordinates.
+
+CLI:
+
+```text
+python main.py unity-spatial-validate \
+  --schema rallyboat.schema.json \
+  --world-layout rallyboat.world-layout.json \
+  --spatial-roles rallyboat.spatial-roles.json \
+  --spatial-fusion rallyboat.spatial-fusion.json \
+  --output rallyboat.spatial-validation.json
+```
+
+The main Unity pipeline runs the validator after the final schema-side
+coverage pass and freezes it again after generator model-aware relayout. The
+generated project receives `<Project>.spatial-roles.json`,
+`<Project>.scene-graph.json`, optional `<Project>.spatial-fusion.json`,
+`<Project>.world-layout.json`, and `<Project>.spatial-validation.json`, each
+with a neighboring manifest. `unity-vizconcept-compile` accepts
+`--image-evidence` to activate the 6.3 path.
+
+Focused coverage is in `tests/test_unity_spatial_validation.py` and
+`tests/test_unity_spatial_pipeline.py`.
 
 ### 6.7 — Spatial freeze
 
