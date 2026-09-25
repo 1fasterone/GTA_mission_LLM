@@ -322,11 +322,15 @@ def _terms(value: Any) -> set[str]:
 
 
 def _entity_score(entity: Any, aliases: list[tuple[str, float]]) -> float:
+    # Spatial/asset binding must follow the entity's declared identity, not
+    # incidental prose that may mention nearby aircraft, ships, or effects.
+    # Descriptions remain useful to the LLM, but letting them score here can
+    # make an aircraft label claim a ship group merely because the concept
+    # describes both in one sentence.
     fields = (
         (getattr(entity, "name", ""), 4.0),
         (getattr(entity, "model_hint", ""), 5.0),
         (getattr(entity, "sketchfab_query", ""), 3.0),
-        (getattr(entity, "description", ""), 1.0),
         (getattr(entity, "kind", ""), 0.5),
     )
     score = 0.0

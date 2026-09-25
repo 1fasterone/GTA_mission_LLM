@@ -41,7 +41,6 @@ def _entity_terms(entity: Any) -> set[str]:
         _terms(getattr(entity, "name", ""))
         | _terms(getattr(entity, "model_hint", ""))
         | _terms(getattr(entity, "sketchfab_query", ""))
-        | _terms(getattr(entity, "description", ""))
     )
 
 

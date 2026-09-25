@@ -237,6 +237,66 @@ def test_slice5_preserves_numeric_identity_for_named_visual_instances():
     assert list(result["bindings"]) == ["Aircraft2"]
 
 
+def test_slice5_does_not_bind_aircraft_to_ship_from_description_overlap():
+    plan = {
+        "closed": {
+            "inventory": {"visible_elements": [
+                {
+                    "label": "aircraft_3",
+                    "category": "vehicle",
+                    "description": "aircraft attacking ships",
+                    "model_hint": "aircraft",
+                },
+                {
+                    "label": "ship_1",
+                    "category": "vehicle",
+                    "description": "ship attacked by aircraft",
+                    "model_hint": "ship",
+                },
+            ]},
+            "entity_matches": [
+                {"reference": "aircraft_3", "inventory_label": "aircraft_3"},
+                {"reference": "ship_1", "inventory_label": "ship_1"},
+            ],
+        },
+        "assets": [
+            {
+                "inventory_label": "aircraft_3",
+                "query": "aircraft",
+                "selection": {"filename": "aircraft.fbx", "source": "kenney"},
+                "catalog_entry": {"filename": "aircraft.fbx"},
+                "source_path": "models/aircraft.fbx",
+            },
+            {
+                "inventory_label": "ship_1",
+                "query": "ship",
+                "selection": {"filename": "ship.fbx", "source": "kenney"},
+                "catalog_entry": {"filename": "ship.fbx"},
+                "source_path": "models/ship.fbx",
+            },
+        ],
+    }
+    schema = SimpleNamespace(entities=[
+        EntitySpec(
+            name="EnemyAircraftGroup",
+            kind="enemy",
+            model_hint="interceptor aircraft",
+            description="Enemy aircraft attack ships below.",
+        ),
+        EntitySpec(
+            name="TargetShips",
+            kind="pickup",
+            model_hint="naval ship",
+            description="Ships are attacked by enemy aircraft.",
+        ),
+    ])
+
+    result = bind_visual_assets(schema, plan)
+
+    assert result["bindings"]["EnemyAircraftGroup"]["inventory_label"] == "aircraft_3"
+    assert result["bindings"]["TargetShips"]["inventory_label"] == "ship_1"
+
+
 def test_resolver_uses_exact_visual_binding_before_catalog_tiers(tmp_path):
     lookups = tmp_path / "lookups"
     (lookups / "unity").mkdir(parents=True)
