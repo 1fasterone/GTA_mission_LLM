@@ -27,6 +27,11 @@ _GENERATED_ENTITY_FIELDS = (
     "elevation",
     "instance_positions",
     "instance_yaws",
+    # The generator deterministically backfills or reconciles runtime
+    # behaviour after spatial preparation.  Behaviour is gameplay/codegen
+    # state, not a spatial constraint, so it must not invalidate a frozen
+    # 6.3 fusion artifact during the final post-generation freeze.
+    "behavior",
 )
 _GENERATED_META_FIELDS = (
     "cover_points",

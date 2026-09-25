@@ -34690,28 +34690,30 @@
         1.6,
         1.8
       ],
-      "category": "vehicle",
-      "curated": false,
-      "description": "rocket base a — vehicle model",
+      "category": "prop",
+      "curated": true,
+      "description": "Kenney space-kit rocket body curated as the unique aerial projectile visual asset",
       "filename": "rocket_baseA.fbx",
       "format": "fbx",
       "game_contexts": [
+        "aerial_combat",
+        "action",
         "any"
       ],
       "generic_score": 0,
       "keywords": [
-        "rocket",
-        "spaceship",
-        "ship",
+        "aerial",
         "missile",
-        "launch",
-        "base",
-        "vehicle"
+        "ordnance",
+        "projectile",
+        "rocket"
       ],
       "kind_hints": [
-        "vehicle"
+        "prop",
+        "weapon",
+        "hazard"
       ],
-      "pack": "kenney_fbx_format",
+      "pack": "kenney_space_kit",
       "relpath": "space-kit/FBX format/rocket_baseA.fbx",
       "root": "Models/FBX format",
       "scale": 1.0,
@@ -39862,22 +39864,30 @@
         13.1
       ],
       "category": "vehicle",
-      "curated": false,
-      "description": "ship large — vehicle model",
+      "curated": true,
+      "description": "Kenney watercraft-kit large ship curated as the unique naval warship visual asset",
       "filename": "ship-large.fbx",
       "format": "fbx",
       "game_contexts": [
+        "aerial_combat",
+        "naval",
         "any"
       ],
       "generic_score": 0,
       "keywords": [
+        "destroyer",
+        "military",
+        "naval",
         "ship",
-        "vehicle"
+        "vessel",
+        "warship",
+        "wwii"
       ],
       "kind_hints": [
-        "vehicle"
+        "vehicle",
+        "boat"
       ],
-      "pack": "kenney_fbx_format",
+      "pack": "kenney_watercraft_kit",
       "relpath": "watercraft-kit/FBX format/ship-large.fbx",
       "root": "Models/FBX format",
       "scale": 1.0,
@@ -86998,7 +87008,7 @@
       "object": 6,
       "obstacle": 25,
       "platform": 2,
-      "prop": 909,
+      "prop": 910,
       "rail": 4,
       "ramp": 4,
       "ship": 250,
@@ -87007,7 +87017,7 @@
       "track": 251,
       "ui": 15,
       "vegetation": 24,
-      "vehicle": 86,
+      "vehicle": 85,
       "weapon": 18
     },
     "curated_catalog": "lookups/unity/kenney_catalog.json",

@@ -1730,6 +1730,16 @@ class UnityPipeline:
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
 
+        # Re-resolve anything that consistency check added before deriving the
+        # spatial identity. Package/version resolution and behavior expansion
+        # are deterministic schema mutations; running them after Slice 6.3
+        # would make the fusion hash stale before the generator consumes it.
+        schema = self.resolver.resolve_schema(schema)
+        manifest_deps = self.resolver.build_manifest_deps(
+            schema, inject_mcp_bridge=self.inject_mcp_bridge
+        )
+        self._ok(f"manifest.json will contain {len(manifest_deps)} packages")
+
         # Final post-schema spatial handoff.  Earlier Step-5 passes may have
         # baked an ordinary layout for playability repair; reset only that
         # generated geometry so the closed sidecars now see the FINAL entity
@@ -1759,13 +1769,6 @@ class UnityPipeline:
             )
         else:
             self._ok(f"Spatial sidecars 6.2–6.6 prepared ({_spatial_status})")
-
-        # Re-resolve anything that consistency check added
-        schema = self.resolver.resolve_schema(schema)
-        manifest_deps = self.resolver.build_manifest_deps(
-            schema, inject_mcp_bridge=self.inject_mcp_bridge
-        )
-        self._ok(f"manifest.json will contain {len(manifest_deps)} packages")
 
         # STEP 6 — generate ───────────────────────────────────────────────────
         self._step(6, "Generator compiles schema -> Unity project folder")

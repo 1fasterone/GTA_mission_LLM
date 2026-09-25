@@ -85,6 +85,13 @@ class TestRoleGraphRestoresTheAvatar:
         assert hero.count == 1
         assert any("R1a" in r for r in s.meta["role_lint"]["repairs"])
 
+    def test_player_prefixed_tag_alias_is_canonicalized(self):
+        s = _schema([EntitySpec(name="ForegroundAircraft", kind="vehicle",
+                                tag="PlayerCraft")])
+        avatar = next(e for e in s.entities if e.name == "ForegroundAircraft")
+        assert avatar.tag == "Player"
+        assert any("R1b" in r for r in s.meta["role_lint"]["repairs"])
+
     def test_nothing_is_invented_when_no_entity_reads_as_the_player(self):
         s = _schema([EntitySpec(name="Trees", kind="prop", count=9)])
         assert not [e for e in s.entities if e.tag == "Player"]

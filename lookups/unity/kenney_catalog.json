@@ -1485,6 +1485,55 @@
       "description": "Victorian monobike — a brass-and-iron single giant-wheel steampunk racing contraption the rider sits inside",
       "generic_score": 0,
       "scale": 0.6
+    },
+    {
+      "filename": "rocket_baseA.fbx",
+      "pack": "kenney_space_kit",
+      "category": "prop",
+      "keywords": [
+        "aerial",
+        "missile",
+        "ordnance",
+        "projectile",
+        "rocket"
+      ],
+      "kind_hints": [
+        "prop",
+        "weapon",
+        "hazard"
+      ],
+      "game_contexts": [
+        "aerial_combat",
+        "action",
+        "any"
+      ],
+      "description": "Kenney space-kit rocket body curated as the unique aerial projectile visual asset",
+      "generic_score": 0
+    },
+    {
+      "filename": "ship-large.fbx",
+      "pack": "kenney_watercraft_kit",
+      "category": "vehicle",
+      "keywords": [
+        "destroyer",
+        "military",
+        "naval",
+        "ship",
+        "vessel",
+        "warship",
+        "wwii"
+      ],
+      "kind_hints": [
+        "vehicle",
+        "boat"
+      ],
+      "game_contexts": [
+        "aerial_combat",
+        "naval",
+        "any"
+      ],
+      "description": "Kenney watercraft-kit large ship curated as the unique naval warship visual asset",
+      "generic_score": 0
     }
   ],
   "_resolver_config": {
