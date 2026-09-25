@@ -32,6 +32,11 @@ _GENERATED_ENTITY_FIELDS = (
     # state, not a spatial constraint, so it must not invalidate a frozen
     # 6.3 fusion artifact during the final post-generation freeze.
     "behavior",
+    # The post-schema asset-query enrichment may add this field while the
+    # generator is resolving models.  It is resolver metadata, not spatial
+    # meaning; including it would make a valid 6.3 fusion stale before the
+    # model-aware 6.5 relayout consumes it.
+    "sketchfab_query",
 )
 _GENERATED_META_FIELDS = (
     "cover_points",
@@ -40,6 +45,12 @@ _GENERATED_META_FIELDS = (
     "spatial_primitive",
     "wiring",
     "entity_model_paths",
+)
+_GENERATED_SCHEMA_FIELDS = (
+    # Generator sanitization and composition can rewrite these codegen-only
+    # collections after 6.3 prepares its fusion artifact.  They do not affect
+    # entity roles, relations, or world placement.
+    "scripts",
 )
 
 
@@ -56,6 +67,8 @@ def semantic_schema_payload(schema: UnitySchema) -> dict[str, Any]:
     # World realization is the authority for that geometry, so the whole
     # mutable world envelope is intentionally outside the sidecar identity.
     payload.pop("world_spec", None)
+    for field in _GENERATED_SCHEMA_FIELDS:
+        payload.pop(field, None)
 
     meta = payload.get("meta")
     if isinstance(meta, dict):

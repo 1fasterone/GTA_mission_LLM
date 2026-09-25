@@ -279,7 +279,9 @@ Focused coverage is in `tests/test_unity_spatial_validation.py` and
 
 ### 6.7 — Spatial freeze
 
-Freeze the complete deterministic inputs and outputs together:
+`src/unity_spatial_freeze.py` implements the accepted-build gate. It refuses
+to overwrite an existing freeze and replays Slice 6.6 before writing the
+complete deterministic inputs and outputs together:
 
 - image evidence hash and manifest;
 - closed Concept/inventory lineage;
@@ -289,10 +291,29 @@ Freeze the complete deterministic inputs and outputs together:
 - measured footprints and transforms;
 - spatial validation report.
 
-The freeze is a build sidecar, not a new schema authority. Re-running with
-the same frozen inputs must reproduce the same scene graph and transforms;
-changing the board, Concept, asset catalog, or config creates a new lineage
-instead of mutating an old freeze.
+CLI:
+
+```text
+python main.py unity-spatial-freeze \
+  --project-root output/unity/Build/Game \
+  --source-image F:/Downloads/plane.png \
+  --reasoning-manifest output/visual_reasoning/run/reasoning.json \
+  --inventory output/visual_reasoning/run/visual_inventory.json \
+  --concept output/visual_reasoning/run/Concept.txt \
+  --closed-ir output/visual_reasoning/run/closed_image_ir.json \
+  --reconciliation-manifest output/visual_reasoning/run/reconciliation.json \
+  --image-evidence output/visual_reasoning/run/image_spatial_evidence.json \
+  --image-evidence-manifest output/visual_reasoning/run/image_spatial_evidence.manifest.json \
+  --asset-fulfilment output/visual_reasoning/run/asset_fulfilment.json \
+  --asset-manifest output/visual_reasoning/run/asset_fulfilment.manifest.json \
+  --compile-manifest output/unity/Build/visual_compile.manifest.json
+```
+
+The freeze is a build sidecar, not a new schema authority. It contains a
+content-hash lineage plus a transform snapshot, and it will not accept a
+rejected asset result, stale neighboring manifest, or non-passing 6.6 report.
+Changing the board, Concept, asset catalog, or config therefore produces a
+new lineage instead of mutating an old freeze.
 
 ## Why this ordering produces the best output
 

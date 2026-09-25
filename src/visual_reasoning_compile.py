@@ -304,20 +304,33 @@ def load_visual_compile_plan(*, closed_ir: Path, asset_fulfilment: Path,
 
 
 def _terms(value: Any) -> set[str]:
+    raw = str(value or "")
     result: set[str] = set()
-    for token in tokenize(str(value or "")):
+    for token in tokenize(raw):
         token = re.sub(r"[^a-z0-9]", "", token)
         if len(token) > 1 and token not in _STOPWORDS:
             result.add(token)
+    # Catalog tokenization intentionally drops numeric fragments, but visual
+    # labels use them as instance identity (aircraft_2 != aircraft_4).  Keep a
+    # compact alphanumeric form only when digits are present so CamelCase and
+    # underscore spellings compare deterministically without changing ordinary
+    # noun scoring.
+    compact = re.sub(r"[^a-z0-9]", "", raw.casefold())
+    if len(compact) > 1 and any(char.isdigit() for char in compact):
+        result.add(compact)
     return result
 
 
 def _entity_score(entity: Any, aliases: list[tuple[str, float]]) -> float:
+    # Spatial/asset binding must follow the entity's declared identity, not
+    # incidental prose that may mention nearby aircraft, ships, or effects.
+    # Descriptions remain useful to the LLM, but letting them score here can
+    # make an aircraft label claim a ship group merely because the concept
+    # describes both in one sentence.
     fields = (
         (getattr(entity, "name", ""), 4.0),
         (getattr(entity, "model_hint", ""), 5.0),
         (getattr(entity, "sketchfab_query", ""), 3.0),
-        (getattr(entity, "description", ""), 1.0),
         (getattr(entity, "kind", ""), 0.5),
     )
     score = 0.0
@@ -371,16 +384,28 @@ def bind_visual_assets(schema: Any, plan: dict[str, Any]) -> dict[str, Any]:
         aliases.append((str(element.get("model_hint") or ""), 3.0))
         aliases.append((str(asset.get("query") or ""), 2.0))
 
-        scored = sorted(
-            (
-                _entity_score(entity, aliases),
-                str(getattr(entity, "name", "")),
-                entity,
+        def score_entities(candidates: list[Any]) -> list[tuple[float, str, Any]]:
+            scored = sorted(
+                (
+                    _entity_score(entity, aliases),
+                    str(getattr(entity, "name", "")),
+                    entity,
+                )
+                for entity in candidates
             )
-            for entity in entities
+            return [row for row in scored if row[0] > 0.0]
+
+        scored = score_entities([
+            entity for entity in entities
             if str(getattr(entity, "name", "")) not in used_entities
-        )
-        scored = [row for row in scored if row[0] > 0.0]
+        ])
+        # Repeated image nouns can be instances of one schema group (for
+        # example aircraft_2..aircraft_5 in an EnemyAircraftGroup).  Once all
+        # distinct matching groups have been consumed, permit reuse only when
+        # the all-entity score still has one unique best target.  The exact
+        # Slice-4 selection must also agree with the existing group binding.
+        if not scored:
+            scored = score_entities(entities)
         if not scored:
             raise VisualReasoningCompilerError(
                 f"visual asset {label!r} has no unique schema entity binding"
@@ -401,7 +426,16 @@ def bind_visual_assets(schema: Any, plan: dict[str, Any]) -> dict[str, Any]:
             "catalog_entry": dict(asset["catalog_entry"]),
             "source_path": asset["source_path"],
         }
-        bindings[entity_name] = binding
+        existing = bindings.get(entity_name)
+        if existing is not None:
+            if existing["selection"] != binding["selection"]:
+                raise VisualReasoningCompilerError(
+                    f"visual assets {label!r} and "
+                    f"{existing['inventory_label']!r} require conflicting "
+                    f"selections for schema entity {entity_name!r}"
+                )
+        else:
+            bindings[entity_name] = binding
         rows.append({
             "inventory_label": label,
             "entity_name": entity_name,

@@ -465,6 +465,107 @@ def unity_spatial_validate(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-spatial-freeze")
+def unity_spatial_freeze(
+    project_root: Path = typer.Option(
+        ..., "--project-root", help="Accepted generated Unity project directory"
+    ),
+    source_image: Path = typer.Option(
+        ..., "--source-image", help="Original image supplied to the E2E run"
+    ),
+    reasoning_manifest: Path = typer.Option(
+        ..., "--reasoning-manifest", help="Slice-2 image reasoning manifest"
+    ),
+    inventory_file: Path = typer.Option(
+        ..., "--inventory", help="Slice-2 visual inventory JSON"
+    ),
+    concept_file: Path = typer.Option(
+        ..., "--concept", help="Slice-2 image-derived Concept.txt"
+    ),
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    reconciliation_manifest: Path = typer.Option(
+        ..., "--reconciliation-manifest", help="Slice-3 reconciliation manifest"
+    ),
+    image_evidence: Path = typer.Option(
+        ..., "--image-evidence", help="Slice-6.1 image spatial evidence JSON"
+    ),
+    image_evidence_manifest: Path = typer.Option(
+        ..., "--image-evidence-manifest", help="Slice-6.1 evidence manifest"
+    ),
+    asset_fulfilment: Path = typer.Option(
+        ..., "--asset-fulfilment", help="Slice-4 fulfilled asset JSON"
+    ),
+    asset_manifest: Path = typer.Option(
+        ..., "--asset-manifest", help="Slice-4 asset fulfilment manifest"
+    ),
+    compile_manifest: Path = typer.Option(
+        ..., "--compile-manifest", help="Slice-5 visual compile manifest"
+    ),
+    config: Optional[Path] = typer.Option(
+        Path("config.yaml"), "--config", help="Config snapshot to hash"
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Slice-6.7 freeze JSON destination"
+    ),
+    manifest: Optional[Path] = typer.Option(
+        None, "--manifest", help="Slice-6.7 provenance manifest destination"
+    ),
+) -> None:
+    """Freeze the complete lineage of an accepted deterministic spatial build."""
+    from src.unity_spatial_freeze import SpatialFreezeError, freeze_spatial_build
+
+    required = (
+        ("project root", project_root),
+        ("source image", source_image),
+        ("reasoning manifest", reasoning_manifest),
+        ("inventory", inventory_file),
+        ("Concept", concept_file),
+        ("closed IR", closed_ir),
+        ("reconciliation manifest", reconciliation_manifest),
+        ("image evidence", image_evidence),
+        ("image evidence manifest", image_evidence_manifest),
+        ("asset fulfilment", asset_fulfilment),
+        ("asset manifest", asset_manifest),
+        ("compile manifest", compile_manifest),
+    )
+    for label, path in required:
+        if not path.exists():
+            console.print(f"[red]Spatial-freeze {label} not found:[/] {path}")
+            raise typer.Exit(2)
+    if config is not None and not config.is_file():
+        console.print(f"[red]Spatial-freeze config not found:[/] {config}")
+        raise typer.Exit(2)
+    try:
+        path = freeze_spatial_build(
+            project_root=project_root,
+            source_image=source_image,
+            reasoning_manifest=reasoning_manifest,
+            inventory=inventory_file,
+            concept=concept_file,
+            closed_ir=closed_ir,
+            reconciliation_manifest=reconciliation_manifest,
+            image_evidence=image_evidence,
+            image_evidence_manifest=image_evidence_manifest,
+            asset_fulfilment=asset_fulfilment,
+            asset_manifest=asset_manifest,
+            compile_manifest=compile_manifest,
+            config=config,
+            output=output,
+            manifest=manifest,
+        )
+        freeze_manifest = manifest or path.with_name(path.stem + ".manifest.json")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        console.print(f"[green]Spatial freeze written[/] {path}")
+        console.print(f"[green]Slice-6.7 manifest written[/] {freeze_manifest}")
+        console.print(f"[green]Lineage hash:[/] {data.get('lineage_sha256')}")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError,
+            SpatialFreezeError) as exc:
+        console.print(f"[red]Spatial-freeze error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-vizconcept-reconcile")
 def unity_vizconcept_reconcile(
     inventory_file: Path = typer.Option(

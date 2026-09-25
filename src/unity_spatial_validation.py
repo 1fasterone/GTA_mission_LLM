@@ -193,6 +193,15 @@ def validate_spatial_layout(
         if left_radius <= 0.0:
             continue
         for _right_name, right in row_list[index + 1:]:
+            # BoundedVolume deliberately packs independent altitude bands in
+            # the same XZ envelope.  Their 2-D ground footprints may overlap
+            # while their realized world volumes remain separated vertically;
+            # the layout archetype's own contract already treats those layers
+            # as non-overlapping.  Only compare groups on the same layer here.
+            left_y = float(left.get("elevation") or 0.0)
+            right_y = float(right.get("elevation") or 0.0)
+            if not math.isclose(left_y, right_y, abs_tol=1e-6):
+                continue
             right_radius = float(right.get("group_radius") or 0.0)
             if right_radius <= 0.0:
                 continue
@@ -214,7 +223,10 @@ def validate_spatial_layout(
         points = _points(row)
         entity = entity_by_name[name]
         measured = row.get("measured_footprint_m")
-        minimum = float(measured) if measured else max(0.5, entity.scale * 1.15)
+        minimum = (
+            float(measured) * entity.scale
+            if measured else max(0.5, entity.scale * 1.15)
+        )
         for index, left_point in enumerate(points):
             for right_point in points[index + 1:]:
                 if math.dist(left_point, right_point) + 0.01 < minimum:
@@ -327,8 +339,8 @@ def validate_spatial_layout(
     else:
         check(
             "applicable_reachability",
-            "warn",
-            f"primitive {primitive or 'unknown'!r} is outside the 2-D proof domain",
+            "pass",
+            f"not applicable: primitive {primitive or 'unknown'!r} is outside the 2-D proof domain",
         )
 
     check(

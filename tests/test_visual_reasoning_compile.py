@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -171,6 +172,129 @@ def test_slice5_rejects_ambiguous_entity_binding(tmp_path):
     ])
     with pytest.raises(VisualReasoningCompilerError, match="ambiguous"):
         bind_visual_assets(schema, plan)
+
+
+def test_slice5_reuses_one_group_for_repeated_visual_nouns(tmp_path):
+    closed, fulfilment, manifest, lookups, _ = _fixture_artifacts(tmp_path)
+    plan = load_visual_compile_plan(
+        closed_ir=closed,
+        asset_fulfilment=fulfilment,
+        asset_manifest=manifest,
+        lookups_dir=str(lookups),
+    )
+    plan["closed"]["inventory"]["visible_elements"].append({
+        "label": "Wooden Crate 2",
+        "category": "prop",
+        "description": "a second wooden crate",
+        "model_hint": "wooden crate",
+    })
+    plan["closed"]["entity_matches"].append({
+        "reference": "Wooden Crate 2",
+        "inventory_label": "Wooden Crate 2",
+    })
+    repeated_asset = copy.deepcopy(plan["assets"][0])
+    repeated_asset["inventory_label"] = "Wooden Crate 2"
+    plan["assets"].append(repeated_asset)
+
+    schema = SimpleNamespace(entities=[EntitySpec(
+        name="CrateGroup", kind="prop", model_hint="wooden crate"
+    )])
+    result = bind_visual_assets(schema, plan)
+
+    assert list(result["bindings"]) == ["CrateGroup"]
+    assert [row["inventory_label"] for row in plan["binding_report"]["bindings"]] == [
+        "Wooden Crate", "Wooden Crate 2",
+    ]
+
+
+def test_slice5_preserves_numeric_identity_for_named_visual_instances():
+    label = "aircraft_2"
+    plan = {
+        "closed": {
+            "inventory": {"visible_elements": [{
+                "label": label,
+                "category": "vehicle",
+                "description": "a fighter aircraft",
+                "model_hint": "fighter aircraft",
+            }]},
+            "entity_matches": [{"reference": label, "inventory_label": label}],
+        },
+        "assets": [{
+            "inventory_label": label,
+            "query": "fighter aircraft",
+            "selection": {"filename": "fighter.fbx", "source": "kenney"},
+            "catalog_entry": {"filename": "fighter.fbx"},
+            "source_path": "models/fighter.fbx",
+        }],
+    }
+    schema = SimpleNamespace(entities=[
+        EntitySpec(name="Aircraft2", kind="enemy", model_hint="fighter aircraft"),
+        EntitySpec(name="Aircraft4", kind="enemy", model_hint="fighter aircraft"),
+    ])
+
+    result = bind_visual_assets(schema, plan)
+
+    assert list(result["bindings"]) == ["Aircraft2"]
+
+
+def test_slice5_does_not_bind_aircraft_to_ship_from_description_overlap():
+    plan = {
+        "closed": {
+            "inventory": {"visible_elements": [
+                {
+                    "label": "aircraft_3",
+                    "category": "vehicle",
+                    "description": "aircraft attacking ships",
+                    "model_hint": "aircraft",
+                },
+                {
+                    "label": "ship_1",
+                    "category": "vehicle",
+                    "description": "ship attacked by aircraft",
+                    "model_hint": "ship",
+                },
+            ]},
+            "entity_matches": [
+                {"reference": "aircraft_3", "inventory_label": "aircraft_3"},
+                {"reference": "ship_1", "inventory_label": "ship_1"},
+            ],
+        },
+        "assets": [
+            {
+                "inventory_label": "aircraft_3",
+                "query": "aircraft",
+                "selection": {"filename": "aircraft.fbx", "source": "kenney"},
+                "catalog_entry": {"filename": "aircraft.fbx"},
+                "source_path": "models/aircraft.fbx",
+            },
+            {
+                "inventory_label": "ship_1",
+                "query": "ship",
+                "selection": {"filename": "ship.fbx", "source": "kenney"},
+                "catalog_entry": {"filename": "ship.fbx"},
+                "source_path": "models/ship.fbx",
+            },
+        ],
+    }
+    schema = SimpleNamespace(entities=[
+        EntitySpec(
+            name="EnemyAircraftGroup",
+            kind="enemy",
+            model_hint="interceptor aircraft",
+            description="Enemy aircraft attack ships below.",
+        ),
+        EntitySpec(
+            name="TargetShips",
+            kind="pickup",
+            model_hint="naval ship",
+            description="Ships are attacked by enemy aircraft.",
+        ),
+    ])
+
+    result = bind_visual_assets(schema, plan)
+
+    assert result["bindings"]["EnemyAircraftGroup"]["inventory_label"] == "aircraft_3"
+    assert result["bindings"]["TargetShips"]["inventory_label"] == "ship_1"
 
 
 def test_resolver_uses_exact_visual_binding_before_catalog_tiers(tmp_path):

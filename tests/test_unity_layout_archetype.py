@@ -37,6 +37,7 @@ from src.unity_layout_archetype import (
     is_formation_entity,
     is_hazard_entity,
     pick_exit_platform,
+    player_rank,
     select_archetype,
     spatial_relationship_of,
     surface_height,
@@ -839,6 +840,11 @@ class TestLiveLLMSchemaRoles:
 # ── 2b. BoundedVolume ────────────────────────────────────────────────────────
 
 class TestBoundedVolume:
+    def test_compact_player_compound_name_is_an_avatar_signal(self):
+        entity = EntitySpec(name="PlayerCraft", kind="pickup", tag="Collectible")
+
+        assert player_rank(entity) == 1
+
     def test_volume_height_comes_from_the_schema(self):
         h, why, defaulted = volume_height(_glider_schema())
         assert defaulted is False
