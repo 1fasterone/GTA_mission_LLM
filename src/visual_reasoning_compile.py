@@ -371,16 +371,28 @@ def bind_visual_assets(schema: Any, plan: dict[str, Any]) -> dict[str, Any]:
         aliases.append((str(element.get("model_hint") or ""), 3.0))
         aliases.append((str(asset.get("query") or ""), 2.0))
 
-        scored = sorted(
-            (
-                _entity_score(entity, aliases),
-                str(getattr(entity, "name", "")),
-                entity,
+        def score_entities(candidates: list[Any]) -> list[tuple[float, str, Any]]:
+            scored = sorted(
+                (
+                    _entity_score(entity, aliases),
+                    str(getattr(entity, "name", "")),
+                    entity,
+                )
+                for entity in candidates
             )
-            for entity in entities
+            return [row for row in scored if row[0] > 0.0]
+
+        scored = score_entities([
+            entity for entity in entities
             if str(getattr(entity, "name", "")) not in used_entities
-        )
-        scored = [row for row in scored if row[0] > 0.0]
+        ])
+        # Repeated image nouns can be instances of one schema group (for
+        # example aircraft_2..aircraft_5 in an EnemyAircraftGroup).  Once all
+        # distinct matching groups have been consumed, permit reuse only when
+        # the all-entity score still has one unique best target.  The exact
+        # Slice-4 selection must also agree with the existing group binding.
+        if not scored:
+            scored = score_entities(entities)
         if not scored:
             raise VisualReasoningCompilerError(
                 f"visual asset {label!r} has no unique schema entity binding"
@@ -401,7 +413,16 @@ def bind_visual_assets(schema: Any, plan: dict[str, Any]) -> dict[str, Any]:
             "catalog_entry": dict(asset["catalog_entry"]),
             "source_path": asset["source_path"],
         }
-        bindings[entity_name] = binding
+        existing = bindings.get(entity_name)
+        if existing is not None:
+            if existing["selection"] != binding["selection"]:
+                raise VisualReasoningCompilerError(
+                    f"visual assets {label!r} and "
+                    f"{existing['inventory_label']!r} require conflicting "
+                    f"selections for schema entity {entity_name!r}"
+                )
+        else:
+            bindings[entity_name] = binding
         rows.append({
             "inventory_label": label,
             "entity_name": entity_name,

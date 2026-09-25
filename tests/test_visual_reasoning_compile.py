@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -171,6 +172,39 @@ def test_slice5_rejects_ambiguous_entity_binding(tmp_path):
     ])
     with pytest.raises(VisualReasoningCompilerError, match="ambiguous"):
         bind_visual_assets(schema, plan)
+
+
+def test_slice5_reuses_one_group_for_repeated_visual_nouns(tmp_path):
+    closed, fulfilment, manifest, lookups, _ = _fixture_artifacts(tmp_path)
+    plan = load_visual_compile_plan(
+        closed_ir=closed,
+        asset_fulfilment=fulfilment,
+        asset_manifest=manifest,
+        lookups_dir=str(lookups),
+    )
+    plan["closed"]["inventory"]["visible_elements"].append({
+        "label": "Wooden Crate 2",
+        "category": "prop",
+        "description": "a second wooden crate",
+        "model_hint": "wooden crate",
+    })
+    plan["closed"]["entity_matches"].append({
+        "reference": "Wooden Crate 2",
+        "inventory_label": "Wooden Crate 2",
+    })
+    repeated_asset = copy.deepcopy(plan["assets"][0])
+    repeated_asset["inventory_label"] = "Wooden Crate 2"
+    plan["assets"].append(repeated_asset)
+
+    schema = SimpleNamespace(entities=[EntitySpec(
+        name="CrateGroup", kind="prop", model_hint="wooden crate"
+    )])
+    result = bind_visual_assets(schema, plan)
+
+    assert list(result["bindings"]) == ["CrateGroup"]
+    assert [row["inventory_label"] for row in plan["binding_report"]["bindings"]] == [
+        "Wooden Crate", "Wooden Crate 2",
+    ]
 
 
 def test_resolver_uses_exact_visual_binding_before_catalog_tiers(tmp_path):
