@@ -155,8 +155,9 @@ def test_prompt_is_image_only_with_closed_label_whitelist() -> None:
     assert "SUPPLIED VISIBLE LABELS:" in prompt
     assert "- Player Boat" in prompt
     assert "metres" not in prompt
-    assert "not emit any other anchor" in prompt
+    assert "Do not emit any other anchor" in prompt
     assert "x + w <= 1 and y + h <= 1" in prompt
+    assert "do not close the JSON object until every supplied label is present" in prompt
 
 
 def test_spatial_response_is_canonical_and_strict() -> None:

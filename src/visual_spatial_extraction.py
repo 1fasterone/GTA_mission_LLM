@@ -110,8 +110,10 @@ keys and no others:
 }}
 
 Rules:
-- Emit exactly one anchor for every supplied label, including UI labels. Do
-  not emit any other anchor. A UI label can use surface "unknown".
+- Count the supplied labels before writing the answer. Emit exactly one
+  complete anchor object for every supplied label, including UI labels, and
+  do not close the JSON object until every supplied label is present. Do not
+  emit any other anchor. A UI label can use surface "unknown".
 - Coordinates are normalized image coordinates with origin at the top-left.
   Every bbox must have x, y, w, h in [0, 1], positive w/h, and remain inside
   the image. Before answering, check x + w <= 1 and y + h <= 1 for every box;
@@ -129,6 +131,9 @@ Rules:
 - A cluster contains two or more supplied labels and has no invented name.
   Do not use clusters to imply gameplay grouping.
 - Use [] for an empty list. Confidence is a number from 0 through 1.
+- Before finishing, verify that the response is valid JSON, every anchor has
+  exactly the listed fields, and the anchors array contains every supplied
+  label exactly once.
 
 SUPPLIED VISIBLE LABELS:
 {label_lines}
