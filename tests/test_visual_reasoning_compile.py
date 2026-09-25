@@ -207,6 +207,36 @@ def test_slice5_reuses_one_group_for_repeated_visual_nouns(tmp_path):
     ]
 
 
+def test_slice5_preserves_numeric_identity_for_named_visual_instances():
+    label = "aircraft_2"
+    plan = {
+        "closed": {
+            "inventory": {"visible_elements": [{
+                "label": label,
+                "category": "vehicle",
+                "description": "a fighter aircraft",
+                "model_hint": "fighter aircraft",
+            }]},
+            "entity_matches": [{"reference": label, "inventory_label": label}],
+        },
+        "assets": [{
+            "inventory_label": label,
+            "query": "fighter aircraft",
+            "selection": {"filename": "fighter.fbx", "source": "kenney"},
+            "catalog_entry": {"filename": "fighter.fbx"},
+            "source_path": "models/fighter.fbx",
+        }],
+    }
+    schema = SimpleNamespace(entities=[
+        EntitySpec(name="Aircraft2", kind="enemy", model_hint="fighter aircraft"),
+        EntitySpec(name="Aircraft4", kind="enemy", model_hint="fighter aircraft"),
+    ])
+
+    result = bind_visual_assets(schema, plan)
+
+    assert list(result["bindings"]) == ["Aircraft2"]
+
+
 def test_resolver_uses_exact_visual_binding_before_catalog_tiers(tmp_path):
     lookups = tmp_path / "lookups"
     (lookups / "unity").mkdir(parents=True)

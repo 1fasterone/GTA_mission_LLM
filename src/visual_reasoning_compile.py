@@ -304,11 +304,20 @@ def load_visual_compile_plan(*, closed_ir: Path, asset_fulfilment: Path,
 
 
 def _terms(value: Any) -> set[str]:
+    raw = str(value or "")
     result: set[str] = set()
-    for token in tokenize(str(value or "")):
+    for token in tokenize(raw):
         token = re.sub(r"[^a-z0-9]", "", token)
         if len(token) > 1 and token not in _STOPWORDS:
             result.add(token)
+    # Catalog tokenization intentionally drops numeric fragments, but visual
+    # labels use them as instance identity (aircraft_2 != aircraft_4).  Keep a
+    # compact alphanumeric form only when digits are present so CamelCase and
+    # underscore spellings compare deterministically without changing ordinary
+    # noun scoring.
+    compact = re.sub(r"[^a-z0-9]", "", raw.casefold())
+    if len(compact) > 1 and any(char.isdigit() for char in compact):
+        result.add(compact)
     return result
 
 

@@ -24,11 +24,16 @@ _GENERIC = frozenset({
 
 
 def _terms(value: Any) -> set[str]:
-    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", str(value or ""))
-    return {
+    raw = str(value or "")
+    text = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", raw)
+    result = {
         token for token in tokenize(text)
         if len(token) > 1 and token not in _GENERIC
     }
+    compact = re.sub(r"[^a-z0-9]", "", raw.casefold())
+    if len(compact) > 1 and any(char.isdigit() for char in compact):
+        result.add(compact)
+    return result
 
 
 def _entity_terms(entity: Any) -> set[str]:
