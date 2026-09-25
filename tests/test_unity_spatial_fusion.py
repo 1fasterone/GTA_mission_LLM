@@ -15,6 +15,7 @@ from src.unity_spatial_fusion import (
     fuse_spatial_evidence,
 )
 from src.unity_spatial_roles import write_spatial_roles
+from src.unity_visual_bindings import bind_visual_assets
 from src.visual_reasoning_compiler import sha256_bytes, sha256_file
 from src.visual_reasoning_reconcile import CLOSED_FORMAT
 from src.visual_spatial_extraction import (
@@ -282,3 +283,40 @@ def test_fusion_rejects_changed_evidence_bytes(tmp_path: Path) -> None:
             output=tmp_path / "fusion.json",
             manifest=tmp_path / "fusion.manifest.json",
         )
+
+
+def test_visual_binding_reuses_one_unique_schema_group_for_repeated_labels() -> None:
+    schema = UnitySchema(
+        project_name="PlaneCombat",
+        company_name="Test",
+        description="aircraft group",
+        game_type="3D",
+        platform="pc",
+        render_pipeline="URP",
+        scenes=["Main"],
+        entities=[EntitySpec(
+            name="EnemyAircraftGroup",
+            kind="enemy",
+            model_hint="aircraft",
+            placement="scatter",
+            count=4,
+        )],
+    )
+    records = [
+        {
+            "inventory_label": label,
+            "element": {
+                "label": label,
+                "category": "vehicle",
+                "model_hint": "aircraft",
+            },
+            "query": "aircraft",
+            "selection": {"_spatial_label": label},
+        }
+        for label in ("aircraft_1", "aircraft_2", "aircraft_3", "aircraft_4")
+    ]
+
+    result = bind_visual_assets(schema, records)
+
+    assert list(result) == ["EnemyAircraftGroup"]
+    assert result["EnemyAircraftGroup"] == {"_spatial_label": "aircraft_1"}

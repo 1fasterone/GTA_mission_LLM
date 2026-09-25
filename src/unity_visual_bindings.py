@@ -81,27 +81,39 @@ def bind_visual_assets(schema: Any,
             failures.append("fulfilled visual record has no inventory_label")
             continue
         target = _visual_terms(record)
-        candidates: list[tuple[int, int, str, Any]] = []
-        for entity in entities:
-            name = str(entity.name)
-            if name in used_entities:
-                continue
-            overlap = target & _entity_terms(entity)
-            if not overlap:
-                continue
-            exact = int(_terms(name) == _terms(label))
-            # Exact names dominate; otherwise shared model nouns must carry the
-            # match.  Description-only overlaps are intentionally weak because
-            # the Concept can mention many nearby objects.
-            name_overlap = len(_terms(name) & target)
-            hint_overlap = len(
-                (_terms(getattr(entity, "model_hint", ""))
-                 | _terms(getattr(entity, "sketchfab_query", ""))) & target
-            )
-            score = exact * 100 + name_overlap * 4 + hint_overlap * 3 + len(overlap)
-            if score > 0:
-                candidates.append((score, exact, name, entity))
-        candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))
+        def score_entities(candidate_entities: list[Any]) -> list[tuple[int, int, str, Any]]:
+            candidates: list[tuple[int, int, str, Any]] = []
+            for entity in candidate_entities:
+                name = str(entity.name)
+                overlap = target & _entity_terms(entity)
+                if not overlap:
+                    continue
+                exact = int(_terms(name) == _terms(label))
+                # Exact names dominate; otherwise shared model nouns must carry
+                # the match.  Description-only overlaps are intentionally weak
+                # because the Concept can mention many nearby objects.
+                name_overlap = len(_terms(name) & target)
+                hint_overlap = len(
+                    (_terms(getattr(entity, "model_hint", ""))
+                     | _terms(getattr(entity, "sketchfab_query", ""))) & target
+                )
+                score = exact * 100 + name_overlap * 4 + hint_overlap * 3 + len(overlap)
+                if score > 0:
+                    candidates.append((score, exact, name, entity))
+            candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))
+            return candidates
+
+        candidates = score_entities([
+            entity for entity in entities
+            if str(entity.name) not in used_entities
+        ])
+        # Repeated image nouns can be instances of one schema group (for
+        # example aircraft_2..aircraft_5 in an EnemyAircraftGroup).  Once all
+        # distinct matching groups have been consumed, permit reuse only when
+        # the all-entity score still has one unique best target.  This keeps
+        # ambiguous same-kind groups and unrelated weak matches as abstentions.
+        if not candidates:
+            candidates = score_entities(entities)
         if not candidates:
             failures.append(f"{label!r} has no unique schema entity match")
             continue
@@ -114,7 +126,11 @@ def bind_visual_assets(schema: Any,
             )
             continue
         used_entities.add(best[2])
-        bindings[best[2]] = dict(record.get("selection") or {})
+        # Keep the first representative for a reused schema group.  The
+        # fusion layer may receive several visible instances for one group;
+        # replacing the first label with a later one would make the result
+        # depend on incidental record ordering without improving coverage.
+        bindings.setdefault(best[2], dict(record.get("selection") or {}))
 
     if failures:
         raise VisualReasoningCompilerError(
