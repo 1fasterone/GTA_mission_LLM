@@ -78,6 +78,42 @@ def test_validation_passes_realized_route_layout() -> None:
     }
 
 
+def test_validation_allows_separate_volume_layers_to_share_xz_footprints() -> None:
+    source = UnitySchema(
+        project_name="VolumeValidation",
+        company_name="Test",
+        description="An aircraft combat volume.",
+        game_type="3D",
+        platform="pc",
+        render_pipeline="URP",
+        locomotion="fly",
+        scenes=["Main"],
+        entities=[
+            EntitySpec(name="PlayerAircraft", kind="vehicle", tag="Player"),
+            EntitySpec(name="EnemyAircraft", kind="enemy", placement="scatter"),
+        ],
+    )
+    roles = derive_spatial_roles(source)
+    realized = realize_spatial_layout(source.model_copy(deep=True))
+    rows = realized["layout"]["entities"]
+    for row, elevation in zip(rows, (40.0, 80.0)):
+        row["origin_offset"] = [0.0, 0.0]
+        row["group_radius"] = 10.0
+        row["elevation"] = elevation
+        row["instance_positions"] = [[0.0, elevation, 0.0]]
+
+    report = validate_spatial_layout(
+        source,
+        world_layout=realized,
+        spatial_roles=roles,
+    )
+
+    group_check = next(
+        check for check in report["checks"] if check["check"] == "group_footprints"
+    )
+    assert group_check["status"] == "pass"
+
+
 def test_validation_rejects_out_of_bounds_position() -> None:
     source = _schema()
     roles = derive_spatial_roles(source)
