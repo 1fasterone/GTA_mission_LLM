@@ -114,7 +114,9 @@ Rules:
   not emit any other anchor. A UI label can use surface "unknown".
 - Coordinates are normalized image coordinates with origin at the top-left.
   Every bbox must have x, y, w, h in [0, 1], positive w/h, and remain inside
-  the image. A broad environment may use a broad box.
+  the image. Before answering, check x + w <= 1 and y + h <= 1 for every box;
+  never emit a broad region whose width or height overflows the image. A broad
+  environment may use a broad box that ends exactly at the image boundary.
 - horizon_y and vanishing_x are normalized nullable estimates. Use null when
   not visible or not meaningful.
 - Use only these values: layer = foreground | midground | background | unknown;
