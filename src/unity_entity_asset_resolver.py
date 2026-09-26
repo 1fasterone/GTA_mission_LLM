@@ -40,6 +40,7 @@ from typing import Any, Optional
 from .ident import fhash
 from .unity_asset_catalog import load_catalog, tokenize
 from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
+from .unity_identity_archetypes import IdentityResolution, resolve_identity
 # One vocabulary decides what a group IS on a board, so the pass that LAYS IT
 # OUT as a panel and the pass that BUILDS it agree. See the UISurface roles
 # section of src/unity_layout_archetype.py.
@@ -358,7 +359,8 @@ def _score(entry: dict, query_weights: dict[str, float], kind: str) -> float:
     return score + entry.get("generic_score", 0) / 50.0
 
 
-def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
+def _query_weights(entity, scene_words: set[str],
+                   identity: Optional[IdentityResolution] = None) -> dict[str, float]:
     """Token → weight for one entity. model_hint and the concept-translated
     sketchfab_query count double, the scene description barely at all (it only
     breaks ties toward on-theme assets)."""
@@ -382,6 +384,16 @@ def _query_weights(entity, scene_words: set[str]) -> dict[str, float]:
     for t in tokenize(getattr(entity, "sketchfab_query", "") or ""):
         if t not in _STOPWORDS and len(t) > 1:
             weights[t] = max(weights.get(t, 0.0), 2.0)
+    # Identity vocabulary is semantic glue, not a replacement for the noun.
+    # Keep it below an explicit model_hint but above scene context: a shallow
+    # entity such as "Unit" in open water should still ask for boat identity
+    # terms, while an explicit "speedboat" hint remains the strongest signal.
+    if (identity is not None and identity.archetype is not None
+            and not identity.rule.startswith("generic_")):
+        for identity_token in identity.query_tokens:
+            for t in tokenize(identity_token):
+                if t not in _STOPWORDS and len(t) > 1:
+                    weights[t] = max(weights.get(t, 0.0), 1.25)
     # Style adjectives never qualify a match — cap to scene-description
     # weight regardless of where the token came from, and do it BEFORE
     # plural bridging so a style word can't smuggle in a strong variant.
@@ -815,6 +827,22 @@ def resolve_entity_assets(schema,
     for e in schema.entities:
         kind = (e.kind or "prop").lower()
         hint = (getattr(e, "model_hint", "") or "").strip().lower()
+        identity = resolve_identity(
+            name=e.name,
+            kind=kind,
+            model_hint=hint,
+            context=schema.description or "",
+            genre=genre,
+            lookups_dir=str(lookups_dir),
+        )
+        identity_meta = getattr(schema, "meta", None)
+        if isinstance(identity_meta, dict) and identity.name:
+            identity_meta.setdefault("identity_archetypes", {})[e.name] = identity.as_dict()
+            _log.info(
+                "[identity] entity '%s' → %s (%s; matched=%s)",
+                e.name, identity.name, identity.rule,
+                ", ".join(identity.matched_terms) or "kind",
+            )
 
         # ── Tier A: authored model (Scene Compiler) ──────────────────────────
         # The author opened the model, looked at it, and put it there. Nothing
@@ -900,7 +928,7 @@ def resolve_entity_assets(schema,
             continue
 
         # ── Tier 2: catalog semantic match ────────────────────────────────────
-        qw = _query_weights(e, scene_words)
+        qw = _query_weights(e, scene_words, identity)
 
         # One query embed + one precomputed-matrix cosine per entity (never
         # per asset) — see catalog_embeddings load above. Empty dict when

@@ -1,0 +1,134 @@
+"""Tests for deterministic noun -> identity archetype resolution."""
+
+import json
+import shutil
+
+from src.unity_identity_archetypes import load_identity_catalog, resolve_identity
+from src.unity_entity_asset_resolver import resolve_entity_assets
+from src.unity_schema import EntitySpec, UnitySchema
+
+
+def test_catalog_has_the_requested_identity_families():
+    archetypes, noun_map, rules = load_identity_catalog("lookups")
+    expected = {
+        "medieval_human_commoner", "medieval_human_knight",
+        "medieval_human_worker", "npc_human", "fantasy_human",
+        "sci-fi_human", "soldier_infantry", "civilian_modern",
+        "vehicle_boat", "vehicle_car", "creature_generic",
+    }
+    assert expected <= set(archetypes)
+    assert len(archetypes) == 12
+    assert noun_map["paladin"] == "medieval_human_knight"
+    assert any(rule["name"] == "water_vehicle_context" for rule in rules)
+
+
+def test_distinctive_nouns_resolve_to_identity_not_the_literal_noun():
+    assert resolve_identity(name="Paladin", kind="character").name == "medieval_human_knight"
+    assert resolve_identity(model_hint="office worker", kind="npc").name == "civilian_modern"
+    assert resolve_identity(name="Speedboat", kind="vehicle").name == "vehicle_boat"
+    result = resolve_identity(name="Wolf", kind="enemy")
+    assert result.name == "creature_generic"
+    assert result.rule == "noun_map"
+    assert result.used_fallback is False
+
+
+def test_context_rescues_shallow_human_nouns():
+    worker = resolve_identity(
+        name="Worker", kind="character", context="a medieval forge near the castle"
+    )
+    assert worker.name == "medieval_human_worker"
+    assert worker.rule == "medieval_worker_context"
+    assert worker.used_fallback is True
+
+    commoner = resolve_identity(
+        name="Human", kind="npc", context="a medieval village market"
+    )
+    assert commoner.name == "medieval_human_commoner"
+    assert commoner.rule == "medieval_commoner_context"
+
+
+def test_context_rescues_shallow_vehicle_nouns():
+    boat = resolve_identity(
+        name="Unit", kind="vehicle", context="cross the open water to the harbor"
+    )
+    assert boat.name == "vehicle_boat"
+    assert boat.rule == "water_vehicle_context"
+
+    car = resolve_identity(
+        name="Unit", kind="vehicle", context="a city street racing garage"
+    )
+    assert car.name == "vehicle_car"
+    assert car.rule == "ground_vehicle_context"
+
+
+def test_kind_fallbacks_are_explicit_and_stable():
+    human = resolve_identity(name="Unit", kind="character")
+    creature = resolve_identity(name="Unit", kind="creature")
+    vehicle = resolve_identity(name="Unit", kind="vehicle")
+    assert (human.name, human.rule, human.used_fallback) == ("npc_human", "generic_human_kind", True)
+    assert (creature.name, creature.rule, creature.used_fallback) == ("creature_generic", "generic_creature_kind", True)
+    assert (vehicle.name, vehicle.rule, vehicle.used_fallback) == ("vehicle_car", "generic_vehicle_kind", True)
+
+
+def test_unrelated_props_do_not_gain_a_human_identity():
+    result = resolve_identity(name="StoneWall", kind="prop", context="medieval castle")
+    assert result.name == "object_generic"
+    assert result.rule == "generic_object_kind"
+
+
+def test_missing_lookup_data_abstains_instead_of_inventing_identity(tmp_path):
+    result = resolve_identity(name="Knight", kind="character", lookups_dir=str(tmp_path))
+    assert result.name is None
+    assert result.rule == "no_identity_signal"
+
+
+def test_identity_vocabulary_steers_a_shallow_catalog_query(tmp_path):
+    """The identity result must affect deterministic asset selection, not just logs."""
+    asset_root = tmp_path / "models"
+    asset_root.mkdir()
+    (asset_root / "cargo-boat.fbx").write_bytes(b"boat")
+    (asset_root / "city-sedan.fbx").write_bytes(b"car")
+    lookups = tmp_path / "lookups" / "unity"
+    lookups.mkdir(parents=True)
+    shutil.copyfile(
+        "lookups/unity/identity_archetypes.json",
+        lookups / "identity_archetypes.json",
+    )
+    catalog = {
+        "version": 1,
+        "assets": [
+            {
+                "filename": "cargo-boat.fbx", "relpath": "cargo-boat.fbx",
+                "root": str(asset_root), "format": "fbx", "pack": "test",
+                "source": "kenney", "category": "vehicle",
+                "keywords": ["cargo", "boat", "ship", "watercraft", "vehicle"],
+                "kind_hints": ["vehicle"], "game_contexts": ["any"],
+                "generic_score": 0, "scale": 1.0,
+            },
+            {
+                "filename": "city-sedan.fbx", "relpath": "city-sedan.fbx",
+                "root": str(asset_root), "format": "fbx", "pack": "test",
+                "source": "kenney", "category": "vehicle",
+                "keywords": ["city", "sedan", "car", "vehicle"],
+                "kind_hints": ["vehicle"], "game_contexts": ["any"],
+                "generic_score": 0, "scale": 1.0,
+            },
+        ],
+    }
+    (lookups / "asset_catalog.json").write_text(
+        json.dumps(catalog), encoding="utf-8"
+    )
+    schema = UnitySchema(
+        project_name="WaterCrossing", company_name="Test",
+        description="cross open water to the harbor",
+        game_type="3D", platform="pc", render_pipeline="URP",
+        visual_style="low_poly", unity_version="6000.2",
+        entities=[EntitySpec(name="Unit", kind="vehicle")],
+    )
+
+    paths = resolve_entity_assets(
+        schema, {}, {}, lookups_dir=str(tmp_path / "lookups"), strict=True
+    )
+    assert paths["Unit"].endswith("cargo-boat")
+    assert schema.meta["identity_archetypes"]["Unit"]["archetype"] == "vehicle_boat"
+    assert schema.meta["identity_archetypes"]["Unit"]["rule"] == "water_vehicle_context"

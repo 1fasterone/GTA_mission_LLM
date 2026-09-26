@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "archetypes": [
+    {
+      "name": "medieval_human_commoner",
+      "family": "human",
+      "kind_hints": ["character", "npc", "crowd"],
+      "query_tokens": ["human", "person", "character", "medieval", "villager", "commoner", "peasant", "townsfolk"]
+    },
+    {
+      "name": "medieval_human_knight",
+      "family": "human",
+      "kind_hints": ["character", "npc", "enemy"],
+      "query_tokens": ["human", "person", "character", "medieval", "knight", "paladin", "squire", "armor", "warrior"]
+    },
+    {
+      "name": "medieval_human_worker",
+      "family": "human",
+      "kind_hints": ["character", "npc", "crowd"],
+      "query_tokens": ["human", "person", "character", "medieval", "worker", "artisan", "farmer", "blacksmith", "carpenter", "laborer"]
+    },
+    {
+      "name": "npc_human",
+      "family": "human",
+      "kind_hints": ["character", "npc", "crowd", "player"],
+      "query_tokens": ["human", "person", "character", "npc", "figure", "citizen"]
+    },
+    {
+      "name": "fantasy_human",
+      "family": "human",
+      "kind_hints": ["character", "npc", "enemy", "player"],
+      "query_tokens": ["human", "person", "character", "fantasy", "adventurer", "wizard", "mage", "ranger", "bard", "elf", "dwarf"]
+    },
+    {
+      "name": "sci-fi_human",
+      "family": "human",
+      "kind_hints": ["character", "npc", "enemy", "player"],
+      "query_tokens": ["human", "person", "character", "science", "fiction", "space", "astronaut", "pilot", "crew", "android", "cyborg"]
+    },
+    {
+      "name": "soldier_infantry",
+      "family": "human",
+      "kind_hints": ["character", "npc", "enemy"],
+      "query_tokens": ["human", "person", "character", "soldier", "infantry", "military", "army", "marine", "trooper", "rifleman", "guard"]
+    },
+    {
+      "name": "civilian_modern",
+      "family": "human",
+      "kind_hints": ["character", "npc", "crowd"],
+      "query_tokens": ["human", "person", "character", "civilian", "modern", "office", "commuter", "pedestrian", "business"]
+    },
+    {
+      "name": "vehicle_boat",
+      "family": "vehicle",
+      "kind_hints": ["vehicle"],
+      "query_tokens": ["vehicle", "boat", "ship", "watercraft", "vessel", "marine", "water", "sail", "ferry", "dinghy", "submarine"]
+    },
+    {
+      "name": "vehicle_car",
+      "family": "vehicle",
+      "kind_hints": ["vehicle"],
+      "query_tokens": ["vehicle", "car", "automobile", "sedan", "truck", "jeep", "suv", "van", "taxi", "buggy", "kart", "road"]
+    },
+    {
+      "name": "creature_generic",
+      "family": "creature",
+      "kind_hints": ["creature", "enemy", "npc", "character"],
+      "query_tokens": ["creature", "animal", "beast", "monster", "wildlife", "fauna", "alien", "dragon", "wolf", "fish", "bird"]
+    },
+    {
+      "name": "object_generic",
+      "family": "object",
+      "kind_hints": ["prop", "object", "obstacle", "pickup", "item"],
+      "query_tokens": ["object", "prop", "item"]
+    }
+  ],
+  "noun_map": {
+    "peasant": "medieval_human_commoner",
+    "villager": "medieval_human_commoner",
+    "commoner": "medieval_human_commoner",
+    "townsfolk": "medieval_human_commoner",
+    "knight": "medieval_human_knight",
+    "paladin": "medieval_human_knight",
+    "squire": "medieval_human_knight",
+    "templar": "medieval_human_knight",
+    "blacksmith": "medieval_human_worker",
+    "carpenter": "medieval_human_worker",
+    "farmer": "medieval_human_worker",
+    "miner": "medieval_human_worker",
+    "artisan": "medieval_human_worker",
+    "craftsman": "medieval_human_worker",
+    "laborer": "medieval_human_worker",
+    "wizard": "fantasy_human",
+    "mage": "fantasy_human",
+    "sorcerer": "fantasy_human",
+    "ranger": "fantasy_human",
+    "bard": "fantasy_human",
+    "adventurer": "fantasy_human",
+    "elf": "fantasy_human",
+    "dwarf": "fantasy_human",
+    "astronaut": "sci-fi_human",
+    "spaceman": "sci-fi_human",
+    "scientist": "sci-fi_human",
+    "android": "sci-fi_human",
+    "cyborg": "sci-fi_human",
+    "soldier": "soldier_infantry",
+    "infantry": "soldier_infantry",
+    "marine": "soldier_infantry",
+    "trooper": "soldier_infantry",
+    "rifleman": "soldier_infantry",
+    "guardsman": "soldier_infantry",
+    "guard": "soldier_infantry",
+    "civilian": "civilian_modern",
+    "office worker": "civilian_modern",
+    "commuter": "civilian_modern",
+    "pedestrian": "civilian_modern",
+    "businessperson": "civilian_modern",
+    "boat": "vehicle_boat",
+    "ship": "vehicle_boat",
+    "canoe": "vehicle_boat",
+    "raft": "vehicle_boat",
+    "yacht": "vehicle_boat",
+    "sailboat": "vehicle_boat",
+    "ferry": "vehicle_boat",
+    "dinghy": "vehicle_boat",
+    "speedboat": "vehicle_boat",
+    "submarine": "vehicle_boat",
+    "watercraft": "vehicle_boat",
+    "vessel": "vehicle_boat",
+    "car": "vehicle_car",
+    "automobile": "vehicle_car",
+    "sedan": "vehicle_car",
+    "truck": "vehicle_car",
+    "jeep": "vehicle_car",
+    "suv": "vehicle_car",
+    "van": "vehicle_car",
+    "taxi": "vehicle_car",
+    "buggy": "vehicle_car",
+    "kart": "vehicle_car",
+    "creature": "creature_generic",
+    "animal": "creature_generic",
+    "beast": "creature_generic",
+    "monster": "creature_generic",
+    "dragon": "creature_generic",
+    "wolf": "creature_generic",
+    "fish": "creature_generic",
+    "bird": "creature_generic",
+    "alien": "creature_generic"
+  },
+  "fallback_rules": [
+    {
+      "name": "medieval_worker_context",
+      "archetype": "medieval_human_worker",
+      "scope": "human",
+      "primary_any": ["worker", "staff", "employee"],
+      "context_any": ["medieval", "feudal", "kingdom", "village", "castle", "forge", "tavern"]
+    },
+    {
+      "name": "medieval_commoner_context",
+      "archetype": "medieval_human_commoner",
+      "scope": "human",
+      "context_any": ["medieval", "feudal", "kingdom", "village", "castle", "tavern", "market"]
+    },
+    {
+      "name": "fantasy_human_context",
+      "archetype": "fantasy_human",
+      "scope": "human",
+      "context_any": ["fantasy", "enchanted", "magic", "magical", "mythic", "dungeon"]
+    },
+    {
+      "name": "sci-fi_human_context",
+      "archetype": "sci-fi_human",
+      "scope": "human",
+      "context_any": ["sci-fi", "science fiction", "space", "orbit", "starship", "future", "cyberpunk"]
+    },
+    {
+      "name": "modern_civilian_context",
+      "archetype": "civilian_modern",
+      "scope": "human",
+      "context_any": ["modern", "city", "urban", "office", "subway", "airport", "contemporary"]
+    },
+    {
+      "name": "military_context",
+      "archetype": "soldier_infantry",
+      "scope": "human",
+      "context_any": ["military", "army", "war", "battlefield", "combat", "barracks", "patrol"]
+    },
+    {
+      "name": "water_vehicle_context",
+      "archetype": "vehicle_boat",
+      "scope": "vehicle",
+      "context_any": ["water", "ocean", "sea", "river", "lake", "harbor", "harbour", "dock", "underwater"]
+    },
+    {
+      "name": "ground_vehicle_context",
+      "archetype": "vehicle_car",
+      "scope": "vehicle",
+      "context_any": ["road", "street", "highway", "city", "racing", "race", "parking", "garage"]
+    },
+    {
+      "name": "generic_creature_kind",
+      "archetype": "creature_generic",
+      "scope": "creature"
+    },
+    {
+      "name": "generic_vehicle_kind",
+      "archetype": "vehicle_car",
+      "scope": "vehicle"
+    },
+    {
+      "name": "generic_human_kind",
+      "archetype": "npc_human",
+      "scope": "human"
+    },
+    {
+      "name": "generic_object_kind",
+      "archetype": "object_generic",
+      "scope": "object"
+    }
+  ]
+}
