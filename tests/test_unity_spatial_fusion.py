@@ -12,6 +12,7 @@ from src.unity_spatial_fusion import (
     SPATIAL_FUSION_FORMAT,
     SPATIAL_FUSION_MANIFEST_FORMAT,
     SpatialFusionError,
+    _bind_labels,
     fuse_spatial_evidence,
 )
 from src.unity_spatial_roles import write_spatial_roles
@@ -320,3 +321,45 @@ def test_visual_binding_reuses_one_unique_schema_group_for_repeated_labels() -> 
 
     assert list(result) == ["EnemyAircraftGroup"]
     assert result["EnemyAircraftGroup"] == {"_spatial_label": "aircraft_1"}
+
+
+def test_fusion_keeps_ui_only_labels_as_evidence_only() -> None:
+    schema = UnitySchema(
+        project_name="CardBoard",
+        company_name="Test",
+        description="card board",
+        game_type="2d_topdown",
+        platform="pc",
+        render_pipeline="URP",
+        locomotion="none",
+        scenes=["Main"],
+        entities=[EntitySpec(
+            name="PeasantUnit",
+            kind="character",
+            model_hint="peasant",
+        )],
+    )
+    label_by_entity, references = _bind_labels(
+        schema=schema,
+        closed={
+            "entity_matches": [
+                {"reference": "peasant", "inventory_label": "peasant"},
+                {"reference": "map", "inventory_label": "map"},
+            ],
+        },
+        elements={
+            "peasant": {
+                "label": "peasant",
+                "category": "character",
+                "model_hint": "peasant",
+            },
+            "map": {
+                "label": "map",
+                "category": "ui",
+                "model_hint": None,
+            },
+        },
+    )
+
+    assert label_by_entity == {"PeasantUnit": "peasant"}
+    assert references == {"peasant": "peasant"}

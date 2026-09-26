@@ -43,6 +43,9 @@ from .visual_spatial_extraction import (
 )
 
 
+_NON_BINDABLE_VISUAL_CATEGORIES = frozenset({"ui", "effect"})
+
+
 SPATIAL_FUSION_FORMAT = "visual-reasoning-compiler/hybrid-spatial-fusion/v1"
 SPATIAL_FUSION_MANIFEST_FORMAT = (
     "visual-reasoning-compiler/hybrid-spatial-fusion-manifest/v1"
@@ -358,6 +361,13 @@ def _bind_labels(
             raise SpatialFusionError(
                 f"closed entity match for {label!r} has no reference"
             )
+        # UI/effect labels remain image evidence only. Slice 4 deliberately
+        # does not fulfil them as world assets, so asking Slice 6.3 to bind
+        # labels such as a map or glow would manufacture a schema entity from
+        # presentation content and violate the visual authority boundary.
+        category = str(elements[label].get("category") or "").casefold()
+        if category in _NON_BINDABLE_VISUAL_CATEGORIES:
+            continue
         reference_by_label[label] = reference
         records.append({
             "inventory_label": label,

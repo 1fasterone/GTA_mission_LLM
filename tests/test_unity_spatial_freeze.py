@@ -6,7 +6,8 @@ import json
 from pathlib import Path
 
 from src.unity_schema import EntitySpec, UnitySchema
-from src.unity_spatial_freeze import _transform_snapshot, freeze_spatial_build
+from src.unity_spatial_freeze import (audit_frozen_models, _transform_snapshot,
+                                      freeze_spatial_build)
 from src.unity_spatial_pipeline import freeze_spatial_sidecars
 from src.visual_reasoning_compiler import sha256_file
 
@@ -64,6 +65,42 @@ def test_transform_snapshot_is_ordered_by_schema_and_hashes_coordinates() -> Non
     ]
     assert snapshot["entities"][1]["instance_positions"] == [[4.0, 0.0, 5.0]]
     assert len(snapshot["sha256"]) == 64
+
+
+def test_frozen_model_audit_rejects_obvious_identity_contradictions() -> None:
+    report = audit_frozen_models([
+        {"inventory_label": "crusader", "selection": {
+            "filename": "crusader-mug.fbx", "file_sha256": "x",
+        }},
+        {"inventory_label": "goblin", "selection": {
+            "filename": "fictional-supercar-v12-goblin.fbx",
+            "file_sha256": "y",
+        }},
+        {"inventory_label": "horse", "selection": {
+            "filename": "rocking-horse.fbx", "file_sha256": "z",
+        }},
+        {"inventory_label": "pikeman", "selection": {
+            "filename": "mordor-orck-armor.fbx", "file_sha256": "w",
+        }},
+    ])
+    assert report["status"] == "rejected"
+    assert {item["inventory_label"] for item in report["findings"]} == {
+        "crusader", "goblin", "horse", "pikeman",
+    }
+
+
+def test_frozen_model_audit_keeps_uncertain_models_reviewable() -> None:
+    report = audit_frozen_models([
+        {"inventory_label": "peasant", "selection": {
+            "filename": "medieval-peasant-female-outfit.fbx",
+            "file_sha256": "x",
+        }},
+        {"inventory_label": "knight", "selection": {
+            "filename": "bulky-knight.fbx", "file_sha256": "y",
+        }},
+    ])
+    assert report["status"] == "pass"
+    assert report["findings"] == []
 
 
 def _make_fixture(root: Path) -> dict[str, Path]:

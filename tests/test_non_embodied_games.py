@@ -25,6 +25,7 @@ import pytest
 from src.unity_archetypes import apply_intent, classify
 from src.unity_playability import (_EMBODIED_ONLY_CHECKS, evaluate, gate,
                                    is_embodied)
+from src.unity_playability_artifact import evaluate_project
 from src.unity_schema import (EntitySpec, MissionObjective, MissionSpec,
                               UnitySchema, UnityScript)
 
@@ -79,6 +80,15 @@ def test_declared_ui_game_is_not_failed_for_having_no_avatar():
     assert "avatar" not in rep.checks
     assert not any(f.check == "avatar" for f in rep.findings)
     assert rep.playable
+
+
+def test_declared_ui_game_artifact_grader_does_not_require_avatar_scene_objects():
+    rep = evaluate_project(_ui_game(), {})
+    for check in ("avatar_singleton", "avatar_spawn", "avatar_not_duplicated"):
+        assert check not in rep.checks
+        assert check in rep.not_graded
+        assert "locomotion='none'" in rep.not_graded[check]
+        assert not any(f.check == check for f in rep.findings)
 
 
 @pytest.mark.parametrize("check", sorted(_EMBODIED_ONLY_CHECKS))

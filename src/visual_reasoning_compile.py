@@ -60,6 +60,59 @@ def _mapping(value: Any, *, label: str) -> dict[str, Any]:
     return value
 
 
+def render_visual_entity_checklist(plan: dict[str, Any]) -> str:
+    """Render the closed Slice-4 nouns as Step-3 entity guidance.
+
+    A visual compile has already closed the image inventory and frozen one
+    exact asset selection per asset-worthy noun.  The schema-fill model still
+    owns the schema, but it must expose an identity-bearing entity group for
+    every frozen noun so Slice 5 can bind the immutable selection without
+    guessing through broad groups such as PlayerUnits or EnemyWaves.
+    This function exposes only closed visual labels and categories; it never
+    authors schema JSON or chooses gameplay behavior.
+    """
+    closed = _mapping(plan.get("closed"), label="visual compile closed IR")
+    inventory = _mapping(closed.get("inventory"), label="visual compile inventory")
+    elements = {
+        str(element.get("label")): element
+        for element in inventory.get("visible_elements", [])
+        if isinstance(element, dict) and element.get("label")
+    }
+    assets = plan.get("assets")
+    if not isinstance(assets, list) or not assets:
+        raise VisualReasoningCompilerError(
+            "visual compile has no fulfilled assets for the Step-3 entity checklist"
+        )
+
+    lines = [
+        "VISUAL ASSET ENTITY CONTRACT — closed Slice-4 handoff:",
+        "The following fulfilled visual nouns each require ONE DISTINCT entity "
+        "group in the schema's entities array.",
+        "Preserve each noun in that group's PascalCase name and set model_hint "
+        "to the same physical noun. Do not collapse distinct lines into broad "
+        "groups such as PlayerUnits or EnemyWaves; those names are not valid "
+        "bindings for the individual nouns below.",
+        "This is an identity/asset-binding requirement, not permission to invent "
+        "new gameplay systems. Keep roles, counts, and mechanics grounded in "
+        "the Concept; add only the required identity-bearing groups.",
+    ]
+    for raw_asset in assets:
+        asset = _mapping(raw_asset, label="visual compile asset")
+        label = str(asset.get("inventory_label") or "").strip()
+        element = elements.get(label)
+        if not label or element is None:
+            raise VisualReasoningCompilerError(
+                f"fulfilled visual asset {label!r} is absent from the closed inventory"
+            )
+        category = str(element.get("category") or "other").strip() or "other"
+        hint = str(element.get("model_hint") or label).strip() or label
+        lines.append(
+            f'  - visual_label="{label}" category="{category}" '
+            f'model_hint="{hint}"'
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _sha256_record(path: Path, record: Any, *, label: str) -> str:
     entry = _mapping(record, label=f"{label} hash record")
     expected = entry.get("sha256")

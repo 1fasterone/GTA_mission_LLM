@@ -396,15 +396,24 @@ def _check_objective_marker_present(schema: UnitySchema, files: Mapping[str, str
 def grade_artifact(schema: UnitySchema, files: Mapping[str, str],
                    rep: PlayabilityReport) -> PlayabilityReport:
     """Add the artifact findings to an existing schema report, in place."""
-    scene_path, scene = _primary_scene(schema, files)
-    if scene is None or scene_path is None:
-        for name in ("avatar_singleton", "avatar_spawn"):
-            _ungraded(rep, name, "the build emitted no .unity scene")
+    if not is_embodied(schema):
+        reason = (
+            "locomotion='none' — the game declares no avatar, so emitted-scene "
+            "avatar checks do not apply"
+        )
+        for name in ("avatar_singleton", "avatar_spawn",
+                     "avatar_not_duplicated"):
+            _ungraded(rep, name, reason)
     else:
-        scene_name = scene_path.rsplit("/", 1)[-1]
-        _check_avatar_singleton(scene_name, scene, rep)
-        _check_avatar_spawn(schema, scene_name, scene, rep)
-    _check_avatar_not_duplicated(schema, files, rep)
+        scene_path, scene = _primary_scene(schema, files)
+        if scene is None or scene_path is None:
+            for name in ("avatar_singleton", "avatar_spawn"):
+                _ungraded(rep, name, "the build emitted no .unity scene")
+        else:
+            scene_name = scene_path.rsplit("/", 1)[-1]
+            _check_avatar_singleton(scene_name, scene, rep)
+            _check_avatar_spawn(schema, scene_name, scene, rep)
+        _check_avatar_not_duplicated(schema, files, rep)
     _check_objectives_spawned(schema, files, rep)
     _check_postprocessing_present(schema, files, rep)
     _check_aaa_visual_atmosphere(schema, files, rep)

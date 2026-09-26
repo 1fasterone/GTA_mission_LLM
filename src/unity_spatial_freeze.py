@@ -14,6 +14,7 @@ from typing import Any, Mapping, Optional
 from .unity_schema import UnitySchema
 from .unity_spatial_identity import semantic_schema_hash
 from .unity_spatial_validation import validate_spatial_layout
+from .unity_asset_catalog import tokenize
 from .visual_reasoning_compiler import sha256_bytes, sha256_file
 
 
@@ -26,6 +27,57 @@ SPATIAL_FREEZE_STAGE = "6.7_spatial_freeze"
 
 class SpatialFreezeError(ValueError):
     """Raised when a build cannot be frozen without breaking lineage."""
+
+
+def audit_frozen_models(assets: list[Any]) -> dict[str, Any]:
+    """Reject obvious identity contradictions before spatial freeze.
+
+    Slice 4 proves provenance, licensing, bytes, and lexical fulfilment. That
+    is not enough to freeze a world when a marketplace title has matched the
+    noun while describing a different physical object (for example, a mug
+    returned for ``crusader``). This deterministic audit is deliberately
+    narrow: it only rejects filename identity signals that contradict the
+    closed visual noun and leaves uncertain models for human review.
+    """
+    findings: list[dict[str, Any]] = []
+    checked = 0
+    for asset in assets:
+        if not isinstance(asset, Mapping):
+            continue
+        label = str(asset.get("inventory_label") or "").strip()
+        selection = asset.get("selection")
+        if not label or not isinstance(selection, Mapping):
+            continue
+        checked += 1
+        label_tokens = set(tokenize(label))
+        filename = str(selection.get("filename") or "")
+        filename_tokens = set(tokenize(filename))
+        signals: list[str] = []
+
+        if filename_tokens & {"mug", "cup", "tankard"} and "mug" not in label_tokens:
+            signals.append("container/prop model")
+        if filename_tokens & {"supercar", "car", "apc", "btr", "tank"}:
+            if not label_tokens & {"car", "vehicle", "tank"}:
+                signals.append("vehicle model")
+        if "rocking" in filename_tokens and "rocking" not in label_tokens:
+            signals.append("rocking/toy model")
+        if filename_tokens & {"orc", "orck"} and not label_tokens & {"orc", "orck"}:
+            signals.append("orc model")
+
+        if signals:
+            findings.append({
+                "inventory_label": label,
+                "filename": filename,
+                "signals": sorted(set(signals)),
+                "reason": "filename identity contradicts the closed visual noun",
+            })
+
+    return {
+        "format": "visual-reasoning-compiler/frozen-model-audit/v1",
+        "status": "rejected" if findings else "pass",
+        "checked_count": checked,
+        "findings": findings,
+    }
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -502,6 +554,15 @@ def freeze_spatial_build(
         selection = asset.get("selection") if isinstance(asset, Mapping) else None
         if not isinstance(selection, Mapping) or not selection.get("file_sha256"):
             raise SpatialFreezeError(f"Slice-4 asset[{index}] has no frozen file hash")
+    model_audit = audit_frozen_models(assets)
+    if model_audit["status"] != "pass":
+        details = "; ".join(
+            f"{finding['inventory_label']}: {', '.join(finding['signals'])}"
+            for finding in model_audit["findings"]
+        )
+        raise SpatialFreezeError(
+            "Slice-4 frozen model audit rejected the build: " + details
+        )
 
     compile_manifest = Path(compile_manifest)
     compile_data, _compile_raw = _read_json(
@@ -647,6 +708,7 @@ def freeze_spatial_build(
     asset_bindings = {
         "fulfilment_fingerprint": fulfilment.get("fulfilment_fingerprint"),
         "catalog_preflight": fulfilment.get("catalog_preflight"),
+        "model_audit": model_audit,
         "catalogs": catalog_refs,
         "selections": [
             {
