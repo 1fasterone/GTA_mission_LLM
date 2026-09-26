@@ -64,6 +64,7 @@ from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 from .unity_reference_image import ReferenceImageError, encode_reference_image
 from .unity_visual_bindings import (bind_visual_assets,
                                     ensure_visual_scene_coverage)
+from .visual_reasoning_compile import render_visual_entity_checklist
 from .unity_spatial_pipeline import (
     SpatialPipelineError,
     freeze_spatial_sidecars,
@@ -1389,6 +1390,15 @@ class UnityPipeline:
                                                         schema_hints=schema_hints,
                                                         multimodal_block=mm.text,
                                                         brief_block=brief_block(user_prompt))
+            if visual_compile:
+                assert visual_compile_plan is not None
+                schema_user += "\n" + render_visual_entity_checklist(
+                    visual_compile_plan
+                )
+                self._ok(
+                    "Closed Slice-4 visual nouns passed to Step-3 as a "
+                    "distinct-entity binding checklist"
+                )
             # In --compose mode the micros + GameContext locator exist, so steer
             # the LLM to reach subsystems via GameContext.Instance.Get<T>()
             # instead of inventing singletons (which the fixer strips).
@@ -1433,6 +1443,12 @@ class UnityPipeline:
                         thinking    = False,
                         json_mode   = _json_mode,
                         json_schema = _json_schema,
+                        # A visual compile has a closed asset cardinality
+                        # and its schema must reach the deterministic
+                        # post-schema chain.  Keep this one response bounded
+                        # even when the global LM budget is intentionally
+                        # generous for ordinary projects.
+                        max_tokens  = (32000 if visual_compile else None),
                     )
                     schema_dict = self.llm.extract_json(schema_raw)
                     clamp_msgs  = clamp_capped_lists(schema_dict)

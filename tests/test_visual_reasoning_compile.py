@@ -14,6 +14,7 @@ from src.unity_schema import EntitySpec, UnitySchema
 from src.visual_reasoning_compile import (
     bind_visual_assets,
     load_visual_compile_plan,
+    render_visual_entity_checklist,
 )
 from src.visual_reasoning_compiler import (
     VisualReasoningCompilerError,
@@ -128,6 +129,23 @@ def test_slice5_plan_verifies_hashes_and_enriches_exact_catalog_entry(tmp_path):
     )
     assert plan["assets"][0]["catalog_entry"]["filename"] == asset_path.name
     assert plan["assets"][0]["source_path"] == str(asset_path.resolve())
+
+
+def test_visual_entity_checklist_preserves_each_fulfilled_noun(tmp_path):
+    closed, fulfilment, manifest, lookups, _ = _fixture_artifacts(tmp_path)
+    plan = load_visual_compile_plan(
+        closed_ir=closed,
+        asset_fulfilment=fulfilment,
+        asset_manifest=manifest,
+        lookups_dir=str(lookups),
+    )
+
+    checklist = render_visual_entity_checklist(plan)
+
+    assert 'visual_label="Wooden Crate"' in checklist
+    assert 'model_hint="wooden crate"' in checklist
+    assert "PlayerUnits" in checklist
+    assert "EnemyWaves" in checklist
 
 
 def test_slice5_rejects_changed_selected_asset_bytes(tmp_path):
