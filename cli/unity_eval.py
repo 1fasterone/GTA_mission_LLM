@@ -125,6 +125,10 @@ def unity_vizconcept_reason(
         ..., "--concept-output", "--concept",
         help="Image-derived Concept.txt destination",
     ),
+    context_output: Optional[Path] = typer.Option(
+        None, "--context-output",
+        help="Image-grounded Step-2 context destination (default: context.txt beside Concept)",
+    ),
     manifest: Optional[Path] = typer.Option(
         None, "--manifest", help="Slice-2 provenance manifest destination"
     ),
@@ -147,24 +151,31 @@ def unity_vizconcept_reason(
     if not config.is_file():
         console.print(f"[red]Config file not found:[/] {config}")
         raise typer.Exit(2)
+    llm = None
     try:
         cfg = _cfg(str(config))
         llm = make_chat_client(cfg)
         manifest_path = manifest or concept_output.with_suffix(".reasoning.json")
+        context_path = context_output or concept_output.parent / "context.txt"
         path = reason_over_board(
             board_image=board_image,
             inventory_output=inventory_output,
             concept_output=concept_output,
             manifest=manifest_path,
             board_manifest=board_manifest,
+            context_output=context_path,
             llm=llm,
         )
         console.print(f"[green]Visual inventory written[/] {inventory_output}")
         console.print(f"[green]Image-derived Concept.txt written[/] {concept_output}")
+        console.print(f"[green]Visual context written[/] {context_path}")
         console.print(f"[green]Slice-2 provenance manifest written[/] {path}")
     except (OSError, ValueError, RuntimeError, VisualReasoningCompilerError) as exc:
         console.print(f"[red]Visual reasoning error:[/] {exc}")
         raise typer.Exit(2) from exc
+    finally:
+        if llm is not None and hasattr(llm, "unload"):
+            llm.unload()
 
 
 @app.command("unity-vizconcept-spatial")
@@ -199,6 +210,7 @@ def unity_vizconcept_spatial(
     if not config.is_file():
         console.print(f"[red]Config file not found:[/] {config}")
         raise typer.Exit(2)
+    llm = None
     try:
         cfg = _cfg(str(config))
         llm = make_chat_client(cfg)
@@ -215,6 +227,9 @@ def unity_vizconcept_spatial(
     except (OSError, ValueError, RuntimeError, VisualSpatialExtractionError) as exc:
         console.print(f"[red]Image spatial extraction error:[/] {exc}")
         raise typer.Exit(2) from exc
+    finally:
+        if llm is not None and hasattr(llm, "unload"):
+            llm.unload()
 
 
 @app.command("unity-vizconcept-spatial-roles")
@@ -662,6 +677,54 @@ def unity_vizconcept_fulfill_assets(
         raise typer.Exit(2) from exc
 
 
+@app.command("unity-vizconcept-prepare-assets")
+def unity_vizconcept_prepare_assets(
+    closed_ir: Path = typer.Option(
+        ..., "--closed-ir", help="Slice-3 closed image IR JSON"
+    ),
+    reconciliation_manifest: Path = typer.Option(
+        ..., "--reconciliation-manifest",
+        help="Slice-3 reconciliation manifest used to verify the IR hash",
+    ),
+    output: Path = typer.Option(
+        ..., "--output", "-o", help="Preparation report destination"
+    ),
+    lookups_dir: Path = typer.Option(
+        Path("lookups"), "--lookups-dir", help="Frozen Unity catalog directory"
+    ),
+    asset_root: Optional[Path] = typer.Option(
+        None, "--asset-root",
+        help="Fallback root for catalog entries without an embedded root",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+) -> None:
+    """Pre-Slice-4 Sketchfab freeze; failed requests remain catalog fallbacks."""
+    from src.visual_asset_preparation import prepare_image_assets
+    from src.visual_reasoning_compiler import VisualReasoningCompilerError
+
+    try:
+        cfg = _cfg(str(config)) if config.is_file() else {}
+        sk_cfg = (cfg.get("sketchfab") or {})
+        path = prepare_image_assets(
+            closed_ir=closed_ir,
+            reconciliation_manifest=reconciliation_manifest,
+            output=output,
+            lookups_dir=str(lookups_dir),
+            asset_root=asset_root,
+            sketchfab_config=sk_cfg,
+            accepted_licenses=sk_cfg.get("accepted_licenses"),
+        )
+        result = json.loads(path.read_text(encoding="utf-8"))
+        console.print(f"[green]Sketchfab preparation report written[/] {path}")
+        console.print(f"[green]Frozen Sketchfab assets:[/] {result.get('frozen_count', 0)}")
+        console.print(f"[yellow]Catalog fallbacks:[/] {result.get('fallback_count', 0)}")
+        console.print("[green]LLM calls here:[/] 0")
+    except (OSError, ValueError, TypeError, json.JSONDecodeError,
+            VisualReasoningCompilerError) as exc:
+        console.print(f"[red]Visual asset preparation error:[/] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("unity-vizconcept-compile")
 def unity_vizconcept_compile(
     closed_ir: Path = typer.Option(
@@ -688,12 +751,21 @@ def unity_vizconcept_compile(
     no_think: bool = typer.Option(
         False, "--no-think", help="Disable reasoning on the single schema-fill call"
     ),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m", help="Override the configured Step-3 model"
+    ),
+    compose: bool = typer.Option(
+        True, "--compose/--no-compose",
+        help="Emit deterministic micro-generators and audio (default: on)",
+    ),
 ) -> None:
     """Run Slice 5: closed Concept + exact Slice-4 assets -> Unity project.
 
     The Concept is reused byte-for-byte, so the normal Concept call is skipped.
     The existing schema-fill call runs once; visual assets are then passed as
-    explicit locked bindings into the generator. This command never performs a
+    explicit locked bindings into the generator. By default the deterministic
+    micro composer is also run, which emits Assets/Micros and the audio bank;
+    --no-compose is the legacy shell-only mode. This command never performs a
     live Sketchfab search or thumbnail/CLIP selection. Pass --image-evidence to
     carry the closed board composition through the deterministic 6.3–6.6 path.
     """
@@ -797,7 +869,7 @@ def unity_vizconcept_compile(
         if not config.is_file():
             raise VisualReasoningCompilerError(f"config file not found: {config}")
 
-        cfg = _cfg(str(config))
+        cfg = _cfg(str(config), model=model)
         asset_cfg = cfg.get("assets") or {}
         configured_root = asset_cfg.get("asset_root")
         plan = load_visual_compile_plan(
@@ -826,7 +898,7 @@ def unity_vizconcept_compile(
         project_root = UnityPipeline(cfg).run(
             concept,
             theme="none",
-            compose=False,
+            compose=compose,
             blender_models=False,
             no_think=no_think,
             micro_code=False,
@@ -849,6 +921,18 @@ def unity_vizconcept_compile(
                 "network_called_here": False,
                 "thumbnail_or_clip_selection_here": False,
             },
+            "composition": {
+                "enabled": compose,
+                "micro_code_llm_calls": 0,
+                "micros_root": str(project_root / "Assets" / "Micros")
+                if compose else None,
+                "micro_script_count": len(list(
+                    (project_root / "Assets" / "Micros").rglob("*.cs")
+                )) if compose and (project_root / "Assets" / "Micros").is_dir() else 0,
+                "audio_clip_count": len(list(
+                    (project_root / "Assets" / "Resources" / "Audio").rglob("*.wav")
+                )) if compose and (project_root / "Assets" / "Resources" / "Audio").is_dir() else 0,
+            },
             "inputs": plan["inputs"],
             "binding_report": (schema_data.get("meta") or {})
             .get("visual_reasoning_compiler"),
@@ -867,6 +951,254 @@ def unity_vizconcept_compile(
             RuntimeError, VisualReasoningCompilerError) as exc:
         console.print(f"[red]Visual Unity compile error:[/] {exc}")
         raise typer.Exit(2) from exc
+
+
+@app.command("unity-vizconcept-e2e")
+@app.command("unity-vizconcept")
+def unity_vizconcept_e2e(
+    source_image: Path = typer.Option(
+        ..., "--image", "--source-image",
+        help="Existing image to import as the canonical visual board",
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o",
+        help="Visual run directory (default: output/visual_reasoning/<image>_e2e)",
+    ),
+    unity_output: Optional[Path] = typer.Option(
+        None, "--unity-output",
+        help="Unity output directory (default: output/unity/<run-directory-name>)",
+    ),
+    config: Path = typer.Option(Path("config.yaml"), "--config"),
+    lookups_dir: Path = typer.Option(
+        Path("lookups"), "--lookups-dir", help="Frozen Unity catalog directory"
+    ),
+    model: Optional[str] = typer.Option(
+        None, "--model", "-m", help="Override the configured Qwen/LLM model"
+    ),
+    no_think: bool = typer.Option(
+        False, "--no-think", help="Disable reasoning on the Step-3 schema-fill call"
+    ),
+    compile_project: bool = typer.Option(
+        True, "--compile/--no-compile",
+        help="Continue through Unity compile, spatial acceptance, and 6.7 freeze",
+    ),
+    sketchfab_first: bool = typer.Option(
+        True, "--sketchfab-first/--catalog-only",
+        help="Freeze missing image assets from Sketchfab before deterministic Slice 4",
+    ),
+) -> None:
+    """Run the complete imported-image visual compiler in one command.
+
+    This is the persisted equivalent of the former eight-command handoff:
+    import -> Slice 2 reasoning -> Slice 3 reconciliation -> Slice 4 asset
+    fulfilment -> Slice 6.1 evidence -> Slice 5 Unity compile -> deterministic
+    Slices 6.2-6.6 -> Slice 6.7 freeze.  When enabled, the explicit
+    pre-Slice-4 preparation freezes Sketchfab candidates first; Slice 4 then
+    reads frozen Sketchfab entries before falling back to the local catalog.
+    The Unity compile composes the deterministic micro-generators and audio
+    bank by default; no post-schema LLM call or live Sketchfab operation is
+    permitted after Slice 4 begins.
+    """
+    from src.backends import make_chat_client
+    from src.visual_asset_fulfilment import fulfil_image_assets
+    from src.visual_reasoning_compiler import (
+        VisualReasoningCompilerError,
+        import_existing_board,
+        reason_over_board,
+    )
+    from src.visual_reasoning_reconcile import reconcile_image_reasoning
+    from src.visual_spatial_extraction import (
+        VisualSpatialExtractionError,
+        extract_image_spatial_evidence,
+    )
+    from src.unity_spatial_freeze import SpatialFreezeError, freeze_spatial_build
+
+    if not source_image.is_file():
+        console.print(f"[red]Visual source image not found:[/] {source_image}")
+        raise typer.Exit(2)
+    if not config.is_file():
+        console.print(f"[red]Config file not found:[/] {config}")
+        raise typer.Exit(2)
+    if not lookups_dir.is_dir():
+        console.print(f"[red]Unity lookups directory not found:[/] {lookups_dir}")
+        raise typer.Exit(2)
+
+    safe_stem = "".join(
+        char if char.isalnum() or char in "-_" else "_"
+        for char in source_image.stem
+    ).strip("._-") or "visual"
+    run_dir = output or (Path("output") / "visual_reasoning" / f"{safe_stem}_e2e")
+    project_output = unity_output or (Path("output") / "unity" / run_dir.name)
+    if run_dir.exists():
+        console.print(
+            f"[red]Refusing to overwrite visual run directory:[/] {run_dir}\n"
+            "Choose a new --output directory."
+        )
+        raise typer.Exit(2)
+    if compile_project and project_output.exists():
+        console.print(
+            f"[red]Refusing to overwrite Unity output directory:[/] {project_output}\n"
+            "Choose a new --unity-output directory."
+        )
+        raise typer.Exit(2)
+
+    board = run_dir / "board.png"
+    board_manifest = run_dir / "board.import.json"
+    inventory = run_dir / "visual_inventory.json"
+    concept = run_dir / "Concept.txt"
+    context = run_dir / "context.txt"
+    reasoning_manifest = run_dir / "reasoning.json"
+    closed_ir = run_dir / "closed_image_ir.json"
+    reconciliation_manifest = run_dir / "reconciliation.json"
+    asset_fulfilment = run_dir / "asset_fulfilment.json"
+    asset_manifest = run_dir / "asset_fulfilment.manifest.json"
+    asset_preparation = run_dir / "asset_preparation.json"
+    image_evidence = run_dir / "image_spatial_evidence.json"
+    image_evidence_manifest = run_dir / "image_spatial_evidence.manifest.json"
+
+    llm = None
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)
+        cfg = _cfg(str(config), model=model)
+        llm = make_chat_client(cfg)
+
+        console.print("[cyan]Visual E2E Slice 1:[/] importing canonical board")
+        import_existing_board(
+            board_image=source_image,
+            output=board,
+            manifest=board_manifest,
+        )
+
+        console.print("[cyan]Visual E2E Slice 2:[/] reasoning over board")
+        reason_over_board(
+            board_image=board,
+            inventory_output=inventory,
+            concept_output=concept,
+            manifest=reasoning_manifest,
+            board_manifest=board_manifest,
+            context_output=context,
+            llm=llm,
+        )
+
+        console.print("[cyan]Visual E2E Slice 3:[/] reconciling image IR")
+        reconcile_image_reasoning(
+            inventory_file=inventory,
+            concept_file=concept,
+            reasoning_manifest=reasoning_manifest,
+            output=closed_ir,
+            manifest=reconciliation_manifest,
+        )
+
+        configured_root = (cfg.get("assets") or {}).get("asset_root")
+        if sketchfab_first:
+            from src.visual_asset_preparation import prepare_image_assets
+
+            console.print(
+                "[cyan]Visual asset preparation:[/] Sketchfab-first freeze; "
+                "unresolved requests fall back to the local catalog"
+            )
+            prepare_image_assets(
+                closed_ir=closed_ir,
+                reconciliation_manifest=reconciliation_manifest,
+                output=asset_preparation,
+                lookups_dir=str(lookups_dir),
+                asset_root=Path(configured_root) if configured_root else None,
+                sketchfab_config=(cfg.get("sketchfab") or {}),
+                accepted_licenses=((cfg.get("sketchfab") or {}).get("accepted_licenses")),
+            )
+        console.print(
+            "[cyan]Visual E2E Slice 4:[/] "
+            + ("frozen Sketchfab first, local catalog fallback"
+               if sketchfab_first else "local catalog only")
+        )
+        fulfil_image_assets(
+            closed_ir=closed_ir,
+            reconciliation_manifest=reconciliation_manifest,
+            output=asset_fulfilment,
+            manifest=asset_manifest,
+            lookups_dir=str(lookups_dir),
+            asset_root=Path(configured_root) if configured_root else None,
+            accepted_licenses=((cfg.get("sketchfab") or {}).get("accepted_licenses")),
+            allow_sketchfab=sketchfab_first,
+        )
+        fulfilled = json.loads(asset_fulfilment.read_text(encoding="utf-8"))
+        if fulfilled.get("status") != "fulfilled":
+            raise VisualReasoningCompilerError(
+                "Slice 4 did not produce a fulfilled asset result"
+            )
+
+        console.print("[cyan]Visual E2E Slice 6.1:[/] extracting image-space evidence")
+        extract_image_spatial_evidence(
+            board_image=board,
+            closed_ir=closed_ir,
+            output=image_evidence,
+            manifest=image_evidence_manifest,
+            llm=llm,
+        )
+
+        if not compile_project:
+            console.print(f"[green]Visual E2E precompile artifacts written[/] {run_dir}")
+            return
+
+        console.print(
+            "[cyan]Visual E2E compile:[/] deterministic micros + audio + Slices 6.2-6.6"
+        )
+        unity_vizconcept_compile(
+            closed_ir=closed_ir,
+            image_evidence=image_evidence,
+            asset_fulfilment=asset_fulfilment,
+            asset_manifest=asset_manifest,
+            output=project_output,
+            config=config,
+            lookups_dir=lookups_dir,
+            no_think=no_think,
+            model=model,
+            compose=True,
+        )
+
+        compile_manifest = project_output / "visual_compile.manifest.json"
+        if not compile_manifest.is_file():
+            raise VisualReasoningCompilerError(
+                "visual compile returned without a Unity project and compile manifest"
+            )
+        compile_data = json.loads(compile_manifest.read_text(encoding="utf-8"))
+        project_ref = ((compile_data.get("outputs") or {}).get("project_root"))
+        project_root = Path(str(project_ref)) if project_ref else Path()
+        if not project_root.is_absolute() and not project_root.is_dir():
+            project_root = Path.cwd() / project_root
+        if not project_root.is_dir():
+            raise VisualReasoningCompilerError(
+                "visual compile returned a manifest without an existing Unity project"
+            )
+
+        console.print("[cyan]Visual E2E Slice 6.7:[/] freezing accepted lineage")
+        freeze_path = freeze_spatial_build(
+            project_root=project_root,
+            source_image=source_image,
+            reasoning_manifest=reasoning_manifest,
+            inventory=inventory,
+            concept=concept,
+            closed_ir=closed_ir,
+            reconciliation_manifest=reconciliation_manifest,
+            image_evidence=image_evidence,
+            image_evidence_manifest=image_evidence_manifest,
+            asset_fulfilment=asset_fulfilment,
+            asset_manifest=asset_manifest,
+            compile_manifest=compile_manifest,
+            config=config,
+        )
+        frozen = json.loads(freeze_path.read_text(encoding="utf-8"))
+        console.print(f"[green]Visual E2E accepted and frozen[/] {project_root}")
+        console.print(f"[green]Spatial freeze:[/] {freeze_path}")
+        console.print(f"[green]Lineage hash:[/] {frozen.get('lineage_sha256')}")
+    except (OSError, ValueError, RuntimeError, TypeError, KeyError,
+            json.JSONDecodeError, VisualReasoningCompilerError,
+            VisualSpatialExtractionError, SpatialFreezeError) as exc:
+        console.print(f"[red]Visual E2E error:[/] {exc}")
+        raise typer.Exit(2) from exc
+    finally:
+        if llm is not None and hasattr(llm, "unload"):
+            llm.unload()
 
 
 @app.command("unity-playability")

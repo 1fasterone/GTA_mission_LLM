@@ -1212,13 +1212,20 @@ class TestProvenance:
         for field in ("motion_axis=", "medium=", "goal_topology="):
             assert field in head, head
 
-    def test_2d_projects_skip_selection_entirely(self):
-        """2D builds its own layout at spawn time — it must never be asked to
-        justify a 3D spatial primitive (and never abstain on one)."""
-        for gt in ("2D", "2d_topdown"):
-            s = _planar_schema()
-            s.game_type = gt
-            assert compute_layout(s) == []
+    def test_side_scroller_skips_selection_but_topdown_keeps_board_layout(self):
+        """Side-scroller content is still built by its lane runtime builder.
+
+        Top-down content is different: its deterministic board anchors must
+        survive into the runtime projection so image composition is not lost.
+        """
+        side = _planar_schema()
+        side.game_type = "2D"
+        assert compute_layout(side) == []
+
+        topdown = _planar_schema()
+        topdown.game_type = "2d_topdown"
+        assert any("ArenaPlane" in msg for msg in compute_layout(topdown))
+        assert topdown.entities[0].instance_positions
 
     def test_schema_with_nothing_to_place_skips_selection(self):
         s = _planar_schema()

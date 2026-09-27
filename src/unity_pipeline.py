@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
+from .lm_studio_client   import LMStudioClient
 from .micro_pipeline     import to_pascal
 from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
                                  is_embodied)
@@ -469,9 +470,9 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
         fixes.append("VR game: added input_system feature")
 
     # NavMesh has no 2D pathfinding support in Unity
-    if schema.game_type == "2D" and "navmesh" in schema.features:
+    if schema.game_type in ("2D", "2d_topdown") and "navmesh" in schema.features:
         schema.features.remove("navmesh")
-        fixes.append("2D game: removed navmesh (not applicable to 2D)")
+        fixes.append("2D game: removed navmesh (not applicable to flat 2D)")
 
     if "game_manager" not in _stypes():
         schema.scripts.insert(0, UnityScript(
@@ -539,7 +540,7 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
 
     # Always inject MaterialPalette for 3D/2.5D/top_down/isometric/VR projects
     # so palette colors are available at runtime even without an explicit schema entry
-    if schema.game_type not in ("2D",) and "material_palette" not in _stypes():
+    if schema.game_type not in ("2D", "2d_topdown") and "material_palette" not in _stypes():
         schema.scripts.insert(0, UnityScript(
             name        = "MaterialPalette",
             type        = "material_palette",
@@ -1125,7 +1126,27 @@ class UnityPipeline:
 
         return overrides
 
-    def run(self, user_prompt: str,
+    def run(self, user_prompt: str, *args, **kwargs) -> Path:
+        """Run the compiler and release any model used by this run.
+
+        Unity can contend with LM Studio for GPU/RAM after the last schema
+        token arrives.  Keep lifecycle cleanup outside deterministic Steps
+        4-7 so it cannot affect compiler output or add a post-schema call.
+        """
+        try:
+            return self._run_impl(user_prompt, *args, **kwargs)
+        finally:
+            eject = getattr(self.llm, "unload", None)
+            if callable(eject):
+                try:
+                    eject()
+                except Exception as exc:  # noqa: BLE001 - cleanup must not mask a run
+                    self._warn(
+                        f"LLM cleanup failed after pipeline run "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+
+    def _run_impl(self, user_prompt: str,
             theme:       str | None = None,
             mashup_with: str | None = None,
             seed:        int | None = None,
@@ -1141,9 +1162,24 @@ class UnityPipeline:
             visual_asset_bindings: list[dict] | None = None,
             closed_image_ir: Path | None = None,
             image_spatial_evidence: Path | None = None,
-            visual_compile_plan: dict | None = None) -> Path:
+            visual_compile_plan: dict | None = None,
+            visual_context: str | None = None) -> Path:
         locked_asset_bindings: dict[str, dict] | None = None
         visual_compile = visual_compile_plan is not None
+        visual_context_mode = visual_context is not None
+        if visual_context_mode:
+            visual_context = str(visual_context).strip()
+            if not visual_context:
+                raise ValueError("visual context handoff is empty")
+            if reference_image is None:
+                raise ValueError(
+                    "visual context requires the canonical reference image"
+                )
+            if precomputed_concept is not None or visual_compile:
+                raise ValueError(
+                    "visual context cannot be combined with a precomputed "
+                    "Concept or closed visual-compile plan"
+                )
         if visual_compile:
             if visual_asset_bindings is not None:
                 raise ValueError(
@@ -1162,10 +1198,16 @@ class UnityPipeline:
                 raise ValueError(
                     "visual compile accepts only theme='none'; hidden creative context is disabled"
                 )
-            if compose or blender_models or micro_code:
+            # Visual compile may compose the deterministic micro library.  The
+            # old guard rejected all composition because the historical visual
+            # command also disabled post-schema LLM authoring; that conflated
+            # two separate switches and silently produced a legacy shell with
+            # no Assets/Micros or audio bank.  Keep Blender and micro-code
+            # authoring disabled here, but allow the pure plan/emit path.
+            if blender_models or micro_code:
                 raise ValueError(
-                    "visual compile disables compose, Blender model generation, "
-                    "and post-schema micro-code authoring"
+                    "visual compile disables Blender model generation and "
+                    "post-schema micro-code authoring; deterministic compose is allowed"
                 )
         precomputed_mode = precomputed_concept is not None
         if precomputed_mode:
@@ -1367,6 +1409,23 @@ class UnityPipeline:
                     )
                     concept_images = [reference_image_uri]
                     self._ok("Reference image attached to Concept only")
+                if visual_context_mode:
+                    concept_user += (
+                        "\n\nVISUAL ASSET CONTEXT\n"
+                        "The text brief above is authoritative for gameplay, "
+                        "semantics, entity roles, and required systems. The "
+                        "following image-derived context is authoritative only "
+                        "for visible appearance, concrete object nouns, scene "
+                        "composition, and asset-search language. Preserve its "
+                        "literal visible nouns and distinctive physical details "
+                        "when describing entities so Step 3 can produce precise "
+                        "2-5 word Sketchfab queries. Do not add a gameplay "
+                        "entity merely because it appears in this context, and "
+                        "do not replace a role required by the text brief.\n\n"
+                        + str(visual_context)
+                        + "\nEND VISUAL ASSET CONTEXT\n"
+                    )
+                    self._ok("Image-derived context.txt injected into Step 2")
                 concept = self.llm.chat(
                     system      = UNITY_CONCEPT_SYSTEM,
                     user        = concept_user,
@@ -1768,7 +1827,17 @@ class UnityPipeline:
         for msg in _repairs:
             self._fix(msg)
 
-        if visual_asset_bindings is not None or visual_compile:
+        # A plain `unity-create --viz` run has already crossed the visual
+        # reasoning boundary and will feed the closed board into the spatial
+        # sidecars, even though it does not use the stricter Slice-4 asset
+        # compile plan.  Its Step-3 scene subset must therefore receive the
+        # same deterministic coverage repair as visual-compile mode.  Without
+        # this, a model-authored decorative/hazard entity can remain excluded
+        # from every SceneSpec and the graph correctly aborts later with an
+        # orphaned entity.  Keep the repair scoped to visual-context runs so
+        # ordinary text-only projects retain their authored scene subsets.
+        if (visual_asset_bindings is not None or visual_compile
+                or visual_context_mode):
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
 
@@ -1859,7 +1928,10 @@ class UnityPipeline:
         # --no-llm skips this: the enrichment is a model call, and its
         # deterministic fallback (model_hint / entity name, both already parsed
         # from the brief) is exactly what the offline arm is meant to exercise.
-        if schema.entities and not no_llm:
+        post_schema_llm_allowed = not (
+            no_llm or visual_compile or visual_context_mode
+        )
+        if schema.entities and post_schema_llm_allowed:
             try:
                 from .unity_sketchfab_translator import translate_concept
                 _llm_seed = getattr(self.llm, "seed", None)
@@ -1873,6 +1945,16 @@ class UnityPipeline:
             except Exception as exc:  # noqa: BLE001
                 self._warn(f"Sketchfab query translation failed "
                           f"({type(exc).__name__}: {exc}) — mechanical fallback used")
+        elif schema.entities and visual_context_mode:
+            _query_count = sum(
+                bool((entity.sketchfab_query or "").strip())
+                for entity in schema.entities
+            )
+            self._ok(
+                "Step 3 supplied image-guided Sketchfab queries for "
+                f"{_query_count}/{len(schema.entities)} entities; no "
+                "post-schema query LLM was called"
+            )
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
         # Computed BEFORE Step 3.5a (below) so script enrichment can show the
@@ -1935,7 +2017,7 @@ class UnityPipeline:
         # step here is. `subsystems` (computed just above, () when compose is
         # off) lets the writer's contract name the real composed-micro classes
         # reachable via GameContext instead of staying silent about them.
-        if schema.scripts and micro_code and not no_llm:
+        if schema.scripts and micro_code and post_schema_llm_allowed:
             from .unity_micro_code import enrich_scripts
             for msg in enrich_scripts(schema.scripts, llm=self.llm,
                                       concept=concept, user_prompt=user_prompt,
@@ -1962,7 +2044,7 @@ class UnityPipeline:
                                            sanitize_subsystem_composed_calls,
                                            sanitize_subsystem_invented_constructors,
                                            sanitize_subsystem_builtin_call_arity)
-            if micro_code and not no_llm:
+            if micro_code and post_schema_llm_allowed:
                 # The tags TagManager will actually define. Handed to the author
                 # because GameObject.FindGameObjectWithTag THROWS on an undefined
                 # tag — live on CodeVault, an authored "FolderContainer" (the real
@@ -1975,9 +2057,14 @@ class UnityPipeline:
                                              user_prompt=user_prompt,
                                              tags=_tags):
                     self._fix(msg)
-            elif no_llm:
-                self._ok("--no-llm: micros keep their deterministic baseline "
-                         "bodies (Step 3.5 code enrichment skipped)")
+            elif no_llm or visual_context_mode or visual_compile:
+                _reason = (
+                    "visual asset mode" if visual_context_mode
+                    else "visual compile" if visual_compile
+                    else "--no-llm"
+                )
+                self._ok(f"{_reason}: micros keep their deterministic baseline "
+                         "bodies (post-schema code enrichment skipped)")
             # Fallback: schema.microgens[].input is already LLM-authored, so it
             # costs nothing and covers whatever enrichment left empty (disabled,
             # failed, or nothing usable returned for that kind).
@@ -2066,7 +2153,7 @@ class UnityPipeline:
             # TTS-free). Retry once — the local model very occasionally returns an
             # unparseable first response under load.
             _npc_subs = [s for s in subsystems if s.kind == "npc_dialog"]
-            if _npc_subs and concept:
+            if _npc_subs and concept and post_schema_llm_allowed:
                 _itype = {"quest_giver": "quest", "vendor": "vendor",
                           "ambient_bark": "ambient", "combat_chatter": "combat",
                           "follower": "follower", "cutscene": "quest"}
@@ -2106,8 +2193,9 @@ class UnityPipeline:
             # Kenney pick. Every model logs where it was written or why it failed.
             self._sketchfab_collection = None
             _coll_cfg = self.config.get("sketchfab", {}) or {}
-            if _coll_cfg.get("enabled") and _coll_cfg.get("collect", True) and concept:
-                if schema.game_type == "2D":
+            if (post_schema_llm_allowed and _coll_cfg.get("enabled")
+                    and _coll_cfg.get("collect", True) and concept):
+                if schema.game_type in ("2D", "2d_topdown"):
                     # Sketchfab is a 3D-model marketplace — fetch_and_freeze only
                     # ever writes FBX. The per-entity Tier S resolver already
                     # skips itself for 2D (unity_entity_asset_resolver.py: `not
@@ -2136,7 +2224,17 @@ class UnityPipeline:
                         self._warn(f"Sketchfab collection failed "
                                    f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
-        _sketchfab_cfg = self.config.get("sketchfab", {}) or {}
+        _sketchfab_cfg = dict(self.config.get("sketchfab", {}) or {})
+        _asset_llm: LMStudioClient | None = self.llm
+        if visual_context_mode:
+            # Step 3 already authored the per-entity query. Selection and
+            # filename wiring after that boundary must be deterministic.
+            _sketchfab_cfg["vision_select"] = False
+            _asset_llm = None
+            self._ok(
+                "Sketchfab resolver will fetch/freeze each Step-3 entity query "
+                "and wire the selected filename without post-schema LLM calls"
+            )
         from .csharp_syntax_gate import CSharpSyntaxError
         try:
             project_root, file_count = self.generator.write(
@@ -2144,7 +2242,7 @@ class UnityPipeline:
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                project_config=self.config, llm=self.llm,
+                project_config=self.config, llm=_asset_llm,
                 locked_asset_bindings=locked_asset_bindings,
                 spatial_fusion=_spatial_bundle["spatial_fusion"])
         except (ValueError, CSharpSyntaxError) as exc:
@@ -2179,33 +2277,50 @@ class UnityPipeline:
 
         if compose and subsystems:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
-            if (audio_backend == "stable3" and not no_llm
+            if (audio_backend == "stable3"
                     and any(s.kind == "audio" for s in subsystems)):
                 # 1. Extract diegetic cues from concept WHILE LM Studio is loaded.
                 #    Inject into the audio subsystem meta so default_fix() finds them
                 #    without needing a live LLM (it's unloaded a few lines below).
-                try:
-                    from .audio.resolver import extract_cues as _extract_audio_cues
-                    _llm_seed = getattr(self.llm, "seed", None)
-                    _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                    _pre_cues = _extract_audio_cues(concept, self.llm, n=10, seed=_seed)
-                    if _pre_cues:
-                        self._ok(f"Pre-extracted {len(_pre_cues)} diegetic audio cues from concept")
-                        for _sub in subsystems:
-                            if _sub.kind == "audio":
-                                _sub.options.setdefault("meta", {})["_pre_cues"] = _pre_cues
-                    else:
-                        self._warn("Concept audio extraction returned no cues — genre preset will be used")
-                except Exception as _exc:  # noqa: BLE001
-                    self._warn(f"Audio pre-extraction failed ({type(_exc).__name__}: {_exc})")
-                # 2. Unload LM Studio so SA3 has the full VRAM budget.
-                from .audio.backends import unload_lm_studio
-                self._ok("Unloading LM Studio to free VRAM for Stable Audio 3 clip generation")
-                ok = unload_lm_studio(self.config)
-                if ok:
-                    self._ok("LM Studio model unloaded — VRAM available for Stable Audio 3")
+                # The visual compiler already has Step-3 audio_specs.  It must
+                # not make a second, post-schema LLM call, so the deterministic
+                # compose path consumes those cues directly.
+                if post_schema_llm_allowed:
+                    try:
+                        from .audio.resolver import extract_cues as _extract_audio_cues
+                        _llm_seed = getattr(self.llm, "seed", None)
+                        _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
+                        _pre_cues = _extract_audio_cues(concept, self.llm, n=10, seed=_seed)
+                        if _pre_cues:
+                            self._ok(f"Pre-extracted {len(_pre_cues)} diegetic audio cues from concept")
+                            for _sub in subsystems:
+                                if _sub.kind == "audio":
+                                    _sub.options.setdefault("meta", {})["_pre_cues"] = _pre_cues
+                        else:
+                            self._warn("Concept audio extraction returned no cues — genre preset will be used")
+                    except Exception as _exc:  # noqa: BLE001
+                        self._warn(f"Audio pre-extraction failed ({type(_exc).__name__}: {_exc})")
+                elif visual_compile:
+                    self._ok("Visual compile: using Step-3 audio_specs; no post-schema LLM audio extraction")
+                # Stable Audio 3 is deferred by default.  The compose pass now
+                # writes audio_batch.json and never imports the GPU model, so
+                # Step 2/3 and the Unity compiler finish without a GPU stall.
+                _defer_stable3 = bool(
+                    self.config.get("audio", {}).get("defer_stable3", True)
+                )
+                if _defer_stable3:
+                    self._ok(
+                        "Stable Audio 3 deferred — audio_batch.json will be rendered "
+                        "by unity-audio-batch after project generation"
+                    )
                 else:
-                    self._warn("LM Studio unload failed — SA3 may OOM; run: lms unload")
+                    from .audio.backends import unload_lm_studio
+                    self._ok("Unloading LM Studio to free VRAM for Stable Audio 3 clip generation")
+                    ok = unload_lm_studio(self.config)
+                    if ok:
+                        self._ok("LM Studio model unloaded — VRAM available for Stable Audio 3")
+                    else:
+                        self._warn("LM Studio unload failed — SA3 may OOM; run: lms unload")
             # Bridge the two islands: tell the composer whether a GameManager
             # concept script survived so GameContext can wire micro↔concept seams.
             has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
@@ -2373,6 +2488,17 @@ class UnityPipeline:
             )
         except Exception:  # noqa: BLE001 — sidecar failure shouldn't break the run
             self._warn("Could not write .concept.txt sidecar")
+        if visual_context_mode:
+            try:
+                from .unity_visual_context import render_project_context
+
+                (project_root / "context.txt").write_text(
+                    render_project_context(str(visual_context), schema),
+                    encoding="utf-8",
+                )
+                self._ok("context.txt records Step-3 searches and exact Unity filenames")
+            except OSError:
+                self._warn("Could not write context.txt sidecar")
         # Persist the resolved schema so it can be rebuilt (`from-schema`) or fed
         # to the Blender asset pipeline (`blender_cli.py from-schema`) — the
         # unity→assets chain needs a schema on disk.
@@ -2426,13 +2552,15 @@ class UnityPipeline:
         # in config.yaml makes errors fatal; `python main.py unity-playability
         # <schema.json> --strict` grades a saved schema the same way.
         _pcfg = (self.config.get("playability") or {}) if self.config else {}
-        _reason = playability_gate(
+        _playability_reason = playability_gate(
             report,
             min_score=int(_pcfg.get("min_score", 0) or 0),
             fail_on_error=bool(_pcfg.get("gate", False)),
         )
-        if _reason:
-            raise PlayabilityGateError(f"Playability gate failed — {_reason}")
+        if _playability_reason:
+            raise PlayabilityGateError(
+                f"Playability gate failed — {_playability_reason}"
+            )
 
         console.print(Panel(
             f"[bold green]Done![/]\n"

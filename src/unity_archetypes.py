@@ -212,6 +212,7 @@ _PERSPECTIVE: list[tuple[str, list[str]]] = [
     # specific (2D-qualified) signal, so it should win ties against the
     # dimension-neutral top_down phrases below — not the other way around.
     ("2d_topdown", [
+        "2d-top-down", "2d top-down", "2d top down",
         "twin-stick", "twin stick", "zelda-like", "zelda-style", "bullet heaven",
     ]),
     ("top_down", [

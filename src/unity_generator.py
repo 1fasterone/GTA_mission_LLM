@@ -3052,6 +3052,23 @@ class UnityProjectGenerator:
         # schema replayable through `unity-fidelity` with its assets intact.
         if isinstance(schema.meta, dict):
             schema.meta["entity_model_paths"] = dict(entity_model_paths)
+            models_by_resource = {
+                model.resource_path: model for model in used_models.values()
+            }
+            bindings: dict[str, dict[str, str | None]] = {}
+            for entity_name, resource_path in sorted(entity_model_paths.items()):
+                model = models_by_resource.get(resource_path)
+                if model is None:
+                    continue
+                bindings[entity_name] = {
+                    "filename": Path(model.dest_rel).name,
+                    "source_filename": Path(model.src).name,
+                    "resource_path": model.resource_path,
+                    "source": model.source,
+                    "license": model.license,
+                    "attribution": model.attribution,
+                }
+            schema.meta["entity_model_bindings"] = bindings
         return used_models, entity_model_paths
 
     # ── public entry point ─────────────────────────────────────────────────────

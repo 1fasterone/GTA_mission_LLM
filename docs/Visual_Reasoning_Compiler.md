@@ -5,8 +5,8 @@
 This document defines the image-led compiler mode. Slice 1 is implemented:
 `vizconcept.txt` to one canonical ComfyUI board and a complete provenance
 manifest. Slice 2 now adds the image-only Qwen boundary: one visual inventory
-JSON, one image-derived `Concept.txt`, and a provenance manifest linking both
-outputs to the board hash. Live smoke runs remain environment-dependent and
+JSON, one image-derived `Concept.txt`, one deterministic `context.txt`, and a
+provenance manifest linking all outputs to the board hash. Live smoke runs remain environment-dependent and
 must be reported separately from the checked-in contract and mocked tests.
 Slice 3 now closes those artifacts deterministically through an explicit
 Concept entity-reference block and a hash-checked closed image IR. Slice 4
@@ -75,6 +75,11 @@ remain loaded on an 8 GB card:
    model hints, and Sketchfab queries;
 2. `Concept.txt`, describing a game whose mechanics and entities are built from
    the objects visible in the image.
+
+The compiler deterministically combines these two validated outputs into
+`context.txt`. In `unity-create --viz` mode that artifact becomes explicit
+visual/asset-search context for the normal Step 2 Concept prompt; it does not
+replace the user's semantic brief.
 
 The image must dictate the game direction. The inventory is strict JSON with
 visible elements, exact-label query references, legible visible text, and
@@ -267,6 +272,7 @@ The slice is complete when:
   --board-manifest 'output\visual_reasoning\git_run\board.import.json' `
   --inventory-output 'output\visual_reasoning\git_run\visual_inventory.json' `
   --concept-output 'output\visual_reasoning\git_run\Concept.txt' `
+  --context-output 'output\visual_reasoning\git_run\context.txt' `
   --manifest 'output\visual_reasoning\git_run\reasoning.json'
 ```
 
@@ -306,6 +312,11 @@ END VISIBLE ENTITY REFERENCES
 Every concrete entity used by the concept must be listed there. Slice 3
 matches those phrases conservatively against inventory labels, model hints,
 and descriptions.
+
+`context.txt` records the scene summary, discrete visible targets, image query
+phrases, appearance descriptions, visible text/uncertainties, and the
+image-derived Concept. It is deterministic formatting over the two validated
+Slice-2 outputs and makes no additional model call.
 
 `reasoning.json` records the board hash, optional Slice-1 manifest hash, model,
 fixed request instructions and settings, the injected inventory label list,
@@ -391,6 +402,11 @@ silently downgraded to a generic prop.
 
 Slice 4 acceptance criteria:
 
+- the complete imported-image E2E may run the explicit pre-Slice-4
+  `unity-vizconcept-prepare-assets` operation first; it reads only the closed
+  IR, makes no LLM call, and freezes licensed Sketchfab conversions into the
+  local Sketchfab catalog. A failed or unavailable Sketchfab request is
+  recorded as a catalog fallback rather than a hidden substitution;
 - the Slice-3 IR and reconciliation manifest must both be present and hash
   matched;
 - no LLM, network, live Sketchfab search, download, or Blender conversion is
@@ -404,6 +420,9 @@ Slice 4 acceptance criteria:
 - when a licensed Sketchfab entry was frozen for the exact closed request
   query, that recorded query provenance outranks stale local lexical variants;
   this is text/provenance only and never invokes thumbnail or CLIP judging;
+- any other acceptable frozen Sketchfab candidate is still a higher source
+  tier than local catalog candidates; local catalog entries are considered
+  only when no acceptable Sketchfab candidate matches the request;
 - byte-identical duplicate pack copies are collapsed before ambiguity is
   evaluated, while distinct plausible model candidates remain refusals;
 - the output records enough hashes and provenance to hand the resolved asset
@@ -444,6 +463,27 @@ as explicit locked bindings into the generator. The compile handoff disables
 live Sketchfab fetch, semantic thumbnail selection, and CLIP selection. The
 output directory receives `visual_compile.manifest.json` linking the closed IR,
 Slice-4 artifacts, schema, and generated project.
+
+For an imported image, the complete path can be invoked as one command:
+
+```powershell
+& .\.venv\Scripts\python.exe main.py unity-vizconcept-e2e `
+  --image 'F:\Downloads\plane.png' `
+  --model 'qwen3.5-9b' `
+  --compile
+```
+
+The E2E's asset order is explicit: pre-Slice-4 Sketchfab preparation (when
+`--sketchfab-first` is enabled), deterministic Slice 4 frozen-Sketchfab
+selection, then local-catalog fallback. Use `--catalog-only` to replay the
+deterministic fallback path without making a new marketplace attempt.
+
+This owns the import, Slices 2-4, Slice 6.1, the compile handoff, deterministic
+Slices 6.2-6.6, and the accepted-build Slice 6.7 freeze. Visual compile now
+composes the deterministic micro-generators and audio bank by default; use
+`unity-vizconcept-compile --no-compose` only for the legacy shell-only output.
+Composition does not enable post-schema LLM code authoring, live Sketchfab
+search, or catalog substitution.
 
 The command must:
 

@@ -1083,7 +1083,7 @@ _PLAYER_NAME_RE = re.compile(r"^\s*(?:the\s+)?player\b", re.IGNORECASE)
 # word boundary after "Player"; keep the suffix vocabulary narrow so scenery
 # names such as PlayerStatues do not become avatars by prefix alone.
 _PLAYER_COMPOUND_RE = re.compile(
-    r"^\s*(?:the\s+)?player(?:craft|aircraft|plane|bike|car|kart|diver|pilot|"
+    r"^\s*(?:the\s+)?player(?:character|craft|aircraft|plane|bike|car|kart|diver|pilot|"
     r"hero|avatar)\b", re.IGNORECASE
 )
 _PLAYER_ALIASES: tuple[str, ...] = ("avatar", "protagonist", "hero", "pc")

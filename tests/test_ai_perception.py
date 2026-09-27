@@ -188,7 +188,7 @@ def test_squad_enabled_emits_squad_machinery(dummy_config, tmp_path):
     assert "_squad.Add(this);" in cs
     assert "_squad.Remove(this);" in cs
     assert "private void AlertSquad()" in cs
-    assert "public void ReceiveAllyAlert(Vector3 reportedPosition, int sourceId, SquadRole role)" in cs
+    assert "private void ReceiveAllyAlert(Vector3 reportedPosition, int sourceId, SquadRole role)" in cs
     assert "private Vector3 ApplySquadRoleOffset(Vector3 dest)" in cs
     assert "private enum SquadRole { None, FlankLeft, FlankRight, Cover }" in cs
     assert "_allyAlerted = false;" in cs   # consumed-then-reset, mirrors _tookDamage

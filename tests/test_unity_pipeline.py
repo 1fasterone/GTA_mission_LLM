@@ -149,6 +149,42 @@ class TestUnityPipelineHappyPath2D:
         assert schema_call.kwargs.get("images") is None
         assert "REFERENCE IMAGE" not in schema_call.kwargs["user"]
 
+    def test_visual_context_guides_step_2_and_writes_project_context(
+        self, unity_pipeline_config, unity_concept_text, unity_schema_json_2d, tmp_path
+    ):
+        image = tmp_path / "basement.png"
+        image.write_bytes(b"png-bytes")
+        visual_context = (
+            "# Visual Scene Context\n\n"
+            "- robot | category=character | image_query=industrial robot\n"
+        )
+        schema_data = json.loads(unity_schema_json_2d)
+        schema_data["entities"] = [{
+            "name": "RobotEnemies",
+            "kind": "enemy",
+            "model_hint": "industrial robot",
+            "sketchfab_query": "industrial robot enemy",
+        }]
+        pipeline = _make_pipeline(unity_pipeline_config)
+        mock_chat = MagicMock(side_effect=[unity_concept_text, json.dumps(schema_data)])
+        pipeline.llm.chat = mock_chat
+
+        project_root = pipeline.run(
+            "an FPS with robot enemies in a bright basement",
+            reference_image=image,
+            visual_context=visual_context,
+        )
+
+        concept_call, schema_call = mock_chat.call_args_list
+        assert "VISUAL ASSET CONTEXT" in concept_call.kwargs["user"]
+        assert "industrial robot" in concept_call.kwargs["user"]
+        assert "VISUAL ASSET CONTEXT" not in schema_call.kwargs["user"]
+        written = (project_root / "context.txt").read_text(encoding="utf-8")
+        assert "industrial robot" in written
+        assert "query=industrial robot enemy" in written
+        assert "## Step 3 Sketchfab searches" in written
+        assert "## Frozen Unity model bindings" in written
+
     def test_reference_image_is_invalid_for_no_llm_mode(
         self, unity_pipeline_config, tmp_path
     ):

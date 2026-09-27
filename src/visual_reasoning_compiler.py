@@ -83,6 +83,14 @@ these keys:
 List discrete, asset-worthy visible elements, not abstract game systems. For
 every visible element, the label must be one literal visible noun (or the same
 noun with a numeric suffix when duplicate instances need distinct labels).
+Classify a physical object by what it is, not by a visual effect applied to it:
+use "prop", "environment", or "landmark" for a visible lantern, lamp, torch,
+sign, or gate even when it glows or emits light. Reserve "effect" for a
+standalone VFX such as smoke, fire, sparks, or an explosion with no physical
+object carrying it.
+For card-like interfaces, use the pictured unit or object noun (for example,
+"peasant", "knight", or "dragon"), never the card position, tier, rank, or
+another numeric-only identifier.
 Do not use adjectives, pronouns, articles, spatial/depth modifiers, gameplay
 roles, or inferred names in labels. Examples include "aircraft", "missile",
 "warship", "mountain", "ocean", "smoke", "explosion", and "watermark".
@@ -375,6 +383,10 @@ def validate_visual_inventory(raw: str | dict[str, Any]) -> dict[str, Any]:
             label=f"visible_elements[{index}]",
         )
         label = _require_string(item["label"], label=f"visible_elements[{index}].label")
+        if label.isdecimal():
+            raise VisualReasoningCompilerError(
+                f"visible_elements[{index}].label must be a visible noun, not a numeric-only identifier"
+            )
         if label in labels:
             raise VisualReasoningCompilerError(
                 f"visual inventory repeats element label {label!r}"
@@ -523,7 +535,8 @@ def _board_manifest_record(board_manifest: Path | None, board_hash: str) -> dict
 
 def reason_over_board(*, board_image: Path, inventory_output: Path,
                       concept_output: Path, manifest: Path,
-                      llm: Any, board_manifest: Path | None = None) -> Path:
+                      llm: Any, board_manifest: Path | None = None,
+                      context_output: Path | None = None) -> Path:
     """Run Slice 2 using only the board image and fixed instructions.
 
     The two calls are sequential so one 9B vision model can remain loaded on
@@ -542,6 +555,8 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
         concept_output.with_suffix(".raw.txt"),
     )
     requested = [inventory_output, concept_output, manifest, *raw_paths]
+    if context_output is not None:
+        requested.append(context_output)
     resolved: list[Path] = []
     for path in requested:
         path_resolved = path.resolve()
@@ -583,6 +598,14 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
     )
     concept = _clean_concept_response(concept_raw)
     _require_inventory_reference_labels(concept, inventory_labels)
+
+    context_bytes: bytes | None = None
+    if context_output is not None:
+        from .unity_visual_context import render_image_context
+
+        context_bytes = render_image_context(
+            board_image, inventory, concept
+        ).encode("utf-8")
 
     inventory_bytes = (
         json.dumps(inventory, indent=2, ensure_ascii=False) + "\n"
@@ -655,13 +678,23 @@ def reason_over_board(*, board_image: Path, inventory_output: Path,
             },
         },
     }
+    if context_output is not None and context_bytes is not None:
+        manifest_data["outputs"]["context"] = {
+            "path": str(context_output),
+            "sha256": sha256_bytes(context_bytes),
+        }
 
-    for path in (inventory_output, concept_output, *raw_paths, manifest):
+    output_paths = [inventory_output, concept_output, *raw_paths, manifest]
+    if context_output is not None:
+        output_paths.append(context_output)
+    for path in output_paths:
         path.parent.mkdir(parents=True, exist_ok=True)
     inventory_output.write_bytes(inventory_bytes)
     concept_output.write_bytes(concept_bytes)
     raw_paths[0].write_bytes(inventory_raw_bytes)
     raw_paths[1].write_bytes(concept_raw_bytes)
+    if context_output is not None and context_bytes is not None:
+        context_output.write_bytes(context_bytes)
     manifest.write_text(
         json.dumps(manifest_data, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",

@@ -148,3 +148,33 @@ def test_reconcile_rejects_omitted_asset_element(tmp_path: Path) -> None:
             output=tmp_path / "closed.json",
             manifest=tmp_path / "reconcile.json",
         )
+
+
+def test_reconcile_accepts_unique_exact_generic_inventory_label(tmp_path: Path) -> None:
+    inventory, concept, reasoning = _write_inputs(tmp_path)
+    concept.write_text(
+        concept.read_text(encoding="utf-8").replace(
+            "- red-hat explorer\n", "- character\n"),
+        encoding="utf-8",
+    )
+    inventory_data = json.loads(inventory.read_text(encoding="utf-8"))
+    inventory_data["visible_elements"][0]["label"] = "character"
+    inventory_data["sketchfab_queries"][0]["label"] = "character"
+    inventory.write_text(json.dumps(inventory_data), encoding="utf-8")
+    reasoning_data = json.loads(reasoning.read_text(encoding="utf-8"))
+    reasoning_data["outputs"]["visual_inventory"]["sha256"] = sha256_file(inventory)
+    reasoning_data["outputs"]["concept"]["sha256"] = sha256_file(concept)
+    reasoning.write_text(json.dumps(reasoning_data), encoding="utf-8")
+
+    output = tmp_path / "closed.json"
+    reconcile_image_reasoning(
+        inventory_file=inventory,
+        concept_file=concept,
+        reasoning_manifest=reasoning,
+        output=output,
+        manifest=tmp_path / "reconcile.json",
+    )
+    closed = json.loads(output.read_text(encoding="utf-8"))
+    assert closed["entity_matches"][0] == {
+        "reference": "character", "inventory_label": "character"
+    }

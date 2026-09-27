@@ -72,7 +72,7 @@ def test_golden_2d_topdown_diverges_from_2d_side_scroller():
     core_top = _core_signature("2d_topdown", GOLDEN_2D_TOPDOWN_CORE_SIGNATURE, features=[])
     assert core_2d != core_top
     assert dict(core_top)["controller"] == "2d_topdown"
-    assert dict(core_top)["camera"]     == "follow_2d"    # same orthographic X/Y follow as 2D
+    assert dict(core_top)["camera"]     == "board_framing"  # whole-board orthographic composition
     assert dict(core_top)["physics"]    == "rigidbody_2d"  # flat, like 2D — unlike 2.5D
 
 

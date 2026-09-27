@@ -19,6 +19,8 @@ Debug output (--debug / -d flag):
 import json
 import logging
 import re
+import shutil
+import subprocess
 import time
 import httpx
 from rich.console import Console
@@ -198,9 +200,11 @@ class LMStudioClient:
                  temperature: float = 0.7, max_tokens: int = 8192,
                  timeout: float = 600.0, seed: int | None = None,
                  reasoning_effort: str | None = None,
-                 api_key: str | None = None):
+                 api_key: str | None = None,
+                 backend: str = "lm_studio"):
         self.base_url    = base_url.rstrip("/")
         self.model       = model
+        self.backend     = backend.lower()
         self.temperature = temperature
         self.max_tokens  = max_tokens
         self.timeout     = timeout
@@ -224,6 +228,70 @@ class LMStudioClient:
         # one sequential pipeline run (no concurrent calls), so instance state
         # here is safe the same way _REASONING_IGNORED's module state is.
         self.last_finish_reason: str | None = None
+        # Do not evict a model when this client was only constructed for an
+        # offline/no-LLM path.  A positive count proves this run used it.
+        self.chat_calls = 0
+
+    def unload(self) -> bool:
+        """Eject the LM Studio model used by this run, best effort.
+
+        The OpenAI-compatible ``/v1`` surface has no lifecycle operation;
+        LM Studio's native REST API does.  Older installations can fall back
+        to the ``lms unload`` CLI.  Other backends are intentionally no-ops.
+        Cleanup must not turn a successful compiler tail into a failed run.
+        """
+        if self.backend != "lm_studio" or self.chat_calls == 0:
+            return False
+
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        native_root = self.base_url
+        if native_root.endswith("/v1"):
+            native_root = native_root[:-3].rstrip("/")
+        endpoint = f"{native_root}/api/v1/models/unload"
+        try:
+            with httpx.Client(timeout=min(float(self.timeout), 15.0)) as client:
+                response = client.post(
+                    endpoint,
+                    json={"instance_id": self.model},
+                    headers=headers,
+                )
+            response.raise_for_status()
+            log.info("LM Studio model ejected: %s", self.model)
+            return True
+        except Exception as exc:  # noqa: BLE001 - cleanup is best effort
+            log.warning(
+                "LM Studio native unload failed for '%s' (%s: %s); "
+                "trying `lms unload` fallback",
+                self.model, type(exc).__name__, exc,
+            )
+
+        lms = shutil.which("lms")
+        if not lms:
+            log.warning(
+                "LM Studio model '%s' may still be resident: native unload "
+                "is unavailable and `lms` is not on PATH",
+                self.model,
+            )
+            return False
+        try:
+            result = subprocess.run(
+                [lms, "unload", self.model],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            if result.returncode == 0:
+                log.info("LM Studio model ejected via lms: %s", self.model)
+                return True
+            log.warning(
+                "`lms unload %s` failed with exit %d: %s",
+                self.model, result.returncode,
+                (result.stderr or result.stdout).strip()[:400],
+            )
+        except Exception as exc:  # noqa: BLE001 - cleanup is best effort
+            log.warning("`lms unload` fallback failed: %s: %s", type(exc).__name__, exc)
+        return False
 
     def _build_payload(self, system: str, user: str,
                        temperature: float | None, thinking: bool,
@@ -410,6 +478,7 @@ class LMStudioClient:
                          existing text-only call site — behavior for those
                          is unchanged.
         """
+        self.chat_calls += 1
         payload = self._build_payload(system, user, temperature, thinking, seed,
                                       max_tokens, json_mode=json_mode,
                                       json_schema=json_schema, images=images)

@@ -84,14 +84,24 @@ class TestGroupPacking:
         assert track.group_radius == 0.0
         assert track.instance_positions == []
 
-    def test_2d_game_types_are_skipped_entirely(self):
+    def test_side_scroller_2d_is_skipped_for_runtime_lane_builder(self):
         e = EntitySpec(name="Trees", count=5, placement="scatter", radius=10)
-        for gt in ("2D", "2d_topdown"):
-            schema = _schema([e], game_type=gt)
-            msgs = compute_layout(schema)
-            assert msgs == []
-            assert e.origin_offset == [0.0, 0.0]
-            assert e.instance_positions == []
+        schema = _schema([e], game_type="2D")
+        msgs = compute_layout(schema)
+        assert msgs == []
+        assert e.origin_offset == [0.0, 0.0]
+        assert e.instance_positions == []
+
+    def test_topdown_2d_bakes_board_positions_for_runtime_projection(self):
+        player = EntitySpec(name="Player", kind="character", tag="Player")
+        prop = EntitySpec(name="Lantern", kind="pickup", count=1,
+                          placement="single", tag="Collectible")
+        schema = _schema([player, prop], game_type="2d_topdown")
+        msgs = compute_layout(schema)
+        assert any("ArenaPlane" in msg for msg in msgs)
+        assert player.instance_positions
+        assert prop.instance_positions
+        assert player.instance_positions != prop.instance_positions
 
     def test_idempotent(self):
         e1 = EntitySpec(name="A", count=10, placement="scatter", radius=8, scale=2.0)

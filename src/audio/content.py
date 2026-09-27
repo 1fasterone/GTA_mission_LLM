@@ -99,6 +99,11 @@ def generate_bank(cues, resources_dir: str | Path, config: dict,
                 bufs = synth.variations(synth.archetype_params(arch, cue["descriptor"]),
                                         cue["variations"], cseed)
                 note = f"degrade-synth:{arch}"
+                if client.name == "stable3":
+                    warnings.append(
+                        f"{cid}: Stable Audio 3 produced nothing -> DSP "
+                        f"fallback ({arch})"
+                    )
             else:
                 dur = max(0.2, min(2.0, cue["duration_s"]))
                 bufs = [np.zeros(int(dur * synth.SR), dtype=np.float32)]

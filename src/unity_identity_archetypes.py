@@ -143,13 +143,19 @@ def load_identity_catalog(lookups_dir: str = "lookups") -> tuple[
         target = str(rule.get("archetype") or "").strip()
         if target not in archetypes:
             raise ValueError(f"identity fallback rule in {path} references {target!r}")
+        scope = str(rule.get("scope") or "").strip().lower()
+        if not scope:
+            family = archetypes[target].family
+            if family in {"human", "vehicle", "creature", "object"}:
+                scope = family
         rules.append({
             **rule,
             "name": str(rule.get("name") or "unnamed_rule"),
             "archetype": target,
-            "scope": str(rule.get("scope") or "").strip().lower(),
+            "scope": scope,
             "primary_any": _safe_tuple(rule.get("primary_any")),
             "context_any": _safe_tuple(rule.get("context_any")),
+            "match_suffix": _safe_tuple(rule.get("match_suffix")),
         })
     return archetypes, noun_map, tuple(rules)
 
@@ -211,8 +217,28 @@ def resolve_identity(*, name: str = "", kind: str = "", model_hint: str = "",
     kind_tokens = _tokens(kind)
     primary_tokens = hint_tokens + name_tokens
     context_tokens = _tokens(f"{context} {genre}")
-    primary_set = set(primary_tokens)
-    context_set = set(context_tokens)
+
+    def matching_terms(tokens: tuple[str, ...], values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(value for value in values if _phrase_present(tokens, value))
+
+    def matching_rule(rule: dict[str, Any]) -> Optional[tuple[str, ...]]:
+        primary_matches = matching_terms(primary_tokens, rule["primary_any"])
+        context_matches = matching_terms(context_tokens, rule["context_any"])
+        suffix_matches = tuple(
+            token for token in primary_tokens
+            if token != "human" and any(
+                token.endswith(suffix) for suffix in rule["match_suffix"]
+            )
+        )
+        if rule["primary_any"] and not primary_matches:
+            return None
+        if rule["context_any"] and not context_matches:
+            return None
+        if rule["match_suffix"] and not suffix_matches:
+            return None
+        if not (rule["primary_any"] or rule["context_any"] or rule["match_suffix"]):
+            return None
+        return tuple(sorted(set(primary_matches) | set(context_matches) | set(suffix_matches)))
 
     # Distinctive noun mappings are the strongest identity evidence. Prefer a
     # longer phrase, then model_hint, then the stable lexical target/name tie.
@@ -232,26 +258,37 @@ def resolve_identity(*, name: str = "", kind: str = "", model_hint: str = "",
     if scope is None:
         return IdentityResolution()
 
+    # Context/primary rules are more specific than morphology rules, regardless
+    # of their order in the editable catalog. This keeps a medieval worker in a
+    # forge on its explicit worker context path rather than a generic -er rule.
     for rule in rules:
         if rule["scope"] != scope:
             continue
-        primary_any = set(rule["primary_any"])
-        context_any = set(rule["context_any"])
-        if primary_any and not (primary_set & primary_any):
+        if not (rule["primary_any"] or rule["context_any"]):
             continue
-        if context_any and not (context_set & context_any):
+        matched = matching_rule(rule)
+        if matched is None:
             continue
         identity = archetypes[rule["archetype"]]
-        matched = tuple(sorted((primary_set & primary_any) | (context_set & context_any)))
+        return IdentityResolution(identity, matched, rule["name"], True, identity.query_tokens)
+
+    for rule in rules:
+        if rule["scope"] != scope or not rule["match_suffix"]:
+            continue
+        matched = matching_rule(rule)
+        if matched is None:
+            continue
+        identity = archetypes[rule["archetype"]]
         return IdentityResolution(identity, matched, rule["name"], True, identity.query_tokens)
 
     # The lookup's final family rules are deliberately explicit. A shallow
     # noun gets a stable identity, and the provenance says it was a fallback.
     for rule in rules:
-        if rule["scope"] != scope or rule["primary_any"] or rule["context_any"]:
+        if (rule["scope"] != scope or rule["primary_any"] or
+                rule["context_any"] or rule["match_suffix"]):
             continue
         identity = archetypes[rule["archetype"]]
-        matched = tuple(sorted(primary_set | set(kind_tokens)))
+        matched = tuple(sorted(set(primary_tokens) | set(kind_tokens)))
         return IdentityResolution(identity, matched, rule["name"], True, identity.query_tokens)
 
     return IdentityResolution()

@@ -11,13 +11,19 @@ from src.unity_schema import EntitySpec, UnitySchema
 def test_catalog_has_the_requested_identity_families():
     archetypes, noun_map, rules = load_identity_catalog("lookups")
     expected = {
-        "medieval_human_commoner", "medieval_human_knight",
-        "medieval_human_worker", "npc_human", "fantasy_human",
-        "sci-fi_human", "soldier_infantry", "civilian_modern",
-        "vehicle_boat", "vehicle_car", "creature_generic",
+        "medieval_human_commoner", "medieval_human_worker",
+        "medieval_human_knight", "medieval_human_noble",
+        "medieval_human_servant", "fantasy_human",
+        "fantasy_creature_humanoid", "creature_fantasy_beast",
+        "sci-fi_human", "sci-fi_alien_humanoid", "soldier_infantry",
+        "modern_security_guard", "modern_police", "civilian_modern",
+        "npc_human", "creature_domestic", "creature_predator",
+        "creature_generic", "vehicle_boat", "vehicle_car",
+        "vehicle_aircraft", "vehicle_sci-fi_ship", "object_generic",
+        "object_weapon_melee", "object_weapon_ranged", "object_structure",
     }
     assert expected <= set(archetypes)
-    assert len(archetypes) == 12
+    assert len(archetypes) == 26
     assert noun_map["paladin"] == "medieval_human_knight"
     assert any(rule["name"] == "water_vehicle_context" for rule in rules)
 
@@ -27,7 +33,7 @@ def test_distinctive_nouns_resolve_to_identity_not_the_literal_noun():
     assert resolve_identity(model_hint="office worker", kind="npc").name == "civilian_modern"
     assert resolve_identity(name="Speedboat", kind="vehicle").name == "vehicle_boat"
     result = resolve_identity(name="Wolf", kind="enemy")
-    assert result.name == "creature_generic"
+    assert result.name == "creature_predator"
     assert result.rule == "noun_map"
     assert result.used_fallback is False
 
@@ -44,7 +50,7 @@ def test_context_rescues_shallow_human_nouns():
         name="Human", kind="npc", context="a medieval village market"
     )
     assert commoner.name == "medieval_human_commoner"
-    assert commoner.rule == "medieval_commoner_context"
+    assert commoner.rule == "medieval_context"
 
 
 def test_context_rescues_shallow_vehicle_nouns():

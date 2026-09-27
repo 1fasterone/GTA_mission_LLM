@@ -416,21 +416,34 @@ def _deduplicate_identical_candidates(
 ) -> list[tuple[float, dict[str, Any], Path]]:
     """Collapse duplicate pack copies without hiding distinct model choices."""
     unique: dict[str, tuple[float, dict[str, Any], Path]] = {}
+
+    def preference(candidate: tuple[float, dict[str, Any], Path]) -> tuple[Any, ...]:
+        _score, entry, source = candidate
+        return (
+            0 if str(entry.get("source") or "").casefold() == "sketchfab" else 1,
+            str(entry.get("filename") or source.name),
+            str(entry.get("source") or ""),
+            str(entry.get("relpath") or ""),
+        )
+
     for candidate in candidates:
         score, entry, source = candidate
         content_hash = sha256_file(source)
         current = unique.get(content_hash)
-        if current is None or (
-            str(entry.get("filename") or source.name),
-            str(entry.get("source") or ""),
-            str(entry.get("relpath") or ""),
-        ) < (
-            str(current[1].get("filename") or current[2].name),
-            str(current[1].get("source") or ""),
-            str(current[1].get("relpath") or ""),
-        ):
+        if current is None or preference(candidate) < preference(current):
             unique[content_hash] = candidate
     return list(unique.values())
+
+
+def _candidate_sort_key(item: tuple[float, dict[str, Any], Path]) -> tuple[Any, ...]:
+    score, entry, _source = item
+    return (
+        -score,
+        0 if str(entry.get("source") or "").casefold() == "sketchfab" else 1,
+        str(entry.get("filename") or ""),
+        str(entry.get("source") or ""),
+        str(entry.get("relpath") or ""),
+    )
 
 
 def _selection(entry: dict[str, Any], source: Path, score: float) -> dict[str, Any]:
@@ -469,8 +482,15 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
                         lookups_dir: str = "lookups",
                         asset_root: Path | None = None,
                         min_score: float = 0.15,
-                        accepted_licenses: Iterable[str] | None = None) -> Path:
-    """Fulfil a closed image request set from frozen, local catalog data."""
+                        accepted_licenses: Iterable[str] | None = None,
+                        allow_sketchfab: bool = True) -> Path:
+    """Fulfil a closed image request set from frozen catalog data.
+
+    ``allow_sketchfab=False`` is the explicit offline/catalog-only mode. It
+    filters frozen marketplace rows before freshness and scoring, so a stale
+    Sketchfab entry already present in the merged catalog cannot silently
+    defeat the caller's request for a local-only reproducible run.
+    """
     _assert_output_paths(output, manifest)
     closed, closed_raw = _read_json(closed_ir, label="closed image IR")
     reconciliation, reconciliation_raw = _read_json(
@@ -496,6 +516,12 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
     catalog_assets = catalog.get("assets") if isinstance(catalog, dict) else None
     if not isinstance(catalog_assets, list):
         raise VisualReasoningCompilerError("Unity asset catalog has no assets list")
+    if not allow_sketchfab:
+        catalog_assets = [
+            entry for entry in catalog_assets
+            if isinstance(entry, dict)
+            and str(entry.get("source") or "").casefold() != "sketchfab"
+        ]
     accepted = {
         str(value).casefold() for value in (accepted_licenses or DEFAULT_ACCEPTED_LICENSES)
     }
@@ -565,19 +591,19 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
             if score >= min_score:
                 candidates.append((score, entry, source))
 
-        candidates.sort(key=lambda item: (
-            -item[0],
-            str(item[1].get("filename") or ""),
-            str(item[1].get("source") or ""),
-            str(item[1].get("relpath") or ""),
-        ))
+        # Source tier is intentional: a valid frozen Sketchfab candidate is
+        # preferred as a whole tier.  Local catalog entries are a fallback,
+        # not a competing tie-breaker against a frozen marketplace result.
+        sketchfab_candidates = [
+            item for item in candidates
+            if str(item[1].get("source") or "").casefold() == "sketchfab"
+        ]
+        if sketchfab_candidates:
+            candidates = sketchfab_candidates
+
+        candidates.sort(key=_candidate_sort_key)
         candidates = _deduplicate_identical_candidates(candidates)
-        candidates.sort(key=lambda item: (
-            -item[0],
-            str(item[1].get("filename") or ""),
-            str(item[1].get("source") or ""),
-            str(item[1].get("relpath") or ""),
-        ))
+        candidates.sort(key=_candidate_sort_key)
         if not candidates:
             reason = "no readable licensed catalog asset met the semantic-kind score"
             if path_errors:
@@ -612,7 +638,10 @@ def fulfil_image_assets(*, closed_ir: Path, reconciliation_manifest: Path,
         "authority": {
             "llm_called_here": False,
             "network_called_here": False,
-            "asset_source": "local_catalog_and_frozen_sketchfab_catalog",
+            "asset_source": (
+                "local_catalog_only" if not allow_sketchfab
+                else "local_catalog_and_frozen_sketchfab_catalog"
+            ),
             "original_vizconcept_sent_to_asset_resolver": False,
         },
         "inputs": {

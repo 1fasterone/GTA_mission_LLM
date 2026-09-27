@@ -116,3 +116,12 @@ def test_generation_error_evicts_only_the_failing_model(adapter):
 
     adapter.sfx("steam hiss", 4.0, 2)                # next call gets a fresh model
     assert adapter._load_calls == ["sfx", "sfx"]
+
+
+def test_sfx_failure_returns_none_so_content_layer_records_fallback(adapter):
+    def fail(*_args, **_kwargs):
+        raise RuntimeError("native wrapper error")
+
+    adapter._ensure_loaded("sfx").generate = fail
+
+    assert adapter.sfx("steam hiss", 4.0, 1) is None

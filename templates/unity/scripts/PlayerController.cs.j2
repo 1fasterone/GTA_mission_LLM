@@ -92,7 +92,7 @@ public class {{ script.name }} : MonoBehaviour
 {% else %}
         _moveInput = new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical"));
 {% endif %}
-        if (_moveInput.x != 0f)
+        if (_sr != null && _moveInput.x != 0f)
             _sr.flipX = _moveInput.x < 0f;
 
         if (_anim != null)

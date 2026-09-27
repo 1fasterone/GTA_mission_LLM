@@ -21,11 +21,18 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
 
 ━━━ Unity — full project ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   python main.py unity-create "horror survival in a maze"
+  python main.py unity-create "bright 3D FPS" --compose --viz reference.png --viz-overwrite
   python main.py unity-create --file prompts/neon_fugitive.txt
   python main.py unity-create "racing game" --compose         # + wire micro-generators
   python main.py unity-validate MyGame.schema.json            # recompile (no LLM)
   python main.py unity-migrate MyGame.schema.json             # upgrade v1 → v2 schema
   python main.py unity-resolve "universal render pipeline"    # look up package ID
+
+━━━ Unity — imported visual E2E ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  python main.py unity-vizconcept-e2e --image F:\\Downloads\\plane.png --model qwen3.5-9b --compile
+  # import → visual reasoning → reconciliation → assets → Unity compile,
+  # deterministic micro-generators/audio, spatial acceptance, and 6.7 freeze
+  # assets: Sketchfab freeze first, then local catalog fallback
 
 ━━━ Unity — micro-generators (drop-in focused artefacts) ━━━━━━━━━━━━━━━━━━
   python main.py unity-controller "scuba diver" --variant swimming
@@ -46,10 +53,11 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
   python main.py unity-trigger    "boss arena that seals on entry" --variant zone_enter
   python main.py unity-animator   "humanoid soldier walk/run/shoot" --variant humanoid
 
-━━━ Unity — audio (Stable Audio 3 by default — see config.yaml audio.backend) ━━
+━━━ Unity — audio (Stable Audio 3 prompts + standalone batch) ━━━━━━━━━━━━━━━
   python main.py unity-audio "horror maze ambient + threat SFX"
-  python main.py unity-audio "arcade coin game" --no-llm       # no LLM, DSP fallback
-  python main.py unity-audio "FPS soundscape" -u output/unity/MyGame  # overlay clips
+  python main.py unity-audio-batch output/unity/MyGame/Assets/Micros/audio/audio_batch.json
+  python main.py unity-audio "arcade coin game" --no-llm       # deterministic cues
+  python main.py unity-audio-batch output/unity/MyGame/Assets/Micros/audio/audio_batch.json -u output/unity/MyGame
 
 ━━━ Unity — Blender 3D model micro (car / plane / humanoid / bike / weapon → FBX) ━━
   python main.py unity-model "lifted matte-black pickup" --no-llm
