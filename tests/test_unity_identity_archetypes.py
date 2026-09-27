@@ -2,6 +2,9 @@
 
 import json
 import shutil
+from pathlib import Path
+
+import pytest
 
 from src.unity_identity_archetypes import load_identity_catalog, resolve_identity
 from src.unity_entity_asset_resolver import resolve_entity_assets
@@ -23,9 +26,83 @@ def test_catalog_has_the_requested_identity_families():
         "object_weapon_melee", "object_weapon_ranged", "object_structure",
     }
     assert expected <= set(archetypes)
-    assert len(archetypes) == 26
+    assert len(archetypes) == 27
     assert noun_map["paladin"] == "medieval_human_knight"
     assert any(rule["name"] == "water_vehicle_context" for rule in rules)
+
+
+def test_identity_resolution_expands_reusable_attribute_bundles():
+    peasant = resolve_identity(name="Peasant", kind="character")
+    assert peasant.name == "medieval_human_commoner"
+    assert peasant.attributes["identity"]["profession"] == "farmer"
+    assert peasant.attributes["visual"]["equipment"] == ["hoe", "basket"]
+    assert peasant.attributes["affordances"] == [
+        "can_work", "can_flee", "can_carry", "can_operate_tools"
+    ]
+    assert peasant.confidence == 1.0
+    assert peasant.confidence_tier == "direct_noun_map"
+
+    knight = resolve_identity(name="Knight", kind="character")
+    assert knight.attributes["identity"]["class"] == "noble"
+    assert knight.attributes["visual"]["clothing_style"] == "armor"
+    assert knight.attributes["affordances"] == ["can_fight", "can_flee", "can_patrol"]
+
+
+def test_context_selects_modern_worker_bundle_and_peasant_variants():
+    worker = resolve_identity(
+        name="Worker", kind="character", context="inside a modern factory"
+    )
+    assert worker.name == "modern_human_worker"
+    assert worker.attributes["identity"]["profession"] == "factory_worker"
+    assert worker.attributes["environment"]["location_type"] == "factory"
+    assert worker.confidence_tier == "context_match"
+
+    battle = resolve_identity(
+        name="Peasant", kind="character", context="flee across the battlefield"
+    )
+    assert battle.selected_variant == "battle"
+    assert battle.attributes["environment"]["location_type"] == "battlefield"
+    assert battle.attributes["visual"]["equipment"] == []
+    assert battle.attributes["affordances"] == ["can_flee"]
+
+    village = resolve_identity(
+        name="Villager", kind="character", context="work in the village fields"
+    )
+    assert village.selected_variant == "village"
+    assert village.attributes["affordances"] == [
+        "can_work", "can_carry", "can_operate_tools"
+    ]
+
+
+def test_visual_attribute_rules_add_evidence_without_overriding_identity():
+    result = resolve_identity(
+        name="Peasant", kind="character", visual_tokens=["mud", "tool"]
+    )
+    assert result.attributes["visual"]["clothing_condition"] == "worn"
+    assert result.attributes["visual"]["dirt_level"] == "high"
+    assert "hand_tool" in result.attributes["visual"]["equipment"]
+    assert result.attribute_evidence
+    assert result.attribute_conflicts == ()
+    # The lookup-authored identity remains stronger than corroborating visual
+    # evidence; the visual rule is still recorded in attribute_evidence.
+    assert result.attribute_confidence["visual"]["dirt_level"] == 1.0
+
+
+def test_attribute_registry_rejects_unknown_fields_and_affordances(tmp_path):
+    raw = json.loads(Path("lookups/unity/identity_archetypes.json").read_text())
+    lookups = tmp_path / "lookups" / "unity"
+    lookups.mkdir(parents=True)
+
+    raw["attribute_bundles"]["peasant"]["attributes"]["identity"]["unknown"] = "x"
+    (lookups / "identity_archetypes.json").write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="unknown field"):
+        load_identity_catalog(str(tmp_path / "lookups"))
+
+    raw = json.loads(Path("lookups/unity/identity_archetypes.json").read_text())
+    raw["attribute_bundles"]["peasant"]["attributes"]["affordances"] = ["teleport"]
+    (lookups / "identity_archetypes.json").write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match="unknown value"):
+        load_identity_catalog(str(tmp_path / "lookups"))
 
 
 def test_distinctive_nouns_resolve_to_identity_not_the_literal_noun():
@@ -138,3 +215,5 @@ def test_identity_vocabulary_steers_a_shallow_catalog_query(tmp_path):
     assert paths["Unit"].endswith("cargo-boat")
     assert schema.meta["identity_archetypes"]["Unit"]["archetype"] == "vehicle_boat"
     assert schema.meta["identity_archetypes"]["Unit"]["rule"] == "water_vehicle_context"
+    assert schema.meta["identity_archetypes"]["Unit"]["confidence_tier"] == "context_match"
+    assert schema.meta["identity_archetypes"]["Unit"]["attributes"] == {}
