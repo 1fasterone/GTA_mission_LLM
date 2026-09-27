@@ -1940,6 +1940,22 @@ def _replay_archetype(schema: UnitySchema) -> Optional[LayoutArchetype]:
         return None
 
 
+def _is_embodied_ui_board(schema: UnitySchema) -> bool:
+    """Identify the legacy UI-first shape even if locomotion was overfilled.
+
+    UI-first schemas normally declare ``locomotion='none'``.  A few held-out
+    and production-shaped fills still carry a locomotion value while every
+    entity is an explicit interface element.  Those schemas must not be
+    mistaken for an embodied top-down world: their controls are built by the
+    UI stack, not positioned by the world-layout pass.  Requiring every
+    layoutable entity to have a recognized UI role keeps this guard semantic
+    and leaves mixed world boards (player, terrain, landmarks) on the
+    deterministic top-down path.
+    """
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    return bool(layoutable) and all(ui_element_of(e) is not None for e in layoutable)
+
+
 def compute_layout(schema: UnitySchema,
                    footprints: Optional[dict[str, float]] = None) -> list[str]:
     """Select a spatial archetype for the scene, then lay every
@@ -1989,8 +2005,10 @@ def compute_layout(schema: UnitySchema,
     CodeVault run reached a 2D top-down teaching sim with its file icons
     scattered like debris: the layout pass had declined to run, and the only
     other opinion in the build assumed an avatar. A declared non-embodied
-    schema gets the UISurface board whatever its dimension, and every embodied
-    2D project keeps returning [] here, byte-identically.
+    schema gets the UISurface board whatever its dimension, and an embodied
+    UI-first schema keeps returning [] here, byte-identically.  Embodied
+    top-down worlds are the deliberate exception: their deterministic board
+    anchors must survive into the runtime projection.
     """
     # Side-scroller 2D keeps its lane builder, but 2d_topdown is a board: its
     # deterministic X/Z layout is projected onto the runtime X/Y plane by
@@ -1998,6 +2016,9 @@ def compute_layout(schema: UnitySchema,
     # composition survive into the playable scene instead of being discarded
     # and re-scattered around the origin at runtime.
     if schema.game_type == "2D" and is_embodied(schema):
+        return []
+    if (schema.game_type == "2d_topdown" and is_embodied(schema)
+            and _is_embodied_ui_board(schema)):
         return []
 
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
@@ -2206,7 +2227,8 @@ def _layout_arena_plane(schema: UnitySchema,
                         footprints: Optional[dict[str, float]] = None) -> list[str]:
     """The original ground-plane packer — see `compute_layout`'s docstring.
     Byte-for-byte the behaviour that shipped before archetype selection."""
-    if schema.game_type == "2d_topdown" and is_embodied(schema):
+    if (schema.game_type == "2d_topdown" and is_embodied(schema)
+            and not _is_embodied_ui_board(schema)):
         return _layout_topdown_board(schema, footprints)
 
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
