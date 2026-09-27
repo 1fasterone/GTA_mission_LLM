@@ -245,6 +245,11 @@ def test_visual_inventory_contract_is_strict_and_canonical() -> None:
     with pytest.raises(VisualReasoningCompilerError, match="no model hint"):
         validate_visual_inventory(malformed)
 
+    malformed = json.loads(_inventory_response())
+    malformed["visible_elements"][0]["label"] = "1"
+    with pytest.raises(VisualReasoningCompilerError, match="numeric-only"):
+        validate_visual_inventory(malformed)
+
 
 class FakeVisionLLM:
     model = "qwen3.5-9b"
@@ -262,6 +267,7 @@ class FakeVisionLLM:
         assert "pixel-art Git graph" not in str(kwargs["user"])
         if len(self.calls) == 1:
             assert "one literal visible noun" in str(kwargs["user"])
+            assert "never the card position" in str(kwargs["user"])
             assert "Do not use adjectives, pronouns" in str(kwargs["user"])
             return _inventory_response()
         assert "CANONICAL VISIBLE ENTITY LABELS:" in str(kwargs["user"])
@@ -296,6 +302,7 @@ def test_reason_over_board_sends_image_and_inventory_labels_and_writes_artifacts
     }), encoding="utf-8")
     inventory = tmp_path / "run" / "visual_inventory.json"
     concept = tmp_path / "run" / "Concept.txt"
+    context = tmp_path / "run" / "context.txt"
     manifest = tmp_path / "run" / "reasoning.json"
     llm = FakeVisionLLM()
 
@@ -304,6 +311,7 @@ def test_reason_over_board_sends_image_and_inventory_labels_and_writes_artifacts
         board_manifest=board_manifest,
         inventory_output=inventory,
         concept_output=concept,
+        context_output=context,
         manifest=manifest,
         llm=llm,
     )
@@ -314,6 +322,10 @@ def test_reason_over_board_sends_image_and_inventory_labels_and_writes_artifacts
     concept_text = concept.read_text(encoding="utf-8")
     assert concept_text.startswith("VISIBLE ENTITY REFERENCES:")
     assert "The player guides" in concept_text
+    context_text = context.read_text(encoding="utf-8")
+    assert "# Visual Scene Context" in context_text
+    assert "image_query=" in context_text
+    assert "## Image-derived Concept" in context_text
     data = json.loads(manifest.read_text(encoding="utf-8"))
     assert data["format"] == "visual-reasoning-compiler/image-reasoning/v1"
     assert data["authority"]["original_vizconcept_sent_to_llm"] is False
@@ -329,6 +341,7 @@ def test_reason_over_board_sends_image_and_inventory_labels_and_writes_artifacts
     assert data["board_manifest"]["board_sha256"] == sha256_file(board)
     assert data["outputs"]["visual_inventory"]["sha256"] == sha256_file(inventory)
     assert data["outputs"]["concept"]["sha256"] == sha256_file(concept)
+    assert data["outputs"]["context"]["sha256"] == sha256_file(context)
     assert inventory.with_suffix(".raw.txt").is_file()
     assert concept.with_suffix(".raw.txt").is_file()
 

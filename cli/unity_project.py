@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 from typing import Optional
 
 import typer
@@ -14,11 +15,90 @@ from src.unity_pipeline   import UnityPipeline
 from src.unity_resolver   import UnityResolver
 from src.unity_schema     import UnitySchema
 from src.unity_reference_image import ReferenceImageError
+from src.visual_reasoning_compiler import VisualReasoningCompilerError
 
 from .common import app, console, _cfg, _load_authored_scene, _scene_cache_dir, _unity_pipe_cfg
 
 
 # ── Unity commands ─────────────────────────────────────────────────────────────
+
+def _prepare_viz_reasoning(
+    source_image: Path,
+    output: Optional[Path],
+    cfg: dict,
+    overwrite: bool = False,
+) -> tuple[Path, Path]:
+    """Persist visual evidence and return canonical board/context paths.
+
+    The user's brief remains semantic authority.  The context carries only
+    image-grounded appearance and concrete asset-search evidence into Step 2.
+    """
+    from src.backends import make_chat_client
+    from src.visual_reasoning_compiler import import_existing_board, reason_over_board
+
+    safe_stem = "".join(
+        char if char.isalnum() or char in "-_" else "_"
+        for char in source_image.stem
+    ).strip("._-") or "visual"
+    run_dir = output or (
+        Path("output") / "visual_reasoning" / f"{safe_stem}_unity_create"
+    )
+    if run_dir.exists():
+        if not overwrite:
+            raise VisualReasoningCompilerError(
+                f"refusing to overwrite visual-reasoning directory: {run_dir}. "
+                "Use --viz-overwrite to replace this generated run."
+            )
+        resolved_run = run_dir.resolve()
+        protected = {
+            Path.cwd().resolve(),
+            Path("output").resolve(),
+            (Path("output") / "visual_reasoning").resolve(),
+        }
+        if run_dir.is_symlink() or resolved_run in protected:
+            raise VisualReasoningCompilerError(
+                f"refusing unsafe --viz-overwrite target: {run_dir}"
+            )
+        if not run_dir.is_dir():
+            raise VisualReasoningCompilerError(
+                f"--viz-overwrite target is not a directory: {run_dir}"
+            )
+        try:
+            shutil.rmtree(run_dir)
+        except OSError as exc:
+            raise VisualReasoningCompilerError(
+                f"could not replace visual-reasoning directory {run_dir}: {exc}"
+            ) from exc
+
+    board = run_dir / "board.png"
+    board_manifest = run_dir / "board.import.json"
+    inventory = run_dir / "visual_inventory.json"
+    concept = run_dir / "Concept.txt"
+    context = run_dir / "context.txt"
+    reasoning_manifest = run_dir / "reasoning.json"
+
+    console.print("[cyan]Visual Slice 1:[/] importing canonical board")
+    import_existing_board(
+        board_image=source_image,
+        output=board,
+        manifest=board_manifest,
+    )
+    console.print("[cyan]Visual Slice 2:[/] inventory + image-derived Concept")
+    reason_over_board(
+        board_image=board,
+        inventory_output=inventory,
+        concept_output=concept,
+        manifest=reasoning_manifest,
+        board_manifest=board_manifest,
+        context_output=context,
+        llm=make_chat_client(cfg),
+    )
+    console.print(f"[green]Visual reasoning artifacts written[/] {run_dir}")
+    console.print(
+        "[dim]The text brief remains semantic authority; context.txt supplies "
+        "image-grounded asset language to Step 2.[/]"
+    )
+    return board, context
 
 @app.command("unity-create")
 def unity_create(
@@ -46,6 +126,18 @@ def unity_create(
         None, "--reference-image", "--image",
         help="Visual reference image sent to the Concept stage only; any PNG/JPEG/WEBP/GIF filename",
     ),
+    viz: Optional[Path] = typer.Option(
+        None, "--viz",
+        help="Canonical PNG: create visual inventory, Concept, context.txt, and reasoning provenance; feed the context into Step 2 and the board into unity-create",
+    ),
+    viz_output: Optional[Path] = typer.Option(
+        None, "--viz-output",
+        help="Visual artifact directory (default: output/visual_reasoning/<image>_unity_create)",
+    ),
+    viz_overwrite: bool = typer.Option(
+        False, "--viz-overwrite",
+        help="Replace the existing visual-reasoning directory for this --viz run",
+    ),
     models_dir: Optional[Path] = typer.Option(None, "--models-dir",
                                               help="--scene only: the Scene Compiler's models/ folder (default: the layout's own ../models sibling)"),
     no_think:    bool          = typer.Option(False, "--no-think",
@@ -60,6 +152,9 @@ def unity_create(
     \b
     Inline prompt:
       python main.py unity-create "A 2D platformer with Cinemachine"
+
+    Prompt with a visual reference:
+      python main.py unity-create "A bright 3D FPS" --compose --viz reference.png
 
     Prompt from file (for long, structured briefs):
       python main.py unity-create --file prompts/neon_fugitive.txt
@@ -76,7 +171,17 @@ def unity_create(
             raise typer.Exit(1)
         prompt = file.read_text(encoding="utf-8").strip()
 
-    if not prompt and reference_image is not None:
+    if reference_image is not None and viz is not None:
+        console.print("[red]Error:[/] use either --viz or --image/--reference-image, not both")
+        raise typer.Exit(1)
+    if viz_output is not None and viz is None:
+        console.print("[red]Error:[/] --viz-output requires --viz <PNG>")
+        raise typer.Exit(1)
+    if viz is not None and no_llm:
+        console.print("[red]Error:[/] --viz runs visual reasoning and cannot be used with --no-llm")
+        raise typer.Exit(1)
+
+    if not prompt and (reference_image is not None or viz is not None):
         # The Concept stage still needs a user message for the OpenAI-compatible
         # chat contract, but this carrier deliberately contributes no semantic
         # game brief. The image remains the only creative input.
@@ -86,7 +191,7 @@ def unity_create(
         )
 
     if not prompt:
-        console.print("[red]Error:[/] provide a prompt, use --file <path>, or pass --image <path>")
+        console.print("[red]Error:[/] provide a prompt, use --file <path>, or pass --image/--viz <path>")
         console.print("  Example: python main.py unity-create \"A 2D platformer\"")
         console.print("  Example: python main.py unity-create --file prompts/neon_fugitive.txt")
         console.print("  Example: python main.py unity-create --image racing-reference.png")
@@ -115,7 +220,16 @@ def unity_create(
             raise typer.Exit(1)
 
     try:
-        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm, reference_image=reference_image)
+        visual_context = None
+        if viz is not None:
+            reference_image, context_path = _prepare_viz_reasoning(
+                viz, viz_output, cfg, overwrite=viz_overwrite
+            )
+            visual_context = context_path.read_text(encoding="utf-8")
+        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm, reference_image=reference_image, visual_context=visual_context)
+    except VisualReasoningCompilerError as exc:
+        console.print(f"[red]Visual reasoning error:[/] {exc}")
+        raise typer.Exit(2)
     except ReferenceImageError as exc:
         console.print(f"[red]Reference image error:[/] {exc}")
         raise typer.Exit(2)

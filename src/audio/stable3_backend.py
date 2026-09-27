@@ -17,9 +17,10 @@ VRAM strategy for 8 GB cards
   * Caller MUST call unload_all() once the whole batch is done (content.py's
     generate_bank() does this) so VRAM is freed before the next pipeline stage.
   * tts returns None — content.py degrades to a silent placeholder.
-  * Any import error, CUDA OOM, or generation failure degrades silently:
-      sfx  → falls back to the DSP synth archetype (inherited from DspAdapter)
-      music → returns None → content.py writes a silent placeholder
+  * Python-level import errors, CUDA OOMs, or generation failures return None;
+    content.py then records an explicit DSP or silent-placeholder fallback.
+  * src.audio.safe_content runs the whole bank in a child process so a native
+    CUDA/process termination also degrades without ending the Unity compiler.
 """
 
 from __future__ import annotations
@@ -129,6 +130,11 @@ class Stable3AudioAdapter(DspAdapter):
         # (e.g. CI, which never installs it — see requirements.txt) so it's
         # NOT gated behind a torch check here; only the actual generation call
         # below genuinely needs torch, since it's the real model doing the work.
+        print(
+            f"[audio/stable3] preparing {model_key} cue "
+            f"({dur:.1f}s, {self.steps} steps)",
+            flush=True,
+        )
         model = self._ensure_loaded(model_key)
         if model is None:
             return None
@@ -172,6 +178,11 @@ class Stable3AudioAdapter(DspAdapter):
             else:
                 return None  # truly silent — let caller degrade to DSP
 
+            print(
+                f"[audio/stable3] generated {model_key} cue "
+                f"({len(mono)} samples)",
+                flush=True,
+            )
             return mono
 
         except Exception as exc:  # noqa: BLE001
@@ -198,11 +209,7 @@ class Stable3AudioAdapter(DspAdapter):
     def sfx(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
         # SA3 sfx model needs at least ~4 s to produce audible output;
         # sub-second requests result in near-silent buffers that fail normalisation.
-        buf = self._generate("sfx", prompt, max(4.0, dur), seed)
-        if buf is not None:
-            return buf
-        # DSP archetype fallback so a failed SFX cue is never silent
-        return super().sfx(prompt, dur, seed)
+        return self._generate("sfx", prompt, max(4.0, dur), seed)
 
     def music(self, prompt: str, dur: float, seed: int) -> Optional[np.ndarray]:
         # No DSP fallback for music; content.py writes a silent placeholder

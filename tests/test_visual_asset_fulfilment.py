@@ -265,6 +265,54 @@ def test_exact_frozen_query_beats_stale_local_variant(tmp_path: Path) -> None:
     assert selection["source"] == "sketchfab"
 
 
+def test_any_acceptable_frozen_sketchfab_candidate_is_ahead_of_local_catalog(
+    tmp_path: Path,
+) -> None:
+    closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
+
+    local = asset_root / "glowing-orb-local-strong.fbx"
+    local.write_bytes(b"local-strong-orb")
+    catalog_path = lookups / "unity" / "asset_catalog.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    catalog["assets"].append({
+        "filename": local.name,
+        "relpath": local.name,
+        "root": str(asset_root),
+        "format": "fbx",
+        "source": "kenney",
+        "category": "prop",
+        "keywords": ["glowing", "orb", "node", "prop", "game", "extra"],
+        "kind_hints": ["prop"],
+        "generic_score": 50,
+    })
+    catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+
+    sketchfab_path = lookups / "unity" / "sketchfab_catalog.json"
+    sketchfab = json.loads(sketchfab_path.read_text(encoding="utf-8"))
+    sketchfab["entries"][0]["query"] = "orb"
+    sketchfab_path.write_text(json.dumps(sketchfab), encoding="utf-8")
+
+    output = tmp_path / "asset_fulfilment.json"
+    manifest = tmp_path / "asset_fulfilment.manifest.json"
+    fulfil_image_assets(
+        closed_ir=closed,
+        reconciliation_manifest=reconciliation,
+        output=output,
+        manifest=manifest,
+        lookups_dir=str(lookups),
+        asset_root=asset_root,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    selection = next(
+        item["selection"] for item in data["assets"]
+        if item["inventory_label"] == "glowing commit nodes"
+    )
+    assert data["status"] == "fulfilled"
+    assert selection["source"] == "sketchfab"
+    assert selection["filename"] == "glowing-orb.fbx"
+
+
 def test_fulfilment_records_rejected_unlicensed_request(tmp_path: Path) -> None:
     closed, reconciliation, lookups, asset_root = _write_case(
         tmp_path, sketchfab_license="unknown"

@@ -184,6 +184,21 @@ public class ScubaExplorerController : MonoBehaviour
 | `input` | `unity-input` | keyboard_mouse, gamepad, touch, dual_stick, racing_wheel, vr_xr, pointer |
 | `audio` | `unity-audio` | 2d_simple, 3d_spatial, music_layers, crossfade_zones, categorical_mixer |
 
+When `audio.backend: stable3`, the default `audio.defer_stable3: true` keeps
+Stable Audio out of the project compiler. `unity-audio` and
+`unity-create --compose` write `Assets/Micros/audio/audio_batch.json` with the
+LLM-authored prompts and a pending manifest. Render it afterward with:
+
+```bash
+python main.py unity-audio-batch \
+  output/unity/MyGame/Assets/Micros/audio/audio_batch.json
+```
+
+The batch command uses `audio.stable3_python`, keeps each Stable Audio model
+warm across its cues, and overlays the final clips and manifest into the Unity
+project. Set `defer_stable3: false` only when the legacy inline worker is
+intentionally wanted.
+
 > `controller`'s `multi_mode` variant is a runtime-switchable "Control Surface
 > Stack" — one player, several coexisting locomotion modes on one schema
 > instance — rather than a normal one-mode-per-project variant. See

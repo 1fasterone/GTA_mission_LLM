@@ -371,6 +371,15 @@ blender:                           # external asset-fulfilment stage (blender_cl
 audio:
   backend: dsp                     # sfx/music: dsp | local | stable3 | none
   cache_dir: output/audio_cache
+  # Stable Audio 3 only: run the whole bank in one crash-isolated child.
+  # Consecutive cues reuse warm weights. A native CUDA exit or a worker with no
+  # log progress for this long degrades to DSP/silent clips without killing the
+  # compiler. Leave stable3_python empty to reuse the compiler interpreter.
+  stable3_dir: ''
+  stable3_python: ''
+  defer_stable3: true            # write audio_batch.json; render after unity-create
+  worker_timeout_s: 1800
+  worker_stall_timeout_s: 120
   # NPC dialog speech synthesis (separate from `backend`).
   #   kokoro — Kokoro-82M (~330 MB, Apache-2.0), CPU or any GPU. Default.
   #   higgs  — Higgs Audio v2: needs ~11 GB VRAM, does NOT fit an 8 GB card.

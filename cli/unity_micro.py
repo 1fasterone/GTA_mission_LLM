@@ -2,7 +2,11 @@
 17 simple `unity-<kind>` generators sharing one CLI shape."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 from typing import Optional
 
 import typer
@@ -93,13 +97,12 @@ def unity_audio(
     clips:   bool           = typer.Option(True, "--clips/--no-clips", help="Generate actual .wav clips into Resources/Audio/"),
     unity:   Optional[str]  = typer.Option(None, "--unity", "-u", help="Overlay generated clips + manifest into this Unity project's Assets/Resources/"),
 ) -> None:
-    """Generate a Unity audio bank (AudioCue + Bank + AudioManager) AND actual .wav clips.
+    """Generate a Unity audio bank and a deferred Stable Audio 3 batch.
 
-    Default backend is Stable Audio 3 (config.yaml audio.backend: stable3).
-    The pipeline translates the Step-2 concept brief into evocative per-cue prompts,
-    unloads LM Studio to free VRAM, then runs inference.  Falls back to offline DSP
-    synth when Stable Audio 3 is unavailable.  Set audio.backend: dsp to always use
-    the deterministic synth, or none to skip clip generation entirely."""
+    With audio.defer_stable3 enabled (the default), this writes the prompts and
+    Unity-readable pending manifest without loading Stable Audio.  Render it later
+    with `unity-audio-batch`.  Set audio.defer_stable3: false for the legacy inline
+    worker, or audio.backend: dsp for immediate deterministic synth output."""
     if file is not None:
         if not file.exists():
             console.print(f"[red]Error:[/] file not found: {file}"); raise typer.Exit(1)
@@ -108,17 +111,74 @@ def unity_audio(
         console.print("[red]Error:[/] provide a prompt or use --file <path>"); raise typer.Exit(1)
 
     from src.micro import AudioPipeline
-    out_dir = AudioPipeline(_cfg(config, model)).run(
+    cfg = _cfg(config, model)
+    out_dir = AudioPipeline(cfg).run(
         prompt, variant=variant, theme=theme, mashup_with=mashup_with, seed=seed,
         out=out, use_llm=not no_llm, with_clips=clips)
 
-    if unity and clips:
+    deferred = (
+        str((cfg.get("audio", {}) or {}).get("backend", "dsp")).strip().lower() == "stable3"
+        and bool((cfg.get("audio", {}) or {}).get("defer_stable3", True))
+    )
+    if unity and clips and not deferred:
         import shutil
         src_res = Path(out_dir) / "Resources"
         if src_res.exists():
             dst_res = Path(unity) / "Assets" / "Resources"
             shutil.copytree(src_res, dst_res, dirs_exist_ok=True)
             console.print(f"  [green]overlay[/] -> {dst_res}")
+    elif unity and clips and deferred:
+        console.print(
+            "  [cyan]Stable Audio 3 deferred:[/] run unity-audio-batch "
+            f"{Path(out_dir) / 'audio_batch.json'} --unity {unity}"
+        )
+
+
+@app.command("unity-audio-batch")
+def unity_audio_batch(
+    batch: Path = typer.Argument(..., help="audio_batch.json emitted by unity-create or unity-audio"),
+    config: str = typer.Option("config.yaml", "--config", "-c"),
+    unity: Optional[Path] = typer.Option(
+        None, "--unity", "-u", help="Unity project root; inferred when batch is under Assets/Micros/audio"
+    ),
+) -> None:
+    """Render a deferred Stable Audio 3 batch in its standalone environment.
+
+    The compiler's virtualenv stays free of Stable Audio dependencies.  This
+    command launches audio.stable3_python (or the current interpreter), reuses
+    each loaded Stable Audio model across the batch, writes the final manifest,
+    and overlays clips into the Unity project when a project root is available.
+    """
+    if not batch.is_file():
+        console.print(f"[red]Error:[/] batch file not found: {batch}")
+        raise typer.Exit(1)
+    cfg = _cfg(config)
+    audio_cfg = cfg.get("audio", {}) or {}
+    worker_python = str(audio_cfg.get("stable3_python") or sys.executable)
+    repo_root = Path(__file__).resolve().parents[1]
+    request = {
+        "batch_path": str(batch.resolve()),
+        "config": cfg,
+        "unity": str(unity.resolve()) if unity else None,
+    }
+    with tempfile.TemporaryDirectory(prefix="stable3-batch-") as temp_dir:
+        request_path = Path(temp_dir) / "request.json"
+        request_path.write_text(json.dumps(request), encoding="utf-8")
+        console.print(
+            f"[cyan]Stable Audio 3 standalone batch:[/] {batch} "
+            f"(python={worker_python})"
+        )
+        result = subprocess.run(
+            [worker_python, "-m", "src.audio.stable3_batch", "--request", str(request_path)],
+            cwd=repo_root,
+            check=False,
+        )
+    if result.returncode:
+        console.print(
+            f"[red]Error:[/] Stable Audio 3 batch exited with code {result.returncode}"
+        )
+        raise typer.Exit(result.returncode)
+    console.print("[green]OK[/] Stable Audio 3 batch complete")
 
 
 @app.command("unity-npc-dialog")

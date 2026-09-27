@@ -31,10 +31,32 @@ alias:
 .venv\Scripts\python.exe main.py unity-create --reference-image racing-reference.png
 ```
 
+To persist the canonical board, imported-board manifest, strict visual
+inventory, image-derived `Concept.txt`, `context.txt`, raw responses, and
+reasoning manifest before the normal Unity run, use `--viz`:
+
+```powershell
+.venv\Scripts\python.exe main.py unity-create "bright 3D FPS" --compose `
+  --viz basement-reference.png
+```
+
+These artifacts are written under
+`output/visual_reasoning/<image>_unity_create` by default; use `--viz-output`
+to choose another new directory. The text prompt remains semantic/gameplay
+authority. The image inventory and image-derived Concept are formatted into
+`context.txt` and injected into the normal Step 2 prompt as visual appearance
+and asset-search evidence. Step 3 writes each entity's `sketchfab_query`.
+The deterministic resolver searches/downloads those exact entity queries,
+freezes the selected files, and wires their copied filenames through the
+existing `Resources.Load` paths. The generated Unity project receives its own
+`context.txt` containing the Step 3 queries and final filename/resource-path
+bindings.
+
 When no text prompt or `--file` is supplied, the CLI uses a deliberately
 generic carrier message so the image remains the only creative input. The
-image is passed to the Concept stage only. Steps 4–7 remain deterministic and
-LLM-free.
+image is passed to the Concept stage only. In `--viz` mode, no query
+translation, bulk model collection, thumbnail vision selection, micro-code
+authoring, dialog extraction, or audio extraction LLM runs after Step 3.
 
 The alias and image-only behavior are covered by
 [`tests/test_cli_unity_project.py`](../tests/test_cli_unity_project.py).

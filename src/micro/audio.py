@@ -195,8 +195,8 @@ class AudioPipeline(UnityMicroPipeline):
         schema.meta = {"user_prompt": user_prompt}
         schema = self.default_fix(schema, variant)
         schema.name = to_pascal(schema.name or "AudioBank", "AudioBank")
-        # Unload LM Studio if stable3 backend is active (no concept to translate
-        # on the --no-llm path, but VRAM still needs to be freed before inference).
+        # Keep LM Studio resident when Stable Audio 3 is deferred; the batch is
+        # rendered later by the configured standalone Stable Audio interpreter.
         self._pre_write(schema, variant)
         out_dir = Path(out) if out else (self.output_root / schema.name)
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +237,12 @@ class AudioPipeline(UnityMicroPipeline):
                     "— descriptors will be used as prompts"
                 )
 
-        # Step 3.6 — unload LM Studio so Stable Audio 3 has the full 8 GB
+        # Step 3.6 — only unload LM Studio for the legacy inline Stable3 path.
+        # Deferred batches are deliberately emitted while the compiler remains
+        # fast and leave GPU ownership to the later standalone command.
+        if bool(cfg.get("defer_stable3", True)):
+            self._ok("Stable Audio 3 deferred — prompts will be rendered by unity-audio-batch")
+            return
         self._step(3, "Unloading LM Studio model to free VRAM for Stable Audio 3")
         try:
             from ..audio.backends import unload_lm_studio
@@ -373,10 +378,27 @@ class AudioPipeline(UnityMicroPipeline):
         clips_on = self._with_clips
         if clips_on is None:
             clips_on = bool(self.config.get("audio", {}).get("generate_clips", True))
-        if clips_on and schema.cues:
+        audio_cfg = self.config.get("audio", {}) or {}
+        backend = str(audio_cfg.get("backend", "dsp")).strip().lower()
+        defer_stable3 = backend == "stable3" and bool(
+            audio_cfg.get("defer_stable3", True)
+        )
+        if clips_on and schema.cues and defer_stable3:
+            from ..audio.batch import write_stable3_batch
+            batch_path = write_stable3_batch(
+                schema.cues,
+                out_dir / "audio_batch.json",
+                seed=self._gen_seed,
+                project_name=schema.name,
+            )
+            count += 2  # request + pending Resources/audio_manifest.json
+            self._ok(
+                f"Stable Audio 3 deferred: {len(schema.cues)} prompt(s) -> {batch_path}"
+            )
+        elif clips_on and schema.cues:
             try:
-                from ..audio import generate_bank
-                manifest = generate_bank(
+                from ..audio.safe_content import generate_bank_safe
+                manifest = generate_bank_safe(
                     [c.model_dump() for c in schema.cues],
                     out_dir / "Resources", self.config, seed=self._gen_seed)
                 count += sum(len(e["clips"]) for e in manifest["cues"]) + 1  # + manifest

@@ -734,7 +734,7 @@ public class {{ s.name }} : MonoBehaviour
     /// information — accepting it anyway would restart urgency/role every
     /// frame the whole time one squadmate keeps a stationary target in
     /// sight, instead of decaying toward "give up and use my own memory".</summary>
-    public void ReceiveAllyAlert(Vector3 reportedPosition, int sourceId, SquadRole role)
+    private void ReceiveAllyAlert(Vector3 reportedPosition, int sourceId, SquadRole role)
     {
         if (sourceId == _alertSourceId && _alertUrgency > 0f
             && Vector3.Distance(reportedPosition, _lastKnownPosition) < 0.5f)
