@@ -36,6 +36,12 @@ from typing import Optional
 from src.unity_layout_archetype import pick_player_entity
 from src.unity_package_cache import CacheReport, ensure_cached
 from src.unity_schema import UnitySchema, is_embodied
+from src.unity_screenshot_diff import (
+    ScreenshotDiffError,
+    ScreenshotDiffResult,
+    compare_screenshot_to_reference,
+    load_landmark_rectangles,
+)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -436,6 +442,7 @@ class PlaytestPhaseResult:
     cache_report: Optional[CacheReport] = None
     render_health: Optional[RenderHealthResult] = None
     screenshot_path: Optional[Path] = None
+    visual_diff: Optional[ScreenshotDiffResult] = None
 
     def render(self) -> str:
         """Plain-text summary, worst-first — mirrors PlayabilityReport.render()'s
@@ -446,6 +453,8 @@ class PlaytestPhaseResult:
         n_pass = sum(1 for o in self.parse.outcomes if o.outcome == "passed")
         n_fail = len(self.parse.failures)
         if self.render_health is not None and not self.render_health.ok:
+            n_fail += 1
+        if self.visual_diff is not None and not self.visual_diff.ok:
             n_fail += 1
         n_skip = sum(1 for o in self.parse.outcomes if o.outcome == "skipped")
         lines = [f"PLAYTEST {n_pass} passed, {n_fail} failed, {n_skip} skipped"]
@@ -460,6 +469,11 @@ class PlaytestPhaseResult:
                               f"(black={self.render_health.black_fraction:.0%}, "
                               f"magenta={self.render_health.magenta_fraction:.0%}) "
                               f"— {self.screenshot_path}")
+        if self.visual_diff is not None:
+            lines.append(
+                f"  {'OK' if self.visual_diff.ok else 'FAIL'}  "
+                f"VisualComparison: {self.visual_diff.render()}"
+            )
         if self.cache_report and self.cache_report.failed:
             lines.append(
                 "  WARN  package cache priming failed for: "
@@ -477,6 +491,8 @@ def run_playtest_phase(
     cache_dir: Path,
     global_cache_root: Optional[Path] = None,
     timeout: int = 900,
+    reference_image: Optional[Path] = None,
+    spatial_fusion: Optional[Path] = None,
 ) -> PlaytestPhaseResult:
     """Drop the PlayMode test assembly, run Unity in batchmode against
     `project_root`, and report pass/fail. Caller resolves `editor` (mirrors
@@ -561,9 +577,31 @@ def run_playtest_phase(
     # only meaningful once a screenshot genuinely exists.
     render_health = analyze_render_health(screenshot_path) if screenshot_path.exists() else None
 
+    visual_diff: Optional[ScreenshotDiffResult] = None
+    if reference_image is not None:
+        fusion_path = Path(spatial_fusion) if spatial_fusion is not None else None
+        if fusion_path is None:
+            candidates = sorted(project_root.glob("*.spatial-fusion.json"))
+            if len(candidates) == 1:
+                fusion_path = candidates[0]
+        try:
+            if fusion_path is None:
+                raise ScreenshotDiffError(
+                    "no spatial-fusion sidecar found beside the Unity project; "
+                    "pass --spatial-fusion explicitly"
+                )
+            landmarks = load_landmark_rectangles(fusion_path)
+            visual_diff = compare_screenshot_to_reference(
+                Path(reference_image), screenshot_path, landmarks
+            )
+        except ScreenshotDiffError as exc:
+            visual_diff = ScreenshotDiffResult(ok=False, reason=str(exc))
+
     if not parse.harness_ok:
         exit_code = 2
-    elif parse.failures or (render_health is not None and not render_health.ok):
+    elif (parse.failures
+          or (render_health is not None and not render_health.ok)
+          or (visual_diff is not None and not visual_diff.ok)):
         exit_code = 1
     else:
         exit_code = 0
@@ -572,4 +610,5 @@ def run_playtest_phase(
         exit_code=exit_code, parse=parse, log_path=log_path, cache_report=cache_report,
         render_health=render_health,
         screenshot_path=screenshot_path if screenshot_path.exists() else None,
+        visual_diff=visual_diff,
     )

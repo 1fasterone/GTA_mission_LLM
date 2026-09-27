@@ -228,6 +228,13 @@ groups remain protected by schema/archetype authority. Candidate moves that
 would overlap a realized group are named abstentions. This keeps image
 composition useful without allowing it to rewrite gameplay placement.
 
+For `game_type="2d_topdown"`, the same validated fusion rows now carry their
+normalized `bbox` rectangles into the deterministic board primitive before
+keyword anchors are considered. The rectangle center maps to the fixed board
+envelope and its compact extent reserves a bounded group footprint. Authored
+Scene Compiler transforms still remain Tier A, while the legacy semantic
+anchors remain the fallback when no closed image rectangle exists.
+
 Focused coverage is in `tests/test_unity_spatial_realization.py` and
 `tests/test_unity_spatial_pipeline.py`.
 
@@ -276,6 +283,33 @@ with a neighboring manifest. `unity-vizconcept-compile` accepts
 
 Focused coverage is in `tests/test_unity_spatial_validation.py` and
 `tests/test_unity_spatial_pipeline.py`.
+
+### 6.6a — Visual-comparison gate
+
+The PlayMode screenshot is judged by `src/unity_screenshot_diff.py`, not by an
+image model. It consumes only bound normalized rectangles from the closed
+Slice-6.3 spatial-fusion sidecar and gates three deterministic signals:
+
+- mean landmark centroid error, maximum `0.12` in normalized image space;
+- foreground occupancy IoU, minimum `0.45`;
+- coarse RGB palette cosine similarity, minimum `0.75`.
+
+The Unity capture fixture temporarily disables recognizable Canvas/UI and
+atmosphere/volume behaviours, fog, the UI layer, and camera post-processing;
+all prior state is restored after capture. This keeps HUD and atmosphere
+residue out of the scene-only comparison without changing gameplay checks.
+
+Run the gate with:
+
+```text
+python unity_cli.py playtest output/unity/Project \
+  --reference-image reference.png \
+  --spatial-fusion Project.spatial-fusion.json
+```
+
+`e2e-verify --reference-image` enables its PlayMode phase automatically. If
+`--spatial-fusion` is omitted, the isolated project must contain exactly one
+`*.spatial-fusion.json` sidecar; otherwise the comparison fails loudly.
 
 ### 6.7 — Spatial freeze
 

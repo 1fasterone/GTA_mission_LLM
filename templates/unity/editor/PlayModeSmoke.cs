@@ -29,6 +29,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -284,6 +285,86 @@ public class PlayModeSmoke
     // touching the window backbuffer (which #3 showed is empty) and never
     // manually re-invoking Render() outside that normal loop (which #2 showed
     // URP doesn't handle the same way).
+    private sealed class VisualComparisonCaptureState
+    {
+        private readonly List<GameObject> _disabledObjects = new List<GameObject>();
+        private readonly List<Behaviour> _disabledBehaviours = new List<Behaviour>();
+        private readonly bool _fogEnabled;
+        private bool _restored;
+
+        private VisualComparisonCaptureState()
+        {
+            _fogEnabled = RenderSettings.fog;
+        }
+
+        public static VisualComparisonCaptureState Begin()
+        {
+            var state = new VisualComparisonCaptureState();
+            RenderSettings.fog = false;
+
+            foreach (var root in SceneManager.GetActiveScene().GetRootGameObjects())
+            {
+                foreach (var transform in root.GetComponentsInChildren<Transform>(true))
+                {
+                    var gameObject = transform.gameObject;
+                    if (IsUiOrAtmosphereObject(gameObject.name))
+                    {
+                        if (gameObject.activeSelf)
+                        {
+                            gameObject.SetActive(false);
+                            state._disabledObjects.Add(gameObject);
+                        }
+                        continue;
+                    }
+
+                    foreach (var behaviour in gameObject.GetComponents<Behaviour>())
+                    {
+                        if (IsUiOrAtmosphereBehaviour(behaviour) && behaviour.enabled)
+                        {
+                            behaviour.enabled = false;
+                            state._disabledBehaviours.Add(behaviour);
+                        }
+                    }
+                }
+            }
+            return state;
+        }
+
+        public void Restore()
+        {
+            if (_restored) return;
+            for (int i = _disabledBehaviours.Count - 1; i >= 0; i--)
+            {
+                if (_disabledBehaviours[i] != null)
+                    _disabledBehaviours[i].enabled = true;
+            }
+            for (int i = _disabledObjects.Count - 1; i >= 0; i--)
+            {
+                if (_disabledObjects[i] != null)
+                    _disabledObjects[i].SetActive(true);
+            }
+            RenderSettings.fog = _fogEnabled;
+            _restored = true;
+        }
+
+        private static bool IsUiOrAtmosphereObject(string name)
+        {
+            string token = name.ToLowerInvariant().Replace(" ", "").Replace("_", "");
+            return token == "canvas" || token == "hudroot" || token == "eventsystem" ||
+                   token == "volume" || token.Contains("pausemenu") ||
+                   token.Contains("gameover") || token.Contains("atmosphere") ||
+                   token.Contains("postprocess");
+        }
+
+        private static bool IsUiOrAtmosphereBehaviour(Behaviour behaviour)
+        {
+            string token = behaviour.GetType().Name.ToLowerInvariant();
+            return token == "canvas" || token == "uidocument" ||
+                   token == "volume" || token.EndsWith("volume", StringComparison.Ordinal) ||
+                   token.Contains("atmosphere") || token.Contains("postprocess");
+        }
+    }
+
     public const string ScreenshotFilename = "playtest_screenshot.png";
 
     [UnityTest]
@@ -333,11 +414,16 @@ public class PlayModeSmoke
         var tex = new Texture2D(width, height, TextureFormat.RGB24, false);
         var captureGo = new GameObject("PlayModeSmokeCaptureCamera");
         var prevActive = RenderTexture.active;
+        VisualComparisonCaptureState captureState = null;
         try
         {
+            captureState = VisualComparisonCaptureState.Begin();
             var captureCam = captureGo.AddComponent<Camera>();
             captureCam.CopyFrom(cam);
             captureGo.transform.SetPositionAndRotation(cam.transform.position, cam.transform.rotation);
+            // The UI layer is a final safety net for canvases that were
+            // created without a recognizable root name.
+            captureCam.cullingMask &= ~(1 << 5);
 
             // URP needs UniversalAdditionalCameraData on a camera for
             // correct per-camera rendering; CopyFrom() only copies base
@@ -348,7 +434,13 @@ public class PlayModeSmoke
                 "UnityEngine.Rendering.Universal.UniversalAdditionalCameraData, " +
                 "Unity.RenderPipelines.Universal.Runtime");
             if (urpDataType != null && cam.GetComponent(urpDataType) != null)
-                captureGo.AddComponent(urpDataType);
+            {
+                var urpData = captureGo.AddComponent(urpDataType);
+                var postProcessing = urpDataType.GetProperty(
+                    "renderPostProcessing", BindingFlags.Instance | BindingFlags.Public);
+                if (postProcessing != null && postProcessing.CanWrite)
+                    postProcessing.SetValue(urpData, false, null);
+            }
 
             captureCam.targetTexture = rt;
             yield return null;  // let the isolated camera's own normal render happen
@@ -367,6 +459,8 @@ public class PlayModeSmoke
         finally
         {
             RenderTexture.active = prevActive;
+            if (captureState != null)
+                captureState.Restore();
             UnityEngine.Object.Destroy(captureGo);
             UnityEngine.Object.Destroy(tex);
             rt.Release();

@@ -29,12 +29,10 @@ Typical workflow
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
-import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -53,7 +51,6 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:  # noqa: BLE001 — older Python / non-reconfigurable stream
         pass
 
-from rich.columns import Columns
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import (
@@ -65,7 +62,6 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
-from rich.text import Text
 
 # -- project pipeline imports --------------------------------------------------
 from src.unity_pipeline import UnityPipeline, _programmatic_fix, _check_consistency
@@ -518,7 +514,7 @@ def _post_generate(
     # -- Open in Unity ----------------------------------------------------------
     if open_unity:
         launch_path = overlay_target if overlay_target else generated_root
-        console.print(f"\n[bold]Opening project in Unity…[/]")
+        console.print("\n[bold]Opening project in Unity…[/]")
         console.print(f"  [dim]Path:[/] {launch_path}")
         ok = _open_project(launch_path, unity_version)
         if not ok:
@@ -744,7 +740,6 @@ def _run_compile_check(
         "-logFile", str(log_path.resolve()),
     ]
 
-    rc: Optional[int] = None
     try:
         with Progress(
             SpinnerColumn(),
@@ -755,11 +750,9 @@ def _run_compile_check(
         ) as prog:
             prog.add_task("Compiling in Unity (first import can take minutes)…", total=None)
             try:
-                proc = subprocess.run(cmd, timeout=timeout)
-                rc = proc.returncode
+                subprocess.run(cmd, timeout=timeout)
             except subprocess.TimeoutExpired:
                 console.print(f"[yellow]Unity batch run exceeded {timeout}s — treating as failure.[/]")
-                rc = None
     finally:
         _cleanup_compilecheck(project_root)
 
@@ -929,6 +922,16 @@ def e2e_verify(
         help="Also enter real Play mode and check console errors / avatar "
              "cardinality / entity spawn counts (slow — launches the Editor again).",
     ),
+    reference_image: Optional[Path] = typer.Option(
+        None, "--reference-image",
+        help="Canonical visual-reference image; also enables the PlayMode "
+             "screenshot-diff gate.",
+    ),
+    spatial_fusion: Optional[Path] = typer.Option(
+        None, "--spatial-fusion",
+        help="Spatial-fusion sidecar containing normalized landmark rectangles; "
+             "auto-discovered beside the isolated project when omitted.",
+    ),
     keep: bool = typer.Option(
         False, "--keep", help="Keep the isolated verify copy even when everything passes."
     ),
@@ -973,6 +976,10 @@ def e2e_verify(
       python unity_cli.py e2e-verify C:/u/RepoFlowSim --min-score 70 --strict
     """
     from src.unity_playability import evaluate, gate
+
+    if reference_image is not None and not playtest:
+        console.print("[dim]--reference-image enables the PlayMode screenshot-diff gate.[/]")
+        playtest = True
 
     source = source.resolve()
     if not source.is_dir():
@@ -1033,6 +1040,8 @@ def e2e_verify(
                     global_cache_root=(Path(pcfg["global_root"])
                                        if pcfg.get("global_root") else unity_cache_root()),
                     timeout=timeout,
+                    reference_image=reference_image,
+                    spatial_fusion=spatial_fusion,
                 )
                 console.print(playtest_result.render(), markup=False)
 
@@ -1064,6 +1073,15 @@ def playtest(
     ),
     timeout: int = typer.Option(
         900, "--timeout", help="Max seconds for each Unity batch phase (compile, then playtest)."
+    ),
+    reference_image: Optional[Path] = typer.Option(
+        None, "--reference-image",
+        help="Canonical visual-reference image for the screenshot-diff gate.",
+    ),
+    spatial_fusion: Optional[Path] = typer.Option(
+        None, "--spatial-fusion",
+        help="Spatial-fusion sidecar containing normalized landmark rectangles; "
+             "auto-discovered beside the isolated project when omitted.",
     ),
     keep: bool = typer.Option(
         False, "--keep", help="Keep the isolated copy even when everything passes."
@@ -1135,6 +1153,8 @@ def playtest(
                 global_cache_root=(Path(pcfg["global_root"])
                                    if pcfg.get("global_root") else unity_cache_root()),
                 timeout=timeout,
+                reference_image=reference_image,
+                spatial_fusion=spatial_fusion,
             )
             console.print(playtest_result.render(), markup=False)
 
@@ -1353,7 +1373,7 @@ def overlay(
     # -- Live refresh ---------------------------------------------------------
     if not no_refresh:
         if _bridge_is_alive(bridge_port):
-            console.print(f"\nRefreshing Unity Editor…", end=" ")
+            console.print("\nRefreshing Unity Editor…", end=" ")
             try:
                 _bridge_refresh(bridge_port)
                 console.print("[green]OK[/]")
@@ -1553,8 +1573,8 @@ def _gta_verify_real_dll(targets: list[Path]) -> bool:
 
     if not all_ok:
         console.print(Panel(
-            f"[bold red]FAIL[/] — one or more missions failed to compile "
-            f"against the real SHVDN3 DLL", style="red"))
+            "[bold red]FAIL[/] — one or more missions failed to compile "
+            "against the real SHVDN3 DLL", style="red"))
         return False
     console.print(Panel(
         f"[bold green]PASS[/] — all {len(targets)} mission(s) compile clean "

@@ -244,6 +244,9 @@ def test_fusion_binds_declared_entities_and_keeps_adjacency_unit_free(tmp_path: 
         "unbound_visual_labels": 2,
     }
     player = next(row for row in fused["entity_regions"] if row["entity"] == "PlayerBoat")
+    assert player["composition"]["bbox"] == {
+        "x": 0.35, "y": 0.68, "w": 0.2, "h": 0.18,
+    }
     assert player["composition"]["center"] == {"x": 0.45, "y": 0.77}
     assert player["composition"]["extent"] == {"w": 0.2, "h": 0.18}
     assert player["composition"]["applied_surface"] == "ground"

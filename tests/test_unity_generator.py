@@ -861,7 +861,6 @@ class TestCustomScripts:
         between there and here, none of which had re-verified balance.
         _reject_unbalanced_custom_bodies (the fix) must catch that and clear
         the body rather than let a syntax error reach the generated file."""
-        from src.unity_schema import UnitySchema
         from src.unity_generator import _reject_unbalanced_custom_bodies
 
         script = UnityScript(
@@ -1970,6 +1969,27 @@ class TestNonCompose2DTopdown:
         assert "BuildTopDown2D" in cs
         assert "BuildSideScroller2D" not in cs
         assert cs.count("{") == cs.count("}")
+
+    def test_topdown_marsh_uses_deterministic_layered_sprite_stack(self, gen):
+        from src.unity_schema import EntitySpec
+        files = gen.generate(self._schema(
+            entities=[EntitySpec(name="Lantern", kind="prop", count=1)]
+        ), {})
+        cs = files["Vanilla2DTop/Assets/Scripts/EntitySpawner.cs"]
+        layers = [
+            "MarshWater",
+            "MarshWaterHighlights",
+            "MarshIsland",
+            "MarshVegetation",
+            "MarshRocks",
+        ]
+        positions = [cs.index(layer) for layer in layers]
+        assert positions == sorted(positions)
+        assert "CreateWaterHighlightsSprite" in cs
+        assert "CreateVegetationSprite" in cs
+        assert "CreateRockSprite" in cs
+        assert "CreateLanternGlowSprite" in cs
+        assert "groupName + \"_Glow_\" + i" in cs
 
     def test_humanoid_rig_downgraded_like_2d(self, gen, tmp_path):
         # 2d_topdown is flat-sprite like "2D" — a genuine Blender-built humanoid
@@ -3435,8 +3455,6 @@ def test_shader_specs_surface_in_readme_not_as_files():
 
 
 # ── Track 5: world_spec feeds environment/atmosphere context ─────────────────
-
-import re
 
 
 def _fog_and_intensity(scene: str) -> tuple:

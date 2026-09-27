@@ -349,6 +349,18 @@ class TestAnalyzeRenderHealth:
         assert result.ok is False
 
 
+def test_visual_comparison_capture_removes_ui_and_atmosphere_residue():
+    source = (TEMPLATE_DIR / "editor" / "PlayModeSmoke.cs").read_text(encoding="utf-8")
+
+    assert "VisualComparisonCaptureState.Begin" in source
+    assert "RenderSettings.fog = false" in source
+    assert "captureCam.cullingMask &= ~(1 << 5)" in source
+    assert '"renderPostProcessing"' in source
+    assert "token == \"canvas\"" in source
+    assert "token.Contains(\"atmosphere\")" in source
+    assert "captureState.Restore()" in source
+
+
 # ── Opt-in real gate (mirrors tests/test_unity_compile.py exactly) ─────────
 
 def _first_project() -> Path | None:

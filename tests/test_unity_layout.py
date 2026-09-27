@@ -103,6 +103,29 @@ class TestGroupPacking:
         assert prop.instance_positions
         assert player.instance_positions != prop.instance_positions
 
+    def test_topdown_2d_uses_normalized_image_landmark_rectangles(self):
+        player = EntitySpec(name="Player", kind="character", tag="Player")
+        lantern = EntitySpec(name="Lantern", kind="pickup", count=1,
+                             placement="single", tag="Collectible")
+        schema = _schema([player, lantern], game_type="2d_topdown")
+        messages = compute_layout(
+            schema,
+            image_landmarks={
+                "Player": {
+                    "center": {"x": 0.2, "y": 0.8},
+                    "extent": {"w": 0.12, "h": 0.16},
+                },
+                "Lantern": {
+                    "center": {"x": 0.82, "y": 0.24},
+                    "extent": {"w": 0.08, "h": 0.12},
+                },
+            },
+        )
+
+        assert any("normalized image landmark rectangles" in msg for msg in messages)
+        assert player.origin_offset == [-4.8, -3.0]
+        assert lantern.origin_offset == [5.12, 2.6]
+
     def test_idempotent(self):
         e1 = EntitySpec(name="A", count=10, placement="scatter", radius=8, scale=2.0)
         e2 = EntitySpec(name="B", count=5, placement="ring", radius=6, scale=1.0)
