@@ -17,6 +17,7 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
+from .lm_studio_client   import LMStudioClient
 from .micro_pipeline     import to_pascal
 from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
                                  is_embodied)
@@ -2224,7 +2225,7 @@ class UnityPipeline:
                                    f"({type(_exc).__name__}: {_exc})")
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = dict(self.config.get("sketchfab", {}) or {})
-        _asset_llm = self.llm
+        _asset_llm: LMStudioClient | None = self.llm
         if visual_context_mode:
             # Step 3 already authored the per-entity query. Selection and
             # filename wiring after that boundary must be deterministic.
@@ -2551,13 +2552,15 @@ class UnityPipeline:
         # in config.yaml makes errors fatal; `python main.py unity-playability
         # <schema.json> --strict` grades a saved schema the same way.
         _pcfg = (self.config.get("playability") or {}) if self.config else {}
-        _reason = playability_gate(
+        _playability_reason = playability_gate(
             report,
             min_score=int(_pcfg.get("min_score", 0) or 0),
             fail_on_error=bool(_pcfg.get("gate", False)),
         )
-        if _reason:
-            raise PlayabilityGateError(f"Playability gate failed — {_reason}")
+        if _playability_reason:
+            raise PlayabilityGateError(
+                f"Playability gate failed — {_playability_reason}"
+            )
 
         console.print(Panel(
             f"[bold green]Done![/]\n"
