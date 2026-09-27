@@ -436,6 +436,12 @@ def _anchor_composition(
         medium=medium,
     )
     return {
+        "bbox": {
+            "x": round(x, 6),
+            "y": round(y, 6),
+            "w": round(width, 6),
+            "h": round(height, 6),
+        },
         "center": {
             "x": round(x + width / 2.0, 6),
             "y": round(y + height / 2.0, 6),

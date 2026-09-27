@@ -1125,7 +1125,16 @@ public class EntitySpawner : MonoBehaviour
                 go = new GameObject(groupName + "_" + i);
                 var sr = go.AddComponent<SpriteRenderer>();
                 sr.sprite = sprite;
-                sr.sortingOrder = 0;
+                sr.sortingOrder = groupName.ToLowerInvariant().Contains("lantern") ? 2 : 0;
+                if (groupName.ToLowerInvariant().Contains("lantern"))
+                {
+                    var glow = new GameObject(groupName + "_Glow_" + i);
+                    glow.transform.SetParent(go.transform, false);
+                    var glowRenderer = glow.AddComponent<SpriteRenderer>();
+                    glowRenderer.sprite = CreateLanternGlowSprite();
+                    glowRenderer.sortingOrder = -1;
+                    glow.transform.localScale = Vector3.one * 1.5f;
+                }
             }
             else
             {
@@ -1166,12 +1175,32 @@ public class EntitySpawner : MonoBehaviour
         waterRenderer.sortingOrder = -100;
         water.transform.position = new Vector3(0f, 0f, 1f);
 
+        var waterHighlights = new GameObject("MarshWaterHighlights");
+        var waterHighlightRenderer = waterHighlights.AddComponent<SpriteRenderer>();
+        waterHighlightRenderer.sprite = CreateWaterHighlightsSprite();
+        waterHighlightRenderer.sortingOrder = -95;
+        waterHighlights.transform.position = new Vector3(0f, 0f, 0.95f);
+
         var island = new GameObject("MarshIsland");
         var islandRenderer = island.AddComponent<SpriteRenderer>();
         islandRenderer.sprite = CreateIslandSprite();
         islandRenderer.sortingOrder = -90;
         island.transform.localScale = Vector3.one * 1.25f;
         island.transform.position = new Vector3(0f, 0f, 0.8f);
+
+        var vegetation = new GameObject("MarshVegetation");
+        var vegetationRenderer = vegetation.AddComponent<SpriteRenderer>();
+        vegetationRenderer.sprite = CreateVegetationSprite();
+        vegetationRenderer.sortingOrder = -85;
+        vegetation.transform.localScale = Vector3.one * 1.25f;
+        vegetation.transform.position = new Vector3(0f, 0f, 0.7f);
+
+        var rocks = new GameObject("MarshRocks");
+        var rockRenderer = rocks.AddComponent<SpriteRenderer>();
+        rockRenderer.sprite = CreateRockSprite();
+        rockRenderer.sortingOrder = -84;
+        rocks.transform.localScale = Vector3.one * 1.25f;
+        rocks.transform.position = new Vector3(0f, 0f, 0.65f);
     }
 
     private Sprite CreateWaterSprite()
@@ -1179,11 +1208,26 @@ public class EntitySpawner : MonoBehaviour
         const int width = 512, height = 288;
         var tex = NewPixelTexture(width, height);
         var water = new Color(0.035f, 0.13f, 0.24f, 1f);
-        var ripple = new Color(0.06f, 0.24f, 0.34f, 0.85f);
         Fill(tex, water);
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 16f);
+    }
+
+    private Sprite CreateWaterHighlightsSprite()
+    {
+        const int width = 512, height = 288;
+        var tex = NewPixelTexture(width, height);
+        var highlight = new Color(0.08f, 0.31f, 0.40f, 0.82f);
+        var glint = new Color(0.25f, 0.55f, 0.57f, 0.52f);
         for (int y = 10; y < height; y += 23)
+        {
             for (int x = (y / 23 % 2) * 28; x < width; x += 76)
-                Rect(tex, x, y, 32, 3, ripple);
+            {
+                Rect(tex, x, y, 32, 3, highlight);
+                if ((x + y) % 5 == 0) Rect(tex, x + 8, y - 2, 9, 2, glint);
+            }
+        }
         tex.Apply();
         return Sprite.Create(tex, new Rect(0f, 0f, width, height),
                              new Vector2(0.5f, 0.5f), 16f);
@@ -1210,17 +1254,73 @@ public class EntitySpawner : MonoBehaviour
                 tex.SetPixel(x, y, c);
             }
         }
-        // Pixel clusters read as reeds, shrubs, and rocks without relying on
-        // imported 3D materials.
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 16f);
+    }
+
+    private Sprite CreateVegetationSprite()
+    {
+        const int width = 352, height = 224;
+        var tex = NewPixelTexture(width, height);
+        var reed = new Color(0.10f, 0.23f, 0.18f, 0.95f);
+        var leaf = new Color(0.16f, 0.36f, 0.24f, 0.96f);
+        var shadow = new Color(0.07f, 0.18f, 0.14f, 0.96f);
         for (int i = 0; i < 24; i++)
         {
             int x = 32 + ((i * 67) % 288);
             int y = 28 + ((i * 41) % 168);
-            Rect(tex, x, y, 7, 7, i % 3 == 0 ? new Color(0.10f, 0.23f, 0.18f, 1f) : grass);
+            Rect(tex, x, y, 7, 7, i % 3 == 0 ? shadow : leaf);
+            Rect(tex, x + 1, y - 7, 2, 8, reed);
+            if (i % 2 == 0) Rect(tex, x + 4, y - 11, 2, 12, reed);
+        }
+        // A few larger reed beds establish a readable marsh silhouette while
+        // remaining an independent transparent layer over the island base.
+        for (int i = 0; i < 7; i++)
+        {
+            int x = 54 + i * 43;
+            int y = 54 + (i % 3) * 31;
+            Rect(tex, x, y, 3, 28 + (i % 2) * 8, reed);
+            Rect(tex, x + 7, y - 5, 3, 34, leaf);
+            Rect(tex, x + 14, y + 4, 3, 25, reed);
         }
         tex.Apply();
         return Sprite.Create(tex, new Rect(0f, 0f, width, height),
                              new Vector2(0.5f, 0.5f), 16f);
+    }
+
+    private Sprite CreateRockSprite()
+    {
+        const int width = 352, height = 224;
+        var tex = NewPixelTexture(width, height);
+        var rock = new Color(0.22f, 0.25f, 0.25f, 1f);
+        var rockLight = new Color(0.42f, 0.44f, 0.40f, 1f);
+        var rockShadow = new Color(0.12f, 0.15f, 0.15f, 1f);
+        for (int i = 0; i < 12; i++)
+        {
+            int x = 48 + ((i * 83) % 250);
+            int y = 42 + ((i * 53) % 125);
+            int radius = 4 + i % 4;
+            Circle(tex, x, y, radius, rockShadow);
+            Circle(tex, x - 1, y - 2, Mathf.Max(2, radius - 2), rock);
+            Rect(tex, x - radius / 2, y - radius / 2, Mathf.Max(2, radius), 2, rockLight);
+        }
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 16f);
+    }
+
+    private Sprite CreateLanternGlowSprite()
+    {
+        const int width = 64, height = 64;
+        var tex = NewPixelTexture(width, height);
+        Circle(tex, 32, 32, 30, new Color(1f, 0.42f, 0.03f, 0.08f));
+        Circle(tex, 32, 32, 22, new Color(1f, 0.57f, 0.05f, 0.13f));
+        Circle(tex, 32, 32, 14, new Color(1f, 0.72f, 0.13f, 0.20f));
+        Circle(tex, 32, 32, 7, new Color(1f, 0.94f, 0.56f, 0.30f));
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 64f);
     }
 
     private Sprite CreateTopDownSprite(string groupName, Color color)
@@ -1248,7 +1348,6 @@ public class EntitySpawner : MonoBehaviour
         }
         else if (key.Contains("lantern"))
         {
-            Circle(tex, width / 2, height / 2, 22, new Color(1f, 0.67f, 0.08f, 0.20f));
             Rect(tex, 18, 18, 12, 30, new Color(1f, 0.63f, 0.08f, 1f));
             Rect(tex, 13, 21, 22, 5, new Color(0.40f, 0.20f, 0.03f, 1f));
             Rect(tex, 16, 13, 16, 5, new Color(0.40f, 0.20f, 0.03f, 1f));

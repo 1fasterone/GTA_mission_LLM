@@ -54,7 +54,7 @@ import logging
 import math
 import random
 import re
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 from .unity_layout_archetype import (
     LayoutArchetype,
@@ -1956,8 +1956,11 @@ def _is_embodied_ui_board(schema: UnitySchema) -> bool:
     return bool(layoutable) and all(ui_element_of(e) is not None for e in layoutable)
 
 
-def compute_layout(schema: UnitySchema,
-                   footprints: Optional[dict[str, float]] = None) -> list[str]:
+def compute_layout(
+    schema: UnitySchema,
+    footprints: Optional[dict[str, float]] = None,
+    image_landmarks: Optional[Mapping[str, Mapping[str, object]]] = None,
+) -> list[str]:
     """Select a spatial archetype for the scene, then lay every
     {single,line,ring,grid,scatter} entity group out inside it, baking
     `origin_offset`, `group_radius` and `instance_positions` onto each
@@ -2080,13 +2083,15 @@ def compute_layout(schema: UnitySchema,
         return msgs + _layout_vertical_surface(schema, arch, footprints)
     if arch.name == "UISurface":
         return msgs + _layout_ui_board(schema, arch, footprints)
-    return msgs + _layout_arena_plane(schema, footprints)
+    return msgs + _layout_arena_plane(schema, footprints, image_landmarks)
 
 
 _TOPDOWN_PLAYER_ANCHOR = (-6.0, -4.5)
 _TOPDOWN_ENTRY_ANCHOR = (0.0, -7.0)
 _TOPDOWN_OBJECTIVE_ANCHOR = (5.0, 3.5)
 _TOPDOWN_TERMINAL_ANCHOR = (0.0, 7.0)
+_TOPDOWN_VISUAL_HALF_WIDTH = 8.0
+_TOPDOWN_VISUAL_HALF_HEIGHT = 5.0
 # Screen-space reference runs from upper-left to lower-right. Unity's top-down
 # world uses Y-up, so the authored world anchors intentionally run from
 # lower-left in world order to upper-right only when the visual reference does
@@ -2107,8 +2112,70 @@ def _topdown_natural_key(entity: EntitySpec) -> tuple:
     return (numbers, text, entity.name)
 
 
-def _layout_topdown_board(schema: UnitySchema,
-                          footprints: Optional[dict[str, float]] = None) -> list[str]:
+def _topdown_visual_anchor(
+    composition: Mapping[str, object],
+) -> tuple[float, float] | None:
+    """Map one normalized image-space composition center into board X/Z.
+
+    The image remains the authority for composition only.  This fixed board
+    envelope is the deterministic projection used by the 2-D runtime, so a
+    second run cannot choose a different world scale from incidental group
+    names or keyword matches.
+    """
+    center = composition.get("center")
+    if not isinstance(center, Mapping):
+        return None
+    try:
+        x = float(center["x"])
+        y = float(center["y"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (math.isfinite(x) and math.isfinite(y)
+            and 0.0 <= x <= 1.0 and 0.0 <= y <= 1.0):
+        return None
+    return (
+        round((x * 2.0 - 1.0) * _TOPDOWN_VISUAL_HALF_WIDTH, 3),
+        round((1.0 - y * 2.0) * _TOPDOWN_VISUAL_HALF_HEIGHT, 3),
+    )
+
+
+def _topdown_visual_radius(
+    entity: EntitySpec,
+    composition: Mapping[str, object],
+) -> float:
+    """Reserve a small deterministic footprint for a visual landmark bbox.
+
+    Broad environment boxes describe a board surface, not a collision-sized
+    landmark.  They keep the normal group footprint.  Compact boxes reserve
+    enough space for the rectangle's projected silhouette without allowing a
+    single image annotation to consume the whole board.
+    """
+    base = max(0.5, entity.scale * 0.6)
+    extent = composition.get("extent")
+    if not isinstance(extent, Mapping):
+        return base
+    try:
+        width = float(extent["w"])
+        height = float(extent["h"])
+    except (KeyError, TypeError, ValueError):
+        return base
+    if not (math.isfinite(width) and math.isfinite(height)
+            and 0.0 < width <= 1.0 and 0.0 < height <= 1.0):
+        return base
+    if max(width, height) > 0.6:
+        return base
+    projected = max(
+        width * _TOPDOWN_VISUAL_HALF_WIDTH,
+        height * _TOPDOWN_VISUAL_HALF_HEIGHT,
+    ) * 0.5
+    return max(base, min(3.5, projected))
+
+
+def _layout_topdown_board(
+    schema: UnitySchema,
+    footprints: Optional[dict[str, float]] = None,
+    image_landmarks: Optional[Mapping[str, Mapping[str, object]]] = None,
+) -> list[str]:
     """Lay an embodied 2D top-down game out as a readable board.
 
     ArenaPlane's collision packing remains the fallback, but it has no notion
@@ -2138,6 +2205,28 @@ def _layout_topdown_board(schema: UnitySchema,
         claimed.add(id(entity))
         anchors[id(entity)] = (point[0], point[1], role)
 
+    visual_anchors: dict[int, tuple[float, float, str]] = {}
+    visual_radii: dict[int, float] = {}
+    for entity in layoutable:
+        composition = (image_landmarks or {}).get(entity.name)
+        if not isinstance(composition, Mapping):
+            continue
+        visual_point = _topdown_visual_anchor(composition)
+        if visual_point is None:
+            continue
+        visual_anchors[id(entity)] = (
+            visual_point[0], visual_point[1], "image_bbox"
+        )
+        visual_radii[id(entity)] = _topdown_visual_radius(entity, composition)
+
+    for entity_id, visual_record in sorted(
+        visual_anchors.items(), key=lambda item: str(next(
+            e.name for e in layoutable if id(e) == item[0]
+        ))
+    ):
+        entity = next(e for e in layoutable if id(e) == entity_id)
+        claim(entity, (visual_record[0], visual_record[1]), visual_record[2])
+
     claim(player, _TOPDOWN_PLAYER_ANCHOR, "player")
     entry = next((e for e in layoutable if has_any(
         e, ("dock", "pier", "entrance", "entry", "start", "spawn"))), None)
@@ -2150,9 +2239,9 @@ def _layout_topdown_board(schema: UnitySchema,
     claim(objective, _TOPDOWN_OBJECTIVE_ANCHOR, "objective")
     blockers = [e for e in layoutable if id(e) not in claimed and has_any(
         e, ("stone", "block", "rock", "obstacle", "barrier", "wall", "pillar", "crate"))]
-    for e, point in zip(sorted(blockers, key=_topdown_natural_key),
+    for e, block_point in zip(sorted(blockers, key=_topdown_natural_key),
                         _TOPDOWN_BLOCKER_ANCHORS):
-        claim(e, point, "blocker")
+        claim(e, block_point, "blocker")
 
     # Positions from an earlier compiler pass are replayable inputs only for
     # authored Scene Compiler layouts.  Ordinary generated positions must be
@@ -2177,6 +2266,8 @@ def _layout_topdown_board(schema: UnitySchema,
             e.group_radius = round(radius, 3)
     for e in packable:
         e.group_radius = _footprint_radius(e, _effective_spacing(e, footprints))
+        if id(e) in visual_radii:
+            e.group_radius = max(e.group_radius, visual_radii[id(e)])
 
     occupied: list[tuple[float, float, float]] = []
     anchored_names: list[str] = []
@@ -2217,19 +2308,25 @@ def _layout_topdown_board(schema: UnitySchema,
     _attach_regions(schema, _regions_for(packable, preplaced))
     if not anchored_names:
         return ["TopDown board layout had no semantic anchors; existing deterministic packer retained"]
-    return [
-        "TopDown board anchors: " + ", ".join(anchored_names),
-        "TopDown unknown groups packed around anchored composition",
-    ]
+    messages = ["TopDown board anchors: " + ", ".join(anchored_names)]
+    if visual_anchors:
+        messages.append(
+            "TopDown normalized image landmark rectangles projected into board layout"
+        )
+    messages.append("TopDown unknown groups packed around anchored composition")
+    return messages
 
 
-def _layout_arena_plane(schema: UnitySchema,
-                        footprints: Optional[dict[str, float]] = None) -> list[str]:
+def _layout_arena_plane(
+    schema: UnitySchema,
+    footprints: Optional[dict[str, float]] = None,
+    image_landmarks: Optional[Mapping[str, Mapping[str, object]]] = None,
+) -> list[str]:
     """The original ground-plane packer — see `compute_layout`'s docstring.
     Byte-for-byte the behaviour that shipped before archetype selection."""
     if (schema.game_type == "2d_topdown" and is_embodied(schema)
             and not _is_embodied_ui_board(schema)):
-        return _layout_topdown_board(schema, footprints)
+        return _layout_topdown_board(schema, footprints, image_landmarks)
 
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
     preplaced = [e for e in layoutable if e.instance_positions]

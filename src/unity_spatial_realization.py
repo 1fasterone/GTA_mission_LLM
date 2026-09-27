@@ -289,6 +289,69 @@ def _composition_center(row: Mapping[str, Any]) -> Optional[tuple[float, float]]
     return float(center[0]), float(center[1])
 
 
+def _image_landmark_compositions(
+    spatial_fusion: Optional[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Extract closed normalized image rectangles for deterministic layout.
+
+    Slice 6.3 owns the normalized image evidence; this adapter only carries
+    that already-validated composition into the layout primitive.  It never
+    infers a missing rectangle from entity keywords.  Legacy fusion artifacts
+    without ``bbox`` remain usable through their validated center/extent pair.
+    """
+    if spatial_fusion is None:
+        return {}
+    raw_rows = spatial_fusion.get("bindings")
+    if not isinstance(raw_rows, list):
+        raw_rows = spatial_fusion.get("entity_regions") or []
+    result: dict[str, dict[str, Any]] = {}
+    for row in raw_rows:
+        if not isinstance(row, Mapping):
+            continue
+        if row.get("status") != "bound" and row.get("binding_status") != "bound":
+            continue
+        entity = row.get("entity")
+        composition = row.get("composition")
+        if not isinstance(entity, str) or not isinstance(composition, Mapping):
+            continue
+        center = composition.get("center")
+        extent = composition.get("extent")
+        bbox = composition.get("bbox")
+        if isinstance(bbox, Mapping):
+            try:
+                x, y = float(bbox["x"]), float(bbox["y"])
+                width, height = float(bbox["w"]), float(bbox["h"])
+            except (KeyError, TypeError, ValueError):
+                continue
+        elif isinstance(center, Mapping) and isinstance(extent, Mapping):
+            try:
+                cx, cy = float(center["x"]), float(center["y"])
+                width, height = float(extent["w"]), float(extent["h"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            x, y = cx - width / 2.0, cy - height / 2.0
+        else:
+            continue
+        if not all(math.isfinite(value) for value in (x, y, width, height)):
+            continue
+        if width <= 0.0 or height <= 0.0 or x < 0.0 or y < 0.0 \
+                or x + width > 1.000001 or y + height > 1.000001:
+            continue
+        result[entity] = {
+            "bbox": {
+                "x": round(x, 6), "y": round(y, 6),
+                "w": round(width, 6), "h": round(height, 6),
+            },
+            "center": {
+                "x": round(x + width / 2.0, 6),
+                "y": round(y + height / 2.0, 6),
+            },
+            "extent": {"w": round(width, 6), "h": round(height, 6)},
+            "role": str(row.get("role") or ""),
+        }
+    return result
+
+
 def _apply_composition_constraints(
     schema: UnitySchema,
     spatial_fusion: Mapping[str, Any],
@@ -324,6 +387,17 @@ def _apply_composition_constraints(
         role = role or by_entity[name].get("role")
         center = _composition_center(by_entity[name])
         if center is None:
+            continue
+        if (schema.game_type == "2d_topdown"
+                and isinstance(by_entity[name].get("composition"), Mapping)
+                and (by_entity[name]["composition"].get("bbox")
+                     or by_entity[name]["composition"].get("extent"))):
+            rows.append({
+                "entity": name,
+                "status": "protected",
+                "reason": "top-down normalized image rectangle was realized by board layout",
+                "normalized_center_xy": [round(center[0], 6), round(center[1], 6)],
+            })
             continue
         if role != "scenery":
             rows.append({
@@ -478,7 +552,12 @@ def realize_spatial_layout(
         if entity.name in authored_names and entity.instance_positions
     }
 
-    messages = compute_layout(schema, measured or None)
+    image_landmarks = _image_landmark_compositions(fusion)
+    messages = compute_layout(
+        schema,
+        measured or None,
+        image_landmarks=image_landmarks or None,
+    )
 
     for entity in schema.entities:
         before = authored_positions.get(entity.name)

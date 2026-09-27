@@ -100,6 +100,7 @@ def prepare_spatial_layout(
         if not isinstance(fusion_rows, list):
             fusion_rows = (fusion or {}).get("entity_regions") or []
         composition_targets = set()
+        topdown_image_targets = set()
         for row in fusion_rows:
             if not isinstance(row, Mapping):
                 continue
@@ -107,11 +108,17 @@ def prepare_spatial_layout(
             role = (row.get("schema_constraints") or {}).get("role") or row.get("role")
             if status == "bound" and role == "scenery" and row.get("entity"):
                 composition_targets.add(str(row["entity"]))
+            if (schema.game_type == "2d_topdown" and status == "bound"
+                    and row.get("entity") and row.get("composition") is not None):
+                topdown_image_targets.add(str(row["entity"]))
         for entity in schema.entities:
             # Existing deterministic scaffolds (for example the racing start
-            # grid) are already authoritative. Only scenery explicitly bound
-            # by 6.3 is reset so its normalized composition can be re-applied.
-            if (entity.name not in composition_targets
+            # grid) are already authoritative.  Top-down image rectangles are
+            # a deterministic board-layout input, so every bound group is
+            # reset there; authored Scene Compiler transforms remain Tier A.
+            reset_targets = (topdown_image_targets if schema.game_type == "2d_topdown"
+                             else composition_targets)
+            if (entity.name not in reset_targets
                     or entity.name in authored
                     or entity.placement == "path"):
                 continue

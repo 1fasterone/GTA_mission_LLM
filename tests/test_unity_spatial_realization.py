@@ -103,6 +103,60 @@ def test_spatial_fusion_is_consumed_only_for_non_authored_scenery() -> None:
                 if row["entity"] == "Crates")["origin_offset"] != [0.0, 0.0]
 
 
+def test_topdown_realization_projects_bound_image_rectangles_into_board() -> None:
+    schema = UnitySchema(
+        project_name="TopdownRealizationTest",
+        company_name="Test",
+        description="A marsh board.",
+        game_type="2d_topdown",
+        platform="pc",
+        render_pipeline="URP",
+        locomotion="walk",
+        scenes=["Main"],
+        entities=[
+            EntitySpec(name="Player", kind="character", tag="Player"),
+            EntitySpec(name="Lantern", kind="pickup", count=1, placement="single"),
+        ],
+    )
+    fusion = {
+        "format": "visual-reasoning-compiler/spatial-fusion/v1",
+        "status": "complete",
+        "inputs": {"schema_sha256": _schema_hash(schema)},
+        "bindings": [
+            {
+                "entity": "Player",
+                "status": "bound",
+                "composition": {
+                    "bbox": {"x": 0.10, "y": 0.70, "w": 0.20, "h": 0.20},
+                    "center": {"x": 0.20, "y": 0.80},
+                    "extent": {"w": 0.20, "h": 0.20},
+                },
+            },
+            {
+                "entity": "Lantern",
+                "status": "bound",
+                "composition": {
+                    "bbox": {"x": 0.78, "y": 0.18, "w": 0.08, "h": 0.12},
+                    "center": {"x": 0.82, "y": 0.24},
+                    "extent": {"w": 0.08, "h": 0.12},
+                },
+            },
+        ],
+    }
+
+    realized = realize_spatial_layout(schema, spatial_fusion=fusion)
+
+    player = next(row for row in realized["layout"]["entities"]
+                  if row["entity"] == "Player")
+    lantern = next(row for row in realized["layout"]["entities"]
+                   if row["entity"] == "Lantern")
+    assert player["origin_offset"] == [-4.8, -3.0]
+    assert lantern["origin_offset"] == [5.12, 2.6]
+    protected = realized["layout"]["composition_constraints"]
+    assert all(row["status"] == "protected" for row in protected)
+    assert any("board layout" in row["reason"] for row in protected)
+
+
 def test_unknown_or_invalid_footprints_abstain() -> None:
     schema = _schema()
 
