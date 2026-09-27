@@ -374,6 +374,18 @@ def _terms(value: Any) -> set[str]:
     return result
 
 
+def _instance_numbers(value: Any) -> set[str]:
+    """Numeric instance identity kept separate from noun token scoring.
+
+    Visual labels use human-readable suffixes (``stone block 2``), while the
+    schema-fill model commonly wraps the same identity in a PascalCase group
+    name (``StoneBlock2Group``).  Token overlap alone drops the digit and makes
+    every repeated noun tie.  Numbers are safe to use only alongside a shared
+    noun, so an unrelated ``rock 2`` cannot claim ``stone block 2``.
+    """
+    return set(re.findall(r"\d+", str(value or "")))
+
+
 def _entity_score(entity: Any, aliases: list[tuple[str, float]]) -> float:
     # Spatial/asset binding must follow the entity's declared identity, not
     # incidental prose that may mention nearby aircraft, ships, or effects.
@@ -392,9 +404,15 @@ def _entity_score(entity: Any, aliases: list[tuple[str, float]]) -> float:
         if not alias_terms:
             continue
         for field, field_weight in fields:
-            overlap = alias_terms & _terms(field)
+            field_terms = _terms(field)
+            overlap = alias_terms & field_terms
             if overlap:
                 score += weight * field_weight * len(overlap) / len(alias_terms)
+                if (_instance_numbers(alias) & _instance_numbers(field)):
+                    # The shared noun guard above is intentional: the number
+                    # disambiguates repeated visual instances, it never creates
+                    # a binding by itself.
+                    score += 100.0 * weight * field_weight
     return score
 
 

@@ -1725,9 +1725,11 @@ GOLDEN_2_5D_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
 # free 2-axis movement (no gravity/jump) via the "2d_topdown" controller, which
 # already existed in src/micro/controller.py but was unreachable until this
 # game_type was added — the deterministic mapper only ever selected
-# "2d_platformer" for any 2D-flavored game_type.
+# "2d_platformer" for any 2D-flavored game_type. Its camera frames the baked
+# board rather than following the avatar: visual reproduction is judged on the
+# whole composition, so a follow camera would crop the image's anchors.
 GOLDEN_2D_TOPDOWN_CORE_SIGNATURE: tuple[tuple[str, str], ...] = (
-    ("controller", "2d_topdown"), ("camera", "follow_2d"), ("health", "simple"),
+    ("controller", "2d_topdown"), ("camera", "board_framing"), ("health", "simple"),
     ("hud", "health_bar"), ("menu", "pause_menu"), ("saveload", "json_file"),
     ("physics", "rigidbody_2d"), ("input", "keyboard_mouse"),
     ("interactable", "pickup"), ("animator", "humanoid"),
@@ -2321,7 +2323,7 @@ def subsystems_for(
         ctrl = "2d_fighting"
     cam = {
         "2d": "follow_2d", "2.5d": "follow_2_5d", "top_down": "cinemachine_topdown",
-        "2d_topdown": "follow_2d", "isometric": "cinemachine_topdown",
+        "2d_topdown": "board_framing", "isometric": "cinemachine_topdown",
     }.get(gt, cam_default)
 
     # Locomotion overrides for 3D-ish game types. "vr" belongs here too — a VR

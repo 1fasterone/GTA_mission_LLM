@@ -469,9 +469,9 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
         fixes.append("VR game: added input_system feature")
 
     # NavMesh has no 2D pathfinding support in Unity
-    if schema.game_type == "2D" and "navmesh" in schema.features:
+    if schema.game_type in ("2D", "2d_topdown") and "navmesh" in schema.features:
         schema.features.remove("navmesh")
-        fixes.append("2D game: removed navmesh (not applicable to 2D)")
+        fixes.append("2D game: removed navmesh (not applicable to flat 2D)")
 
     if "game_manager" not in _stypes():
         schema.scripts.insert(0, UnityScript(
@@ -539,7 +539,7 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
 
     # Always inject MaterialPalette for 3D/2.5D/top_down/isometric/VR projects
     # so palette colors are available at runtime even without an explicit schema entry
-    if schema.game_type not in ("2D",) and "material_palette" not in _stypes():
+    if schema.game_type not in ("2D", "2d_topdown") and "material_palette" not in _stypes():
         schema.scripts.insert(0, UnityScript(
             name        = "MaterialPalette",
             type        = "material_palette",
@@ -1125,7 +1125,27 @@ class UnityPipeline:
 
         return overrides
 
-    def run(self, user_prompt: str,
+    def run(self, user_prompt: str, *args, **kwargs) -> Path:
+        """Run the compiler and release any model used by this run.
+
+        Unity can contend with LM Studio for GPU/RAM after the last schema
+        token arrives.  Keep lifecycle cleanup outside deterministic Steps
+        4-7 so it cannot affect compiler output or add a post-schema call.
+        """
+        try:
+            return self._run_impl(user_prompt, *args, **kwargs)
+        finally:
+            eject = getattr(self.llm, "unload", None)
+            if callable(eject):
+                try:
+                    eject()
+                except Exception as exc:  # noqa: BLE001 - cleanup must not mask a run
+                    self._warn(
+                        f"LLM cleanup failed after pipeline run "
+                        f"({type(exc).__name__}: {exc})"
+                    )
+
+    def _run_impl(self, user_prompt: str,
             theme:       str | None = None,
             mashup_with: str | None = None,
             seed:        int | None = None,
@@ -1806,7 +1826,17 @@ class UnityPipeline:
         for msg in _repairs:
             self._fix(msg)
 
-        if visual_asset_bindings is not None or visual_compile:
+        # A plain `unity-create --viz` run has already crossed the visual
+        # reasoning boundary and will feed the closed board into the spatial
+        # sidecars, even though it does not use the stricter Slice-4 asset
+        # compile plan.  Its Step-3 scene subset must therefore receive the
+        # same deterministic coverage repair as visual-compile mode.  Without
+        # this, a model-authored decorative/hazard entity can remain excluded
+        # from every SceneSpec and the graph correctly aborts later with an
+        # orphaned entity.  Keep the repair scoped to visual-context runs so
+        # ordinary text-only projects retain their authored scene subsets.
+        if (visual_asset_bindings is not None or visual_compile
+                or visual_context_mode):
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
 
@@ -2164,7 +2194,7 @@ class UnityPipeline:
             _coll_cfg = self.config.get("sketchfab", {}) or {}
             if (post_schema_llm_allowed and _coll_cfg.get("enabled")
                     and _coll_cfg.get("collect", True) and concept):
-                if schema.game_type == "2D":
+                if schema.game_type in ("2D", "2d_topdown"):
                     # Sketchfab is a 3D-model marketplace — fetch_and_freeze only
                     # ever writes FBX. The per-entity Tier S resolver already
                     # skips itself for 2D (unity_entity_asset_resolver.py: `not

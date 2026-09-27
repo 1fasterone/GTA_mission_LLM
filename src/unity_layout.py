@@ -53,6 +53,7 @@ from __future__ import annotations
 import logging
 import math
 import random
+import re
 from typing import Optional, Sequence
 
 from .unity_layout_archetype import (
@@ -1991,7 +1992,12 @@ def compute_layout(schema: UnitySchema,
     schema gets the UISurface board whatever its dimension, and every embodied
     2D project keeps returning [] here, byte-identically.
     """
-    if schema.game_type in ("2D", "2d_topdown") and is_embodied(schema):
+    # Side-scroller 2D keeps its lane builder, but 2d_topdown is a board: its
+    # deterministic X/Z layout is projected onto the runtime X/Y plane by
+    # EntitySpawner. Keeping those positions here is what lets image-space
+    # composition survive into the playable scene instead of being discarded
+    # and re-scattered around the origin at runtime.
+    if schema.game_type == "2D" and is_embodied(schema):
         return []
 
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
@@ -2056,10 +2062,153 @@ def compute_layout(schema: UnitySchema,
     return msgs + _layout_arena_plane(schema, footprints)
 
 
+_TOPDOWN_PLAYER_ANCHOR = (-6.0, -4.5)
+_TOPDOWN_ENTRY_ANCHOR = (0.0, -7.0)
+_TOPDOWN_OBJECTIVE_ANCHOR = (5.0, 3.5)
+_TOPDOWN_TERMINAL_ANCHOR = (0.0, 7.0)
+# Screen-space reference runs from upper-left to lower-right. Unity's top-down
+# world uses Y-up, so the authored world anchors intentionally run from
+# lower-left in world order to upper-right only when the visual reference does
+# so; this board's barrier is the opposite diagonal after projection.
+_TOPDOWN_BLOCKER_ANCHORS = ((-1.35, 2.4), (0.0, 0.8), (1.35, -0.8))
+
+
+def _topdown_entity_text(entity: EntitySpec) -> str:
+    """Return deterministic naming evidence used by board anchoring."""
+    return " ".join(str(getattr(entity, field, "") or "") for field in (
+        "name", "kind", "tag", "model_hint", "description",
+    )).lower().replace("_", " ").replace("-", " ")
+
+
+def _topdown_natural_key(entity: EntitySpec) -> tuple:
+    text = _topdown_entity_text(entity)
+    numbers = tuple(int(n) for n in re.findall(r"\d+", text))
+    return (numbers, text, entity.name)
+
+
+def _layout_topdown_board(schema: UnitySchema,
+                          footprints: Optional[dict[str, float]] = None) -> list[str]:
+    """Lay an embodied 2D top-down game out as a readable board.
+
+    ArenaPlane's collision packing remains the fallback, but it has no notion
+    of screen composition. These anchors encode the stable visual reading
+    order that a reference board communicates: player lower-left, entry lower
+    edge, blockers through the center, objective upper-right, terminal upper
+    edge. Frozen image-space fusion can override these later; without that
+    sidecar this deterministic composition is the compiler's authority.
+    """
+    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    if not layoutable:
+        return []
+
+    player, _ = pick_player_entity(layoutable)
+    text_by_entity = {id(e): _topdown_entity_text(e) for e in layoutable}
+
+    def has_any(entity: EntitySpec, words: tuple[str, ...]) -> bool:
+        text = text_by_entity[id(entity)]
+        return any(word in text for word in words)
+
+    claimed: set[int] = set()
+    anchors: dict[int, tuple[float, float, str]] = {}
+
+    def claim(entity: Optional[EntitySpec], point: tuple[float, float], role: str) -> None:
+        if entity is None or id(entity) in claimed:
+            return
+        claimed.add(id(entity))
+        anchors[id(entity)] = (point[0], point[1], role)
+
+    claim(player, _TOPDOWN_PLAYER_ANCHOR, "player")
+    entry = next((e for e in layoutable if has_any(
+        e, ("dock", "pier", "entrance", "entry", "start", "spawn"))), None)
+    claim(entry, _TOPDOWN_ENTRY_ANCHOR, "entry")
+    terminal = next((e for e in layoutable if has_any(
+        e, ("exit", "gate", "terminal", "door", "finish"))), None)
+    claim(terminal, _TOPDOWN_TERMINAL_ANCHOR, "terminal")
+    objective = next((e for e in layoutable if has_any(
+        e, ("lantern", "pickup", "collectible", "objective", "key", "gem", "treasure", "orb"))), None)
+    claim(objective, _TOPDOWN_OBJECTIVE_ANCHOR, "objective")
+    blockers = [e for e in layoutable if id(e) not in claimed and has_any(
+        e, ("stone", "block", "rock", "obstacle", "barrier", "wall", "pillar", "crate"))]
+    for e, point in zip(sorted(blockers, key=_topdown_natural_key),
+                        _TOPDOWN_BLOCKER_ANCHORS):
+        claim(e, point, "blocker")
+
+    # Positions from an earlier compiler pass are replayable inputs only for
+    # authored Scene Compiler layouts.  Ordinary generated positions must be
+    # recomputed here so a second pass with measured footprints can preserve
+    # the same semantic anchors without freezing the first pass's geometry.
+    authored_scene = bool(
+        isinstance(schema.meta, dict) and schema.meta.get("authored_scene")
+    )
+    if not authored_scene:
+        for e in layoutable:
+            e.instance_positions = []
+            e.instance_yaws = []
+            e.origin_offset = [0.0, 0.0]
+            e.group_radius = 0.0
+
+    preplaced = [e for e in layoutable if e.instance_positions]
+    packable = [e for e in layoutable if not e.instance_positions]
+    for e in preplaced:
+        if e.group_radius <= 0.0:
+            cx, cz, radius = _measure_baked(e)
+            e.origin_offset = [round(cx, 3), round(cz, 3)]
+            e.group_radius = round(radius, 3)
+    for e in packable:
+        e.group_radius = _footprint_radius(e, _effective_spacing(e, footprints))
+
+    occupied: list[tuple[float, float, float]] = []
+    anchored_names: list[str] = []
+    for e in layoutable:
+        if id(e) not in anchors or e.instance_positions:
+            if e.instance_positions:
+                occupied.append((e.origin_offset[0], e.origin_offset[1], e.group_radius))
+            continue
+        cx, cz, role = anchors[id(e)]
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.instance_positions = _bake_positions(
+            e, _effective_spacing(e, footprints), cx, cz,
+            (footprints or {}).get(e.name, 0.0) * e.scale, 0.0)
+        e.instance_yaws = []
+        _set_elevation(e, 0.0)
+        radius = max(
+            e.group_radius,
+            max((math.hypot(p[0] - cx, p[2] - cz)
+                 for p in e.instance_positions), default=0.0)
+            + max(0.5, e.scale * 0.6),
+        )
+        e.group_radius = round(radius, 3)
+        occupied.append((cx, cz, e.group_radius))
+        anchored_names.append(f"{e.name} ({role})")
+
+    fallback = [e for e in packable if id(e) not in anchors]
+    slots = _pack_groups(fallback, occupied)
+    for e in fallback:
+        cx, cz, radius = slots[e.name]
+        e.origin_offset = [round(cx, 3), round(cz, 3)]
+        e.group_radius = round(radius, 3)
+        e.instance_positions = _bake_positions(
+            e, _effective_spacing(e, footprints), cx, cz,
+            (footprints or {}).get(e.name, 0.0) * e.scale, 0.0)
+        e.instance_yaws = []
+        _set_elevation(e, 0.0)
+
+    _attach_regions(schema, _regions_for(packable, preplaced))
+    if not anchored_names:
+        return ["TopDown board layout had no semantic anchors; existing deterministic packer retained"]
+    return [
+        "TopDown board anchors: " + ", ".join(anchored_names),
+        "TopDown unknown groups packed around anchored composition",
+    ]
+
+
 def _layout_arena_plane(schema: UnitySchema,
                         footprints: Optional[dict[str, float]] = None) -> list[str]:
     """The original ground-plane packer — see `compute_layout`'s docstring.
     Byte-for-byte the behaviour that shipped before archetype selection."""
+    if schema.game_type == "2d_topdown" and is_embodied(schema):
+        return _layout_topdown_board(schema, footprints)
+
     layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
     preplaced = [e for e in layoutable if e.instance_positions]
     packable = [e for e in layoutable if not e.instance_positions]
@@ -2176,6 +2325,16 @@ def _layout_arena_plane(schema: UnitySchema,
             slots.update(_pack_groups(in_band, seed_circles))
     else:
         slots = _pack_groups(cluster_packable, seed_circles)
+
+    # `_scenery_scatter_pack` and the route-aware scenery packer run after
+    # this cluster pass and read the same occupied-space list.  The cluster
+    # result used to remain only in `slots`, so a scenery group could still
+    # claim the player's freshly packed start cell (the exact failure seen in
+    # the 2d_topdown board: Player and the first single pickup both baked at
+    # [6, 0, 0]).  Publish the placements before any later direct packer runs.
+    for e in cluster_packable:
+        cx, cz, radius = slots[e.name]
+        seed_circles.append((cx, cz, radius))
 
     # Bake route-gate groups directly on the route centerline, spanning it
     # and facing along the direction of travel — see _route_gate_pack's

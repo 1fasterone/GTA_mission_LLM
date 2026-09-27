@@ -80,6 +80,23 @@ public class EntitySpawner : MonoBehaviour
 {% endfor %}
 {% endif %}
 
+{# 2d_topdown uses the deterministic X/Z layout sidecar but has its own
+   runtime builder, so it does not enter the generic spawn branch above.
+   Emit those positions here as well; otherwise the generated C# call below
+   references an array that the template never declared. #}
+{% if game_type == "2d_topdown" and not ui_board %}
+{% for e in entities %}
+{% if e.instance_positions and not entity_model_paths.get(e.name, "").startswith("skip:") %}
+    private static readonly Vector3[] _pos_{{ loop.index0 }} =
+    {
+{% for p in e.instance_positions %}
+        new Vector3({{ "%.3f"|format(p[0]) }}f, {{ "%.3f"|format(p[1]) }}f, {{ "%.3f"|format(p[2]) }}f),
+{% endfor %}
+    };
+{% endif %}
+{% endfor %}
+{% endif %}
+
 {% set ns = namespace(first_path=true) %}
     // Destroy() throws outside Play mode ("may not be called from edit
     // mode") — the edit-time bake path needs DestroyImmediate instead.
@@ -1014,7 +1031,12 @@ public class EntitySpawner : MonoBehaviour
             }
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
-            go.transform.localScale = Vector3.one * scale;
+            float visualScale = scale;
+            var visualKey = groupName.ToLowerInvariant();
+            if (visualKey.Contains("block") || visualKey.Contains("rock")) visualScale *= 1.8f;
+            else if (visualKey.Contains("lantern")) visualScale *= 2.0f;
+            else if (visualKey.Contains("player") || visualKey.Contains("character")) visualScale *= 1.25f;
+            go.transform.localScale = Vector3.one * visualScale;
             go.transform.position = new Vector3((i + 1) * (courseLen / (n + 1)),
                                                 backdrop ? 3.5f : scale * 0.5f,
                                                 backdrop ? 8f : 0f);
@@ -1045,34 +1067,45 @@ public class EntitySpawner : MonoBehaviour
     // side-scroller's single-lane course.
     private void BuildTopDown2D(Shader sh)
     {
+        BuildTopDownBoardArt();
 {% if scene_entity_map %}
         var _scene = SceneManager.GetActiveScene().name;
 {% endif %}
 {% for e in entities %}
 {% set role = e.kind|lower %}
 {% set epath = entity_model_paths.get(e.name, "") %}
-{% if role != "player" and not epath.startswith("skip:") and not epath.startswith("fx:") %}
-        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceGroup2DTopDown("{{ e.name }}", {{ e.count }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", sh);
+{% if role != "player" and e.tag != "Player" and not epath.startswith("skip:") and not epath.startswith("fx:") %}
+        {{ 'if (GroupActive(_scene, "' ~ e.name ~ '")) ' if scene_entity_map else '' }}PlaceGroup2DTopDown("{{ e.name }}", {{ e.count }}, "{{ e.placement }}", {{ "%.2f"|format(e.spacing) }}f, {{ "%.2f"|format(e.radius) }}f, {{ "%.2f"|format(e.scale) }}f, "{{ entity_model_paths.get(e.name, "") }}", new Color({{ "%.3f"|format(palette_rgb[e.color_role].r) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].g) }}f, {{ "%.3f"|format(palette_rgb[e.color_role].b) }}f), "{{ e.tag }}", sh{% if e.instance_positions %}, _pos_{{ loop.index0 }}{% endif %});
 {% endif %}
 {% endfor %}
-        PlacePlayerStart2DTopDown();
+{% set _player_ns = namespace(entity=None) %}
+{% for candidate in entities %}
+{% if candidate.tag == "Player" and _player_ns.entity is none %}
+{% set _player_ns.entity = candidate %}
+{% endif %}
+{% endfor %}
+{% if _player_ns.entity is not none and _player_ns.entity.instance_positions %}
+        PlacePlayerStart2DTopDown(new Vector3({{ "%.3f"|format(_player_ns.entity.instance_positions[0][0]) }}f, {{ "%.3f"|format(_player_ns.entity.instance_positions[0][2]) }}f, 0f));
+{% else %}
+        PlacePlayerStart2DTopDown(Vector3.zero);
+{% endif %}
     }
 
     private void PlaceGroup2DTopDown(string groupName, int count, string placement, float spacing,
                                      float radius, float scale, string modelPath, Color color,
-                                     string tag, Shader sh)
+                                     string tag, Shader sh, Vector3[] bakedPositions = null)
     {
         // Same sprite_animator-bank -> modelPath -> model -> primitive load
         // order as PlaceRow2D — see that method's own comment for why the
         // bank has to be checked by groupName, ahead of modelPath, rather
         // than folded into entity_model_paths.
-        Sprite sprite = null;
+        Sprite sprite = CreateTopDownSprite(groupName, color);
         GameObject modelPrefab = null;
         var genTex = Resources.Load<Texture2D>("Sprites/" + groupName + "/idle/frame_00");
-        if (genTex != null)
+        if (sprite == null && genTex != null)
             sprite = Sprite.Create(genTex, new Rect(0f, 0f, genTex.width, genTex.height),
                                    new Vector2(0.5f, 0.5f), Mathf.Max(1f, genTex.height));
-        else if (!string.IsNullOrEmpty(modelPath))
+        else if (sprite == null && !string.IsNullOrEmpty(modelPath))
         {
             var tex = Resources.Load<Texture2D>(modelPath);
             if (tex != null)
@@ -1090,7 +1123,9 @@ public class EntitySpawner : MonoBehaviour
             if (sprite != null)
             {
                 go = new GameObject(groupName + "_" + i);
-                go.AddComponent<SpriteRenderer>().sprite = sprite;
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = sprite;
+                sr.sortingOrder = 0;
             }
             else
             {
@@ -1099,12 +1134,182 @@ public class EntitySpawner : MonoBehaviour
             go.name = groupName + "_" + i;
             go.transform.SetParent(parent);
             go.transform.localScale = Vector3.one * scale;
-            go.transform.position = PlaceAt2DTopDown(placement, i, n, spacing, radius);
+            if (bakedPositions != null && i < bakedPositions.Length)
+            {
+                // Layout sidecars are ground-plane X/Z. The 2D runtime uses
+                // X/Y, so project the deterministic world position without
+                // inventing a second scatter algorithm in C#.
+                var p = bakedPositions[i];
+                go.transform.position = new Vector3(p.x, p.z, 0f);
+            }
+            else
+            {
+                go.transform.position = PlaceAt2DTopDown(placement, i, n, spacing, radius);
+            }
             foreach (var cc in go.GetComponentsInChildren<Collider>()) SafeDestroy(cc);
             if (go.GetComponent<Collider2D>() == null) go.AddComponent<BoxCollider2D>();
             if (sprite == null && modelPrefab == null) Apply2DColor(go, sh, color);
             if (!string.IsNullOrEmpty(tag) && tag != "Untagged") { try { go.tag = tag; } catch { } }
         }
+    }
+
+    // The visual reference is a flat, readable board: water around a marsh
+    // island, with a sandy interior and a small number of high-contrast
+    // landmarks.  Asset packs are optional and can import with missing
+    // shaders, so this deterministic fallback owns the 2D silhouette and
+    // palette whenever a top-down board is generated.
+    private void BuildTopDownBoardArt()
+    {
+        var water = new GameObject("MarshWater");
+        var waterRenderer = water.AddComponent<SpriteRenderer>();
+        waterRenderer.sprite = CreateWaterSprite();
+        waterRenderer.sortingOrder = -100;
+        water.transform.position = new Vector3(0f, 0f, 1f);
+
+        var island = new GameObject("MarshIsland");
+        var islandRenderer = island.AddComponent<SpriteRenderer>();
+        islandRenderer.sprite = CreateIslandSprite();
+        islandRenderer.sortingOrder = -90;
+        island.transform.localScale = Vector3.one * 1.25f;
+        island.transform.position = new Vector3(0f, 0f, 0.8f);
+    }
+
+    private Sprite CreateWaterSprite()
+    {
+        const int width = 512, height = 288;
+        var tex = NewPixelTexture(width, height);
+        var water = new Color(0.035f, 0.13f, 0.24f, 1f);
+        var ripple = new Color(0.06f, 0.24f, 0.34f, 0.85f);
+        Fill(tex, water);
+        for (int y = 10; y < height; y += 23)
+            for (int x = (y / 23 % 2) * 28; x < width; x += 76)
+                Rect(tex, x, y, 32, 3, ripple);
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 16f);
+    }
+
+    private Sprite CreateIslandSprite()
+    {
+        const int width = 352, height = 224;
+        var tex = NewPixelTexture(width, height);
+        var centre = new Vector2(width * 0.5f, height * 0.5f);
+        var sand = new Color(0.67f, 0.48f, 0.27f, 1f);
+        var grass = new Color(0.16f, 0.31f, 0.23f, 1f);
+        var bank = new Color(0.20f, 0.16f, 0.13f, 1f);
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            float dx = (x - centre.x) / (width * 0.47f);
+            float dy = (y - centre.y) / (height * 0.45f);
+            float d = dx * dx + dy * dy;
+            if (d <= 1.0f)
+            {
+                var c = d > 0.82f ? bank : sand;
+                if (((x * 13 + y * 7) % 31) < 3 && d < 0.78f) c = grass;
+                tex.SetPixel(x, y, c);
+            }
+        }
+        // Pixel clusters read as reeds, shrubs, and rocks without relying on
+        // imported 3D materials.
+        for (int i = 0; i < 24; i++)
+        {
+            int x = 32 + ((i * 67) % 288);
+            int y = 28 + ((i * 41) % 168);
+            Rect(tex, x, y, 7, 7, i % 3 == 0 ? new Color(0.10f, 0.23f, 0.18f, 1f) : grass);
+        }
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 16f);
+    }
+
+    private Sprite CreateTopDownSprite(string groupName, Color color)
+    {
+        var key = groupName.ToLowerInvariant();
+        int width = 64, height = 64;
+        if (key.Contains("dock")) { width = 64; height = 40; }
+        else if (key.Contains("gate")) { width = 96; height = 56; }
+        else if (key.Contains("lantern")) { width = 48; height = 64; }
+        var tex = NewPixelTexture(width, height);
+        var dark = new Color(0.08f, 0.10f, 0.12f, 1f);
+        if (key.Contains("dock"))
+        {
+            Rect(tex, 4, 3, width - 8, height - 6, new Color(0.34f, 0.17f, 0.08f, 1f));
+            for (int y = 8; y < height - 4; y += 9) Rect(tex, 7, y, width - 14, 3, new Color(0.62f, 0.32f, 0.12f, 1f));
+            Rect(tex, 2, 0, 6, height, dark); Rect(tex, width - 8, 0, 6, height, dark);
+        }
+        else if (key.Contains("block") || key.Contains("rock"))
+        {
+            Rect(tex, 5, 5, width - 10, height - 10, new Color(0.25f, 0.27f, 0.29f, 1f));
+            Rect(tex, 10, 10, width - 20, 5, new Color(0.43f, 0.45f, 0.44f, 1f));
+            Rect(tex, 18, 23, width - 36, 5, dark);
+            Rect(tex, 25, 30, 14, 14, new Color(0.12f, 0.14f, 0.15f, 1f));
+            Rect(tex, 11, height - 13, width - 22, 5, new Color(0.14f, 0.20f, 0.16f, 1f));
+        }
+        else if (key.Contains("lantern"))
+        {
+            Circle(tex, width / 2, height / 2, 22, new Color(1f, 0.67f, 0.08f, 0.20f));
+            Rect(tex, 18, 18, 12, 30, new Color(1f, 0.63f, 0.08f, 1f));
+            Rect(tex, 13, 21, 22, 5, new Color(0.40f, 0.20f, 0.03f, 1f));
+            Rect(tex, 16, 13, 16, 5, new Color(0.40f, 0.20f, 0.03f, 1f));
+            Rect(tex, 22, 6, 4, 8, dark); Rect(tex, 10, 47, 28, 5, dark);
+            Circle(tex, 24, 32, 6, new Color(1f, 0.93f, 0.51f, 1f));
+        }
+        else if (key.Contains("gate"))
+        {
+            Rect(tex, 8, 7, 12, height - 10, dark); Rect(tex, width - 20, 7, 12, height - 10, dark);
+            Rect(tex, 17, 14, width - 34, height - 25, new Color(0.65f, 0.12f, 0.10f, 1f));
+            for (int x = 22; x < width - 20; x += 13) Rect(tex, x, 18, 6, height - 32, new Color(0.90f, 0.22f, 0.13f, 1f));
+            Rect(tex, 5, 3, width - 10, 7, new Color(0.30f, 0.13f, 0.08f, 1f));
+        }
+        else if (key.Contains("player") || key.Contains("character"))
+        {
+            Circle(tex, width / 2, 38, 18, new Color(0.05f, 0.25f, 0.72f, 1f));
+            Rect(tex, 16, 34, 32, 18, new Color(0.04f, 0.16f, 0.48f, 1f));
+            Rect(tex, 12, 50, 16, 6, dark); Rect(tex, width - 28, 50, 16, 6, dark);
+            Rect(tex, 19, 13, 26, 15, new Color(0.08f, 0.15f, 0.30f, 1f));
+            Rect(tex, 23, 28, 18, 5, new Color(0.98f, 0.75f, 0.35f, 1f));
+        }
+        else
+        {
+            Circle(tex, width / 2, height / 2, width / 3, color);
+            Rect(tex, 5, 5, width - 10, 4, dark);
+        }
+        tex.Apply();
+        return Sprite.Create(tex, new Rect(0f, 0f, width, height),
+                             new Vector2(0.5f, 0.5f), 64f);
+    }
+
+    private Texture2D NewPixelTexture(int width, int height)
+    {
+        var tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+        tex.filterMode = FilterMode.Point;
+        tex.wrapMode = TextureWrapMode.Clamp;
+        Fill(tex, new Color(0f, 0f, 0f, 0f));
+        return tex;
+    }
+
+    private void Fill(Texture2D tex, Color color)
+    {
+        var pixels = new Color[tex.width * tex.height];
+        for (int i = 0; i < pixels.Length; i++) pixels[i] = color;
+        tex.SetPixels(pixels);
+    }
+
+    private void Rect(Texture2D tex, int x, int y, int width, int height, Color color)
+    {
+        for (int py = Mathf.Max(0, y); py < Mathf.Min(tex.height, y + height); py++)
+        for (int px = Mathf.Max(0, x); px < Mathf.Min(tex.width, x + width); px++)
+            tex.SetPixel(px, py, color);
+    }
+
+    private void Circle(Texture2D tex, int cx, int cy, int radius, Color color)
+    {
+        int r2 = radius * radius;
+        for (int y = cy - radius; y <= cy + radius; y++)
+        for (int x = cx - radius; x <= cx + radius; x++)
+            if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= r2)
+                if (x >= 0 && x < tex.width && y >= 0 && y < tex.height) tex.SetPixel(x, y, color);
     }
 
     // Same placement vocabulary as PlaceAt() but projected onto the X/Y
@@ -1138,10 +1343,33 @@ public class EntitySpawner : MonoBehaviour
         }
     }
 
-    private void PlacePlayerStart2DTopDown()
+    private void PlacePlayerStart2DTopDown(Vector3 position)
     {
         var p = GameObject.FindWithTag("Player");
-        if (p != null) p.transform.position = Vector3.zero;
+        if (p == null) return;
+        p.transform.position = position;
+        var sr = p.GetComponent<SpriteRenderer>();
+        if (sr == null) sr = p.AddComponent<SpriteRenderer>();
+        sr.sprite = CreateTopDownSprite("PlayerCharacter", new Color(0.08f, 0.25f, 0.82f, 1f));
+        sr.sortingOrder = 2;
+        Invoke(nameof(StyleTopDownPlayer), 0.25f);
+        StyleTopDownPlayer();
+    }
+
+    private void StyleTopDownPlayer()
+    {
+        foreach (var p in GameObject.FindGameObjectsWithTag("Player"))
+        {
+            var sr = p.GetComponent<SpriteRenderer>();
+            if (sr == null) sr = p.AddComponent<SpriteRenderer>();
+            sr.sprite = CreateTopDownSprite("PlayerCharacter", new Color(0.08f, 0.25f, 0.82f, 1f));
+            sr.sortingOrder = 2;
+            // Imported character children are optional and often render as a
+            // tiny orange model in a pixel-art board. Keep the deterministic
+            // board sprite as the sole visible player representation.
+            foreach (var child in p.GetComponentsInChildren<Renderer>(true))
+                if (child != sr) child.enabled = false;
+        }
     }
 {% endif %}
 

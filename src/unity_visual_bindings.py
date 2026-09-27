@@ -36,6 +36,10 @@ def _terms(value: Any) -> set[str]:
     return result
 
 
+def _instance_numbers(value: Any) -> set[str]:
+    return set(re.findall(r"\d+", str(value or "")))
+
+
 def _entity_terms(entity: Any) -> set[str]:
     return (
         _terms(getattr(entity, "name", ""))
@@ -102,6 +106,13 @@ def bind_visual_assets(schema: Any,
                      | _terms(getattr(entity, "sketchfab_query", ""))) & target
                 )
                 score = exact * 100 + name_overlap * 4 + hint_overlap * 3 + len(overlap)
+                if (_instance_numbers(label) & _instance_numbers(name)
+                        and name_overlap > 0):
+                    # Slice-2 labels use "stone block 2" while the schema
+                    # commonly uses "StoneBlock2Group".  Keep the numeric
+                    # identity only as a disambiguator after a shared noun
+                    # already proves the semantic family.
+                    score += 1000
                 if score > 0:
                     candidates.append((score, exact, name, entity))
             candidates.sort(key=lambda item: (-item[0], -item[1], item[2]))

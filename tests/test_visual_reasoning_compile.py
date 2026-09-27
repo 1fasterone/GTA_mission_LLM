@@ -255,6 +255,39 @@ def test_slice5_preserves_numeric_identity_for_named_visual_instances():
     assert list(result["bindings"]) == ["Aircraft2"]
 
 
+def test_slice5_maps_human_numeric_suffix_to_pascalcase_group_identity():
+    plan = {
+        "closed": {
+            "inventory": {"visible_elements": [
+                {"label": "stone block 1", "category": "prop",
+                 "description": "a stone block", "model_hint": "stone block"},
+                {"label": "stone block 2", "category": "prop",
+                 "description": "a stone block", "model_hint": "stone block"},
+            ]},
+            "entity_matches": [
+                {"reference": "stone block 1", "inventory_label": "stone block 1"},
+                {"reference": "stone block 2", "inventory_label": "stone block 2"},
+            ],
+        },
+        "assets": [
+            {"inventory_label": "stone block 1", "query": "stone block",
+             "selection": {"filename": "stone.fbx", "source": "kenney"},
+             "catalog_entry": {}, "source_path": "stone.fbx"},
+            {"inventory_label": "stone block 2", "query": "stone block",
+             "selection": {"filename": "stone.fbx", "source": "kenney"},
+             "catalog_entry": {}, "source_path": "stone.fbx"},
+        ],
+    }
+    schema = SimpleNamespace(entities=[
+        EntitySpec(name="StoneBlock1Group", kind="prop", model_hint="stone block"),
+        EntitySpec(name="StoneBlock2Group", kind="prop", model_hint="stone block"),
+    ])
+
+    result = bind_visual_assets(schema, plan)
+
+    assert list(result["bindings"]) == ["StoneBlock1Group", "StoneBlock2Group"]
+
+
 def test_slice5_does_not_bind_aircraft_to_ship_from_description_overlap():
     plan = {
         "closed": {

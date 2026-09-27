@@ -154,6 +154,10 @@ class Test2DTopdownVsTopDown:
         intent = classify("A 2D zelda-like adventure with dungeons and puzzles.")
         assert intent.game_type == "2d_topdown"
 
+    def test_explicit_2d_top_down_phrase_selects_flat_archetype(self):
+        intent = classify("A 2D top-down puzzle game with a fixed board camera.")
+        assert intent.game_type == "2d_topdown"
+
     def test_twin_stick_bullet_heaven_selects_2d_topdown(self):
         intent = classify("A twin-stick bullet heaven survival game.")
         assert intent.game_type == "2d_topdown"

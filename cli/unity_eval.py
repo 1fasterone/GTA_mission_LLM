@@ -151,6 +151,7 @@ def unity_vizconcept_reason(
     if not config.is_file():
         console.print(f"[red]Config file not found:[/] {config}")
         raise typer.Exit(2)
+    llm = None
     try:
         cfg = _cfg(str(config))
         llm = make_chat_client(cfg)
@@ -172,6 +173,9 @@ def unity_vizconcept_reason(
     except (OSError, ValueError, RuntimeError, VisualReasoningCompilerError) as exc:
         console.print(f"[red]Visual reasoning error:[/] {exc}")
         raise typer.Exit(2) from exc
+    finally:
+        if llm is not None and hasattr(llm, "unload"):
+            llm.unload()
 
 
 @app.command("unity-vizconcept-spatial")
@@ -206,6 +210,7 @@ def unity_vizconcept_spatial(
     if not config.is_file():
         console.print(f"[red]Config file not found:[/] {config}")
         raise typer.Exit(2)
+    llm = None
     try:
         cfg = _cfg(str(config))
         llm = make_chat_client(cfg)
@@ -222,6 +227,9 @@ def unity_vizconcept_spatial(
     except (OSError, ValueError, RuntimeError, VisualSpatialExtractionError) as exc:
         console.print(f"[red]Image spatial extraction error:[/] {exc}")
         raise typer.Exit(2) from exc
+    finally:
+        if llm is not None and hasattr(llm, "unload"):
+            llm.unload()
 
 
 @app.command("unity-vizconcept-spatial-roles")
@@ -1048,6 +1056,7 @@ def unity_vizconcept_e2e(
     image_evidence = run_dir / "image_spatial_evidence.json"
     image_evidence_manifest = run_dir / "image_spatial_evidence.manifest.json"
 
+    llm = None
     try:
         run_dir.mkdir(parents=True, exist_ok=False)
         cfg = _cfg(str(config), model=model)
@@ -1097,7 +1106,11 @@ def unity_vizconcept_e2e(
                 sketchfab_config=(cfg.get("sketchfab") or {}),
                 accepted_licenses=((cfg.get("sketchfab") or {}).get("accepted_licenses")),
             )
-        console.print("[cyan]Visual E2E Slice 4:[/] frozen Sketchfab first, local catalog fallback")
+        console.print(
+            "[cyan]Visual E2E Slice 4:[/] "
+            + ("frozen Sketchfab first, local catalog fallback"
+               if sketchfab_first else "local catalog only")
+        )
         fulfil_image_assets(
             closed_ir=closed_ir,
             reconciliation_manifest=reconciliation_manifest,
@@ -1106,6 +1119,7 @@ def unity_vizconcept_e2e(
             lookups_dir=str(lookups_dir),
             asset_root=Path(configured_root) if configured_root else None,
             accepted_licenses=((cfg.get("sketchfab") or {}).get("accepted_licenses")),
+            allow_sketchfab=sketchfab_first,
         )
         fulfilled = json.loads(asset_fulfilment.read_text(encoding="utf-8"))
         if fulfilled.get("status") != "fulfilled":
@@ -1182,6 +1196,9 @@ def unity_vizconcept_e2e(
             VisualSpatialExtractionError, SpatialFreezeError) as exc:
         console.print(f"[red]Visual E2E error:[/] {exc}")
         raise typer.Exit(2) from exc
+    finally:
+        if llm is not None and hasattr(llm, "unload"):
+            llm.unload()
 
 
 @app.command("unity-playability")

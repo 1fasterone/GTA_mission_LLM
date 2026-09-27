@@ -92,6 +92,13 @@ class TestRoleGraphRestoresTheAvatar:
         assert avatar.tag == "Player"
         assert any("R1b" in r for r in s.meta["role_lint"]["repairs"])
 
+    def test_player_character_name_restores_demoted_avatar(self):
+        s = _schema([EntitySpec(name="PlayerCharacter", kind="pickup",
+                                tag="Untagged", count=1)])
+        avatar = next(e for e in s.entities if e.name == "PlayerCharacter")
+        assert avatar.tag == "Player"
+        assert avatar.kind == "character"
+
     def test_nothing_is_invented_when_no_entity_reads_as_the_player(self):
         s = _schema([EntitySpec(name="Trees", kind="prop", count=9)])
         assert not [e for e in s.entities if e.tag == "Player"]

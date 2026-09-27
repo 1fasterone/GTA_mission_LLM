@@ -90,6 +90,16 @@ public class {{ s.name }} : MonoBehaviour
         foreach (var r in FindObjectsByType<Renderer>(FindObjectsSortMode.None))
         {
             if (r == null || !r.enabled) continue;
+            // Atmosphere, ground texture layers and particle volumes are
+            // deliberately oversized renderers. Letting one of those define
+            // the gameplay frame produced a 90-unit orthographic zoom for a
+            // 14-unit board, making the actual scene disappear into black.
+            var n = r.gameObject.name.ToLowerInvariant();
+            if (n.Contains("ground texture") || n.Contains("atmosphere")
+                || n.Contains("volume") || n.Contains("decal")
+                || n.Contains("particles") || n.Contains("shafts")
+                || r.bounds.extents.x > 25f || r.bounds.extents.y > 25f)
+                continue;
             if (any) bounds.Encapsulate(r.bounds);
             else { bounds = r.bounds; any = true; }
         }

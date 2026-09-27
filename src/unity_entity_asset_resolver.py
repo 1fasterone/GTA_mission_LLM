@@ -568,7 +568,12 @@ def resolve_entity_assets(schema,
     embed_weight = float(cfg.get("embedding_weight", _DEFAULT_EMBEDDING_WEIGHT))
 
     sk_cfg = sketchfab_cfg or {}
-    sk_enabled = bool(sk_cfg.get("enabled"))
+    # Sketchfab is a 3D FBX source. A flat 2D project must remain on the
+    # sprite/local-catalog path even when the global config enables marketplace
+    # fetching; otherwise a semantically correct 2D schema can still render a
+    # 3D cabin, plant, or character mesh in the board.
+    is_2d = getattr(schema, "game_type", "3D") in ("2D", "2d_topdown")
+    sk_enabled = bool(sk_cfg.get("enabled")) and not is_2d
     sk_client = None
     if sk_enabled:
         from .sketchfab_client import SketchfabClient
@@ -577,7 +582,6 @@ def resolve_entity_assets(schema,
     # Format gate by game type: 2D games may use sprites (png) and models;
     # everything else is models-only — a flat PNG must never be picked as a
     # 3D scene object.
-    is_2d = getattr(schema, "game_type", "3D") == "2D"
     allowed_formats = {"fbx", "png"} if is_2d else {"fbx"}
 
     catalog = load_catalog(str(lookups_dir))

@@ -84,15 +84,21 @@ def _prepare_viz_reasoning(
         manifest=board_manifest,
     )
     console.print("[cyan]Visual Slice 2:[/] inventory + image-derived Concept")
-    reason_over_board(
-        board_image=board,
-        inventory_output=inventory,
-        concept_output=concept,
-        manifest=reasoning_manifest,
-        board_manifest=board_manifest,
-        context_output=context,
-        llm=make_chat_client(cfg),
-    )
+    llm = make_chat_client(cfg)
+    try:
+        reason_over_board(
+            board_image=board,
+            inventory_output=inventory,
+            concept_output=concept,
+            manifest=reasoning_manifest,
+            board_manifest=board_manifest,
+            context_output=context,
+            llm=llm,
+        )
+    finally:
+        eject = getattr(llm, "unload", None)
+        if callable(eject):
+            eject()
     console.print(f"[green]Visual reasoning artifacts written[/] {run_dir}")
     console.print(
         "[dim]The text brief remains semantic authority; context.txt supplies "

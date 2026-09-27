@@ -83,6 +83,19 @@ def _normalise_terms(value: str) -> set[str]:
 
 def _best_inventory_match(reference: str,
                           elements: list[dict[str, Any]]) -> str | None:
+    # A generic word is unsafe as a fuzzy join, but an exact label copied from
+    # the validated inventory is already a closed, unique identity.  The image
+    # model used `character` in the Lantern Marsh run; rejecting that exact
+    # label would make the strict reference block impossible to reconcile even
+    # though no semantic guess is involved.  Keep generic terms excluded from
+    # all non-exact matching below.
+    exact_labels = [
+        str(element["label"])
+        for element in elements
+        if str(element["label"]).casefold() == reference.casefold()
+    ]
+    if len(exact_labels) == 1:
+        return exact_labels[0]
     reference_terms = _normalise_terms(reference)
     if not reference_terms:
         return None

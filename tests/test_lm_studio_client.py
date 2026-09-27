@@ -44,6 +44,38 @@ class TestSeed:
         assert make_chat_client({"lm_studio": {}}).seed is None
 
 
+class TestModelLifecycle:
+    def test_unload_posts_to_native_lm_studio_api(self):
+        from unittest.mock import MagicMock, patch
+
+        client = LMStudioClient("http://localhost:1234/v1", "qwen3.5-9b")
+        client.chat_calls = 1
+        response = MagicMock()
+        with patch("src.lm_studio_client.httpx.Client") as http_client:
+            http_client.return_value.__enter__.return_value.post.return_value = response
+            assert client.unload() is True
+
+        http_client.return_value.__enter__.return_value.post.assert_called_once_with(
+            "http://localhost:1234/api/v1/models/unload",
+            json={"instance_id": "qwen3.5-9b"},
+            headers={},
+        )
+
+    def test_unload_does_not_evict_unused_or_non_lm_clients(self):
+        from unittest.mock import patch
+
+        unused = LMStudioClient("http://localhost:1234/v1", "unused")
+        ollama = LMStudioClient(
+            "http://localhost:11434/v1", "qwen", backend="ollama"
+        )
+        unused.chat_calls = 0
+        ollama.chat_calls = 1
+        with patch("src.lm_studio_client.httpx.Client") as http_client:
+            assert unused.unload() is False
+            assert ollama.unload() is False
+            http_client.assert_not_called()
+
+
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
 @pytest.fixture

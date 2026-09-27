@@ -83,6 +83,11 @@ these keys:
 List discrete, asset-worthy visible elements, not abstract game systems. For
 every visible element, the label must be one literal visible noun (or the same
 noun with a numeric suffix when duplicate instances need distinct labels).
+Classify a physical object by what it is, not by a visual effect applied to it:
+use "prop", "environment", or "landmark" for a visible lantern, lamp, torch,
+sign, or gate even when it glows or emits light. Reserve "effect" for a
+standalone VFX such as smoke, fire, sparks, or an explosion with no physical
+object carrying it.
 For card-like interfaces, use the pictured unit or object noun (for example,
 "peasant", "knight", or "dragon"), never the card position, tier, rank, or
 another numeric-only identifier.

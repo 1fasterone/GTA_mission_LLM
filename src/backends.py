@@ -133,6 +133,7 @@ def make_chat_client(config: dict) -> LMStudioClient:
         seed        = cfg.get("seed"),
         reasoning_effort = cfg.get("reasoning_effort"),
         api_key     = cfg.get("api_key"),
+        backend     = cfg["backend"],
     )
 
 

@@ -145,6 +145,30 @@ def test_fulfilment_selects_local_and_frozen_assets(tmp_path: Path) -> None:
     assert report["catalog_preflight"]["status"] == "pass"
 
 
+def test_catalog_only_mode_excludes_frozen_sketchfab_rows(tmp_path: Path) -> None:
+    closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
+    output = tmp_path / "asset_fulfilment.json"
+    manifest = tmp_path / "asset_fulfilment.manifest.json"
+
+    fulfil_image_assets(
+        closed_ir=closed,
+        reconciliation_manifest=reconciliation,
+        output=output,
+        manifest=manifest,
+        lookups_dir=str(lookups),
+        asset_root=asset_root,
+        allow_sketchfab=False,
+    )
+
+    data = json.loads(output.read_text(encoding="utf-8"))
+    assert data["authority"]["asset_source"] == "local_catalog_only"
+    assert [item["selection"]["source"] for item in data["assets"]] == ["kenney"]
+    assert all(
+        item["selection"]["source"] != "sketchfab"
+        for item in data["assets"]
+    )
+
+
 def test_landmark_accepts_nature_or_terrain_catalog_domain(tmp_path: Path) -> None:
     closed, reconciliation, lookups, asset_root = _write_case(tmp_path)
 
