@@ -36,6 +36,10 @@ ControllerVariant = Literal[
     "vehicle_hover",
     # Special locomotion
     "flying", "swimming",
+    # Wall-constrained hold-to-hold traversal.  This is selected
+    # deterministically from a climbing brief; it is not a new LLM-authored
+    # schema field.
+    "climbing",
     # New genres
     "aircraft",   # fixed-wing arcade: pitch/roll/yaw/throttle via Rigidbody
     "fighting",   # third_person base + melee combat atoms (punch/kick/block/dodge)

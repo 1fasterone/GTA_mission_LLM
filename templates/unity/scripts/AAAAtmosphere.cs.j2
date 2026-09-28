@@ -29,7 +29,7 @@ public sealed class AAAAtmosphere : MonoBehaviour
     private static readonly string[] RequiredVisualComponents =
     {
         "Bloom", "Vignette", "ChromaticAberration", "FilmGrain",
-        "DepthOfField", "Tonemapping", "ColorAdjustments", "ColorLookup"
+        "DepthOfField", "Tonemapping", "ColorAdjustments"{% if render_pipeline != "HDRP" %}, "ColorLookup"{% endif %}
     };
 
     private void Awake()
@@ -60,7 +60,9 @@ public sealed class AAAAtmosphere : MonoBehaviour
         ConfigurePipelineSafeVolume();
         ConfigureDirectionalLight();
         ConfigureGlobalIllumination();
+{% if render_pipeline != "HDRP" %}
         ConfigureAmbientOcclusion();
+{% endif %}
         ConfigureSkyAndFog();
         ConfigureCamera();
         ConfigureEnvironmentDensity();
@@ -113,9 +115,11 @@ public sealed class AAAAtmosphere : MonoBehaviour
         // compile-safe across the selected pipeline and its supported versions.
         VolumeComponent bloom = EnsureComponent(profile, "Bloom");
         SetParameter(bloom, "active", true);
-        SetParameter(bloom, "threshold", 0.9f);
-        SetParameter(bloom, "intensity", 0.65f);
-        SetParameter(bloom, "scatter", 0.72f);
+        // Conservative highlight treatment keeps rock, holds, and the avatar
+        // readable instead of washing the frame in bloom.
+        SetParameter(bloom, "threshold", 1.7f);
+        SetParameter(bloom, "intensity", 0.08f);
+        SetParameter(bloom, "scatter", 0.28f);
 
         VolumeComponent vignette = EnsureComponent(profile, "Vignette");
         SetParameter(vignette, "active", true);
@@ -139,7 +143,7 @@ public sealed class AAAAtmosphere : MonoBehaviour
 
         VolumeComponent grading = EnsureComponent(profile, "ColorAdjustments");
         SetParameter(grading, "active", true);
-        SetParameter(grading, "postExposure", 0.1f);
+        SetParameter(grading, "postExposure", -0.05f);
         SetParameter(grading, "contrast", 12f);
         SetParameter(grading, "saturation", -4f);
         SetParameter(grading, "colorFilter", new Color(
@@ -147,7 +151,8 @@ public sealed class AAAAtmosphere : MonoBehaviour
             {{ palette_rgb.primary.b }}f, 1f));
 
         VolumeComponent dof = EnsureComponent(profile, "DepthOfField");
-        SetParameter(dof, "active", true);
+        // Disabled until a gameplay camera supplies a measured focal target.
+        SetParameter(dof, "active", false);
         SetParameter(dof, "mode", "Bokeh");
         SetParameter(dof, "focusMode", "UsePhysicalCamera");
         SetParameter(dof, "focusDistance", 18f);
@@ -155,7 +160,9 @@ public sealed class AAAAtmosphere : MonoBehaviour
         SetParameter(dof, "aperture", 5.6f);
         SetParameter(dof, "bladeCount", 7);
 
+{% if render_pipeline != "HDRP" %}
         ApplyLutGrade(profile);
+{% endif %}
         ConfigureAutomaticExposure();
         ConfigurePipelineAtmospherics(profile);
     }
@@ -256,10 +263,13 @@ public sealed class AAAAtmosphere : MonoBehaviour
         if (exposure != null)
         {
             SetParameter(exposure, "active", true);
-            SetParameter(exposure, "mode", "Automatic");
+            // HDRP's physical sun is already expressed in Lux. Fixed exposure
+            // keeps regenerated captures comparable across cameras/machines.
+            SetParameter(exposure, "mode", "Fixed");
             SetParameter(exposure, "compensation", 0f);
-            SetParameter(exposure, "limitMin", -2f);
-            SetParameter(exposure, "limitMax", 2f);
+            SetParameter(exposure, "fixedExposure", 0f);
+            SetParameter(exposure, "limitMin", 0f);
+            SetParameter(exposure, "limitMax", 0f);
             _autoExposureFallback = false;
             return;
         }
@@ -349,12 +359,20 @@ public sealed class AAAAtmosphere : MonoBehaviour
         sun.shadowBias = 0.035f;
         sun.shadowNormalBias = 0.25f;
         sun.bounceIntensity = 1f;
+        sun.intensity = {{ sun_intensity }}f;
 
         // Contact shadows are a concrete HDRP light setting.  The reflection
         // path keeps the same generated source compile-safe for URP projects.
         Component hdrpLight = EnsureComponentOnObject(
             sun.gameObject,
             "UnityEngine.Rendering.HighDefinition.HDAdditionalLightData");
+{% if render_pipeline == "HDRP" %}
+        // Explicitly keep the Light and HDAdditionalLightData contracts in
+        // Lux. Without this, Unity can preserve a generic Light value while
+        // the additional component remains on its default unit.
+        SetObjectMember(hdrpLight, "lightUnit", "Lux");
+        SetObjectMember(hdrpLight, "intensity", {{ sun_intensity }}f);
+{% endif %}
         SetObjectMember(hdrpLight, "useContactShadow", true);
         SetObjectMember(hdrpLight, "contactShadowDistance", 40f);
 
@@ -379,13 +397,25 @@ public sealed class AAAAtmosphere : MonoBehaviour
             SetMaterialColor(sky, "_GroundColor", new Color(0.22f, 0.19f, 0.16f, 1f));
             SetMaterialFloat(sky, "_Exposure", 1.15f);
             RenderSettings.skybox = sky;
+            RenderSettings.ambientMode = AmbientMode.Skybox;
+        }
+        else
+        {
+            // A missing/incompatible sky shader must not produce a black
+            // ambient probe. Flat reads this deterministic color directly.
+            RenderSettings.ambientMode = AmbientMode.Flat;
+            RenderSettings.ambientLight = new Color(0.20f, 0.25f, 0.34f, 1f);
         }
 
         RenderSettings.fog = true;
         RenderSettings.fogMode = FogMode.ExponentialSquared;
         RenderSettings.fogColor = new Color(0.35f, 0.43f, 0.55f, 1f);
         RenderSettings.fogDensity = 0.008f;
-        RenderSettings.ambientMode = AmbientMode.Skybox;
+        if (RenderSettings.skybox != null && RenderSettings.skybox.shader != null)
+            RenderSettings.ambientMode = AmbientMode.Skybox;
+        else
+            RenderSettings.ambientMode = AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.20f, 0.25f, 0.34f, 1f);
         RenderSettings.ambientIntensity = 1.05f;
         RenderSettings.reflectionIntensity = 1f;
         DynamicGI.UpdateEnvironment();
@@ -394,7 +424,7 @@ public sealed class AAAAtmosphere : MonoBehaviour
                               new Vector3(0f, 12f, 0f), 0.035f);
         CreateAtmosphereProxy("AAA Height Fog", new Vector3(180f, 8f, 180f),
                               new Vector3(0f, 4f, 0f), 0.02f);
-        CreateLightShafts();
+        DisableLightShafts();
     }
 
     private void ConfigureCamera()
@@ -465,7 +495,7 @@ public sealed class AAAAtmosphere : MonoBehaviour
             Destroy(collider);
 
         Renderer renderer = layer.GetComponent<Renderer>();
-        Material material = CreateMaterial("Universal Render Pipeline/Lit", tint, false);
+        Material material = CreateMaterial("{% if render_pipeline == "HDRP" %}HDRP/Lit{% else %}Universal Render Pipeline/Lit{% endif %}", tint, false);
         if (material == null)
             material = CreateMaterial("Standard", tint, false);
         if (material != null)
@@ -490,9 +520,9 @@ public sealed class AAAAtmosphere : MonoBehaviour
         if (collider != null)
             Destroy(collider);
         Renderer renderer = decal.GetComponent<Renderer>();
-        Material material = CreateMaterial("Universal Render Pipeline/Unlit", tint, true);
+        Material material = CreateMaterial("{% if render_pipeline == "HDRP" %}HDRP/Unlit{% else %}Universal Render Pipeline/Unlit{% endif %}", tint, true);
         if (material == null)
-            material = CreateMaterial("Unlit/Transparent", tint, true);
+            material = CreateMaterial("{% if render_pipeline == "HDRP" %}HDRP/Unlit{% else %}Unlit/Transparent{% endif %}", tint, true);
         if (material != null)
         {
             Texture2D texture = BuildDecalTexture(seed, tint);
@@ -532,33 +562,12 @@ public sealed class AAAAtmosphere : MonoBehaviour
             new Color(1f, 0.86f, 0.62f, 0.35f), true);
     }
 
-    private void CreateLightShafts()
+    private void DisableLightShafts()
     {
         Transform root = FindOrCreateChild("AAA Light Shafts");
-        if (root.childCount > 0)
-            return;
-        GameObject shafts = new GameObject("Light Shafts — God Rays");
-        shafts.transform.SetParent(root, false);
-        shafts.transform.localPosition = new Vector3(0f, 14f, 18f);
-        ParticleSystem particles = shafts.AddComponent<ParticleSystem>();
-        ParticleSystem.MainModule main = particles.main;
-        main.loop = true;
-        main.maxParticles = 18;
-        main.startLifetime = 5f;
-        main.startSpeed = 0.05f;
-        main.startSize = new ParticleSystem.MinMaxCurve(3f, 8f);
-        main.startColor = new Color(1f, 0.82f, 0.5f, 0.025f);
-        ParticleSystem.EmissionModule emission = particles.emission;
-        emission.rateOverTime = 1.2f;
-        ParticleSystem.ShapeModule shape = particles.shape;
-        shape.shapeType = ParticleSystemShapeType.Cone;
-        shape.angle = 12f;
-        shape.radius = 2f;
-        ParticleSystemRenderer renderer = particles.GetComponent<ParticleSystemRenderer>();
-        renderer.renderMode = ParticleSystemRenderMode.Billboard;
-        renderer.material = CreateMaterial(
-            "Universal Render Pipeline/Particles/Unlit",
-            new Color(1f, 0.75f, 0.35f, 0.08f), true);
+        // Disable, rather than destroy, so re-opening a previously played
+        // generated project cannot resurrect the old god-ray effect.
+        root.gameObject.SetActive(false);
     }
 
     private void CreateAtmosphereProxy(string name, Vector3 scale,

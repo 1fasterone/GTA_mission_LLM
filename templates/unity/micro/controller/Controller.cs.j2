@@ -5,6 +5,7 @@
 {% set is_bike = variant == "vehicle_bike" -%}
 {% set wheel_count = 2 if is_bike else 4 -%}
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 {% if s.input_backend == "input_system" %}
@@ -15,7 +16,7 @@ using {{ u }};
 {% endfor %}
 
 /// <summary>{{ s.description }}</summary>
-public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}, IVehicleState{% endif %}
+public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}, IVehicleState{% endif %}{% if variant == "climbing" %}, IClimbingState{% endif %}
 {
     public System.Func<string, float> ReadStat;
     // ═══ MOVEMENT ════════════════════════════════════════════════════════════
@@ -287,6 +288,21 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% else %}
     private CharacterController _cc;
     private Vector3 _velocity;
+{% if variant == "climbing" %}
+    // Deterministic wall route state. Holds and ledges are discovered by their
+    // schema-authored tags; no runtime asset or LLM decision is involved.
+    private readonly List<Transform> _routeHolds = new List<Transform>();
+    private int _routeIndex = -1;
+    private float _wallPlaneZ;
+    private Vector3 _wallNormal = Vector3.forward;
+    private bool _climbing;
+    private bool _gripHeld;
+    private bool _routeReady;
+    private float _routeInputCooldown;
+    private float _forcedReleaseUntil;
+    private const float ClimbHandOffset = 1.05f;
+    private const float WallStandOff = 0.85f;
+{% endif %}
 {% if "crouch" in s.abilities %}
     private bool _crouching;
 {% endif %}
@@ -378,6 +394,25 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if not variant.startswith("vehicle_") and variant != "aircraft" and variant not in ("swimming", "flying") %}
     /// <summary>Read by GameWiring each frame to push grounded state to FSM + Animator.</summary>
     public bool IsGrounded => _grounded;
+{% endif %}
+{% if variant == "climbing" %}
+    public bool IsClimbing => _climbing;
+    public bool IsGripHeld => _gripHeld;
+    public bool IsFalling => !_climbing && !_grounded && _velocity.y < -0.1f;
+    public float GripLoad => _gripHeld ? 1f : 0f;
+    public int HoldCount => _routeHolds.Count;
+    public int CurrentHoldIndex => _routeIndex;
+    public Vector3 CurrentHoldPosition => _routeIndex >= 0 && _routeIndex < _routeHolds.Count
+        ? _routeHolds[_routeIndex].position : transform.position;
+    public Vector3 CameraLookPoint => CurrentHoldPosition + Vector3.up * 0.35f;
+
+    public void ForceReleaseGrip()
+    {
+        _forcedReleaseUntil = Time.time + 0.75f;
+        _gripHeld = false;
+        _climbing = false;
+        SendMessage("SetClimbing", false, SendMessageOptions.DontRequireReceiver);
+    }
 {% endif %}
 {% if variant in ("2d_platformer", "2d_fighting") %}
     /// <summary>SendMessage entry point — see the movement-lock comment
@@ -478,6 +513,13 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% else %}
         _cc = GetComponent<CharacterController>();
         if (_cc == null) _cc = gameObject.AddComponent<CharacterController>();
+{% if variant == "climbing" %}
+        _cc.height = 1.8f;
+        _cc.radius = 0.35f;
+        _cc.center = new Vector3(0f, 0.9f, 0f);
+        _cc.stepOffset = 0.05f;
+        _cc.slopeLimit = 89f;
+{% endif %}
 {% endif %}
 {% if variant == "first_person" %}
         // Reuse an authored "Eye" child if the scene already has one, otherwise
@@ -553,6 +595,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if s.input_backend == "input_system" %}
         var kb    = Keyboard.current;
         var mouse = Mouse.current;
+{% endif %}
+{% if variant == "climbing" %}
+        UpdateClimbing();
+        return;
 {% endif %}
 {% if variant == "first_person" %}
 
@@ -660,7 +706,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% endif %}
 
         // ── Per-variant movement ──────────────────────────────────────────────
-{% if variant in ("2d_platformer", "2d_fighting") %}
+{% if variant == "climbing" %}
+        // Climbing is handled at the top of Update so free locomotion code
+        // below cannot accidentally detach the player from the wall route.
+{% elif variant in ("2d_platformer", "2d_fighting") %}
         // Locked while riding a mountable vehicle (e.g. Bike.cs.j2) — that
         // component drives its own Rigidbody2D and the player transform rides
         // along parented to it; this guard just stops THIS component's own
@@ -720,6 +769,19 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         Vector3 input3 = transform.right * h + transform.forward * v;
         _velocity.x = input3.x * speed;
         _velocity.z = input3.z * speed;
+{% if variant in ("third_person", "fighting") %}
+        // Third-person follow cameras use the player root as their orientation
+        // anchor. Turn toward travel so the authored camera offset stays behind
+        // the blacksmith instead of orbiting a stale heading.
+        if (input3.sqrMagnitude > 0.0001f)
+        {
+            Quaternion desiredRotation = Quaternion.LookRotation(
+                input3.normalized, Vector3.up);
+            transform.rotation = Quaternion.Slerp(
+                transform.rotation, desiredRotation,
+                1f - Mathf.Exp(-12f * Time.deltaTime));
+        }
+{% endif %}
         _grounded = CheckGrounded3D();
         if (_grounded && _velocity.y < 0f) _velocity.y = -2f;
 {% if "jump" in s.abilities %}
@@ -1186,6 +1248,190 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% else %}
         return Physics.Raycast(transform.position, Vector3.down, groundRayLen, groundMask);
 {% endif %}
+    }
+{% endif %}
+
+{% if variant == "climbing" %}
+    // ═══ WALL-CONSTRAINED CLIMBING ══════════════════════════════════════════
+    private void UpdateClimbing()
+    {
+        if (!_routeReady) BuildClimbingRoute();
+        if (_routeHolds.Count == 0)
+        {
+            _climbing = false;
+            _gripHeld = false;
+            _grounded = false;
+            _velocity += Physics.gravity * Time.deltaTime;
+            _cc.Move(_velocity * Time.deltaTime);
+            return;
+        }
+
+        if (_routeIndex < 0)
+        {
+            _routeIndex = FindNearestHold();
+            transform.position = HoldRoot(_routeHolds[_routeIndex]);
+        }
+
+{% if s.input_backend == "input_system" %}
+        var kb = Keyboard.current;
+        var mouse = Mouse.current;
+        bool grip = (kb == null || (!kb.qKey.isPressed
+                    && !(mouse != null && mouse.rightButton.isPressed)))
+                    && Time.time >= _forcedReleaseUntil;
+        Vector2 climbInput = kb == null ? Vector2.zero : new Vector2(
+            (kb.dKey.isPressed ? 1f : 0f) - (kb.aKey.isPressed ? 1f : 0f),
+            (kb.wKey.isPressed ? 1f : 0f) - (kb.sKey.isPressed ? 1f : 0f));
+{% else %}
+        // The climber starts attached to the first hold. Right mouse/Q is the
+        // explicit release gesture; movement keys choose the next hold.
+        bool grip = !Input.GetMouseButton(1) && !Input.GetKey(KeyCode.Q)
+                    && Time.time >= _forcedReleaseUntil;
+        Vector2 climbInput = new Vector2(Input.GetAxisRaw("Horizontal"),
+                                         Input.GetAxisRaw("Vertical"));
+{% endif %}
+        _gripHeld = grip;
+
+        if (!grip)
+        {
+            if (_climbing)
+            {
+                _climbing = false;
+                _velocity = new Vector3(0f, -2f, 0f);
+                SendMessage("OnGripReleased", SendMessageOptions.DontRequireReceiver);
+            }
+            _grounded = false;
+            _velocity += Physics.gravity * Time.deltaTime;
+            _cc.Move(_velocity * Time.deltaTime);
+            SendMessage("SetClimbing", false, SendMessageOptions.DontRequireReceiver);
+            return;
+        }
+
+        if (!_climbing)
+        {
+            _climbing = true;
+            _velocity = Vector3.zero;
+        }
+        if (_routeInputCooldown > 0f)
+            _routeInputCooldown -= Time.deltaTime;
+
+        if (_routeInputCooldown <= 0f && climbInput.sqrMagnitude > 0.04f)
+        {
+            int next = FindReachableHold(climbInput);
+            if (next >= 0 && next != _routeIndex)
+            {
+                _routeIndex = next;
+                _routeInputCooldown = 0.16f;
+                SendMessage("OnClimbHoldChanged", _routeIndex,
+                            SendMessageOptions.DontRequireReceiver);
+            }
+        }
+
+        Vector3 target = HoldRoot(_routeHolds[_routeIndex]);
+        Vector3 delta = target - transform.position;
+        float step = Mathf.Max(2.5f, moveSpeed) * Time.deltaTime;
+        _cc.Move(Vector3.ClampMagnitude(delta, step));
+        _velocity = delta / Mathf.Max(Time.deltaTime, 0.0001f);
+        _grounded = true;
+
+        // The wall normal points from the face toward the climber. Looking at
+        // -normal keeps the avatar aligned to the rock instead of rotating
+        // toward free-movement input.
+        Quaternion wallRotation = Quaternion.LookRotation(-_wallNormal, Vector3.up);
+        transform.rotation = Quaternion.Slerp(
+            transform.rotation, wallRotation,
+            1f - Mathf.Exp(-14f * Time.deltaTime));
+        SendMessage("SetClimbing", true, SendMessageOptions.DontRequireReceiver);
+    }
+
+    private void BuildClimbingRoute()
+    {
+        _routeReady = true;
+        _routeHolds.Clear();
+        try
+        {
+            foreach (string tag in new[] { "Hold", "Platform" })
+            {
+                foreach (GameObject go in GameObject.FindGameObjectsWithTag(tag))
+                    if (go != null && !_routeHolds.Contains(go.transform))
+                        _routeHolds.Add(go.transform);
+            }
+        }
+        catch (UnityException) { }
+
+        if (_routeHolds.Count == 0) return;
+        float plane = 0f;
+        foreach (Transform hold in _routeHolds) plane += hold.position.z;
+        _wallPlaneZ = plane / _routeHolds.Count;
+        _wallNormal = transform.position.z >= _wallPlaneZ
+            ? Vector3.forward : Vector3.back;
+
+        // Stable insertion sort: y is the route axis and x is the tie-break.
+        for (int i = 1; i < _routeHolds.Count; i++)
+        {
+            Transform item = _routeHolds[i];
+            int j = i - 1;
+            while (j >= 0 && (item.position.y < _routeHolds[j].position.y
+                   || (Mathf.Abs(item.position.y - _routeHolds[j].position.y) < 0.001f
+                       && item.position.x < _routeHolds[j].position.x)))
+            {
+                _routeHolds[j + 1] = _routeHolds[j];
+                j--;
+            }
+            _routeHolds[j + 1] = item;
+        }
+    }
+
+    private int FindNearestHold()
+    {
+        int best = 0;
+        float bestDistance = float.MaxValue;
+        for (int i = 0; i < _routeHolds.Count; i++)
+        {
+            float distance = (HoldRoot(_routeHolds[i]) - transform.position).sqrMagnitude;
+            if (distance < bestDistance)
+            {
+                best = i;
+                bestDistance = distance;
+            }
+        }
+        return best;
+    }
+
+    private int FindReachableHold(Vector2 input)
+    {
+        int best = -1;
+        float bestScore = float.MaxValue;
+        Vector3 current = _routeHolds[_routeIndex].position;
+        for (int i = 0; i < _routeHolds.Count; i++)
+        {
+            if (i == _routeIndex) continue;
+            Vector3 candidate = _routeHolds[i].position;
+            float dy = candidate.y - current.y;
+            bool vertical = Mathf.Abs(input.y) >= Mathf.Abs(input.x);
+            if (vertical)
+            {
+                if (input.y > 0f && dy <= 0.05f) continue;
+                if (input.y < 0f && dy >= -0.05f) continue;
+                if (Mathf.Abs(candidate.x - current.x) > 3.0f) continue;
+                float score = Mathf.Abs(dy) + Mathf.Abs(candidate.x - current.x) * 0.35f;
+                if (score < bestScore) { best = i; bestScore = score; }
+            }
+            else
+            {
+                if (Mathf.Abs(dy) > 0.9f) continue;
+                if (input.x > 0f && candidate.x <= current.x) continue;
+                if (input.x < 0f && candidate.x >= current.x) continue;
+                float score = Mathf.Abs(candidate.x - current.x);
+                if (score < bestScore) { best = i; bestScore = score; }
+            }
+        }
+        return best;
+    }
+
+    private Vector3 HoldRoot(Transform hold)
+    {
+        return hold.position + _wallNormal * WallStandOff
+            + Vector3.down * ClimbHandOffset;
     }
 {% endif %}
 

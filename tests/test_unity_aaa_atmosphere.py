@@ -50,3 +50,12 @@ def test_aaa_pass_is_pipeline_aware_for_hdrp():
     assert "VolumetricFog" in script
     assert "AAAProbe/Assets/Editor/SetupAAAVisualAtmosphere.cs" in files
     assert "AAAProbe/Assets/Settings/PostProcessProfile.asset" not in files
+    assert 'SetParameter(bloom, "threshold", 1.7f);' in script
+    assert 'SetParameter(bloom, "intensity", 0.08f);' in script
+    assert 'SetParameter(bloom, "scatter", 0.28f);' in script
+    assert 'SetParameter(dof, "active", false);' in script
+    assert 'SetParameter(exposure, "mode", "Fixed");' in script
+    assert 'SetObjectMember(hdrpLight, "lightUnit", "Lux");' in script
+    lighting = next(value for key, value in files.items()
+                    if key.endswith("/Assets/Scripts/LightingDirector.cs"))
+    assert 'fell back to the baked Flat ambient color.' in lighting

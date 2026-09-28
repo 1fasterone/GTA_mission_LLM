@@ -71,6 +71,20 @@ public class {{ s.name }} : MonoBehaviour
     public void SetGrounded(bool value) { if (_anim) _anim.SetBool("Grounded", value); }
 {% endif %}
 
+    // Deterministic climbing controller bridge. The generated fallback
+    // controller owns the Climb state; this method keeps the micro decoupled
+    // from the controller class name and safely no-ops for non-climbing rigs.
+    public void SetClimbing(bool value)
+    {
+        if (_anim == null) return;
+        foreach (var parameter in _anim.parameters)
+            if (parameter.name == "Climb")
+            {
+                _anim.SetBool("Climb", value);
+                return;
+            }
+    }
+
     public void CrossFade(string stateName, float transitionDuration = 0.1f)
         => _anim?.CrossFadeInFixedTime(stateName, transitionDuration);
 

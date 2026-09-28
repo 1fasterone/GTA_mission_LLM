@@ -277,6 +277,19 @@ def test_subsystems_for_no_genre_still_defaults_third_person():
     assert ctrl.variant == "third_person"
 
 
+def test_subsystems_for_climbing_brief_selects_wall_controller_and_camera():
+    prompt = ("A third-person mountain climbing game with a wall of rock holds "
+              "and ledges leading to a summit flag; manage stamina while climbing.")
+    subs = subsystems_for("3D", [], user_prompt=prompt)
+    ctrl = next(s for s in subs if s.kind == "controller")
+    cam = next(s for s in subs if s.kind == "camera")
+    assert ctrl.variant == "climbing"
+    assert cam.variant == "climbing_follow"
+    assert cam.options["offset_x"] > 0.0
+    assert cam.options["offset_z"] < 0.0
+    assert cam.options["collision_avoidance"] is True
+
+
 def test_subsystems_for_fps_genre_does_not_override_explicit_game_type():
     # An explicit dimension/perspective (2D/top_down/isometric/VR) wins over an
     # fps genre hint — only the "no opinion" 3D default defers to genre.

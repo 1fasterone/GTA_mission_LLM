@@ -109,7 +109,9 @@ public class EntitySpawner : MonoBehaviour
     {
         if (_baked) return;
         _baked = true;
-        var sh = Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard");
+        var sh = Shader.Find("{% if render_pipeline == "HDRP" %}HDRP/Lit{% else %}Universal Render Pipeline/Lit{% endif %}")
+               ?? Shader.Find("Universal Render Pipeline/Lit")
+               ?? Shader.Find("Standard");
 {% if scene_entity_map %}
         var _scene = SceneManager.GetActiveScene().name;
 {% endif %}
@@ -269,6 +271,11 @@ public class EntitySpawner : MonoBehaviour
 {% endif %}
         }
         float finalScale = fitFactor * scale;
+        // Summit markers are route landmarks, not a second mountain. Keep a
+        // resolved flag/pole visually subordinate to the climber and wall.
+        if (groupName.ToLowerInvariant().Contains("summit")
+            || tag.ToLowerInvariant() == "checkpoint")
+            finalScale = Mathf.Min(finalScale, 0.65f);
         // `spacing`/`radius` are AUTHORED MINIMUMS — the model's own measured
         // footprint (post-scale) can only widen them, never shrink below what
         // the schema asked for. Fixes entities overlapping when a real
@@ -343,7 +350,7 @@ public class EntitySpawner : MonoBehaviour
                 pshape.shapeType = ParticleSystemShapeType.Sphere;
                 pshape.radius = Mathf.Max(1.5f, scale * 2f);
                 var psr = go.GetComponent<ParticleSystemRenderer>();
-                var pmat = new Material(Shader.Find("Universal Render Pipeline/Particles/Unlit") ?? sh);
+                var pmat = new Material(Shader.Find("{% if render_pipeline == "HDRP" %}HDRP/Unlit{% else %}Universal Render Pipeline/Particles/Unlit{% endif %}") ?? sh);
                 pmat.color = new Color(color.r, color.g, color.b, 0.65f);
                 psr.material = pmat;
             }
@@ -511,7 +518,7 @@ public class EntitySpawner : MonoBehaviour
 
     private static Material UiMaterial(Shader sh, Color c)
     {
-        var m = new Material(sh != null ? sh : Shader.Find("Universal Render Pipeline/Lit"));
+        var m = new Material(sh != null ? sh : Shader.Find("{% if render_pipeline == "HDRP" %}HDRP/Lit{% else %}Universal Render Pipeline/Lit{% endif %}"));
         m.color = c;
         if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
         if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0.15f);

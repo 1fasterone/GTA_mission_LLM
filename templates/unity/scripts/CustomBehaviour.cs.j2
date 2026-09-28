@@ -5,6 +5,12 @@ using UnityEngine;
 {% if atom_body %}
 using System.Collections;
 {% endif %}
+{% set climbing_contract_enabled = climbing_contract|default(false, true) %}
+{% set climbing_interaction = climbing_contract_enabled and script.name|lower == "climbinteraction" %}
+{% set climbing_stamina = climbing_contract_enabled and script.name|lower == "staminasystem" %}
+{% if climbing_interaction or climbing_stamina %}
+using System.Collections.Generic;
+{% endif %}
 {% for u in script.extra_usings %}
 using {{ u }};
 {% endfor %}
@@ -39,6 +45,14 @@ public class {{ script.name }} : MonoBehaviour
         }
     }
 {% endif %}
+{% if climbing_interaction %}
+    private readonly List<Transform> _route = new List<Transform>();
+    private readonly List<GameObject> _arrows = new List<GameObject>();
+    private bool _arrowsBuilt;
+{% elif climbing_stamina %}
+    private IClimbingState _climbing;
+    private GameObject _player;
+{% endif %}
 {% for f in script.extra_fields %}
 {{ "    " }}{% if f.header %}[Header("{{ f.header }}")] {% endif %}{% if f.tooltip %}[Tooltip("{{ f.tooltip }}")] {% endif %}[SerializeField] private {{ f.type }} {{ f.name }}{% if f.default %} = {{ f.default }}{% endif %};
 {% endfor %}
@@ -52,7 +66,7 @@ public class {{ script.name }} : MonoBehaviour
         yield return null;
     }
 {% endif %}
-{% if needs_rigidbody or script.awake_extra %}
+{% if climbing_interaction or climbing_stamina or needs_rigidbody or script.awake_extra %}
 
     private void Awake()
     {
@@ -60,22 +74,99 @@ public class {{ script.name }} : MonoBehaviour
         rb = GetComponent<Rigidbody>();
         if (rb == null) rb = gameObject.AddComponent<Rigidbody>();
 {% endif %}
-{% if script.awake_extra %}
+{% if script.awake_extra and not (climbing_interaction or climbing_stamina) %}
 {% if needs_player_rigidbody and "playerRigidbody" in script.awake_extra %}
         if (playerRigidbody == null) return;
 {% endif %}
 {{ script.awake_extra | indent(8, True) }}
 {% endif %}
+{% if climbing_interaction %}
+        BuildRoute();
+{% elif climbing_stamina %}
+        BindClimber();
+{% endif %}
     }
 {% endif %}
-{% if script.update_extra %}
+{% if climbing_interaction or climbing_stamina or script.update_extra %}
 
     private void Update()
     {
+{% if climbing_interaction %}
+        if (_route.Count < 2) BuildRoute();
+        if (!_arrowsBuilt && _route.Count >= 2) BuildRouteArrows();
+{% elif climbing_stamina %}
+        if (_climbing == null) BindClimber();
+        if (_climbing == null) return;
+        if (_climbing.IsClimbing && _climbing.IsGripHeld)
+            _currentStamina -= _staminaDrainRate * Mathf.Lerp(0.85f, 1.25f, _climbing.GripLoad) * Time.deltaTime;
+        else if (_climbing.IsFalling)
+            _currentStamina -= _staminaDrainRate * 0.35f * Time.deltaTime;
+        else
+            _currentStamina += 0.75f * Time.deltaTime;
+        _currentStamina = Mathf.Clamp(_currentStamina, 0f, _maxStamina);
+        if (_currentStamina <= 0f && _climbing.IsClimbing)
+            _player.SendMessage("ForceReleaseGrip", SendMessageOptions.DontRequireReceiver);
+{% else %}
 {% if needs_player_rigidbody and "playerRigidbody" in script.update_extra %}
         if (playerRigidbody == null) return;
 {% endif %}
 {{ script.update_extra | indent(8, True) }}
+{% endif %}
+    }
+{% endif %}
+{% if climbing_interaction %}
+
+    private void BuildRoute()
+    {
+        _route.Clear();
+        try
+        {
+            foreach (string tag in new[] { "Hold", "Platform" })
+                foreach (GameObject go in GameObject.FindGameObjectsWithTag(tag))
+                    if (go != null && !_route.Contains(go.transform)) _route.Add(go.transform);
+        }
+        catch (UnityException) { }
+        _route.Sort((a, b) => a.position.y == b.position.y
+            ? a.position.x.CompareTo(b.position.x)
+            : a.position.y.CompareTo(b.position.y));
+    }
+
+    private void BuildRouteArrows()
+    {
+        _arrowsBuilt = true;
+        Shader shader = Shader.Find("{% if render_pipeline == "HDRP" %}HDRP/Unlit{% else %}Universal Render Pipeline/Unlit{% endif %}")
+            ?? Shader.Find("Standard");
+        for (int i = 0; i < _route.Count - 1; i++)
+        {
+            Vector3 start = _route[i].position;
+            Vector3 end = _route[i + 1].position;
+            Vector3 direction = (end - start).normalized;
+            GameObject arrow = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            arrow.name = "Route Arrow " + i;
+            arrow.transform.position = Vector3.Lerp(start, end, 0.45f)
+                + Vector3.back * 0.12f + Vector3.up * 0.06f;
+            arrow.transform.rotation = Quaternion.LookRotation(direction, Vector3.up);
+            arrow.transform.localScale = new Vector3(0.12f, 0.045f, 0.32f);
+            Collider collider = arrow.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
+            if (shader != null)
+            {
+                Material material = new Material(shader);
+                Color arrowColor = new Color(1f, 0.72f, 0.16f, 1f);
+                if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", arrowColor);
+                if (material.HasProperty("_Color")) material.SetColor("_Color", arrowColor);
+                arrow.GetComponent<Renderer>().sharedMaterial = material;
+            }
+            _arrows.Add(arrow);
+        }
+    }
+{% elif climbing_stamina %}
+
+    private void BindClimber()
+    {
+        _player = GameObject.FindWithTag("Player");
+        _climbing = _player == null ? null
+            : _player.GetComponent(typeof(IClimbingState)) as IClimbingState;
     }
 {% endif %}
 {% if script.fixed_update_extra %}
