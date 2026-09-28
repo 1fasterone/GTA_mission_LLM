@@ -19,18 +19,17 @@ The canonical vocabulary lives in
 `src/unity_identity_archetypes.py`. It is post-schema compiler logic: it makes
 no LLM calls and adds no field to `EntitySpec`.
 
-## First slice
+## Current substrate
 
-The initial catalog deliberately covers the common domains requested by the
-compiler:
+The registry currently covers 27 identity families across human, creature,
+vehicle, and object domains. The extra `object_generic` family is a safe
+terminal identity for props and pickups; it is not used to turn arbitrary
+scenery into a character or vehicle.
 
-`medieval_human_commoner`, `medieval_human_knight`,
-`medieval_human_worker`, `npc_human`, `fantasy_human`, `sci-fi_human`,
-`soldier_infantry`, `civilian_modern`, `vehicle_boat`, `vehicle_car`,
-`creature_generic`, and `object_generic`.
-
-The extra `object_generic` family is a safe terminal identity for props and
-pickups; it is not used to turn arbitrary scenery into a character or vehicle.
+Level 2 now adds lookup-authored attribute bundles for medieval peasants,
+medieval workers, knights, and modern factory workers. The bundles are
+resolved into `schema.meta["identity_archetypes"]` with per-field confidence;
+they do not add fields to `EntitySpec` or trigger prefab/AI behavior yet.
 
 ## Resolver contract
 
@@ -44,9 +43,10 @@ pickups; it is not used to turn arbitrary scenery into a character or vehicle.
 3. An explicit family fallback from `kind`: generic human → `npc_human`,
    vehicle → `vehicle_car`, creature → `creature_generic`.
 
-Every result carries `rule`, `matched_terms`, and `used_fallback`. An entity's
-marketplace `sketchfab_query` is intentionally excluded: search context is not
-identity evidence.
+Every result carries `rule`, `matched_terms`, and `used_fallback`, plus the
+resolved attribute bundle, selected context variant, confidence tier, visual
+attribute evidence, and conflicts. An entity's marketplace `sketchfab_query`
+is intentionally excluded: search context is not identity evidence.
 
 ## Integration boundary
 
@@ -65,20 +65,13 @@ authored transform/model or invent a new schema kind.
 
 ## Deepening plan
 
-1. **Substrate (landed here):** freeze the 10–20 family vocabulary, noun map,
-   fallback precedence, provenance, and deterministic tests.
-2. **Catalog identity (next):** derive and freeze an identity family for each
-   catalog asset at catalog-build time. Add compatibility gates so a medieval
-   human query cannot be satisfied by a modern vehicle or a creature merely
-   because marketplace tags overlap.
-3. **Backend adapters:** expose the same identity result to GTA ped/vehicle
-   resolution without changing either backend schema. Keep backend model names
-   as adapters, not identity definitions.
-4. **Acceptance matrix:** test exact nouns, shallow nouns with context, generic
-   kind fallbacks, negative cross-family pairs, missing lookup data, and
-   byte-identical repeated resolution. Require an explicit warning or abstain
-   for an unknown family instead of a silent prop guess.
-5. **Promotion rule:** when an identity family needs backend behavior rather
-   than asset semantics, promote that behavior into a real schema field and
-   update prompts, fixers, and generators together. Do not grow the identity
-   catalog into a second schema.
+The full staged ontology roadmap is in
+[`docs/ENTITY_ONTOLOGY_PLAN.md`](ENTITY_ONTOLOGY_PLAN.md). In short, the next
+slice is attribute bundles and an auditable sidecar, followed by roles and
+affordances, contextual variants, image-to-noun grounding, declarative
+assembly profiles, confidence gates, and finally a bounded ontology registry.
+
+The existing identity layer remains the substrate: authored Scene Compiler
+bindings and locked visual bindings outrank derived identity, generic kind
+fallbacks remain metadata-only for catalog search, and no new `EntitySpec`
+field is added until a repeated consumer proves that promotion is necessary.

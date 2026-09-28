@@ -923,6 +923,13 @@ _TERMINAL_NAME_WORDS: tuple[str, ...] = (
 _GOAL_KINDS: frozenset[str] = frozenset({
     "goal", "checkpoint", "finish", "objective", "landing_pad", "landingpad",
 })
+# Schema-fill commonly carries the objective role in `tag` while leaving the
+# asset bucket as `kind="prop"` (for example SummitFlag). Treat that explicit
+# role as equivalent to an authored goal kind; model names remain only the
+# weaker prose signal below.
+_GOAL_TAGS: frozenset[str] = frozenset({
+    "goal", "checkpoint", "finish", "objective",
+})
 # Bare "target" is deliberately absent: a formation-lock target, a practice
 # target and a targeting reticle are all mid-air content, and pinning them to
 # the terminal plane is exactly the flattening this primitive removes.
@@ -1140,7 +1147,8 @@ def goal_rank(entity) -> int:
     """How strongly this entity claims to be the thing the player is falling
     TOWARD: 2 = an authored goal `kind`, 1 = goal wording in its name/hint,
     0 = not a goal. An authored kind always outranks prose."""
-    if (entity.kind or "").lower().strip() in _GOAL_KINDS:
+    if ((entity.kind or "").lower().strip() in _GOAL_KINDS
+            or _tag_of(entity) in _GOAL_TAGS):
         return 2
     return 1 if _hits(_entity_words(entity), _GOAL_NAME_WORDS) else 0
 

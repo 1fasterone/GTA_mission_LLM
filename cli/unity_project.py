@@ -507,6 +507,15 @@ def unity_validate(
     resolver = UnityResolver(lookups_dir=pipe_cfg.get("lookups_dir", "lookups"))
     schema   = resolver.resolve_schema(schema)
     schema   = resolver.inject_required_packages(schema)
+    # A saved schema carries the previous layout output. Replaying the
+    # deterministic spatial contract here is required for `unity-validate` to
+    # observe layout/compiler fixes made after that schema was authored (and is
+    # what a fresh unity-create run already did in Step 5). Authored Scene
+    # Compiler transforms remain protected by compute_layout's authored-scene
+    # boundary; generated transforms are rebuilt, never hand-edited.
+    from src.unity_layout import compute_layout
+    for msg in compute_layout(schema):
+        console.print(f"  [cyan]LAYOUT[/]  {msg}")
     deps     = resolver.build_manifest_deps(
         schema, inject_mcp_bridge=pipe_cfg.get("inject_mcp_bridge", True)
     )
@@ -574,7 +583,8 @@ def unity_validate(
             vfx_specs=schema.vfx, shaders=schema.shaders, animations=schema.animations,
             characters=schema.characters, missions=schema.missions,
             behavior_trees=schema.behavior_trees, environment=schema.environment,
-            visual_style=schema.visual_style, palette_rgb=_compose_palette_rgb(schema),
+            visual_style=schema.visual_style, render_pipeline=schema.render_pipeline,
+            palette_rgb=_compose_palette_rgb(schema),
         )
         # No-LLM fallback only — see the docstring above for what this can and
         # cannot recover relative to the original `enrich_subsystems` call.

@@ -2150,7 +2150,8 @@ def _native_meta(guid: str, main_object_id: int) -> str:
 # render — every imported FBX showed up magenta/black in Play mode.
 
 
-def _humanoid_model_meta(guid: str, scale: float = 1.0) -> str:
+def _humanoid_model_meta(guid: str, scale: float = 1.0,
+                         readable: bool = False) -> str:
     """ModelImporter .meta for rigged characters/clips — Humanoid rig
     (animationType: 3) so any Mixamo-style clip retargets to any character."""
     return (
@@ -2176,7 +2177,7 @@ def _humanoid_model_meta(guid: str, scale: float = 1.0) -> str:
         "    animationScaleError: 0.5\n"
         "    animationWrapMode: 0\n"
         "    clipAnimations: []\n"
-        "    isReadable: 0\n"
+        f"    isReadable: {1 if readable else 0}\n"
         f"  globalScale: {scale}\n"
         "  useFileScale: 1\n"
         "  animationType: 3\n"
@@ -2205,7 +2206,7 @@ def _humanoid_model_meta(guid: str, scale: float = 1.0) -> str:
     )
 
 
-def _model_meta(guid: str) -> str:
+def _model_meta(guid: str, readable: bool = False) -> str:
     """ModelImporter .meta for .obj placeholder files."""
     return (
         "fileFormatVersion: 2\n"
@@ -2230,7 +2231,7 @@ def _model_meta(guid: str) -> str:
         "    animationScaleError: 0.5\n"
         "    animationWrapMode: 0\n"
         "    clipAnimations: []\n"
-        "    isReadable: 0\n"
+        f"    isReadable: {1 if readable else 0}\n"
         "  platforms: []\n"
         "  userData: \n"
         "  assetBundleName: \n"
@@ -2238,7 +2239,8 @@ def _model_meta(guid: str) -> str:
     )
 
 
-def _generic_model_meta(guid: str, scale: float = 1.0) -> str:
+def _generic_model_meta(guid: str, scale: float = 1.0,
+                        readable: bool = False) -> str:
     """ModelImporter .meta for skeleton-less procedural FBX (Blender bases).
 
     animationType: 2 (Generic) so Unity does NOT try to build a Humanoid avatar —
@@ -2268,7 +2270,7 @@ def _generic_model_meta(guid: str, scale: float = 1.0) -> str:
         "    animationScaleError: 0.5\n"
         "    animationWrapMode: 0\n"
         "    clipAnimations: []\n"
-        "    isReadable: 0\n"
+        f"    isReadable: {1 if readable else 0}\n"
         f"  globalScale: {scale}\n"
         "  useFileScale: 1\n"
         "  animationType: 2\n"
@@ -3785,7 +3787,8 @@ class UnityProjectGenerator:
                 obj_path = f"{pn}/Assets/Models/{mesh.name}.obj"
                 files[obj_path]           = _generate_obj(mesh)
                 files[f"{obj_path}.meta"] = _model_meta(
-                    _make_guid(f"{pn}/Models/{mesh.name}")
+                    _make_guid(f"{pn}/Models/{mesh.name}"),
+                    readable="navmesh" in schema.features,
                 )
                 mesh_cs  = f"{mesh.name}Mesh"
                 cs_path  = f"{pn}/Assets/Scripts/{mesh_cs}.cs"
@@ -3860,11 +3863,14 @@ class UnityProjectGenerator:
                         continue
                     guid = _make_guid(f"{pn}/{item.dest_rel}")
                     if item.rig == "humanoid":
-                        meta_fn = _humanoid_model_meta(guid, item.scale)
+                        meta_fn = _humanoid_model_meta(
+                            guid, item.scale, readable="navmesh" in schema.features)
                     elif item.rig == "generic":
-                        meta_fn = _generic_model_meta(guid, item.scale)
+                        meta_fn = _generic_model_meta(
+                            guid, item.scale, readable="navmesh" in schema.features)
                     else:
-                        meta_fn = _model_meta(guid)
+                        meta_fn = _model_meta(
+                            guid, readable="navmesh" in schema.features)
                     files[f"{pn}/Assets/Resources/{item.dest_rel}.meta"] = meta_fn
             ms_path = f"{pn}/Assets/Scripts/ModelSwap.cs"
             files[ms_path]           = self._render("ModelSwap.cs.j2", base_ctx)

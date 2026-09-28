@@ -745,6 +745,11 @@ class MicroComposer:
                     "controller_var":   _fv(ctrl),
                     "statemachine_var": _fv(_fsm_for_grounded) if _fsm_for_grounded else "_statemachine",
                     "animator_var":     _fv(anim) if anim else "_animator",
+                    # PlayerAnimator exposes SetSpeed in the humanoid/creature
+                    # contract.  Vehicles and controllers without that method
+                    # keep the old grounded-only seam and therefore cannot
+                    # produce a CS1061 from this bridge.
+                    "set_speed": bool(anim and anim.variant in ("humanoid", "creature")),
                 }),
             })
 

@@ -234,6 +234,10 @@ public class {{ s.name }} : MonoBehaviour
     {
 {% if s.nav_backend == "navmesh" %}
         if (_agent != null) _agent.speed = EffectiveMoveSpeed;
+        // A runtime-baked surface may not contain every generated object. Do
+        // not issue NavMeshAgent commands until Unity has placed this agent;
+        // the next frame will retry once the deterministic surface exists.
+        if (_agent != null && !_agent.isOnNavMesh) return;
 {% endif %}
         if (_target == null)
         {

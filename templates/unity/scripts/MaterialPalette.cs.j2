@@ -89,8 +89,9 @@ public class {{ script.name }} : MonoBehaviour
             if (s != null) return s;
         }
 
-        // Prefer URP Lit, fall back to Standard
-        return Shader.Find("Universal Render Pipeline/Lit")
+        // Prefer the active pipeline's Lit shader, then cross-pipeline fallbacks.
+        return Shader.Find("{% if render_pipeline == "HDRP" %}HDRP/Lit{% else %}Universal Render Pipeline/Lit{% endif %}")
+            ?? Shader.Find("Universal Render Pipeline/Lit")
             ?? Shader.Find("Standard")
             ?? Shader.Find("Diffuse");
     }
