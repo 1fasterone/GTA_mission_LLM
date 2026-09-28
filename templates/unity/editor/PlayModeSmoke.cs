@@ -38,31 +38,11 @@ using UnityEngine.TestTools;
 
 public class PlayModeSmoke
 {
-    // Fires at editor-domain-load time — as early as physically possible,
-    // well before Unity Test Framework's own IPrebuildSetup pass (confirmed
-    // live, 2026-09: on a project where com.unity.test-framework.performance
-    // is resolved — observed here via Cinemachine/URP pulling it in
-    // transitively, unrelated to anything this harness does — its
-    // Unity.PerformanceTesting.Editor.TestRunBuilder.IPrebuildSetup logs a
-    // spurious '[Error] FindAllObjectsOfType: The type has to be derived
-    // from UnityEngine.Object' for any plain, non-MonoBehaviour
-    // [RuntimeInitializeOnLoadMethod] class in the project — e.g.
-    // AtmosphereBootstrap.cs.j2 — noise from a third-party package we never
-    // asked for, not a defect in the generated project). That happens
-    // BEFORE any of this fixture's own [SetUp]/[OneTimeSetUp] runs, so
-    // setting LogAssert.ignoreFailingMessages there (both tried, both too
-    // late — confirmed live) can't intercept it. This can. Harmless for the
-    // checks that actually care about log content: NoConsoleErrorsDuringPlay
-    // uses its own independent Application.logMessageReceived capture, not
-    // LogAssert — this only turns off Unity Test Framework's OWN blunter
-    // default (auto-fail whichever test is running the instant ANY
-    // error/exception is logged, unrelated to what that test is even
-    // checking), the exact default this fixture exists to own itself.
-    [InitializeOnLoadMethod]
-    private static void SuppressUnhandledLogAutoFail()
-    {
-        LogAssert.ignoreFailingMessages = true;
-    }
+    // Do not touch LogAssert during editor-domain load. Unity 6 requires an
+    // active log scope for that property; changing it from an
+    // [InitializeOnLoadMethod] throws before the PlayMode fixture can run.
+    // NoConsoleErrorsDuringPlay owns the generated project's log contract via
+    // its independent Application.logMessageReceived capture below.
 
     [Serializable]
     private class EntityExpectationDto
@@ -140,17 +120,6 @@ public class PlayModeSmoke
         return result;
     }
 
-    // Deliberately no [SetUp]/[TearDown] pair here re-toggling
-    // LogAssert.ignoreFailingMessages per test: LogAssert's unhandled-message
-    // scope is created fresh per test, so setting it true only in
-    // [OneTimeSetUp] didn't carry into each test's own scope, and the
-    // IPrebuildSetup-time failure (see SuppressUnhandledLogAutoFail above)
-    // happens before EITHER [SetUp] or [OneTimeSetUp] gets a chance to run
-    // at all — both confirmed live, 2026-09. SuppressUnhandledLogAutoFail
-    // sets it once, permanently, at domain-load time instead; a [TearDown]
-    // flipping it back to false after test #1 would break suppression for
-    // every test after it, so there is intentionally no reset.
-
     private readonly List<string> _capturedLogs = new List<string>();
 
     private void OnLog(string logString, string stackTrace, LogType type)
@@ -191,6 +160,130 @@ public class PlayModeSmoke
         Assert.AreEqual(1, tagged.Length,
             "expected exactly 1 active Player-tagged GameObject, found " + tagged.Length +
             (tagged.Length > 0 ? ": " + string.Join(", ", tagged.Select(g => g.name)) : ""));
+    }
+
+    private static bool TryGetClimbingRoute(out List<Transform> route)
+    {
+        route = new List<Transform>();
+        try
+        {
+            foreach (string tag in new[] { "Hold", "Platform" })
+                foreach (var go in GameObject.FindGameObjectsWithTag(tag))
+                    if (go != null && !route.Contains(go.transform)) route.Add(go.transform);
+        }
+        catch (UnityException) { }
+        route.Sort((a, b) => a.position.y == b.position.y
+            ? a.position.x.CompareTo(b.position.x)
+            : a.position.y.CompareTo(b.position.y));
+        return route.Count >= 2;
+    }
+
+    private static Bounds PlayerBounds(GameObject player)
+    {
+        var renderers = player.GetComponentsInChildren<Renderer>(true);
+        if (renderers.Length > 0)
+        {
+            Bounds bounds = renderers[0].bounds;
+            for (int i = 1; i < renderers.Length; i++) bounds.Encapsulate(renderers[i].bounds);
+            return bounds;
+        }
+        var collider = player.GetComponent<Collider>();
+        return collider != null ? collider.bounds : new Bounds(player.transform.position, Vector3.one);
+    }
+
+    [UnityTest]
+    public IEnumerator ClimbingCameraPlayerVisibility()
+    {
+        yield return LoadMainSceneAndSettle();
+        List<Transform> route;
+        if (!TryGetClimbingRoute(out route))
+        {
+            Assert.Ignore("no Hold/Platform route — climbing contract not present");
+            yield break;
+        }
+
+        var player = GameObject.FindWithTag("Player");
+        Assert.IsNotNull(player, "climbing route requires a Player-tagged avatar");
+        var camera = Camera.main;
+        Assert.IsNotNull(camera, "climbing camera contract requires Camera.main");
+        Bounds bounds = PlayerBounds(player);
+        var planes = GeometryUtility.CalculateFrustumPlanes(camera);
+        Assert.IsTrue(GeometryUtility.TestPlanesAABB(planes, bounds),
+            "player bounds are outside Camera.main; follow framing is not playable " +
+            "player=" + bounds.center + " camera=" + camera.transform.position +
+            " forward=" + camera.transform.forward);
+        Vector3 viewport = camera.WorldToViewportPoint(bounds.center);
+        Assert.IsTrue(viewport.z > 0f && viewport.x > 0.02f && viewport.x < 0.98f
+                      && viewport.y > 0.02f && viewport.y < 0.98f,
+            "player bounds are not actually visible through Camera.main " +
+            "viewport=" + viewport);
+    }
+
+    [UnityTest]
+    public IEnumerator ClimbingRouteIsReachable()
+    {
+        yield return LoadMainSceneAndSettle();
+        List<Transform> route;
+        if (!TryGetClimbingRoute(out route))
+        {
+            Assert.Ignore("no Hold/Platform route — climbing contract not present");
+            yield break;
+        }
+        for (int i = 1; i < route.Count; i++)
+            Assert.LessOrEqual(Vector3.Distance(route[i - 1].position, route[i].position), 4.0f,
+                "successive climbing holds exceed the deterministic reach budget");
+
+        var player = GameObject.FindWithTag("Player");
+        Assert.IsNotNull(player, "climbing route requires a Player-tagged avatar");
+        Component controller = player.GetComponents<MonoBehaviour>()
+            .FirstOrDefault(c => c != null && c.GetType().GetProperty("HoldCount") != null);
+        Assert.IsNotNull(controller, "generated player controller has no climbing route contract");
+        int holdCount = (int)controller.GetType().GetProperty("HoldCount").GetValue(controller, null);
+        Assert.GreaterOrEqual(holdCount, 2, "controller did not bind the visible hold route");
+    }
+
+    [UnityTest]
+    public IEnumerator ClimbingFlagScaleIsBounded()
+    {
+        yield return LoadMainSceneAndSettle();
+        List<Transform> route;
+        if (!TryGetClimbingRoute(out route))
+        {
+            Assert.Ignore("no Hold/Platform route — climbing contract not present");
+            yield break;
+        }
+        GameObject flag = null;
+        try { flag = GameObject.FindWithTag("Checkpoint"); }
+        catch (UnityException) { }
+        if (flag == null)
+            flag = AllTransformsInActiveScene().Select(t => t.gameObject)
+                .FirstOrDefault(g => g.name.StartsWith("SummitFlag_", StringComparison.Ordinal));
+        Assert.IsNotNull(flag, "climbing route has no summit flag/checkpoint");
+        float maxScale = Mathf.Max(flag.transform.lossyScale.x,
+                                   Mathf.Max(flag.transform.lossyScale.y, flag.transform.lossyScale.z));
+        Assert.LessOrEqual(maxScale, 0.70f,
+            "summit flag is not using the deterministic small-landmark scale");
+    }
+
+    [UnityTest]
+    public IEnumerator ClimbingAnimationStateIsActive()
+    {
+        yield return LoadMainSceneAndSettle();
+        List<Transform> route;
+        if (!TryGetClimbingRoute(out route))
+        {
+            Assert.Ignore("no Hold/Platform route — climbing contract not present");
+            yield break;
+        }
+        var player = GameObject.FindWithTag("Player");
+        var animator = player == null ? null : player.GetComponentInChildren<Animator>(true);
+        Assert.IsNotNull(animator, "climbing avatar has no Animator");
+        Assert.IsNotNull(animator.runtimeAnimatorController,
+            "climbing avatar has no runtime AnimatorController");
+        Assert.IsTrue(animator.parameters.Any(p => p.name == "Climb"),
+            "generated AnimatorController has no Climb parameter");
+        Assert.IsTrue(animator.HasState(0, Animator.StringToHash("Climb")),
+            "generated AnimatorController has no Climb state");
     }
 
     [UnityTest]

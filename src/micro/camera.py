@@ -17,6 +17,7 @@ from .code_fields import (
 
 CameraVariant = Literal[
     "follow", "follow_2d", "follow_2_5d", "orbit", "first_person",
+    "climbing_follow",
     "cinemachine_3p", "cinemachine_topdown",
     "rts_pan_zoom", "vehicle_chase", "cinematic_dolly",
     # Frames a BOARD instead of following a body. Every variant above resolves

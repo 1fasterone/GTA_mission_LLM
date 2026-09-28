@@ -137,7 +137,8 @@ def wants_atmosphere(schema) -> bool:
 
 
 def _environment_ctx(time_of_day: str, fog, fog_color, sun_intensity,
-                     lighting: dict, bg: dict) -> dict:
+                     lighting: dict, bg: dict,
+                     render_pipeline: str = "URP") -> dict:
     """Sun + fog template context for one environment (project or per-scene).
 
     "day" / empty keeps the historical style lighting byte-for-byte; other
@@ -157,6 +158,17 @@ def _environment_ctx(time_of_day: str, fog, fog_color, sun_intensity,
         intensity    = lighting["intensity"]
     if sun_intensity is not None:
         intensity = sun_intensity
+    # EnvironmentSpec is pipeline-neutral. HDRP directional lights are
+    # physical Lux, so normalize the authored day baseline at this backend
+    # boundary rather than allowing Unity to reinterpret a unitless value.
+    if render_pipeline == "HDRP":
+        try:
+            raw_intensity = float(intensity)
+        except (TypeError, ValueError):
+            raw_intensity = 1.2
+        intensity = (raw_intensity if raw_intensity > 10.0
+                     else (raw_intensity / 1.2) * 100000.0)
+        intensity = round(max(1000.0, min(150000.0, intensity)))
     return {
         "sun_rotation":  sun_rotation,
         "sun_euler":     sun_euler,
@@ -1900,7 +1912,10 @@ def _needs_player_rigidbody(script: UnityScript) -> bool:
     return False
 
 
-def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
+def _auto_declare_undeclared_scalars(
+    script: UnityScript,
+    sibling_defaults: dict[str, str] | None = None,
+) -> None:
     """Auto-declare a bare assignment-target identifier the LLM never gave a
     field for (see module comment above). Skips anything already known:
     extra_fields, method params, locally var/typed-declared, foreach vars,
@@ -1936,6 +1951,35 @@ def _auto_declare_undeclared_scalars(script: UnityScript) -> None:
             continue
         seen.add(tok)
         script.extra_fields.append(CodeField(name=tok, type="float"))
+        declared.add(tok)
+
+    # A read-only numeric field can be just as undeclared as an assignment
+    # target. The generated stamina script hit this shape: the body multiplied
+    # by `_staminaDrainRate`, while Step 3 had omitted that field entirely.
+    # Restrict the repair to private-looking identifiers used beside numeric
+    # operators, so component/member accesses and method calls are never
+    # guessed into floats. When another authored custom script declares the
+    # same field, its explicit default is deterministic ground truth for the
+    # repaired declaration; otherwise C#'s zero default is preserved.
+    numeric_read = re.compile(r"(?<![.\w])(_[A-Za-z_]\w*)\b")
+    numeric_operator = re.compile(r"(?:[+\-*/%<>]=?|==|!=)\s*$")
+    for m in numeric_read.finditer(combined):
+        tok = m.group(1)
+        if tok in declared or tok in _CS_KEYWORDS or tok in _STATIC_CLASS_ALLOW:
+            continue
+        after = combined[m.end():]
+        if re.match(r"\s*(?:[.(]|\[)", after):
+            continue
+        before = combined[max(0, m.start() - 12):m.start()]
+        right = after[:12]
+        if not (numeric_operator.search(before) or numeric_operator.match(right)):
+            continue
+        declared.add(tok)
+        script.extra_fields.append(CodeField(
+            name=tok,
+            type="float",
+            default=(sibling_defaults or {}).get(tok),
+        ))
 
 
 # ── Environment lighting: scene YAML ↔ runtime guard agreement ────────────────
@@ -1965,6 +2009,25 @@ def _lighting_variant_for(schema, composed_units=None) -> str:
         user_prompt=str((getattr(schema, "meta", None) or {}).get("user_prompt") or ""),
         scenes=schema.scenes,
     )
+
+
+def _is_climbing_contract(schema: UnitySchema) -> bool:
+    """True when the deterministic project contract is wall climbing.
+
+    This is intentionally derived from the held-out brief/schema content and
+    existing entity vocabulary. It does not ask the Pipeline LLM to invent a
+    controller mode or rewrite the schema.
+    """
+    meta = getattr(schema, "meta", None) or {}
+    text = " ".join([
+        str(getattr(schema, "description", "") or ""),
+        str(meta.get("user_prompt") or ""),
+        str(meta.get("concept") or ""),
+        " ".join(str(getattr(e, "name", "") or "") for e in schema.entities),
+        " ".join(str(getattr(e, "tag", "") or "") for e in schema.entities),
+    ]).lower()
+    return ("climb" in text or "climber" in text) and any(
+        word in text for word in ("hold", "ledge", "rock face", "vertical wall", "summit"))
 
 
 def _ambient_ctx(palette_rgb: dict, variant: str) -> dict:
@@ -3172,7 +3235,19 @@ class UnityProjectGenerator:
                 _sanitize_param_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
                 _sanitize_vector_scale_misuse(s)          # Vector3 * Vector3 -> CS0019
-                _auto_declare_undeclared_scalars(s)       # bare persisted field, never declared
+                # Sibling custom fields are only a source of an explicit
+                # default for a same-named numeric read; they do not create a
+                # cross-component reference or alter schema semantics.
+                _auto_declare_undeclared_scalars(
+                    s, {
+                        f.name: f.default
+                        for other in schema.scripts
+                        if other is not s and other.type == "custom"
+                        for f in (other.extra_fields or [])
+                        if f.default and (f.type or "").lower() in {
+                            "float", "double", "int", "long",
+                        }
+                    })
                 _strip_undeclared_foreach(s)
                 _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver
                 _sanitize_undeclared_condition_reads(s)   # bare if/while value read
@@ -3444,7 +3519,8 @@ class UnityProjectGenerator:
             # consumers outside .regions). Additive only, no behavior change
             # when neither block is present.
             _tod, _fog, _fog_color, _sun_i = _world_spec_env_fallback(schema.world_spec)
-        env_ctx = _environment_ctx(_tod, _fog, _fog_color, _sun_i, lighting, bg)
+        env_ctx = _environment_ctx(_tod, _fog, _fog_color, _sun_i, lighting, bg,
+                                   schema.render_pipeline)
         sun_rotation  = env_ctx["sun_rotation"]
         sun_euler     = env_ctx["sun_euler"]
         sun_color     = env_ctx["sun_color"]
@@ -3517,6 +3593,7 @@ class UnityProjectGenerator:
             "kenney_assets":     kenney_assets,
             "materials":         schema.materials,
             "shaders":           schema.shaders,
+            "climbing_contract": _is_climbing_contract(schema),
         }
 
         _ev, _er = _VERSION_MAP.get(schema.unity_version, ("6000.0.66f2", "0000000000000"))
@@ -3650,7 +3727,7 @@ class UnityProjectGenerator:
                         sp.fog if sp.fog is not None else (env.fog if env else None),
                         sp.fog_color or (env.fog_color if env else None),
                         env.sun_intensity if env else None,
-                        lighting, bg))
+                        lighting, bg, schema.render_pipeline))
                 if sp.entities is not None:
                     _allowed = set(sp.entities)
                     ctx["entities"] = [e for e in schema.entities
@@ -3678,6 +3755,17 @@ class UnityProjectGenerator:
         # definitions of it (CS0101). _generate_script runs once per script, so
         # the accumulator has to outlive a single call.
         self._stubbed_types: set[str] = set()
+
+        # The interface is emitted only for the deterministic climbing
+        # contract. The composed controller implements it and the generated
+        # stamina/interaction systems consume it without coupling those
+        # systems to a Pipeline-LLM-authored class name.
+        if base_ctx["climbing_contract"]:
+            climb_state_path = f"{pn}/Assets/Scripts/IClimbingState.cs"
+            files[climb_state_path] = self._render(
+                "scripts/IClimbingState.cs.j2", base_ctx)
+            files[f"{climb_state_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Scripts/IClimbingState"))
         for script in schema.scripts:
             script_content, script_path = self._generate_script(
                 schema, script, base_ctx, _stub_known_types)
@@ -3781,7 +3869,13 @@ class UnityProjectGenerator:
             ms_path = f"{pn}/Assets/Scripts/ModelSwap.cs"
             files[ms_path]           = self._render("ModelSwap.cs.j2", base_ctx)
             files[f"{ms_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/ModelSwap"))
-            if any_humanoid:
+            # A generated walking player still needs the deterministic
+            # DefaultCharacter controller even when its selected visual is a
+            # Generic mesh with no embedded clips (the blacksmith asset is
+            # exactly that case). Vehicle-only projects keep the old behavior;
+            # VehicleBoneDriver is their animation contract.
+            needs_player_animator = any_humanoid or player_avatar_model is not None
+            if needs_player_animator:
                 sdm_path = f"{pn}/Assets/Editor/SetupDefaultModels.cs"
                 files[sdm_path]           = self._render("SetupDefaultModels.cs.j2", base_ctx)
                 files[f"{sdm_path}.meta"] = _meta_file(_make_guid(f"{pn}/Editor/SetupDefaultModels"))
@@ -4060,6 +4154,8 @@ class UnityProjectGenerator:
             "scripts/AAAAtmosphere.cs.j2"
             if schema.render_pipeline in ("URP", "HDRP")
             else "scripts/AAAAtmosphereBuiltin.cs.j2")
+        if _is_climbing_contract(schema):
+            m["Assets/Scripts/IClimbingState.cs"] = "scripts/IClimbingState.cs.j2"
         if has_kenney:
             m["Assets/Editor/KenneyImporter.cs"] = "editor/KenneyImporter.cs.j2"
         return m

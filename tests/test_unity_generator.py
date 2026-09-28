@@ -2584,6 +2584,17 @@ class TestFragmentSanitizers:
         assert "cooldown" in names           # compound assign -> still caught
         assert "safeVelocityLimit" in names  # pre-existing field, not duplicated
 
+    def test_auto_declares_numeric_field_read_and_reuses_sibling_default(self):
+        from src.unity_generator import _auto_declare_undeclared_scalars
+        s = self._script(
+            'if (_currentStamina > 0f) _currentStamina -= '
+            '_staminaDrainRate * Time.deltaTime;')
+        sibling = {"_staminaDrainRate": "2.5f"}
+        _auto_declare_undeclared_scalars(s, sibling)
+        field = next(f for f in s.extra_fields if f.name == "_staminaDrainRate")
+        assert field.type == "float"
+        assert field.default == "2.5f"
+
 
 # ── _sanitize_composed_component_calls: per-composed-class member validation ──
 

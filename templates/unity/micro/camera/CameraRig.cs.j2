@@ -27,9 +27,16 @@ public class {{ s.name }} : MonoBehaviour
     [SerializeField] private float fovSprint = {{ "%.2f"|format(s.fov_sprint) }}f;
 {% endif %}
 
+    // _followRoot is the gameplay/physics anchor. _target is the camera focus
+    // pivot, kept as a child so look-at height is stable without changing the
+    // player's collider or movement origin.
+    private Transform _followRoot;
     private Transform _target;
     private Vector3   _vel;
     private Camera    _cam;
+{% if variant == "climbing_follow" %}
+    private bool _climbingCameraInitialized;
+{% endif %}
 {% if variant == "vehicle_chase" %}
     // Racing camera state is derived from the existing vehicle Rigidbody and
     // the controller's generated Body pivot. No extra schema or runtime
@@ -180,10 +187,23 @@ public class {{ s.name }} : MonoBehaviour
 {% else %}
             var go = GameObject.FindWithTag(followTag);
             if (go == null) return;
-            _target = go.transform;
+            _followRoot = go.transform;
+            _target = _followRoot.Find("CameraFocus");
+            if (_target == null)
+            {
+                // The focus pivot is a runtime contract, so generated scenes
+                // do not need hand-authored child transforms. It is created
+                // once, parented locally, and follows the visual at a useful
+                // upper-body height even for a generic blacksmith mesh.
+                var focusGo = new GameObject("CameraFocus");
+                focusGo.transform.SetParent(_followRoot, false);
+                focusGo.transform.localPosition = new Vector3(
+                    0f, {{ "1.35f" if variant == "climbing_follow" else "1.1f" }}, 0f);
+                _target = focusGo.transform;
+            }
 {% if variant == "vehicle_chase" %}
-            _vehicleBody = _target.GetComponent<Rigidbody>();
-            _vehicleVisual = _target.Find("Body");
+            _vehicleBody = _followRoot.GetComponent<Rigidbody>();
+            _vehicleVisual = _followRoot.Find("Body");
 {% endif %}
 {% endif %}
         }
@@ -212,9 +232,9 @@ public class {{ s.name }} : MonoBehaviour
         transform.position = Vector3.SmoothDamp(transform.position, desired25, ref _vel, smoothTime);
         transform.LookAt(_target.position + Vector3.up * 0.5f);
 {% elif variant == "orbit" %}
-        Vector3 desired = _target.position + _target.rotation * offset;
+        Vector3 desired = _followRoot.position + _followRoot.rotation * offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
-        transform.LookAt(_target);
+        transform.LookAt(_target.position);
 {% elif variant == "rts_pan_zoom" %}
         // RTS: edge-pan with mouse + scroll zoom on Y
         Vector3 p = transform.position;
@@ -226,16 +246,16 @@ public class {{ s.name }} : MonoBehaviour
         transform.position = p;
 {% elif variant == "cinematic_dolly" %}
         // Dolly: drift toward target along its forward axis
-        Vector3 desired = _target.position + _target.forward * offset.z + Vector3.up * offset.y;
+        Vector3 desired = _followRoot.position + _followRoot.forward * offset.z + Vector3.up * offset.y;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
-        transform.LookAt(_target);
+        transform.LookAt(_target.position);
 {% elif variant.startswith("cinemachine_") %}
         // Cinemachine variant: this script just hosts the follow target — the actual
         // camera lives on a CinemachineCamera in the scene. Drop a CinemachineCamera and
         // assign its Follow/LookAt to the target found here.
-        Vector3 desired = _target.position + offset;
+        Vector3 desired = _followRoot.position + offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
-        transform.LookAt(_target);
+        transform.LookAt(_target.position);
 {% elif variant == "vehicle_chase" %}
         // Low, forward-facing motorcycle chase framing. The target root is
         // kept as the physics anchor; the visual Body pivot supplies the
@@ -289,25 +309,172 @@ public class {{ s.name }} : MonoBehaviour
         float targetFov = Mathf.Lerp(fovBase, fovSprint, speedCurve);
         _cam.fieldOfView = Mathf.Lerp(
             _cam.fieldOfView, targetFov, 1f - Mathf.Exp(-8f * Time.deltaTime));
+{% elif variant == "climbing_follow" %}
+        // Shoulder framing keeps the climber in the lower-right while the
+        // wall and route remain readable on the left/upper field of view.
+        // The player faces the wall, so local Z is not a safe camera-side
+        // contract. Derive the side from the same tagged hold plane that the
+        // controller uses, keeping the shoulder camera outside the cliff.
+        Vector3 wallNormal = FindClimbingWallNormal();
+        Vector3 desired = _followRoot.position
+            + wallNormal * Mathf.Abs(offset.z)
+            + Vector3.up * offset.y
+            + _followRoot.rotation * (Vector3.right * offset.x);
+        bool snapClimbingCamera = !_climbingCameraInitialized;
+        transform.position = snapClimbingCamera
+            ? desired
+            : Vector3.SmoothDamp(transform.position, desired,
+                                 ref _vel, smoothTime);
+        _climbingCameraInitialized = true;
+
+        Vector3 lookPoint = _target.position + Vector3.up * 0.25f;
+        Transform nextRoutePoint = FindNextRoutePoint();
+        if (nextRoutePoint != null)
+            lookPoint = Vector3.Lerp(lookPoint,
+                                     nextRoutePoint.position + Vector3.up * 0.25f,
+                                     0.25f);
+        Transform summit = FindSummitPoint();
+        if (summit != null)
+            lookPoint = Vector3.Lerp(lookPoint,
+                                     summit.position + Vector3.up * 0.45f,
+                                     0.03f);
+        // Look-ahead must not pan the climber out of the frame. The next hold
+        // and summit still bias the horizontal composition, but the vertical
+        // aim stays within a torso-to-next-hold window so the visibility gate
+        // remains a real camera contract rather than a scene-only assertion.
+        lookPoint.y = Mathf.Clamp(lookPoint.y,
+                                  _target.position.y - 0.25f,
+                                  _target.position.y + 0.65f);
+        Vector3 lookVector = lookPoint - transform.position;
+        if (lookVector.sqrMagnitude > 0.001f)
+            transform.rotation = snapClimbingCamera
+                ? Quaternion.LookRotation(lookVector, Vector3.up)
+                : Quaternion.Slerp(
+                    transform.rotation,
+                    Quaternion.LookRotation(lookVector, Vector3.up),
+                    1f - Mathf.Exp(-10f * Time.deltaTime));
 {% else %}
         // follow
-        Vector3 desired = _target.position + _target.rotation * offset;
+        Vector3 desired = _followRoot.position + _followRoot.rotation * offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
-        transform.LookAt(_target);
+        transform.LookAt(_target.position);
 {% endif %}
 
 {% if s.collision_avoidance %}
-        // Collision avoidance: pull camera closer if something is between it and the target
-        if (_target != null)
+        // Collision avoidance: pull camera closer if something is between the
+        // focus pivot and the desired camera point. Ignore the player's own
+        // colliders; a Raycast from the pivot otherwise hits the blacksmith's
+        // capsule/mesh and pins the camera inside the player.
+        if (_target != null && _followRoot != null)
         {
             Vector3 dir = transform.position - _target.position;
-            if (Physics.Raycast(_target.position, dir.normalized, out RaycastHit hit, dir.magnitude, occlusionMask))
-                transform.position = hit.point - dir.normalized * 0.2f;
+            float distance = dir.magnitude;
+            if (distance > 0.01f)
+            {
+                RaycastHit[] hits = Physics.RaycastAll(
+                    _target.position, dir / distance, distance, occlusionMask,
+                    QueryTriggerInteraction.Ignore);
+                float nearest = distance;
+                foreach (var hit in hits)
+                {
+                    if (hit.transform == _followRoot
+                        || hit.transform.IsChildOf(_followRoot)) continue;
+                    nearest = Mathf.Min(nearest, hit.distance);
+                }
+                if (nearest < distance)
+                    transform.position = _target.position
+                        + dir / distance * Mathf.Max(0.25f, nearest - 0.2f);
+{% if variant == "climbing_follow" %}
+                // A sphere cast adds clearance around the shoulder camera, so
+                // a cliff edge cannot clip through the view even when its
+                // collider is thinner than the camera ray.
+                if (Physics.SphereCast(_target.position, 0.30f, dir / distance,
+                                       out RaycastHit shoulderHit, distance,
+                                       occlusionMask, QueryTriggerInteraction.Ignore)
+                    && shoulderHit.transform != _followRoot
+                    && !shoulderHit.transform.IsChildOf(_followRoot))
+                {
+                    transform.position = _target.position
+                        + dir / distance * Mathf.Max(0.35f, shoulderHit.distance - 0.25f);
+                }
+{% endif %}
+            }
         }
+{% endif %}
+{% if variant == "climbing_follow" %}
+        // Collision avoidance may move the camera closer to the focus pivot;
+        // recompute the view from that final position so the wall-side ray
+        // cannot leave the player outside the frustum.
+        Vector3 correctedLook = lookPoint - transform.position;
+        if (correctedLook.sqrMagnitude > 0.001f)
+            transform.rotation = snapClimbingCamera
+                ? Quaternion.LookRotation(correctedLook, Vector3.up)
+                : Quaternion.Slerp(
+                    transform.rotation,
+                    Quaternion.LookRotation(correctedLook, Vector3.up),
+                    1f - Mathf.Exp(-14f * Time.deltaTime));
 {% endif %}
 {{ inject.lifecycle(s.update_extra) }}
 {% endif %}
     }
+{% if variant == "climbing_follow" %}
+
+    private Transform FindNextRoutePoint()
+    {
+        if (_followRoot == null) return null;
+        Transform best = null;
+        float bestDelta = float.MaxValue;
+        try
+        {
+            foreach (string tag in new[] { "Hold", "Platform" })
+            {
+                foreach (GameObject candidate in GameObject.FindGameObjectsWithTag(tag))
+                {
+                    if (candidate == null || candidate.transform == _followRoot) continue;
+                    float dy = candidate.transform.position.y - _followRoot.position.y;
+                    if (dy <= 0.35f || dy >= bestDelta) continue;
+                    best = candidate.transform;
+                    bestDelta = dy;
+                }
+            }
+        }
+        catch (UnityException) { }
+        return best;
+    }
+
+    private Transform FindSummitPoint()
+    {
+        try
+        {
+            GameObject summit = GameObject.FindWithTag("Checkpoint");
+            if (summit != null) return summit.transform;
+        }
+        catch (UnityException) { }
+        return null;
+    }
+
+    private Vector3 FindClimbingWallNormal()
+    {
+        if (_followRoot == null) return Vector3.forward;
+        float plane = 0f;
+        int count = 0;
+        try
+        {
+            foreach (string tag in new[] { "Hold", "Platform" })
+                foreach (GameObject candidate in GameObject.FindGameObjectsWithTag(tag))
+                {
+                    if (candidate == null) continue;
+                    plane += candidate.transform.position.z;
+                    count++;
+                }
+        }
+        catch (UnityException) { }
+        if (count == 0)
+            return -_followRoot.forward;
+        plane /= count;
+        return _followRoot.position.z >= plane ? Vector3.forward : Vector3.back;
+    }
+{% endif %}
 {{ inject.fixed_update(s) }}
 {{ inject.methods(s) }}{{ inject.extensions_methods(s) }}
 }

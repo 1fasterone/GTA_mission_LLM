@@ -35,6 +35,9 @@ PlayerSettings:
     renderViewportScale: 1
     enableStereoCapture: 0
   colorSpace: {{ "1" if color_space == "Linear" else "0" }}
+  # Unity 6 reads m_ActiveColorSpace; keep the legacy colorSpace key above for
+  # older editors, but make the active setting explicit for HDRP compatibility.
+  m_ActiveColorSpace: {{ "1" if color_space == "Linear" or render_pipeline == "HDRP" else "0" }}
   m_EnableMetalAPIValidation: 1
   m_StackTraceTypes:
   - 1

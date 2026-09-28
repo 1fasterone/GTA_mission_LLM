@@ -102,10 +102,11 @@ public class {{ s.name }} : MonoBehaviour
         if (RenderSettings.ambientMode == AmbientMode.Skybox
             && AmbientProbeLuminance() < ambientLuminanceFloor)
         {
-            RenderSettings.ambientMode = AmbientMode.Trilight;
+            RenderSettings.ambientMode = AmbientMode.Flat;
+            RenderSettings.ambientLight = ambientSky;
             DynamicGI.UpdateEnvironment();
             Debug.LogWarning("[{{ s.name }}] Skybox ambient resolved to black; " +
-                             "fell back to the baked Trilight gradient.");
+                             "fell back to the baked Flat ambient color.");
         }
     }
 
@@ -224,7 +225,10 @@ public class {{ s.name }} : MonoBehaviour
         }
         // No skybox available at all — a Skybox ambient mode would sample black.
         if (RenderSettings.ambientMode == AmbientMode.Skybox)
-            RenderSettings.ambientMode = AmbientMode.Trilight;
+        {
+            RenderSettings.ambientMode = AmbientMode.Flat;
+            RenderSettings.ambientLight = ambientSky;
+        }
     }
 
     private static bool HasAtmosphereController()
@@ -254,7 +258,8 @@ public class {{ s.name }} : MonoBehaviour
     /// </summary>
     public void RepairMaterials()
     {
-        Shader fallback = Shader.Find("Universal Render Pipeline/Lit")
+        Shader fallback = Shader.Find("{% if s.meta.get("render_pipeline", "URP") == "HDRP" %}HDRP/Lit{% else %}Universal Render Pipeline/Lit{% endif %}")
+                       ?? Shader.Find("Universal Render Pipeline/Lit")
                        ?? Shader.Find("Standard")
                        ?? Shader.Find("Sprites/Default");
         if (fallback == null) return;

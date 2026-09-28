@@ -2268,6 +2268,7 @@ def subsystems_for(
     behavior_trees = None,           # schema.behavior_trees: list[AIBehaviorTree]
     environment    = None,           # schema.environment: Optional[EnvironmentSpec]
     visual_style:  str              = "stylized",   # schema.visual_style
+    render_pipeline: str            = "URP",        # schema.render_pipeline
     palette_rgb:   dict | None      = None,         # {slot: {r,g,b}} — see unity_generator
     cover_points:  dict | None      = None,         # schema.meta["cover_points"] — see unity_cover_points.py
 ) -> list[Subsystem]:
@@ -2512,7 +2513,36 @@ def subsystems_for(
     # see _CAMERA_PRESETS["2.5D"] in unity_generator.py: y=3, z=-8, ~21 deg
     # down-tilt). Every other camera variant is fine with CameraRigSchema's
     # defaults.
-    cam_opts: dict = {"offset_y": 3.0, "offset_z": -8.0} if cam == "follow_2_5d" else {}
+    # VerticalSurface scenes put the climb face in the X/Y plane with the
+    # player in front of it (+Z).  The generic follow preset's -Z offset would
+    # put the camera behind the wall, which is why the Game view can show only
+    # a blown-out background while the player still exists.  This is derived
+    # from the existing natural-language brief signals; it does not add a new
+    # schema field or ask the pipeline model to choose a camera transform.
+    _ascent_camera_signal = any(token in prompt_low for token in (
+        "climb", "climbing", "climber", "handhold", "ledge", "summit",
+        "mountain ascent", "vertical wall", "rock face"))
+    if not ui_first and ctrl == "third_person" and _ascent_camera_signal:
+        # A climbing brief is not a free-walk third-person game.  Route input,
+        # wall-facing rotation, stamina state, and camera look-ahead are one
+        # deterministic control contract selected here from existing prompt /
+        # schema signals; the Pipeline LLM still only fills the IR.
+        ctrl = "climbing"
+        ctrl_opts["climbing_contract"] = True
+    if cam == "follow_2_5d":
+        cam_opts: dict = {"offset_y": 3.0, "offset_z": -8.0}
+    elif cam == "follow" and _ascent_camera_signal:
+        cam_opts = {
+            "offset_x": 2.25,
+            "offset_y": 2.8,
+            # The climber faces -Z toward the wall; a negative local Z keeps
+            # the shoulder camera on the player side of the cliff.
+            "offset_z": -5.8,
+            "collision_avoidance": True,
+        }
+        cam = "climbing_follow"
+    else:
+        cam_opts = {}
 
     # trigger/interactable need to know the project's dimension so their
     # generated scripts author Collider2D + OnTrigger*2D callbacks instead of
@@ -2543,7 +2573,10 @@ def subsystems_for(
     light_variant = _lighting_variant(
         gt, visual_style=visual_style, time_of_day=_tod,
         explicit_env=environment is not None, user_prompt=prompt_low, scenes=scenes)
-    light_opts: dict = {"meta": {"game_type": game_type or "3D"}}
+    light_opts: dict = {"meta": {
+        "game_type": game_type or "3D",
+        "render_pipeline": render_pipeline or "URP",
+    }}
     if palette_rgb:
         light_opts["meta"]["palette_rgb"] = palette_rgb
 

@@ -134,6 +134,12 @@ _SPAWN_CLEARANCE_BY_LOCOMOTION = {"drive": 6.0, "fly": 8.0, "swim": 6.0}
 _SPAWN_CLEARANCE_DEFAULT = 3.0
 
 _LAYOUT_PLACEMENTS = frozenset({"single", "line", "ring", "grid", "scatter"})
+# A vertical surface also accepts a path group.  Path is a real schema
+# placement, not an authored-scene marker: on an ascent it is the natural
+# declaration for ledges/holds that the surface primitive must distribute over
+# the climb face.  Keep the broader set local to this primitive so other
+# archetypes retain their existing placement contracts.
+_SURFACE_LAYOUT_PLACEMENTS = _LAYOUT_PLACEMENTS | frozenset({"path"})
 
 # ── VerticalCorridor ─────────────────────────────────────────────────────────
 # Stratification band, as a fraction of corridor height H. The player spawns AT
@@ -1309,7 +1315,19 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
     msgs.append(f"Reach distance {reach:g} m ({why_reach}) — maximum gap "
                 "between successive holds")
 
-    layoutable = [e for e in schema.entities if e.placement in _LAYOUT_PLACEMENTS]
+    layoutable = [e for e in schema.entities
+                  if e.placement in _SURFACE_LAYOUT_PLACEMENTS]
+    # The model-aware relayout runs after the first deterministic layout pass.
+    # Generated positions are outputs of that pass, not authored input. If
+    # they are left in place, _measure_and_size treats them as preplaced and a
+    # goal/ledge can never be moved to the wall on pass two. Scene Compiler
+    # layouts are the explicit exception: their transforms are source data and
+    # must remain untouched.
+    if not bool(schema.meta.get("authored_scene")):
+        for e in layoutable:
+            e.instance_positions = []
+            e.instance_yaws = []
+            e.origin_offset = [0.0, 0.0]
     preplaced, packable = _measure_and_size(layoutable, footprints)
 
     # ── Roles ────────────────────────────────────────────────────────────────
@@ -1487,15 +1505,29 @@ def _layout_vertical_surface(schema: UnitySchema, arch: LayoutArchetype,
         ]
         seed_circles += [(e.origin_offset[0], e.origin_offset[1], e.group_radius)
                          for e in preplaced]
-        slots = _pack_groups(ground, seed_circles)
-        for e in ground:
+        background = [e for e in ground if any(word in e.name.lower()
+                     for word in ("background", "backdrop", "valley", "skyline"))]
+        ordinary_ground = [e for e in ground if e not in background]
+        slots = _pack_groups(ordinary_ground, seed_circles)
+        for e in ordinary_ground:
             cx, cz, _r = slots[e.name]
             e.origin_offset = [round(cx, 3), round(cz, 3)]
             e.instance_positions = _bake_positions(
                 e, _effective_spacing(e, footprints), cx, cz,
                 (footprints or {}).get(e.name, 0.0) * e.scale)
+        for e in background:
+            # A valley/backdrop belongs to the composition's negative space,
+            # left of the wall from the climbing camera, rather than in the
+            # route's playable footprint.
+            cx = round(-half_width - e.group_radius - _GROUP_MARGIN, 3)
+            cz = round(-_SURFACE_BASE_DEPTH * 0.35, 3)
+            e.origin_offset = [cx, cz]
+            e.instance_positions = _bake_positions(
+                e, _effective_spacing(e, footprints), cx, cz,
+                (footprints or {}).get(e.name, 0.0) * e.scale)
+        packed_names = [e.name for e in ordinary_ground + background]
         msgs.append(f"Packed {len(ground)} non-wall group(s) on the ground "
-                    f"plane around the base ({', '.join(e.name for e in ground)})")
+                    f"plane around the base ({', '.join(packed_names)})")
 
     _attach_regions(schema, _regions_for(packable, preplaced))
     return msgs
