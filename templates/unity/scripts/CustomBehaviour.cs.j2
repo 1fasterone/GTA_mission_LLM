@@ -5,8 +5,9 @@ using UnityEngine;
 {% if atom_body %}
 using System.Collections;
 {% endif %}
-{% set climbing_interaction = climbing_contract and script.name|lower == "climbinteraction" %}
-{% set climbing_stamina = climbing_contract and script.name|lower == "staminasystem" %}
+{% set climbing_contract_enabled = climbing_contract|default(false, true) %}
+{% set climbing_interaction = climbing_contract_enabled and script.name|lower == "climbinteraction" %}
+{% set climbing_stamina = climbing_contract_enabled and script.name|lower == "staminasystem" %}
 {% if climbing_interaction or climbing_stamina %}
 using System.Collections.Generic;
 {% endif %}
