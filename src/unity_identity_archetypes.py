@@ -204,6 +204,7 @@ def _normalize_attribute_bundle(raw: Any, *, label: str) -> dict[str, Any]:
                     f"attribute bundle {label}.{category} has unknown field {field_name!r}"
                 )
             is_list = (category, field_name) in _ATTRIBUTE_LIST_FIELDS
+            normalized_value: Any
             if is_list:
                 if isinstance(value, str):
                     value = [value]
@@ -634,6 +635,7 @@ def resolve_identity(*, name: str = "", kind: str = "", model_hint: str = "",
             matches.append((noun_len, 2, noun, target))
         if _phrase_present(name_tokens, noun):
             matches.append((noun_len, 1, noun, target))
+    matched_terms: tuple[str, ...] = ()
     if matches:
         _, _, noun, target = max(matches, key=lambda row: (row[0], row[1], row[2], row[3]))
         identity = archetypes[target]
@@ -647,7 +649,6 @@ def resolve_identity(*, name: str = "", kind: str = "", model_hint: str = "",
 
         identity = None
         rule = "no_identity_signal"
-        matched_terms: tuple[str, ...] = ()
         used_fallback = True
 
         # Context/primary rules are more specific than morphology rules,
@@ -694,6 +695,7 @@ def resolve_identity(*, name: str = "", kind: str = "", model_hint: str = "",
         if identity is None:
             return IdentityResolution()
 
+    assert identity is not None
     confidence_tier, confidence = _confidence_value(confidence_tiers, rule)
     attributes = deepcopy(identity.attributes)
     attribute_confidence = _confidence_shape(attributes, confidence)
