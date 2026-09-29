@@ -23,6 +23,10 @@ from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
 from .unity_atmosphere import assert_aaa_contract
+from .unity_greybox import (GREYBOX_SCRIPT_TYPES, apply_greybox_spatial_layout,
+                             greybox_plus_ir_for_schema, greybox_ir_for_schema,
+                             is_geometry_only_greybox, is_greybox_enabled,
+                             is_greybox_plus_enabled, unity_greybox_asset_payload)
 from .micro.code_fields import (CodeField, lint_extensible, _code_mask,
                                 _code_brace_depth, _code_paren_depth)
 
@@ -307,7 +311,7 @@ _SCRIPT_TEMPLATES = {
     "mesh_builder":     "MeshBuilder.cs.j2",
     "material_palette": "MaterialPalette.cs.j2",
     "custom":           "CustomBehaviour.cs.j2",
-    # level_generator is an Editor script — handled separately in generate()
+    # Greybox generators are Editor scripts — handled separately in generate().
 }
 
 # ── Custom-type stub emitter ───────────────────────────────────────────────────
@@ -3001,6 +3005,12 @@ class UnityProjectGenerator:
         obstacles USED to be, and the cover_shooter AI ships them. Whoever
         moves the layout re-derives what was computed from it.
         """
+        # In greybox mode the room/corridor IR owns the world coordinate frame.
+        # Asset footprints may inform later QA, but must never repack entities
+        # out of their ProBuilder rooms.
+        if is_greybox_enabled(schema):
+            return
+
         from .unity_cover_points import META_KEY, compute_cover_points
         from .unity_layout import compute_layout
 
@@ -3029,6 +3039,99 @@ class UnityProjectGenerator:
                       "layout: %d -> %d point(s)",
                       sum(len(v) for v in before.values()),
                       sum(len(v) for v in (after or {}).values()))
+
+    def _generate_greybox_only_files(self, schema: UnitySchema,
+                                     manifest_deps: dict[str, str]) -> dict[str, str]:
+        """Emit a clean project shell with no gameplay, art or runtime assets."""
+        pn = schema.project_name
+        ir = greybox_ir_for_schema(schema)
+        ev, revision = _VERSION_MAP.get(
+            schema.unity_version, ("6000.0.66f2", "0000000000000")
+        )
+        title = _to_display_title(pn)
+        base_ctx = {
+            "project_name": pn,
+            "display_title": title,
+            "company_name": schema.company_name,
+            "platform": "pc",
+            "features": [],
+            "game_type": "3D",
+            "render_pipeline": "builtin",
+            "color_space": "Gamma",
+        }
+        files: dict[str, str] = {
+            f"{pn}/ProjectVersion.txt": self._render(
+                "ProjectVersion.txt.j2",
+                {"editor_version": ev, "editor_revision": revision},
+            ),
+            f"{pn}/Packages/manifest.json": self._render(
+                "manifest.json.j2",
+                {"dependencies": manifest_deps},
+            ),
+            f"{pn}/ProjectSettings/ProjectSettings.asset": self._render(
+                "ProjectSettings.asset.j2",
+                {**base_ctx, "product_guid": _make_guid(pn)},
+            ),
+            f"{pn}/ProjectSettings/EditorBuildSettings.asset": self._render(
+                "EditorBuildSettings.asset.j2",
+                {"scenes": [], "scene_guids": {}},
+            ),
+        }
+
+        canonical_path = f"{pn}/Assets/Greybox/{pn}.greybox.json"
+        unity_path = f"{pn}/Assets/Greybox/{pn}.greybox.unity.json"
+        editor_path = f"{pn}/Assets/Editor/GreyboxLevelGenerator.cs"
+        files[canonical_path] = json.dumps(
+            ir.model_dump(mode="json"), indent=2, ensure_ascii=False
+        ) + "\n"
+        files[unity_path] = json.dumps(
+            unity_greybox_asset_payload(ir), indent=2, ensure_ascii=False
+        ) + "\n"
+        files[editor_path] = self._render(
+            "LevelGenerator.cs.j2",
+            {"project_name": pn, "greybox_seed": ir.seed},
+        )
+        files[f"{canonical_path}.meta"] = _default_meta(
+            _make_guid(f"{pn}/Greybox/{pn}.greybox")
+        )
+        files[f"{unity_path}.meta"] = _default_meta(
+            _make_guid(f"{pn}/Greybox/{pn}.greybox.unity")
+        )
+        if is_greybox_plus_enabled(schema):
+            plus_ir = greybox_plus_ir_for_schema(schema, ir)
+            plus_path = f"{pn}/Assets/Greybox/{pn}.greybox_plus.json"
+            files[plus_path] = json.dumps(
+                plus_ir.model_dump(mode="json"), indent=2, ensure_ascii=False
+            ) + "\n"
+            files[f"{plus_path}.meta"] = _default_meta(
+                _make_guid(f"{pn}/Greybox/{pn}.greybox_plus")
+            )
+        for folder in ("Assets/Greybox", "Assets/Editor", "Assets/Scenes"):
+            files[f"{pn}/{folder}.meta"] = _default_meta(
+                _make_guid(f"{pn}/{folder}"), folder=True
+            )
+        files[f"{editor_path}.meta"] = _meta_file(
+            _make_guid(f"{pn}/Editor/GreyboxLevelGenerator")
+        )
+        files[f"{pn}/README.md"] = (
+            f"# {title} — geometry-only greybox\n\n"
+            f"Seed: `{ir.seed}`  \n"
+            f"Rooms: {len(ir.rooms)}  \n"
+            f"Corridors: {len(ir.corridors)}  \n"
+            f"Boss depth: {ir.boss_depth}\n\n"
+            "On first open, the Editor bootstrap builds and saves the ProBuilder "
+            "world to `Assets/Scenes/Main.unity`. Regenerate with **Tools → "
+            f"{title} → Generate Greybox**. The canonical source is "
+            f"`Assets/Greybox/{pn}.greybox.json`.\n"
+        )
+        if is_greybox_plus_enabled(schema):
+            files[f"{pn}/README.md"] += (
+                "\nGreybox+ planning evidence is recorded in "
+                f"`Assets/Greybox/{pn}.greybox_plus.json`. It contains image "
+                "provenance and deterministic Macro/Meso/Micro primitive roles; "
+                "it does not add final-art assets.\n"
+            )
+        return files
 
     def _resolve_all_models(self, schema: UnitySchema, lookups_dir: str,
                             model_source_dir: str | None,
@@ -3159,8 +3262,22 @@ class UnityProjectGenerator:
         `_GameSystems` GameObject carrying one MonoBehaviour per composed micro,
         referenced by its deterministic .cs.meta GUID.
         """
+        if is_geometry_only_greybox(schema):
+            return self._generate_greybox_only_files(schema, manifest_deps)
+
         files: dict[str, str] = {}
         pn = schema.project_name
+
+        # The ProBuilder greybox is the world coordinate authority for an
+        # explicitly greybox-enabled build.  Stamp the deterministic IR before
+        # model-aware relayout or template rendering so the generated project,
+        # spatial sidecars and Step 7 all read one contract.  Theme/twist data
+        # never enters this path; geometry-only IR forces theme="none".
+        greybox_ir = None
+        if is_greybox_enabled(schema):
+            greybox_ir = greybox_ir_for_schema(schema)
+            for message in apply_greybox_spatial_layout(schema, greybox_ir):
+                _log.info("[greybox] %s", message)
 
         # ── Custom-script lint pass ───────────────────────────────────────────
         # LLM-authored C# fragments are defensively cleaned before any render
@@ -3596,6 +3713,9 @@ class UnityProjectGenerator:
             "materials":         schema.materials,
             "shaders":           schema.shaders,
             "climbing_contract": _is_climbing_contract(schema),
+            "greybox_enabled":   greybox_ir is not None,
+            "greybox_ir":        greybox_ir.model_dump(mode="json") if greybox_ir else None,
+            "greybox_seed":      greybox_ir.seed if greybox_ir else 0,
         }
 
         _ev, _er = _VERSION_MAP.get(schema.unity_version, ("6000.0.66f2", "0000000000000"))
@@ -3606,6 +3726,29 @@ class UnityProjectGenerator:
         files[f"{pn}/Packages/manifest.json"] = self._render(
             "manifest.json.j2", {**base_ctx, "dependencies": manifest_deps}
         )
+
+        if greybox_ir is not None:
+            greybox_asset = f"{pn}/Assets/Greybox/{pn}.greybox.json"
+            files[greybox_asset] = json.dumps(
+                greybox_ir.model_dump(mode="json"),
+                indent=2,
+                ensure_ascii=False,
+            ) + "\n"
+            files[f"{greybox_asset}.meta"] = _default_meta(
+                _make_guid(f"{pn}/Greybox/{pn}.greybox")
+            )
+            files[f"{pn}/Assets/Greybox.meta"] = _default_meta(
+                _make_guid(f"{pn}/Assets/Greybox"), folder=True
+            )
+            unity_asset = f"{pn}/Assets/Greybox/{pn}.greybox.unity.json"
+            files[unity_asset] = json.dumps(
+                unity_greybox_asset_payload(greybox_ir),
+                indent=2,
+                ensure_ascii=False,
+            ) + "\n"
+            files[f"{unity_asset}.meta"] = _default_meta(
+                _make_guid(f"{pn}/Greybox/{pn}.greybox.unity")
+            )
 
         files[f"{pn}/ProjectSettings/ProjectSettings.asset"] = self._render(
             "ProjectSettings.asset.j2", {**base_ctx, "product_guid": _make_guid(pn)}
@@ -3772,7 +3915,7 @@ class UnityProjectGenerator:
             script_content, script_path = self._generate_script(
                 schema, script, base_ctx, _stub_known_types)
             if "/_skip_" in script_path:
-                continue  # level_generator handled separately as Editor script
+                continue  # greybox generator handled separately as Editor script
             files[script_path]           = script_content
             files[f"{script_path}.meta"] = _meta_file(
                 _make_guid(f"{pn}/Scripts/{script.name}")
@@ -3951,19 +4094,17 @@ class UnityProjectGenerator:
             })
             files[f"{gs_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/GameSequencer"))
 
-        # ── Level Generator editor script (ProBuilder) ────────────────────────
+        # ── Deterministic ProBuilder greybox editor script ────────────────────
         _stypes = {s.type for s in schema.scripts}
-        if "level_generator" in _stypes:
-            for sc in schema.scripts:
-                if sc.type != "level_generator":
-                    continue
-                ed_path = f"{pn}/Assets/Editor/{sc.name}.cs"
-                files[ed_path]            = self._render("LevelGenerator.cs.j2", {
-                    **base_ctx, "script": sc,
-                })
-                files[f"{ed_path}.meta"]  = _meta_file(
-                    _make_guid(f"{pn}/Editor/{sc.name}")
-                )
+        _greybox_scripts = [s for s in schema.scripts if s.type in GREYBOX_SCRIPT_TYPES]
+        if _greybox_scripts:
+            ed_path = f"{pn}/Assets/Editor/GreyboxLevelGenerator.cs"
+            files[ed_path] = self._render("LevelGenerator.cs.j2", {
+                **base_ctx, "script": _greybox_scripts[0],
+            })
+            files[f"{ed_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Editor/GreyboxLevelGenerator")
+            )
 
         # ── Kenney asset importer editor script ──────────────────────────────
         if kenney_assets:
@@ -3973,9 +4114,9 @@ class UnityProjectGenerator:
                 _make_guid(f"{pn}/Editor/KenneyImporter")
             )
 
-        # ── Editor folder (shared by SetupRenderPipeline + LevelGenerator + KenneyImporter) ─
+        # ── Editor folder (shared by SetupRenderPipeline + greybox + KenneyImporter) ─
         # (only create if not already handled by the URP/HDRP block below)
-        has_editor_content = "level_generator" in _stypes or bool(kenney_assets)
+        has_editor_content = bool(_greybox_scripts) or bool(kenney_assets)
         if has_editor_content and schema.render_pipeline == "builtin":
             files[f"{pn}/Assets/Editor.meta"] = _default_meta(
                 _make_guid(f"{pn}/Assets/Editor"), folder=True
@@ -4142,8 +4283,8 @@ class UnityProjectGenerator:
         """file (relative to project root) -> source template path under templates/unity/."""
         m: dict[str, str] = {}
         for s in schema.scripts:
-            if s.type == "level_generator":
-                m[f"Assets/Editor/{s.name}.cs"] = "editor/LevelGenerator.cs.j2"
+            if s.type in GREYBOX_SCRIPT_TYPES:
+                m["Assets/Editor/GreyboxLevelGenerator.cs"] = "editor/LevelGenerator.cs.j2"
                 continue
             tpl = _SCRIPT_TEMPLATES.get(s.type)
             if tpl:
@@ -4280,6 +4421,11 @@ class UnityProjectGenerator:
                 enabled=bool((project_config or {}).get("unity_pipeline", {})
                              .get("syntax_gate", True)),
                 label="generated script(s)")
+
+        # Geometry-only output intentionally has no model, texture, material,
+        # lighting, runtime-script or gameplay-asset fulfilment phase.
+        if is_geometry_only_greybox(schema):
+            return root / schema.project_name, len(files)
 
         # Binary model copies. Same _resolve_all_models call as generate() —
         # deterministic, so the .meta files emitted there and the binaries
@@ -4515,8 +4661,8 @@ class UnityProjectGenerator:
         tpl_file = _SCRIPT_TEMPLATES.get(script.type)
         pn       = schema.project_name
 
-        # level_generator lives in Assets/Editor — handled in generate(); emit nothing here
-        if script.type == "level_generator":
+        # Greybox generators live in Assets/Editor — handled in generate(); emit nothing here.
+        if script.type in GREYBOX_SCRIPT_TYPES:
             return "", f"{pn}/Assets/Scripts/_skip_{script.name}"
 
         path = f"{pn}/Assets/Scripts/{script.name}.cs"

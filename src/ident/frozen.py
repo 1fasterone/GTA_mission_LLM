@@ -71,6 +71,13 @@ SITES: tuple[DigestSite, ...] = (
                "keep",
                "contract: exact SHA-256 verifies a locked visual asset binding "
                "against its fulfilment manifest"),
+    DigestSite("src/unity_greybox.py", "_canonical_sha256", 1, "keep",
+               "contract: Greybox+ source_greybox_sha256 binds the canonical "
+               "dungeon IR embedded in its sidecar"),
+    DigestSite("src/unity_greybox.py", "stamp_greybox_plus_reference", 2,
+               "keep",
+               "contract: raw SHA-256 provenance binds the exact reference "
+               "image bytes and visual-context text accepted before Step 4"),
 
     # ── output seeds ──────────────────────────────────────────────────────────
     DigestSite("src/audio/content.py", "_seed_for", 1, "keep",
@@ -89,6 +96,9 @@ SITES: tuple[DigestSite, ...] = (
     DigestSite("src/unity_entity_asset_resolver.py", "_stable_seed", 1, "keep",
                "output seed: the catalog variety-rotation draw that picks each "
                "entity's model"),
+    DigestSite("src/unity_greybox.py", "_seed_from_schema", 1, "keep",
+               "output seed: project-name fallback for the deterministic "
+               "dungeon layout when no explicit seed is supplied"),
 
     # ── wrapped / machine-stable local keys ───────────────────────────────────
     DigestSite("src/blender/cache.py", "BlenderCache.fingerprint", 1, "keep",

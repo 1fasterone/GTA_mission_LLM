@@ -14,8 +14,10 @@
 //
 // NOT part of normal generated output. The verify harness removes it afterward.
 
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using System.Text;
 using UnityEditor;
 using UnityEditor.Compilation;
@@ -86,12 +88,75 @@ public static class CompileCheck
         CompilationPipeline.compilationFinished         -= OnCompilationFinished;
         EditorApplication.update                        -= OnUpdate;
 
+        if (_errors.Count == 0)
+            VerifyGeneratedGreyboxScene();
+
         WriteReport();
 
         int code = _errors.Count > 0 ? 1 : 0;
         Debug.Log("[CompileCheck] done — errors=" + _errors.Count +
                   " warnings=" + _warnings.Count + " exit=" + code);
         EditorApplication.Exit(code);
+    }
+
+    // A static Step 7 score cannot prove that editor-only generation actually
+    // built a scene. If this project ships the deterministic greybox generator,
+    // run its public entry point and require the saved scene.
+    // Reflection keeps this isolated asmdef independent of Assembly-CSharp-
+    // Editor, so ordinary compile failures still produce a useful report.
+    private static void VerifyGeneratedGreyboxScene()
+    {
+        const string generatorName = "GreyboxLevelGenerator";
+        Type generator = null;
+        foreach (System.Reflection.Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            generator = assembly.GetType(generatorName, false);
+            if (generator != null) break;
+        }
+
+        // This is not a greybox project; compilation is the complete gate.
+        if (generator == null) return;
+
+        MethodInfo generate = generator.GetMethod(
+            "GenerateAndSavePreviewScene",
+            BindingFlags.Public | BindingFlags.Static);
+        if (generate == null)
+        {
+            _errors.Add(Encode(
+                "Assets/Editor/GreyboxLevelGenerator.cs", 0, 0,
+                "Greybox generator is missing public GenerateAndSavePreviewScene()."));
+            return;
+        }
+
+        try
+        {
+            generate.Invoke(null, null);
+        }
+        catch (TargetInvocationException e)
+        {
+            Exception cause = e.InnerException ?? e;
+            _errors.Add(Encode(
+                "Assets/Editor/GreyboxLevelGenerator.cs", 0, 0,
+                "Greybox scene generation failed: " + cause.Message));
+            return;
+        }
+        catch (Exception e)
+        {
+            _errors.Add(Encode(
+                "Assets/Editor/GreyboxLevelGenerator.cs", 0, 0,
+                "Greybox scene generation failed: " + e.Message));
+            return;
+        }
+
+        string scenePath = Path.Combine(
+            Directory.GetParent(Application.dataPath).FullName,
+            "Assets", "Scenes", "Main.unity");
+        if (!File.Exists(scenePath))
+        {
+            _errors.Add(Encode(
+                "Assets/Scenes/Main.unity", 0, 0,
+                "Greybox generator completed without saving Assets/Scenes/Main.unity."));
+        }
     }
 
     private static void WriteReport()

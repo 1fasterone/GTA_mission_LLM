@@ -93,6 +93,58 @@ def test_unity_create_accepts_viz_alias_with_prompt_and_compose(tmp_path, monkey
     }
 
 
+def test_unity_create_requires_viz_for_greybox_plus():
+    result = CliRunner().invoke(
+        main.app,
+        ["unity-create", "industrial greybox", "--greybox-plus"],
+    )
+
+    assert result.exit_code == 1
+    assert "--greybox-plus requires --viz <reference-image>" in result.stdout
+
+
+def test_unity_create_wires_greybox_plus_to_source_viz(tmp_path, monkeypatch):
+    image = tmp_path / "industrial-reference.png"
+    image.write_bytes(b"png-bytes")
+    canonical_board = tmp_path / "visual-run" / "board.png"
+    context_path = tmp_path / "visual-run" / "context.txt"
+    context_path.parent.mkdir(parents=True)
+    context_path.write_text("tank | pipe | catwalk\n", encoding="utf-8")
+    config = tmp_path / "config.yaml"
+    config.write_text("lm_studio: {}\n", encoding="utf-8")
+    captured = {}
+
+    def fake_prepare_viz(source_image, output, cfg, overwrite=False):
+        assert source_image == image
+        return canonical_board, context_path
+
+    class FakePipeline:
+        def __init__(self, _config):
+            pass
+
+        def run(self, _prompt, **kwargs):
+            captured.update(kwargs)
+            return tmp_path
+
+    monkeypatch.setattr("cli.unity_project.UnityPipeline", FakePipeline)
+    monkeypatch.setattr("cli.unity_project._prepare_viz_reasoning", fake_prepare_viz)
+
+    result = CliRunner().invoke(
+        main.app,
+        [
+            "unity-create", "industrial greybox", "--greybox-plus", "--viz",
+            str(image), "--config", str(config),
+        ],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert captured["geometry_only"] is True
+    assert captured["greybox_plus"] is True
+    assert captured["greybox_plus_reference_image"] == image
+    assert captured["reference_image"] == canonical_board
+    assert captured["visual_context"] == "tank | pipe | catwalk\n"
+
+
 def test_prepare_viz_reasoning_runs_import_and_reason_contract(tmp_path, monkeypatch):
     source = tmp_path / "rallyboat.png"
     source.write_bytes(b"source-png")

@@ -36,7 +36,9 @@ Boundary — three different questions, three different graders:
 from __future__ import annotations
 
 import math
+import json
 import re
+from pathlib import Path
 from typing import Mapping, Optional
 
 from .unity_layout_archetype import pick_player_entity
@@ -45,6 +47,10 @@ from .unity_playability import (ERROR, WARN, Finding, PlayabilityReport,
                                 _is_objective, _objective_names, _ungraded,
                                 evaluate)
 from .unity_schema import UnitySchema, is_embodied
+from .unity_greybox import (DungeonGreyboxIR, GreyboxPlusIR,
+                            is_geometry_only_greybox, is_greybox_plus_enabled,
+                            unity_greybox_asset_payload,
+                            validate_greybox_plus_ir)
 
 # How far the emitted avatar may sit from the spawn the layout baked before it
 # counts as a different place. The merge writes y = baked_y + 1.0 (the capsule
@@ -391,11 +397,115 @@ def _check_objective_marker_present(schema: UnitySchema, files: Mapping[str, str
     rep.checks["objective_marker_present"] = present
 
 
+def _check_geometry_only_greybox_artifact(schema: UnitySchema,
+                                           files: Mapping[str, str],
+                                           rep: PlayabilityReport) -> None:
+    """Check that Step 6 actually emitted the isolated greybox project contract."""
+    canonical = next((content for path, content in files.items()
+                      if path.endswith(".greybox.json")), None)
+    plus_canonical = next((content for path, content in files.items()
+                           if path.endswith(".greybox_plus.json")), None)
+    unity_transport = next((content for path, content in files.items()
+                            if path.endswith(".greybox.unity.json")), None)
+    editor = next((content for path, content in files.items()
+                   if path.endswith("Assets/Editor/GreyboxLevelGenerator.cs")), None)
+    manifest = next((content for path, content in files.items()
+                     if path.endswith("Packages/manifest.json")), None)
+    errors: list[str] = []
+    if canonical is None:
+        errors.append("canonical greybox IR sidecar is missing")
+    else:
+        try:
+            sidecar_ir = json.loads(canonical)
+            schema_ir = (schema.meta or {}).get("greybox_ir", {})
+            if sidecar_ir != schema_ir:
+                errors.append("canonical greybox sidecar disagrees with the Step 7 schema IR")
+            if unity_transport is not None:
+                expected_transport = unity_greybox_asset_payload(
+                    DungeonGreyboxIR.model_validate(schema_ir)
+                )
+                if json.loads(unity_transport) != expected_transport:
+                    errors.append("Unity transport coordinates disagree with canonical greybox IR")
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"greybox sidecar is invalid: {exc}")
+    if unity_transport is None:
+        errors.append("Unity JsonUtility transport sidecar is missing")
+    if is_greybox_plus_enabled(schema):
+        if plus_canonical is None:
+            errors.append("Greybox+ canonical planning sidecar is missing")
+        else:
+            try:
+                plus_sidecar = json.loads(plus_canonical)
+                plus_schema = (schema.meta or {}).get("greybox_plus_ir", {})
+                if plus_sidecar != plus_schema:
+                    errors.append(
+                        "Greybox+ sidecar disagrees with the Step 7 schema IR"
+                    )
+                plus_report = validate_greybox_plus_ir(
+                    GreyboxPlusIR.model_validate(plus_sidecar)
+                )
+                if not plus_report.accepted:
+                    errors.extend(plus_report.errors)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                errors.append(f"Greybox+ sidecar is invalid: {exc}")
+    if editor is None:
+        errors.append("ProBuilder Editor generator is missing")
+    elif ("InitializeOnLoadMethod" not in editor
+          or "EnsureProjectScene" not in editor
+          or "GenerateAndSavePreviewScene" not in editor
+          or "NewSceneSetup.EmptyScene, NewSceneMode.Single" not in editor):
+        errors.append(
+            "Editor generator lacks the compile-correct saved-preview bootstrap "
+            "required for the Unity E2E")
+    if manifest is None:
+        errors.append("Unity package manifest is missing")
+    else:
+        try:
+            manifest_data = json.loads(manifest)
+            deps = (manifest_data.get("dependencies", {})
+                    if isinstance(manifest_data, dict) else {})
+        except (TypeError, ValueError):
+            deps = {}
+        if "com.unity.probuilder" not in deps:
+            errors.append("package manifest does not include ProBuilder")
+
+    runtime_scripts = [path for path in files
+                       if path.startswith("Assets/") and path.endswith(".cs")
+                       and not path.startswith("Assets/Editor/")]
+    if runtime_scripts:
+        errors.append("runtime/gameplay scripts were emitted: "
+                      + ", ".join(sorted(runtime_scripts)[:4]))
+    unexpected_assets = [
+        path for path in files
+        if path.startswith("Assets/")
+        and Path(path).suffix.lower() not in {".cs", ".json", ".meta", ".unity"}
+    ]
+    if unexpected_assets:
+        errors.append("non-greybox Unity assets were emitted: "
+                      + ", ".join(sorted(unexpected_assets)[:4]))
+
+    if errors:
+        rep.findings.append(Finding(
+            "greybox_project_artifact", ERROR,
+            "; ".join(errors),
+            "src/unity_generator.py geometry-only output",
+        ))
+    rep.checks["greybox_project_artifact"] = not errors
+
+
 # ── entry points ──────────────────────────────────────────────────────────────
 
 def grade_artifact(schema: UnitySchema, files: Mapping[str, str],
                    rep: PlayabilityReport) -> PlayabilityReport:
     """Add the artifact findings to an existing schema report, in place."""
+    if is_geometry_only_greybox(schema):
+        _check_geometry_only_greybox_artifact(schema, files, rep)
+        return rep
+    _ungraded(
+        rep,
+        "greybox_project_artifact",
+        "not a geometry-only greybox project",
+    )
     if not is_embodied(schema):
         reason = (
             "locomotion='none' — the game declares no avatar, so emitted-scene "

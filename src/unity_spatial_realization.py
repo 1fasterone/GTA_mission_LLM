@@ -29,6 +29,7 @@ from .unity_layout_archetype import spatial_relationship_of
 from .unity_schema import UnitySchema
 from .unity_spatial_fusion import SPATIAL_FUSION_FORMAT
 from .unity_spatial_identity import semantic_schema_hash
+from .unity_greybox import greybox_ir_for_schema, is_greybox_enabled, greybox_world_bounds
 from .visual_reasoning_compiler import sha256_bytes
 
 
@@ -574,9 +575,13 @@ def realize_spatial_layout(
                 "changed during world realization"
             )
 
+    # ProBuilder greybox geometry is the world coordinate authority.  Image
+    # composition hints may still be recorded as an input, but they must not
+    # translate entities out of their deterministic rooms/corridors.
+    greybox_authority = is_greybox_enabled(schema)
     composition_rows: list[dict[str, Any]] = []
     composition_messages: list[str] = []
-    if fusion is not None:
+    if fusion is not None and not greybox_authority:
         composition_rows, composition_messages = _apply_composition_constraints(
             schema,
             fusion,
@@ -585,6 +590,10 @@ def realize_spatial_layout(
         )
         _refresh_entity_regions(schema)
     rows = _layout_rows(schema, measured, authored_names)
+    world_bounds = list(terrain_bounds(schema.entities, schema.locomotion))
+    if greybox_authority:
+        world_bounds = list(greybox_world_bounds(greybox_ir_for_schema(schema)))
+
     graph = {
         "format": SPATIAL_REALIZATION_FORMAT,
         "stage": SPATIAL_REALIZATION_STAGE,
@@ -593,11 +602,12 @@ def realize_spatial_layout(
             "llm_called_here": False,
             "archetype_geometry_authority": True,
             "relation_graph_used": relation_hash is not None,
-            "spatial_fusion_used": fusion is not None,
+            "spatial_fusion_used": fusion is not None and not greybox_authority,
             "measured_footprints_used": bool(measured),
             "image_spatial_evidence_used_here": False,
             "world_coordinates_emitted_here": True,
             "authored_transforms_preserved": True,
+            "greybox_world_authority": greybox_authority,
         },
         "inputs": {
             "schema_sha256": input_schema_hash,
@@ -612,7 +622,7 @@ def realize_spatial_layout(
             if isinstance(schema.meta, dict) else None,
             "messages": list(messages) + composition_messages,
             "composition_constraints": composition_rows,
-            "world_bounds": list(terrain_bounds(schema.entities, schema.locomotion)),
+            "world_bounds": world_bounds,
             "entities": rows,
         },
         "warnings": [],

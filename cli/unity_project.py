@@ -122,6 +122,10 @@ def unity_create(
                                               help="Override the configured LM Studio model for this run"),
     compose:     bool          = typer.Option(False, "--compose",
                                               help="Assemble micros into the project + wire them into the scene (combinatorial mode)"),
+    geometry_only: bool        = typer.Option(False, "--geometry-only",
+                                              help="Generate only the deterministic ProBuilder dungeon greybox (also enabled by explicit greybox/blockout prompts)"),
+    greybox_plus: bool         = typer.Option(False, "--greybox-plus",
+                                              help="Image-aware geometry-only Greybox+ planning contract; requires --viz and emits no final-art assets"),
     blender_models: bool       = typer.Option(False, "--blender-models",
                                               help="Build real models from the story in Blender (headless) and wire them into the scene via the Model Pack (replaces placeholders)"),
     route: Optional[Path]      = typer.Option(None, "--route",
@@ -186,6 +190,11 @@ def unity_create(
     if viz is not None and no_llm:
         console.print("[red]Error:[/] --viz runs visual reasoning and cannot be used with --no-llm")
         raise typer.Exit(1)
+    if greybox_plus and viz is None:
+        console.print("[red]Error:[/] --greybox-plus requires --viz <reference-image>")
+        raise typer.Exit(1)
+    if greybox_plus:
+        geometry_only = True
 
     if not prompt and (reference_image is not None or viz is not None):
         # The Concept stage still needs a user message for the OpenAI-compatible
@@ -227,12 +236,18 @@ def unity_create(
 
     try:
         visual_context = None
+        greybox_plus_reference = None
         if viz is not None:
+            if greybox_plus:
+                # Preserve the caller's source image as Greybox+ provenance.
+                # `_prepare_viz_reasoning` returns a normalized visual board for
+                # the Concept stage, which is not the same evidence artifact.
+                greybox_plus_reference = viz
             reference_image, context_path = _prepare_viz_reasoning(
                 viz, viz_output, cfg, overwrite=viz_overwrite
             )
             visual_context = context_path.read_text(encoding="utf-8")
-        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm, reference_image=reference_image, visual_context=visual_context)
+        UnityPipeline(cfg).run(prompt, theme=theme, mashup_with=mashup_with, seed=seed, compose=compose, geometry_only=geometry_only, greybox_plus=greybox_plus, greybox_plus_reference_image=greybox_plus_reference, blender_models=blender_models, route=route_data, scene=scene_data, no_think=no_think, micro_code=micro_code, no_llm=no_llm, reference_image=reference_image, visual_context=visual_context)
     except VisualReasoningCompilerError as exc:
         console.print(f"[red]Visual reasoning error:[/] {exc}")
         raise typer.Exit(2)
