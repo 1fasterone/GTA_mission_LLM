@@ -27,7 +27,7 @@ ScriptType     = Literal[
     "player", "camera", "game_manager", "enemy",
     "collectible", "ui_manager", "audio_manager", "health",
     "dialogue_manager", "mesh_builder", "procedural_mesh",
-    "level_generator", "material_palette", "custom"
+    "level_generator", "greybox_level_generator", "material_palette", "custom"
 ]
 ScriptAttach   = Literal["player", "camera", "game_manager", "systems"]
 VisualStyle    = Literal["cartoon", "realistic", "low_poly", "stylized", "pixel_art", "retro"]

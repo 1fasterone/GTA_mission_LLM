@@ -136,7 +136,7 @@ _NON_SCENE_KINDS = {"wiring", "context", "input"}
 # Built-in UnityScript types the micro library now OWNS. In --compose mode these
 # are dropped from the generated project so the composer is the single source of
 # truth (no duplicate PlayerController/CameraFollow/etc.). The unique glue scripts
-# (game_manager, mesh_builder, material_palette, procedural_mesh, level_generator)
+# (game_manager, mesh_builder, material_palette, procedural_mesh, greybox generator)
 # have no micro equivalent and are kept.
 COVERED_SCRIPT_TYPES = {
     "player", "camera", "enemy", "audio_manager",

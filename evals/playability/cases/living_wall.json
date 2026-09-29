@@ -26,6 +26,9 @@
     "ungraded_ok": [
       "brief_entities",
       "entity_scene_coverage",
+      "greybox_coordinates",
+      "greybox_project_artifact",
+      "greybox_topology",
       "mission_loop",
       "pointer_targets",
       "role_graph",

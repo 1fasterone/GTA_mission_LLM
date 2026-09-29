@@ -64,6 +64,9 @@ from .unity_layout_archetype import (is_climbable_entity, pick_player_entity,
                                      ui_board_layer, ui_element_of)
 from .unity_spatial import (GROUND_PLANE, ROUTE_CORRIDOR, VOLUME_PRIMITIVES,
                             WALL_SURFACE, is_grounded, select_primitive)
+from .unity_greybox import (DungeonGreyboxIR, is_greybox_enabled,
+                            is_geometry_only_greybox,
+                            validate_coordinates, validate_topology)
 
 ERROR = "error"
 WARN = "warn"
@@ -127,6 +130,9 @@ _CHECK_SEVERITY: dict[str, str] = {
     # cannot get to is content that is not in the game. On a board "cannot get
     # to" means "cannot click".
     "pointer_targets":   ERROR,
+    "greybox_topology":  ERROR,
+    "greybox_coordinates": ERROR,
+    "greybox_project_artifact": ERROR,
     # WARN, not ERROR: floating entities with no ground underfoot are a
     # polish defect (like silence from `audio`), not the difference between
     # "a game" and "a scene" — the avatar/objective/reachability checks
@@ -1393,6 +1399,51 @@ def _check_pointer_targets(schema: UnitySchema,
     rep.checks["pointer_targets"] = bool(targets)
 
 
+def _check_greybox_acceptance(schema: UnitySchema,
+                              rep: PlayabilityReport) -> None:
+    """Step 7 gate for the ProBuilder world's topology and exact coordinates.
+
+    Greybox builds carry the serialized IR in ``schema.meta``.  Missing or
+    malformed evidence is a failure, not a free pass: the editor generator and
+    the spatial sidecars would otherwise be evaluating different worlds.
+    """
+    if not is_greybox_enabled(schema):
+        reason = "not a deterministic greybox schema"
+        for check in ("greybox_topology", "greybox_coordinates"):
+            _ungraded(rep, check, reason)
+        return
+    raw = (schema.meta or {}).get("greybox_ir") if isinstance(schema.meta, dict) else None
+    if not isinstance(raw, dict):
+        reason = ("greybox IR is missing from schema.meta.greybox_ir — run the "
+                  "deterministic greybox generator before Step 7")
+        for check in ("greybox_topology", "greybox_coordinates"):
+            rep.findings.append(Finding(check, ERROR, reason, "schema.meta.greybox_ir"))
+            rep.checks[check] = False
+        return
+    try:
+        ir = DungeonGreyboxIR.model_validate(raw)
+    except (TypeError, ValueError) as exc:
+        reason = f"greybox IR is invalid: {exc}"
+        for check in ("greybox_topology", "greybox_coordinates"):
+            rep.findings.append(Finding(check, ERROR, reason, "schema.meta.greybox_ir"))
+            rep.checks[check] = False
+        return
+    topology = validate_topology(ir)
+    coordinates = validate_coordinates(ir)
+    if topology:
+        rep.findings.append(Finding(
+            "greybox_topology", ERROR,
+            "greybox topology rejected: " + "; ".join(topology[:4]),
+            "src/unity_greybox.py topology validators"))
+    if coordinates:
+        rep.findings.append(Finding(
+            "greybox_coordinates", ERROR,
+            "greybox coordinates rejected: " + "; ".join(coordinates[:4]),
+            "src/unity_greybox.py exact grid validator"))
+    rep.checks["greybox_topology"] = not topology
+    rep.checks["greybox_coordinates"] = not coordinates
+
+
 _CHECKS = (
     _check_avatar,
     _check_avatar_binding,
@@ -1449,8 +1500,13 @@ def evaluate(schema: UnitySchema) -> PlayabilityReport:
         project_name=schema.project_name,
         primitive=_primitive_of(schema, has_route),
     )
+    if is_geometry_only_greybox(schema):
+        rep.primitive = "Dungeon_Greybox"
+        _check_greybox_acceptance(schema, rep)
+        return rep
     for check in _CHECKS:
         check(schema, rep)
+    _check_greybox_acceptance(schema, rep)
 
     # A non-embodied game answers the spatial checks by not being that kind of
     # game. Filtered here rather than gated inside each check so a new

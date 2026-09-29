@@ -31,6 +31,8 @@ from .unity_spatial_identity import semantic_schema_hash
 from .unity_spatial_realization import realize_spatial_layout
 from .unity_spatial_roles import derive_spatial_roles
 from .unity_spatial_validation import validate_spatial_layout
+from .unity_greybox import (apply_greybox_spatial_layout, greybox_ir_for_schema,
+                            is_greybox_enabled)
 from .visual_reasoning_compiler import sha256_bytes
 
 
@@ -82,6 +84,12 @@ def prepare_spatial_layout(
         raise SpatialPipelineError(
             "Slice 6.3 requires both closed image IR and image spatial evidence"
         )
+    # Stamp the greybox IR before deriving the hash-linked role and relation
+    # sidecars.  The sidecars must describe the same schema metadata that the
+    # generator and Step 7 will later validate.
+    if is_greybox_enabled(schema):
+        greybox_ir = greybox_ir_for_schema(schema)
+        apply_greybox_spatial_layout(schema, greybox_ir)
     roles = derive_spatial_roles(schema)
     graph = build_scene_graph(schema, roles)
     fusion = None
@@ -92,7 +100,7 @@ def prepare_spatial_layout(
             image_evidence=image_spatial_evidence,
             spatial_roles=roles,
         )
-    if reset_generated_layout:
+    if reset_generated_layout and not is_greybox_enabled(schema):
         authored = {
             str(name) for name in ((schema.meta or {}).get("authored_models") or {})
         } if isinstance(schema.meta, dict) else set()
@@ -128,6 +136,17 @@ def prepare_spatial_layout(
             entity.group_radius = 0.0
             entity.elevation = 0.0
 
+    # A greybox-enabled schema has an explicit ProBuilder world.  Apply its
+    # deterministic room assignment before the existing realization pass so
+    # the world-layout sidecar records the same coordinates that the editor
+    # generator will emit.  compute_layout treats these as preplaced and
+    # preserves them; image composition and theme/twist never enter this path.
+    if is_greybox_enabled(schema):
+        greybox_ir = greybox_ir_for_schema(schema)
+        greybox_messages = apply_greybox_spatial_layout(schema, greybox_ir)
+    else:
+        greybox_messages = []
+
     realization = realize_spatial_layout(
         schema,
         relation_graph=graph,
@@ -145,6 +164,7 @@ def prepare_spatial_layout(
         "spatial_fusion": fusion,
         "world_layout": realization,
         "spatial_validation": validation,
+        "greybox_messages": greybox_messages,
     }
 
 

@@ -138,7 +138,7 @@ FEATURE FLAGS — use only these (as many as apply):
 
 SCRIPT TYPES — use only one per script:
   player | camera | game_manager | enemy | collectible | ui_manager | audio_manager | health |
-  dialogue_manager | mesh_builder | procedural_mesh | level_generator | material_palette | custom
+  dialogue_manager | mesh_builder | procedural_mesh | level_generator | greybox_level_generator | material_palette | custom
 
 CUSTOM SCRIPTS — how concepts BEYOND the fixed types reach the project.
   The non-custom types render proven baseline templates. For every behavior the prompt
@@ -408,6 +408,31 @@ MULTIMODAL DESIGN LAYER — ADDITIONAL top-level keys in the SAME JSON object
 PROJECT; these author the GAME, and each one is compiled into a real asset or
 subsystem. Fill what the concept actually calls for and leave a key out when the
 concept never implies it — padding these with filler is worse than omitting them.
+"""
+
+GREYBOX_ONLY_SCHEMA_GUIDANCE = """
+
+DETERMINISTIC GREYBOX-ONLY MODE:
+This request explicitly asks for a greybox/blockout world. The compiler will
+generate and validate the room/corridor graph and ProBuilder geometry from its
+deterministic greybox IR. This is not a playable-game-content pass. Do not add
+gameplay scripts, player/enemy/item/prop entities, materials, textures, lighting,
+VFX, audio, or art assets. Keep those schema collections empty where possible;
+use one scene named Main. Theme and twist metadata are non-authoritative here:
+use theme=none and do not let them change geometry.
+"""
+
+GREYBOX_PLUS_SCHEMA_GUIDANCE = """
+
+GREYBOX+ IMAGE-TO-SCENE MODE:
+The attached visual reference is composition evidence only. In the Concept,
+name the large spatial zones, their route order, major silhouettes, elevation
+relationships, and player-readable landmarks (for example tank area, pipe
+corridor, catwalk route). The text brief remains authority for gameplay
+semantics. Do not request, author, or imply textures, lighting, materials,
+shaders, final art, enemies, items, props, or gameplay scripts. Do not invent
+Greybox+ schema fields: deterministic Steps 4–7 record image provenance and
+primitive roles after this schema is accepted.
 """
 
 # ── Core sections (always emitted) ────────────────────────────────────────────
@@ -797,7 +822,7 @@ VALIDATION RULES:
 5. render_pipeline: URP | HDRP | builtin
 6. unity_version: 6000.0 | 6000.1 | 6000.4 | 2022.3 | 2021.3  (default: 6000.0)
 7. script type: player | camera | game_manager | enemy | collectible | ui_manager | audio_manager | health |
-   dialogue_manager | mesh_builder | procedural_mesh | level_generator | material_palette | custom
+   dialogue_manager | mesh_builder | procedural_mesh | level_generator | greybox_level_generator | material_palette | custom
    (custom scripts keep their extra_* fragment fields and attach_to — do not strip them)
 8a. visual_style: cartoon | realistic | low_poly | stylized | pixel_art | retro
 8b. color_palette: each color must be a valid #RRGGBB hex string

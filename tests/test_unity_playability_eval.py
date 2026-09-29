@@ -132,8 +132,11 @@ _TAIL_CALLS = (
 
 def _pipeline_tail_source() -> str:
     src = (REPO_ROOT / "src" / "unity_pipeline.py").read_text(encoding="utf-8")
-    start = src.index("self._step(4")
-    end = src.index("self._step(6")
+    # The geometry-only helper owns its own isolated Step 4-6 path. This eval
+    # guards the ordinary schema replay tail, identified by its pre-existing
+    # section marker rather than by the first step number in the module.
+    start = src.index("# STEP 4 — resolve packages")
+    end = src.index("self._step(6", start)
     return src[start:end]
 
 

@@ -30,7 +30,9 @@ from .unity_generator    import UnityProjectGenerator
 from .unity_prompts      import (
     UNITY_CONCEPT_SYSTEM, UNITY_CONCEPT_USER,
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
-    GAMECONTEXT_SCHEMA_GUIDANCE, render_multimodal_block, brief_block,
+    GAMECONTEXT_SCHEMA_GUIDANCE, GREYBOX_ONLY_SCHEMA_GUIDANCE,
+    GREYBOX_PLUS_SCHEMA_GUIDANCE,
+    render_multimodal_block, brief_block,
 )
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
@@ -54,6 +56,14 @@ from .unity_concept_title import (inject_missing_concept_title,
 from .unity_concept_missions import inject_missing_concept_missions
 from .unity_layout        import compute_layout
 from .unity_cover_points  import compute_cover_points
+from .unity_greybox       import (GREYBOX_SCRIPT_TYPES,
+                                  greybox_plus_ir_for_schema,
+                                  greybox_ir_for_schema,
+                                  is_greybox_plus_enabled,
+                                  is_geometry_only_greybox,
+                                  stamp_greybox_plus_reference,
+                                  validate_greybox_plus_ir,
+                                  validate_dungeon_greybox)
 from .unity_scenebind     import apply_scene
 from .unity_playability   import PlayabilityGateError, gate as playability_gate
 from .unity_playability_artifact import evaluate_project
@@ -292,6 +302,11 @@ def _to_pascal(s: str, fallback: str = "Script") -> str:
 _BRIEF_MARKER_RE = re.compile(
     r"^\s*([A-Z][A-Z]+(?:[ &/-]+[A-Z][A-Z]+)*)\b",
     re.MULTILINE)
+_GREYBOX_MODE_RE = re.compile(r"\b(?:grey|gray)box(?:ing)?\b|\bblockout\b", re.I)
+_GREYBOX_WORLD_RE = re.compile(
+    r"\b(?:labyrinth|maze|dungeon)\b.{0,180}\b(?:grey|gray)\s+blocks?\b",
+    re.I | re.S,
+)
 
 
 def _apply_ramp_tilts(schema: UnitySchema) -> list[str]:
@@ -549,15 +564,15 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
         ))
         fixes.append("Injected MaterialPalette (3D project)")
 
-    # Inject ProBuilder package when level_generator script is present
-    if "level_generator" in _stypes():
+    # Inject ProBuilder package when the deterministic greybox editor is present
+    if _stypes() & GREYBOX_SCRIPT_TYPES:
         existing_ids = {p.package_id for p in schema.packages}
         if "com.unity.probuilder" not in existing_ids:
             schema.packages.append(UnityPackage(
                 description = "probuilder geometry editing tool",
                 package_id  = "com.unity.probuilder",
             ))
-            fixes.append("Injected ProBuilder package (level_generator script requires it)")
+            fixes.append("Injected ProBuilder package (greybox generator requires it)")
 
     # The LLM routinely keeps the Input System PACKAGE but drops the
     # input_system FEATURE flag (hit live: TerminalHorizon rerun) — the
@@ -1044,6 +1059,94 @@ class UnityPipeline:
     def _warn(self, msg: str) -> None: console.print(f"  [yellow]WARN[/] {msg}")
     def _fix(self, msg: str)  -> None: console.print(f"  [magenta]FIX[/]  {msg}")
 
+    def _run_geometry_only_greybox(self, schema: UnitySchema,
+                                   concept: str) -> Path:
+        """Compile only the deterministic IR, ProBuilder tool and preview bootstrap."""
+        if not is_geometry_only_greybox(schema):
+            raise ValueError("geometry-only greybox mode was not stamped on the schema")
+
+        self._step(4, "Resolver installs only the ProBuilder geometry dependency")
+        schema.packages = [UnityPackage(
+            description="ProBuilder geometry editing tool",
+            package_id="com.unity.probuilder",
+        )]
+        schema = self.resolver.resolve_schema(schema)
+        manifest_deps = self.resolver.build_manifest_deps(
+            schema, inject_mcp_bridge=False
+        )
+        if "com.unity.probuilder" not in manifest_deps:
+            raise ValueError("ProBuilder package resolution failed for greybox mode")
+        self._ok("Dependency graph contains ProBuilder and Unity modules only")
+
+        self._step(5, "Generate and validate the deterministic dungeon IR")
+        ir = greybox_ir_for_schema(schema)
+        acceptance = validate_dungeon_greybox(ir)
+        if not acceptance.accepted:
+            raise ValueError("greybox IR rejected: " + "; ".join(acceptance.errors))
+        schema.meta["greybox_acceptance"] = acceptance.model_dump(mode="json")
+        self._ok(
+            f"Accepted {len(ir.rooms)} rooms, {len(ir.corridors)} corridors, "
+            f"boss depth {ir.boss_depth}, seed {ir.seed}"
+        )
+        if is_greybox_plus_enabled(schema):
+            plus_ir = greybox_plus_ir_for_schema(schema, ir)
+            plus_acceptance = validate_greybox_plus_ir(plus_ir)
+            if not plus_acceptance.accepted:
+                raise ValueError(
+                    "Greybox+ IR rejected: " + "; ".join(plus_acceptance.errors)
+                )
+            schema.meta["greybox_plus_ir"] = plus_ir.model_dump(mode="json")
+            schema.meta["greybox_plus_acceptance"] = plus_acceptance.model_dump(
+                mode="json"
+            )
+            self._ok(
+                f"Greybox+ provenance accepted: {len(plus_ir.primitives)} "
+                "role-tagged primitives"
+            )
+
+        self._step(6, "Emit an isolated ProBuilder-only Unity project")
+        greybox_root = Path(self.output_dir) / "_greybox"
+        project_root, file_count = self.generator.write(
+            schema,
+            manifest_deps,
+            output_dir=str(greybox_root),
+            project_config=self.config,
+        )
+        (project_root / f"{schema.project_name}.schema.json").write_text(
+            schema.model_dump_json(indent=2), encoding="utf-8"
+        )
+        (project_root / ".concept.txt").write_text(
+            f"# {schema.project_name} greybox-only build\n\n{concept}\n",
+            encoding="utf-8",
+        )
+        self._ok(f"Project written to: {project_root} ({file_count} emitted files)")
+
+        self._step(7, "Validate topology, exact coordinates and geometry-only output")
+        report = evaluate_project(
+            schema, _read_project_files_for_grading(project_root)
+        )
+        console.print(report.render(), markup=False,
+                      style="green" if report.playable else "yellow")
+        (project_root / "playability.txt").write_text(
+            report.render() + "\n", encoding="utf-8"
+        )
+        _pcfg = (self.config.get("playability") or {}) if self.config else {}
+        reason = playability_gate(
+            report,
+            min_score=int(_pcfg.get("min_score", 0) or 0),
+            fail_on_error=bool(_pcfg.get("gate", False)),
+        )
+        if reason:
+            raise PlayabilityGateError(f"Greybox acceptance failed — {reason}")
+        console.print(Panel(
+            f"[bold green]Greybox ready[/]\n"
+            f"Project: [cyan]{schema.project_name}[/]\n"
+            f"Mode: [cyan]geometry_only[/]\n"
+            f"Output: [cyan]{project_root}[/]",
+            style="green",
+        ))
+        return project_root
+
     # ── main run ──────────────────────────────────────────────────────────────
 
     def _blender_model_overrides(self, schema, concept: str) -> dict[str, str]:
@@ -1158,15 +1261,61 @@ class UnityPipeline:
             micro_code:  bool = True,
             no_llm:      bool = False,
             reference_image: Path | None = None,
+            greybox_plus_reference_image: Path | None = None,
             precomputed_concept: str | None = None,
             visual_asset_bindings: list[dict] | None = None,
             closed_image_ir: Path | None = None,
             image_spatial_evidence: Path | None = None,
             visual_compile_plan: dict | None = None,
-            visual_context: str | None = None) -> Path:
+            visual_context: str | None = None,
+            geometry_only: bool = False,
+            greybox_plus: bool = False) -> Path:
         locked_asset_bindings: dict[str, dict] | None = None
+        greybox_request_text = "\n".join(
+            part for part in (user_prompt, visual_context or "",
+                              precomputed_concept or "") if part
+        )
+        prompt_selects_greybox = bool(
+            _GREYBOX_MODE_RE.search(greybox_request_text)
+            or _GREYBOX_WORLD_RE.search(greybox_request_text)
+        )
+        if greybox_plus:
+            plus_reference = greybox_plus_reference_image or reference_image
+            if plus_reference is None or visual_context is None:
+                raise ValueError(
+                    "--greybox-plus requires --viz so the reference image and "
+                    "visual composition context are both available in Steps 2–3"
+                )
+            geometry_only = True
+            self._ok("Greybox+ selected — image-aware primitive planning, geometry-only output")
+        geometry_only = bool(geometry_only or prompt_selects_greybox)
+        if prompt_selects_greybox:
+            self._ok("Greybox/blockout request detected — selecting geometry-only generation")
         visual_compile = visual_compile_plan is not None
         visual_context_mode = visual_context is not None
+        if geometry_only:
+            if visual_compile or visual_asset_bindings is not None or scene:
+                raise ValueError(
+                    "geometry-only greybox generation cannot be combined with "
+                    "visual asset binding, visual compilation, or an authored scene"
+                )
+            if route is not None:
+                raise ValueError(
+                    "geometry-only greybox generation does not consume a gameplay route; "
+                    "use the greybox room/corridor IR instead"
+                )
+            if compose or blender_models:
+                self._warn(
+                    "Geometry-only greybox mode disables compose, Blender models, "
+                    "and micro-code generation"
+                )
+            compose = False
+            blender_models = False
+            micro_code = False
+            if theme not in (None, "none") or mashup_with:
+                self._warn("Geometry-only greybox mode ignores theme/twist input; using theme=none")
+            theme = "none"
+            mashup_with = None
         if visual_context_mode:
             visual_context = str(visual_context).strip()
             if not visual_context:
@@ -1449,6 +1598,10 @@ class UnityPipeline:
                                                         schema_hints=schema_hints,
                                                         multimodal_block=mm.text,
                                                         brief_block=brief_block(user_prompt))
+            if geometry_only:
+                schema_user += GREYBOX_ONLY_SCHEMA_GUIDANCE
+            if greybox_plus:
+                schema_user += GREYBOX_PLUS_SCHEMA_GUIDANCE
             if visual_compile:
                 assert visual_compile_plan is not None
                 schema_user += "\n" + render_visual_entity_checklist(
@@ -1554,6 +1707,21 @@ class UnityPipeline:
         schema.meta["concept"]     = concept
         schema.meta["user_prompt"] = user_prompt
         schema.meta["fill"]        = "deterministic" if no_llm else "llm"
+        if geometry_only:
+            schema.meta["greybox_mode"] = "geometry_only"
+            raw_greybox = schema.meta.get("greybox")
+            greybox_config = dict(raw_greybox) if isinstance(raw_greybox, dict) else {}
+            greybox_config["mode"] = "geometry_only"
+            if seed is not None:
+                greybox_config["seed"] = int(seed)
+            schema.meta["greybox"] = greybox_config
+        if greybox_plus:
+            # The reference remains evidence, not a copied texture/art asset.
+            # Its digest binds the Greybox+ IR to the exact Step 2/3 visual
+            # input while all subsequent generation stays deterministic.
+            plus_reference = greybox_plus_reference_image or reference_image
+            assert plus_reference is not None and visual_context is not None
+            stamp_greybox_plus_reference(schema, plus_reference, visual_context)
         # The brief's spatial facts ride alongside from here on. Written LAST
         # and unconditionally, so a model that decided to author its own
         # `meta.spatial_facts` cannot get one past the extraction pass. Step 5's
@@ -1576,6 +1744,9 @@ class UnityPipeline:
             f"{len(schema.packages)} packages  {len(schema.scripts)} scripts  "
             f"{len(schema.scenes)} scenes  {len(schema.features)} features"
         )
+
+        if geometry_only:
+            return self._run_geometry_only_greybox(schema, concept)
 
         # STEP 4 — resolve packages + inject required ─────────────────────────
         self._step(4, "Resolver maps packages to Unity Package Manager IDs")
