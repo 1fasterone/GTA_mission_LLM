@@ -29,7 +29,7 @@ from pydantic import (BaseModel, Field, ValidationError, field_validator,
 GREYBOX_FORMAT = "game-o-matic/unity-dungeon-greybox/v1"
 GREYBOX_PLUS_FORMAT = "game-o-matic/unity-greybox-plus/v1"
 GREYBOX_SCRIPT_TYPES = frozenset({"level_generator", "greybox_level_generator"})
-GREYBOX_HIERARCHY = {
+GREYBOX_HIERARCHY: dict[str, Any] = {
     "root": "Dungeon_Greybox",
     "children": {
         "Dungeon_Greybox": [
@@ -47,7 +47,7 @@ GREYBOX_HIERARCHY = {
 # alongside the v1 dungeon hierarchy until Slice 2 teaches the Unity emitter to
 # realize these Macro/Meso/Micro paths directly. This avoids a silent root
 # rename in existing generated projects.
-GREYBOX_PLUS_HIERARCHY = {
+GREYBOX_PLUS_HIERARCHY: dict[str, Any] = {
     "root": "GreyboxPlus_Level",
     "children": {
         "GreyboxPlus_Level": ["Geometry", "Markers"],
@@ -554,7 +554,7 @@ def _room_cell_set(room: RoomIR) -> set[tuple[int, int, int]]:
 
 
 def _edge_key(a: str, b: str) -> tuple[str, str]:
-    return tuple(sorted((a, b)))
+    return (a, b) if a <= b else (b, a)
 
 
 def _seed_from_schema(schema: Any) -> int:
@@ -1006,6 +1006,7 @@ def generate_dungeon_greybox(
             axis_x = neighbor.x != point.x
             axis_z = neighbor.z != point.z
             parent = "Elevation" if neighbor.y != point.y else "Corridors"
+            sides: tuple[tuple[str, GridPoint], ...]
             if axis_x:
                 floor_size = [cell_size, floor_height, corridor.width * cell_size]
             elif axis_z:
