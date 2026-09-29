@@ -65,7 +65,7 @@ public class {{ script.name }} : MonoBehaviour
         else if (dist <= detectionRadius)
         {
             _state = AIState.Chase;
-            if (_agent != null)
+            if (_agent != null && _agent.isOnNavMesh)
             {
                 _agent.isStopped = false;
                 _agent.SetDestination(_player.position);

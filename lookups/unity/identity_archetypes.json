@@ -1,5 +1,260 @@
 {
-  "version": 2,
+  "version": 3,
+  "attribute_bundles": {
+    "peasant": {
+      "attributes": {
+        "identity": {
+          "era": "medieval",
+          "culture": "feudal_europe",
+          "species": "human",
+          "class": "low",
+          "profession": "farmer",
+          "faction": "village_commoners",
+          "alignment": "neutral"
+        },
+        "visual": {
+          "clothing_style": "ragged",
+          "clothing_condition": "worn",
+          "equipment": ["hoe", "basket"],
+          "body_traits": ["weathered"],
+          "posture": "upright",
+          "dirt_level": "high"
+        },
+        "behavioral": {
+          "temperament": "timid",
+          "hostility": "non-hostile",
+          "confidence": "low",
+          "work_style": "manual",
+          "social_role": "civilian_worker"
+        },
+        "environment": {
+          "location_type": "village",
+          "weather_adaptation": "outdoor",
+          "terrain_adaptation": "fields"
+        },
+        "affordances": [
+          "can_work",
+          "can_flee",
+          "can_carry",
+          "can_operate_tools"
+        ]
+      },
+      "variants": {
+        "battle": {
+          "context_any": ["battle", "battlefield", "combat", "war"],
+          "priority": 10,
+          "attributes": {
+            "visual": {
+              "equipment": [],
+              "posture": "cowering"
+            },
+            "behavioral": {
+              "social_role": "fleeing_civilian"
+            },
+            "environment": {
+              "location_type": "battlefield"
+            },
+            "affordances": ["can_flee"]
+          }
+        },
+        "village": {
+          "context_any": ["village", "market", "fields", "farm", "farming"],
+          "priority": 10,
+          "attributes": {
+            "visual": {
+              "posture": "upright"
+            },
+            "behavioral": {
+              "work_style": "manual",
+              "social_role": "civilian_worker"
+            },
+            "affordances": [
+              "can_work",
+              "can_carry",
+              "can_operate_tools"
+            ]
+          }
+        },
+        "cutscene": {
+          "context_any": ["cutscene", "dialogue", "conversation", "cinematic"],
+          "priority": 10,
+          "attributes": {
+            "visual": {
+              "posture": "attentive"
+            },
+            "behavioral": {
+              "temperament": "fearful",
+              "social_role": "dialogue_participant"
+            },
+            "affordances": ["can_talk"]
+          }
+        }
+      }
+    },
+    "medieval_worker": {
+      "attributes": {
+        "identity": {
+          "era": "medieval",
+          "culture": "feudal_europe",
+          "species": "human",
+          "class": "working",
+          "profession": "artisan",
+          "faction": "town_workers",
+          "alignment": "neutral"
+        },
+        "visual": {
+          "clothing_style": "apron",
+          "clothing_condition": "worn",
+          "equipment": ["hand_tool"],
+          "body_traits": ["strong_hands"],
+          "posture": "upright",
+          "dirt_level": "medium"
+        },
+        "behavioral": {
+          "temperament": "focused",
+          "hostility": "non-hostile",
+          "confidence": "medium",
+          "work_style": "manual",
+          "social_role": "craft_worker"
+        },
+        "environment": {
+          "location_type": "workshop",
+          "weather_adaptation": "mixed",
+          "terrain_adaptation": "town"
+        },
+        "affordances": ["can_work", "can_carry", "can_operate_tools"]
+      }
+    },
+    "knight": {
+      "attributes": {
+        "identity": {
+          "era": "medieval",
+          "culture": "feudal_europe",
+          "species": "human",
+          "class": "noble",
+          "profession": "warrior",
+          "faction": "feudal_lordship",
+          "alignment": "lawful"
+        },
+        "visual": {
+          "clothing_style": "armor",
+          "clothing_condition": "maintained",
+          "equipment": ["sword", "shield"],
+          "body_traits": ["armored"],
+          "posture": "vigilant",
+          "dirt_level": "low"
+        },
+        "behavioral": {
+          "temperament": "brave",
+          "hostility": "hostile",
+          "confidence": "high",
+          "work_style": "combat",
+          "social_role": "guard"
+        },
+        "environment": {
+          "location_type": "castle",
+          "weather_adaptation": "outdoor",
+          "terrain_adaptation": "battlefield"
+        },
+        "affordances": ["can_fight", "can_flee", "can_patrol"]
+      },
+      "variants": {
+        "battle": {
+          "context_any": ["battle", "battlefield", "combat", "war"],
+          "priority": 10,
+          "attributes": {
+            "environment": {
+              "location_type": "battlefield"
+            },
+            "affordances": ["can_fight", "can_patrol"]
+          }
+        },
+        "cutscene": {
+          "context_any": ["cutscene", "dialogue", "conversation", "cinematic"],
+          "priority": 10,
+          "attributes": {
+            "behavioral": {
+              "social_role": "dialogue_participant"
+            },
+            "affordances": ["can_talk"]
+          }
+        }
+      }
+    },
+    "modern_worker": {
+      "attributes": {
+        "identity": {
+          "era": "modern",
+          "culture": "industrial",
+          "species": "human",
+          "class": "working",
+          "profession": "factory_worker",
+          "faction": "laborers",
+          "alignment": "neutral"
+        },
+        "visual": {
+          "clothing_style": "uniform",
+          "clothing_condition": "clean",
+          "equipment": ["toolbelt"],
+          "body_traits": ["work_worn"],
+          "posture": "upright",
+          "dirt_level": "medium"
+        },
+        "behavioral": {
+          "temperament": "neutral",
+          "hostility": "non-hostile",
+          "confidence": "medium",
+          "work_style": "industrial",
+          "social_role": "factory_worker"
+        },
+        "environment": {
+          "location_type": "factory",
+          "weather_adaptation": "indoor",
+          "terrain_adaptation": "industrial"
+        },
+        "affordances": ["can_work", "can_carry", "can_operate_tools"]
+      }
+    }
+  },
+  "archetype_attribute_bundles": {
+    "medieval_human_commoner": "peasant",
+    "medieval_human_worker": "medieval_worker",
+    "medieval_human_knight": "knight",
+    "modern_human_worker": "modern_worker"
+  },
+  "attribute_rules": [
+    {
+      "name": "visual_ragged_clothing",
+      "visual_any": ["ragged", "tattered"],
+      "confidence": 0.93,
+      "attributes": {
+        "visual": {
+          "clothing_style": "ragged"
+        }
+      }
+    },
+    {
+      "name": "visual_worn_clothing",
+      "visual_any": ["dirt", "mud", "grime", "worn"],
+      "confidence": 0.88,
+      "attributes": {
+        "visual": {
+          "clothing_condition": "worn",
+          "dirt_level": "high"
+        }
+      }
+    },
+    {
+      "name": "visual_hand_tool",
+      "visual_any": ["tool", "hoe", "hammer", "basket"],
+      "confidence": 0.71,
+      "attributes": {
+        "visual": {
+          "equipment": ["hand_tool"]
+        }
+      }
+    }
+  ],
   "archetypes": [
     {
       "name": "medieval_human_commoner",
@@ -316,6 +571,30 @@
       ]
     },
     {
+      "name": "modern_human_worker",
+      "family": "human",
+      "identity": {
+        "is_human": true,
+        "is_modern": true
+      },
+      "kind_hints": [
+        "character",
+        "npc",
+        "crowd"
+      ],
+      "query_tokens": [
+        "human",
+        "person",
+        "character",
+        "modern",
+        "worker",
+        "factory",
+        "industrial",
+        "warehouse",
+        "employee"
+      ]
+    },
+    {
       "name": "npc_human",
       "family": "human",
       "identity": {
@@ -616,6 +895,9 @@
     "pedestrian": "civilian_modern",
     "businessperson": "civilian_modern",
     "office worker": "civilian_modern",
+    "factory worker": "modern_human_worker",
+    "industrial worker": "modern_human_worker",
+    "warehouse worker": "modern_human_worker",
     "dog": "creature_domestic",
     "cat": "creature_domestic",
     "cow": "creature_domestic",
@@ -738,6 +1020,25 @@
         "cyberpunk"
       ],
       "archetype": "sci-fi_human"
+    },
+    {
+      "name": "modern_worker_context",
+      "description": "Worker nouns in modern industrial contexts imply modern workers",
+      "scope": "human",
+      "primary_any": [
+        "worker",
+        "staff",
+        "employee"
+      ],
+      "context_any": [
+        "modern",
+        "factory",
+        "industrial",
+        "warehouse",
+        "manufacturing",
+        "plant"
+      ],
+      "archetype": "modern_human_worker"
     },
     {
       "name": "modern_context",

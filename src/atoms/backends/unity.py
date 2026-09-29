@@ -770,12 +770,17 @@ def _wire_grounded_bridge(args: dict) -> str:
     cv = _s(args.get("controller_var",   "_controller"))
     fv = _s(args.get("statemachine_var", "_statemachine"))
     av = _s(args.get("animator_var",     "_animator"))
+    speed_line = (
+        f"    {av}?.SetSpeed({cv}.CurrentSpeed);\n"
+        if args.get("set_speed") else ""
+    )
     return (
         f"if ({cv} != null)\n"
         f"{{\n"
         f"    bool grounded = {cv}.IsGrounded;\n"
         f"    {fv}?.SetGrounded(grounded);\n"
         f"    {av}?.SetGrounded(grounded);\n"
+        f"{speed_line}"
         f"}}"
     )
 
