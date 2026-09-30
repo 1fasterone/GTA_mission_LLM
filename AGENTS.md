@@ -27,18 +27,25 @@ pipeline was not tested — the engineer was. See Eval Discipline.
 
 # Pipeline Contract
 
-The Pipeline LLM participates only in Steps 2-3.
+The Pipeline LLM participates only in Steps 2-3 (3.5 included).
 
 1. Prompt
 2. Concept — Pipeline LLM writes a short, clear English brief
-3. Schema — Pipeline LLM fills the strict Pydantic schema (IR). Once the
-   schema is valid, the Pipeline LLM stops.
+3. Schema — Pipeline LLM fills the strict Pydantic schema (IR).
+   3.5 Enrichment — the one declared phase for LLM content beyond the fill
+   (custom-script and micro bodies, entity Sketchfab queries, NPC dialog
+   lines, audio cues, the concept Sketchfab collection). Every result is
+   written INTO the schema (fields, schema.microgens[].input,
+   schema.meta["llm_enrichment"]). Then the client is frozen
+   (src/llm_boundary.py): the Pipeline LLM stops, and any later call raises
+   PostSchemaLLMError. docs/LLM_FREEZE_BOUNDARY.md is the reference.
 4. Resolver — deterministic ID lookup (Python)
 5. Fixer — deterministic consistency + naming
 6. Generator — deterministic backend codegen
 7. Playability — deterministic structural evaluation (unity_playability.py)
 
-Never add LLM calls to Steps 4-7. Never introduce nondeterminism.
+Never add LLM calls to Steps 4-7 — new LLM-authored content goes in
+Step 3.5 and is persisted into the schema. Never introduce nondeterminism.
 
 # Eval Discipline
 
