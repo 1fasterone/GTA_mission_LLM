@@ -60,6 +60,12 @@ replays the same project through `unity-validate --compose` with no model.
 - Composed-micro bodies are keyed by **kind** (the existing
   `schema.microgens` granularity): two units of one kind share one body set.
 - Still nondeterministic after the boundary, but not LLM: Step 6 live
-  Sketchfab search/freeze (`unity_entity_asset_resolver` Tier S) and the GTA5
-  backend's Step 5b `_llm_pick_model` (`src/pipeline.py`), which this change
-  does not touch.
+  Sketchfab search/freeze (`unity_entity_asset_resolver` Tier S).
+
+## GTA5 backend
+
+`MissionPipeline` freezes its client right after the Step 3 schema fill and
+thaws it in `run()`'s `finally`. Its Step 5b used to ask the LLM to pick a
+model for each `UNRESOLVED` item and fell back to `candidates[0]`; it now
+uses `resolver.pick_model_deterministic` (model-ID word match, variants
+collapsed, tie or no match → stays `UNRESOLVED`, named in the log).

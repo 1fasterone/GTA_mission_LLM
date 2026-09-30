@@ -27,7 +27,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.pipeline import MissionPipeline, _programmatic_fix, _llm_pick_model
+from src.pipeline import MissionPipeline, _programmatic_fix
+from src.llm_boundary import FrozenLLM, PostSchemaLLMError
+from src.resolver import pick_model_deterministic
 from src.mission_schema import MissionObject, MissionPed, MissionSchema, MissionStep, MissionVehicle
 
 
@@ -315,60 +317,97 @@ class TestProgrammaticFix:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# LLM-pick fallback for UNRESOLVED models
+# Step 5b — deterministic pick for UNRESOLVED models (no LLM after Step 3)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestLlmPickFallback:
-    def test_llm_called_for_unresolved_ped_when_triggered(
-        self, gta_pipeline_config
-    ):
-        """If a ped is still UNRESOLVED after RAG+local, pipeline calls llm.chat
-        a third time (the LLM picker) and uses its result."""
-        schema_with_unresolvable = json.dumps({
-            "mission_name":  "Alien Mission",
-            "location_name": "docks",
-            "time_of_day":   12,
-            "weather":       "CLEAR",
-            "steps":         [{"type": "go_to", "label": "Go"}],
-            "peds": [{"description": "xyzzy_martian_alien_9999", "role": "guard", "count": 1, "weapon": "none"}],
-            "vehicles":      [],
-            "objects":       [],
-            "audio":         [],
-        })
-        pipeline = _make_pipeline(gta_pipeline_config)
-        # Third call (LLM picker) returns a valid-looking model ID
-        pipeline.llm.chat = MagicMock(
-            side_effect=["concept story", schema_with_unresolvable, "s_m_y_cop_01"]
-        )
-        out = pipeline.run("alien mission")
-        code = out.read_text(encoding="utf-8")
-        # LLM pick should have resolved to s_m_y_cop_01
-        assert "s_m_y_cop_01" in code
+def _one_ped_schema(description: str) -> str:
+    return json.dumps({
+        "mission_name":  "Pick Mission",
+        "location_name": "docks",
+        "time_of_day":   12,
+        "weather":       "CLEAR",
+        "steps":         [{"type": "go_to", "label": "Go"}],
+        "peds": [{"description": description, "role": "guard", "count": 1, "weapon": "none"}],
+        "vehicles":      [],
+        "objects":       [],
+        "audio":         [],
+    })
 
-    def test_pipeline_still_generates_when_model_stays_unresolved(
+
+class TestDeterministicUnresolvedPick:
+    def test_llm_is_never_called_after_the_schema_fill(self, gta_pipeline_config):
+        """Two calls — concept + schema — even when a ped stays UNRESOLVED.
+        A third answer is queued so a regression would silently consume it."""
+        pipeline = _make_pipeline(gta_pipeline_config)
+        pipeline.llm.chat = MagicMock(side_effect=[
+            "concept story", _one_ped_schema("xyzzy_martian_alien_9999"), "s_m_y_cop_01"])
+        out = pipeline.run("alien mission")
+        assert pipeline.llm.chat.call_count == 2
+        assert "s_m_y_cop_01" not in out.read_text(encoding="utf-8")
+
+    def test_unmatched_description_abstains_instead_of_taking_first_candidate(
         self, gta_pipeline_config
     ):
-        """Even if a model stays UNRESOLVED, the pipeline should not crash —
-        it should emit a warning and generate code that skips that spawn."""
-        schema_json = json.dumps({
-            "mission_name":  "Broken Mission",
-            "location_name": "docks",
-            "time_of_day":   12,
-            "weather":       "CLEAR",
-            "steps":         [{"type": "go_to", "label": "Go"}],
-            "peds": [{"description": "xyzzy_alien", "role": "guard", "count": 1, "weapon": "none"}],
-            "vehicles": [],
-            "objects":  [],
-            "audio":    [],
-        })
+        """The old fallback shipped candidates[0] (a beach woman) for anything.
+        An abstain keeps UNRESOLVED and the spawn is skipped, loudly."""
         pipeline = _make_pipeline(gta_pipeline_config)
-        # LLM picker returns garbage → UNRESOLVED persists
-        pipeline.llm.chat = MagicMock(
-            side_effect=["story", schema_json, "!!!not_a_valid_id!!!"]
-        )
-        # Must not raise
+        first = pipeline.lookups["peds"]["valid_models"][0]
+        pipeline.llm.chat = MagicMock(side_effect=["story", _one_ped_schema("xyzzy_alien")])
         out = pipeline.run("broken")
         assert out.exists()
+        saved = next(out.parent.glob("*.schema.json"))
+        schema = json.loads(saved.read_text(encoding="utf-8"))
+        assert schema["peds"][0]["model"] == "UNRESOLVED"
+        assert first not in out.read_text(encoding="utf-8")
+
+    def test_post_schema_llm_call_raises(self, gta_pipeline_config, monkeypatch):
+        pipeline = _make_pipeline(gta_pipeline_config)
+        pipeline.llm.chat = MagicMock(side_effect=["story", _one_ped_schema("cop")])
+
+        def _fixer_that_calls_the_llm(schema):
+            pipeline.llm.chat(system="s", user="u")
+            return schema
+
+        monkeypatch.setattr(pipeline, "_fix_unresolved", _fixer_that_calls_the_llm)
+        # "cop" resolves in Step 4; force the Step 5b branch to run anyway.
+        monkeypatch.setattr(MissionSchema, "unresolved_models",
+                            lambda self: ["ped:forced"])
+        with pytest.raises(PostSchemaLLMError):
+            pipeline.run("cop mission")
+        assert not isinstance(pipeline.llm, FrozenLLM)   # thawed for the next run
+
+
+class TestPickModelDeterministic:
+    PEDS = ["a_f_m_beach_01", "a_f_y_beach_01", "a_m_m_business_01",
+            "a_f_y_business_01", "s_f_y_ranger_01", "s_m_y_ranger_01",
+            "s_m_m_prisguard_01", "g_m_m_cartelguards_01"]
+
+    def test_exact_word_match_wins(self):
+        assert pick_model_deterministic("drug stack", [
+            "prop_drug_package_01", "xm3_prop_xm3_drug_stack_01a"])[0] ==             "xm3_prop_xm3_drug_stack_01a"
+
+    def test_variants_of_one_model_are_not_a_tie(self):
+        assert pick_model_deterministic("police cruiser",
+                                        ["police2", "police", "policeb"])[0] == "police"
+        assert pick_model_deterministic("beach woman", self.PEDS, ped=True)[0] ==             "a_f_m_beach_01"
+
+    def test_gender_word_selects_the_matching_ped(self):
+        assert pick_model_deterministic("businessman", self.PEDS, ped=True)[0] ==             "a_m_m_business_01"
+        assert pick_model_deterministic("female ranger", self.PEDS, ped=True)[0] ==             "s_f_y_ranger_01"
+
+    def test_tie_between_different_models_abstains_and_names_them(self):
+        model, reason = pick_model_deterministic("a guard", self.PEDS, ped=True)
+        assert model is None
+        assert "tie" in reason and "prisguard" in reason and "cartelguards" in reason
+
+    def test_no_shared_word_abstains(self):
+        model, reason = pick_model_deterministic("xyzzy alien", self.PEDS, ped=True)
+        assert model is None and "no candidate" in reason
+
+    def test_order_of_candidates_does_not_matter(self):
+        forward = pick_model_deterministic("beach woman", self.PEDS, ped=True)
+        backward = pick_model_deterministic("beach woman", self.PEDS[::-1], ped=True)
+        assert forward == backward
 
 
 # ══════════════════════════════════════════════════════════════════════════════

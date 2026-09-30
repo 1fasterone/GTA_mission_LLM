@@ -6,7 +6,7 @@ STEP 3 — LLM fills the mission schema (plain English descriptions)
          + location sanity check against concept keywords
 STEP 4 — RAG resolves all descriptions → GTA5 model IDs
          + step↔entity consistency enforcement
-STEP 5 — Python fixer + per-item LLM pick for UNRESOLVED models
+STEP 5 — Python fixer + deterministic model-ID pick for UNRESOLVED models
 STEP 6 — Pipeline compiles schema → .NET 4.8 C# (no LLM involved)
 """
 
@@ -16,9 +16,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel   import Panel
 
-from .lm_studio_client   import LMStudioClient
 from .backends           import make_chat_client, make_rag_client
-from .resolver           import ModelResolver, _load_lookups
+from .resolver           import (ModelResolver, _load_lookups,
+                                pick_model_deterministic)
+from .llm_boundary       import freeze, thaw
 from .mission_schema     import MissionSchema, MissionObject
 from .code_generator     import CodeGenerator
 from .prompts            import (
@@ -211,35 +212,6 @@ def _programmatic_fix(schema: MissionSchema) -> MissionSchema:
     return schema
 
 
-# ── Step 5b: LLM model picker (one call per UNRESOLVED item) ─────────────────
-
-def _llm_pick_model(llm: LMStudioClient, description: str,
-                    category: str, candidates: list[str]) -> str:
-    candidate_str = "\n".join(f"  {m}" for m in candidates[:30])
-    system = (
-        "You are a GTA5 asset lookup tool. "
-        "Reply with ONLY a single model ID from the list — no explanation."
-    )
-    user = (
-        f"Which GTA5 {category} model best matches: \"{description}\"?\n\n"
-        f"Choose from:\n{candidate_str}\n\n"
-        "Reply with the single best model ID only."
-    )
-    try:
-        raw = llm.chat(system=system, user=user, temperature=0.05, thinking=False)
-    except Exception as exc:
-        fallback = candidates[0] if candidates else "UNRESOLVED"
-        console.print(f"  [yellow]WARN[/] LLM pick failed for '{description}' ({exc!r}) — using {fallback}")
-        return fallback
-    match = re.search(r"\b([a-z][a-z0-9_]{2,})\b", raw.strip().lower())
-    candidate_set = set(candidates)
-    if match and match.group(1) in candidate_set:
-        return match.group(1)
-    fallback = candidates[0] if candidates else "UNRESOLVED"
-    console.print(f"  [yellow]WARN[/] LLM pick returned no valid ID for '{description}' — using {fallback}")
-    return fallback
-
-
 # ── Pipeline class ────────────────────────────────────────────────────────────
 
 class MissionPipeline:
@@ -423,30 +395,39 @@ class MissionPipeline:
 
         return schema
 
-    # ── Step 5b: resolve UNRESOLVED models with LLM pick ────────────────────
+    # ── Step 5b: deterministic pick for UNRESOLVED models ─────────────────────
 
     def _fix_unresolved(self, schema: MissionSchema) -> MissionSchema:
-        for ped in schema.peds:
-            if not ped.model or ped.model == "UNRESOLVED":
-                candidates = self.lookups.get("peds", {}).get("valid_models", [])
-                if candidates:
-                    ped.model = _llm_pick_model(self.llm, ped.description, "ped", candidates)
-                    self._fix(f"'{ped.description}' -> {ped.model}")
+        """Last resolution tier: match the description to candidate model IDs.
 
-        for v in schema.vehicles:
-            if not v.model or v.model == "UNRESOLVED":
-                candidates = self.lookups.get("vehicles", {}).get("valid_models", [])
-                if candidates:
-                    v.model = _llm_pick_model(self.llm, v.description, "vehicle", candidates)
-                    self._fix(f"'{v.description}' -> {v.model}")
-
-        for o in schema.objects:
-            if not o.model or o.model == "UNRESOLVED":
-                candidates = self.lookups.get("objects", {}).get("valid_models", [])
-                if candidates:
-                    o.model = _llm_pick_model(self.llm, o.description, "prop", candidates)
-                    self._fix(f"'{o.description}' -> {o.model}")
-
+        Deterministic (resolver.pick_model_deterministic) — no LLM, and no
+        arbitrary first-candidate fallback. An abstain keeps UNRESOLVED; the
+        final audit below names the spawn that will be skipped and why.
+        """
+        groups = (
+            (schema.peds,     "peds",     "ped"),
+            (schema.vehicles, "vehicles", "vehicle"),
+            (schema.objects,  "objects",  "prop"),
+        )
+        for items, table, label in groups:
+            candidates = self.lookups.get(table, {}).get("valid_models", [])
+            for item in items:
+                if item.model and item.model != "UNRESOLVED":
+                    continue
+                if not candidates:
+                    self._warn(f"{label} '{item.description}': no valid_models in "
+                               f"lookups/{table}.json — stays UNRESOLVED")
+                    continue
+                model, reason = pick_model_deterministic(
+                    item.description, candidates, ped=(table == "peds"))
+                if model:
+                    item.model = model
+                    self._fix(f"'{item.description}' -> {model} ({reason})")
+                else:
+                    item.model = "UNRESOLVED"
+                    self._warn(f"{label} '{item.description}': abstained — {reason}; "
+                               "set an explicit model ID or add a synonym to "
+                               f"lookups/{table}.json")
         return schema
 
     # ── main run ──────────────────────────────────────────────────────────────
@@ -455,6 +436,17 @@ class MissionPipeline:
             theme:       str | None = None,
             mashup_with: str | None = None,
             seed:        int | None = None) -> Path:
+        """Run the mission compiler; the LLM freeze after Step 3 is per run."""
+        try:
+            return self._run_impl(user_prompt, theme=theme,
+                                  mashup_with=mashup_with, seed=seed)
+        finally:
+            self.llm = thaw(self.llm)
+
+    def _run_impl(self, user_prompt: str,
+                  theme:       str | None = None,
+                  mashup_with: str | None = None,
+                  seed:        int | None = None) -> Path:
         console.print(Panel(
             f"[bold]GTA5 Mission Pipeline[/]\n{user_prompt}", style="blue"
         ))
@@ -547,6 +539,10 @@ class MissionPipeline:
         # a description for each saved mod, not just its filename.
         schema.meta["concept"]      = concept
         schema.meta["user_prompt"]  = user_prompt
+        # Freeze boundary (src/llm_boundary.py): the Pipeline LLM's work ends
+        # with the schema fill. Steps 4-6 are deterministic; a stray
+        # llm.chat() from here on raises PostSchemaLLMError.
+        self.llm = freeze(self.llm)
         self._ok(
             f"{len(schema.steps)} steps  {len(schema.peds)} peds  "
             f"{len(schema.vehicles)} vehicles  {len(schema.objects)} objects"
@@ -581,10 +577,10 @@ class MissionPipeline:
 
         still_unresolved = schema.unresolved_models()
         if still_unresolved:
-            self._ok(f"LLM picking closest model for {len(still_unresolved)} UNRESOLVED item(s)")
+            self._ok(f"Deterministic model-ID match for {len(still_unresolved)} UNRESOLVED item(s)")
             schema = self._fix_unresolved(schema)
 
-        # Final audit — anything still UNRESOLVED after LLM pick will silently skip spawning
+        # Final audit — anything still UNRESOLVED is named here; its spawn is skipped
         final_unresolved = schema.unresolved_models()
         if final_unresolved:
             for item in final_unresolved:

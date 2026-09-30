@@ -188,13 +188,16 @@ typos and from the LLM hallucinating model names:
 1. **`UNRESOLVED` token**: if a model can't be resolved, the schema marks it
    `UNRESOLVED` and the code generator emits a `console.print` warning at
    compile time so the tester sees it before the script ships.
-2. **LLM pick fallback** (`pipeline._llm_pick_model`): if RAG returns
-   something that's not in `valid_models`, the LLM is asked to pick the
-   closest match from the stock list — never invents a name.
+2. **Deterministic pick** (`resolver.pick_model_deterministic`, Step 5b):
+   a description the resolver left `UNRESOLVED` is matched against the words
+   inside each `valid_models` ID (`s_m_y_cop_01` → "cop"). Variants of one
+   model (`_01`/`_02`, a ped's age letter) count as one; a tie between
+   different models, or no shared word, keeps `UNRESOLVED` and names the
+   reason in the log. No LLM runs after the schema fill, and there is no
+   first-candidate fallback.
 
-If you want LLM-suggested AddOns, drop `--basic` in Custom Args for that
-run (forces local-only resolution) and ensure your AddOn names are in
-`valid_models`. The LLM-pick then picks among your AddOns.
+AddOn names you add to `valid_models` take part in the same match, so give
+them descriptive IDs (or a `synonyms` entry) for them to be picked.
 
 ---
 
