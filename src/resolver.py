@@ -67,6 +67,102 @@ def _local_resolve(description: str, category: str, lookups: dict,
     return None
 
 
+# ── Deterministic model-ID pick (Step 5b) ────────────────────────────────────
+#
+# Last tier for a description the resolver left UNRESOLVED. It used to be an
+# LLM call inside the fixer that fell back to `candidates[0]` — an arbitrary
+# model shipped with a WARN. This scores the description against the words in
+# each candidate's own ID instead: deterministic, and it ABSTAINS (keeps
+# UNRESOLVED, spawn skipped, named in the log) when nothing matches or two
+# different models tie. Variants of one model are not a tie — `_01`/`_02`,
+# `police`/`police2`, or a ped's age/gender letters around the same role
+# (`a_f_y_beach_01`/`a_f_m_beach_01`) — the lowest-sorted variant is used.
+
+# ID fragments that name a namespace or DLC, never what the model depicts.
+_GENERIC_ID_TOKENS = frozenset({"prop", "veh", "csb", "xm3", "dlc", "int", "des"})
+_FEMALE_WORDS = frozenset({"woman", "women", "female", "girl", "lady", "ladies",
+                           "she", "her", "wife", "mother", "mom", "grandma"})
+_MALE_WORDS = frozenset({"man", "men", "male", "guy", "boy", "he", "his",
+                         "husband", "father", "dad", "grandpa"})
+_PED_ID_RE = re.compile(r"^[a-z]+_([fm])_[a-z]_(.+)$")
+_VARIANT_SUFFIX_RE = re.compile(r"_?\d+[a-z]?$")
+
+
+def _id_tokens(model_id: str) -> list[str]:
+    """Descriptive words inside a model ID (`s_m_y_cop_01` -> ['cop'])."""
+    return [t for t in re.split(r"[_\d]+", model_id.lower())
+            if len(t) >= 3 and t not in _GENERIC_ID_TOKENS]
+
+
+def _id_base(model_id: str, ped: bool) -> str:
+    """What the model depicts, variant letters stripped (`police2` -> `police`,
+    ped `a_f_y_beach_01` -> `beach`)."""
+    base = _VARIANT_SUFFIX_RE.sub("", model_id.lower()) or model_id.lower()
+    if ped:
+        m = _PED_ID_RE.match(base)
+        if m:
+            return m.group(2)
+    return base
+
+
+def _desc_words(description: str) -> set[str]:
+    words = set(re.findall(r"[a-z]+", description.lower()))
+    return words | {w[:-1] for w in words if len(w) > 3 and w.endswith("s")}
+
+
+def _word_score(word: str, tokens: list[str]) -> int:
+    """2 for an exact ID token, 1 for a containment match (never short words)."""
+    if word in tokens:
+        return 2
+    if len(word) >= 4 and any(len(t) >= 4 and (word in t or t in word)
+                              for t in tokens):
+        return 1
+    return 0
+
+
+def _gender_cue(words: set[str]) -> Optional[str]:
+    female = any(w in _FEMALE_WORDS or w.endswith("woman") for w in words)
+    male = any(w in _MALE_WORDS or (w.endswith("man") and not w.endswith("woman"))
+               for w in words)
+    return "f" if female and not male else "m" if male and not female else None
+
+
+def pick_model_deterministic(description: str, candidates: list[str], *,
+                             ped: bool = False) -> tuple[Optional[str], str]:
+    """Pick the candidate whose ID words best match `description`.
+
+    Returns (model, reason). `model` is None when the pick abstains: no
+    candidate ID shares a word with the description, or the best score is
+    shared by two different models. For peds, a gender word in the
+    description ("woman", "businessman") ranks the matching `_f_`/`_m_` ID
+    first.
+    """
+    words = _desc_words(description)
+    cue = _gender_cue(words) if ped else None
+
+    scored: list[tuple[int, int, str]] = []            # (score, gender, id)
+    for model in sorted(set(candidates)):
+        tokens = _id_tokens(model)
+        score = sum(_word_score(w, tokens) for w in words)
+        if score < 1:
+            continue
+        gender = 0
+        if cue:
+            m = _PED_ID_RE.match(model)
+            gender = 1 if m and m.group(1) == cue else 0
+        scored.append((score, gender, model))
+
+    if not scored:
+        return None, "no candidate model ID shares a word with the description"
+    best = max((sc, g) for sc, g, _ in scored)
+    top = sorted(m for sc, g, m in scored if (sc, g) == best)
+    bases = sorted({_id_base(m, ped) for m in top})
+    if len(bases) > 1:
+        shown = ", ".join(bases[:3]) + (" …" if len(bases) > 3 else "")
+        return None, f"tie between {len(bases)} different models ({shown})"
+    return top[0], f"model-ID word match (score {best[0]})"
+
+
 class ModelResolver:
     def __init__(self, rag: Any, lookups_dir: str,
                  fallback: bool = True, use_rag: bool = True):
