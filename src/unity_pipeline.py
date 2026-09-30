@@ -17,7 +17,6 @@ from rich.console import Console
 from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
-from .lm_studio_client   import LMStudioClient
 from .micro_pipeline     import to_pascal
 from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
                                  is_embodied)
@@ -64,6 +63,8 @@ from .unity_greybox       import (GREYBOX_SCRIPT_TYPES,
                                   stamp_greybox_plus_reference,
                                   validate_greybox_plus_ir,
                                   validate_dungeon_greybox)
+from .llm_boundary       import (ENRICHMENT_FORMAT, ENRICHMENT_META_KEY,
+                                  freeze, thaw)
 from .unity_scenebind     import apply_scene
 from .unity_playability   import PlayabilityGateError, gate as playability_gate
 from .unity_playability_artifact import evaluate_project
@@ -99,6 +100,78 @@ def _compose_palette_rgb(schema) -> dict:
         return {}
     return {slot: _unity_color(getattr(pal, slot))
             for slot in ("primary", "secondary", "accent", "background", "trim")}
+
+
+def _compose_subsystems(schema, user_prompt: str,
+                        features: list[str] | None = None) -> list:
+    """The composed-micro plan for `schema` — a pure function of the schema.
+
+    One call site for both readers: Step 3.5 plans against the freshly filled
+    schema to know which micros to author code for, and Step 6 re-plans
+    against the fixed schema to compose them. `features` overrides
+    schema.features without mutating it (Step 3.5 must see compose's
+    always-on audio before Step 6 injects it).
+    """
+    from .unity_compose import subsystems_for
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    return subsystems_for(schema.game_type,
+                          list(schema.features if features is None else features),
+                          locomotion=schema.locomotion,
+                          locomotion_modes=schema.locomotion_modes,
+                          flying_abilities=meta.get("flying_abilities"),
+                          capabilities=schema.capabilities,
+                          user_prompt=user_prompt,
+                          scenes=schema.scenes,
+                          entities=schema.entities,
+                          scripts=schema.scripts,
+                          genre=meta.get("genre", "universal"),
+                          audio_specs=schema.audio_specs,
+                          vfx_specs=schema.vfx,
+                          shaders=schema.shaders,
+                          animations=schema.animations,
+                          characters=schema.characters,
+                          missions=schema.missions,
+                          behavior_trees=schema.behavior_trees,
+                          environment=schema.environment,
+                          visual_style=schema.visual_style,
+                          palette_rgb=_compose_palette_rgb(schema),
+                          cover_points=meta.get("cover_points"))
+
+
+# npc_dialog variant -> the interaction type the dialog extractor is asked for.
+_NPC_INTERACTION_TYPES = {"quest_giver": "quest", "vendor": "vendor",
+                          "ambient_bark": "ambient", "combat_chatter": "combat",
+                          "follower": "follower", "cutscene": "quest"}
+
+
+def _npc_dialog_key(sub) -> str:
+    """Stable key tying Step 3.5's dialog lines to a Step 6 npc_dialog unit."""
+    return f"{sub.variant or ''}:{sub.options.get('speaker_name', 'NPC')}"
+
+
+def _enrichment(meta) -> dict:
+    """schema.meta's Step 3.5 record, or {} when Step 3.5 authored nothing."""
+    record = meta.get(ENRICHMENT_META_KEY) if isinstance(meta, dict) else None
+    return record if isinstance(record, dict) else {}
+
+
+def _inject_npc_dialog_lines(subsystems, meta) -> list[str]:
+    """Hand each npc_dialog unit the lines Step 3.5 authored for it."""
+    stored = _enrichment(meta).get("npc_dialog_lines") or {}
+    msgs: list[str] = []
+    for sub in subsystems:
+        if sub.kind != "npc_dialog":
+            continue
+        lines = stored.get(_npc_dialog_key(sub))
+        if not lines:
+            continue
+        sub_meta = sub.options.setdefault("meta", {})
+        sub_meta["_pre_lines"] = [dict(line) for line in lines]
+        sub_meta.pop("skip_audio", None)   # lift default skip → emit renders Kokoro clips
+        msgs.append(f"Injected {len(lines)} Step 3.5 NPC dialog lines for "
+                    f"{sub.options.get('speaker_name', 'NPC')} — Kokoro clips "
+                    "will render at emit")
+    return msgs
 
 
 # ── Programmatic fixer ────────────────────────────────────────────────────────
@@ -1052,7 +1125,7 @@ class UnityPipeline:
 
     # ── console helpers ───────────────────────────────────────────────────────
 
-    def _step(self, n: int, title: str) -> None:
+    def _step(self, n: int | str, title: str) -> None:
         console.print(f"\n[bold cyan]STEP {n}[/] -- {title}")
 
     def _ok(self, msg: str)   -> None: console.print(f"  [green]OK[/]   {msg}")
@@ -1149,6 +1222,193 @@ class UnityPipeline:
 
     # ── main run ──────────────────────────────────────────────────────────────
 
+    def _run_llm_enrichment(self, schema: UnitySchema, *, concept: str,
+                            user_prompt: str, seed: int | None, compose: bool,
+                            micro_code: bool, allowed: bool,
+                            visual_context_mode: bool) -> None:
+        """Step 3.5 — every LLM-authored artifact beyond the schema fill.
+
+        Runs straight after Step 3, while the model is warm, and writes each
+        result INTO the schema so Steps 4-7 can stay LLM-free and a saved
+        schema replays the same project (`unity-validate --compose`):
+
+        - entity `sketchfab_query`          -> the entity fields themselves
+        - custom-script bodies (`extra_*`)  -> the script fields themselves
+        - composed-micro bodies             -> `schema.microgens[].input`
+        - NPC dialog lines, audio cues      -> `schema.meta["llm_enrichment"]`
+        - the concept Sketchfab collection  -> frozen into lookups (network +
+          Blender, so it runs last: it cools the model)
+
+        Authored against the Step-3 schema. Content Step 5 adds afterwards (a
+        rescued entity, an injected script) is not enriched; it takes the
+        same deterministic fallback an enrichment failure always took, and
+        the log names what was enriched.
+        """
+        self._step("3.5", "LLM enrichment — authored content frozen into the schema")
+        if not isinstance(schema.meta, dict):
+            schema.meta = {}
+        meta = schema.meta
+        if ENRICHMENT_META_KEY in meta:
+            meta.pop(ENRICHMENT_META_KEY)
+            self._warn(f"Discarded a schema-fill meta.{ENRICHMENT_META_KEY} — "
+                       "that key is compiler-owned (Step 3.5 writes it)")
+        self._sketchfab_collection = None
+        if not allowed:
+            if schema.entities and visual_context_mode:
+                _query_count = sum(
+                    bool((entity.sketchfab_query or "").strip())
+                    for entity in schema.entities
+                )
+                self._ok(
+                    "Step 3 supplied image-guided Sketchfab queries for "
+                    f"{_query_count}/{len(schema.entities)} entities; no "
+                    "post-schema query LLM was called"
+                )
+            self._ok("Step 3.5 skipped (--no-llm / visual mode) — deterministic "
+                     "fallbacks apply to queries, bodies, dialog and cues")
+            return
+
+        record: dict = {"format": ENRICHMENT_FORMAT, "stage": "3.5"}
+        _llm_seed = getattr(self.llm, "seed", None)
+        run_seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
+
+        # Entity sketchfab_query. It also drives the LOCAL catalog tiers
+        # (see _query_weights), so entity -> model matching is concept-aware
+        # even when Sketchfab is off. The fallback on failure is the
+        # resolver's mechanical model_hint / entity-name query.
+        if schema.entities:
+            try:
+                from .unity_sketchfab_translator import translate_concept
+                n = translate_concept(concept, schema.entities, self.llm, run_seed)
+                if n:
+                    self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
+                else:
+                    self._warn("Sketchfab query translation produced nothing — "
+                               "resolver falls back to model_hint / entity name")
+            except Exception as exc:  # noqa: BLE001
+                self._warn(f"Sketchfab query translation failed "
+                           f"({type(exc).__name__}: {exc}) — mechanical fallback used")
+            record["sketchfab_query_entities"] = sorted(
+                e.name for e in schema.entities
+                if (e.sketchfab_query or "").strip())
+
+        # The composed-micro plan this schema implies. Step 6 re-plans against
+        # the FIXED schema; bodies authored here reach it through
+        # schema.microgens (merge_authored_code), keyed by kind.
+        subsystems: list = []
+        if compose:
+            features = list(schema.features or [])
+            if "audio" not in features:
+                features.append("audio")   # Step 6 always composes audio
+            try:
+                subsystems = _compose_subsystems(schema, user_prompt, features)
+            except Exception as exc:  # noqa: BLE001
+                self._warn(f"Step 3.5 could not plan composed micros "
+                           f"({type(exc).__name__}: {exc}) — micro code, NPC "
+                           "dialog and audio cue enrichment skipped; micros "
+                           "keep their deterministic baseline")
+
+        # `type: custom` script bodies. Its template is a bare shell, so with
+        # no author it ships a class of fields with no behaviour. `subsystems`
+        # lets the contract name the composed-micro classes reachable via
+        # GameContext.
+        if schema.scripts and micro_code:
+            from .unity_micro_code import enrich_scripts
+            for msg in enrich_scripts(schema.scripts, llm=self.llm,
+                                      concept=concept, user_prompt=user_prompt,
+                                      subsystems=subsystems):
+                self._fix(msg)
+
+        # Composed-micro bodies. Only the extras vocabulary is writable
+        # (unity_micro_code.CODE_KEYS), so wiring stays deterministic.
+        if subsystems and micro_code:
+            from .unity_micro_code import (enrich_subsystems,
+                                           sync_microgens_from_subsystems)
+            # The tags TagManager will actually define:
+            # GameObject.FindGameObjectWithTag THROWS on an undefined tag.
+            _tags = sorted({(e.tag or "").strip() for e in schema.entities
+                            if (e.tag or "").strip()
+                            and (e.tag or "").strip() != "Untagged"})
+            for msg in enrich_subsystems(subsystems, llm=self.llm,
+                                         concept=concept,
+                                         user_prompt=user_prompt, tags=_tags):
+                self._fix(msg)
+            for msg in sync_microgens_from_subsystems(subsystems, schema.microgens):
+                self._fix(msg)
+
+        # NPC dialog lines, one set per npc_dialog unit. Retried: the local
+        # model occasionally returns an unparseable first response under load.
+        _npc_subs = [s for s in subsystems if s.kind == "npc_dialog"]
+        if _npc_subs and concept:
+            dialog: dict[str, list[dict]] = {}
+            try:
+                from .audio.dialog_resolver import extract_dialog_lines
+                _dialog_count = int(self.config.get("audio", {}).get("dialog_lines", 12))
+                for _sub in _npc_subs:
+                    _spk = _sub.options.get("speaker_name", "NPC")
+                    _lines: list[dict] = []
+                    for _attempt in range(3):
+                        _lines = extract_dialog_lines(
+                            concept, self.llm, speaker=_spk,
+                            interaction_type=_NPC_INTERACTION_TYPES.get(
+                                _sub.variant or "", "quest"),
+                            seed=run_seed, count=_dialog_count)
+                        if _lines:
+                            break
+                    if _lines:
+                        dialog[_npc_dialog_key(_sub)] = _lines
+                        self._ok(f"Extracted {len(_lines)} NPC dialog lines for {_spk}")
+                    else:
+                        self._warn(f"No dialog lines extracted for {_spk} — "
+                                   "npc_dialog stays text-only (preset lines, no clips)")
+            except Exception as _exc:  # noqa: BLE001
+                self._warn(f"NPC dialog extraction failed "
+                           f"({type(_exc).__name__}: {_exc})")
+            if dialog:
+                record["npc_dialog_lines"] = dialog
+
+        # Diegetic audio cues for the Stable Audio 3 bank.
+        audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
+        if (concept and audio_backend == "stable3"
+                and any(s.kind == "audio" for s in subsystems)):
+            try:
+                from .audio.resolver import extract_cues
+                _cues = extract_cues(concept, self.llm, n=10, seed=run_seed)
+                if _cues:
+                    record["audio_cues"] = _cues
+                    self._ok(f"Extracted {len(_cues)} diegetic audio cues from concept")
+                else:
+                    self._warn("Concept audio extraction returned no cues — genre preset will be used")
+            except Exception as _exc:  # noqa: BLE001
+                self._warn(f"Audio cue extraction failed ({type(_exc).__name__}: {_exc})")
+
+        # Concept-driven Sketchfab collection: the LLM proposes the models this
+        # world needs; each is searched + downloaded + Blender-converted +
+        # frozen into lookups so Step 6's per-entity Tier S matches real,
+        # on-concept models. Last, because Blender cools the local model.
+        _coll_cfg = self.config.get("sketchfab", {}) or {}
+        if (compose and _coll_cfg.get("enabled")
+                and _coll_cfg.get("collect", True) and concept):
+            if schema.game_type in ("2D", "2d_topdown"):
+                # Sketchfab only yields 3D FBX; a 2D game uses PNG sprites.
+                self._warn("Sketchfab collection skipped — 2D game "
+                           "(Sketchfab only yields 3D FBX; 2D sprites come "
+                           "from the Kenney PNG catalog instead)")
+            else:
+                try:
+                    from .unity_sketchfab_collection import collect_models
+                    from .sketchfab_client import SketchfabClient
+                    self._sketchfab_collection = collect_models(
+                        concept, self.llm, client=SketchfabClient(_coll_cfg),
+                        sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
+                        count=int(_coll_cfg.get("collection_count", 12)),
+                        seed=run_seed, log_ok=self._ok, log_warn=self._warn)
+                except Exception as _exc:  # noqa: BLE001
+                    self._warn(f"Sketchfab collection failed "
+                               f"({type(_exc).__name__}: {_exc})")
+
+        meta[ENRICHMENT_META_KEY] = record
+
     def _blender_model_overrides(self, schema, concept: str) -> dict[str, str]:
         """Build procedural Blender models for every supported catalog kind and return
         {kind: fbx_path}.  Degrades silently per kind if a build fails — the generator
@@ -1239,6 +1499,8 @@ class UnityPipeline:
         try:
             return self._run_impl(user_prompt, *args, **kwargs)
         finally:
+            # Hand the next run a live client: the freeze is per run.
+            self.llm = thaw(self.llm)
             eject = getattr(self.llm, "unload", None)
             if callable(eject):
                 try:
@@ -1748,6 +2010,23 @@ class UnityPipeline:
         if geometry_only:
             return self._run_geometry_only_greybox(schema, concept)
 
+        # STEP 3.5 — LLM enrichment, then the freeze boundary ─────────────────
+        # Every LLM-authored artifact beyond the schema fill is written HERE,
+        # into the schema, while the model is still warm from Step 3. From the
+        # end of this block the client is frozen (src/llm_boundary.py): Steps
+        # 4-7 read what Step 3.5 persisted and a stray llm.chat() raises.
+        post_schema_llm_allowed = not (
+            no_llm or visual_compile or visual_context_mode
+        )
+        self._run_llm_enrichment(
+            schema, concept=concept, user_prompt=user_prompt, seed=seed,
+            compose=compose, micro_code=micro_code,
+            allowed=post_schema_llm_allowed,
+            visual_context_mode=visual_context_mode,
+        )
+        self.llm = freeze(self.llm)
+        self._ok("Freeze boundary crossed — Steps 4-7 run without the LLM")
+
         # STEP 4 — resolve packages + inject required ─────────────────────────
         self._step(4, "Resolver maps packages to Unity Package Manager IDs")
         schema = self.resolver.resolve_schema(schema)
@@ -2082,58 +2361,11 @@ class UnityPipeline:
         model_overrides: dict[str, str] = {}
         if blender_models:
             model_overrides = self._blender_model_overrides(schema, concept)
-        # Step 6.5 — enrich entity sketchfab_query while the project LLM is
-        # STILL WARM (mirrors the audio concept-translator's placement, and the
-        # NPC dialog pre-extraction below: it MUST run before any Blender/
-        # Chromium-heavy phase cools the LLM). Deliberately placed ahead of the
-        # `if compose:` block below — the bulk Sketchfab collection nested in
-        # there runs 10-15 rounds of search+download+Blender-convert and
-        # previously ran BEFORE this step; by the time translate_concept ran,
-        # the local model had gone cold (LM Studio idle-unload), llm.chat()
-        # failed/timed out, translate_concept's try/except swallowed it, every
-        # entity kept an empty sketchfab_query, and per-entity Tier S had
-        # nothing to match on — silently falling through to Kenney. Runs
-        # regardless of `compose`/`subsystems`: the concept-translated query
-        # also drives the LOCAL catalog tiers (see _query_weights), so entity
-        # -> model matching is concept-aware even when Sketchfab is off or fails.
-        # --no-llm skips this: the enrichment is a model call, and its
-        # deterministic fallback (model_hint / entity name, both already parsed
-        # from the brief) is exactly what the offline arm is meant to exercise.
-        post_schema_llm_allowed = not (
-            no_llm or visual_compile or visual_context_mode
-        )
-        if schema.entities and post_schema_llm_allowed:
-            try:
-                from .unity_sketchfab_translator import translate_concept
-                _llm_seed = getattr(self.llm, "seed", None)
-                _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                n = translate_concept(concept, schema.entities, self.llm, _seed)
-                if n:
-                    self._ok(f"sketchfab_query enriched for {n}/{len(schema.entities)} entities")
-                else:
-                    self._warn("Sketchfab query translation produced nothing — "
-                              "resolver falls back to model_hint / entity name")
-            except Exception as exc:  # noqa: BLE001
-                self._warn(f"Sketchfab query translation failed "
-                          f"({type(exc).__name__}: {exc}) — mechanical fallback used")
-        elif schema.entities and visual_context_mode:
-            _query_count = sum(
-                bool((entity.sketchfab_query or "").strip())
-                for entity in schema.entities
-            )
-            self._ok(
-                "Step 3 supplied image-guided Sketchfab queries for "
-                f"{_query_count}/{len(schema.entities)} entities; no "
-                "post-schema query LLM was called"
-            )
+        # Entity sketchfab_query enrichment (formerly Step 6.5) now runs in
+        # Step 3.5 — see _run_llm_enrichment — and is read here from the
+        # entities it was written onto.
         # Composition: assemble the micro library into the project and wire each
         # micro into the scene as a _GameSystems component (deterministic, no LLM).
-        # Computed BEFORE Step 3.5a (below) so script enrichment can show the
-        # writer which composed-micro class names will actually exist to
-        # GameContext.Instance.Get<T>() — subsystems_for is a pure function of
-        # the schema, so moving the call earlier changes nothing about what it
-        # returns, only when. composer.plan()/emit() still happen further down,
-        # after Step 3.5's subsystem enrichment.
         composed_units = None
         subsystems = None
         # No `composer = None` pre-declaration: it is only ever referenced
@@ -2142,8 +2374,13 @@ class UnityPipeline:
         # this function's later, separately-gated `if compose ...:` blocks
         # (composer.plan/module_deps/emit/wiring_report) rely on.
         if compose:
-            from .unity_compose import (MicroComposer, subsystems_for,
-                                        drop_owned_scripts, refresh_cover_points)
+            from .unity_compose import (MicroComposer, drop_owned_scripts,
+                                        refresh_cover_points)
+            from .unity_micro_code import (merge_authored_code,
+                                           sync_microgens_from_subsystems,
+                                           sanitize_subsystem_composed_calls,
+                                           sanitize_subsystem_invented_constructors,
+                                           sanitize_subsystem_builtin_call_arity)
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
@@ -2151,94 +2388,20 @@ class UnityPipeline:
             if "audio" not in (schema.features or []):
                 schema.features = list(schema.features or []) + ["audio"]
                 self._fix("compose: injected 'audio' feature for SA3 clip generation")
-            subsystems = subsystems_for(schema.game_type, schema.features,
-                                        locomotion=schema.locomotion,
-                                        locomotion_modes=schema.locomotion_modes,
-                                        flying_abilities=schema.meta.get("flying_abilities"),
-                                        capabilities=schema.capabilities,
-                                        user_prompt=user_prompt,
-                                        scenes=schema.scenes,
-                                        entities=schema.entities,
-                                        scripts=schema.scripts,
-                                        genre=schema.meta.get("genre", "universal"),
-                                        audio_specs=schema.audio_specs,
-                                        vfx_specs=schema.vfx,
-                                        shaders=schema.shaders,
-                                        animations=schema.animations,
-                                        characters=schema.characters,
-                                        missions=schema.missions,
-                                        behavior_trees=schema.behavior_trees,
-                                        environment=schema.environment,
-                                        visual_style=schema.visual_style,
-                                        palette_rgb=_compose_palette_rgb(schema),
-                                        cover_points=schema.meta.get("cover_points"))
-
-        # STEP 3.5a — the same code-authoring step, for schema.scripts.
-        #
-        # OUTSIDE the compose-gated ENRICHMENT on purpose: a `type: custom`
-        # script is generated whether or not micros are composed, and its
-        # template (templates/unity/scripts/CustomBehaviour.cs.j2) is a bare
-        # shell that renders extra_fields and the extra_* bodies and declares
-        # nothing else. With no supplier for those bodies it emits a class of
-        # fields with no behaviour and attaches it to a live GameObject —
-        # measured on CodeBranchSim as 14 authored method blocks across the
-        # micros and 0 across its four custom scripts, because Step 3.5 only
-        # ever walked subsystems. Inside the warm window, ahead of the
-        # Blender/Chromium phases, for the same reason every other llm.chat()
-        # step here is. `subsystems` (computed just above, () when compose is
-        # off) lets the writer's contract name the real composed-micro classes
-        # reachable via GameContext instead of staying silent about them.
-        if schema.scripts and micro_code and post_schema_llm_allowed:
-            from .unity_micro_code import enrich_scripts
-            for msg in enrich_scripts(schema.scripts, llm=self.llm,
-                                      concept=concept, user_prompt=user_prompt,
-                                      subsystems=subsystems or ()):
-                self._fix(msg)
-
-        if compose:
-            # mypy can't carry `subsystems`'s narrowing from the first
-            # `if compose:` block above across the intervening Step 3.5a
-            # block — both are gated on the same unchanged `compose`, so
-            # subsystems is always set by the time execution reaches here.
-            assert subsystems is not None
-            # STEP 3.5 — LLM authors prompt-specific C# per subsystem. Runs
-            # BEFORE plan(): plan/emit must see identical options or their
-            # class names and GUIDs would disagree. Only the extras vocabulary
-            # is writable (see unity_micro_code.CODE_KEYS), so the scene wiring
-            # stays deterministic while the bodies gain concept-specific
-            # content. Placed here — inside the warm window, ahead of the bulk
-            # Sketchfab/Blender phase below — for the same reason the NPC
-            # dialog pre-extraction is (LM Studio idle-unload would otherwise
-            # turn every call into a swallowed failure).
-            from .unity_micro_code import (enrich_subsystems, merge_authored_code,
-                                           sync_microgens_from_subsystems,
-                                           sanitize_subsystem_composed_calls,
-                                           sanitize_subsystem_invented_constructors,
-                                           sanitize_subsystem_builtin_call_arity)
-            if micro_code and post_schema_llm_allowed:
-                # The tags TagManager will actually define. Handed to the author
-                # because GameObject.FindGameObjectWithTag THROWS on an undefined
-                # tag — live on CodeVault, an authored "FolderContainer" (the real
-                # tag is "Folder") crashed in Awake before anything could run.
-                _tags = sorted({(e.tag or "").strip() for e in schema.entities
-                                if (e.tag or "").strip()
-                                and (e.tag or "").strip() != "Untagged"})
-                for msg in enrich_subsystems(subsystems, llm=self.llm,
-                                             concept=concept,
-                                             user_prompt=user_prompt,
-                                             tags=_tags):
-                    self._fix(msg)
-            elif no_llm or visual_context_mode or visual_compile:
+            subsystems = _compose_subsystems(schema, user_prompt)
+            if no_llm or visual_context_mode or visual_compile:
                 _reason = (
                     "visual asset mode" if visual_context_mode
                     else "visual compile" if visual_compile
                     else "--no-llm"
                 )
                 self._ok(f"{_reason}: micros keep their deterministic baseline "
-                         "bodies (post-schema code enrichment skipped)")
-            # Fallback: schema.microgens[].input is already LLM-authored, so it
-            # costs nothing and covers whatever enrichment left empty (disabled,
-            # failed, or nothing usable returned for that kind).
+                         "bodies (no Step 3.5 code enrichment)")
+            # The micro bodies Step 3.5 authored were persisted into
+            # schema.microgens[].input by kind; together with whatever the
+            # schema fill itself put there, that is the ONLY source of authored
+            # micro code from here on — the same read `unity-validate
+            # --compose` replays, so a live run and its replay render alike.
             for msg in merge_authored_code(subsystems, schema.microgens):
                 self._fix(msg)
 
@@ -2311,97 +2474,30 @@ class UnityPipeline:
                               "(input/controller micros use UnityEngine.InputSystem)")
             self._ok(f"Composing {len(composed_units)} micro subsystems: "
                      + ", ".join(f"{u.kind}/{u.variant}" for u in composed_units))
-            # Step 6.5 (cont.) — NPC dialog pre-extraction. Sibling of the
-            # sketchfab_query enrichment above (same warm-window LLM family,
-            # named there); the LLM call here is content extraction consumed
-            # deterministically by the Step 6 generator below, not a Step 6
-            # LLM call in its own right. Pre-extract concept-specific NPC
-            # dialog lines NOW — while the LLM is
-            # warm from the schema step and BEFORE the auto_fetch Blender/Chromium
-            # phase in generator.write cools it. Inject as meta._pre_lines and pop
-            # skip_audio so emit renders REAL, concept-driven Kokoro clips (mirrors
-            # the audio _pre_cues path; a bare MicroComposer.emit still stays
-            # TTS-free). Retry once — the local model very occasionally returns an
-            # unparseable first response under load.
-            _npc_subs = [s for s in subsystems if s.kind == "npc_dialog"]
-            if _npc_subs and concept and post_schema_llm_allowed:
-                _itype = {"quest_giver": "quest", "vendor": "vendor",
-                          "ambient_bark": "ambient", "combat_chatter": "combat",
-                          "follower": "follower", "cutscene": "quest"}
-                try:
-                    from .audio.dialog_resolver import extract_dialog_lines
-                    _llm_seed = getattr(self.llm, "seed", None)
-                    _dseed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                    _dialog_count = int(self.config.get("audio", {}).get("dialog_lines", 12))
-                    for _sub in _npc_subs:
-                        _spk = _sub.options.get("speaker_name", "NPC")
-                        _lines: list[dict] = []
-                        for _attempt in range(3):
-                            _lines = extract_dialog_lines(
-                                concept, self.llm, speaker=_spk,
-                                interaction_type=_itype.get(_sub.variant or "", "quest"),
-                                seed=_dseed, count=_dialog_count)
-                            if _lines:
-                                break
-                        if _lines:
-                            _meta = _sub.options.setdefault("meta", {})
-                            _meta["_pre_lines"] = _lines
-                            _meta.pop("skip_audio", None)   # lift default skip → emit renders Kokoro clips
-                            self._ok(f"Pre-extracted {len(_lines)} NPC dialog lines for "
-                                     f"{_spk} — Kokoro clips will render at emit")
-                        else:
-                            self._warn(f"No dialog lines extracted for {_spk} — "
-                                       "npc_dialog stays text-only (preset lines, no clips)")
-                except Exception as _exc:  # noqa: BLE001
-                    self._warn(f"NPC dialog pre-extraction failed "
-                               f"({type(_exc).__name__}: {_exc})")
-            # ── Step 6.5 (cont.) — Concept-driven Sketchfab model collection
-            # (10-15 models) ──────────────────────────────────────────────
-            # Mirrors the audio cue pipeline: the LLM proposes the models this
-            # world actually needs; each is searched + downloaded + Blender-
-            # converted + frozen NOW (before generator.write) so the per-entity
-            # Tier S then matches real, on-concept models instead of a stray
-            # Kenney pick. Every model logs where it was written or why it failed.
-            self._sketchfab_collection = None
-            _coll_cfg = self.config.get("sketchfab", {}) or {}
-            if (post_schema_llm_allowed and _coll_cfg.get("enabled")
-                    and _coll_cfg.get("collect", True) and concept):
-                if schema.game_type in ("2D", "2d_topdown"):
-                    # Sketchfab is a 3D-model marketplace — fetch_and_freeze only
-                    # ever writes FBX. The per-entity Tier S resolver already
-                    # skips itself for 2D (unity_entity_asset_resolver.py: `not
-                    # is_2d`) so those FBX never get matched to an entity; this
-                    # batch step was the one place that gate was missing, and it
-                    # unconditionally downloaded + Blender-converted 10-15 FBX
-                    # models into Assets/Models/Sketchfab/ for a 2D game that
-                    # can only use PNG sprites (Kenney catalog) or its own kind
-                    # default models — wasted network/Blender time and orphaned
-                    # files. Skip the whole step for 2D instead.
-                    self._warn("Sketchfab collection skipped — 2D game "
-                               "(Sketchfab only yields 3D FBX; 2D sprites come "
-                               "from the Kenney PNG catalog instead)")
-                else:
-                    try:
-                        from .unity_sketchfab_collection import collect_models
-                        from .sketchfab_client import SketchfabClient
-                        _llm_seed = getattr(self.llm, "seed", None)
-                        _cseed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                        self._sketchfab_collection = collect_models(
-                            concept, self.llm, client=SketchfabClient(_coll_cfg),
-                            sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
-                            count=int(_coll_cfg.get("collection_count", 12)),
-                            seed=_cseed, log_ok=self._ok, log_warn=self._warn)
-                    except Exception as _exc:  # noqa: BLE001
-                        self._warn(f"Sketchfab collection failed "
-                                   f"({type(_exc).__name__}: {_exc})")
+            # NPC dialog lines were authored in Step 3.5 and persisted under
+            # schema.meta["llm_enrichment"]; hand them to the matching
+            # npc_dialog unit as meta._pre_lines and lift skip_audio so emit
+            # renders real, concept-driven Kokoro clips.
+            for msg in _inject_npc_dialog_lines(subsystems, schema.meta):
+                self._ok(msg)
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = dict(self.config.get("sketchfab", {}) or {})
-        _asset_llm: LMStudioClient | None = self.llm
+        if _sketchfab_cfg.get("vision_select"):
+            # vision_select asks the LLM to reorder live Sketchfab candidates
+            # inside Step 6 — a post-schema model call the freeze boundary
+            # forbids. The Step 3.5 collection may still use it; per-entity
+            # selection falls back to its deterministic ordering (and to
+            # sketchfab.semantic_select when enabled).
+            _sketchfab_cfg["vision_select"] = False
+            self._warn(
+                "sketchfab.vision_select is disabled for per-entity Step 6 "
+                "selection (post-schema LLM call) — deterministic candidate "
+                "order used; enable sketchfab.semantic_select for a "
+                "deterministic re-rank"
+            )
         if visual_context_mode:
             # Step 3 already authored the per-entity query. Selection and
             # filename wiring after that boundary must be deterministic.
-            _sketchfab_cfg["vision_select"] = False
-            _asset_llm = None
             self._ok(
                 "Sketchfab resolver will fetch/freeze each Step-3 entity query "
                 "and wire the selected filename without post-schema LLM calls"
@@ -2413,7 +2509,7 @@ class UnityPipeline:
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
                 asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                project_config=self.config, llm=_asset_llm,
+                project_config=self.config, llm=None,
                 locked_asset_bindings=locked_asset_bindings,
                 spatial_fusion=_spatial_bundle["spatial_fusion"])
         except (ValueError, CSharpSyntaxError) as exc:
@@ -2450,27 +2546,18 @@ class UnityPipeline:
             audio_backend = str(self.config.get("audio", {}).get("backend", "dsp")).strip().lower()
             if (audio_backend == "stable3"
                     and any(s.kind == "audio" for s in subsystems)):
-                # 1. Extract diegetic cues from concept WHILE LM Studio is loaded.
-                #    Inject into the audio subsystem meta so default_fix() finds them
-                #    without needing a live LLM (it's unloaded a few lines below).
-                # The visual compiler already has Step-3 audio_specs.  It must
-                # not make a second, post-schema LLM call, so the deterministic
-                # compose path consumes those cues directly.
-                if post_schema_llm_allowed:
-                    try:
-                        from .audio.resolver import extract_cues as _extract_audio_cues
-                        _llm_seed = getattr(self.llm, "seed", None)
-                        _seed = int(_llm_seed) if _llm_seed is not None else (seed or 0)
-                        _pre_cues = _extract_audio_cues(concept, self.llm, n=10, seed=_seed)
-                        if _pre_cues:
-                            self._ok(f"Pre-extracted {len(_pre_cues)} diegetic audio cues from concept")
-                            for _sub in subsystems:
-                                if _sub.kind == "audio":
-                                    _sub.options.setdefault("meta", {})["_pre_cues"] = _pre_cues
-                        else:
-                            self._warn("Concept audio extraction returned no cues — genre preset will be used")
-                    except Exception as _exc:  # noqa: BLE001
-                        self._warn(f"Audio pre-extraction failed ({type(_exc).__name__}: {_exc})")
+                # Diegetic cues were extracted from the concept in Step 3.5 and
+                # persisted under schema.meta["llm_enrichment"]; inject them into
+                # the audio unit's meta so default_fix() finds them without a
+                # live LLM. The visual compiler already has Step-3 audio_specs
+                # and consumes those directly.
+                _pre_cues = _enrichment(schema.meta).get("audio_cues") or []
+                if _pre_cues:
+                    for _sub in subsystems:
+                        if _sub.kind == "audio":
+                            _sub.options.setdefault("meta", {})["_pre_cues"] = [
+                                dict(c) for c in _pre_cues]
+                    self._ok(f"Injected {len(_pre_cues)} Step 3.5 diegetic audio cues")
                 elif visual_compile:
                     self._ok("Visual compile: using Step-3 audio_specs; no post-schema LLM audio extraction")
                 # Stable Audio 3 is deferred by default.  The compose pass now

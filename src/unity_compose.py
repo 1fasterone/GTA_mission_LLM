@@ -241,6 +241,12 @@ class MicroComposer:
         pipeline_cls = REGISTRY[sub.kind]
         variant = sub.variant or pipeline_cls.default_variant
         pipeline = pipeline_cls(self._cfg)
+        # Composition is Step 6: past the freeze boundary (src/llm_boundary.py).
+        # A micro's default_fix takes its documented no-LLM branch when it has
+        # no client, so drop the one MicroPipeline.__init__ built — concept
+        # content (cues, dialog lines) arrives pre-authored from Step 3.5 via
+        # options["meta"] instead.
+        pipeline.llm = None  # type: ignore[assignment]  # typed live client; None = no-LLM branch
         schema = pipeline_cls.schema_cls(
             name=sub.name or sub.kind.title(),
             variant=variant,
