@@ -25,6 +25,20 @@ tests, docs, and PRs. The engineer NEVER does the Pipeline LLM's job.
 hand-authors or pre-formats pipeline input or intermediate artifacts, the
 pipeline was not tested — the engineer was. See Eval Discipline.
 
+# Working Rules
+
+## Code Completeness
+
+Never leave NotImplementedException stubs, TODOs, or "left for the user"
+logic. Implement every method fully. If you can't, explain why before ending
+the task.
+
+## Solving the General Case
+
+When the user reports a bad behaviour (e.g. clustering, bad asset
+selection), fix the general default behaviour, not just the keyword-matched
+examples they mentioned. Treat user metaphors as metaphors.
+
 # Pipeline Contract
 
 The Pipeline LLM participates only in Steps 2-3 (3.5 included).
@@ -282,6 +296,42 @@ internals unless asked.
 - Never break template references
 - Atoms remain deterministic, engine-valid (branching/loops/multi-step logic
   allowed — see Atoms above)
+
+# Unity Code Generation
+
+## Fix at the Root
+
+Generated Unity C# errors must be fixed in the generator or template, not
+only in the live project files. After any fix, regenerate the project and
+recheck the whole template for related issues (obsolete APIs like
+GetInstanceID, quoting in default expressions, bare coroutines) before
+reporting done. Then add a regression test.
+
+# Git & PR Workflow
+
+## Before Pushing / Opening PRs
+
+- Run the CI gates locally before every push — `ruff check src main.py cli
+  rag`, `mypy src main.py cli rag`, and the full `pytest` suite. CI fails on
+  mypy and ruff errors.
+- Branch PRs off up-to-date origin/main. If the work depends on an unmerged
+  PR, say so and stack the branch explicitly instead of hitting conflicts.
+- Always refer to PRs by their real GitHub number (e.g. #176), never
+  "PR #1".
+
+# Testing
+
+## Editing Tests
+
+When inserting new tests into an existing file, add them only at function
+boundaries, usually at the end of the file. Re-read the surrounding code
+after editing to make sure no existing test body was split or truncated.
+
+## Evidence & Calibration
+
+Calibration and benchmark runs must use a meaningful sample (at least 20-30
+queries or cases) before you draw conclusions. Check for false positives
+before reporting a win.
 
 # Required Workflow Rule
 
