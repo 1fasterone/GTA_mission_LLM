@@ -28,15 +28,22 @@ model is logged and skipped so the pipeline always continues.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from .unity_asset_catalog import tokenize
 
 _VALID_CATEGORIES = ("vehicle", "character", "prop", "environment",
                      "nature", "building", "weapon", "furniture")
+COLLECTION_LOCK_FORMAT = "game-o-matic/sketchfab-collection/v1"
+_COLLECTION_ENTRY_KEYS = (
+    "filename", "relpath", "format", "source", "category", "query",
+    "sketchfab_uid", "sketchfab_url", "license", "author",
+    "author_username", "author_url", "attribution",
+)
 
 _SYSTEM = """\
 You are an art director sourcing REAL 3D models from a marketplace of independent
@@ -129,6 +136,100 @@ def extract_model_briefs(concept: str, llm: Any, *, count: int = 12,
             "category": _clean_category(m.get("category", "prop")),
         })
     return style, out[:count]
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def frozen_collection_record(collection: Mapping[str, Any], *, cache_dir: str | Path) -> dict:
+    """Return the portable, deterministic evidence needed to replay a collection.
+
+    The mutable shared catalog remains a discovery cache.  The saved schema
+    instead records the exact entries and file bytes that Step 3.5 accepted, so
+    a replay can verify and copy those assets without selecting from whatever
+    the catalog contains later.  Wall-clock catalog fields such as ``fetched_at``
+    are deliberately excluded from the frozen record.
+    """
+    cache_root = Path(cache_dir)
+    entries: list[dict[str, Any]] = []
+    for raw in collection.get("written", []):
+        if not isinstance(raw, Mapping):
+            continue
+        relpath = str(raw.get("relpath") or "").strip()
+        if not relpath:
+            continue
+        relative = Path(relpath)
+        source_root = Path(str(raw.get("root") or cache_root))
+        source = source_root / relative
+        try:
+            if (relative.is_absolute()
+                    or not source.resolve().is_relative_to(source_root.resolve())
+                    or not source.is_file()):
+                continue
+        except OSError:
+            continue
+        entry = {
+            key: raw[key] for key in _COLLECTION_ENTRY_KEYS
+            if raw.get(key) not in (None, "")
+        }
+        entry["relpath"] = relpath.replace("\\", "/")
+        entry["file_sha256"] = _sha256_file(source)
+        entry["file_bytes"] = source.stat().st_size
+        entries.append(entry)
+    entries.sort(key=lambda item: (
+        str(item.get("sketchfab_uid") or ""),
+        str(item.get("relpath") or ""),
+    ))
+    return {
+        "format": COLLECTION_LOCK_FORMAT,
+        "cache_dir": str(cache_root.as_posix()),
+        "style": str(collection.get("style") or ""),
+        "briefs": list(collection.get("briefs") or []),
+        "entries": entries,
+        "failed": list(collection.get("failed") or []),
+        "local": list(collection.get("local") or []),
+    }
+
+
+def replay_collection_entries(record: Mapping[str, Any]) -> tuple[Path, list[dict]]:
+    """Validate a frozen collection record and return its verified entries.
+
+    A missing or changed cached model is a loud replay failure.  Falling back to
+    a changed catalog would make a saved schema silently describe another game.
+    """
+    if record.get("format") != COLLECTION_LOCK_FORMAT:
+        raise ValueError("unsupported frozen Sketchfab collection format")
+    cache_dir = str(record.get("cache_dir") or "").strip()
+    if not cache_dir:
+        raise ValueError("frozen Sketchfab collection has no cache_dir")
+    cache_root = Path(cache_dir)
+    entries = record.get("entries")
+    if not isinstance(entries, list):
+        raise ValueError("frozen Sketchfab collection entries must be a list")
+    verified: list[dict] = []
+    for raw in entries:
+        if not isinstance(raw, Mapping):
+            raise ValueError("frozen Sketchfab collection entry is not an object")
+        relpath = str(raw.get("relpath") or "").strip()
+        expected_hash = str(raw.get("file_sha256") or "").strip()
+        relative = Path(relpath)
+        source = cache_root / relative
+        try:
+            contained = source.resolve().is_relative_to(cache_root.resolve())
+        except OSError as exc:
+            raise ValueError(f"could not resolve frozen Sketchfab asset {relpath!r}") from exc
+        if (not relpath or not expected_hash or relative.is_absolute() or not contained
+                or not source.is_file()):
+            raise ValueError(f"frozen Sketchfab asset is unavailable: {relpath!r}")
+        if _sha256_file(source) != expected_hash:
+            raise ValueError(f"frozen Sketchfab asset bytes changed: {relpath!r}")
+        verified.append(dict(raw))
+    return cache_root, verified
 
 
 def collect_models(concept: str, llm: Any, *, client: Any, sk_cfg: dict,

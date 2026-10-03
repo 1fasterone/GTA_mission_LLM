@@ -51,6 +51,10 @@ sketchfab.auto_fetch: true    # opt-in — resolver fetches live on a cache
                                # resolved again is a pure cache hit.
 ```
 
+`UnityPipeline` and `unity-validate` always disable this fallback after the
+schema boundary. Use it only in an explicit asset-management workflow, then
+preserve the frozen catalog entry before compiling.
+
 Accepted licenses (`sketchfab.accepted_licenses`, default `cc0, by, by-sa,
 by-nd`) — anything beyond CC0 gets a `CREDITS.md` written into the generated
 project automatically. Requires a Sketchfab API token: set the

@@ -258,7 +258,9 @@ def replay(schema: UnitySchema, *,
     schema = resolver.resolve_schema(schema)
     deps = resolver.build_manifest_deps(schema, inject_mcp_bridge=False)
     files = UnityProjectGenerator(template_dir=templates).generate(
-        schema, deps, lookups_dir=lookups, strict_assets=False)
+        schema, deps, lookups_dir=lookups, strict_assets=False,
+        sketchfab_cfg={"enabled": False, "auto_fetch": False,
+                       "vision_select": False})
     return schema, files, log
 
 

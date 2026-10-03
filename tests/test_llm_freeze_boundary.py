@@ -15,7 +15,10 @@ import pytest
 import src.unity_pipeline as unity_pipeline
 from src.llm_boundary import (ENRICHMENT_FORMAT, ENRICHMENT_META_KEY,
                               FrozenLLM, PostSchemaLLMError, freeze, thaw)
-from src.unity_pipeline import UnityPipeline, _inject_npc_dialog_lines
+from src.unity_spatial_pipeline import SpatialPipelineError
+from src.unity_pipeline import (UnityPipeline, _inject_npc_dialog_lines,
+                                _persist_collection_bindings)
+from src.unity_schema import UnitySchema
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -171,6 +174,58 @@ def test_schema_fill_cannot_author_the_compiler_owned_record(config):
     assert record["format"] == ENRICHMENT_FORMAT
 
 
+def test_step_6_disables_live_asset_fetch_after_the_schema_boundary(config):
+    config["sketchfab"] = {
+        "enabled": True, "auto_fetch": True, "vision_select": True,
+    }
+    pipeline = UnityPipeline(config)
+    _recording_llm(pipeline, _schema_json())
+    captured: dict = {}
+    real_write = pipeline.generator.write
+
+    def _write(*args, **kwargs):
+        captured.update(kwargs["sketchfab_cfg"])
+        return real_write(*args, **kwargs)
+
+    pipeline.generator.write = _write
+    pipeline.run("an arena game")
+
+    assert captured["auto_fetch"] is False
+    assert captured["vision_select"] is False
+
+
+def test_acceptance_retries_a_lossy_schema_fill_instead_of_shipping_defaults(config):
+    config["acceptance"] = {"reject_lossy_normalization": True}
+    lossy = json.loads(_schema_json())
+    lossy["platform"] = "toaster"
+    pipeline = UnityPipeline(config)
+    pipeline.llm.chat = MagicMock(side_effect=[
+        "An arena where the player stacks crates.", json.dumps(lossy), json.dumps(lossy),
+    ])
+
+    with pytest.raises(RuntimeError, match="unsupported values"):
+        pipeline.run("an arena game")
+    assert pipeline.llm.chat.call_count == 3  # concept + two schema attempts
+
+
+def test_spatial_acceptance_gate_refuses_generation_before_step_6(config, monkeypatch):
+    config["acceptance"] = {"require_spatial_validation": True}
+    pipeline = UnityPipeline(config)
+    _recording_llm(pipeline, _schema_json())
+    pipeline.generator.write = MagicMock(side_effect=AssertionError("Step 6 must not run"))
+    monkeypatch.setattr(
+        unity_pipeline,
+        "prepare_spatial_layout",
+        lambda *_args, **_kwargs: {
+            "world_layout": {"layout": {"messages": []}},
+            "spatial_validation": {"status": "fail"},
+        },
+    )
+
+    with pytest.raises(SpatialPipelineError, match="refusing generation"):
+        pipeline.run("an arena game")
+
+
 def test_post_boundary_llm_call_raises(config, monkeypatch):
     """A Step 5 pass that reached for the model would fail the run loudly."""
     pipeline = UnityPipeline(config)
@@ -231,3 +286,26 @@ def test_injection_is_a_noop_without_a_record():
     sub = _Sub("npc_dialog", "vendor", speaker_name="Mira")
     assert _inject_npc_dialog_lines([sub], {}) == []
     assert "meta" not in sub.options
+
+
+def test_step6_persists_sketchfab_entity_binding_with_the_collection():
+    schema = UnitySchema.model_validate(json.loads(_schema_json()))
+    selection = {
+        "filename": "rival-truck.fbx",
+        "relpath": "vehicle/rival-truck.fbx",
+        "source": "sketchfab",
+        "file_sha256": "a" * 64,
+        "sketchfab_uid": "truck-uid",
+    }
+    schema.meta[ENRICHMENT_META_KEY] = {
+        "sketchfab_collection": {"entries": [], "entity_bindings": {}},
+    }
+    schema.meta["entity_model_bindings"] = {
+        "Player": {"catalog_selection": selection},
+    }
+
+    _persist_collection_bindings(schema)
+
+    collection = schema.meta[ENRICHMENT_META_KEY]["sketchfab_collection"]
+    assert collection["entity_bindings"] == {"Player": selection}
+    assert collection["entries"] == [selection]

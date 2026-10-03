@@ -23,14 +23,14 @@ These tests exercise:
 """
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from src.pipeline import MissionPipeline, _programmatic_fix
 from src.llm_boundary import FrozenLLM, PostSchemaLLMError
 from src.resolver import pick_model_deterministic
-from src.mission_schema import MissionObject, MissionPed, MissionSchema, MissionStep, MissionVehicle
+from src.mission_schema import MissionPed, MissionSchema, MissionStep, MissionVehicle
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -358,7 +358,10 @@ class TestDeterministicUnresolvedPick:
         saved = next(out.parent.glob("*.schema.json"))
         schema = json.loads(saved.read_text(encoding="utf-8"))
         assert schema["peds"][0]["model"] == "UNRESOLVED"
+        assert schema["meta"]["unresolved_models"]["policy"] == "abstain"
+        assert schema["meta"]["unresolved_models"]["items"] == ["ped:xyzzy_alien"]
         assert first not in out.read_text(encoding="utf-8")
+        assert pipeline.llm.chat.call_count == 2
 
     def test_post_schema_llm_call_raises(self, gta_pipeline_config, monkeypatch):
         pipeline = _make_pipeline(gta_pipeline_config)
