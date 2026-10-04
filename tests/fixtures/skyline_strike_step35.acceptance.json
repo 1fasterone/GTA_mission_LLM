@@ -1,0 +1,20 @@
+{
+  "format": "game-o-matic/frozen-step35-acceptance/v1",
+  "input": "captured-llm",
+  "provenance": "The Step-3 schema and visual spatial evidence were captured from a live SkylineStrike visual run. Step 3.5 was then run once through the normal pipeline client with compose enabled; its persisted schema.microgens[].input and meta.llm_enrichment content were copied verbatim. This fixture is replay-only: its test never contacts an LLM, marketplace, or image service.",
+  "schema": "skyline_strike_step35_llm.schema.json",
+  "step_3_5": {
+    "enrichment_format": "game-o-matic/llm-enrichment/v1",
+    "stage": "3.5",
+    "minimum_authored_microgens": 22,
+    "requires_nonempty_micro_inputs": true
+  },
+  "spatial": {
+    "spatial_fusion": "skyline_strike_step35.spatial-fusion.json",
+    "required_status": "pass"
+  },
+  "playability": {
+    "strict": true,
+    "minimum_score": 95
+  }
+}

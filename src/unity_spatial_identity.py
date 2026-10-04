@@ -45,12 +45,20 @@ _GENERATED_META_FIELDS = (
     "spatial_primitive",
     "wiring",
     "entity_model_paths",
+    # Step 3.5 stores LLM-authored dialogue and audio cues here. Those values
+    # affect codegen only; spatial roles, fusion, and realization must remain
+    # replayable from the same frozen visual evidence after enrichment.
+    "llm_enrichment",
 )
 _GENERATED_SCHEMA_FIELDS = (
     # Generator sanitization and composition can rewrite these codegen-only
     # collections after 6.3 prepares its fusion artifact.  They do not affect
     # entity roles, relations, or world placement.
     "scripts",
+    # Step 3.5 persists composed-micro code here so `unity-validate --compose`
+    # can rebuild it without an LLM. These are codegen inputs, not spatial
+    # semantics, and therefore cannot invalidate a frozen 6.3–6.6 sidecar set.
+    "microgens",
 )
 
 

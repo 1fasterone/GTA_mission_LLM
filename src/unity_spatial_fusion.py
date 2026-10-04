@@ -14,6 +14,7 @@ ambiguous declared-entity binding aborts instead of silently swapping names.
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any, Mapping
@@ -29,6 +30,7 @@ from .unity_spatial_roles import (
     ROLE_UI_ONLY,
     SPATIAL_ROLES_FORMAT,
     SPATIAL_ROLES_MANIFEST_FORMAT,
+    derive_spatial_roles,
 )
 from .unity_spatial_identity import semantic_schema_hash
 from .unity_visual_bindings import bind_visual_assets
@@ -759,6 +761,112 @@ def fuse_spatial_evidence_data(
     return _fuse(data)
 
 
+def replay_frozen_spatial_fusion(
+    schema: UnitySchema,
+    frozen_fusion: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Rebind a complete captured fusion artifact for a no-LLM schema replay.
+
+    A Step-3.5 capture can add codegen-only data after Slice 6.3 was first
+    frozen.  The visual evidence itself remains authoritative only when every
+    declared entity still has exactly one captured binding with the same closed
+    spatial role.  This check is deliberately stricter than ordinary fusion
+    validation: a replay acceptance fixture must not silently default an
+    entity, drop a binding, or reinterpret an old role.
+
+    The returned copy preserves the original source semantic hash under
+    ``captured_schema_semantic_sha256`` and updates only the replay identity.
+    It never calls an LLM or alters the supplied artifact.
+    """
+    if not isinstance(frozen_fusion, Mapping):
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay requires a JSON object"
+        )
+    replayed = copy.deepcopy(dict(frozen_fusion))
+    if replayed.get("format") != SPATIAL_FUSION_FORMAT:
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay has an unsupported artifact format"
+        )
+    if replayed.get("status") not in {"complete", "closed"}:
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay requires a closed artifact"
+        )
+    inputs = replayed.get("inputs")
+    if not isinstance(inputs, dict):
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay has no inputs object"
+        )
+    rows = replayed.get("bindings")
+    if not isinstance(rows, list):
+        rows = replayed.get("entity_regions")
+    if not isinstance(rows, list):
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay has no bindings or entity regions list"
+        )
+
+    roles = derive_spatial_roles(schema)
+    if roles.get("format") != SPATIAL_ROLES_FORMAT or roles.get("status") != "closed":
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay could not derive closed spatial roles"
+        )
+    role_by_entity = {
+        str(row.get("entity")): str(row.get("role"))
+        for row in roles.get("role_table") or []
+        if isinstance(row, Mapping) and row.get("entity") and row.get("role")
+    }
+    declared = {str(entity.name) for entity in schema.entities}
+    if set(role_by_entity) != declared:
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay has incomplete current spatial roles"
+        )
+
+    bound: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, Mapping):
+            raise SpatialFusionError(
+                f"[spatial.strict] frozen fusion replay row {index} is not an object"
+            )
+        is_bound = row.get("status") == "bound" or row.get("binding_status") == "bound"
+        if not is_bound:
+            continue
+        entity = row.get("entity")
+        if not isinstance(entity, str) or entity not in declared:
+            raise SpatialFusionError(
+                "[spatial.strict] frozen fusion replay binds an undeclared entity "
+                f"{entity!r}"
+            )
+        if entity in bound:
+            raise SpatialFusionError(
+                "[spatial.strict] frozen fusion replay binds entity more than once: "
+                f"{entity!r}"
+            )
+        role = row.get("role")
+        if not isinstance(role, str) or role != role_by_entity[entity]:
+            raise SpatialFusionError(
+                "[spatial.strict] frozen fusion replay role changed for "
+                f"{entity!r}; rebuild Slice 6.3"
+            )
+        bound.add(entity)
+    if bound != declared:
+        missing = ", ".join(sorted(declared - bound))
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay requires one bound visual "
+            f"reference for every declared entity; missing: {missing}"
+        )
+
+    source_hash = inputs.get("schema_semantic_sha256")
+    if isinstance(source_hash, str) and source_hash:
+        inputs.setdefault("captured_schema_semantic_sha256", source_hash)
+    inputs["schema_semantic_sha256"] = semantic_schema_hash(schema)
+    authority = replayed.get("authority")
+    if not isinstance(authority, dict):
+        authority = {}
+        replayed["authority"] = authority
+    authority["replayed_from_frozen_fusion"] = True
+    authority["llm_called_here"] = False
+    return replayed
+
+
 def fuse_spatial_evidence(
     *,
     closed_ir: Path,
@@ -848,4 +956,5 @@ __all__ = [
     "SpatialFusionError",
     "fuse_spatial_evidence",
     "fuse_spatial_evidence_data",
+    "replay_frozen_spatial_fusion",
 ]
