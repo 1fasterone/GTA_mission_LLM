@@ -83,6 +83,83 @@ _VALID_WEATHER:       frozenset[str] = frozenset(get_args(WeatherType))
 _VALID_WORLD_SCALE:   frozenset[str] = frozenset(get_args(WorldScale))
 _VALID_AI_BEH:        frozenset[str] = frozenset(get_args(AIBehaviorKind))
 
+# The schema deliberately accepts a small number of common aliases so the
+# pipeline can recover from harmless model vocabulary drift.  A fallback to a
+# default is different: it changes the game the user asked for.  Keep those
+# repairs in the IR rather than silently erasing their cause.
+NORMALIZATION_META_KEY = "normalization"
+NORMALIZATION_FORMAT = "game-o-matic/schema-normalization/v1"
+_NORMALIZATION_INPUT_KEY = "_compiler_normalization_input"
+
+_PLATFORM_ALIASES = {
+    "android": "mobile", "ios": "mobile", "iphone": "mobile",
+    "ipad": "mobile", "phone": "mobile", "smartphone": "mobile",
+    "tablet": "mobile", "handheld": "mobile", "touch": "mobile",
+    "windows": "pc", "mac": "pc", "macos": "pc", "linux": "pc",
+    "desktop": "pc", "standalone": "pc", "steam": "pc",
+    "web": "webgl", "browser": "webgl", "html5": "webgl",
+    "switch": "console", "playstation": "console", "ps5": "console",
+    "xbox": "console", "quest": "mobile",
+    "cross_platform": "all", "multiplatform": "all", "any": "all",
+}
+_LOCOMOTION_ALIASES = {
+    "driving": "drive", "car": "drive", "vehicle": "drive", "racing": "drive",
+    "flying": "fly", "flight": "fly",
+    "swimming": "swim", "underwater": "swim", "diving": "swim",
+    "walking": "walk", "running": "walk", "on_foot": "walk",
+    "none": "none", "static": "none", "pointer": "none", "mouse": "none",
+    "point_and_click": "none", "ui": "none", "menu": "none",
+    "stationary": "none", "no_movement": "none", "n/a": "none",
+}
+_GAME_TYPE_ALIASES = frozenset({
+    "2d", "2.5d", "3d", "vr", "2d_topdown", "2d topdown", "2d-topdown",
+    "flat top_down", "flat topdown", "top_down", "topdown", "top-down",
+    "isometric", "iso",
+})
+_PIPELINE_ALIASES = frozenset({
+    "universal", "urp", "lightweight", "lwrp", "high definition", "hdrp", "hd",
+    "builtin", "built-in", "built_in", "standard", "legacy",
+})
+
+
+def _normalization_issue(field: str, raw: Any, normalized: Any) -> dict[str, Any] | None:
+    """Return a report entry only when validation had to discard intent."""
+    if field == "features":
+        if not isinstance(raw, list):
+            return {"field": field, "input": raw, "normalized": normalized,
+                    "reason": "expected a list of supported feature flags"}
+        dropped = [str(item) for item in raw
+                   if str(item).lower().strip() not in _VALID_FEATURES]
+        if dropped:
+            return {"field": field, "input": raw, "normalized": normalized,
+                    "dropped": dropped, "reason": "unsupported feature flags"}
+        return None
+
+    text = str(raw).strip()
+    if field == "color_space" and text.title() == "Gamma" and normalized == "Linear":
+        return {
+            "field": field,
+            "input": raw,
+            "normalized": normalized,
+            "reason": "URP/HDRP requires Linear color space",
+        }
+    accepted = {
+        "game_type": text.lower() in _GAME_TYPE_ALIASES,
+        "platform": text.lower().replace("-", "_") in (_VALID_PLATFORMS | _PLATFORM_ALIASES.keys()),
+        "locomotion": text.lower() in ({"walk", "drive", "fly", "swim", "none"} | _LOCOMOTION_ALIASES.keys()),
+        "render_pipeline": text.upper() in {item.upper() for item in _VALID_PIPELINES} or text.upper() in {item.upper() for item in _PIPELINE_ALIASES},
+        "unity_version": bool(re.search(r"(?:6000|6)\.(\d+)", text)
+                              or re.fullmatch(r"(?:unity\s+)?(?:6|6000)", text, re.IGNORECASE)
+                              or "2022" in text or "2021" in text
+                              or text in _VALID_VERSIONS),
+        "visual_style": text.lower().replace("-", "_").replace(" ", "_") in _VALID_VISUAL_STYLES,
+        "color_space": text.title() in {"Linear", "Gamma"},
+    }.get(field, True)
+    if accepted:
+        return None
+    return {"field": field, "input": raw, "normalized": normalized,
+            "reason": "unsupported value; compiler default applied"}
+
 # ── Hex color helpers ──────────────────────────────────────────────────────────
 
 _HEX_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
@@ -1238,6 +1315,36 @@ class UnitySchema(BaseModel):
 
     # ── Validators ────────────────────────────────────────────────────────────
 
+    @model_validator(mode="before")
+    @classmethod
+    def capture_normalization_inputs(cls, data: Any) -> Any:
+        """Retain raw normalizer inputs long enough to report lossy repairs.
+
+        The private key is removed by ``record_normalization`` before the
+        schema can leave Pydantic.  A schema-fill cannot forge it because this
+        pass always replaces any incoming value with the fields it received.
+        """
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        meta = dict(payload.get("meta") or {})
+        prior_report = meta.get(NORMALIZATION_META_KEY)
+        if not (isinstance(prior_report, dict)
+                and prior_report.get("format") == NORMALIZATION_FORMAT):
+            prior_report = None
+        meta[_NORMALIZATION_INPUT_KEY] = {
+            field: payload[field]
+            for field in (
+                "game_type", "platform", "locomotion", "render_pipeline",
+                "unity_version", "features", "visual_style", "color_space",
+            )
+            if field in payload
+        }
+        if prior_report is not None:
+            meta[_NORMALIZATION_INPUT_KEY]["_prior_report"] = prior_report
+        payload["meta"] = meta
+        return payload
+
     @field_validator("game_type", mode="before")
     @classmethod
     def normalise_game_type(cls, v: str) -> str:
@@ -1271,19 +1378,7 @@ class UnitySchema(BaseModel):
         p = str(v).lower().strip().replace("-", "_")
         if p in _VALID_PLATFORMS:
             return p
-        synonyms = {
-            "android": "mobile", "ios": "mobile", "iphone": "mobile",
-            "ipad": "mobile", "phone": "mobile", "smartphone": "mobile",
-            "tablet": "mobile", "handheld": "mobile", "touch": "mobile",
-            "windows": "pc", "mac": "pc", "macos": "pc", "linux": "pc",
-            "desktop": "pc", "standalone": "pc", "steam": "pc",
-            "web": "webgl", "browser": "webgl", "html5": "webgl",
-            "switch": "console", "playstation": "console", "ps5": "console",
-            "xbox": "console",
-            "quest": "mobile",   # standalone Quest builds ARE Android players
-            "cross_platform": "all", "multiplatform": "all", "any": "all",
-        }
-        return synonyms.get(p, "pc")
+        return _PLATFORM_ALIASES.get(p, "pc")
 
     @field_validator("locomotion", mode="before")
     @classmethod
@@ -1291,19 +1386,7 @@ class UnitySchema(BaseModel):
         """How the player moves — routes compose to the matching controller
         (drive → real WheelCollider car, fly/swim → those variants)."""
         s = str(v).lower().strip()
-        synonyms = {
-            "driving": "drive", "car": "drive", "vehicle": "drive", "racing": "drive",
-            "flying": "fly", "flight": "fly",
-            "swimming": "swim", "underwater": "swim", "diving": "swim",
-            "walking": "walk", "running": "walk", "on_foot": "walk",
-            # Non-embodied: the player acts through a pointer or UI and there is
-            # no avatar. The words a model actually reaches for when a game has
-            # no character to move.
-            "none": "none", "static": "none", "pointer": "none", "mouse": "none",
-            "point_and_click": "none", "ui": "none", "menu": "none",
-            "stationary": "none", "no_movement": "none", "n/a": "none",
-        }
-        s = synonyms.get(s, s)
+        s = _LOCOMOTION_ALIASES.get(s, s)
         return s if s in ("walk", "drive", "fly", "swim", "none") else "walk"
 
     @field_validator("locomotion_modes", mode="before")
@@ -1334,15 +1417,17 @@ class UnitySchema(BaseModel):
     @classmethod
     def normalise_version(cls, v: str) -> str:
         s = str(v).strip()
-        m = re.search(r"6000\.(\d+)", s) or re.fullmatch(r"6(?:\.(\d+))?", s)
+        m = re.search(r"(?:6000|6)\.(\d+)", s)
         if m:
-            minor = int(m.group(1) or 0)
+            minor = int(m.group(1))
             # Editors newer than the pinned minors (6.2, 6.3, 6.5, …) take the
             # newest pin set — the 6000.0 pins (e.g. Cinemachine) are too old
             # for them and fail compilation from the PackageCache.
             if minor >= 2:
                 return "6000.4"
             return "6000.1" if minor == 1 else "6000.0"
+        if re.fullmatch(r"(?:unity\s+)?(?:6|6000)", s, re.IGNORECASE):
+            return "6000.0"
         if "2022" in s:
             return "2022.3"
         if "2021" in s:
@@ -1563,5 +1648,42 @@ class UnitySchema(BaseModel):
             self.meta["role_lint"] = lint
         return self
 
+    @model_validator(mode="after")
+    def record_normalization(self) -> "UnitySchema":
+        """Persist every lossy root-field normalization in the canonical IR."""
+        raw_inputs = self.meta.pop(_NORMALIZATION_INPUT_KEY, {})
+        if not isinstance(raw_inputs, dict):
+            raw_inputs = {}
+        prior_report = raw_inputs.pop("_prior_report", None)
+        issues = [
+            issue for field, raw in raw_inputs.items()
+            if (issue := _normalization_issue(field, raw, getattr(self, field))) is not None
+        ]
+        if issues:
+            self.meta[NORMALIZATION_META_KEY] = {
+                "format": NORMALIZATION_FORMAT,
+                "status": "repaired_with_loss",
+                "issues": issues,
+                "remedy": "use a supported schema value instead of relying on a compiler default",
+            }
+        elif isinstance(prior_report, dict):
+            # A saved IR is canonical input for deterministic replay. Its
+            # diagnostics describe the original schema-fill and must travel
+            # with it instead of disappearing merely because its repaired
+            # values now validate cleanly.
+            self.meta[NORMALIZATION_META_KEY] = prior_report
+        else:
+            self.meta.pop(NORMALIZATION_META_KEY, None)
+        return self
+
     def unresolved_packages(self) -> list[str]:
         return [p.description for p in self.packages if not p.package_id]
+
+
+def normalization_issues(schema: UnitySchema) -> list[dict[str, Any]]:
+    """Return persisted lossy-normalization diagnostics from a canonical IR."""
+    report = (schema.meta or {}).get(NORMALIZATION_META_KEY)
+    if not isinstance(report, dict) or report.get("format") != NORMALIZATION_FORMAT:
+        return []
+    issues = report.get("issues")
+    return [issue for issue in issues if isinstance(issue, dict)] if isinstance(issues, list) else []

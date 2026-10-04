@@ -18,8 +18,9 @@ from rich.panel   import Panel
 
 from .backends           import make_chat_client, make_rag_client
 from .micro_pipeline     import to_pascal
-from .unity_schema       import (UnityPackage, UnitySchema, UnityScript,
-                                 is_embodied)
+from .unity_schema       import (NORMALIZATION_META_KEY, UnityPackage,
+                                 UnitySchema, UnityScript, is_embodied,
+                                 normalization_issues)
 from .unity_schema_clamp import clamp_capped_lists, render_cap_reminder
 from .unity_schema_jsonschema import response_format_schema
 from .capability_resolver import resolve_capabilities, resolve_microgens
@@ -83,6 +84,7 @@ from .unity_spatial_pipeline import (
     load_spatial_inputs,
     prepare_spatial_layout,
 )
+from .unity_build_provenance import write_build_provenance
 
 console = Console()
 
@@ -153,6 +155,54 @@ def _enrichment(meta) -> dict:
     """schema.meta's Step 3.5 record, or {} when Step 3.5 authored nothing."""
     record = meta.get(ENRICHMENT_META_KEY) if isinstance(meta, dict) else None
     return record if isinstance(record, dict) else {}
+
+
+def _persist_collection_bindings(schema: UnitySchema) -> None:
+    """Attach Step-6's exact Sketchfab picks to the Step-3.5 collection record.
+
+    The collection's entries are frozen before the deterministic tail, but the
+    entity-to-entry mapping is only known after deterministic resolution.  Keep
+    that mapping beside the collection so a no-LLM replay can pass the exact,
+    hash-checked selections back into the generator instead of consulting a
+    changed shared catalog.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    collection = _enrichment(meta).get("sketchfab_collection")
+    if not isinstance(collection, dict):
+        return
+    resolved = meta.get("entity_model_bindings")
+    if not isinstance(resolved, dict):
+        return
+    entries = collection.get("entries")
+    if not isinstance(entries, list):
+        return
+    entry_identities = {
+        (str(entry.get("filename") or ""), str(entry.get("relpath") or ""),
+         str(entry.get("file_sha256") or ""))
+        for entry in entries if isinstance(entry, dict)
+    }
+    bindings: dict[str, dict] = {}
+    for entity_name, binding in sorted(resolved.items()):
+        if not isinstance(binding, dict):
+            continue
+        selection = binding.get("catalog_selection")
+        if (isinstance(selection, dict)
+                and selection.get("source") == "sketchfab"):
+            frozen_selection = dict(selection)
+            bindings[str(entity_name)] = frozen_selection
+            identity = (
+                str(frozen_selection.get("filename") or ""),
+                str(frozen_selection.get("relpath") or ""),
+                str(frozen_selection.get("file_sha256") or ""),
+            )
+            if identity not in entry_identities:
+                entries.append(frozen_selection)
+                entry_identities.add(identity)
+    entries.sort(key=lambda entry: (
+        str(entry.get("sketchfab_uid") or ""),
+        str(entry.get("relpath") or ""),
+    ))
+    collection["entity_bindings"] = bindings
 
 
 def _inject_npc_dialog_lines(subsystems, meta) -> list[str]:
@@ -1211,6 +1261,19 @@ class UnityPipeline:
         )
         if reason:
             raise PlayabilityGateError(f"Greybox acceptance failed — {reason}")
+        try:
+            provenance = write_build_provenance(
+                schema,
+                project_root=project_root,
+                manifest_deps=manifest_deps,
+                config=self.config,
+                template_dir=self.template_dir,
+                lookups_dir=self.lookups_dir,
+                status="accepted",
+            )
+            self._ok(f"Build provenance -> {provenance.name}")
+        except OSError as exc:
+            raise RuntimeError(f"could not write build provenance: {exc}") from exc
         console.print(Panel(
             f"[bold green]Greybox ready[/]\n"
             f"Project: [cyan]{schema.project_name}[/]\n"
@@ -1396,13 +1459,18 @@ class UnityPipeline:
                            "from the Kenney PNG catalog instead)")
             else:
                 try:
-                    from .unity_sketchfab_collection import collect_models
+                    from .unity_sketchfab_collection import (collect_models,
+                                                              frozen_collection_record)
                     from .sketchfab_client import SketchfabClient
                     self._sketchfab_collection = collect_models(
                         concept, self.llm, client=SketchfabClient(_coll_cfg),
                         sk_cfg=_coll_cfg, lookups_dir=self.lookups_dir,
                         count=int(_coll_cfg.get("collection_count", 12)),
                         seed=run_seed, log_ok=self._ok, log_warn=self._warn)
+                    record["sketchfab_collection"] = frozen_collection_record(
+                        self._sketchfab_collection,
+                        cache_dir=_coll_cfg.get("cache_dir", "Models/Sketchfab"),
+                    )
                 except Exception as _exc:  # noqa: BLE001
                     self._warn(f"Sketchfab collection failed "
                                f"({type(_exc).__name__}: {_exc})")
@@ -1925,8 +1993,26 @@ class UnityPipeline:
                         max_tokens  = (32000 if visual_compile else None),
                     )
                     schema_dict = self.llm.extract_json(schema_raw)
+                    # Normalization reports are compiler-owned provenance. A
+                    # schema-fill may not pre-author a clean bill of health or
+                    # a fabricated failure record for its own output.
+                    if isinstance(schema_dict.get("meta"), dict):
+                        schema_dict["meta"].pop(NORMALIZATION_META_KEY, None)
                     clamp_msgs  = clamp_capped_lists(schema_dict)
-                    schema      = UnitySchema.model_validate(schema_dict)
+                    candidate = UnitySchema.model_validate(schema_dict)
+                    if (self.config.get("acceptance", {}) or {}).get(
+                            "reject_lossy_normalization", False):
+                        _issues = normalization_issues(candidate)
+                        if _issues:
+                            _fields = ", ".join(
+                                str(issue.get("field", "unknown"))
+                                for issue in _issues
+                            )
+                            raise ValueError(
+                                "schema used unsupported values that required "
+                                f"compiler defaults: {_fields}"
+                            )
+                    schema = candidate
                     break
                 except (ValueError, ValidationError) as exc:
                     last_err = exc
@@ -1969,6 +2055,21 @@ class UnityPipeline:
         schema.meta["concept"]     = concept
         schema.meta["user_prompt"] = user_prompt
         schema.meta["fill"]        = "deterministic" if no_llm else "llm"
+        # The LLM path rejects a lossy fill inside its retry loop. The
+        # deterministic --no-llm parser reaches this shared tail directly, so
+        # apply the same production acceptance rule here rather than letting
+        # one schema source silently bypass it.
+        if no_llm and (self.config.get("acceptance", {}) or {}).get(
+                "reject_lossy_normalization", False):
+            _issues = normalization_issues(schema)
+            if _issues:
+                _fields = ", ".join(
+                    str(issue.get("field", "unknown")) for issue in _issues
+                )
+                raise ValueError(
+                    "offline schema used unsupported values that required "
+                    f"compiler defaults: {_fields}"
+                )
         if geometry_only:
             schema.meta["greybox_mode"] = "geometry_only"
             raw_greybox = schema.meta.get("greybox")
@@ -2347,6 +2448,12 @@ class UnityPipeline:
             self._fix(msg)
         _spatial_status = _spatial_bundle["spatial_validation"]["status"]
         if _spatial_status == "fail":
+            _acceptance = self.config.get("acceptance", {}) or {}
+            if _acceptance.get("require_spatial_validation", False):
+                raise SpatialPipelineError(
+                    "Spatial validation preflight found hard findings; refusing "
+                    "generation until the schema/layout is corrected"
+                )
             self._warn(
                 "Spatial validation preflight found hard findings; the report "
                 "will be persisted and the project remains spatially unaccepted"
@@ -2482,6 +2589,17 @@ class UnityPipeline:
                 self._ok(msg)
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = dict(self.config.get("sketchfab", {}) or {})
+        if _sketchfab_cfg.get("auto_fetch"):
+            # All network acquisition must finish in the declared Step-3.5
+            # collection.  Step 6 only resolves frozen/local catalog entries;
+            # otherwise the same schema can generate different projects as a
+            # marketplace result changes or becomes unavailable.
+            _sketchfab_cfg["auto_fetch"] = False
+            self._warn(
+                "sketchfab.auto_fetch is disabled for Step 6 — only assets "
+                "already frozen during Step 3.5 or present in local catalogs "
+                "may be resolved after the schema boundary"
+            )
         if _sketchfab_cfg.get("vision_select"):
             # vision_select asks the LLM to reorder live Sketchfab candidates
             # inside Step 6 — a post-schema model call the freeze boundary
@@ -2536,6 +2654,8 @@ class UnityPipeline:
             except OSError:
                 pass
             raise
+
+        _persist_collection_bindings(schema)
 
         # Warm Unity's global package cache so first open resolves locally
         # instead of stalling on the registry. Best-effort by contract — any
@@ -2775,10 +2895,14 @@ class UnityPipeline:
             )
             _final_spatial_status = _frozen_spatial["spatial_validation"]["status"]
             if _final_spatial_status == "fail":
-                self._warn(
+                _message = (
                     "Final spatial validation failed; inspect "
                     f"{_frozen_spatial['paths']['spatial_validation']}"
                 )
+                if (self.config.get("acceptance", {}) or {}).get(
+                        "require_spatial_validation", False):
+                    raise SpatialPipelineError(_message)
+                self._warn(_message)
             else:
                 self._ok(
                     "Spatial sidecars frozen beside the Unity project "
@@ -2819,6 +2943,20 @@ class UnityPipeline:
             raise PlayabilityGateError(
                 f"Playability gate failed — {_playability_reason}"
             )
+
+        try:
+            provenance = write_build_provenance(
+                schema,
+                project_root=project_root,
+                manifest_deps=manifest_deps,
+                config=self.config,
+                template_dir=self.template_dir,
+                lookups_dir=self.lookups_dir,
+                status="accepted",
+            )
+            self._ok(f"Build provenance -> {provenance.name}")
+        except OSError as exc:
+            raise RuntimeError(f"could not write build provenance: {exc}") from exc
 
         console.print(Panel(
             f"[bold green]Done![/]\n"

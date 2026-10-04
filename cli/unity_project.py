@@ -13,7 +13,7 @@ from src.unity_briefparse import BriefParseError
 from src.unity_generator  import UnityProjectGenerator
 from src.unity_pipeline   import UnityPipeline
 from src.unity_resolver   import UnityResolver
-from src.unity_schema     import UnitySchema
+from src.unity_schema     import UnitySchema, normalization_issues
 from src.unity_reference_image import ReferenceImageError
 from src.visual_reasoning_compiler import VisualReasoningCompilerError
 
@@ -21,6 +21,47 @@ from .common import app, console, _cfg, _load_authored_scene, _scene_cache_dir, 
 
 
 # ── Unity commands ─────────────────────────────────────────────────────────────
+
+def _frozen_collection_replay(schema: UnitySchema) -> tuple[Path | None, dict[str, dict], list[dict]]:
+    """Return the verified Step-3.5 collection inputs for a no-LLM replay.
+
+    The collection record is compiler-owned.  Its model bytes and the
+    entity-to-catalog selections must be intact before the generator runs;
+    otherwise this command would quietly resolve a different catalog entry.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    enrichment = meta.get("llm_enrichment")
+    collection = enrichment.get("sketchfab_collection") if isinstance(enrichment, dict) else None
+    if collection is None:
+        return None, {}, []
+    if not isinstance(collection, dict):
+        raise ValueError("frozen Sketchfab collection is not an object")
+    from src.unity_sketchfab_collection import replay_collection_entries
+
+    cache_dir, entries = replay_collection_entries(collection)
+    allowed = {
+        (str(entry.get("filename") or ""), str(entry.get("relpath") or ""),
+         str(entry.get("file_sha256") or ""))
+        for entry in entries
+    }
+    bindings = collection.get("entity_bindings", {})
+    if not isinstance(bindings, dict):
+        raise ValueError("frozen Sketchfab entity_bindings must be an object")
+    locked: dict[str, dict] = {}
+    for entity_name, selection in sorted(bindings.items()):
+        if not isinstance(selection, dict):
+            raise ValueError(f"frozen Sketchfab binding for {entity_name!r} is not an object")
+        identity = (
+            str(selection.get("filename") or ""),
+            str(selection.get("relpath") or ""),
+            str(selection.get("file_sha256") or ""),
+        )
+        if identity not in allowed or selection.get("source") != "sketchfab":
+            raise ValueError(
+                f"frozen Sketchfab binding for {entity_name!r} is not in its collection"
+            )
+        locked[str(entity_name)] = dict(selection)
+    return cache_dir, locked, entries
 
 def _prepare_viz_reasoning(
     source_image: Path,
@@ -519,6 +560,17 @@ def unity_validate(
     pipe_cfg = _unity_pipe_cfg(cfg)
     data     = json.loads(Path(schema_file).read_text(encoding="utf-8"))
     schema   = UnitySchema.model_validate(data)
+    _acceptance = cfg.get("acceptance", {}) or {}
+    _normalization_issues = normalization_issues(schema)
+    if (_normalization_issues
+            and _acceptance.get("reject_lossy_normalization", False)):
+        _fields = ", ".join(
+            str(issue.get("field", "unknown")) for issue in _normalization_issues
+        )
+        raise typer.BadParameter(
+            "schema records lossy normalization for: " + _fields
+            + "; correct the source IR or disable acceptance.reject_lossy_normalization"
+        )
     resolver = UnityResolver(lookups_dir=pipe_cfg.get("lookups_dir", "lookups"))
     schema   = resolver.resolve_schema(schema)
     schema   = resolver.inject_required_packages(schema)
@@ -576,7 +628,25 @@ def unity_validate(
     gen      = UnityProjectGenerator(template_dir=template_dir)
     output_dir = pipe_cfg.get("unity_output_dir", "output/unity")
     _asset_cfg = cfg.get("assets", {}) or {}
-    _sketchfab_cfg = cfg.get("sketchfab", {}) or {}
+    _sketchfab_cfg = dict(cfg.get("sketchfab", {}) or {})
+    if _sketchfab_cfg.get("auto_fetch"):
+        _sketchfab_cfg["auto_fetch"] = False
+        console.print(
+            "[yellow]WARN[/]  disabled sketchfab.auto_fetch for deterministic "
+            "unity-validate replay"
+        )
+    if _sketchfab_cfg.get("vision_select"):
+        _sketchfab_cfg["vision_select"] = False
+
+    try:
+        _collection_cache, _collection_bindings, _collection_entries = _frozen_collection_replay(schema)
+    except ValueError as exc:
+        raise typer.BadParameter(f"invalid frozen Sketchfab collection: {exc}") from exc
+    if _collection_cache is not None:
+        console.print(
+            f"[green]OK[/]  verified {len(_collection_entries)} frozen Sketchfab asset(s) "
+            f"and {len(_collection_bindings)} entity binding(s) for replay"
+        )
 
     composed_units = None
     composer = None
@@ -637,9 +707,20 @@ def unity_validate(
     root, count = gen.write(schema, deps, output_dir,
                             composed_units=composed_units,
                             model_overrides=model_overrides or None,
-                            strict_assets=bool(_asset_cfg.get("strict", True)),
-                            asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
-                            project_config=cfg)
+                             strict_assets=bool(_asset_cfg.get("strict", True)),
+                             asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
+                             project_config=cfg,
+                             locked_asset_bindings=_collection_bindings or None)
+
+    if _collection_cache is not None:
+        from src.unity_sketchfab_collection import copy_collection_into_project
+        copied = copy_collection_into_project(
+            _collection_entries, _collection_cache, root / "Assets",
+        )
+        if copied != len(_collection_entries):
+            raise RuntimeError(
+                "verified frozen Sketchfab collection could not be copied into the replay"
+            )
 
     if compose and composer is not None and composed_units is not None:
         has_game_manager = any(s.type == "game_manager" for s in (schema.scripts or []))
@@ -691,6 +772,25 @@ def unity_validate(
             schema.model_dump_json(indent=2), encoding="utf-8")
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from src.unity_build_provenance import write_build_provenance
+        provenance = write_build_provenance(
+            schema,
+            project_root=root,
+            manifest_deps=deps,
+            config=cfg,
+            template_dir=template_dir,
+            lookups_dir=pipe_cfg.get("lookups_dir", "lookups"),
+            source_schema_path=Path(schema_file),
+            status="replayed_unverified",
+        )
+        console.print(
+            f"[yellow]WARN[/]  replay provenance is unverified -> {provenance.name}; "
+            "run the configured spatial/playability acceptance path before certification"
+        )
+    except OSError as exc:
+        console.print(f"[red]ERROR[/] could not write build provenance: {exc}")
+        raise typer.Exit(code=1)
     console.print(f"[green]OK[/]  {count} files -> {root}")
 
 

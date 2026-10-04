@@ -71,6 +71,12 @@ SITES: tuple[DigestSite, ...] = (
                "keep",
                "contract: exact SHA-256 verifies a locked visual asset binding "
                "against its fulfilment manifest"),
+    DigestSite("src/unity_generator.py", "_frozen_asset_selection", 1, "keep",
+               "contract: exact SHA-256 binds a saved Sketchfab selection to "
+               "the cached model bytes used by replay"),
+    DigestSite("src/unity_sketchfab_collection.py", "_sha256_file", 1, "keep",
+               "contract: exact SHA-256 verifies the cached Sketchfab bytes "
+               "recorded in the frozen collection lock"),
     DigestSite("src/unity_greybox.py", "_canonical_sha256", 1, "keep",
                "contract: Greybox+ source_greybox_sha256 binds the canonical "
                "dungeon IR embedded in its sidecar"),

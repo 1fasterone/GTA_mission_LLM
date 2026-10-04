@@ -13,6 +13,9 @@ Offline and deterministic — no LLM, no Unity, no network.
 
 from __future__ import annotations
 
+import json
+
+import pytest
 import yaml
 
 from src.unity_escort_follow import resolve_escort_follow
@@ -74,3 +77,42 @@ def test_unity_validate_compose_wires_escort_objective(tmp_path):
     assert "SEAM 8b: trigger" in gw
     assert 'ReportProgress("escort_buddy")' in gw
     assert "no event source" not in gw
+
+    manifest = json.loads(
+        (tmp_path / "out" / "EscortRegressionCheck" / "Project.build.manifest.json")
+        .read_text(encoding="utf-8")
+    )
+    assert manifest["status"] == "replayed_unverified"
+
+
+def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(tmp_path):
+    from cli.unity_project import _frozen_collection_replay
+    from src.unity_sketchfab_collection import frozen_collection_record
+
+    cache_dir = tmp_path / "Models" / "Sketchfab"
+    asset = cache_dir / "vehicle" / "rival-truck.fbx"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"frozen-truck")
+    collection = frozen_collection_record({"written": [{
+        "filename": asset.name,
+        "relpath": "vehicle/rival-truck.fbx",
+        "root": cache_dir.as_posix(),
+        "source": "sketchfab",
+        "category": "vehicle",
+    }]}, cache_dir=cache_dir)
+    schema = _escort_schema()
+    schema.meta["llm_enrichment"] = {"sketchfab_collection": collection}
+    _cache, locked, _entries = _frozen_collection_replay(schema)
+    assert locked == {}
+
+    selection = dict(collection["entries"][0])
+    collection["entity_bindings"] = {"Buddy": selection}
+    _cache, locked, _entries = _frozen_collection_replay(schema)
+    assert locked == {"Buddy": selection}
+
+    collection["entity_bindings"] = {"Buddy": {
+        **selection,
+        "filename": "replacement.fbx",
+    }}
+    with pytest.raises(ValueError, match="not in its collection"):
+        _frozen_collection_replay(schema)

@@ -6,11 +6,10 @@ STEP 3 — LLM fills the mission schema (plain English descriptions)
          + location sanity check against concept keywords
 STEP 4 — RAG resolves all descriptions → GTA5 model IDs
          + step↔entity consistency enforcement
-STEP 5 — Python fixer + deterministic model-ID pick for UNRESOLVED models
+STEP 5 — deterministic Python fixer + model-ID pick + unresolved-model diagnostics
 STEP 6 — Pipeline compiles schema → .NET 4.8 C# (no LLM involved)
 """
 
-import re
 from pathlib import Path
 
 from rich.console import Console
@@ -143,8 +142,6 @@ def _lint_mission_extras(schema: MissionSchema) -> None:
         m.body = lint_vector3_entity_prop_misuse(m.body)
 
 console = Console()
-
-_MODEL_ID_RE = re.compile(r"^[a-z][a-z0-9_]+$")
 
 # ── FIX 3: Location keyword map ───────────────────────────────────────────────
 # Used to detect when the LLM story describes location X but the schema
@@ -428,6 +425,32 @@ class MissionPipeline:
                     self._warn(f"{label} '{item.description}': abstained — {reason}; "
                                "set an explicit model ID or add a synonym to "
                                f"lookups/{table}.json")
+
+        return schema
+
+    # ── Step 5b: preserve unresolved assets as explicit abstentions ──────────
+
+    def _record_unresolved(self, schema: MissionSchema) -> MissionSchema:
+        """Persist resolver abstentions instead of guessing an unrelated asset.
+
+        The old fallback made a fresh LLM request after the schema boundary and
+        otherwise selected the first lookup entry.  Both paths were unsafe:
+        the former made code generation model-dependent, while the latter
+        silently turned an unknown request into an arbitrary spawn.  Keep the
+        compiler's authoritative answer (``UNRESOLVED``), record it in the IR,
+        and let the generator omit only that spawn with an auditable warning.
+        """
+        unresolved = schema.unresolved_models()
+        if not unresolved:
+            return schema
+        meta = schema.meta if isinstance(schema.meta, dict) else {}
+        meta["unresolved_models"] = {
+            "stage": "5",
+            "policy": "abstain",
+            "items": sorted(unresolved),
+            "remedy": "add a resolver synonym or use a known GTA5 model ID",
+        }
+        schema.meta = meta
         return schema
 
     # ── main run ──────────────────────────────────────────────────────────────
@@ -580,11 +603,19 @@ class MissionPipeline:
             self._ok(f"Deterministic model-ID match for {len(still_unresolved)} UNRESOLVED item(s)")
             schema = self._fix_unresolved(schema)
 
+        # The schema boundary is now closed. An unknown model is an explicit,
+        # persisted abstention -- never a late LLM guess or "first candidate"
+        # fallback. Code generation can therefore remain deterministic.
+        schema = self._record_unresolved(schema)
+
         # Final audit — anything still UNRESOLVED is named here; its spawn is skipped
         final_unresolved = schema.unresolved_models()
         if final_unresolved:
             for item in final_unresolved:
-                self._warn(f"Could not resolve model for {item} — spawn will be skipped in generated code")
+                self._warn(
+                    f"Could not resolve model for {item} — recorded an abstention; "
+                    "its spawn will be skipped in generated code"
+                )
         else:
             self._ok("All models resolved — no skipped spawns")
 

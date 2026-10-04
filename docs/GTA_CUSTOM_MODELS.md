@@ -198,6 +198,15 @@ typos and from the LLM hallucinating model names:
 
 AddOn names you add to `valid_models` take part in the same match, so give
 them descriptive IDs (or a `synonyms` entry) for them to be picked.
+3. **Persisted abstention**: if RAG, local synonyms, and the deterministic
+   picker cannot bind an entry,
+   the schema records `meta.unresolved_models` with the exact description and
+   recommended remedy. The generator skips only that spawn; it never guesses a
+   stock model or makes a post-schema LLM call.
+
+To use an AddOn deterministically, ensure its exact model name appears in
+`valid_models` and add a matching synonym. This is the only safe resolver
+authority for an asset installed on one tester's machine.
 
 ---
 

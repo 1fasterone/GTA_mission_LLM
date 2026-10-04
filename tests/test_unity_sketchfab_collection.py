@@ -14,7 +14,9 @@ import json
 
 import pytest
 
-from src.unity_sketchfab_collection import collect_models
+from src.unity_sketchfab_collection import (COLLECTION_LOCK_FORMAT, collect_models,
+                                             frozen_collection_record,
+                                             replay_collection_entries)
 
 
 class FakeLLM:
@@ -36,6 +38,36 @@ class FakeClient:
 
 
 _ONE_BRIEF = [{"name": "Rival Truck", "query": "dirt race vehicle", "category": "vehicle"}]
+
+
+def test_frozen_collection_record_replays_exact_verified_asset_bytes(tmp_path):
+    cache_dir = tmp_path / "Models" / "Sketchfab"
+    asset = cache_dir / "vehicle" / "rival-truck.fbx"
+    asset.parent.mkdir(parents=True)
+    asset.write_bytes(b"frozen-fbx")
+    record = frozen_collection_record({
+        "style": "cartoon",
+        "written": [{
+            "filename": asset.name,
+            "relpath": "vehicle/rival-truck.fbx",
+            "root": cache_dir.as_posix(),
+            "source": "sketchfab",
+            "category": "vehicle",
+            "query": "cartoon dirt race vehicle",
+            "sketchfab_uid": "truck-uid",
+            "fetched_at": "not-replay-evidence",
+        }],
+    }, cache_dir=cache_dir)
+
+    assert record["format"] == COLLECTION_LOCK_FORMAT
+    assert "fetched_at" not in record["entries"][0]
+    verified_root, entries = replay_collection_entries(record)
+    assert verified_root == cache_dir
+    assert entries[0]["file_sha256"] == record["entries"][0]["file_sha256"]
+
+    asset.write_bytes(b"changed-fbx")
+    with pytest.raises(ValueError, match="bytes changed"):
+        replay_collection_entries(record)
 
 
 # ── vision_select_fn gating: sketchfab.vision_select must be set ────────────

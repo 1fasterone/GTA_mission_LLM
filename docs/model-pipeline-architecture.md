@@ -118,17 +118,13 @@ Two differences from the generative-mesh case worth calling out:
 - **The instrument can run from two places.** The safe, always-deterministic
   path is a manual pre-fetch (`python main.py sketchfab-fetch`), same shape as
   `unity-catalog` — populate the frozen cache ahead of time, the resolver never
-  touches the network. `sketchfab.auto_fetch: true` is a looser, opt-in mode:
-  the resolver triggers the fetch itself on a cache miss, *from inside*
-  `resolve_entity_assets()`. That first resolution of a new concept is
-  genuinely network/ranking-dependent — nothing in Steps 4-6 has ever been
-  network-dependent before this. It's made **idempotent-after-first-use**:
-  the fetch freezes its result to disk immediately, so the very next
-  resolution of the same entity (including `write()`'s second
-  `_resolve_all_models()` call in the same run) is a pure cache hit. Treat
-  `auto_fetch: true` as accepting that one-notch looser guarantee in exchange
-  for not having to pre-populate the cache by hand — `auto_fetch: false`
-  (the shipped default) keeps the resolver a pure, network-free lookup, full stop.
+  touches the network. `sketchfab.auto_fetch: true` remains available to
+  explicit asset-management workflows and direct resolver integrations, where
+  the caller consciously accepts a live cache miss. The production
+  `UnityPipeline` and `unity-validate` force it off after the schema boundary:
+  Steps 4-7 are network-free, and only the explicitly enabled Step-3.5
+  collection may add frozen models before that boundary. `auto_fetch: false`
+  (the shipped default) keeps every ordinary resolver invocation a pure lookup.
 
 ### Style coherence — one marketplace, many unrelated artists
 

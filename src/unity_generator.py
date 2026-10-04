@@ -11,12 +11,14 @@ import math
 import os
 import re
 from pathlib import Path
+from typing import Any
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
 from .unity_schema import (ProceduralMesh, UnitySchema, UnityScript,
                            is_embodied)
 from .unity_asset_resolver import resolve_assets
+from .unity_asset_catalog import load_catalog
 from .unity_entity_asset_resolver import (resolve_entity_assets,
                                           texture_dirs_with_res_root_for)
 from .unity_model_resolver import resolve_default_models, models_for_schema
@@ -55,6 +57,54 @@ def _render_credits_md(used_models: dict) -> str | None:
                      else f"- {m.dest_rel} ({m.license})")
     lines.append("")
     return "\n".join(lines)
+
+
+def _frozen_asset_selection(model, catalog_assets: list[dict]) -> dict | None:
+    """Return an exact catalog selection for a resolved marketplace model.
+
+    The generated Resource path is an output name, not enough information to
+    replay the input selection.  Match the resolved source bytes back to the
+    frozen catalog entry and carry the catalog coordinates plus a content hash
+    into the schema sidecar.  Non-catalog/default models intentionally return
+    ``None``; they have their own deterministic resolver authority.
+    """
+    if getattr(model, "source", None) != "sketchfab":
+        return None
+    try:
+        source_path = Path(model.src).resolve()
+    except OSError:
+        return None
+    for entry in catalog_assets:
+        if not isinstance(entry, dict) or entry.get("source") != "sketchfab":
+            continue
+        relpath = str(entry.get("relpath") or entry.get("filename") or "")
+        root_text = str(entry.get("root") or "").strip()
+        if not relpath or not root_text:
+            continue
+        root = Path(root_text)
+        try:
+            candidate = (root / relpath).resolve()
+        except OSError:
+            continue
+        if candidate != source_path or not candidate.is_file():
+            continue
+        digest = hashlib.sha256()
+        with candidate.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        selection = {
+            "filename": str(entry.get("filename") or candidate.name),
+            "relpath": relpath.replace("\\", "/"),
+            "source": "sketchfab",
+            "file_sha256": digest.hexdigest(),
+        }
+        for key in ("category", "license", "author", "author_username",
+                    "attribution", "sketchfab_uid", "sketchfab_url"):
+            value = entry.get(key)
+            if value not in (None, ""):
+                selection[key] = value
+        return selection
+    return None
 
 
 def _apply_model_overrides(resolved: dict, overrides: dict[str, str] | None) -> dict:
@@ -3223,12 +3273,13 @@ class UnityProjectGenerator:
             models_by_resource = {
                 model.resource_path: model for model in used_models.values()
             }
-            bindings: dict[str, dict[str, str | None]] = {}
+            catalog_assets = list(load_catalog(str(lookups_dir)).get("assets") or [])
+            bindings: dict[str, dict[str, Any]] = {}
             for entity_name, resource_path in sorted(entity_model_paths.items()):
                 model = models_by_resource.get(resource_path)
                 if model is None:
                     continue
-                bindings[entity_name] = {
+                binding: dict[str, Any] = {
                     "filename": Path(model.dest_rel).name,
                     "source_filename": Path(model.src).name,
                     "resource_path": model.resource_path,
@@ -3236,6 +3287,10 @@ class UnityProjectGenerator:
                     "license": model.license,
                     "attribution": model.attribution,
                 }
+                selection = _frozen_asset_selection(model, catalog_assets)
+                if selection is not None:
+                    binding["catalog_selection"] = selection
+                bindings[entity_name] = binding
             schema.meta["entity_model_bindings"] = bindings
         return used_models, entity_model_paths
 

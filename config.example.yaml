@@ -144,6 +144,15 @@ playability:
   # an ERROR-class check stops being gradable at all (see docs/TESTING.md A1).
   min_score: 0
 
+acceptance:
+  # A compiler repair is evidence, not consent to change the requested game.
+  # Reject a schema fill that needed a lossy root-field default; the pipeline
+  # retries the LLM fill with the offending field names instead of shipping it.
+  reject_lossy_normalization: true
+  # Step 6.6 validates the final spatial contract. Refuse a production project
+  # if the preflight or final measured-footprint sidecar has hard findings.
+  require_spatial_validation: true
+
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve
   # to a REAL model — an explicit kind in the default pack
@@ -252,11 +261,15 @@ sketchfab:
                                   # Sketchfab's S3 bucket is variable (measured
                                   # 25MB in ~31s, 70MB in ~102s minutes apart)
   accepted_licenses: ['cc0', 'by', 'by-sa', 'by-nd']   # Sketchfab v3 license slugs
+  # Concept collection is the explicit Step-3.5 acquisition path. It may use
+  # the network before the freeze, then writes frozen catalog entries that the
+  # deterministic Steps 4-7 resolve without network access.
+  collect: false
   auto_fetch: false              # false = `python main.py sketchfab-fetch` pre-populates
-                                  #         the cache manually; resolver stays a pure lookup.
-                                  # true  = resolver live-fetches on a cache miss —
-                                  #         nondeterministic on the first hit for a new
-                                  #         concept, frozen/idempotent from then on.
+                                  #         the cache manually; compiler/replay stays pure.
+                                  # true  = allowed only for explicit asset-management
+                                  #         workflows; UnityPipeline and unity-validate
+                                  #         force it off after the schema boundary.
   min_match_score: 0.15          # same scale as assets.min_match_score
   cache_dir: Models/Sketchfab    # converted FBX + Textures/ + manifest live here
   blender_path: ''                # empty => reuse blender.blender_path / auto-detect
