@@ -538,6 +538,12 @@ def unity_validate(
                                              "rewrite Assets/Micros/** (deterministic — see "
                                              "the command's own docstring for what this can "
                                              "and cannot recover)."),
+    spatial_fusion_file: Optional[str] = typer.Option(
+        None,
+        "--spatial-fusion",
+        help="Replay a captured closed spatial-fusion artifact through the "
+             "deterministic generation path",
+    ),
 ) -> None:
     """Recompile a saved Unity schema to a project folder without re-running the LLM.
 
@@ -560,6 +566,29 @@ def unity_validate(
     pipe_cfg = _unity_pipe_cfg(cfg)
     data     = json.loads(Path(schema_file).read_text(encoding="utf-8"))
     schema   = UnitySchema.model_validate(data)
+    spatial_fusion: dict | None = None
+    spatial_replay_world: dict | None = None
+    # The command is also called directly by CLI regression tests. Typer's
+    # OptionInfo sentinel is not a path when the new optional argument is
+    # omitted from such a direct call.
+    if isinstance(spatial_fusion_file, str):
+        from src.unity_spatial_fusion import (
+            SpatialFusionError,
+            replay_frozen_spatial_fusion,
+        )
+
+        try:
+            frozen_fusion = json.loads(
+                Path(spatial_fusion_file).read_text(encoding="utf-8")
+            )
+            spatial_fusion = replay_frozen_spatial_fusion(schema, frozen_fusion)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, SpatialFusionError) as exc:
+            raise typer.BadParameter(
+                f"invalid frozen spatial fusion: {exc}"
+            ) from exc
+        console.print(
+            "[green]OK[/]  replayed frozen spatial fusion with no LLM or network"
+        )
     _acceptance = cfg.get("acceptance", {}) or {}
     _normalization_issues = normalization_issues(schema)
     if (_normalization_issues
@@ -580,9 +609,32 @@ def unity_validate(
     # what a fresh unity-create run already did in Step 5). Authored Scene
     # Compiler transforms remain protected by compute_layout's authored-scene
     # boundary; generated transforms are rebuilt, never hand-edited.
-    from src.unity_layout import compute_layout
-    for msg in compute_layout(schema):
-        console.print(f"  [cyan]LAYOUT[/]  {msg}")
+    if spatial_fusion is None:
+        from src.unity_layout import compute_layout
+        for msg in compute_layout(schema):
+            console.print(f"  [cyan]LAYOUT[/]  {msg}")
+    else:
+        from src.scene_graph import build_scene_graph
+        from src.unity_spatial_realization import (
+            SpatialRealizationError,
+            realize_spatial_layout,
+        )
+        from src.unity_spatial_roles import derive_spatial_roles
+
+        spatial_roles = derive_spatial_roles(schema)
+        spatial_graph = build_scene_graph(schema, spatial_roles)
+        try:
+            spatial_replay_world = realize_spatial_layout(
+                schema,
+                relation_graph=spatial_graph,
+                spatial_fusion=spatial_fusion,
+            )
+        except SpatialRealizationError as exc:
+            raise typer.BadParameter(
+                f"frozen spatial fusion could not be realized: {exc}"
+            ) from exc
+        for msg in spatial_replay_world["layout"]["messages"]:
+            console.print(f"  [cyan]LAYOUT[/]  {msg}")
     deps     = resolver.build_manifest_deps(
         schema, inject_mcp_bridge=pipe_cfg.get("inject_mcp_bridge", True)
     )
@@ -710,7 +762,22 @@ def unity_validate(
                              strict_assets=bool(_asset_cfg.get("strict", True)),
                              asset_cfg=_asset_cfg, sketchfab_cfg=_sketchfab_cfg,
                              project_config=cfg,
-                             locked_asset_bindings=_collection_bindings or None)
+                             locked_asset_bindings=_collection_bindings or None,
+                             spatial_fusion=spatial_fusion)
+
+    if spatial_fusion is not None and spatial_replay_world is not None:
+        (root / f"{schema.project_name}.spatial-fusion.json").write_text(
+            json.dumps(spatial_fusion, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        (root / f"{schema.project_name}.world-layout.json").write_text(
+            json.dumps(spatial_replay_world, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        console.print(
+            "[green]OK[/]  wrote frozen spatial replay evidence -> "
+            "*.spatial-fusion.json, *.world-layout.json"
+        )
 
     if _collection_cache is not None:
         from src.unity_sketchfab_collection import copy_collection_into_project

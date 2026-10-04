@@ -45,6 +45,12 @@ _GENERATED_META_FIELDS = (
     "spatial_primitive",
     "wiring",
     "entity_model_paths",
+    # The generator records the selected catalog entry for each entity after
+    # spatial fusion. This is codegen provenance, not spatial meaning.
+    "entity_model_bindings",
+    # Compose records whether it supplied the player controller after the
+    # schema boundary. This controls playability metadata, not spatial meaning.
+    "composed_player_controller",
     # Step 3.5 stores LLM-authored dialogue and audio cues here. Those values
     # affect codegen only; spatial roles, fusion, and realization must remain
     # replayable from the same frozen visual evidence after enrichment.

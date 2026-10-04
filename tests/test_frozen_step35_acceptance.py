@@ -36,6 +36,8 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
         _command(*args),
         cwd=REPO_ROOT,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -122,12 +124,22 @@ def test_captured_step35_fixture_replays_without_llm_and_passes_strict_gates(
     config = _replay_config(tmp_path)
     replay = _run(
         "unity-validate", str(schema_path), "--config", str(config), "--compose",
+        "--spatial-fusion", str(FIXTURES / manifest["spatial"]["spatial_fusion"]),
     )
     assert replay.returncode == 0, replay.stdout + "\n" + replay.stderr
 
     project = tmp_path / "project-output" / schema.project_name
     generated_schema = project / f"{schema.project_name}.schema.json"
     assert generated_schema.is_file()
+    persisted_fusion = _load_json(
+        project / f"{schema.project_name}.spatial-fusion.json"
+    )
+    persisted_world = _load_json(
+        project / f"{schema.project_name}.world-layout.json"
+    )
+    assert persisted_fusion == replayed_fusion
+    assert persisted_world["authority"]["spatial_fusion_used"] is True
+    assert persisted_world["inputs"]["spatial_fusion_sha256"]
     emitted = "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted((project / "Assets" / "Micros").rglob("*.cs"))
@@ -152,3 +164,19 @@ def test_frozen_fusion_replay_refuses_to_drop_a_captured_binding() -> None:
 
     with pytest.raises(SpatialFusionError, match="one bound visual reference"):
         replay_frozen_spatial_fusion(schema, incomplete)
+
+
+def test_frozen_fusion_replay_refuses_an_unverifiable_or_stale_identity() -> None:
+    manifest = _load_json(MANIFEST)
+    schema = UnitySchema.model_validate(_load_json(FIXTURES / manifest["schema"]))
+    source = _load_json(FIXTURES / manifest["spatial"]["spatial_fusion"])
+
+    missing = copy.deepcopy(source)
+    del missing["inputs"]["schema_semantic_sha256"]
+    with pytest.raises(SpatialFusionError, match="captured schema semantic hash"):
+        replay_frozen_spatial_fusion(schema, missing)
+
+    stale = copy.deepcopy(source)
+    stale["inputs"]["schema_semantic_sha256"] = "0" * 64
+    with pytest.raises(SpatialFusionError, match="different schema"):
+        replay_frozen_spatial_fusion(schema, stale)

@@ -40,6 +40,17 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - run: pytest
 
+  frozen-step35-acceptance:
+    name: Acceptance (frozen Step 3.5)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      - run: pytest -q tests/test_frozen_step35_acceptance.py
+
   blender-render:
     name: Test (blender_render)
     runs-on: ubuntu-latest
