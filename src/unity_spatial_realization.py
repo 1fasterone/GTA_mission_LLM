@@ -189,13 +189,30 @@ def _validate_spatial_fusion(
         )
     expected = _schema_hash(schema)
     fusion_inputs = spatial_fusion.get("inputs") or {}
+    authority = spatial_fusion.get("authority")
+    frozen_replay = (
+        isinstance(authority, Mapping)
+        and authority.get("replayed_from_frozen_fusion") is True
+    )
     actual = fusion_inputs.get("schema_sha256")
     if actual != expected:
         actual = fusion_inputs.get("schema_semantic_sha256")
-    if actual != expected:
+    if frozen_replay:
+        captured = fusion_inputs.get("captured_schema_semantic_sha256")
+        if not isinstance(captured, str) or not captured:
+            raise SpatialRealizationError(
+                "[spatial.strict] frozen spatial fusion replay lost its "
+                "captured schema semantic hash"
+            )
+        if fusion_inputs.get("schema_semantic_sha256") != captured:
+            raise SpatialRealizationError(
+                "[spatial.strict] frozen spatial fusion replay identity was "
+                "rewritten after capture"
+            )
+    elif actual != expected:
         raise SpatialRealizationError(
             "[spatial.strict] spatial fusion belongs to a different schema; "
-            "rebuild Slice 6.3"
+            f"rebuild Slice 6.3 (expected {expected}, got {actual})"
         )
     bindings = spatial_fusion.get("bindings")
     entity_regions = spatial_fusion.get("entity_regions")

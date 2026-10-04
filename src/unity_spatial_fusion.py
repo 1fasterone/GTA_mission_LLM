@@ -855,9 +855,19 @@ def replay_frozen_spatial_fusion(
         )
 
     source_hash = inputs.get("schema_semantic_sha256")
-    if isinstance(source_hash, str) and source_hash:
-        inputs.setdefault("captured_schema_semantic_sha256", source_hash)
-    inputs["schema_semantic_sha256"] = semantic_schema_hash(schema)
+    if not isinstance(source_hash, str) or not source_hash:
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay has no captured schema "
+            "semantic hash"
+        )
+    current_hash = semantic_schema_hash(schema)
+    if source_hash != current_hash:
+        raise SpatialFusionError(
+            "[spatial.strict] frozen fusion replay belongs to a different "
+            "schema; rebuild Slice 6.3"
+        )
+    inputs["captured_schema_semantic_sha256"] = source_hash
+    inputs["schema_semantic_sha256"] = current_hash
     authority = replayed.get("authority")
     if not isinstance(authority, dict):
         authority = {}

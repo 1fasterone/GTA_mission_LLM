@@ -15,7 +15,7 @@
     "closed_image_ir_sha256": "16caf28e69285372badf2fbe4353cc2902861755488239c93344a9abb83ca2e2",
     "image_spatial_evidence_sha256": "0111b4ddbbb73874d41f817e19060bff72d7de85881674bad3987594b425e5b9",
     "schema_sha256": "2237580bb5f8e493558f66100dde548ddf9135485d8ea1f8dcc5551bbc319eb6",
-    "schema_semantic_sha256": "e6db31e43334d8446c8ae0fa1584c3e28c7836e8bf9dd01787f0c9783ba89322",
+    "schema_semantic_sha256": "4b59e8042d789330978ab63c75c854cd24c4adb50dc88a5cad78d4aaa70c00f4",
     "schema_spatial_roles_sha256": "efefa99211ac494cfe4d34efda11462e77189f437177206a5834a52c713e9285",
     "archetype": {
       "name": "VerticalCorridor",
