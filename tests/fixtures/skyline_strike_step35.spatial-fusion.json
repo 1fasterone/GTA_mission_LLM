@@ -1,0 +1,931 @@
+{
+  "format": "visual-reasoning-compiler/hybrid-spatial-fusion/v1",
+  "stage": "6.3_hybrid_spatial_fusion",
+  "status": "closed",
+  "authority": {
+    "llm_called_here": false,
+    "schema_roles_authority": true,
+    "image_composition_authority": true,
+    "ambiguous_entity_binding_abstains": true,
+    "unbound_visual_labels_create_entities": false,
+    "world_coordinates_emitted_here": false,
+    "unity_transforms_emitted_here": false
+  },
+  "inputs": {
+    "closed_image_ir_sha256": "16caf28e69285372badf2fbe4353cc2902861755488239c93344a9abb83ca2e2",
+    "image_spatial_evidence_sha256": "0111b4ddbbb73874d41f817e19060bff72d7de85881674bad3987594b425e5b9",
+    "schema_sha256": "2237580bb5f8e493558f66100dde548ddf9135485d8ea1f8dcc5551bbc319eb6",
+    "schema_semantic_sha256": "e6db31e43334d8446c8ae0fa1584c3e28c7836e8bf9dd01787f0c9783ba89322",
+    "schema_spatial_roles_sha256": "efefa99211ac494cfe4d34efda11462e77189f437177206a5834a52c713e9285",
+    "archetype": {
+      "name": "VerticalCorridor",
+      "motion_axis": "vertical",
+      "medium": "air",
+      "goal_topology": "hit_target",
+      "evidence": {
+        "motion_axis": "entity altitude data — 'Ships' at y=118 (>= 50 m)",
+        "medium": "locomotion='fly'",
+        "goal_topology": "mission objective types ['defeat', 'survive']",
+        "direction": "exit platform 'EnemyAircraftGroup' (vocabulary ['plane', 'aircraft'])",
+        "direction_tier": "entity"
+      }
+    }
+  },
+  "frame": {
+    "horizon_y": 0.45,
+    "vanishing_x": 0.5
+  },
+  "surface_regions": [
+    {
+      "id": "surface:water",
+      "surface": "water",
+      "bbox": {
+        "x": 0.1,
+        "y": 0.6,
+        "w": 0.8,
+        "h": 0.4
+      },
+      "confidence": 0.9,
+      "source": "image_spatial_evidence"
+    }
+  ],
+  "entity_regions": [
+    {
+      "entity": "Clouds",
+      "inventory_label": "clouds",
+      "reference": "clouds",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.3
+        },
+        "extent": {
+          "w": 1.0,
+          "h": 0.6
+        },
+        "relative_area": 0.6,
+        "image_layer": "background",
+        "image_surface": "sky",
+        "applied_surface": "air",
+        "facing": "unknown",
+        "occlusion": "none",
+        "confidence": 0.95,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "EnemyAircraftGroup",
+      "inventory_label": "aircraft_1",
+      "reference": "aircraft_1",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.195,
+          "y": 0.65
+        },
+        "extent": {
+          "w": 0.35,
+          "h": 0.2
+        },
+        "relative_area": 0.07,
+        "image_layer": "foreground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.95,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "declared hazard/enemy/trap kind or tag",
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Fire_1",
+      "inventory_label": "fire_1",
+      "reference": "fire_1",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.4,
+          "y": 0.2
+        },
+        "extent": {
+          "w": 0.2,
+          "h": 0.1
+        },
+        "relative_area": 0.02,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "declared hazard vocabulary: fire",
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Fire_2",
+      "inventory_label": "fire_2",
+      "reference": "fire_2",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.15,
+          "y": 0.275
+        },
+        "extent": {
+          "w": 0.1,
+          "h": 0.05
+        },
+        "relative_area": 0.005,
+        "image_layer": "background",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.7,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "declared hazard vocabulary: fire",
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Fire_3",
+      "inventory_label": "fire_3",
+      "reference": "fire_3",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.85,
+          "y": 0.775
+        },
+        "extent": {
+          "w": 0.1,
+          "h": 0.05
+        },
+        "relative_area": 0.005,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "air",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "declared hazard vocabulary: fire",
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Missiles",
+      "inventory_label": "missile",
+      "reference": "missile",
+      "role": "abstain",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.775,
+          "y": 0.3
+        },
+        "extent": {
+          "w": 0.15,
+          "h": 0.1
+        },
+        "relative_area": 0.015,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "right",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Mountains",
+      "inventory_label": "mountains",
+      "reference": "mountains",
+      "role": "hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.45
+        },
+        "extent": {
+          "w": 1.0,
+          "h": 0.2
+        },
+        "relative_area": 0.2,
+        "image_layer": "background",
+        "image_surface": "ground",
+        "applied_surface": "air",
+        "facing": "unknown",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "Concept names this entity with hazard vocabulary: fire"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "PlayerCraft",
+      "inventory_label": "aircraft_2",
+      "reference": "aircraft_2",
+      "role": "player_path",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.25
+        },
+        "extent": {
+          "w": 0.4,
+          "h": 0.2
+        },
+        "relative_area": 0.08,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "deterministic player binding"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Ships",
+      "inventory_label": "ship_1",
+      "reference": "ship_1",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.15,
+          "y": 0.9
+        },
+        "extent": {
+          "w": 0.2,
+          "h": 0.1
+        },
+        "relative_area": 0.02,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "air",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "declared hazard/enemy/trap kind or tag",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Smoke_Trail_1",
+      "inventory_label": "smoke_trail_1",
+      "reference": "smoke_trail_1",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.15,
+          "y": 0.25
+        },
+        "extent": {
+          "w": 0.3,
+          "h": 0.2
+        },
+        "relative_area": 0.06,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "left",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Smoke_Trail_2",
+      "inventory_label": "smoke_trail_2",
+      "reference": "smoke_trail_2",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.8,
+          "y": 0.4
+        },
+        "extent": {
+          "w": 0.4,
+          "h": 0.1
+        },
+        "relative_area": 0.04,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "right",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "Smoke_Trail_3",
+      "inventory_label": "smoke_trail_3",
+      "reference": "smoke_trail_3",
+      "role": "airborne_hazard",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.8,
+          "y": 0.7
+        },
+        "extent": {
+          "w": 0.2,
+          "h": 0.1
+        },
+        "relative_area": 0.02,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "air",
+        "facing": "right",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "Concept names this entity with hazard vocabulary: fire",
+        "layout medium='air' and no declared ground signal"
+      ],
+      "source": "image_spatial_evidence"
+    },
+    {
+      "entity": "WaterSurface",
+      "inventory_label": "water",
+      "reference": "water",
+      "role": "scenery",
+      "binding_status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.8
+        },
+        "extent": {
+          "w": 0.8,
+          "h": 0.4
+        },
+        "relative_area": 0.32,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "water",
+        "facing": "unknown",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "schema_role_evidence": [
+        "entity.kind='prop' is an explicit scenery kind",
+        "entity.tag='environment' is an explicit scenery tag",
+        "declared scenery vocabulary: water",
+        "declared scenery vocabulary: ocean",
+        "declared scenery vocabulary: environment"
+      ],
+      "source": "image_spatial_evidence"
+    }
+  ],
+  "relations": [
+    {
+      "source_label": "aircraft_1",
+      "target_label": "ship_1",
+      "source_entity": "EnemyAircraftGroup",
+      "target_entity": "Ships",
+      "relation": "near",
+      "confidence": 0.7,
+      "status": "bound"
+    },
+    {
+      "source_label": "aircraft_2",
+      "target_label": "missile",
+      "source_entity": "PlayerCraft",
+      "target_entity": "Missiles",
+      "relation": "near",
+      "confidence": 0.8,
+      "status": "bound"
+    },
+    {
+      "source_label": "fire_1",
+      "target_label": "aircraft_2",
+      "source_entity": "Fire_1",
+      "target_entity": "PlayerCraft",
+      "relation": "in_front_of",
+      "confidence": 0.9,
+      "status": "bound"
+    },
+    {
+      "source_label": "ship_2",
+      "target_label": "ship_3",
+      "source_entity": null,
+      "target_entity": null,
+      "relation": "near",
+      "confidence": 0.8,
+      "status": "unbound_visual_evidence"
+    },
+    {
+      "source_label": "smoke_trail_1",
+      "target_label": "aircraft_3",
+      "source_entity": "Smoke_Trail_1",
+      "target_entity": null,
+      "relation": "behind",
+      "confidence": 0.7,
+      "status": "unbound_visual_evidence"
+    }
+  ],
+  "clusters": [
+    {
+      "members": [
+        {
+          "label": "aircraft_1",
+          "entity": "EnemyAircraftGroup"
+        },
+        {
+          "label": "fire_1",
+          "entity": "Fire_1"
+        }
+      ],
+      "cohesion": "tight",
+      "confidence": 0.9,
+      "status": "bound",
+      "source": "image_spatial_evidence"
+    },
+    {
+      "members": [
+        {
+          "label": "fire_3",
+          "entity": "Fire_3"
+        },
+        {
+          "label": "ship_2",
+          "entity": null
+        },
+        {
+          "label": "ship_3",
+          "entity": null
+        }
+      ],
+      "cohesion": "loose",
+      "confidence": 0.8,
+      "status": "unbound_visual_evidence",
+      "source": "image_spatial_evidence"
+    }
+  ],
+  "semantic_constraints": {
+    "objectives": [
+      {
+        "mission": "destroy_fleet",
+        "objective": "obj_ships",
+        "type": "defeat",
+        "target_ref": "Ships",
+        "target_entity": "Ships",
+        "status": "bound",
+        "evidence": [
+          "objective.target_ref='Ships'"
+        ]
+      },
+      {
+        "mission": "destroy_fleet",
+        "objective": "obj_survival",
+        "type": "survive",
+        "target_ref": "PlayerCraft",
+        "target_entity": "PlayerCraft",
+        "status": "bound",
+        "evidence": [
+          "objective.target_ref='PlayerCraft'"
+        ]
+      }
+    ],
+    "adjacency_requirements": []
+  },
+  "constraints": [
+    {
+      "kind": "normalized_composition",
+      "entity": "Clouds",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.3
+        },
+        "extent": {
+          "w": 1.0,
+          "h": 0.6
+        },
+        "relative_area": 0.6,
+        "image_layer": "background",
+        "image_surface": "sky",
+        "applied_surface": "air",
+        "facing": "unknown",
+        "occlusion": "none",
+        "confidence": 0.95,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "EnemyAircraftGroup",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.195,
+          "y": 0.65
+        },
+        "extent": {
+          "w": 0.35,
+          "h": 0.2
+        },
+        "relative_area": 0.07,
+        "image_layer": "foreground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.95,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Fire_1",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.4,
+          "y": 0.2
+        },
+        "extent": {
+          "w": 0.2,
+          "h": 0.1
+        },
+        "relative_area": 0.02,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Fire_2",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.15,
+          "y": 0.275
+        },
+        "extent": {
+          "w": 0.1,
+          "h": 0.05
+        },
+        "relative_area": 0.005,
+        "image_layer": "background",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.7,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Fire_3",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.85,
+          "y": 0.775
+        },
+        "extent": {
+          "w": 0.1,
+          "h": 0.05
+        },
+        "relative_area": 0.005,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "air",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Missiles",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.775,
+          "y": 0.3
+        },
+        "extent": {
+          "w": 0.15,
+          "h": 0.1
+        },
+        "relative_area": 0.015,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "right",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Mountains",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.45
+        },
+        "extent": {
+          "w": 1.0,
+          "h": 0.2
+        },
+        "relative_area": 0.2,
+        "image_layer": "background",
+        "image_surface": "ground",
+        "applied_surface": "air",
+        "facing": "unknown",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "PlayerCraft",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.25
+        },
+        "extent": {
+          "w": 0.4,
+          "h": 0.2
+        },
+        "relative_area": 0.08,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Ships",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.15,
+          "y": 0.9
+        },
+        "extent": {
+          "w": 0.2,
+          "h": 0.1
+        },
+        "relative_area": 0.02,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "air",
+        "facing": "forward",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Smoke_Trail_1",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.15,
+          "y": 0.25
+        },
+        "extent": {
+          "w": 0.3,
+          "h": 0.2
+        },
+        "relative_area": 0.06,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "left",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Smoke_Trail_2",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.8,
+          "y": 0.4
+        },
+        "extent": {
+          "w": 0.4,
+          "h": 0.1
+        },
+        "relative_area": 0.04,
+        "image_layer": "midground",
+        "image_surface": "unknown",
+        "applied_surface": "unknown",
+        "facing": "right",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "Smoke_Trail_3",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.8,
+          "y": 0.7
+        },
+        "extent": {
+          "w": 0.2,
+          "h": 0.1
+        },
+        "relative_area": 0.02,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "air",
+        "facing": "right",
+        "occlusion": "none",
+        "confidence": 0.8,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "normalized_composition",
+      "entity": "WaterSurface",
+      "status": "bound",
+      "composition": {
+        "center": {
+          "x": 0.5,
+          "y": 0.8
+        },
+        "extent": {
+          "w": 0.8,
+          "h": 0.4
+        },
+        "relative_area": 0.32,
+        "image_layer": "foreground",
+        "image_surface": "water",
+        "applied_surface": "water",
+        "facing": "unknown",
+        "occlusion": "none",
+        "confidence": 0.9,
+        "source": "image_spatial_evidence"
+      },
+      "source": "image_spatial_evidence"
+    },
+    {
+      "kind": "relative_visual_relation",
+      "source": "EnemyAircraftGroup",
+      "target": "Ships",
+      "relation": "near",
+      "confidence": 0.7,
+      "source_labels": [
+        "aircraft_1",
+        "ship_1"
+      ]
+    },
+    {
+      "kind": "relative_visual_relation",
+      "source": "PlayerCraft",
+      "target": "Missiles",
+      "relation": "near",
+      "confidence": 0.8,
+      "source_labels": [
+        "aircraft_2",
+        "missile"
+      ]
+    },
+    {
+      "kind": "relative_visual_relation",
+      "source": "Fire_1",
+      "target": "PlayerCraft",
+      "relation": "in_front_of",
+      "confidence": 0.9,
+      "source_labels": [
+        "fire_1",
+        "aircraft_2"
+      ]
+    }
+  ],
+  "unbound_visual_labels": [
+    "aircraft_3",
+    "aircraft_4",
+    "aircraft_5",
+    "ship_2",
+    "ship_3"
+  ],
+  "warnings": [
+    "Clouds: schema role 'airborne_hazard' wins over image surface 'sky'; applied surface is 'air'",
+    "Fire_3: schema role 'airborne_hazard' wins over image surface 'water'; applied surface is 'air'",
+    "Missiles: schema spatial role abstains; image composition is retained as visual evidence only",
+    "Mountains: schema role 'hazard' wins over image surface 'ground'; applied surface is 'air'",
+    "Ships: schema role 'airborne_hazard' wins over image surface 'water'; applied surface is 'air'",
+    "Smoke_Trail_3: schema role 'airborne_hazard' wins over image surface 'water'; applied surface is 'air'",
+    "visual labels not declared as schema entity matches remain evidence-only: aircraft_3, aircraft_4, aircraft_5, ship_2, ship_3",
+    "visual relation 'ship_2' -> 'ship_3' is not applied because both labels are not declared entity matches",
+    "visual relation 'smoke_trail_1' -> 'aircraft_3' is not applied because both labels are not declared entity matches"
+  ],
+  "abstentions": [],
+  "counts": {
+    "declared_schema_entities": 13,
+    "bound_entities": 13,
+    "defaulted_entities": 0,
+    "bound_visual_relations": 3,
+    "unbound_visual_labels": 5
+  }
+}

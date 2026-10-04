@@ -1,0 +1,2916 @@
+{
+  "project_name": "SkylineStrike",
+  "company_name": "AeroForge Studios",
+  "description": "Chaotic aerial combat simulation over a rugged coastline where you pilot a twin-engine fighter bomber to destroy enemy ships and aircraft.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "fly",
+  "locomotion_modes": [],
+  "render_pipeline": "URP",
+  "unity_version": "6000.4",
+  "color_space": "Linear",
+  "visual_style": "realistic",
+  "scenes": [
+    "Main"
+  ],
+  "scene_specs": [
+    {
+      "name": "Main",
+      "description": "Open coastal combat zone with mountains, water, and dynamic weather.",
+      "time_of_day": "day",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "PlayerCraft",
+        "EnemyAircraftGroup",
+        "Missiles",
+        "Ships",
+        "Clouds",
+        "WaterSurface",
+        "Mountains",
+        "Fire_1",
+        "Fire_2",
+        "Fire_3",
+        "Smoke_Trail_1",
+        "Smoke_Trail_2",
+        "Smoke_Trail_3"
+      ]
+    }
+  ],
+  "features": [
+    "physics",
+    "cinemachine",
+    "navmesh",
+    "audio",
+    "input_system"
+  ],
+  "packages": [
+    {
+      "description": "Universal Render Pipeline for optimized lighting and post-processing.",
+      "package_id": "com.unity.postprocessing",
+      "version": "3.4.0"
+    },
+    {
+      "description": "Input System package for modern controller support.",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.14.0"
+    },
+    {
+      "description": "Cinemachine for dynamic camera tracking during dogfights.",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "com.unity.render-pipelines.universal",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.4.0"
+    },
+    {
+      "description": "com.unity.shadergraph",
+      "package_id": "com.unity.shadergraph",
+      "version": "17.4.0"
+    },
+    {
+      "description": "com.unity.textmeshpro",
+      "package_id": "com.unity.textmeshpro",
+      "version": "3.0.9"
+    },
+    {
+      "description": "com.unity.ai.navigation",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.8"
+    },
+    {
+      "description": "com.unity.ugui",
+      "package_id": "com.unity.ugui",
+      "version": "2.0.0"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "MaterialPalette",
+      "type": "material_palette",
+      "description": "Runtime Coastal Combat palette manager — creates and caches materials from palette hex colors",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "PlayerController",
+      "type": "player",
+      "description": "Handles flight physics, thrust, and control inputs for the player's aircraft.",
+      "attach_to": "player",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "EnemyAI",
+      "type": "enemy",
+      "description": "Manages enemy aircraft behavior including patrol, chase, and attack patterns.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "ShipTarget",
+      "type": "collectible",
+      "description": "Handles ship destruction logic and scoring when hit by player weapons.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "WeaponSystem",
+      "type": "custom",
+      "description": "Manages cannon fire, missile launches, and projectile physics.",
+      "attach_to": "systems",
+      "extra_usings": [
+        "System.Collections.Generic"
+      ],
+      "extra_fields": [
+        {
+          "name": "_projectiles",
+          "type": "List<GameObject>",
+          "default": "new List<GameObject>()",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_fireRate",
+          "type": "float",
+          "default": "0.1f",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "lastFireTime",
+          "type": "float",
+          "default": null,
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (Input.GetMouseButton(0) && Time.time - lastFireTime > _fireRate) { FireWeapon(); lastFireTime = Time.time; }",
+      "fixed_update_extra": "",
+      "extra_methods": [
+        {
+          "signature": "private void FireWeapon()",
+          "body": "Instantiate(projectilePrefab, transform.position + rightVector * 2f, Quaternion.identity);"
+        }
+      ],
+      "atoms": []
+    },
+    {
+      "name": "ExplosionEffect",
+      "type": "custom",
+      "description": "Generates fire and smoke trails upon impact with targets.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_fireParticles",
+          "type": "ParticleSystem",
+          "default": "null",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_smokeParticles",
+          "type": "ParticleSystem",
+          "default": "null",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [
+        {
+          "signature": "public void TriggerExplosion(Vector3 position)",
+          "body": "var fire = Instantiate(firePrefab, position, Quaternion.identity); var smoke = Instantiate(smokePrefab, position + Vector3.up * 2f, Quaternion.identity);"
+        }
+      ],
+      "atoms": []
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Tracks mission progress, handles win/loss conditions, and manages game state.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "HealthSystem",
+      "type": "health",
+      "description": "Health component with damage, heal, and death events",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DialogueManager",
+      "type": "dialogue_manager",
+      "description": "Singleton story-beat and dialogue system",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "MeshBuilder",
+      "type": "mesh_builder",
+      "description": "Singleton procedural mesh factory",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "mission_start",
+      "label": "Mission Briefing",
+      "description": "Player receives orders to eliminate enemy fleet.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "ship_destroyed",
+      "label": "Target Eliminated",
+      "description": "A ship is destroyed, updating the mission progress bar.",
+      "trigger": "on_enemy_death"
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "CombatAmbience",
+      "description": "Low rumble of engines and distant explosions.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "MissionTheme",
+      "description": "Tense orchestral score for active combat sequences.",
+      "loop": true,
+      "category": "music"
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "CloudLayer",
+      "description": "Procedurally generated cloud formations for cover and stealth.",
+      "mesh_type": "custom",
+      "resolution": 32
+    },
+    {
+      "name": "TerrainChunk",
+      "description": "Modular mountain segments forming the rugged coastline.",
+      "mesh_type": "terrain",
+      "resolution": 64
+    }
+  ],
+  "entities": [
+    {
+      "name": "PlayerCraft",
+      "kind": "character",
+      "count": 1,
+      "shape": "capsule",
+      "placement": "single",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Player",
+      "behavior": "",
+      "model_hint": "twin engine fighter bomber",
+      "sketchfab_query": "military fighter jet low poly",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 100.0,
+      "origin_offset": [
+        0.0,
+        0.0
+      ],
+      "group_radius": 0.6,
+      "instance_positions": [
+        [
+          0.0,
+          100.0,
+          0.0
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "EnemyAircraftGroup",
+      "kind": "enemy",
+      "count": 10,
+      "shape": "capsule",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.8,
+      "tag": "EnemyPlane",
+      "behavior": "EnemyAI",
+      "model_hint": "enemy interceptor aircraft",
+      "sketchfab_query": "fighter jet enemy",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 118.0,
+      "origin_offset": [
+        -0.0,
+        -61.766
+      ],
+      "group_radius": 41.17701368108879,
+      "instance_positions": [
+        [
+          -1.1346142050673233e-14,
+          118.0,
+          -61.76552052163318
+        ],
+        [
+          14.03837593415502,
+          118.0,
+          -56.26903170765553
+        ],
+        [
+          -13.705149247331327,
+          118.0,
+          -69.77710579355488
+        ],
+        [
+          1.4817495603874469,
+          118.0,
+          -77.88737518278198
+        ],
+        [
+          -17.5473600469701,
+          118.0,
+          -56.56788664503094
+        ],
+        [
+          17.265781979232926,
+          118.0,
+          -72.54357821755806
+        ],
+        [
+          -0.84326785037758,
+          118.0,
+          -40.58596214787572
+        ],
+        [
+          -13.932406378494399,
+          118.0,
+          -44.63518106264387
+        ],
+        [
+          11.275598142380785,
+          118.0,
+          -42.49220497186388
+        ],
+        [
+          -26.365295675148563,
+          118.0,
+          -65.6508301012298
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Missiles",
+      "kind": "pickup",
+      "count": 5,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.3,
+      "tag": "Weapon",
+      "behavior": "",
+      "model_hint": "guided missile projectile",
+      "sketchfab_query": "missile projectile",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 94.0,
+      "origin_offset": [
+        -18.478,
+        -7.654
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -18.477590650225736,
+          94.0,
+          -7.653668647301793
+        ],
+        [
+          -17.953595349785523,
+          94.0,
+          -8.50599398776139
+        ],
+        [
+          -17.579203191163796,
+          94.0,
+          -7.183730055725747
+        ],
+        [
+          -19.373425342835905,
+          94.0,
+          -8.342953442418466
+        ],
+        [
+          -18.33407611078193,
+          94.0,
+          -6.251081625985753
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Ships",
+      "kind": "enemy",
+      "count": 3,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "Target",
+      "behavior": "EnemyAI",
+      "model_hint": "naval warship destroyer",
+      "sketchfab_query": "warship naval ship",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 118.0,
+      "origin_offset": [
+        -72.968,
+        0.0
+      ],
+      "group_radius": 48.6452660850547,
+      "instance_positions": [
+        [
+          -72.96789912758206,
+          118.0,
+          8.935990410710032e-15
+        ],
+        [
+          -101.49965102125287,
+          118.0,
+          9.636714138811689
+        ],
+        [
+          -94.05902465604018,
+          118.0,
+          -27.991643868822198
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Clouds",
+      "kind": "prop",
+      "count": 20,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "background",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "cumulus cloud formation",
+      "sketchfab_query": "cloud volumetric",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        20.0,
+        0.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          20.0,
+          70.0,
+          0.0
+        ],
+        [
+          22.036100584113658,
+          70.0,
+          0.2091960940684292
+        ],
+        [
+          21.492384230122326,
+          70.0,
+          -1.9291314277683975
+        ],
+        [
+          18.438513630640305,
+          70.0,
+          1.943929037145189
+        ],
+        [
+          17.47263797825293,
+          70.0,
+          0.07469906267334933
+        ],
+        [
+          20.087613095104658,
+          70.0,
+          3.6495612979502563
+        ],
+        [
+          17.429568934248614,
+          70.0,
+          -2.645057574765589
+        ],
+        [
+          23.62802761397277,
+          70.0,
+          -1.0391026647423636
+        ],
+        [
+          20.615397315168988,
+          70.0,
+          -3.76324158270839
+        ],
+        [
+          22.947623307012357,
+          70.0,
+          2.60650495220574
+        ],
+        [
+          16.045835043557247,
+          70.0,
+          1.6251662858706832
+        ],
+        [
+          15.234652038993271,
+          70.0,
+          -0.23835927956951794
+        ],
+        [
+          24.80289151202918,
+          70.0,
+          1.1490917050095981
+        ],
+        [
+          22.63523145047916,
+          70.0,
+          -4.336419773828683
+        ],
+        [
+          18.436221571270963,
+          70.0,
+          5.0327503573045655
+        ],
+        [
+          15.23855987369162,
+          70.0,
+          -2.6753460613216755
+        ],
+        [
+          21.178530177839253,
+          70.0,
+          5.403731174701764
+        ],
+        [
+          17.759739015034867,
+          70.0,
+          -5.097133626824931
+        ],
+        [
+          25.045202998323848,
+          70.0,
+          3.192238839604532
+        ],
+        [
+          15.265995606682434,
+          70.0,
+          3.7885893672560274
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "WaterSurface",
+      "kind": "prop",
+      "count": 1,
+      "shape": "plane",
+      "placement": "single",
+      "color_role": "background",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 5.0,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "ocean water surface shader",
+      "sketchfab_query": "water ocean shader",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 41.3,
+      "origin_offset": [
+        9.546,
+        -9.546
+      ],
+      "group_radius": 3.0,
+      "instance_positions": [
+        [
+          9.545941546018398,
+          41.3,
+          -9.545941546018385
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Mountains",
+      "kind": "prop",
+      "count": 1,
+      "shape": "cylinder",
+      "placement": "single",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 3.0,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "rocky mountain terrain",
+      "sketchfab_query": "mountain rocky terrain",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        13.0,
+        0.0
+      ],
+      "group_radius": 1.7999999999999998,
+      "instance_positions": [
+        [
+          13.0,
+          0.0,
+          0.0
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Fire_1",
+      "kind": "prop",
+      "count": 0,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.5,
+      "tag": "VFX",
+      "behavior": "",
+      "model_hint": "explosion fire burst",
+      "sketchfab_query": "fire explosion particle",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        7.654,
+        18.478
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          7.653668647301797,
+          70.0,
+          18.477590650225736
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Fire_2",
+      "kind": "prop",
+      "count": 0,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "VFX",
+      "behavior": "",
+      "model_hint": "intense fireball explosion",
+      "sketchfab_query": "fireball explosion",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        -14.142,
+        14.142
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -14.14213562373095,
+          70.0,
+          14.142135623730951
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Fire_3",
+      "kind": "prop",
+      "count": 0,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "VFX",
+      "behavior": "",
+      "model_hint": "large inferno explosion",
+      "sketchfab_query": "inferno large explosion",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        -18.478,
+        -7.654
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -18.477590650225736,
+          70.0,
+          -7.653668647301793
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Smoke_Trail_1",
+      "kind": "prop",
+      "count": 0,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.8,
+      "tag": "VFX",
+      "behavior": "",
+      "model_hint": "thick smoke plume",
+      "sketchfab_query": "smoke trail particle",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        -0.0,
+        -20.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -3.673940397442059e-15,
+          70.0,
+          -20.0
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Smoke_Trail_2",
+      "kind": "prop",
+      "count": 0,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "VFX",
+      "behavior": "",
+      "model_hint": "dense smoke cloud",
+      "sketchfab_query": "smoke cloud dense",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        19.799,
+        -19.799
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          19.798989873223345,
+          70.0,
+          -19.798989873223316
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Smoke_Trail_3",
+      "kind": "prop",
+      "count": 0,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.5,
+      "tag": "VFX",
+      "behavior": "",
+      "model_hint": "massive smoke explosion",
+      "sketchfab_query": "smoke explosion massive",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 70.0,
+      "origin_offset": [
+        33.26,
+        13.777
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          33.25966317040632,
+          70.0,
+          13.776603565143231
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    }
+  ],
+  "atoms": [
+    {
+      "atom": "ShowHUD",
+      "args": {
+        "duration": 0.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "UpdateHealth",
+      "args": {
+        "value": 100.0,
+        "max_value": 100.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "UpdateObjective",
+      "args": {
+        "text": "Reach the objective",
+        "show_marker": true
+      },
+      "label": ""
+    },
+    {
+      "atom": "BindAction",
+      "args": {
+        "action_name": "Fire",
+        "event_name": "OnFire"
+      },
+      "label": ""
+    },
+    {
+      "atom": "BindAction",
+      "args": {
+        "action_name": "LaunchMissile",
+        "event_name": "OnLaunchmissile"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetModel",
+      "args": {
+        "model_path": "Models/Default"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Hover",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Hover",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "FlyForward",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "EnableNavMesh",
+      "args": {
+        "enabled": true
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAIBehavior",
+      "args": {
+        "behavior": "chase",
+        "detection_range": 25.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "EnableParticles",
+      "args": {
+        "enabled": true
+      },
+      "label": ""
+    },
+    {
+      "atom": "EnablePostProcessing",
+      "args": {
+        "enabled": true
+      },
+      "label": ""
+    }
+  ],
+  "capabilities": {
+    "controller": {
+      "movement": true,
+      "jump": false,
+      "sprint": false,
+      "crouch": false,
+      "look_sensitivity": 3.0,
+      "speed": 15.0,
+      "sprint_multiplier": 1.2,
+      "jump_force": 0.01
+    },
+    "physics": {
+      "gravity": true,
+      "collision": "dynamic",
+      "mass": 5000.0,
+      "drag": 0.1
+    },
+    "hud": {
+      "show_health": true,
+      "show_ammo": false,
+      "show_objective": true,
+      "show_minimap": true
+    },
+    "input": {
+      "bindings": [
+        {
+          "action": "Fire",
+          "key": "Mouse0",
+          "event": ""
+        },
+        {
+          "action": "LaunchMissile",
+          "key": "E",
+          "event": ""
+        }
+      ]
+    },
+    "model": {
+      "lod": "auto",
+      "animations": {
+        "Idle": "Hover"
+      }
+    },
+    "animation": {
+      "rig_type": "generic",
+      "clips": {
+        "Idle": "Hover",
+        "Run": "FlyForward"
+      }
+    },
+    "dialog": {
+      "system": "simple",
+      "bark_on_sight": false
+    },
+    "ai": {
+      "pathfinding": true,
+      "detection_range": 25.0,
+      "behavior": "chase"
+    },
+    "vfx": {
+      "particles": true,
+      "post_processing": true
+    }
+  },
+  "environment": {
+    "time_of_day": "day",
+    "fog": true,
+    "fog_color": "#80C0E0",
+    "sun_intensity": 1.5
+  },
+  "color_palette": {
+    "name": "Coastal Combat",
+    "primary": "#2E8B57",
+    "secondary": "#FFD700",
+    "accent": "#DC143C",
+    "background": "#87CEEB",
+    "trim": "#FFFFFF"
+  },
+  "meta": {
+    "role_lint": {
+      "repairs": [
+        "R1b: no entity held tag=Player -- promoted 'PlayerCraft' (kind='pickup', tag='Untagged', count=1) to the avatar on the name/alias signal"
+      ],
+      "violations": []
+    },
+    "theme": null,
+    "mashup_with": null,
+    "seed": null,
+    "twist_seed": null,
+    "concept": "VISIBLE ENTITY REFERENCES:\n- aircraft_1\n- aircraft_2\n- aircraft_3\n- aircraft_4\n- aircraft_5\n- missile\n- ship_1\n- ship_2\n- ship_3\n- clouds\n- water\n- mountains\n- fire_1\n- fire_2\n- fire_3\n- smoke_trail_1\n- smoke_trail_2\n- smoke_trail_3\nEND VISIBLE ENTITY REFERENCES\n\nThe game is a chaotic aerial combat simulation set over a rugged coastline where the player pilots aircraft_1, a twin-engine fighter bomber. The primary interaction involves maneuvering through dense clouds and evading incoming fire while targeting enemy vessels below. Progression is measured by surviving encounters with hostile aircraft—aircraft_2, aircraft_3, aircraft_4, and aircraft_5—which attempt to intercept or outmaneuver the player’s craft in mid-air collisions. Each successful hit on an enemy plane generates bursts of fire_1, fire_2, and fire_3 along with thick smoke_trail_1, smoke_trail_2, and smoke_trail_3 that obscure vision and complicate targeting.\n\nThe core objective is to destroy all visible ships—ship_1, ship_2, and ship_3—before being shot down or running out of fuel. The player may also launch a missile at high-value targets for bonus points. Win conditions include eliminating every ship on the board while maintaining control over aircraft_1; lose if the craft is destroyed by enemy fire, crashes into terrain, or suffers critical damage from explosions near water and mountains.\n\nVisual feedback includes muzzle flashes from wing-mounted cannons, fiery trails left behind damaged planes, and rising smoke plumes that drift across the sky. The environment features rolling mountains bordering deep blue waters, with white clouds providing cover for stealth approaches. Every explosion adds dynamic lighting effects that illuminate nearby aircraft and ships, enhancing both visual tension and tactical awareness during intense dogfights.",
+    "user_prompt": "VISIBLE ENTITY REFERENCES:\n- aircraft_1\n- aircraft_2\n- aircraft_3\n- aircraft_4\n- aircraft_5\n- missile\n- ship_1\n- ship_2\n- ship_3\n- clouds\n- water\n- mountains\n- fire_1\n- fire_2\n- fire_3\n- smoke_trail_1\n- smoke_trail_2\n- smoke_trail_3\nEND VISIBLE ENTITY REFERENCES\n\nThe game is a chaotic aerial combat simulation set over a rugged coastline where the player pilots aircraft_1, a twin-engine fighter bomber. The primary interaction involves maneuvering through dense clouds and evading incoming fire while targeting enemy vessels below. Progression is measured by surviving encounters with hostile aircraft—aircraft_2, aircraft_3, aircraft_4, and aircraft_5—which attempt to intercept or outmaneuver the player’s craft in mid-air collisions. Each successful hit on an enemy plane generates bursts of fire_1, fire_2, and fire_3 along with thick smoke_trail_1, smoke_trail_2, and smoke_trail_3 that obscure vision and complicate targeting.\n\nThe core objective is to destroy all visible ships—ship_1, ship_2, and ship_3—before being shot down or running out of fuel. The player may also launch a missile at high-value targets for bonus points. Win conditions include eliminating every ship on the board while maintaining control over aircraft_1; lose if the craft is destroyed by enemy fire, crashes into terrain, or suffers critical damage from explosions near water and mountains.\n\nVisual feedback includes muzzle flashes from wing-mounted cannons, fiery trails left behind damaged planes, and rising smoke plumes that drift across the sky. The environment features rolling mountains bordering deep blue waters, with white clouds providing cover for stealth approaches. Every explosion adds dynamic lighting effects that illuminate nearby aircraft and ships, enhancing both visual tension and tactical awareness during intense dogfights.",
+    "fill": "llm",
+    "spatial_facts": [],
+    "genre": "stealth",
+    "spatial_primitive": "airspace_column",
+    "layout_archetype": "BoundedVolume",
+    "layout_archetype_decision": {
+      "name": "BoundedVolume",
+      "motion_axis": "volumetric",
+      "medium": "air",
+      "goal_topology": "hit_target",
+      "direction": "",
+      "evidence": {
+        "motion_axis": "locomotion='fly', no descent evidence",
+        "medium": "locomotion='fly'",
+        "goal_topology": "mission objective types ['defeat', 'survive']"
+      }
+    },
+    "cover_points": {},
+    "mission_scenes": {
+      "destroy_fleet": [
+        "Main"
+      ]
+    },
+    "visual_reasoning_compiler": {
+      "format": "visual-reasoning-compiler/compile/v1",
+      "stage": "5_visual_compile",
+      "status": "bound",
+      "inputs": {
+        "closed_image_ir": {
+          "path": "output\\visual_reasoning\\plane_e2e_20260925_fencedjson\\closed_image_ir.json",
+          "sha256": "e28101298ae4dcd8771a273728ef64c2e377be099d6404752611e26b230aae7f"
+        },
+        "asset_fulfilment": {
+          "path": "output\\visual_reasoning\\plane_e2e_20260925_fencedjson\\asset_fulfilment.r3.json",
+          "sha256": "122a4d6969033b3ef52410a007ad7f42613f20160e0573d467ea66f803df56a4"
+        },
+        "asset_manifest": {
+          "path": "output\\visual_reasoning\\plane_e2e_20260925_fencedjson\\asset_fulfilment.r3.manifest.json",
+          "sha256": "fde3249458d455d27b921a3d851c7ab6f9eb1224587f0d4f2029e2b02c4fc698"
+        }
+      },
+      "bindings": [
+        {
+          "inventory_label": "aircraft_1",
+          "entity_name": "EnemyAircraftGroup",
+          "score": 49.5,
+          "source": "kenney",
+          "filename": "corsair.fbx",
+          "file_sha256": "92a4c7f9fbe592023773e7e61f0a7fc64fadc747a9fa731eb52e1cde743392ad"
+        },
+        {
+          "inventory_label": "aircraft_2",
+          "entity_name": "PlayerCraft",
+          "score": 7.5,
+          "source": "kenney",
+          "filename": "corsair.fbx",
+          "file_sha256": "92a4c7f9fbe592023773e7e61f0a7fc64fadc747a9fa731eb52e1cde743392ad"
+        },
+        {
+          "inventory_label": "aircraft_3",
+          "entity_name": "EnemyAircraftGroup",
+          "score": 49.5,
+          "source": "kenney",
+          "filename": "corsair.fbx",
+          "file_sha256": "92a4c7f9fbe592023773e7e61f0a7fc64fadc747a9fa731eb52e1cde743392ad"
+        },
+        {
+          "inventory_label": "aircraft_4",
+          "entity_name": "EnemyAircraftGroup",
+          "score": 49.5,
+          "source": "kenney",
+          "filename": "corsair.fbx",
+          "file_sha256": "92a4c7f9fbe592023773e7e61f0a7fc64fadc747a9fa731eb52e1cde743392ad"
+        },
+        {
+          "inventory_label": "aircraft_5",
+          "entity_name": "EnemyAircraftGroup",
+          "score": 49.5,
+          "source": "kenney",
+          "filename": "corsair.fbx",
+          "file_sha256": "92a4c7f9fbe592023773e7e61f0a7fc64fadc747a9fa731eb52e1cde743392ad"
+        },
+        {
+          "inventory_label": "missile",
+          "entity_name": "Missiles",
+          "score": 88.0,
+          "source": "kenney",
+          "filename": "rocket_baseA.fbx",
+          "file_sha256": "e06bb67fccc708adbeb2e82f2933d021753d9bcec19d4979a4e27c4b79490ecb"
+        },
+        {
+          "inventory_label": "ship_1",
+          "entity_name": "Ships",
+          "score": 49.0,
+          "source": "kenney",
+          "filename": "ship-large.fbx",
+          "file_sha256": "a42d031e0ac37f61509cd1565a1926137a5999295ac87d5530754b4693970c37"
+        },
+        {
+          "inventory_label": "ship_2",
+          "entity_name": "Ships",
+          "score": 49.0,
+          "source": "kenney",
+          "filename": "ship-large.fbx",
+          "file_sha256": "a42d031e0ac37f61509cd1565a1926137a5999295ac87d5530754b4693970c37"
+        },
+        {
+          "inventory_label": "ship_3",
+          "entity_name": "Ships",
+          "score": 49.0,
+          "source": "kenney",
+          "filename": "ship-large.fbx",
+          "file_sha256": "a42d031e0ac37f61509cd1565a1926137a5999295ac87d5530754b4693970c37"
+        },
+        {
+          "inventory_label": "mountains",
+          "entity_name": "Mountains",
+          "score": 64.0,
+          "source": "kenney",
+          "filename": "cliff_rock.fbx",
+          "file_sha256": "7903d0a99ffeb91ed80de720382fc2abb8668fa976311d43ee37977a556cbb58"
+        }
+      ],
+      "authority": {
+        "authored_scene_compiler_outranks_exact_visual_binding": true,
+        "exact_slice_4_selection_outranks_catalog_search": true,
+        "catalog_rescoring_or_substitution": false
+      }
+    },
+    "entity_model_paths": {
+      "PlayerCraft": "Models/Kenney/Vehicle/corsair",
+      "EnemyAircraftGroup": "Models/Kenney/Vehicle/corsair",
+      "Missiles": "Models/Kenney/Prop/rocket_baseA",
+      "Ships": "Models/Kenney/Vehicle/ship-large",
+      "Clouds": "procedural:custom:32",
+      "WaterSurface": "Models/Kenney/Vehicle/ship-ocean-liner",
+      "Mountains": "Models/Kenney/Nature/cliff_rock",
+      "Fire_1": "Models/Default/Prop/Prop",
+      "Fire_2": "Models/Default/Prop/Prop",
+      "Fire_3": "Models/Kenney/Prop/clip-large",
+      "Smoke_Trail_1": "Models/Kenney/Structure/path-stones-messy",
+      "Smoke_Trail_2": "Models/Kenney/Nature/ground_pathEndClosed",
+      "Smoke_Trail_3": "Models/Kenney/Structure/path_stoneCorner"
+    },
+    "llm_enrichment": {
+      "format": "game-o-matic/llm-enrichment/v1",
+      "stage": "3.5",
+      "sketchfab_query_entities": [
+        "Clouds",
+        "EnemyAircraftGroup",
+        "Fire_1",
+        "Fire_2",
+        "Fire_3",
+        "Missiles",
+        "Mountains",
+        "PlayerCraft",
+        "Ships",
+        "Smoke_Trail_1",
+        "Smoke_Trail_2",
+        "Smoke_Trail_3",
+        "WaterSurface"
+      ],
+      "npc_dialog_lines": {
+        "quest_giver:NPC": [
+          {
+            "line_id": "intro_01",
+            "text": "Listen closely, pilot of aircraft_1; the clouds ahead hide more than just white vapor.",
+            "emotion": "calm",
+            "tags": [
+              "greeting",
+              "hint"
+            ]
+          },
+          {
+            "line_id": "intro_02",
+            "text": "Your mission is clear: sink ship_1, ship_2, and ship_3 before your fuel runs dry.",
+            "emotion": "neutral",
+            "tags": [
+              "quest",
+              "objective"
+            ]
+          },
+          {
+            "line_id": "mid_01",
+            "text": "Look up! aircraft_2 and aircraft_3 are diving from the smoke_trail_1 to intercept you!",
+            "emotion": "fearful",
+            "tags": [
+              "warning",
+              "combat"
+            ]
+          },
+          {
+            "line_id": "mid_02",
+            "text": "Don't waste your ammo on aircraft_4; aim for the hull of ship_2 instead.",
+            "emotion": "excited",
+            "tags": [
+              "hint",
+              "combat"
+            ]
+          },
+          {
+            "line_id": "mid_03",
+            "text": "That missile is heavy, but if you hit ship_3 with it, the explosion near water will blind them all.",
+            "emotion": "happy",
+            "tags": [
+              "quest",
+              "strategy"
+            ]
+          },
+          {
+            "line_id": "mid_04",
+            "text": "Watch your tail! aircraft_5 is trailing smoke_trail_2 and waiting to ram you into the mountains.",
+            "emotion": "angry",
+            "tags": [
+              "warning",
+              "combat"
+            ]
+          },
+          {
+            "line_id": "end_01",
+            "text": "You've cleared the sky, but check your fuel gauge; one more burst of fire_3 could end it all.",
+            "emotion": "surprised",
+            "tags": [
+              "reaction",
+              "hint"
+            ]
+          },
+          {
+            "line_id": "end_02",
+            "text": "All ships are down and you still fly aircraft_1; the coastline is yours to claim.",
+            "emotion": "happy",
+            "tags": [
+              "victory",
+              "farewell"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "world_spec": {
+    "biome": "urban",
+    "time_of_day": "day",
+    "weather": "clear",
+    "scale": "medium",
+    "regions": [
+      {
+        "name": "PlayerCraft",
+        "biome": "",
+        "entities": [
+          "PlayerCraft"
+        ],
+        "bounds": [
+          -0.6,
+          -0.6,
+          0.6,
+          0.6
+        ]
+      },
+      {
+        "name": "EnemyAircraftGroup",
+        "biome": "",
+        "entities": [
+          "EnemyAircraftGroup"
+        ],
+        "bounds": [
+          -41.177,
+          -102.943,
+          41.177,
+          -20.589
+        ]
+      },
+      {
+        "name": "Missiles",
+        "biome": "",
+        "entities": [
+          "Missiles"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478,
+          0.346
+        ]
+      },
+      {
+        "name": "Ships",
+        "biome": "",
+        "entities": [
+          "Ships"
+        ],
+        "bounds": [
+          -121.613,
+          -48.645,
+          -24.323,
+          48.645
+        ]
+      },
+      {
+        "name": "Clouds",
+        "biome": "",
+        "entities": [
+          "Clouds"
+        ],
+        "bounds": [
+          12.0,
+          -8.0,
+          28.0,
+          8.0
+        ]
+      },
+      {
+        "name": "WaterSurface",
+        "biome": "",
+        "entities": [
+          "WaterSurface"
+        ],
+        "bounds": [
+          6.546,
+          -12.546,
+          12.546,
+          -6.546
+        ]
+      },
+      {
+        "name": "Mountains",
+        "biome": "",
+        "entities": [
+          "Mountains"
+        ],
+        "bounds": [
+          11.2,
+          -1.8,
+          14.8,
+          1.8
+        ]
+      },
+      {
+        "name": "Fire_1",
+        "biome": "",
+        "entities": [
+          "Fire_1"
+        ],
+        "bounds": [
+          -0.346,
+          10.478,
+          15.654,
+          26.478
+        ]
+      },
+      {
+        "name": "Fire_2",
+        "biome": "",
+        "entities": [
+          "Fire_2"
+        ],
+        "bounds": [
+          -22.142,
+          6.142,
+          -6.142,
+          22.142
+        ]
+      },
+      {
+        "name": "Fire_3",
+        "biome": "",
+        "entities": [
+          "Fire_3"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478,
+          0.346
+        ]
+      },
+      {
+        "name": "Smoke_Trail_1",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_1"
+        ],
+        "bounds": [
+          -8.0,
+          -28.0,
+          8.0,
+          -12.0
+        ]
+      },
+      {
+        "name": "Smoke_Trail_2",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_2"
+        ],
+        "bounds": [
+          11.799,
+          -27.799,
+          27.799,
+          -11.799
+        ]
+      },
+      {
+        "name": "Smoke_Trail_3",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_3"
+        ],
+        "bounds": [
+          25.26,
+          5.777,
+          41.26,
+          21.777
+        ]
+      },
+      {
+        "name": "WaterSurface",
+        "biome": "",
+        "entities": [
+          "WaterSurface"
+        ],
+        "bounds": [
+          6.546,
+          -12.546,
+          12.546,
+          -6.546
+        ]
+      },
+      {
+        "name": "PlayerCraft",
+        "biome": "",
+        "entities": [
+          "PlayerCraft"
+        ],
+        "bounds": [
+          -0.6,
+          -0.6,
+          0.6,
+          0.6
+        ]
+      },
+      {
+        "name": "EnemyAircraftGroup",
+        "biome": "",
+        "entities": [
+          "EnemyAircraftGroup"
+        ],
+        "bounds": [
+          -41.177,
+          -102.943,
+          41.177,
+          -20.589
+        ]
+      },
+      {
+        "name": "Missiles",
+        "biome": "",
+        "entities": [
+          "Missiles"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478,
+          0.346
+        ]
+      },
+      {
+        "name": "Ships",
+        "biome": "",
+        "entities": [
+          "Ships"
+        ],
+        "bounds": [
+          -121.613,
+          -48.645,
+          -24.323,
+          48.645
+        ]
+      },
+      {
+        "name": "Clouds",
+        "biome": "",
+        "entities": [
+          "Clouds"
+        ],
+        "bounds": [
+          12.0,
+          -8.0,
+          28.0,
+          8.0
+        ]
+      },
+      {
+        "name": "Mountains",
+        "biome": "",
+        "entities": [
+          "Mountains"
+        ],
+        "bounds": [
+          11.2,
+          -1.8,
+          14.8,
+          1.8
+        ]
+      },
+      {
+        "name": "Fire_1",
+        "biome": "",
+        "entities": [
+          "Fire_1"
+        ],
+        "bounds": [
+          -0.346,
+          10.478,
+          15.654,
+          26.478
+        ]
+      },
+      {
+        "name": "Fire_2",
+        "biome": "",
+        "entities": [
+          "Fire_2"
+        ],
+        "bounds": [
+          -22.142,
+          6.142,
+          -6.142,
+          22.142
+        ]
+      },
+      {
+        "name": "Fire_3",
+        "biome": "",
+        "entities": [
+          "Fire_3"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478,
+          0.346
+        ]
+      },
+      {
+        "name": "Smoke_Trail_1",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_1"
+        ],
+        "bounds": [
+          -8.0,
+          -28.0,
+          8.0,
+          -12.0
+        ]
+      },
+      {
+        "name": "Smoke_Trail_2",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_2"
+        ],
+        "bounds": [
+          11.799,
+          -27.799,
+          27.799,
+          -11.799
+        ]
+      },
+      {
+        "name": "Smoke_Trail_3",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_3"
+        ],
+        "bounds": [
+          25.26,
+          5.777,
+          41.26,
+          21.777
+        ]
+      },
+      {
+        "name": "EnemyAircraftGroup",
+        "biome": "",
+        "entities": [
+          "EnemyAircraftGroup"
+        ],
+        "bounds": [
+          -41.177,
+          -102.943,
+          41.177,
+          -20.589
+        ]
+      },
+      {
+        "name": "Missiles",
+        "biome": "",
+        "entities": [
+          "Missiles"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478,
+          0.346
+        ]
+      },
+      {
+        "name": "Ships",
+        "biome": "",
+        "entities": [
+          "Ships"
+        ],
+        "bounds": [
+          -121.613,
+          -48.645,
+          -24.323,
+          48.645
+        ]
+      },
+      {
+        "name": "Fire_3",
+        "biome": "",
+        "entities": [
+          "Fire_3"
+        ],
+        "bounds": [
+          -26.478,
+          -15.654,
+          -10.478,
+          0.346
+        ]
+      },
+      {
+        "name": "Smoke_Trail_1",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_1"
+        ],
+        "bounds": [
+          -8.0,
+          -28.0,
+          8.0,
+          -12.0
+        ]
+      },
+      {
+        "name": "Smoke_Trail_2",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_2"
+        ],
+        "bounds": [
+          11.799,
+          -27.799,
+          27.799,
+          -11.799
+        ]
+      },
+      {
+        "name": "Smoke_Trail_3",
+        "biome": "",
+        "entities": [
+          "Smoke_Trail_3"
+        ],
+        "bounds": [
+          25.26,
+          5.777,
+          41.26,
+          21.777
+        ]
+      },
+      {
+        "name": "PlayerCraft",
+        "biome": "",
+        "entities": [
+          "PlayerCraft"
+        ],
+        "bounds": [
+          -0.6,
+          -0.6,
+          0.6,
+          0.6
+        ]
+      },
+      {
+        "name": "Clouds",
+        "biome": "",
+        "entities": [
+          "Clouds"
+        ],
+        "bounds": [
+          12.0,
+          -8.0,
+          28.0,
+          8.0
+        ]
+      },
+      {
+        "name": "WaterSurface",
+        "biome": "",
+        "entities": [
+          "WaterSurface"
+        ],
+        "bounds": [
+          6.546,
+          -12.546,
+          12.546,
+          -6.546
+        ]
+      },
+      {
+        "name": "Mountains",
+        "biome": "",
+        "entities": [
+          "Mountains"
+        ],
+        "bounds": [
+          11.2,
+          -1.8,
+          14.8,
+          1.8
+        ]
+      },
+      {
+        "name": "Fire_1",
+        "biome": "",
+        "entities": [
+          "Fire_1"
+        ],
+        "bounds": [
+          -0.346,
+          10.478,
+          15.654,
+          26.478
+        ]
+      },
+      {
+        "name": "Fire_2",
+        "biome": "",
+        "entities": [
+          "Fire_2"
+        ],
+        "bounds": [
+          -22.142,
+          6.142,
+          -6.142,
+          22.142
+        ]
+      }
+    ],
+    "procedural_rules": null,
+    "course": {
+      "zones": []
+    }
+  },
+  "characters": [
+    {
+      "id": "player_pilot",
+      "name": "Pilot",
+      "role": "player",
+      "model_ref": "PlayerCraft",
+      "animation_set": [
+        "Hover",
+        "FlyForward"
+      ],
+      "dialog_graph": null,
+      "npc_brain": null
+    }
+  ],
+  "missions": [
+    {
+      "id": "destroy_fleet",
+      "title": "Destroy Enemy Fleet",
+      "description": "Eliminate all hostile ships before being shot down.",
+      "objectives": [
+        {
+          "id": "obj_ships",
+          "description": "Destroy ship_1, ship_2, and ship_3.",
+          "type": "defeat",
+          "target_ref": "Ships",
+          "count": 3,
+          "optional": false
+        },
+        {
+          "id": "obj_survival",
+          "description": "Maintain control of aircraft_1 until the end.",
+          "type": "survive",
+          "target_ref": "PlayerCraft",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 5000
+      },
+      "story_beat_ref": ""
+    }
+  ],
+  "audio_specs": [
+    {
+      "id": "engine_idle",
+      "type": "ambient",
+      "description": "Continuous twin-engine hum of the fighter bomber.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "low frequency mechanical drone with slight pitch variation"
+      },
+      "file_ref": "",
+      "loop": true
+    },
+    {
+      "id": "cannon_fire",
+      "type": "sfx",
+      "description": "Sharp muzzle blast sound when firing wing cannons.",
+      "generation_method": "sfxr",
+      "parameters": {
+        "gen_prompt": "sharp metallic explosion with high frequency tail"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "missile_launch",
+      "type": "sfx",
+      "description": "Whoosh sound when launching a guided missile.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "high pitch wind rush followed by mechanical click"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "explosion_impact",
+      "type": "sfx",
+      "description": "Loud boom and crackle when hitting a target.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "deep sub-bass impact followed by rapid decay hiss"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "wind_ambient",
+      "type": "ambient",
+      "description": "Howling wind sound as planes move through clouds.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "high frequency white noise with Doppler shift modulation"
+      },
+      "file_ref": "",
+      "loop": true
+    },
+    {
+      "id": "ship_alarm",
+      "type": "sfx",
+      "description": "Warning sirens from enemy ships when damaged.",
+      "generation_method": "recorded",
+      "parameters": {
+        "text": ""
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "impact_hit",
+      "type": "sfx",
+      "description": "Metallic clang when aircraft collide mid-air.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "sharp metallic impact with high frequency ring"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "fuel_warning",
+      "type": "sfx",
+      "description": "Beeping sound when player fuel runs low.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "ascending electronic beep sequence"
+      },
+      "file_ref": "",
+      "loop": false
+    }
+  ],
+  "materials": [],
+  "models": [],
+  "animations": [],
+  "vfx": [
+    {
+      "id": "muzzle_flash",
+      "name": "MuzzleFlash",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 0.1,
+        "play_on_start": true,
+        "auto_destroy": true,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "explosion_smoke",
+      "name": "ExplosionSmoke",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 3.0,
+        "play_on_start": true,
+        "auto_destroy": true,
+        "scale": 1.5
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "trail_smoke",
+      "name": "TrailSmoke",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 2.0,
+        "play_on_start": true,
+        "auto_destroy": true,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "explosion_light",
+      "name": "ExplosionLight",
+      "type": "volumetric",
+      "parameters": {
+        "loop": false,
+        "duration": 2.5,
+        "play_on_start": true,
+        "auto_destroy": true,
+        "scale": 3.0
+      },
+      "file_ref": ""
+    }
+  ],
+  "shaders": [],
+  "behavior_trees": [
+    {
+      "id": "enemy_interceptor",
+      "name": "InterceptorBrain",
+      "tree": {
+        "root": "n1",
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "selector",
+            "children": [
+              "n2",
+              "n4"
+            ],
+            "action": "",
+            "params": {}
+          },
+          {
+            "id": "n2",
+            "type": "condition",
+            "children": [],
+            "action": "PlayerInRange",
+            "params": {
+              "range": 15.0
+            }
+          },
+          {
+            "id": "n3",
+            "type": "action",
+            "children": [],
+            "action": "FireWeapon",
+            "params": {
+              "rate": 2.0
+            }
+          },
+          {
+            "id": "n4",
+            "type": "sequence",
+            "children": [
+              "n5"
+            ],
+            "action": "",
+            "params": {}
+          },
+          {
+            "id": "n5",
+            "type": "action",
+            "children": [],
+            "action": "ChasePlayer",
+            "params": {
+              "speed": 12.0
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "microgens": [
+    {
+      "kind": "controller",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_fireSystem",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Main fire burst emitter"
+          },
+          {
+            "name": "_smokeSystem",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Smoke trail emitter"
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnEnemyHit(GameObject enemy)",
+            "body": "if (enemy != null) { TryHit(enemy); }"
+          },
+          {
+            "signature": "public void LaunchMissile()",
+            "body": "AddAmmo(1);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "camera",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_missile",
+            "type": "GameObject",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "The missile projectile currently in flight."
+          },
+          {
+            "name": "_missileSpeed",
+            "type": "float",
+            "default": "100f",
+            "header": "Tuning",
+            "tooltip": "Speed of the launched missile."
+          }
+        ],
+        "update_extra": "if (_missile != null) _missile.transform.position += transform.forward * _missileSpeed * Time.deltaTime;",
+        "extra_methods": [
+          {
+            "signature": "private void OnMissileLaunch()",
+            "body": "_missile = Instantiate(_missile, _target.position + Vector3.up, Quaternion.LookRotation(transform.forward));\n_missile.transform.SetParent(null);\n_missile.SetActive(true);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "health",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_oxygenLevel",
+            "type": "float",
+            "default": "100f",
+            "header": "Runtime",
+            "tooltip": "Current oxygen level for twin-engine fighter bomber."
+          },
+          {
+            "name": "_crashDamageMultiplier",
+            "type": "float",
+            "default": "5f",
+            "header": "Runtime",
+            "tooltip": "Damage multiplier when crashing into terrain or water."
+          }
+        ],
+        "update_extra": "if (_oxygenLevel > 0f) _oxygenLevel -= Time.deltaTime * 2f;",
+        "extra_methods": [
+          {
+            "signature": "private void CheckCrashDamage(float impactForce)",
+            "body": "float damage = (impactForce * _crashDamageMultiplier);\nif (_oxygenLevel < 10f)\ndamage *= 2f;\nTakeDamage(damage);"
+          },
+          {
+            "signature": "private void Refuel()",
+            "body": "_oxygenLevel = Mathf.Min(_oxygenLevel + 10f, 100f);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "hud",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_objectiveText",
+            "type": "TMP_Text",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Objective display text"
+          },
+          {
+            "name": "_shipCount",
+            "type": "int",
+            "default": "3",
+            "header": "Runtime",
+            "tooltip": "Number of ships remaining"
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void UpdateObjective()",
+            "body": "_objectiveText.text = \"Destroy all ships!\";"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "menu",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_smokeTrails",
+            "type": "ParticleSystem[]",
+            "default": "null",
+            "header": "Runtime"
+          },
+          {
+            "name": "_fireEffects",
+            "type": "ParticleSystem[]",
+            "default": "null",
+            "header": "Runtime"
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void ApplyExplosionEffects()",
+            "body": "_smokeTrails = FindObjectsOfType<ParticleSystem>().Where(p => p.name.Contains(\"Smoke\")).ToArray();_fireEffects = FindObjectsOfType<ParticleSystem>().Where(p => p.name.Contains(\"Fire\")).ToArray();"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "saveload",
+      "input": {
+        "extra_usings": [
+          "System.Collections.Generic",
+          "System.IO"
+        ],
+        "extra_fields": [
+          {
+            "name": "_saveKey",
+            "type": "string",
+            "default": "\"SkylineStrike\"",
+            "header": "Runtime",
+            "tooltip": "Unique identifier for the save slot."
+          },
+          {
+            "name": "_playerTransform",
+            "type": "Transform",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Reference to aircraft_1."
+          },
+          {
+            "name": "_enemyPlanes",
+            "type": "List<string>",
+            "default": "\"new List<string>()\"",
+            "header": "Runtime",
+            "tooltip": "Serialized list of enemy plane tags (aircraft_2 through aircraft_5)."
+          },
+          {
+            "name": "_shipsDestroyed",
+            "type": "int",
+            "default": "0",
+            "header": "Runtime",
+            "tooltip": "Count of destroyed ships (ship_1, ship_2, ship_3)."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void RestorePlayerState()",
+            "body": "if (_playerTransform != null) _playerTransform.position = Vector3.zero; // Reset position on load"
+          },
+          {
+            "signature": "public int GetShipsDestroyedCount()",
+            "body": "return _shipsDestroyed;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "physics",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_missile",
+            "type": "GameObject",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "The missile projectile to launch."
+          },
+          {
+            "name": "_fireRate",
+            "type": "float",
+            "default": "1.5f",
+            "header": "Runtime",
+            "tooltip": "Time between missile launches in seconds."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void LaunchMissile()",
+            "body": "if (_missile != null) {\n    Instantiate(_missile, transform.position, Quaternion.identity);\n}"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "interactable",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "System.Collections.Generic"
+        ],
+        "extra_fields": [
+          {
+            "name": "_targetType",
+            "type": "string",
+            "default": "\"EnemyPlane\"",
+            "header": "Targeting",
+            "tooltip": "The tag of entities this interactable targets (e.g., EnemyPlane for interceptors, Target for ships)."
+          },
+          {
+            "name": "_vfxFireList",
+            "type": "List<ParticleSystem>",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Collection of fire particle systems to instantiate on hit."
+          },
+          {
+            "name": "_vfxSmokeList",
+            "type": "List<ParticleSystem>",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Collection of smoke particle systems to instantiate on hit."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "public void OnHit(string targetTag, Vector3 hitPoint)",
+            "body": "if (targetTag != _targetType) return;\nOnInteract();\nInstantiateVFX(hitPoint, \"fire\", ref _vfxFireList);\nInstantiateVFX(hitPoint, \"smoke\", ref _vfxSmokeList);"
+          },
+          {
+            "signature": "private void InstantiateVFX(Vector3 pos, string vfxTag, ref List<ParticleSystem> list)",
+            "body": "if (list == null) return;\nfor (int i = 0; i < list.Count; i++)\n{\n    ParticleSystem ps = Instantiate(list[i], pos, Quaternion.identity);\n    ps.Play();\n}\n// Note: In a real implementation with List<ParticleSystem> as field, we would need to manage instantiation differently or use a different structure. This method assumes the field holds prefabs or handles logic outside standard Unity component lifecycle for this specific constraint set."
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "animator",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_smokeTrail",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Smoke trail system for mid-air collisions and hits."
+          },
+          {
+            "name": "_fireBursts",
+            "type": "List<ParticleSystem>",
+            "default": "new List<ParticleSystem>()",
+            "header": "VFX",
+            "tooltip": "Collection of fire burst systems for explosions."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "public void TriggerSmokeAndFire()",
+            "body": "if (_smokeTrail != null) _smokeTrail.Play();\nif (_fireBursts.Count > 0 && Random.value < 0.5f) _fireBursts[Random.Range(0, _fireBursts.Count)].Play();"
+          },
+          {
+            "signature": "public void TriggerExplosion(int index)",
+            "body": "if (index >= 0 && index < _fireBursts.Count) _fireBursts[index].Play();"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "statemachine",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_smokeTrail1",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Smoke trail effect for enemy hit."
+          },
+          {
+            "name": "_fire1",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Fire burst effect on impact."
+          },
+          {
+            "name": "_mountainTrigger",
+            "type": "Collider2D",
+            "default": "null",
+            "header": "Environment",
+            "tooltip": "Trigger to detect mountain collision for crash logic."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnImpact(Vector3 impactPos)",
+            "body": "_smokeTrail1 = Instantiate(_smokeTrail1, impactPos, Quaternion.identity);\n_smokeTrail1.Play();\n_fire1 = Instantiate(_fire1, impactPos, Quaternion.identity);\n_fire1.Play();"
+          },
+          {
+            "signature": "private void OnCrash()",
+            "body": "if (_mountainTrigger != null) _mountainTrigger.enabled = false;\nDestroy(gameObject);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "trigger",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_targetTag",
+            "type": "string",
+            "default": "\"Target\"",
+            "header": "Runtime",
+            "tooltip": "The tag to look for on enemy aircraft or ships."
+          },
+          {
+            "name": "_triggerRadius",
+            "type": "float",
+            "default": "10f",
+            "header": "Runtime",
+            "tooltip": "Detection radius for the trigger zone."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnValidate()",
+            "body": "_triggerRadius = Mathf.Max(0f, _triggerRadius);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "lighting",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_smokeIntensity",
+            "type": "float",
+            "default": "1.0f",
+            "header": "Runtime",
+            "tooltip": "Controls the density of smoke generated by explosions."
+          },
+          {
+            "name": "_fogDensity",
+            "type": "float",
+            "default": "0.02f",
+            "header": "Runtime",
+            "tooltip": "Base fog density for coastal atmosphere."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void AdjustAtmosphereForExplosion(float intensity)",
+            "body": "_fogDensity = Mathf.Max(0.01f, _fogDensity * (1.0f + intensity));\nambientIntensity += intensity * 2.5f;\nif (_smokeIntensity > 1.5f) { ambientGround = new Color(0.3f, 0.3f, 0.4f); } else { ambientGround = new Color(0.6f, 0.7f, 0.8f); }"
+          },
+          {
+            "signature": "private void ResetAtmosphere()",
+            "body": "_fogDensity = _smokeIntensity * 0.02f;\nambientIntensity = 1.5f;\nambientGround = new Color(0.6f, 0.7f, 0.8f);\nambientSky = new Color(0.4f, 0.6f, 0.9f);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "ai",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_explosionIntensity",
+            "type": "float",
+            "default": "1.5f",
+            "header": "VFX Tuning",
+            "tooltip": "Multiplier for fire and smoke particle burst intensity on hit."
+          },
+          {
+            "name": "_smokeDriftSpeed",
+            "type": "float",
+            "default": "0.2f",
+            "header": "Environment",
+            "tooltip": "How fast smoke trails drift across the sky to obscure vision."
+          }
+        ],
+        "update_extra": "if (_explosionIntensity > 1f) { float burst = _explosionIntensity * Time.deltaTime; if (HasPerceivedTarget()) ApplySquadRoleOffset(new Vector3(0, burst, 0)); }",
+        "extra_methods": [
+          {
+            "signature": "private void OnVFXTriggered(float intensity)",
+            "body": "if (_explosionIntensity > 1f) { float drift = _smokeDriftSpeed * Time.deltaTime; ApplySquadRoleOffset(new Vector3(drift, 0, drift)); }"
+          },
+          {
+            "signature": "public bool IsObscuredBySmoke()",
+            "body": "return HasPerceivedTarget() && (float)_explosionIntensity > 1f;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "spawner",
+      "input": {
+        "extra_usings": [
+          "System.Collections.Generic"
+        ],
+        "extra_fields": [
+          {
+            "name": "_spawnPoints",
+            "type": "List<Transform>",
+            "default": "new List<Transform>()",
+            "header": "Runtime",
+            "tooltip": "Cached list of valid spawn points for enemy aircraft."
+          },
+          {
+            "name": "_enemyPrefabs",
+            "type": "Dictionary<int, GameObject>",
+            "default": "new Dictionary<int, GameObject>()",
+            "header": "Runtime",
+            "tooltip": "Map from difficulty tier to enemy plane prefab (aircraft_2 through aircraft_5)."
+          },
+          {
+            "name": "_cloudLayer",
+            "type": "GameObject",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Reference to the clouds environment object for spawning logic."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnCloudEnter(Collider other)",
+            "body": "if (other.CompareTag(\"Environment\") && other.gameObject.name == \"clouds\") _cloudLayer = other.GetComponent<>()?.gameObject ?? null;"
+          },
+          {
+            "signature": "public GameObject SpawnEnemy(int difficultyTier, Vector3 position, Quaternion rotation)",
+            "body": "GameObject enemyPrefab = Get(difficultyTier);\nif (enemyPrefab == null) return null;\n\n// Attempt to spawn slightly offset from clouds if near a cloud layer for visual variety\nVector3 spawnPos = position;\nif (_cloudLayer != null && Vector3.Distance(position, _cloudLayer.transform.position) < 10f)\n{\n    // Simple logic: ensure we don't spawn inside the cloud volume by nudging up/down randomly\n    float offset = Random.Range(-5f, 5f);\n    spawnPos += new Vector3(0, offset, 0);\n}\n\nGameObject enemy = Instantiate(enemyPrefab, position, rotation);\nreturn enemy;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "audio",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_ambientClip",
+            "type": "AudioClip",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Ambient drone for sky/coastal environments."
+          },
+          {
+            "name": "_explosionClip",
+            "type": "AudioClip",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Explosion sound for hits on aircraft or ships."
+          },
+          {
+            "name": "_missileLaunchClip",
+            "type": "AudioClip",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Missile launch sound effect."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnAmbientChange()",
+            "body": ""
+          },
+          {
+            "signature": "public AudioClip GetExplosionClip()",
+            "body": "if (_explosionClip == null) _explosionClip = PickClip(); return _explosionClip;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "dialogue",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "System.Collections.Generic"
+        ],
+        "extra_fields": [
+          {
+            "name": "_targetShips",
+            "type": "List<string>",
+            "default": "\"new List<string>()\"",
+            "header": "Runtime",
+            "tooltip": "Tracks remaining ships to destroy"
+          },
+          {
+            "name": "_enemyPlanes",
+            "type": "List<string>",
+            "default": "\"new List<string>()\"",
+            "header": "Runtime",
+            "tooltip": "Tracks hostile aircraft IDs"
+          },
+          {
+            "name": "_vfxPoolName",
+            "type": "string",
+            "default": "\"VFX_Pool\"",
+            "header": "Runtime",
+            "tooltip": "Tag for pooling fire and smoke effects"
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnTargetDestroyed(string shipId)",
+            "body": "_targetShips.Remove(shipId); if (_targetShips.Count == 0) End();"
+          },
+          {
+            "signature": "private void OnEnemyHit(string planeId, string vfxTag)",
+            "body": "_enemyPlanes.Remove(planeId); var node = FindById(\"combat_hit\"); if (node != null) Show(node);"
+          },
+          {
+            "signature": "private void LaunchMissile()",
+            "body": "var node = FindById(\"missile_launch\"); if (node != null) Show(node);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "vfx",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_fireIntensity",
+            "type": "float",
+            "default": "1f",
+            "header": "VFX",
+            "tooltip": "Controls the intensity of fire bursts generated on impact."
+          },
+          {
+            "name": "_smokeDuration",
+            "type": "float",
+            "default": "2f",
+            "header": "VFX",
+            "tooltip": "How long smoke trails persist after an explosion."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnImpact(Vector3 impactPos, float intensity)",
+            "body": "DoFlash(intensity * _flashIntensity);\nSpawnEffect(1, impactPos, _smokeDuration);\nSpawnEffect(2, impactPos, 0f);\n"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "npc_dialog",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_targetTag",
+            "type": "string",
+            "default": "\"Player\"",
+            "header": "Runtime",
+            "tooltip": "Tag of the player aircraft to target for dialogue."
+          },
+          {
+            "name": "_dialogueText",
+            "type": "string",
+            "default": "\"Target acquired.\"",
+            "header": "Runtime",
+            "tooltip": "Current dialogue text based on game state."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnPlayerEnterRadius()",
+            "body": "if (!_playing) return;\nif (TryStartDialog()) {\n    _targetTag = \"Player\";\n    _dialogueText = \"Enemy detected. Prepare for interception.\";\n}"
+          },
+          {
+            "signature": "private void OnPlayerExitRadius()",
+            "body": "StopDialog();"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "objectives",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_shipRefs",
+            "type": "List<GameObject>",
+            "default": "new List<GameObject>()",
+            "header": "Target Ships",
+            "tooltip": "References to ship_1, ship_2, and ship_3."
+          },
+          {
+            "name": "_playerRef",
+            "type": "GameObject",
+            "default": "null",
+            "header": "Player Craft",
+            "tooltip": "Reference to aircraft_1."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void CheckShipsDestroyed()",
+            "body": "int destroyedCount = 0;",
+            "body2": "foreach (var ship in _shipRefs) {",
+            "body3": "if (ship != null && !ship.activeSelf) {",
+            "body4": "destroyedCount++;",
+            "body5": "}"
+          },
+          {
+            "signature": "public void OnShipDestroyed(GameObject ship)",
+            "body": "_shipRefs.Remove(ship);",
+            "body2": "CheckMissionComplete();"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "waypoint",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_targetName",
+            "type": "string",
+            "default": "\"\"",
+            "header": "Runtime",
+            "tooltip": "Current target name for display"
+          },
+          {
+            "name": "_markerColor",
+            "type": "Color",
+            "default": "#00FF00",
+            "header": "Runtime",
+            "tooltip": "Target marker color"
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void SetTarget(string name)",
+            "body": "_targetName = name; _marker.color = _markerColor;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "rules",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_fire_1",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Fire burst for aircraft hit."
+          },
+          {
+            "name": "_smoke_trail_1",
+            "type": "ParticleSystem",
+            "default": "null",
+            "header": "VFX",
+            "tooltip": "Smoke trail for aircraft hit."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnEnemyHit(GameObject target)",
+            "body": "if (target.CompareTag(\"Player\")) { Destroy(target); } else if (target.CompareTag(\"Environment\")) { Destroy(target); } else { Instantiate(_fire_1, transform.position, Quaternion.identity); Instantiate(_smoke_trail_1, transform.position, Quaternion.identity); } }"
+          },
+          {
+            "signature": "private void OnMissileHit(GameObject target)",
+            "body": "if (target.CompareTag(\"Player\")) { Destroy(target); } else if (target.CompareTag(\"Environment\")) { Destroy(target); } else { Instantiate(_fire_1, transform.position, Quaternion.identity); Instantiate(_smoke_trail_1, transform.position, Quaternion.identity); } }"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "behavior_tree",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_cooldown",
+            "type": "float",
+            "default": "0f",
+            "header": "Runtime",
+            "tooltip": "Time remaining before weapon can fire again"
+          },
+          {
+            "name": "_targetEnemyPlane",
+            "type": "GameObject",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Currently locked enemy aircraft"
+          }
+        ],
+        "update_extra": "if (_cooldown > 0f) _cooldown -= Time.deltaTime;\nif (_targetEnemyPlane != null && _targetEnemyPlane.activeInHierarchy) {\n    var target = _targetEnemyPlane.GetComponent<BTNodeDef>();\n}",
+        "extra_methods": [
+          {
+            "signature": "private void OnUpdateTarget()",
+            "body": "_cooldown = 0f;\nif (_conditions.ContainsKey(\"PlayerInRange\")) {\n    _targetEnemyPlane = null;\n}"
+          },
+          {
+            "signature": "public bool IsReadyToFire()",
+            "body": "return _cooldown <= 0f;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    }
+  ],
+  "wiring": null
+}

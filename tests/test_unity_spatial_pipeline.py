@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from src.unity_schema import EntitySpec, UnitySchema, UnityScript
+from src.unity_schema import EntitySpec, MicrogensSpec, UnitySchema, UnityScript
 from src.unity_spatial_identity import semantic_schema_hash
 from src.unity_spatial_pipeline import (
     freeze_spatial_sidecars,
@@ -76,6 +76,23 @@ def test_post_schema_asset_query_enrichment_does_not_stale_spatial_identity() ->
     before_hash = semantic_schema_hash(schema)
 
     schema.entities[0].sketchfab_query = "low poly racing bike"
+
+    assert semantic_schema_hash(schema) == before_hash
+
+
+def test_step_35_codegen_enrichment_does_not_stale_spatial_identity() -> None:
+    schema = _schema()
+    before_hash = semantic_schema_hash(schema)
+
+    schema.microgens.append(MicrogensSpec(
+        kind="controller",
+        input={"update_extra": "Debug.Log(\"captured\");"},
+    ))
+    schema.meta["llm_enrichment"] = {
+        "format": "game-o-matic/llm-enrichment/v1",
+        "stage": "3.5",
+        "npc_dialog_lines": {"quest_giver:NPC": [{"text": "Captured line."}]},
+    }
 
     assert semantic_schema_hash(schema) == before_hash
 
