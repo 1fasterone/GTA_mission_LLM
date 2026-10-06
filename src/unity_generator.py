@@ -92,7 +92,7 @@ def _frozen_asset_selection(model, catalog_assets: list[dict]) -> dict | None:
         with candidate.open("rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
                 digest.update(chunk)
-        selection = {
+        selection: dict[str, Any] = {
             "filename": str(entry.get("filename") or candidate.name),
             "relpath": relpath.replace("\\", "/"),
             "source": "sketchfab",

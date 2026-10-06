@@ -2522,8 +2522,9 @@ def subsystems_for(
     # 2.5D's tilted/elevated follow camera needs a non-default offset (matches
     # the static camera preset already used for non-composed 2.5D projects —
     # see _CAMERA_PRESETS["2.5D"] in unity_generator.py: y=3, z=-8, ~21 deg
-    # down-tilt). Every other camera variant is fine with CameraRigSchema's
-    # defaults.
+    # down-tilt). Top-down and isometric cameras receive explicit contract
+    # positions too; the old cinemachine_topdown label is retained for variant
+    # compatibility, but no unassigned external Cinemachine object is required.
     # VerticalSurface scenes put the climb face in the X/Y plane with the
     # player in front of it (+Z).  The generic follow preset's -Z offset would
     # put the camera behind the wall, which is why the Game view can show only
@@ -2542,6 +2543,24 @@ def subsystems_for(
         ctrl_opts["climbing_contract"] = True
     if cam == "follow_2_5d":
         cam_opts: dict = {"offset_y": 3.0, "offset_z": -8.0}
+    elif cam == "cinemachine_topdown" and gt == "isometric":
+        cam_opts = {
+            "mode_id": "Isometric",
+            "category": "player",
+            "spatial": {
+                "position": {"base": [-10.0, 10.0, -10.0]},
+                "rotation": {"mode": "look_at_anchor"},
+            },
+        }
+    elif cam == "cinemachine_topdown":
+        cam_opts = {
+            "mode_id": "TopDown",
+            "category": "player",
+            "spatial": {
+                "position": {"base": [0.0, 12.0, -4.0]},
+                "rotation": {"mode": "look_at_anchor"},
+            },
+        }
     elif cam == "follow" and _ascent_camera_signal:
         cam_opts = {
             "offset_x": 2.25,

@@ -301,6 +301,19 @@ def test_subsystems_for_fps_genre_does_not_override_explicit_game_type():
     assert ctrl_2d.variant == "2d_platformer"
 
 
+def test_topdown_and_isometric_cameras_receive_explicit_contract_positions():
+    top = next(s for s in subsystems_for("top_down", []) if s.kind == "camera")
+    iso = next(s for s in subsystems_for("isometric", []) if s.kind == "camera")
+
+    assert top.variant == "cinemachine_topdown"
+    assert top.options["mode_id"] == "TopDown"
+    assert top.options["spatial"]["position"]["base"] == [0.0, 12.0, -4.0]
+
+    assert iso.variant == "cinemachine_topdown"
+    assert iso.options["mode_id"] == "Isometric"
+    assert iso.options["spatial"]["position"]["base"] == [-10.0, 10.0, -10.0]
+
+
 def test_racing_genre_selects_racing_hud():
     # The race-feedback HUD is the racing-genre counterpart to the AI line's
     # waypoint_follow branch — both key off genre, not locomotion.
