@@ -324,7 +324,12 @@ public class {{ s.name }} : MonoBehaviour
         // object is required for a generated project to frame its target.
         Vector3 desired = _followRoot.position + offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
-        transform.LookAt(_target.position + anchorOffset);
+        // anchorOffset describes where the camera anchor lives; it is not a
+        // second camera-position offset for the look target. CameraFocus is
+        // already the authoritative aim point, so adding anchorOffset here
+        // makes an isometric camera look almost straight up when the anchor
+        // offset matches its placement vector.
+        transform.LookAt(_target.position);
 {% elif variant == "vehicle_chase" %}
         // Low, forward-facing motorcycle chase framing. The target root is
         // kept as the physics anchor; the visual Body pivot supplies the
@@ -426,7 +431,7 @@ public class {{ s.name }} : MonoBehaviour
         // follow
         Vector3 desired = _followRoot.position + _followRoot.rotation * offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
-        transform.LookAt(_target.position + anchorOffset);
+        transform.LookAt(_target.position);
 {% endif %}
 
 {% if s.validation.distance_clamp_check %}

@@ -320,6 +320,21 @@ def test_camera_contract_validation_and_debug_are_emitted(tmp_path, dummy_config
     assert "OnDrawGizmosSelected" in cs
 
 
+def test_isometric_camera_aims_at_focus_not_position_offset(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = CameraRigSchema(
+        name="IsoCam",
+        variant="cinemachine_topdown",
+        anchor={"offset": [-10.0, 10.0, -10.0]},
+        spatial={"position": {"base": [-10.0, 10.0, -10.0]}},
+    )
+    s = p.default_fix(s, "cinemachine_topdown")
+    p.write_files(s, "cinemachine_topdown", tmp_path)
+    cs = (tmp_path / "Scripts" / "IsoCam.cs").read_text(encoding="utf-8")
+    assert "transform.LookAt(_target.position);" in cs
+    assert "transform.LookAt(_target.position + anchorOffset);" not in cs
+
+
 def test_vehicle_chase_fixer_uses_low_wide_racing_defaults(dummy_config):
     p = CameraRigPipeline(dummy_config)
     s = p.default_fix(CameraRigSchema(name="RaceCam", variant="vehicle_chase"), "vehicle_chase")
