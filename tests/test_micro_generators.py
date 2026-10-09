@@ -234,6 +234,46 @@ def test_controller_add_ammo_reserve_flow(dummy_config):
     assert cs.count("{") == cs.count("}")
 
 
+@pytest.mark.parametrize("variant", ["2d_topdown", "third_person"])
+def test_shoot_controller_emits_dimension_neutral_projectile_foundation(
+        tmp_path, dummy_config, variant):
+    """The physical-projectile core is reusable, but does not launch rounds.
+
+    Shoot remains the existing hitscan delivery in this slice.  These two
+    controller variants prove the shared helper emits for both Unity physics
+    stacks, sends damage through the established Health seam exactly once, and
+    stays separate from raycast/rigidbody launch policy.
+    """
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(name="Shooter", variant=variant, input_backend="legacy",
+                         abilities=["shoot"])
+    s = p.default_fix(s, variant)
+
+    assert p.write_files(s, variant, tmp_path) == 3
+    projectile = (tmp_path / "Scripts" / "ProjectileController.cs").read_text(
+        encoding="utf-8")
+    assert "public sealed class ProjectileController" in projectile
+    assert "public void Configure(float damageAmount, GameObject owner)" in projectile
+    assert "private void OnCollisionEnter(Collision collision)" in projectile
+    assert "private void OnTriggerEnter(Collider other)" in projectile
+    assert "private void OnCollisionEnter2D(Collision2D collision)" in projectile
+    assert "private void OnTriggerEnter2D(Collider2D other)" in projectile
+    assert 'SendMessageUpwards("TakeDamage", damage' in projectile
+    assert "if (_hasImpacted || other == null || IsOwner(other)) return;" in projectile
+    assert "Physics.Raycast" not in projectile
+    assert "Rigidbody" not in projectile
+    assert projectile.count("{") == projectile.count("}")
+
+
+def test_non_shoot_controller_does_not_emit_projectile_foundation(tmp_path, dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(name="Walker", input_backend="legacy", abilities=[])
+    s = p.default_fix(s, "third_person")
+
+    assert p.write_files(s, "third_person", tmp_path) == 2
+    assert not (tmp_path / "Scripts" / "ProjectileController.cs").exists()
+
+
 def test_controller_cycle_weapon_implies_shoot(dummy_config):
     p = ControllerPipeline(dummy_config)
     s = ControllerSchema(name="X", abilities=["cycle_weapon"])

@@ -992,6 +992,19 @@ class ControllerPipeline(UnityMicroPipeline):
             )
             count += 1
 
+        if "shoot" in schema.abilities:
+            # Shared, unparametrized collision/damage helper for a future
+            # physical-projectile firing path.  It deliberately has no launch
+            # mechanics: the current Shoot implementation remains hitscan, and
+            # a later slice must introduce launch/prefab semantics explicitly.
+            # Like ThrownObject below, current composition emits one player
+            # controller per project, so the fixed class name is safe here.
+            (scripts_dir / "ProjectileController.cs").write_text(
+                env.get_template("ProjectileController.cs.j2").render(),
+                encoding="utf-8",
+            )
+            count += 1
+
         if "throw" in schema.abilities:
             # Shared, unparametrized helper for whatever gets thrown — see
             # ThrownObject.cs.j2's own header comment for the (narrow, accepted)
