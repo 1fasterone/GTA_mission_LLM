@@ -652,6 +652,7 @@ def test_2d_selects_2d_physics_and_camera():
     follow with the 2d_platformer controller and could not be played)."""
     from src.unity_compose import subsystems_for
     subs2d = subsystems_for("2D", [])
+    assert next(s.variant for s in subs2d if s.kind == "controller") == "2d_platformer"
     assert next(s.variant for s in subs2d if s.kind == "physics") == "rigidbody_2d"
     assert next(s.variant for s in subs2d if s.kind == "camera")  == "follow_2d"
     # 3D stays 3D.

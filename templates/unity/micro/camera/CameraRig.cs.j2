@@ -21,6 +21,7 @@ public class {{ s.name }} : MonoBehaviour
         {{ "%.2f"|format(s.anchor.offset[1]) }}f,
         {{ "%.2f"|format(s.anchor.offset[2]) }}f);
     [SerializeField] private string primaryTargetType = "{{ s.targeting.primary_target.type }}";
+    [SerializeField] private string primaryTargetRef = "{{ s.targeting.primary_target.ref }}";
     [SerializeField] private Vector3 offset = new Vector3(
         {{ "%.2f"|format(s.spatial.position.base[0]) }}f,
         {{ "%.2f"|format(s.spatial.position.base[1]) }}f,
@@ -60,6 +61,9 @@ public class {{ s.name }} : MonoBehaviour
     /// <summary>Stable identity from Camera Contract v1.</summary>
     public string CameraModeID => cameraModeId;
     public string CameraAnchorType => anchorType;
+    public string CameraPrimaryTargetType => primaryTargetType;
+    public string CameraPrimaryTargetRef => primaryTargetRef;
+    public Transform CameraResolvedTarget => _target;
     public int CameraPriority => priority;
     public bool IsOrthographic => GetComponent<Camera>() != null
         && GetComponent<Camera>().orthographic;
@@ -214,10 +218,19 @@ public class {{ s.name }} : MonoBehaviour
 
         if (primaryTargetType == "camera_focus")
         {
-            _target = _followRoot.Find("CameraFocus");
+            string focusRef = string.IsNullOrEmpty(primaryTargetRef)
+                ? "CameraFocus" : primaryTargetRef;
+            string localFocusRef = focusRef.StartsWith(_followRoot.name + "/")
+                ? focusRef.Substring(_followRoot.name.Length + 1) : focusRef;
+            _target = _followRoot.Find(localFocusRef);
             if (_target == null)
             {
-                var focusGo = new GameObject("CameraFocus");
+                GameObject externalFocus = GameObject.Find(focusRef);
+                if (externalFocus != null) _target = externalFocus.transform;
+            }
+            if (_target == null)
+            {
+                var focusGo = new GameObject(localFocusRef);
                 focusGo.transform.SetParent(_followRoot, false);
                 focusGo.transform.localPosition = new Vector3(
                     0f, {{ "1.35f" if variant == "climbing_follow" else "1.1f" }}, 0f);
