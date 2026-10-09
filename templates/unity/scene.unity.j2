@@ -138,7 +138,7 @@ GameObject:
   - component: {fileID: 705507994}
   - component: {fileID: 705507995}
   - component: {fileID: 705507996}
-{% if "camera" in scripts_by_type %}
+{% if "camera" in scripts_by_type and not (composed_units | selectattr("kind", "equalto", "camera") | list) %}
   - component: {fileID: 705507997}
 {% endif %}
 {% if postprocess_profile_guid %}
@@ -225,7 +225,7 @@ AudioListener:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 705507993}
   m_Enabled: 1
-{% if "camera" in scripts_by_type %}
+{% if "camera" in scripts_by_type and not (composed_units | selectattr("kind", "equalto", "camera") | list) %}
 --- !u!114 &705507997
 MonoBehaviour:
   m_ObjectHideFlags: 0

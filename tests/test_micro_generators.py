@@ -249,6 +249,92 @@ def test_camera_fixer_zeros_first_person_offset(dummy_config):
     assert (s.offset_x, s.offset_y, s.offset_z) == (0.0, 0.0, 0.0)
 
 
+def test_camera_contract_migrates_legacy_follow_fields(dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = p.default_fix(
+        CameraRigSchema(name="FollowCam", variant="follow", offset_x=1.0,
+                        offset_y=2.0, offset_z=-7.0, fov_base=65.0),
+        "follow",
+    )
+    assert s.mode_id == "ThirdPersonChase"
+    assert s.category == "player"
+    assert s.anchor.type == "player_root"
+    assert s.anchor.transform == "Player"
+    assert s.spatial.position.base == (1.0, 2.0, -7.0)
+    assert s.spatial.fov.base == 65.0
+    assert s.targeting.primary_target.type == "camera_focus"
+
+
+def test_first_person_contract_requires_eye_anchor(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = p.default_fix(CameraRigSchema(name="FpsCam", variant="first_person"),
+                       "first_person")
+    p.write_files(s, "first_person", tmp_path)
+    cs = (tmp_path / "Scripts" / "FpsCam.cs").read_text(encoding="utf-8")
+    assert s.mode_id == "FirstPerson"
+    assert s.anchor.type == "player_eye"
+    assert "requires Player/Eye" in cs
+    assert "fallbackEyeHeight" not in cs
+    assert "_eyeMounted" not in cs
+
+
+def test_2d_contract_owns_projection_depth_and_orientation(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = CameraRigSchema(
+        name="SideCam",
+        variant="follow_2d",
+        two_d={"axis_lock": "x", "orthographic_size": 8.0, "depth": -14.0},
+    )
+    s = p.default_fix(s, "follow_2d")
+    p.write_files(s, "follow_2d", tmp_path)
+    cs = (tmp_path / "Scripts" / "SideCam.cs").read_text(encoding="utf-8")
+    assert s.mode_id == "Follow2D"
+    assert s.spatial.rotation.mode == "fixed_angle"
+    assert "_cam.orthographic     = true;" in cs
+    assert "transform.rotation = Quaternion.identity;" in cs
+    assert "-14.00f" in cs
+    assert "transform.position.y" in cs
+
+
+def test_camera_contract_validation_and_debug_are_emitted(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = p.default_fix(
+        CameraRigSchema(
+            name="DebugCam",
+            variant="follow",
+            spatial={
+                "position": {"min_distance": 2.0, "max_distance": 9.0},
+                "rotation": {"pitch_clamp": [-30.0, 45.0]},
+                "fov": {"base": 72.0, "clamp": [50.0, 85.0]},
+            },
+            debug={"name": "ChaseDebug", "color": [0.2, 0.4, 1.0]},
+        ),
+        "follow",
+    )
+    p.write_files(s, "follow", tmp_path)
+    cs = (tmp_path / "Scripts" / "DebugCam.cs").read_text(encoding="utf-8")
+    assert "cameraModeId = \"ThirdPersonChase\"" in cs
+    assert "minDistance = 2.000f" in cs
+    assert "pitchMin = -30.00f" in cs
+    assert "fovBase   = 72.00f" in cs
+    assert "OnDrawGizmosSelected" in cs
+
+
+def test_isometric_camera_aims_at_focus_not_position_offset(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+    s = CameraRigSchema(
+        name="IsoCam",
+        variant="cinemachine_topdown",
+        anchor={"offset": [-10.0, 10.0, -10.0]},
+        spatial={"position": {"base": [-10.0, 10.0, -10.0]}},
+    )
+    s = p.default_fix(s, "cinemachine_topdown")
+    p.write_files(s, "cinemachine_topdown", tmp_path)
+    cs = (tmp_path / "Scripts" / "IsoCam.cs").read_text(encoding="utf-8")
+    assert "transform.LookAt(_target.position);" in cs
+    assert "transform.LookAt(_target.position + anchorOffset);" not in cs
+
+
 def test_vehicle_chase_fixer_uses_low_wide_racing_defaults(dummy_config):
     p = CameraRigPipeline(dummy_config)
     s = p.default_fix(CameraRigSchema(name="RaceCam", variant="vehicle_chase"), "vehicle_chase")

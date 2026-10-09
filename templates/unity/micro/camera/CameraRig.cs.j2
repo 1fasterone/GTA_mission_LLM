@@ -12,16 +12,37 @@ public class {{ s.name }} : MonoBehaviour
 {{ inject.fields(s) }}{{ inject.extensions_fields(s) }}
     [Header("Target")]
     [SerializeField] private string followTag = "{{ s.follow_target_tag }}";
-    [SerializeField] private Vector3 offset = new Vector3({{ "%.2f"|format(s.offset_x) }}f, {{ "%.2f"|format(s.offset_y) }}f, {{ "%.2f"|format(s.offset_z) }}f);
+    [SerializeField] private string cameraModeId = "{{ s.mode_id }}";
+    [SerializeField] private int priority = {{ s.priority }};
+    [SerializeField] private string anchorType = "{{ s.anchor.type }}";
+    [SerializeField] private string anchorTransform = "{{ s.anchor.transform }}";
+    [SerializeField] private Vector3 anchorOffset = new Vector3(
+        {{ "%.2f"|format(s.anchor.offset[0]) }}f,
+        {{ "%.2f"|format(s.anchor.offset[1]) }}f,
+        {{ "%.2f"|format(s.anchor.offset[2]) }}f);
+    [SerializeField] private string primaryTargetType = "{{ s.targeting.primary_target.type }}";
+    [SerializeField] private Vector3 offset = new Vector3(
+        {{ "%.2f"|format(s.spatial.position.base[0]) }}f,
+        {{ "%.2f"|format(s.spatial.position.base[1]) }}f,
+        {{ "%.2f"|format(s.spatial.position.base[2]) }}f);
     [SerializeField] private float smoothTime = {{ "%.3f"|format(s.smooth_time) }}f;
+    [SerializeField] private float minDistance = {{ "%.3f"|format(s.spatial.position.min_distance) }}f;
+    [SerializeField] private float maxDistance = {{ "%.3f"|format(s.spatial.position.max_distance) }}f;
+    [SerializeField] private float collisionRadius = {{ "%.3f"|format(s.spatial.position.collision_radius) }}f;
+    [SerializeField] private float pitchMin = {{ "%.2f"|format(s.spatial.rotation.pitch_clamp[0]) }}f;
+    [SerializeField] private float pitchMax = {{ "%.2f"|format(s.spatial.rotation.pitch_clamp[1]) }}f;
+    [SerializeField] private float yawMin = {{ "%.2f"|format(s.spatial.rotation.yaw_clamp[0]) }}f;
+    [SerializeField] private float yawMax = {{ "%.2f"|format(s.spatial.rotation.yaw_clamp[1]) }}f;
+    [SerializeField] private string rotationMode = "{{ s.spatial.rotation.mode }}";
+    [SerializeField] private string rollBehavior = "{{ s.spatial.rotation.roll_behavior }}";
 {% if s.collision_avoidance %}
     [SerializeField] private LayerMask occlusionMask = ~0;
 {% endif %}
 {% if s.lock_on %}
     [SerializeField] private bool lockOn = false;
 {% endif %}
-{% if variant != "follow_2d" %}
-    [SerializeField] private float fovBase   = {{ "%.2f"|format(s.fov_base) }}f;
+{% if variant != "follow_2d" and variant != "board_framing" %}
+    [SerializeField] private float fovBase   = {{ "%.2f"|format(s.spatial.fov.base) }}f;
 {% endif %}
 {% if variant == "vehicle_chase" %}
     [SerializeField] private float fovSprint = {{ "%.2f"|format(s.fov_sprint) }}f;
@@ -34,6 +55,14 @@ public class {{ s.name }} : MonoBehaviour
     private Transform _target;
     private Vector3   _vel;
     private Camera    _cam;
+    private bool      _anchorErrorReported;
+
+    /// <summary>Stable identity from Camera Contract v1.</summary>
+    public string CameraModeID => cameraModeId;
+    public string CameraAnchorType => anchorType;
+    public int CameraPriority => priority;
+    public bool IsOrthographic => GetComponent<Camera>() != null
+        && GetComponent<Camera>().orthographic;
 {% if variant == "climbing_follow" %}
     private bool _climbingCameraInitialized;
 {% endif %}
@@ -58,29 +87,36 @@ public class {{ s.name }} : MonoBehaviour
     private bool    _fitted;
     private Bounds  _board;
 {% endif %}
-{% if variant == "first_person" %}
-
-    [Header("First-person fallback")]
-    [Tooltip("Used only when the player has no \"Eye\" child to mount on.")]
-    [SerializeField] private float fallbackEyeHeight = 1.60f;
-    private bool _eyeMounted;
-{% endif %}
+    private void ValidateContract()
+    {
+        if (string.IsNullOrEmpty(cameraModeId))
+            Debug.LogError("Camera Contract violation: CameraModeID is empty.", this);
+        if (minDistance > 0f && maxDistance > 0f && maxDistance < minDistance)
+            Debug.LogError("Camera Contract violation: maxDistance is below minDistance.", this);
+        if (pitchMax < pitchMin || yawMax < yawMin)
+            Debug.LogError("Camera Contract violation: rotation clamp range is inverted.", this);
+    }
 
     private void Awake()
     {
         _cam = GetComponent<Camera>();
+        ValidateContract();
 {% if variant == "follow_2d" %}
         _cam.orthographic     = true;
-        _cam.orthographicSize = 6f;
+        _cam.orthographicSize = {{ "%.2f"|format(s.two_d.orthographic_size) }}f;
+        transform.rotation    = Quaternion.identity;
 {% elif variant == "board_framing" %}
         // Orthographic: a board is read, not looked into. Perspective would
         // give the panels at the edge of the frame a keystone that reads as a
         // rendering fault rather than as depth.
         _cam.orthographic     = true;
-        _cam.orthographicSize = 6f;
+        _cam.orthographicSize = {{ "%.2f"|format(s.two_d.orthographic_size) }}f;
         transform.rotation    = Quaternion.identity;   // face +Z, the board's normal
 {% else %}
-        _cam.fieldOfView = fovBase;
+        _cam.fieldOfView = Mathf.Clamp(
+            {{ "%.2f"|format(s.spatial.fov.base) }}f,
+            {{ "%.2f"|format(s.spatial.fov.clamp[0]) }}f,
+            {{ "%.2f"|format(s.spatial.fov.clamp[1]) }}f);
 {% endif %}
 {{ inject.lifecycle(s.awake_extra) }}
     }
@@ -133,6 +169,68 @@ public class {{ s.name }} : MonoBehaviour
     }
 {% endif %}
 
+    private bool ResolveContractTargets()
+    {
+        GameObject rootObject = null;
+        if (!string.IsNullOrEmpty(anchorTransform))
+            rootObject = GameObject.Find(anchorTransform);
+        // Legacy fixtures may not have a named Player object, so the tag is a
+        // compatibility fallback. It is never used to replace a missing Eye:
+        // a first-person contract fails loudly instead of filming from the feet.
+        if (rootObject == null && !string.IsNullOrEmpty(followTag))
+        {
+            try { rootObject = GameObject.FindWithTag(followTag); }
+            catch (UnityException) { rootObject = null; }
+        }
+        if (rootObject == null)
+        {
+            if (!_anchorErrorReported)
+            {
+                Debug.LogError(
+                    $"Camera Contract {cameraModeId} could not resolve anchor '{anchorTransform}'.",
+                    this);
+                _anchorErrorReported = true;
+            }
+            return false;
+        }
+
+        _followRoot = rootObject.transform;
+        if (anchorType == "player_eye")
+        {
+            _target = _followRoot.Find("Eye");
+            if (_target == null)
+            {
+                if (!_anchorErrorReported)
+                {
+                    Debug.LogError(
+                        $"Camera Contract {cameraModeId} requires Player/Eye, but the anchor is missing.",
+                        this);
+                    _anchorErrorReported = true;
+                }
+                return false;
+            }
+            return true;
+        }
+
+        if (primaryTargetType == "camera_focus")
+        {
+            _target = _followRoot.Find("CameraFocus");
+            if (_target == null)
+            {
+                var focusGo = new GameObject("CameraFocus");
+                focusGo.transform.SetParent(_followRoot, false);
+                focusGo.transform.localPosition = new Vector3(
+                    0f, {{ "1.35f" if variant == "climbing_follow" else "1.1f" }}, 0f);
+                _target = focusGo.transform;
+            }
+        }
+        else
+        {
+            _target = _followRoot;
+        }
+        return true;
+    }
+
     private void LateUpdate()
     {
 {% if variant == "board_framing" %}
@@ -165,62 +263,33 @@ public class {{ s.name }} : MonoBehaviour
 {% else %}
         if (_target == null)
         {
-{% if variant == "first_person" %}
-            // Several objects can end up sharing the Player tag (a mis-tagged
-            // prop group is enough), and FindWithTag then returns an arbitrary
-            // one — which silently parks the camera on scenery. Prefer whichever
-            // tagged object actually carries the controller's "Eye" child.
-            GameObject go = null;
-            foreach (var cand in GameObject.FindGameObjectsWithTag(followTag))
-            {
-                if (cand == null) continue;
-                if (go == null) go = cand;
-                if (cand.transform.Find("Eye") != null) { go = cand; break; }
-            }
-            if (go == null) return;
-            // The "Eye" sits at head height and carries pitch. Following the
-            // player root instead puts the camera at the feet, facing wherever
-            // the body happens to point — which reads as staring into space.
-            var eye = go.transform.Find("Eye");
-            _eyeMounted = eye != null;
-            _target = _eyeMounted ? eye : go.transform;
-{% else %}
-            var go = GameObject.FindWithTag(followTag);
-            if (go == null) return;
-            _followRoot = go.transform;
-            _target = _followRoot.Find("CameraFocus");
-            if (_target == null)
-            {
-                // The focus pivot is a runtime contract, so generated scenes
-                // do not need hand-authored child transforms. It is created
-                // once, parented locally, and follows the visual at a useful
-                // upper-body height even for a generic blacksmith mesh.
-                var focusGo = new GameObject("CameraFocus");
-                focusGo.transform.SetParent(_followRoot, false);
-                focusGo.transform.localPosition = new Vector3(
-                    0f, {{ "1.35f" if variant == "climbing_follow" else "1.1f" }}, 0f);
-                _target = focusGo.transform;
-            }
+            if (!ResolveContractTargets()) return;
 {% if variant == "vehicle_chase" %}
             _vehicleBody = _followRoot.GetComponent<Rigidbody>();
             _vehicleVisual = _followRoot.Find("Body");
 {% endif %}
-{% endif %}
         }
 
 {% if variant == "first_person" %}
-        // First-person: lock to the target head transform. When no "Eye" child
-        // was found we are sitting on the player root, so lift by the fallback
-        // eye height rather than filming from ankle level.
-        transform.position = _eyeMounted
-            ? _target.position
-            : _target.position + new Vector3(0f, fallbackEyeHeight, 0f);
+        // First-person has a hard anchor contract: the controller must expose
+        // Player/Eye. A missing Eye is an explicit runtime error, never a
+        // silent root-height fallback that produces an apparently valid bad POV.
+        transform.position = _target.position + anchorOffset;
         transform.rotation = _target.rotation;
 {% elif variant == "follow_2d" %}
-        // 2D side-on follow: track X/Y at a fixed camera depth, no roll / LookAt.
-        Vector3 desired2d = new Vector3(_target.position.x + offset.x,
-                                        _target.position.y + offset.y, -10f);
+        // 2D follow: the contract owns projection, depth, axis lock and
+        // orientation. Never inherit a stale scene rotation.
+        Vector3 target2d = _target.position + anchorOffset;
+        Vector3 desired2d = new Vector3(
+            {{ "transform.position.x" if s.two_d.axis_lock == "y" else "target2d.x + offset.x" }},
+            {{ "transform.position.y" if s.two_d.axis_lock == "x" else "target2d.y + offset.y" }},
+            {{ "%.2f"|format(s.two_d.depth) }}f);
         transform.position = Vector3.SmoothDamp(transform.position, desired2d, ref _vel, smoothTime);
+        transform.rotation = Quaternion.identity;
+        _cam.orthographicSize = Mathf.Clamp(
+            _cam.orthographicSize,
+            {{ "%.2f"|format(s.two_d.zoom_min) }}f,
+            {{ "%.2f"|format(s.two_d.zoom_max) }}f);
 {% elif variant == "follow_2_5d" %}
         // 2.5D: track lateral (X) movement only, at a fixed elevated/tilted
         // offset from the target's own depth — real 3D perspective (unlike
@@ -250,11 +319,16 @@ public class {{ s.name }} : MonoBehaviour
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
         transform.LookAt(_target.position);
 {% elif variant.startswith("cinemachine_") %}
-        // Cinemachine variant: this script just hosts the follow target — the actual
-        // camera lives on a CinemachineCamera in the scene. Drop a CinemachineCamera and
-        // assign its Follow/LookAt to the target found here.
+        // The contract is authoritative even when the variant name retains the
+        // historical Cinemachine label. No unassigned external Cinemachine
+        // object is required for a generated project to frame its target.
         Vector3 desired = _followRoot.position + offset;
         transform.position = Vector3.SmoothDamp(transform.position, desired, ref _vel, smoothTime);
+        // anchorOffset describes where the camera anchor lives; it is not a
+        // second camera-position offset for the look target. CameraFocus is
+        // already the authoritative aim point, so adding anchorOffset here
+        // makes an isometric camera look almost straight up when the anchor
+        // offset matches its placement vector.
         transform.LookAt(_target.position);
 {% elif variant == "vehicle_chase" %}
         // Low, forward-facing motorcycle chase framing. The target root is
@@ -360,6 +434,40 @@ public class {{ s.name }} : MonoBehaviour
         transform.LookAt(_target.position);
 {% endif %}
 
+{% if s.validation.distance_clamp_check %}
+        // Distance validation/clamping is deterministic and disabled when the
+        // contract leaves maxDistance at zero (the explicit "no upper clamp"
+        // value used by legacy-compatible follow rigs).
+        if (_target != null && anchorType != "player_eye")
+        {
+            Vector3 distanceVector = transform.position - (_target.position + anchorOffset);
+            float actualDistance = distanceVector.magnitude;
+            float clampedDistance = actualDistance;
+            if (minDistance > 0f) clampedDistance = Mathf.Max(clampedDistance, minDistance);
+            if (maxDistance > 0f) clampedDistance = Mathf.Min(clampedDistance, maxDistance);
+            if (actualDistance > 0.001f && Mathf.Abs(clampedDistance - actualDistance) >
+                {{ "%.3f"|format(s.validation.distance_tolerance) }}f)
+                transform.position = _target.position + anchorOffset
+                    + distanceVector / actualDistance * clampedDistance;
+        }
+{% endif %}
+{% if s.validation.rotation_clamp_check %}
+        if (rotationMode != "follow_anchor" && rotationMode != "fixed_angle")
+        {
+            Vector3 cameraAngles = transform.rotation.eulerAngles;
+            cameraAngles.x = Mathf.Clamp(Mathf.DeltaAngle(0f, cameraAngles.x), pitchMin, pitchMax);
+            cameraAngles.y = Mathf.Clamp(Mathf.DeltaAngle(0f, cameraAngles.y), yawMin, yawMax);
+            if (rollBehavior == "ignore") cameraAngles.z = 0f;
+            transform.rotation = Quaternion.Euler(cameraAngles);
+        }
+{% endif %}
+{% if s.validation.fov_clamp_check and variant != "follow_2d" and variant != "board_framing" %}
+        _cam.fieldOfView = Mathf.Clamp(
+            _cam.fieldOfView,
+            {{ "%.2f"|format(s.spatial.fov.clamp[0]) }}f,
+            {{ "%.2f"|format(s.spatial.fov.clamp[1]) }}f);
+{% endif %}
+
 {% if s.collision_avoidance %}
         // Collision avoidance: pull camera closer if something is between the
         // focus pivot and the desired camera point. Ignore the player's own
@@ -388,7 +496,7 @@ public class {{ s.name }} : MonoBehaviour
                 // A sphere cast adds clearance around the shoulder camera, so
                 // a cliff edge cannot clip through the view even when its
                 // collider is thinner than the camera ray.
-                if (Physics.SphereCast(_target.position, 0.30f, dir / distance,
+                if (Physics.SphereCast(_target.position, collisionRadius, dir / distance,
                                        out RaycastHit shoulderHit, distance,
                                        occlusionMask, QueryTriggerInteraction.Ignore)
                     && shoulderHit.transform != _followRoot
@@ -473,6 +581,23 @@ public class {{ s.name }} : MonoBehaviour
             return -_followRoot.forward;
         plane /= count;
         return _followRoot.position.z >= plane ? Vector3.forward : Vector3.back;
+    }
+{% endif %}
+{% if s.debug.gizmos %}
+
+    private void OnDrawGizmosSelected()
+    {
+        Gizmos.color = new Color(
+            {{ "%.2f"|format(s.debug.color[0]) }}f,
+            {{ "%.2f"|format(s.debug.color[1]) }}f,
+            {{ "%.2f"|format(s.debug.color[2]) }}f,
+            1f);
+        if (_target != null)
+        {
+            Gizmos.DrawWireSphere(_target.position + anchorOffset,
+                                  Mathf.Max(0.05f, collisionRadius));
+            Gizmos.DrawLine(transform.position, _target.position + anchorOffset);
+        }
     }
 {% endif %}
 {{ inject.fixed_update(s) }}

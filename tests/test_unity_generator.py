@@ -217,6 +217,22 @@ class TestPlayerMerge:
         assert 'SpawnGroup("PlayerHero"' not in spawner
         assert 'SpawnGroup("Crate"' in spawner
 
+    def test_composed_camera_is_the_only_scene_camera_owner(
+            self, gen, full_3d_schema):
+        """A composed CameraRig must suppress the legacy CameraFollow component.
+
+        The two components both move Main Camera, so having both serialized in
+        the scene creates last-writer-wins behavior that changes with script
+        execution order instead of following one contract.
+        """
+        from src.unity_compose import MicroComposer, subsystems_for
+
+        units = MicroComposer("CameraOwner").plan(subsystems_for("3D", []))
+        files = gen.generate(full_3d_schema, self.MANIFEST, composed_units=units)
+        scene = self._gameplay_scene(files)
+        assert "705507997" not in scene
+        assert any(u.kind == "camera" and str(u.file_id) in scene for u in units)
+
 
 # ── Meta file format ───────────────────────────────────────────────────────────
 

@@ -1,7 +1,9 @@
 # {{ s.name }} — Unity Camera Rig
 
 **Variant:** `{{ variant }}`
-**Follows:** GameObject tagged `{{ s.follow_target_tag }}`
+**CameraModeID:** `{{ s.mode_id }}`
+**Category / priority:** `{{ s.category }}` / `{{ s.priority }}`
+**Anchor:** `{{ s.anchor.type }}` → `{{ s.anchor.transform }}`
 
 {{ s.description }}
 
@@ -9,20 +11,24 @@
 
 1. Drop `Scripts/{{ s.name }}.cs` into your project's `Assets/`.
 2. Add the component to your scene's main Camera.
-3. Make sure your follow target GameObject is tagged `{{ s.follow_target_tag }}`.
+3. Make sure the contract anchor `{{ s.anchor.transform }}` exists. The tag
+   `{{ s.follow_target_tag }}` is retained only as a compatibility fallback.
 {% if variant.startswith("cinemachine_") %}
-4. Install `com.unity.cinemachine` from Package Manager. Add a `CinemachineCamera` to
-   the scene and set its Follow/LookAt to the target tagged `{{ s.follow_target_tag }}`.
+4. The historical `{{ variant }}` label does not require an external
+   Cinemachine object; `CameraRig` owns the generated camera contract.
 {% endif %}
 
 ## Tuning
 
 | Field          | Default | Notes |
 |----------------|---------|-------|
-| `offset`       | ({{ "%.2f"|format(s.offset_x) }}, {{ "%.2f"|format(s.offset_y) }}, {{ "%.2f"|format(s.offset_z) }}) | local-space follow offset |
+| `CameraModeID` | `{{ s.mode_id }}` | stable mode identity |
+| `offset`       | ({{ "%.2f"|format(s.spatial.position.base[0]) }}, {{ "%.2f"|format(s.spatial.position.base[1]) }}, {{ "%.2f"|format(s.spatial.position.base[2]) }}) | local-space follow offset |
 | `smoothTime`   | {{ "%.3f"|format(s.smooth_time) }} | higher = floatier follow |
-| `fovBase`      | {{ "%.1f"|format(s.fov_base) }} | resting field of view |
+| `fovBase`      | {{ "%.1f"|format(s.spatial.fov.base) }} | resting field of view |
 | `fovSprint`    | {{ "%.1f"|format(s.fov_sprint) }} | widened FOV during sprint |
+| `collision`    | `{{ s.motion.collision.mode }}` | contract collision policy |
+| `validation`   | enabled | distance, rotation and FOV checks |
 {% if variant == "vehicle_chase" %}
 
 The racing chase variant uses the existing offset as a low trailing mount,
