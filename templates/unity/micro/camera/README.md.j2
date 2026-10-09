@@ -4,6 +4,7 @@
 **CameraModeID:** `{{ s.mode_id }}`
 **Category / priority:** `{{ s.category }}` / `{{ s.priority }}`
 **Anchor:** `{{ s.anchor.type }}` → `{{ s.anchor.transform }}`
+**Primary target:** `{{ s.targeting.primary_target.type }}` → `{{ s.targeting.primary_target.ref }}`
 
 {{ s.description }}
 
@@ -11,8 +12,21 @@
 
 1. Drop `Scripts/{{ s.name }}.cs` into your project's `Assets/`.
 2. Add the component to your scene's main Camera.
+{% if variant == "first_person" %}
+3. Use the generated first-person controller on `Player`. It creates the
+   required `Player/Eye` child during `Awake`; a bare `Player` object is not a
+   valid first-person fixture and the camera will reject it rather than falling
+   back to the player root.
+{% elif variant == "follow_2d" %}
+3. Use the generated `2d_platformer` controller on `Player`. It provides the
+   `Rigidbody2D` and `Collider2D` needed for side movement and jumping; author
+   the playable world in the XY plane. The camera is intentionally orthographic
+   and fixed-angle — it does not turn a 3D capsule-and-plane demo into a
+   side-scroller.
+{% else %}
 3. Make sure the contract anchor `{{ s.anchor.transform }}` exists. The tag
    `{{ s.follow_target_tag }}` is retained only as a compatibility fallback.
+{% endif %}
 {% if variant.startswith("cinemachine_") %}
 4. The historical `{{ variant }}` label does not require an external
    Cinemachine object; `CameraRig` owns the generated camera contract.

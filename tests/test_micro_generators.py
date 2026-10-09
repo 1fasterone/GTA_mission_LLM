@@ -249,6 +249,15 @@ def test_camera_fixer_zeros_first_person_offset(dummy_config):
     assert (s.offset_x, s.offset_y, s.offset_z) == (0.0, 0.0, 0.0)
 
 
+def test_camera_contract_omits_competing_generic_lookat_behavior(tmp_path, dummy_config):
+    """The rig owns its target; a generic LookAt(Player) companion must not race it."""
+    pipeline = CameraRigPipeline(dummy_config)
+    schema = pipeline.default_fix(CameraRigSchema(name="Follow2D"), "follow_2d")
+    pipeline._after_write(schema, "follow_2d", tmp_path, "Follow2D")
+
+    assert list(tmp_path.glob("CameraDefaultBehavior.cs")) == []
+
+
 def test_camera_contract_migrates_legacy_follow_fields(dummy_config):
     p = CameraRigPipeline(dummy_config)
     s = p.default_fix(
@@ -271,11 +280,14 @@ def test_first_person_contract_requires_eye_anchor(tmp_path, dummy_config):
                        "first_person")
     p.write_files(s, "first_person", tmp_path)
     cs = (tmp_path / "Scripts" / "FpsCam.cs").read_text(encoding="utf-8")
+    readme = (tmp_path / "README.md").read_text(encoding="utf-8")
     assert s.mode_id == "FirstPerson"
     assert s.anchor.type == "player_eye"
     assert "requires Player/Eye" in cs
     assert "fallbackEyeHeight" not in cs
     assert "_eyeMounted" not in cs
+    assert "generated first-person controller" in readme
+    assert "Player/Eye" in readme
 
 
 def test_2d_contract_owns_projection_depth_and_orientation(tmp_path, dummy_config):
@@ -294,6 +306,99 @@ def test_2d_contract_owns_projection_depth_and_orientation(tmp_path, dummy_confi
     assert "transform.rotation = Quaternion.identity;" in cs
     assert "-14.00f" in cs
     assert "transform.position.y" in cs
+    readme = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "`2d_platformer` controller" in readme
+    assert "XY plane" in readme
+
+
+def test_camera_variant_semantics_repair_schema_valid_conflicts(tmp_path, dummy_config):
+    p = CameraRigPipeline(dummy_config)
+
+    first_person = p.default_fix(
+        CameraRigSchema(
+            name="WrongFps", variant="first_person", mode_id="ThirdPersonChase",
+            anchor={"type": "player_root", "transform": "Player", "offset": [1, 2, 3]},
+            spatial={
+                "position": {"base": [0, 3, -6]},
+                "rotation": {"mode": "look_at_anchor"},
+            },
+            targeting={"primary_target": {"type": "camera_focus", "ref": "CameraFocus"}},
+        ),
+        "first_person",
+    )
+    assert first_person.mode_id == "FirstPerson"
+    assert first_person.anchor.type == "player_eye"
+    assert first_person.anchor.transform == "Player"
+    assert first_person.anchor.offset == (0.0, 0.0, 0.0)
+    assert first_person.spatial.position.base == (0.0, 0.0, 0.0)
+    assert first_person.spatial.rotation.mode == "follow_anchor"
+    assert first_person.targeting.primary_target.type == "anchor"
+    assert first_person.targeting.primary_target.ref == "Player/Eye"
+
+    follow_2d = p.default_fix(
+        CameraRigSchema(
+            name="Wrong2D", variant="follow_2d", mode_id="ThirdPersonChase",
+            targeting={"primary_target": {"type": "camera_focus", "ref": "CameraFocus"}},
+            spatial={"rotation": {"mode": "look_at_anchor"}},
+        ),
+        "follow_2d",
+    )
+    assert follow_2d.mode_id == "Follow2D"
+    assert follow_2d.category == "2d"
+    assert follow_2d.targeting.primary_target.type == "anchor"
+    assert follow_2d.targeting.primary_target.ref == "Player"
+    assert follow_2d.spatial.rotation.mode == "fixed_angle"
+
+    top_down = p.default_fix(
+        CameraRigSchema(
+            name="WrongTopDown", variant="cinemachine_topdown", mode_id="ThirdPersonChase",
+            anchor={"type": "camera_focus", "transform": "CameraFocus"},
+            spatial={"position": {"base": [0, 3, -6]}},
+        ),
+        "cinemachine_topdown",
+    )
+    assert top_down.mode_id == "TopDown"
+    assert top_down.anchor.type == "player_root"
+    assert top_down.anchor.transform == "Player"
+    assert top_down.targeting.primary_target.type == "camera_focus"
+    assert top_down.targeting.primary_target.ref == "CameraFocus"
+    assert top_down.spatial.position.base == (0.0, 12.0, -4.0)
+    assert len(top_down.meta["camera_contract_repairs"]) >= 3
+
+    isometric = p.default_fix(
+        CameraRigSchema(
+            name="Iso", variant="cinemachine_topdown", mode_id="Isometric",
+            spatial={"position": {"base": [-10, 10, -10]},
+                     "rotation": {"mode": "fixed_angle"}},
+        ),
+        "cinemachine_topdown",
+    )
+    assert isometric.mode_id == "Isometric"
+    assert isometric.spatial.position.base == (-10.0, 10.0, -10.0)
+    assert isometric.spatial.rotation.mode == "fixed_angle"
+
+    vehicle = p.default_fix(
+        CameraRigSchema(
+            name="WrongVehicle", variant="vehicle_chase", mode_id="Orbit",
+            category="player",
+            anchor={"type": "player_root", "transform": "Player"},
+            targeting={"primary_target": {"type": "anchor", "ref": "Player"}},
+            spatial={"rotation": {"mode": "fixed_angle"}},
+        ),
+        "vehicle_chase",
+    )
+    assert vehicle.mode_id == "VehicleChase"
+    assert vehicle.category == "vehicle"
+    assert vehicle.anchor.type == "vehicle_root"
+    assert vehicle.targeting.primary_target.type == "camera_focus"
+    assert vehicle.targeting.primary_target.ref == "CameraFocus"
+    assert vehicle.spatial.rotation.mode == "look_at_anchor"
+
+    p.write_files(first_person, "first_person", tmp_path)
+    cs = (tmp_path / "Scripts" / "WrongFps.cs").read_text(encoding="utf-8")
+    assert 'cameraModeId = "FirstPerson"' in cs
+    assert 'primaryTargetRef = "Player/Eye"' in cs
+    assert "public Transform CameraResolvedTarget => _target;" in cs
 
 
 def test_camera_contract_validation_and_debug_are_emitted(tmp_path, dummy_config):
@@ -333,6 +438,8 @@ def test_isometric_camera_aims_at_focus_not_position_offset(tmp_path, dummy_conf
     cs = (tmp_path / "Scripts" / "IsoCam.cs").read_text(encoding="utf-8")
     assert "transform.LookAt(_target.position);" in cs
     assert "transform.LookAt(_target.position + anchorOffset);" not in cs
+    assert 'primaryTargetRef = "CameraFocus"' in cs
+    assert "string focusRef = string.IsNullOrEmpty(primaryTargetRef)" in cs
 
 
 def test_vehicle_chase_fixer_uses_low_wide_racing_defaults(dummy_config):

@@ -482,11 +482,180 @@ class CameraRigPipeline(UnityMicroPipeline):
         "board_framing": "BoardFraming",
     }
     _MODE_CATEGORIES: dict[str, CameraCategory] = {
+        "rts_pan_zoom": "environment",
         "vehicle_chase": "vehicle",
         "cinematic_dolly": "cinematic",
         "board_framing": "2d",
         "follow_2d": "2d",
     }
+    # A camera variant is a deterministic backend instruction, not a stylistic
+    # hint.  The Pipeline LLM may choose values inside the typed contract, but
+    # it cannot turn a first-person rig into a third-person one merely by
+    # supplying schema-valid strings.  These are the facts implied by the
+    # variant itself; deliberately no framing offsets, FOVs, smoothing values,
+    # or user-authored secondary targets are included here.
+    _VARIANT_MODE_IDS: dict[str, frozenset[str]] = {
+        "follow": frozenset({"ThirdPersonChase"}),
+        "follow_2d": frozenset({"Follow2D"}),
+        "follow_2_5d": frozenset({"Follow2_5D"}),
+        "orbit": frozenset({"Orbit"}),
+        "first_person": frozenset({"FirstPerson"}),
+        "climbing_follow": frozenset({"ClimbingFollow"}),
+        "cinemachine_3p": frozenset({"ThirdPersonChase"}),
+        "cinemachine_topdown": frozenset({"TopDown", "Isometric"}),
+        "rts_pan_zoom": frozenset({"RTSPanZoom"}),
+        "vehicle_chase": frozenset({"VehicleChase"}),
+        "cinematic_dolly": frozenset({"CinematicDolly"}),
+        "board_framing": frozenset({"BoardFraming"}),
+    }
+    _VARIANT_ANCHORS: dict[str, tuple[CameraAnchorType, str]] = {
+        "follow": ("player_root", "Player"),
+        "follow_2d": ("player_root", "Player"),
+        "follow_2_5d": ("player_root", "Player"),
+        "orbit": ("player_root", "Player"),
+        "first_person": ("player_eye", "Player"),
+        "climbing_follow": ("player_root", "Player"),
+        "cinemachine_3p": ("player_root", "Player"),
+        "cinemachine_topdown": ("player_root", "Player"),
+        "rts_pan_zoom": ("player_root", "Player"),
+        "vehicle_chase": ("vehicle_root", "Player"),
+        "cinematic_dolly": ("player_root", "Player"),
+        "board_framing": ("board", "Board"),
+    }
+    _VARIANT_TARGETS: dict[str, tuple[CameraTargetType, str]] = {
+        "follow": ("camera_focus", "CameraFocus"),
+        "follow_2d": ("anchor", "Player"),
+        "follow_2_5d": ("camera_focus", "CameraFocus"),
+        "orbit": ("camera_focus", "CameraFocus"),
+        "first_person": ("anchor", "Player/Eye"),
+        "climbing_follow": ("camera_focus", "CameraFocus"),
+        "cinemachine_3p": ("camera_focus", "CameraFocus"),
+        "cinemachine_topdown": ("camera_focus", "CameraFocus"),
+        "rts_pan_zoom": ("camera_focus", "CameraFocus"),
+        "vehicle_chase": ("camera_focus", "CameraFocus"),
+        "cinematic_dolly": ("camera_focus", "CameraFocus"),
+        "board_framing": ("anchor", "Board"),
+    }
+    _VARIANT_ROTATIONS: dict[str, frozenset[CameraRotationMode]] = {
+        "follow": frozenset({"look_at_anchor"}),
+        "follow_2d": frozenset({"fixed_angle"}),
+        "follow_2_5d": frozenset({"look_at_anchor"}),
+        "orbit": frozenset({"look_at_anchor", "orbit"}),
+        "first_person": frozenset({"follow_anchor"}),
+        "climbing_follow": frozenset({"look_at_anchor"}),
+        "cinemachine_3p": frozenset({"look_at_anchor"}),
+        # Isometric composition may describe its presentation as fixed-angle,
+        # while the generated rig still aims at CameraFocus.  Both names are
+        # therefore meaningful and valid for this shared legacy variant.
+        "cinemachine_topdown": frozenset({"look_at_anchor", "fixed_angle"}),
+        "rts_pan_zoom": frozenset({"fixed_angle"}),
+        "vehicle_chase": frozenset({"look_at_anchor"}),
+        "cinematic_dolly": frozenset({"look_at_anchor"}),
+        "board_framing": frozenset({"fixed_angle"}),
+    }
+    _TOPDOWN_DEFAULT_POSITIONS: dict[str, Vector3] = {
+        "TopDown": (0.0, 12.0, -4.0),
+        "Isometric": (-10.0, 10.0, -10.0),
+    }
+
+    def _after_write(self, schema, variant: str, out_dir: Path, name: str) -> None:
+        """Keep CameraRig the sole runtime owner of camera pose and targeting.
+
+        UnityMicroPipeline normally emits an atom-derived ``CameraDefaultBehavior``
+        companion. Its generic ``LookAt(Player)`` conflicts with contract-owned
+        fixed-angle 2D cameras and eye-mounted first-person cameras, and can
+        overwrite the deliberately resolved primary target. Camera motion is
+        already implemented by CameraRig's deterministic LateUpdate, so no
+        separate behavior component is valid for this micro.
+        """
+        return
+
+    def _record_contract_repairs(self, schema, variant: str, repairs: list[str]) -> None:
+        """Persist and report deterministic corrections to variant semantics."""
+        if not repairs:
+            return
+        existing = schema.meta.get("camera_contract_repairs", [])
+        if not isinstance(existing, list):
+            existing = [str(existing)]
+        recorded = [f"{variant}: {repair}" for repair in repairs]
+        schema.meta["camera_contract_repairs"] = [*existing, *recorded]
+        self._fix("camera contract variant repair: " + "; ".join(recorded))
+
+    def _enforce_variant_contract(self, schema, variant: str):
+        """Repair contract values that contradict the requested camera variant.
+
+        Pydantic guarantees that fields contain legal vocabulary, but a legal
+        value can still be incompatible with the deterministic micro variant.
+        The variant is compiler-owned ground truth, so those contradictions are
+        repaired rather than silently passed through to generated C#.
+        """
+        repairs: list[str] = []
+
+        valid_modes = self._VARIANT_MODE_IDS.get(variant)
+        if valid_modes and schema.mode_id not in valid_modes:
+            replacement = self._MODE_IDS[variant]
+            repairs.append(f"mode_id {schema.mode_id!r} -> {replacement!r}")
+            schema.mode_id = replacement
+
+        expected_category = self._MODE_CATEGORIES.get(variant, "player")
+        if schema.category != expected_category:
+            repairs.append(f"category {schema.category!r} -> {expected_category!r}")
+            schema.category = expected_category
+
+        expected_anchor = self._VARIANT_ANCHORS.get(variant)
+        if expected_anchor is not None:
+            anchor_type, anchor_transform = expected_anchor
+            if schema.anchor.type != anchor_type:
+                repairs.append(
+                    f"anchor.type {schema.anchor.type!r} -> {anchor_type!r}")
+                schema.anchor.type = anchor_type
+            if schema.anchor.transform != anchor_transform:
+                repairs.append(
+                    f"anchor.transform {schema.anchor.transform!r} -> {anchor_transform!r}")
+                schema.anchor.transform = anchor_transform
+
+        expected_target = self._VARIANT_TARGETS.get(variant)
+        if expected_target is not None:
+            target_type, target_ref = expected_target
+            primary = schema.targeting.primary_target
+            if primary.type != target_type:
+                repairs.append(
+                    f"targeting.primary_target.type {primary.type!r} -> {target_type!r}")
+                primary.type = target_type
+            if primary.ref != target_ref:
+                repairs.append(
+                    f"targeting.primary_target.ref {primary.ref!r} -> {target_ref!r}")
+                primary.ref = target_ref
+
+        valid_rotations = self._VARIANT_ROTATIONS.get(variant)
+        if valid_rotations and schema.spatial.rotation.mode not in valid_rotations:
+            replacement = sorted(valid_rotations)[0]
+            repairs.append(
+                f"spatial.rotation.mode {schema.spatial.rotation.mode!r} -> {replacement!r}")
+            schema.spatial.rotation.mode = replacement
+
+        if variant == "first_person":
+            if schema.anchor.offset != (0.0, 0.0, 0.0):
+                repairs.append("anchor.offset -> (0.0, 0.0, 0.0)")
+                schema.anchor.offset = (0.0, 0.0, 0.0)
+            if schema.spatial.position.base != (0.0, 0.0, 0.0):
+                repairs.append("spatial.position.base -> (0.0, 0.0, 0.0)")
+                schema.spatial.position.base = (0.0, 0.0, 0.0)
+
+        if variant == "cinemachine_topdown":
+            default_position = self._TOPDOWN_DEFAULT_POSITIONS[schema.mode_id]
+            if schema.spatial.position.base == (0.0, 3.0, -6.0):
+                repairs.append(
+                    f"spatial.position.base generic default -> {default_position!r}")
+                schema.spatial.position.base = default_position
+
+        # The legacy fields are still emitted in a few templates and written
+        # into schema sidecars.  Keep them an exact mirror after a semantic
+        # repair, rather than leaving them as misleading stale metadata.
+        base = schema.spatial.position.base
+        schema.offset_x, schema.offset_y, schema.offset_z = base
+        self._record_contract_repairs(schema, variant, repairs)
+        return schema
 
     def _migrate_legacy_contract(self, schema, variant: str):
         """Populate Camera Contract v1 from the legacy flat camera fields.
@@ -595,6 +764,7 @@ class CameraRigPipeline(UnityMicroPipeline):
         if variant == "first_person":
             schema.offset_x = schema.offset_y = schema.offset_z = 0.0
         schema = self._migrate_legacy_contract(schema, variant)
+        schema = self._enforce_variant_contract(schema, variant)
         # hoist_field_inits: this generator's template renders awake_extra,
         # so a CS0236 initializer can be re-homed there instead of dropped.
         lint_extensible(schema, reserved_fields=self._RESERVED_FIELD_NAMES,
