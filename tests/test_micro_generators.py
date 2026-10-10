@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from src.micro import REGISTRY
 from src.micro.controller     import ControllerPipeline, ControllerSchema, WeaponDef
@@ -237,12 +238,11 @@ def test_controller_add_ammo_reserve_flow(dummy_config):
 @pytest.mark.parametrize("variant", ["2d_topdown", "third_person"])
 def test_shoot_controller_emits_dimension_neutral_projectile_foundation(
         tmp_path, dummy_config, variant):
-    """The physical-projectile core is reusable, but does not launch rounds.
+    """The impact core remains reusable, but default Shoot is still hitscan.
 
-    Shoot remains the existing hitscan delivery in this slice.  These two
-    controller variants prove the shared helper emits for both Unity physics
-    stacks, sends damage through the established Health seam exactly once, and
-    stays separate from raycast/rigidbody launch policy.
+    These two controller variants prove the shared helper emits for both Unity
+    physics stacks, sends damage through the established Health seam exactly
+    once, and does not make the default controller launch physical rounds.
     """
     p = ControllerPipeline(dummy_config)
     s = ControllerSchema(name="Shooter", variant=variant, input_backend="legacy",
@@ -259,10 +259,80 @@ def test_shoot_controller_emits_dimension_neutral_projectile_foundation(
     assert "private void OnCollisionEnter2D(Collision2D collision)" in projectile
     assert "private void OnTriggerEnter2D(Collider2D other)" in projectile
     assert 'SendMessageUpwards("TakeDamage", damage' in projectile
-    assert "if (_hasImpacted || other == null || IsOwner(other)) return;" in projectile
-    assert "Physics.Raycast" not in projectile
-    assert "Rigidbody" not in projectile
+    assert "if (_released || _hasImpacted || other == null || IsOwner(other)) return;" in projectile
+    controller = (tmp_path / "Scripts" / "Shooter.cs").read_text(encoding="utf-8")
+    assert "Physics.Raycast" in controller
+    assert "LaunchProjectile" not in controller
+    assert not (tmp_path / "Scripts" / "ProjectilePool.cs").exists()
     assert projectile.count("{") == projectile.count("}")
+
+
+def test_weapon_delivery_rejects_unknown_mode():
+    """Delivery is a closed contract; prompt text cannot select arbitrary code."""
+    with pytest.raises(ValidationError, match="delivery"):
+        WeaponDef(delivery="homing_laser")
+
+
+def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dummy_config):
+    """P2 wires physical delivery only from an explicit per-weapon declaration."""
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(
+        name="BallisticShooter", variant="first_person", input_backend="legacy",
+        abilities=["shoot"],
+        weapons=[WeaponDef(
+            name="Rifle", damage=40.0, delivery="projectile_3d",
+            projectile_speed=90.0, projectile_use_gravity=True,
+            projectile_lifetime=3.5, projectile_pool_size=2,
+            projectile_pool_growth="grow_by_one",
+        )],
+    )
+    s = p.default_fix(s, "first_person")
+
+    assert p.write_files(s, "first_person", tmp_path) == 4
+    controller = (tmp_path / "Scripts" / "BallisticShooter.cs").read_text(encoding="utf-8")
+    pool = (tmp_path / "Scripts" / "ProjectilePool.cs").read_text(encoding="utf-8")
+    projectile = (tmp_path / "Scripts" / "ProjectileController.cs").read_text(encoding="utf-8")
+
+    assert 'new string[] { "projectile_3d" }' in controller
+    assert "if (weaponDelivery[_weaponIndex] == \"projectile_3d\")" in controller
+    assert "if (!LaunchProjectile()) return;" in controller
+    assert "_currentAmmo--;" in controller
+    assert "projectile.Configure(" in controller
+    assert "weaponDamage[_weaponIndex], gameObject," in controller
+    assert "projectile.Launch(aimRay.direction.normalized * projectileSpeed[_weaponIndex]);" in controller
+    assert "var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);" in controller
+    assert "prefab.AddComponent<Rigidbody>();" in controller
+    assert "prefab.AddComponent<ProjectileController>();" in controller
+
+    assert "public enum ProjectilePoolGrowthPolicy" in pool
+    assert "Fixed," in pool and "GrowByOne," in pool
+    assert "_prefab.GetComponent<Rigidbody>()" in pool
+    assert "_prefab.GetComponent<Collider>()" in pool
+    assert "_prefab.GetComponent<ProjectileController>()" in pool
+    assert "_growthPolicy == ProjectilePoolGrowthPolicy.GrowByOne" in pool
+    assert "if (projectile == null || !_borrowed.Remove(projectile)) return;" in pool
+
+    assert "public void SetPoolReturn" in projectile
+    assert "public void ResetForPool()" in projectile
+    assert "_body.linearVelocity = Vector3.zero;" in projectile
+    assert "_body.useGravity = false;" in projectile
+    assert "effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);" in projectile
+    assert "if (_released) return;" in projectile
+    assert "_returnToPool(this);" in projectile
+    assert "if (_released || _hasImpacted || other == null || IsOwner(other)) return;" in projectile
+
+
+def test_3d_projectile_delivery_abstains_for_2d_controller(tmp_path, dummy_config):
+    p = ControllerPipeline(dummy_config)
+    s = ControllerSchema(
+        name="TwoDShooter", variant="2d_topdown", input_backend="legacy",
+        abilities=["shoot"], weapons=[WeaponDef(delivery="projectile_3d")],
+    )
+    s = p.default_fix(s, "2d_topdown")
+
+    assert "requires a 3D Controller.cs.j2 variant" in s.meta["projectile_delivery_abstain"]
+    with pytest.raises(ValueError, match="controller.projectile"):
+        p.write_files(s, "2d_topdown", tmp_path)
 
 
 def test_non_shoot_controller_does_not_emit_projectile_foundation(tmp_path, dummy_config):

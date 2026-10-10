@@ -4,6 +4,7 @@
 {% import "_inject.j2" as inject -%}
 {% set is_bike = variant == "vehicle_bike" -%}
 {% set wheel_count = 2 if is_bike else 4 -%}
+{% set has_physical_projectiles = (s.weapons | selectattr("delivery", "equalto", "projectile_3d") | list | length) > 0 -%}
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -130,7 +131,16 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private int[]    weaponMagazineSize = new int[]   { {% for w in s.weapons %}{{ w.magazine_size }}{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private float[]  weaponReloadTime   = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.reload_time) }}f{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private float[]  weaponRange        = new float[] { {% for w in s.weapons %}{{ "%.1f"|format(w.shoot_range) }}f{{ "" if loop.last else ", " }}{% endfor %} };
-    [Tooltip("Ammo a reload draws from once the magazine is empty — an inventory's RestoreAmmo item effect refills this.")]
+{% if has_physical_projectiles %}    [Header("Physical 3D Projectiles")]
+    [Tooltip("Optional launch origin. The controller transform is used when this is unassigned.")]
+    [SerializeField] private Transform projectileMuzzle = null;
+    [SerializeField] private string[] weaponDelivery = new string[] { {% for w in s.weapons %}"{{ w.delivery }}"{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[] projectileSpeed = new float[] { {% for w in s.weapons %}{{ "%.1f"|format(w.projectile_speed) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private bool[] projectileUseGravity = new bool[] { {% for w in s.weapons %}{{ "true" if w.projectile_use_gravity else "false" }}{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[] projectileLifetime = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.projectile_lifetime) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private int[] projectilePoolSize = new int[] { {% for w in s.weapons %}{{ w.projectile_pool_size }}{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private bool[] projectilePoolGrows = new bool[] { {% for w in s.weapons %}{{ "true" if w.projectile_pool_growth == "grow_by_one" else "false" }}{{ "" if loop.last else ", " }}{% endfor %} };
+{% endif %}    [Tooltip("Ammo a reload draws from once the magazine is empty — an inventory's RestoreAmmo item effect refills this.")]
     [SerializeField] private int      startingReserveAmmo = {{ s.starting_reserve_ammo }};
 {% endif %}
 {% if "aim_down_sights" in s.abilities %}
@@ -328,7 +338,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private int   _currentAmmo;
     private int   _reserveAmmo;
     private bool  _isReloading;
-{% endif %}
+{% if has_physical_projectiles %}    private ProjectilePool[] _projectilePools;
+{% endif %}{% endif %}
 {% if "aim_down_sights" in s.abilities %}
     private bool  _isAiming;
     private float _defaultFov;
@@ -542,7 +553,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if "shoot" in s.abilities %}
         _currentAmmo = weaponMagazineSize[_weaponIndex];
         _reserveAmmo = startingReserveAmmo;
-{% endif %}
+{% if has_physical_projectiles %}        InitializeProjectilePools();
+{% endif %}{% endif %}
 {% if "throw_grenade" in s.abilities %}
         _grenadesLeft = maxGrenades;
 {% endif %}
@@ -1439,7 +1451,15 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if "shoot" in s.abilities %}
     private void TryShoot()
     {
-        _lastFireTime = Time.time;
+{% if has_physical_projectiles %}        if (weaponDelivery[_weaponIndex] == "projectile_3d")
+        {
+            if (!LaunchProjectile()) return;
+            _lastFireTime = Time.time;
+            _currentAmmo--;
+            if (muzzleFlash != null) muzzleFlash.Play();
+            return;
+        }
+{% endif %}        _lastFireTime = Time.time;
         _currentAmmo--;
         if (muzzleFlash != null) muzzleFlash.Play();
         Ray ray = Camera.main != null
@@ -1448,7 +1468,61 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         if (Physics.Raycast(ray, out RaycastHit hit, weaponRange[_weaponIndex]))
             hit.collider.SendMessage("TakeDamage", weaponDamage[_weaponIndex], SendMessageOptions.DontRequireReceiver);
     }
+{% if has_physical_projectiles %}    private void InitializeProjectilePools()
+    {
+        _projectilePools = new ProjectilePool[weaponNames.Length];
+        for (int i = 0; i < weaponNames.Length; i++)
+        {
+            if (weaponDelivery[i] != "projectile_3d") continue;
 
+            var owner = new GameObject("Projectile3DPool_" + i);
+            owner.transform.SetParent(transform, false);
+            var pool = owner.AddComponent<ProjectilePool>();
+            var prefab = BuildProjectile3DPrefab(i, owner.transform);
+            pool.Initialize(
+                prefab,
+                projectilePoolSize[i],
+                projectilePoolGrows[i]
+                    ? ProjectilePoolGrowthPolicy.GrowByOne
+                    : ProjectilePoolGrowthPolicy.Fixed);
+            _projectilePools[i] = pool;
+        }
+    }
+
+    private GameObject BuildProjectile3DPrefab(int weaponIndex, Transform poolOwner)
+    {
+        var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        prefab.name = "Projectile3DPrefab_" + weaponIndex;
+        prefab.transform.SetParent(poolOwner, false);
+        prefab.transform.localScale = Vector3.one * 0.16f;
+        var body = prefab.AddComponent<Rigidbody>();
+        body.isKinematic = true;
+        body.useGravity = false;
+        prefab.AddComponent<ProjectileController>();
+        prefab.SetActive(false);
+        return prefab;
+    }
+
+    private bool LaunchProjectile()
+    {
+        var pool = _projectilePools != null ? _projectilePools[_weaponIndex] : null;
+        if (pool == null) return false;
+
+        var projectile = pool.Borrow();
+        if (projectile == null) return false;
+
+        Transform muzzle = projectileMuzzle != null ? projectileMuzzle : transform;
+        Ray aimRay = Camera.main != null
+            ? Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
+            : new Ray(muzzle.position, muzzle.forward);
+        projectile.transform.SetPositionAndRotation(muzzle.position, Quaternion.LookRotation(aimRay.direction));
+        projectile.Configure(
+            weaponDamage[_weaponIndex], gameObject,
+            projectileLifetime[_weaponIndex], projectileUseGravity[_weaponIndex]);
+        projectile.Launch(aimRay.direction.normalized * projectileSpeed[_weaponIndex]);
+        return true;
+    }
+{% endif %}
     private IEnumerator ReloadRoutine()
     {
         _isReloading = true;
