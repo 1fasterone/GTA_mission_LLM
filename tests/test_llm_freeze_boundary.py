@@ -231,11 +231,17 @@ def test_spatial_acceptance_gate_refuses_generation_before_step_6(config, monkey
         "prepare_spatial_layout",
         lambda *_args, **_kwargs: {
             "world_layout": {"layout": {"messages": []}},
-            "spatial_validation": {"status": "fail"},
+            "spatial_validation": {
+                "status": "fail",
+                "errors": ["[spatial.strict] world_bounds: 1 position outside the envelope"],
+            },
         },
     )
 
-    with pytest.raises(SpatialPipelineError, match="refusing generation"):
+    with pytest.raises(
+        SpatialPipelineError,
+        match="world_bounds: 1 position outside the envelope",
+    ):
         pipeline.run("an arena game")
 
 

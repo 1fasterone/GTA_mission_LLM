@@ -2459,9 +2459,17 @@ class UnityPipeline:
         if _spatial_status == "fail":
             _acceptance = self.config.get("acceptance", {}) or {}
             if _acceptance.get("require_spatial_validation", False):
+                _spatial_errors = _spatial_bundle["spatial_validation"].get("errors", [])
+                if not isinstance(_spatial_errors, list):
+                    _spatial_errors = []
+                _detail = "; ".join(
+                    str(error).strip() for error in _spatial_errors
+                    if str(error).strip()
+                )
                 raise SpatialPipelineError(
                     "Spatial validation preflight found hard findings; refusing "
                     "generation until the schema/layout is corrected"
+                    + (f": {_detail}" if _detail else "")
                 )
             self._warn(
                 "Spatial validation preflight found hard findings; the report "
