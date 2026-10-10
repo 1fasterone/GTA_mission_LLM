@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from src.unity_schema import EntitySpec, UnitySchema
+from src.unity_spatial_pipeline import prepare_spatial_layout
 from src.unity_spatial_realization import realize_spatial_layout
 from src.unity_spatial_roles import derive_spatial_roles
 from src.unity_spatial_validation import (
@@ -112,6 +113,87 @@ def test_validation_allows_separate_volume_layers_to_share_xz_footprints() -> No
         check for check in report["checks"] if check["check"] == "group_footprints"
     )
     assert group_check["status"] == "pass"
+
+
+def test_validation_uses_realized_instances_for_distributed_group_footprints() -> None:
+    """Distributed scenery has several valid stops, not one solid disk.
+
+    Every stop is packed against the others, but aggregating them around one
+    centroid creates large overlapping enclosing circles.  Slice 6.6 must
+    validate the baked runtime positions rather than reject that valid layout.
+    """
+    source = UnitySchema(
+        project_name="DistributedValidation",
+        company_name="Test",
+        description="A ground arena with distributed scenery.",
+        game_type="3D",
+        platform="pc",
+        render_pipeline="URP",
+        locomotion="walk",
+        scenes=["Main"],
+        entities=[
+            EntitySpec(name="Player", kind="player", tag="Player"),
+            *[
+                EntitySpec(
+                    name=f"Scenery{index}", kind="prop", count=6,
+                    placement="scatter", spacing=2.0, scale=1.0,
+                )
+                for index in range(5)
+            ],
+        ],
+    )
+
+    prepared = prepare_spatial_layout(source, reset_generated_layout=True)
+    group_check = next(
+        check for check in prepared["spatial_validation"]["checks"]
+        if check["check"] == "group_footprints"
+    )
+
+    assert not prepared["spatial_validation"]["errors"]
+    assert group_check == {
+        "check": "group_footprints",
+        "status": "pass",
+        "detail": "0 realized group footprint overlap(s)",
+    }
+
+
+def test_validation_rejects_realized_cross_group_instance_overlap() -> None:
+    """The realized-instance path must still reject a physical collision."""
+    source = UnitySchema(
+        project_name="CrossGroupCollision",
+        company_name="Test",
+        description="A ground arena.",
+        game_type="3D",
+        platform="pc",
+        render_pipeline="URP",
+        locomotion="walk",
+        scenes=["Main"],
+        entities=[
+            EntitySpec(name="Player", kind="player", tag="Player"),
+            EntitySpec(name="Crate", kind="prop"),
+        ],
+    )
+    roles = derive_spatial_roles(source)
+    realized = realize_spatial_layout(source.model_copy(deep=True))
+    player = next(row for row in realized["layout"]["entities"]
+                  if row["entity"] == "Player")
+    crate = next(row for row in realized["layout"]["entities"]
+                 if row["entity"] == "Crate")
+    crate["origin_offset"] = list(player["origin_offset"])
+    crate["group_radius"] = float(player["group_radius"])
+    crate["elevation"] = float(player["elevation"])
+    crate["instance_positions"] = [list(player["instance_positions"][0])]
+
+    report = validate_spatial_layout(
+        source, world_layout=realized, spatial_roles=roles
+    )
+    group_check = next(
+        check for check in report["checks"] if check["check"] == "group_footprints"
+    )
+
+    assert report["status"] == "fail"
+    assert group_check["status"] == "fail"
+    assert group_check["detail"] == "1 realized group footprint overlap(s)"
 
 
 def test_validation_marks_airspace_reachability_as_not_applicable() -> None:
