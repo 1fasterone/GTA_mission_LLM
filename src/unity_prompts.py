@@ -10,7 +10,13 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 
+from .unity_schema import FEATURE_FLAG_VALUES
+
 _log = logging.getLogger(__name__)
+
+# One closed vocabulary serves both schema validation and the LLM instruction.
+# Rendering it here removes a second manually-maintained feature list.
+FEATURE_FLAG_GUIDANCE = " | ".join(FEATURE_FLAG_VALUES)
 
 # ── STEP 2: Project concept ───────────────────────────────────────────────────
 
@@ -130,9 +136,7 @@ VISUAL STYLES — use only one of:
   (drives lighting, color palette defaults, and material smoothness)
 
 FEATURE FLAGS — use only these (as many as apply):
-  physics | ui_toolkit | input_system | cinemachine | tilemaps | navmesh |
-  audio | networking | addressables | localization | timeline | animation_rigging |
-  inventory | dialogue | npc_dialog | vfx | scene_transition
+  """ + FEATURE_FLAG_GUIDANCE + """
   (npc_dialog = spoken/voiced NPCs; vfx = particle/impact effects;
    scene_transition = multi-scene projects that fade/load between scenes)
 

@@ -1,6 +1,6 @@
 """Lossy Unity schema normalization must remain visible in the canonical IR."""
 
-from src.unity_schema import (NORMALIZATION_FORMAT, UnitySchema,
+from src.unity_schema import (FEATURE_FLAG_VALUES, NORMALIZATION_FORMAT, UnitySchema,
                               normalization_issues)
 
 
@@ -54,6 +54,15 @@ def test_aliases_are_not_reported_as_lossy_repairs():
     assert schema.unity_version == "6000.4"
     assert normalization_issues(schema) == []
     assert "normalization" not in schema.meta
+
+
+def test_documented_feature_vocabulary_is_accepted_without_loss():
+    schema = UnitySchema.model_validate(_raw_schema(
+        features=list(FEATURE_FLAG_VALUES),
+    ))
+
+    assert schema.features == list(FEATURE_FLAG_VALUES)
+    assert normalization_issues(schema) == []
 
 
 def test_saved_lossy_report_survives_canonical_replay():
