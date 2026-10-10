@@ -1334,6 +1334,28 @@ def test_inventory_fixer_grid_syncs_slot_count(dummy_config):
     assert s.slot_count == 18
 
 
+def test_inventory_harden_comments_unbound_braced_pickup_loop(dummy_config):
+    """A bad foreach header must remove its whole body, not leave it live."""
+    p = InventoryPipeline(dummy_config)
+    s = InventorySchema(
+        name="Inv",
+        variant="slot_based",
+        update_extra=(
+            "foreach (var itemDef in _ammoPool.ToArray())\n"
+            "{\n"
+            "    for (int i = 0; i < Slots.Count; i++) Add(itemDef, 1);\n"
+            "}"
+        ),
+    )
+    s = p.default_fix(s, "slot_based")
+    msgs = p.harden(s)
+    assert "foreach" in s.update_extra
+    assert "AUDIT: removed loop containing unbindable reference(s)" in s.update_extra
+    assert all(line.lstrip().startswith("//") or not line.strip()
+               for line in s.update_extra.splitlines())
+    assert any("_ammoPool" in msg for msg in msgs)
+
+
 @pytest.mark.parametrize("variant", InventoryPipeline.variants)
 def test_inventory_renders_every_variant(tmp_path, dummy_config, variant):
     p = InventoryPipeline(dummy_config)
@@ -2638,6 +2660,16 @@ class TestVoidMethodNegated:
         out, names = self._f("_isPaused = !SetPaused(true);")
         assert out.strip().startswith("//")
         assert names == {"!SetPaused(...)"}
+
+    def test_void_call_assigned_as_a_value_is_neutralized(self):
+        from src.micro.code_fields import lint_void_method_assigned
+
+        out, names = lint_void_method_assigned(
+            "if (_resumeButton != null) _resumeButton.interactable = SetPaused(true);",
+            void_methods=frozenset({"SetPaused"}),
+        )
+        assert out.strip().startswith("//")
+        assert names == {"SetPaused(...)"}
 
     def test_unrelated_negation_is_left_alone(self):
         text = "if (!_isPaused) Show();"

@@ -158,6 +158,14 @@ def drop_owned_scripts(scripts: list, composed_units: list) -> list:
     the model invents a `type: custom` script that shadows a micro.
     """
     reserved_names = {u.class_name for u in composed_units}
+    # A shooting controller also writes the shared ProjectileController support
+    # class beside its primary controller class.  It is not a ComposedUnit of
+    # its own, so reserve it explicitly from the fixed controller ability list.
+    # Keep the reservation conditional: a custom class with this name remains
+    # valid when the composed controller cannot emit the support file.
+    if any(u.kind == "controller" and "shoot" in u.abilities
+           for u in composed_units):
+        reserved_names.add("ProjectileController")
     return [s for s in scripts
             if s.type not in COVERED_SCRIPT_TYPES and s.name not in reserved_names]
 

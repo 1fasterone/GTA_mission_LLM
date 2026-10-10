@@ -24,6 +24,14 @@ _PKG_ID_RE = re.compile(r"^com\.[a-z][a-z0-9._-]+$")
 MCP_BRIDGE_PKG_ID = "com.coplaydev.unity-mcp"
 MCP_BRIDGE_GIT_URL = "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main"
 
+# This was historically offered by the local package lookup as the answer to
+# ordinary Unity physics requests.  It is a separate experimental package, not
+# the built-in Rigidbody/Collider API generated projects use.  On Unity 6000 it
+# imports without the physics implementation assemblies and emits hundreds of
+# errors from its own PackageCache sources.  Runtime 2D/3D physics instead live
+# in the built-in modules below.
+_INCOMPATIBLE_2D_PHYSICS_PACKAGE = "com.unity.2d.physics"
+
 # Standard built-in engine modules. Unity 6 trims built-in modules from a
 # freshly-written manifest unless they are listed explicitly — so a generated
 # project with a lean manifest is missing the engine surface that both ordinary
@@ -87,6 +95,8 @@ def _local_resolve(description: str, db: dict) -> Optional[str]:
 
 
 def _get_version(pkg_id: str, unity_version: str, db: dict) -> Optional[str]:
+    if pkg_id in BUILTIN_MODULES:
+        return BUILTIN_MODULES[pkg_id]
     versions = db.get("versions", {})
     pkg_versions = versions.get(pkg_id, {})
     if unity_version in pkg_versions:
@@ -175,6 +185,13 @@ class UnityResolver:
         """
         # Already a valid package ID?
         desc = description.strip()
+        if desc == _INCOMPATIBLE_2D_PHYSICS_PACKAGE:
+            replacement = "com.unity.modules.physics2d"
+            console.print(
+                f"  [yellow]FIX[/]  {desc} is incompatible with generated Unity projects "
+                f"— using {replacement}"
+            )
+            return replacement, _get_version(replacement, unity_version, self.db)
         if _PKG_ID_RE.match(desc):
             version = _get_version(desc, unity_version, self.db)
             return desc, version
@@ -211,6 +228,18 @@ class UnityResolver:
         self._reconcile_atmosphere_version(schema)
 
         for pkg in schema.packages:
+            if pkg.package_id == _INCOMPATIBLE_2D_PHYSICS_PACKAGE:
+                replacement = (
+                    "com.unity.modules.physics2d"
+                    if schema.game_type == "2D"
+                    else "com.unity.modules.physics"
+                )
+                console.print(
+                    f"  [yellow]FIX[/]  {pkg.package_id} is incompatible with generated "
+                    f"Unity projects — using {replacement}"
+                )
+                pkg.package_id = replacement
+                pkg.version = _get_version(replacement, schema.unity_version, self.db)
             if not pkg.package_id:
                 pkg_id, version = self.resolve_package(pkg.description, schema.unity_version)
                 pkg.package_id = pkg_id
@@ -388,6 +417,12 @@ class UnityResolver:
         deps: dict[str, str] = {}
         for pkg in schema.packages:
             if not pkg.package_id:
+                continue
+            if pkg.package_id == _INCOMPATIBLE_2D_PHYSICS_PACKAGE:
+                console.print(
+                    f"  [yellow]WARN[/] Skipping incompatible package '{pkg.package_id}' "
+                    "— built-in physics modules are emitted instead"
+                )
                 continue
             version = pkg.version
             if not version:
