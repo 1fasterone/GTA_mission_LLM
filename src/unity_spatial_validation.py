@@ -92,6 +92,25 @@ def _points(row: Mapping[str, Any]) -> list[tuple[float, float, float]]:
     return points
 
 
+def _instance_footprint_radius(entity: Any, row: Mapping[str, Any]) -> float:
+    """Return one realized instance's conservative XZ footprint radius.
+
+    ``group_radius`` is an enclosing circle around every instance in a group.
+    It is a valid packing bound for cohesive groups, but a distributed scenery
+    group's centroid can sit between several independent stops.  It therefore
+    cannot decide whether two realized groups actually collide.  The layout
+    compiler measures catalog footprints as a ground-plane diameter, while the
+    primitive fallback uses the same half-extent as its group packer.
+    """
+    try:
+        measured = float(row.get("measured_footprint_m") or 0.0)
+    except (TypeError, ValueError):
+        measured = 0.0
+    if measured > 0.0:
+        return max(0.5, measured * float(entity.scale) * 0.5)
+    return max(0.5, float(entity.scale) * 0.6)
+
+
 def _nearest_polyline_distance(x: float, z: float, points: list[list[float]]) -> float:
     if not points:
         return math.inf
@@ -202,6 +221,7 @@ def validate_spatial_layout(
     else:
         group_overlap = 0
         row_list = list(rows.items())
+        entity_by_name = {str(entity.name): entity for entity in schema.entities}
         for index, (_left_name, left) in enumerate(row_list):
             left_radius = float(left.get("group_radius") or 0.0)
             left_origin = list(left.get("origin_offset") or [0.0, 0.0])
@@ -220,10 +240,41 @@ def validate_spatial_layout(
                 if right_radius <= 0.0:
                     continue
                 right_origin = list(right.get("origin_offset") or [0.0, 0.0])
-                if math.hypot(
+                aggregate_circles_overlap = math.hypot(
                     float(left_origin[0]) - float(right_origin[0]),
                     float(left_origin[1]) - float(right_origin[1]),
-                ) + 0.25 < left_radius + right_radius:
+                ) + 0.25 < left_radius + right_radius
+                if not aggregate_circles_overlap:
+                    continue
+
+                # ``group_radius`` is only a broad-phase cull.  A
+                # scenery-distributed group intentionally has several stops,
+                # so its enclosing circle can overlap another group's circle
+                # even while every realized instance is separated.  Decide
+                # this strict check from the baked placement contract, which
+                # is also what EntitySpawner consumes at runtime.
+                left_points = _points(left)
+                right_points = _points(right)
+                if not left_points or not right_points:
+                    # Preserve the existing conservative behavior for an
+                    # unbaked group: without realized instances, the enclosing
+                    # circles are the only deterministic geometry available.
+                    group_overlap += 1
+                    continue
+
+                left_instance_radius = _instance_footprint_radius(
+                    entity_by_name[_left_name], left
+                )
+                right_instance_radius = _instance_footprint_radius(
+                    entity_by_name[_right_name], right
+                )
+                if any(
+                    math.hypot(left_point[0] - right_point[0],
+                               left_point[2] - right_point[2]) + 0.25
+                    < left_instance_radius + right_instance_radius
+                    for left_point in left_points
+                    for right_point in right_points
+                ):
                     group_overlap += 1
         check(
             "group_footprints",
@@ -232,7 +283,6 @@ def validate_spatial_layout(
         )
 
         instance_overlap = 0
-        entity_by_name = {str(entity.name): entity for entity in schema.entities}
         for name, row in rows.items():
             points = _points(row)
             entity = entity_by_name[name]
