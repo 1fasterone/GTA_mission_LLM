@@ -17,6 +17,7 @@ from src.atoms import get_atom
 from src.unity_compose import subsystems_for
 from src.unity_prompts import (
     BRIEF_CAP_CHARS,
+    FEATURE_FLAG_GUIDANCE,
     GAMECONTEXT_SCHEMA_GUIDANCE,
     UNITY_SCHEMA_FILL_SYSTEM,
     UNITY_SCHEMA_FILL_USER,
@@ -27,6 +28,7 @@ from src.unity_prompts import (
     brief_block,
     render_multimodal_block,
 )
+from src.unity_schema import FEATURE_FLAG_VALUES
 from src.unity_schema import (
     AIBehaviorTree,
     AnimationSpec,
@@ -79,6 +81,11 @@ def test_schema_fill_prompt_includes_raw_brief():
         brief_block=brief_block("call it Nova, 7 rivals"))
     assert "call it Nova, 7 rivals" in prompt
     assert prompt.index("PROJECT CONCEPT") < prompt.index("USER'S ORIGINAL BRIEF")
+
+
+def test_feature_flag_guidance_is_derived_from_the_schema_vocabulary():
+    assert FEATURE_FLAG_GUIDANCE == " | ".join(FEATURE_FLAG_VALUES)
+    assert f"  {FEATURE_FLAG_GUIDANCE}" in full_prompt(block())
 
 
 def test_brief_block_caps_length():

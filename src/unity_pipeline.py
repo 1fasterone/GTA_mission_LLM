@@ -89,6 +89,20 @@ from .unity_build_provenance import write_build_provenance
 console = Console()
 
 
+def _normalization_failure_summary(issues: list[dict]) -> str:
+    """Render strict-normalization evidence without hiding rejected values."""
+    summaries: list[str] = []
+    for issue in issues:
+        field = str(issue.get("field", "unknown"))
+        dropped = issue.get("dropped")
+        if isinstance(dropped, list) and dropped:
+            values = ", ".join(repr(str(value)) for value in dropped)
+            summaries.append(f"{field} (dropped: {values})")
+        else:
+            summaries.append(field)
+    return "; ".join(summaries)
+
+
 def _compose_palette_rgb(schema) -> dict:
     """schema.color_palette -> {slot: {r,g,b}} for the composed lighting micro.
 
@@ -2004,13 +2018,10 @@ class UnityPipeline:
                             "reject_lossy_normalization", False):
                         _issues = normalization_issues(candidate)
                         if _issues:
-                            _fields = ", ".join(
-                                str(issue.get("field", "unknown"))
-                                for issue in _issues
-                            )
                             raise ValueError(
                                 "schema used unsupported values that required "
-                                f"compiler defaults: {_fields}"
+                                "compiler defaults: "
+                                f"{_normalization_failure_summary(_issues)}"
                             )
                     schema = candidate
                     break
@@ -2063,12 +2074,10 @@ class UnityPipeline:
                 "reject_lossy_normalization", False):
             _issues = normalization_issues(schema)
             if _issues:
-                _fields = ", ".join(
-                    str(issue.get("field", "unknown")) for issue in _issues
-                )
                 raise ValueError(
                     "offline schema used unsupported values that required "
-                    f"compiler defaults: {_fields}"
+                    "compiler defaults: "
+                    f"{_normalization_failure_summary(_issues)}"
                 )
         if geometry_only:
             schema.meta["greybox_mode"] = "geometry_only"

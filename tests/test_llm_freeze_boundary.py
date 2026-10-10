@@ -208,6 +208,19 @@ def test_acceptance_retries_a_lossy_schema_fill_instead_of_shipping_defaults(con
     assert pipeline.llm.chat.call_count == 3  # concept + two schema attempts
 
 
+def test_acceptance_error_names_dropped_feature_values(config):
+    config["acceptance"] = {"reject_lossy_normalization": True}
+    lossy = json.loads(_schema_json())
+    lossy["features"] = ["physics", "unsupported_projectile_feature"]
+    pipeline = UnityPipeline(config)
+    pipeline.llm.chat = MagicMock(side_effect=[
+        "An arena where the player stacks crates.", json.dumps(lossy), json.dumps(lossy),
+    ])
+
+    with pytest.raises(RuntimeError, match="dropped: 'unsupported_projectile_feature'"):
+        pipeline.run("an arena game")
+
+
 def test_spatial_acceptance_gate_refuses_generation_before_step_6(config, monkeypatch):
     config["acceptance"] = {"require_spatial_validation": True}
     pipeline = UnityPipeline(config)

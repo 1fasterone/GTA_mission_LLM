@@ -34,7 +34,11 @@ VisualStyle    = Literal["cartoon", "realistic", "low_poly", "stylized", "pixel_
 FeatureFlag    = Literal[
     "physics", "ui_toolkit", "input_system", "cinemachine",
     "tilemaps", "navmesh", "audio", "networking",
-    "addressables", "localization", "timeline", "animation_rigging"
+    "addressables", "localization", "timeline", "animation_rigging",
+    # Composition already owns these subsystems and Step 3 explicitly
+    # advertises them.  Keep this closed vocabulary in sync with that prompt
+    # so strict normalization never discards a documented feature request.
+    "inventory", "dialogue", "npc_dialog", "vfx", "scene_transition",
 ]
 TriggerType    = Literal["on_start", "on_enter_zone", "on_enemy_death", "on_pickup", "on_timer", "manual"]
 AudioCategory  = Literal["music", "sfx", "ambient", "voice"]
@@ -63,7 +67,8 @@ _VALID_PLATFORMS:     frozenset[str] = frozenset(get_args(Platform))
 _VALID_PIPELINES:     frozenset[str] = frozenset(get_args(RenderPipeline))
 _VALID_VERSIONS:      frozenset[str] = frozenset(get_args(UnityVersion))
 _VALID_SCRIPT_TYPES:  frozenset[str] = frozenset(get_args(ScriptType))
-_VALID_FEATURES:      frozenset[str] = frozenset(get_args(FeatureFlag))
+FEATURE_FLAG_VALUES:   tuple[str, ...] = get_args(FeatureFlag)
+_VALID_FEATURES:       frozenset[str] = frozenset(FEATURE_FLAG_VALUES)
 _VALID_VISUAL_STYLES: frozenset[str] = frozenset(get_args(VisualStyle))
 _VALID_TRIGGERS:      frozenset[str] = frozenset(get_args(TriggerType))
 _VALID_CATEGORIES:    frozenset[str] = frozenset(get_args(AudioCategory))
