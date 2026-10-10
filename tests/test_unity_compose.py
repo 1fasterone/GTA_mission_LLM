@@ -646,6 +646,32 @@ def test_compose_drops_scripts_that_collide_with_micros_by_name():
     assert kept == {"ScoreTracker"}
 
 
+def test_compose_drops_projectile_support_class_only_when_shooting():
+    """A shooting controller emits ProjectileController as a support file.
+
+    It is not the controller unit's primary class, so duplicate prevention must
+    reserve it explicitly without claiming the name for non-shoot controllers.
+    """
+    from src.unity_compose import drop_owned_scripts, subsystems_for, MicroComposer
+    from src.unity_schema import UnityScript
+
+    scripts = [
+        UnityScript(name="ProjectileController", type="custom", description="x"),
+        UnityScript(name="ScoreTracker", type="custom", description="x"),
+    ]
+    shooting = MicroComposer("ProjectileDupGuard").plan(
+        subsystems_for("3D", [], genre="fps")
+    )
+    idle = MicroComposer("NoProjectileDupGuard").plan(subsystems_for("3D", []))
+
+    assert "shoot" in next(u.abilities for u in shooting if u.kind == "controller")
+    assert "shoot" not in next(u.abilities for u in idle if u.kind == "controller")
+    assert {s.name for s in drop_owned_scripts(scripts, shooting)} == {"ScoreTracker"}
+    assert {s.name for s in drop_owned_scripts(scripts, idle)} == {
+        "ProjectileController", "ScoreTracker"
+    }
+
+
 def test_2d_selects_2d_physics_and_camera():
     """2.5D coherence: a 2D game_type must compose a Rigidbody2D physics body and
     an orthographic follow_2d camera (the old setup paired a 3D Rigidbody + 3D

@@ -50,8 +50,9 @@
     "sprite":                               "com.unity.2d.sprite",
     "2d animation":                         "com.unity.2d.animation",
     "sprite animation":                     "com.unity.2d.animation",
-    "2d physics":                           "com.unity.2d.physics",
-    "physics 2d":                           "com.unity.2d.physics",
+    "physics":                              "com.unity.modules.physics",
+    "2d physics":                           "com.unity.modules.physics2d",
+    "physics 2d":                           "com.unity.modules.physics2d",
     "ui toolkit":                           "com.unity.ui",
     "ui builder":                           "com.unity.ui",
     "unity ui":                             "com.unity.ugui",
@@ -218,13 +219,6 @@
       "6000.0": "10.1.3",
       "2022.3": "9.1.3",
       "2021.3": "7.0.12"
-    },
-    "com.unity.2d.physics": {
-      "6000.4": "1.0.0",
-      "6000.1": "1.0.0",
-      "6000.0": "1.0.0",
-      "2022.3": "1.0.0",
-      "2021.3": "1.0.0"
     },
     "com.unity.ui": {
       "6000.4": "2.0.0",

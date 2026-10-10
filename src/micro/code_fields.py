@@ -1322,6 +1322,8 @@ def _repair_bang_count_comparison(text: str) -> str:
 # same as every other invented-member case in this module, rather than
 # guessed at.
 _BANG_CALL_RE = re.compile(r"!\s*([A-Za-z_]\w*)\s*\(")
+_VOID_CALL_ASSIGNMENT_RE = re.compile(
+    r"(?<![=!<>])=(?!=)\s*([A-Za-z_]\w*)\s*\(")
 
 
 def find_void_method_negated(text: str, *, void_methods: "frozenset[str]"
@@ -1354,6 +1356,40 @@ def lint_void_method_negated(text: str, *, void_methods: "frozenset[str]"
         return text, set()
     return _neutralize_flagged_lines(
         text, bad, reason="'!' applied to a void method's result")
+
+
+def find_void_method_assigned(text: str, *, void_methods: "frozenset[str]"
+                              ) -> "dict[int, set[str]]":
+    """Locate assignments that use a template-declared ``void`` call as a value.
+
+    A state-setting template helper can be called as a statement, but it can
+    never be assigned into a field/property.  The only safe deterministic
+    repair is to neutralize the authored statement rather than invent a return
+    value.  ``==`` and other comparisons are excluded by the assignment token.
+    """
+    if not text or "=" not in text or not void_methods:
+        return {}
+    mask = _code_mask(text)
+    bad: "dict[int, set[str]]" = {}
+    for m in _VOID_CALL_ASSIGNMENT_RE.finditer(text):
+        if not mask[m.start()]:
+            continue
+        name = m.group(1)
+        if name not in void_methods:
+            continue
+        line = text.count("\n", 0, m.start())
+        bad.setdefault(line, set()).add(f"{name}(...)")
+    return bad
+
+
+def lint_void_method_assigned(text: str, *, void_methods: "frozenset[str]"
+                              ) -> "tuple[str, set[str]]":
+    """Neutralize assignments whose right hand side is a known-void call."""
+    bad = find_void_method_assigned(text, void_methods=void_methods)
+    if not bad:
+        return text, set()
+    return _neutralize_flagged_lines(
+        text, bad, reason="a void method's result assigned as a value")
 
 
 # CS0103: LLMs write the pre-C#7 raycast idiom `Physics.Raycast(ray, out hit, …)`
@@ -5725,7 +5761,82 @@ def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
                                    field_types=field_types)
     if not bad:
         return text, set()
-    return _neutralize_flagged_lines(text, bad)
+    text, loop_names = _comment_unbound_loop_blocks(text, bad)
+    after, names = _neutralize_flagged_lines(text, bad)
+    # The block rewrite already converted every affected line to a comment, so
+    # the line-level neutralizer rightly finds nothing left to change.  Preserve
+    # the removed names anyway: bind_authored_code uses them both for its audit
+    # and to decide whether to write this rewritten fragment back to the schema.
+    return after, names | loop_names
+
+
+_LOOP_HEADER_RE = re.compile(r"^[ \t]*(?:for|foreach|while)\s*\(")
+
+
+def _comment_unbound_loop_blocks(
+        text: str, bad: "dict[int, set[str]]"
+        ) -> "tuple[str, set[str]]":
+    """Comment a complete braced loop whose header has an unbound reference.
+
+    A loop header cannot be line-commented: its body would remain live and lose
+    the loop variable.  Replacing it with ``if (false)`` is no better because
+    C# still type-checks unreachable code.  For an authored braced loop we can
+    instead comment each line through its matching brace, preserving the
+    surrounding method's syntax while abstaining from guessed behavior.
+    """
+    if not text or not bad:
+        return text, set()
+    lines = text.splitlines()
+    mask = _code_mask(text)
+    line_offsets: list[int] = []
+    offset = 0
+    for line in lines:
+        line_offsets.append(offset)
+        offset += len(line) + 1
+
+    covered: set[int] = set()
+    removed: set[str] = set()
+    for line_index in sorted(bad):
+        if line_index in covered or line_index >= len(lines):
+            continue
+        if not _LOOP_HEADER_RE.match(lines[line_index]):
+            continue
+
+        open_index = -1
+        header_start = line_offsets[line_index]
+        for idx in range(header_start, header_start + len(lines[line_index])):
+            if mask[idx] and text[idx] == "{":
+                open_index = idx
+                break
+        if open_index < 0:
+            for probe in range(line_index + 1, len(lines)):
+                stripped = lines[probe].strip()
+                if not stripped:
+                    continue
+                if stripped.startswith("{"):
+                    open_index = line_offsets[probe] + lines[probe].index("{")
+                break
+        if open_index < 0:
+            continue
+        close_index = _find_matching_brace_generic(text, open_index, "{", "}", mask)
+        if close_index < 0:
+            continue
+        end_line = text.count("\n", 0, close_index)
+        names = ", ".join(sorted(bad[line_index]))
+        removed |= bad[line_index]
+        for nested_index in range(line_index + 1, end_line + 1):
+            removed |= bad.get(nested_index, set())
+        for current in range(line_index, min(end_line + 1, len(lines))):
+            indent = lines[current][:len(lines[current]) - len(lines[current].lstrip())]
+            if current == line_index:
+                lines[current] = (
+                    f"{indent}// AUDIT: removed loop containing unbindable reference(s) "
+                    f"{names} -- {lines[current].strip()}"
+                )
+            elif lines[current].strip():
+                lines[current] = f"{indent}// {lines[current].lstrip()}"
+            covered.add(current)
+    return "\n".join(lines), removed
 
 
 # ── Template-field type misuse (CS1061 / CS1503) ─────────────────────────────
@@ -6579,9 +6690,10 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             after, names5 = lint_readonly_property_assign_misuse(
                 after, field_types=field_types)
             after, names6 = lint_void_method_negated(after, void_methods=void_methods)
+            after, names8 = lint_void_method_assigned(after, void_methods=void_methods)
             after, names7 = lint_field_vector3_context_misuse(
                 after, field_types=field_types)
-            names = names | names2 | names3 | names4 | names5 | names6 | names7
+            names = names | names2 | names3 | names4 | names5 | names6 | names7 | names8
             if names or fixed_ro != before:
                 setattr(schema, key, after)
                 flagged |= names
@@ -6605,9 +6717,10 @@ def bind_authored_code(schema, template_dir) -> list[str]:
             after, names5 = lint_readonly_property_assign_misuse(
                 after, field_types=field_types)
             after, names6 = lint_void_method_negated(after, void_methods=void_methods)
+            after, names8 = lint_void_method_assigned(after, void_methods=void_methods)
             after, names7 = lint_field_vector3_context_misuse(
                 after, field_types=field_types)
-            names = names | names2 | names3 | names4 | names5 | names6 | names7
+            names = names | names2 | names3 | names4 | names5 | names6 | names7 | names8
             if names or fixed_ro != body:
                 flagged |= names
                 changed = True

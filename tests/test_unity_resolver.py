@@ -46,6 +46,19 @@ class TestLocalResolve:
         pkg_id, _ = resolver.resolve_package("com.unity.cinemachine", "2022.3")
         assert pkg_id == "com.unity.cinemachine"
 
+    def test_runtime_physics_resolves_to_builtin_module(self, resolver):
+        pkg_id, version = resolver.resolve_package(
+            "Physics package for rigidbody dynamics and collision resolution.",
+            "6000.0",
+        )
+        assert pkg_id == "com.unity.modules.physics"
+        assert version == "1.0.0"
+
+    def test_legacy_external_2d_physics_package_is_canonicalized(self, resolver):
+        pkg_id, version = resolver.resolve_package("com.unity.2d.physics", "6000.0")
+        assert pkg_id == "com.unity.modules.physics2d"
+        assert version == "1.0.0"
+
 
 # ── _get_version ───────────────────────────────────────────────────────────────
 
@@ -87,6 +100,34 @@ class TestResolveSchema:
         resolver.resolve_schema(minimal_schema)
         # package_id must be unchanged
         assert pkg.package_id == "com.unity.render-pipelines.universal"
+
+    def test_replaces_legacy_external_2d_physics_with_3d_builtin_module(
+        self, resolver, minimal_schema
+    ):
+        minimal_schema.game_type = "3D"
+        minimal_schema.packages.append(UnityPackage(
+            description="Physics package for rigidbody dynamics.",
+            package_id="com.unity.2d.physics",
+            version="1.0.0",
+        ))
+        resolver.resolve_schema(minimal_schema)
+        pkg = minimal_schema.packages[-1]
+        assert pkg.package_id == "com.unity.modules.physics"
+        assert pkg.version == "1.0.0"
+
+    def test_replaces_legacy_external_2d_physics_with_2d_builtin_module(
+        self, resolver, minimal_schema
+    ):
+        minimal_schema.game_type = "2D"
+        minimal_schema.packages.append(UnityPackage(
+            description="Physics package for rigidbody dynamics.",
+            package_id="com.unity.2d.physics",
+            version="1.0.0",
+        ))
+        resolver.resolve_schema(minimal_schema)
+        pkg = minimal_schema.packages[-1]
+        assert pkg.package_id == "com.unity.modules.physics2d"
+        assert pkg.version == "1.0.0"
 
 
 # ── inject_required_packages ───────────────────────────────────────────────────
@@ -165,6 +206,18 @@ class TestBuildManifestDeps:
         deps = resolver.build_manifest_deps(minimal_schema)
         for key in deps:
             assert key.startswith("com.")
+
+    def test_legacy_external_2d_physics_is_blocked_for_old_schema_replays(
+        self, resolver, minimal_schema
+    ):
+        minimal_schema.packages.append(UnityPackage(
+            description="legacy package",
+            package_id="com.unity.2d.physics",
+            version="1.0.0",
+        ))
+        deps = resolver.build_manifest_deps(minimal_schema)
+        assert "com.unity.2d.physics" not in deps
+        assert deps["com.unity.modules.physics"] == "1.0.0"
 
     def test_manifest_is_sorted(self, resolver, minimal_schema):
         minimal_schema.packages += [
