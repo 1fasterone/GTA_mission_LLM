@@ -907,6 +907,39 @@ class TestCustomScripts:
         assert script.update_extra == "if (x != null) { x.Do(); }"
         assert script.extra_methods[0].body == "count++;"
 
+    def test_orphaned_else_body_is_rejected_before_the_syntax_gate(self, gen, tmp_path):
+        """ProjectileTestArena's AmmoSystem reached Step 6 with exactly this
+        post-sanitization body.  Its missing `if` cannot be reconstructed from
+        an `else`, but keeping the callable method with an empty body remains
+        valid and avoids a project-wide C# syntax failure."""
+        from src.unity_schema import UnitySchema
+
+        schema = UnitySchema(
+            project_name="AmmoGuard", company_name="C", description="",
+            game_type="3D", platform="pc", render_pipeline="URP",
+            unity_version="6000.0", color_space="Linear",
+            features=[], scenes=["Main"], packages=[],
+            scripts=[
+                UnityScript(name="PlayerController", type="player", description="m"),
+                UnityScript(
+                    name="AmmoSystem", type="custom", attach_to="systems",
+                    description="Ammo state.",
+                    extra_fields=[{"name": "_reloadTimer", "type": "float", "default": "0f"}],
+                    extra_methods=[{
+                        "signature": "private void SetOutOfAmmo(bool isOutOfAmmo)",
+                        "body": "else _reloadTimer = 0f;",
+                    }],
+                ),
+            ],
+        )
+
+        root, _ = gen.write(schema, {}, output_dir=str(tmp_path))
+        source = (root / "Assets" / "Scripts" / "AmmoSystem.cs").read_text(encoding="utf-8")
+        assert "private void SetOutOfAmmo(bool isOutOfAmmo)" in source
+        assert "else _reloadTimer" not in source
+        method = schema.scripts[1].extra_methods[0]
+        assert method.body == ""
+
     def test_player_attach_falls_back_to_systems_without_player(self, gen):
         from src.unity_schema import UnitySchema
         schema = UnitySchema(

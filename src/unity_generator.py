@@ -1904,6 +1904,23 @@ def _reject_unbalanced_custom_bodies(script: UnityScript) -> None:
     dropped and the syntax gate never sees it, instead of failing the whole
     project days later in Unity.
     """
+    def _starts_with_orphaned_else(body: str) -> bool:
+        """Whether a prior line-removal pass has left an `else` at body root.
+
+        Several defensive custom-script passes reject whole source lines.  If
+        one rejects an `if (...)` head while the LLM wrote the matching `else`
+        on the following line, the braces can remain perfectly balanced even
+        though the rendered method is invalid C#.  A leading `else` has no
+        recoverable condition to attach to, so this is a structural rejection,
+        not an opportunity to invent one.  Comments and string literals are
+        ignored through the shared code mask.
+        """
+        mask = _code_mask(body)
+        for token in re.finditer(r"[A-Za-z_]\w*", body):
+            if mask[token.start()]:
+                return token.group(0) == "else"
+        return False
+
     def _check(body: str, where: str) -> str:
         # Silent like every sibling _sanitize_* pass above (this file has no
         # console/message-return channel of its own — unlike code_fields.py,
@@ -1911,6 +1928,10 @@ def _reject_unbalanced_custom_bodies(script: UnityScript) -> None:
         # via this function's docstring, not a runtime print.
         if not body:
             return body
+        if _starts_with_orphaned_else(body):
+            _log.warning("[custom-script] rejected %s: body begins with an "
+                         "orphaned else after sanitization", where)
+            return ""
         if _code_paren_depth(body) != 0 or _code_brace_depth(body) != 0:
             return ""
         return body
