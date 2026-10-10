@@ -138,6 +138,8 @@ Ability = Literal[
 InputBackend  = Literal["input_system", "legacy"]
 CameraCoupling = Literal["none", "standard", "cinemachine"]
 GroundCheck   = Literal["raycast", "spherecast", "collider"]
+ProjectileDelivery = Literal["hitscan", "projectile_3d"]
+ProjectilePoolGrowth = Literal["fixed", "grow_by_one"]
 
 _ALL_ABILITIES: set[str] = set(Ability.__args__)  # type: ignore[attr-defined]
 
@@ -169,6 +171,14 @@ class WeaponDef(BaseModel):
     magazine_size: int   = 30
     reload_time:   float = 2.0
     shoot_range:   float = 100.0
+    # Hitscan remains the legacy/default delivery.  A physical launch is an
+    # explicit, closed 3D contract; it is never inferred from `shoot`.
+    delivery: ProjectileDelivery = "hitscan"
+    projectile_speed: float = 60.0
+    projectile_use_gravity: bool = False
+    projectile_lifetime: float = 5.0
+    projectile_pool_size: int = 8
+    projectile_pool_growth: ProjectilePoolGrowth = "fixed"
 
 
 class ControllerMode(BaseModel):
@@ -400,7 +410,10 @@ SCHEMA FIELD GUIDE:
   abilities — list of ability names from the full vocabulary above; drives which C# sections appear
   move_speed / sprint_speed / jump_force — tune to match the brief's feel
   fire_rate (s) / magazine_size / reload_time (s) / shoot_range — only matter when "shoot" in abilities
-  weapons — optional list of {"name", "damage", "fire_rate", "magazine_size", "reload_time", "shoot_range"};
+  weapons — optional list of {"name", "damage", "fire_rate", "magazine_size", "reload_time", "shoot_range",
+    "delivery", "projectile_speed", "projectile_use_gravity", "projectile_lifetime", "projectile_pool_size",
+    "projectile_pool_growth"}; delivery is "hitscan" by default. Use "projectile_3d" only for an explicit physical
+    3D round; it borrows from a deterministic pool. projectile_pool_growth is "fixed" or "grow_by_one".
     leave empty for a single weapon (it synthesizes one from the flat fields above). Author 2+ entries
     only when "cycle_weapon" is in abilities and the brief names distinct weapons (e.g. pistol + shotgun).
   starting_reserve_ammo — only matters when "shoot" in abilities; ammo a reload draws from once the
@@ -863,6 +876,22 @@ class ControllerPipeline(UnityMicroPipeline):
             w.magazine_size = max(1,   min(999,    w.magazine_size))
             w.reload_time   = max(0.1, min(10.0,   w.reload_time))
             w.shoot_range   = max(1.0, min(1000.0, w.shoot_range))
+            w.projectile_speed    = max(1.0, min(500.0, w.projectile_speed))
+            w.projectile_lifetime = max(0.01, min(60.0, w.projectile_lifetime))
+            w.projectile_pool_size = max(1, min(64, w.projectile_pool_size))
+
+        # P2 owns only the 3D adapter.  Keeping an explicit 3D delivery on a
+        # 2D or non-Controller template would silently emit a nonfunctional
+        # contract, so record a named abstention for write_files to surface.
+        has_physical_projectiles = any(
+            w.delivery == "projectile_3d" for w in schema.weapons)
+        if has_physical_projectiles and (
+                variant.startswith("2d_") or variant in {"pointer", "multi_mode"}):
+            schema.meta["projectile_delivery_abstain"] = (
+                "projectile_3d requires a 3D Controller.cs.j2 variant; "
+                "use hitscan or wait for the P4 2D adapter")
+        else:
+            schema.meta.pop("projectile_delivery_abstain", None)
 
         # Fighting clamping
         schema.primary_damage    = max(0.0,  min(9999.0, schema.primary_damage))
@@ -993,17 +1022,23 @@ class ControllerPipeline(UnityMicroPipeline):
             count += 1
 
         if "shoot" in schema.abilities:
-            # Shared, unparametrized collision/damage helper for a future
-            # physical-projectile firing path.  It deliberately has no launch
-            # mechanics: the current Shoot implementation remains hitscan, and
-            # a later slice must introduce launch/prefab semantics explicitly.
-            # Like ThrownObject below, current composition emits one player
-            # controller per project, so the fixed class name is safe here.
+            # Shared collision/damage helper.  Its default call path remains
+            # hitscan; P2 adds an explicit pooled 3D consumer below.
             (scripts_dir / "ProjectileController.cs").write_text(
                 env.get_template("ProjectileController.cs.j2").render(),
                 encoding="utf-8",
             )
             count += 1
+
+            if any(w.delivery == "projectile_3d" for w in schema.weapons):
+                abstain = schema.meta.get("projectile_delivery_abstain")
+                if abstain:
+                    raise ValueError(f"[controller.projectile] {abstain}")
+                (scripts_dir / "ProjectilePool.cs").write_text(
+                    env.get_template("ProjectilePool.cs.j2").render(),
+                    encoding="utf-8",
+                )
+                count += 1
 
         if "throw" in schema.abilities:
             # Shared, unparametrized helper for whatever gets thrown — see
