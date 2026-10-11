@@ -107,10 +107,19 @@ public class {{ s.name }} : MonoBehaviour
         }
     }
 
-    private void Awake()
+    // Unity normally invokes Awake before gameplay events, but a component can
+    // be enabled late or receive ReportProgress directly. Rebuild only when the
+    // lookup is absent so objective progress and completion state are preserved.
+    private void EnsureObjectiveIndex()
     {
+        if (_byId != null) return;
         _byId = new Dictionary<string, Objective>();
         foreach (var o in objectives) _byId[o.id] = o;
+    }
+
+    private void Awake()
+    {
+        EnsureObjectiveIndex();
 {{ inject.lifecycle(s.awake_extra) }}
     }
 {% if s.update_extra or survive_objs %}
@@ -142,6 +151,7 @@ public class {{ s.name }} : MonoBehaviour
     /// rather than banking it out of order.</summary>
     public bool ReportProgress(string objectiveId, int amount = 1)
     {
+        EnsureObjectiveIndex();
         if (_missionComplete || !_byId.TryGetValue(objectiveId, out var o) || o.complete) return false;
         if (!string.IsNullOrEmpty(o.after))
         {
