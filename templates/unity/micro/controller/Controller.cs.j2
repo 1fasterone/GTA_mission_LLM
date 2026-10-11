@@ -1511,7 +1511,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         var projectile = pool.Borrow();
         if (projectile == null) return false;
 
-        Transform muzzle = projectileMuzzle != null ? projectileMuzzle : transform;
+        Transform muzzle = ResolveProjectileMuzzle();
         Ray aimRay = Camera.main != null
             ? Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
             : new Ray(muzzle.position, muzzle.forward);
@@ -1521,6 +1521,18 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
             projectileLifetime[_weaponIndex], projectileUseGravity[_weaponIndex]);
         projectile.Launch(aimRay.direction.normalized * projectileSpeed[_weaponIndex]);
         return true;
+    }
+
+    private Transform ResolveProjectileMuzzle()
+    {
+        if (projectileMuzzle != null) return projectileMuzzle;
+        var eye = transform.Find("Eye");
+        if (eye != null)
+        {
+            var mountedMuzzle = eye.Find("ProjectileMuzzle");
+            if (mountedMuzzle != null) return mountedMuzzle;
+        }
+        return transform;
     }
 {% endif %}
     private IEnumerator ReloadRoutine()

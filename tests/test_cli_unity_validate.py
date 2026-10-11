@@ -19,6 +19,7 @@ import pytest
 import yaml
 
 from src.unity_escort_follow import resolve_escort_follow
+from src.unity_projectile_contract import apply_physical_projectile_contract
 from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
 
 
@@ -77,12 +78,36 @@ def test_unity_validate_compose_wires_escort_objective(tmp_path):
     assert "SEAM 8b: trigger" in gw
     assert 'ReportProgress("escort_buddy")' in gw
     assert "no event source" not in gw
-
     manifest = json.loads(
         (tmp_path / "out" / "EscortRegressionCheck" / "Project.build.manifest.json")
         .read_text(encoding="utf-8")
     )
     assert manifest["status"] == "replayed_unverified"
+
+
+def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
+    """The saved-schema replay must preserve P2 delivery, not silently regress
+    back to the ControllerSchema hitscan fallback."""
+    from cli.unity_project import unity_validate
+
+    schema = UnitySchema(
+        project_name="ProjectileReplay", company_name="TestCo", game_type="3D",
+        platform="PC", render_pipeline="URP", unity_version="6000.0",
+        color_space="Linear", description="physical projectile test", scenes=["Main"],
+    )
+    apply_physical_projectile_contract(
+        schema, "An FPS with a rifle and pooled physical bullets."
+    )
+    schema_path = tmp_path / "ProjectileReplay.schema.json"
+    schema_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
+
+    unity_validate(str(schema_path), config=_minimal_config(tmp_path),
+                   blender_models=False, compose=True)
+
+    source = (tmp_path / "out" / "ProjectileReplay" / "Assets" / "Micros"
+              / "controller" / "Scripts" / "PlayerController.cs").read_text(encoding="utf-8")
+    assert "private ProjectilePool[] _projectilePools;" in source
+    assert "ResolveProjectileMuzzle()" in source
 
 
 def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(tmp_path):

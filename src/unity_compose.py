@@ -2290,6 +2290,7 @@ def subsystems_for(
     render_pipeline: str            = "URP",        # schema.render_pipeline
     palette_rgb:   dict | None      = None,         # {slot: {r,g,b}} — see unity_generator
     cover_points:  dict | None      = None,         # schema.meta["cover_points"] — see unity_cover_points.py
+    projectile_contract: dict | None = None,        # deterministic Slice-2 typed physical loadout
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
@@ -2448,11 +2449,19 @@ def subsystems_for(
     # capability block above only ever speaks jump/sprint/crouch, so nothing
     # else can turn this on. Content-gated the same way the optional micros are:
     # the detected genre, or an actual weapon entity in the schema.
-    if genre == "fps" or "weapon" in entity_kinds:
+    if genre == "fps" or "weapon" in entity_kinds or projectile_contract:
         _abils = list(ctrl_opts.get("abilities", ["jump", "sprint"]))
         if "shoot" not in _abils:
             _abils.append("shoot")
         ctrl_opts["abilities"] = _abils
+
+    # The controller schema already owns typed weapon delivery.  Only the
+    # deterministic P2 brief bridge may opt into projectile_3d; an ordinary
+    # FPS/weapon entity deliberately keeps ControllerSchema's hitscan default.
+    if (isinstance(projectile_contract, dict)
+            and projectile_contract.get("delivery") == "projectile_3d"
+            and isinstance(projectile_contract.get("weapon"), dict)):
+        ctrl_opts["weapons"] = [dict(projectile_contract["weapon"])]
 
     # Animator variant from locomotion
     anim_variant = {
