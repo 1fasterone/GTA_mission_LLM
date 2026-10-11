@@ -46,15 +46,25 @@ public class {{ s.name }} : MonoBehaviour
     private readonly Dictionary<string, Func<bool>> _conditions = new Dictionary<string, Func<bool>>();
     private float _timer;
 
-    private void Awake()
+    // Unity normally invokes Awake before Update, but scripts can be enabled
+    // late or invoked directly by other components. Rebuild only when the
+    // lookup is absent so this guard never mutates tree state during play.
+    private void EnsureNodeIndex()
     {
+        if (_byId != null) return;
         _byId = new Dictionary<string, BTNodeDef>();
         foreach (var d in nodeDefs) _byId[d.id] = d;
+    }
+
+    private void Awake()
+    {
+        EnsureNodeIndex();
 {{ inject.lifecycle(s.awake_extra) }}
     }
 
     private void Update()
     {
+        EnsureNodeIndex();
         _timer += Time.deltaTime;
         if (_timer >= tickInterval)
         {
@@ -70,6 +80,7 @@ public class {{ s.name }} : MonoBehaviour
 
     public BTStatus Evaluate(string nodeId)
     {
+        EnsureNodeIndex();
         if (!_byId.TryGetValue(nodeId, out var node)) return BTStatus.Failure;
         switch (node.type)
         {
