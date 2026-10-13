@@ -261,6 +261,36 @@ def test_load_catalog_merges_sketchfab_partition(tmp_path):
     assert catalog["vocabulary"] == {"categories": ["nature"], "tags": ["tree"]}
 
 
+def test_load_catalog_reads_explicit_frozen_sketchfab_partition(tmp_path):
+    lookups = tmp_path / "lookups"
+    (lookups / "unity").mkdir(parents=True)
+    (lookups / "unity" / "asset_catalog.json").write_text(
+        json.dumps({"vocabulary": {}, "assets": [
+            {"filename": "tree.fbx", "source": "kenney"},
+        ]}), encoding="utf-8")
+    shared_catalog = tmp_path / "shared" / "sketchfab_catalog.json"
+    shared_catalog.parent.mkdir()
+    shared_catalog.write_text(json.dumps({"version": 1, "entries": [
+        {"filename": "arena-rifle.fbx", "source": "sketchfab",
+         "license": "by", "sketchfab_uid": "rifle"},
+    ]}), encoding="utf-8")
+
+    catalog = load_catalog(
+        str(lookups), sketchfab_catalog_path=shared_catalog
+    )
+    assert {a["filename"] for a in catalog["assets"]} == {
+        "tree.fbx", "arena-rifle.fbx"
+    }
+
+
+def test_load_catalog_rejects_missing_explicit_frozen_partition(tmp_path):
+    with pytest.raises(ValueError, match="explicit frozen Sketchfab catalog"):
+        load_catalog(
+            str(tmp_path / "lookups"),
+            sketchfab_catalog_path=tmp_path / "missing.json",
+        )
+
+
 def test_load_catalog_sketchfab_only_no_base_catalog(tmp_path):
     lookups = tmp_path / "lookups"
     (lookups / "unity").mkdir(parents=True)

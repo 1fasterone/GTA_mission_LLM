@@ -59,7 +59,8 @@ def _render_credits_md(used_models: dict) -> str | None:
     return "\n".join(lines)
 
 
-def _frozen_asset_selection(model, catalog_assets: list[dict]) -> dict | None:
+def _frozen_asset_selection(model, catalog_assets: list[dict], *,
+                            sketchfab_root: str | None = None) -> dict | None:
     """Return an exact catalog selection for a resolved marketplace model.
 
     The generated Resource path is an output name, not enough information to
@@ -78,7 +79,7 @@ def _frozen_asset_selection(model, catalog_assets: list[dict]) -> dict | None:
         if not isinstance(entry, dict) or entry.get("source") != "sketchfab":
             continue
         relpath = str(entry.get("relpath") or entry.get("filename") or "")
-        root_text = str(entry.get("root") or "").strip()
+        root_text = str(sketchfab_root or entry.get("root") or "").strip()
         if not relpath or not root_text:
             continue
         root = Path(root_text)
@@ -3294,7 +3295,19 @@ class UnityProjectGenerator:
             models_by_resource = {
                 model.resource_path: model for model in used_models.values()
             }
-            catalog_assets = list(load_catalog(str(lookups_dir)).get("assets") or [])
+            _sk_cfg = sketchfab_cfg or {}
+            _sk_enabled = (bool(_sk_cfg.get("enabled"))
+                           and schema.game_type not in ("2D", "2d_topdown"))
+            _external_sk_catalog = (
+                str(_sk_cfg.get("frozen_catalog_path") or "").strip() or None
+            ) if _sk_enabled else None
+            catalog_assets = list(load_catalog(
+                str(lookups_dir), sketchfab_catalog_path=_external_sk_catalog
+            ).get("assets") or [])
+            _shared_sketchfab_root = (
+                str(_sk_cfg.get("cache_dir") or "").strip()
+                if _external_sk_catalog else None
+            )
             bindings: dict[str, dict[str, Any]] = {}
             for entity_name, resource_path in sorted(entity_model_paths.items()):
                 model = models_by_resource.get(resource_path)
@@ -3308,7 +3321,9 @@ class UnityProjectGenerator:
                     "license": model.license,
                     "attribution": model.attribution,
                 }
-                selection = _frozen_asset_selection(model, catalog_assets)
+                selection = _frozen_asset_selection(
+                    model, catalog_assets, sketchfab_root=_shared_sketchfab_root
+                )
                 if selection is not None:
                     binding["catalog_selection"] = selection
                 bindings[entity_name] = binding
