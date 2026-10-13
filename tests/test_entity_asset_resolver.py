@@ -648,6 +648,60 @@ def test_sketchfab_tier_wins_over_kenney_when_enabled(env, tmp_path):
     assert any(k.startswith("asset:") for k in used)
 
 
+def test_sketchfab_external_frozen_catalog_uses_explicit_shared_cache(env, tmp_path):
+    """A fresh worktree must resolve a verified external cache without
+    copying the cache or trusting the catalog's original relative root."""
+    shared_cache = tmp_path / "shared_cache"
+    relpath = Path("weapon") / "arena-rifle" / "arena-rifle.fbx"
+    (shared_cache / relpath).parent.mkdir(parents=True)
+    (shared_cache / relpath).write_bytes(b"FBX")
+    shared_catalog = tmp_path / "shared" / "sketchfab_catalog.json"
+    shared_catalog.parent.mkdir()
+    shared_catalog.write_text(json.dumps({"version": 1, "entries": [{
+        "filename": "arena-rifle.fbx", "relpath": relpath.as_posix(),
+        "root": "Models/Sketchfab", "format": "fbx", "pack": "sketchfab",
+        "source": "sketchfab", "category": "weapon",
+        "description": "arena rifle", "keywords": ["arena", "rifle", "weapon"],
+        "kind_hints": ["weapon"], "game_contexts": ["any"],
+        "generic_score": 0, "scale": 1.0, "curated": False,
+        "query": "arena rifle", "sketchfab_uid": "rifle",
+        "license": "by", "author": "Shared Artist",
+        "attribution": '"Arena Rifle" by Shared Artist is licensed under BY.',
+    }]}), encoding="utf-8")
+
+    used = {}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="ArenaRifle", kind="weapon", count=1,
+                            model_hint="arena rifle")]),
+        used, {}, lookups_dir=str(env), strict=True,
+        sketchfab_cfg={
+            "enabled": True,
+            "cache_dir": shared_cache.as_posix(),
+            "frozen_catalog_path": shared_catalog.as_posix(),
+        })
+
+    assert paths["ArenaRifle"] == "Models/Sketchfab/Weapon/arena-rifle"
+    resolved = next(iter(used.values()))
+    assert Path(resolved.src) == shared_cache / relpath
+    assert resolved.source == "sketchfab"
+
+
+def test_sketchfab_external_catalog_requires_explicit_cache_dir(env, tmp_path):
+    shared_catalog = tmp_path / "shared" / "sketchfab_catalog.json"
+    shared_catalog.parent.mkdir()
+    shared_catalog.write_text('{"version": 1, "entries": []}', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="requires sketchfab.cache_dir"):
+        resolve_entity_assets(
+            _schema([EntitySpec(name="ArenaRifle", kind="weapon", count=1)]),
+            {}, {}, lookups_dir=str(env),
+            sketchfab_cfg={
+                "enabled": True,
+                "cache_dir": "",
+                "frozen_catalog_path": shared_catalog.as_posix(),
+            })
+
+
 def test_sketchfab_cache_miss_falls_through_to_kenney(env, tmp_path):
     """enabled=True but no Sketchfab entry matches this entity at all — Tier S
     must be a silent no-op, not an error, and Kenney's tiers still run."""

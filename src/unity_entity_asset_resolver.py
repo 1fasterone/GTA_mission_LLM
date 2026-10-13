@@ -574,6 +574,14 @@ def resolve_entity_assets(schema,
     # 3D cabin, plant, or character mesh in the board.
     is_2d = getattr(schema, "game_type", "3D") in ("2D", "2d_topdown")
     sk_enabled = bool(sk_cfg.get("enabled")) and not is_2d
+    sk_catalog_path = str(sk_cfg.get("frozen_catalog_path") or "").strip() or None
+    configured_sk_cache = str(sk_cfg.get("cache_dir") or "").strip()
+    if sk_enabled and sk_catalog_path and not configured_sk_cache:
+        raise ValueError(
+            "sketchfab.frozen_catalog_path requires sketchfab.cache_dir to name "
+            "the corresponding shared frozen-model cache"
+        )
+    sk_cache_dir = configured_sk_cache or "Models/Sketchfab"
     sk_client = None
     if sk_enabled:
         from .sketchfab_client import SketchfabClient
@@ -584,7 +592,9 @@ def resolve_entity_assets(schema,
     # 3D scene object.
     allowed_formats = {"fbx", "png"} if is_2d else {"fbx"}
 
-    catalog = load_catalog(str(lookups_dir))
+    catalog = load_catalog(
+        str(lookups_dir), sketchfab_catalog_path=sk_catalog_path if sk_enabled else None
+    )
     _all_assets = [a for a in catalog.get("assets", []) if a.get("filename")
                   and a.get("format", "fbx") in allowed_formats]
     # Kenney's tiers (2a/2b/2c, below) must never see Sketchfab-sourced
@@ -596,6 +606,14 @@ def resolve_entity_assets(schema,
     # Tier S below.
     assets = [a for a in _all_assets if a.get("source") != "sketchfab"]
     sk_catalog_assets = [a for a in _all_assets if a.get("source") == "sketchfab"]
+    if sk_catalog_path:
+        # A frozen partition shared from another worktree normally records its
+        # root relative to the checkout that originally created it.  The
+        # explicit cache directory is the authoritative location for this run;
+        # do not let that relative root silently redirect resolution back to a
+        # disposable worktree.
+        for asset in sk_catalog_assets:
+            asset["root"] = sk_cache_dir
 
     # Resolve Slice-5 selections once, before the entity loop.  The fulfilment
     # artifact carries the file hash precisely so this handoff cannot drift to
@@ -1257,7 +1275,7 @@ def resolve_entity_assets(schema,
                 new_entry = fetch_and_freeze(
                     query, score_fn=lambda a: _score(a, qw, kind),
                     client=sk_client, blender_cfg=sk_cfg,
-                    cache_dir=sk_cfg.get("cache_dir", "Models/Sketchfab"),
+                    cache_dir=sk_cache_dir,
                     lookups_dir=str(lookups_dir), category=kind or "prop",
                     kind_hints=[kind], min_score=sk_min,
                     preferred_author=preferred_author,

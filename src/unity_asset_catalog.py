@@ -673,10 +673,19 @@ def is_stale(catalog: dict, out_path: Path) -> bool:
         return True
 
 
-def load_catalog(lookups_dir: str = "lookups") -> dict:
+def load_catalog(lookups_dir: str = "lookups", *,
+                 sketchfab_catalog_path: str | Path | None = None) -> dict:
     """Read the generated catalog (falling back to the curated kenney catalog,
     whose entries share the same shape, so old checkouts keep working), then
     merge in the frozen Sketchfab partition if one exists.
+
+    ``sketchfab_catalog_path`` is an optional explicit frozen partition.  It
+    supports a shared, already-verified Sketchfab cache outside a disposable
+    feature worktree without copying its large binary library into that
+    worktree.  When supplied it replaces the local partition path; an invalid
+    explicit path is a configuration error rather than a silent fallback to
+    unrelated local assets.  The default remains the local
+    ``lookups/unity/sketchfab_catalog.json`` path byte-for-byte.
 
     The Sketchfab merge is additive-only: entries loaded from asset_catalog.json
     / kenney_catalog.json are tagged source="kenney" when the field is absent
@@ -697,12 +706,17 @@ def load_catalog(lookups_dir: str = "lookups") -> dict:
             continue
 
     sk_entries: list[dict] = []
-    sk_path = Path(lookups_dir) / SKETCHFAB_RELPATH
+    sk_path = (Path(sketchfab_catalog_path)
+               if sketchfab_catalog_path is not None
+               else Path(lookups_dir) / SKETCHFAB_RELPATH)
     try:
         sk = json.loads(sk_path.read_text(encoding="utf-8"))
         sk_entries = list(sk.get("entries", []))
     except (FileNotFoundError, json.JSONDecodeError):
-        pass
+        if sketchfab_catalog_path is not None:
+            raise ValueError(
+                f"explicit frozen Sketchfab catalog is unavailable or invalid: {sk_path}"
+            )
 
     # Neither file exists — preserve the pre-Sketchfab contract of returning
     # {} exactly (callers/tests treat that as "no catalog", not "empty one").

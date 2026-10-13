@@ -272,6 +272,11 @@ sketchfab:
                                   #         force it off after the schema boundary.
   min_match_score: 0.15          # same scale as assets.min_match_score
   cache_dir: Models/Sketchfab    # converted FBX + Textures/ + manifest live here
+  # Optional shared frozen catalog for a cache intentionally kept outside a
+  # disposable worktree. Set BOTH values to the verified catalog/cache pair;
+  # the resolver reads the frozen entries deterministically and never copies
+  # the cache into the worktree. Empty = this checkout's local partition.
+  frozen_catalog_path: ''
   blender_path: ''                # empty => reuse blender.blender_path / auto-detect
   # Visual QC on top of min_match_score above (src/unity_sketchfab_vision.py):
   # keyword scoring can't tell a correct object from a same-word coincidence
