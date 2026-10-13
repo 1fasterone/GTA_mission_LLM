@@ -708,6 +708,7 @@ def unity_validate(
                                        refresh_cover_points, subsystems_for)
         from src.unity_micro_code import CODE_KEYS, merge_authored_code
         from src.unity_pipeline import _compose_palette_rgb
+        from src.unity_projectile_contract import PHYSICAL_PROJECTILE_META_KEY
 
         _meta = schema.meta if isinstance(schema.meta, dict) else {}
         composer = MicroComposer(schema.project_name, template_dir=template_dir,
@@ -722,6 +723,7 @@ def unity_validate(
             behavior_trees=schema.behavior_trees, environment=schema.environment,
             visual_style=schema.visual_style, render_pipeline=schema.render_pipeline,
             palette_rgb=_compose_palette_rgb(schema),
+            projectile_contract=_meta.get(PHYSICAL_PROJECTILE_META_KEY),
         )
         # No-LLM fallback only — see the docstring above for what this can and
         # cannot recover relative to the original `enrich_subsystems` call.

@@ -704,6 +704,16 @@ public class EntitySpawner : MonoBehaviour
         go.transform.SetParent(mount, false);
         go.transform.localPosition = new Vector3(0.28f, -0.22f, 0.45f);
         go.transform.localRotation = Quaternion.identity;
+        // The projectile controller resolves this deterministic marker at fire
+        // time.  It is on the eye, not the selected model, so a catalog swap
+        // cannot move bullets back to the player's feet.
+        if (mount.Find("ProjectileMuzzle") == null)
+        {
+            var marker = new GameObject("ProjectileMuzzle").transform;
+            marker.SetParent(mount, false);
+            marker.localPosition = new Vector3(0.28f, -0.22f, 1.10f);
+            marker.localRotation = Quaternion.identity;
+        }
         // Colliders on a viewmodel sit inside the player's own capsule and
         // would otherwise absorb the player's own aim raycast.
         foreach (var c in go.GetComponentsInChildren<Collider>()) c.enabled = false;

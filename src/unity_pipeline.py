@@ -54,6 +54,8 @@ from .unity_concept_narrative import (inject_missing_concept_narrative,
 from .unity_concept_title import (inject_missing_concept_title,
                                   render_title_checklist)
 from .unity_concept_missions import inject_missing_concept_missions
+from .unity_projectile_contract import (PHYSICAL_PROJECTILE_META_KEY,
+                                        apply_physical_projectile_contract)
 from .unity_layout        import compute_layout
 from .unity_cover_points  import compute_cover_points
 from .unity_greybox       import (GREYBOX_SCRIPT_TYPES,
@@ -151,7 +153,8 @@ def _compose_subsystems(schema, user_prompt: str,
                           environment=schema.environment,
                           visual_style=schema.visual_style,
                           palette_rgb=_compose_palette_rgb(schema),
-                          cover_points=meta.get("cover_points"))
+                          cover_points=meta.get("cover_points"),
+                          projectile_contract=meta.get(PHYSICAL_PROJECTILE_META_KEY))
 
 
 # npc_dialog variant -> the interaction type the dialog extractor is asked for.
@@ -2165,6 +2168,13 @@ class UnityPipeline:
         # enrichment, asset resolution) runs against schema.entities.
         _n_entities_before_rescue = len(schema.entities)
         for msg in inject_missing_concept_entities(schema):
+            self._fix(msg)
+
+        # Slice 2's physical delivery is a deterministic compiler contract,
+        # not an LLM-authored scene or a replacement for bare hitscan shooting.
+        # It runs before scene reconciliation so its held weapon is included in
+        # a scene that names an explicit entity subset.
+        for msg in apply_physical_projectile_contract(schema, user_prompt):
             self._fix(msg)
 
         # Concept-named SCENE rescue — Solution #3's sibling for the world's
