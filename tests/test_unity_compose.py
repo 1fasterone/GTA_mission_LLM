@@ -55,6 +55,43 @@ def test_project_name_changes_guid(tmp_path):
     assert u1[0].guid != u2[0].guid, "different projects must not collide on GUID"
 
 
+def _meta_guid(path: Path) -> str:
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("guid: "):
+            return line.removeprefix("guid: ")
+    raise AssertionError(f"missing guid in {path}")
+
+
+def test_repeated_composed_folder_names_have_distinct_stable_guids(tmp_path):
+    """Every micro owns a Scripts folder, but folders must not share a GUID."""
+    subsystems = [
+        Subsystem(kind="controller", variant="third_person", target="player",
+                  options={"input_backend": "legacy"}),
+        Subsystem(kind="camera", variant="third_person", target="camera"),
+    ]
+
+    first_assets = tmp_path / "first" / "Assets"
+    second_assets = tmp_path / "second" / "Assets"
+    MicroComposer("FolderGuidProof").compose(subsystems, first_assets)
+    MicroComposer("FolderGuidProof").compose(subsystems, second_assets)
+
+    first = {
+        path.relative_to(first_assets).as_posix(): _meta_guid(path)
+        for path in sorted((first_assets / "Micros").glob("*/Scripts.meta"))
+    }
+    second = {
+        path.relative_to(second_assets).as_posix(): _meta_guid(path)
+        for path in sorted((second_assets / "Micros").glob("*/Scripts.meta"))
+    }
+
+    assert first == second
+    assert {
+        "Micros/controller/Scripts.meta",
+        "Micros/camera/Scripts.meta",
+    } <= set(first)
+    assert len(set(first.values())) == len(first)
+
+
 def test_legacy_controller_has_no_inputsystem_dependency(tmp_path):
     assets, units = _compose(tmp_path)
     cs = (assets / "Micros" / "controller" / "Scripts" / f"{units[0].class_name}.cs").read_text(encoding="utf-8")

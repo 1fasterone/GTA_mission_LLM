@@ -390,9 +390,17 @@ class MicroComposer:
             target="systems", file_id=_COMPOSED_FILE_ID_BASE + 10 * (len(subsystems) + 1)))
         return units
 
-    def _folder_meta(self, path: Path) -> None:
+    def _folder_meta(self, path: Path, assets_root: Path) -> None:
+        """Write a deterministic, project-local folder meta sidecar.
+
+        Folder names repeat throughout a composed project (every micro has a
+        ``Scripts`` directory), so the full Assets-relative path is the GUID
+        identity.  Using only ``path.name`` makes those folders share a GUID
+        and leaves Unity unable to preserve their independent identities.
+        """
+        relative_path = path.relative_to(assets_root).as_posix()
         meta = path.with_name(path.name + ".meta")
-        meta.write_text(_default_meta(_make_guid(f"{self.project_name}/{path.name}/dir"),
+        meta.write_text(_default_meta(_make_guid(f"{self.project_name}/{relative_path}/dir"),
                                       folder=True), encoding="utf-8")
 
     def _wiring_template_dir(self) -> Path:
@@ -407,7 +415,7 @@ class MicroComposer:
         assets_root = Path(assets_root)
         micros_root = assets_root / "Micros"
         micros_root.mkdir(parents=True, exist_ok=True)
-        self._folder_meta(micros_root)
+        self._folder_meta(micros_root, assets_root)
 
         # What is on disk BEFORE this composition writes a line — the sweep
         # after _emit_context tells this run's output from a superseded run's
@@ -425,11 +433,11 @@ class MicroComposer:
 
             # Deterministic .cs.meta for every generated script so the scene can
             # reference the component by GUID. Non-.cs assets: Unity imports them.
-            self._folder_meta(kind_dir)
+            self._folder_meta(kind_dir, assets_root)
             scripts_dir = kind_dir / "Scripts"
             rel_scripts: list[str] = []
             if scripts_dir.is_dir():
-                self._folder_meta(scripts_dir)
+                self._folder_meta(scripts_dir, assets_root)
                 for cs in sorted(scripts_dir.glob("*.cs")):
                     guid = _make_guid(f"{self.project_name}/Micros/{sub.kind}/{cs.stem}")
                     (cs.parent / (cs.name + ".meta")).write_text(
@@ -439,9 +447,10 @@ class MicroComposer:
 
         # GameWiring.cs — generated glue referencing the composed (non-wiring) classes.
         self._emit_wiring(units, micros_root, wiring, objective_scenes,
-                          escort_followed_entities, reach_target_entities, game_type)
+                          escort_followed_entities, reach_target_entities, game_type,
+                          assets_root)
         # GameContext.cs — the shared locator bridging micros ↔ prompt-authored scripts.
-        self._emit_context(units, micros_root, has_game_manager)
+        self._emit_context(units, micros_root, has_game_manager, assets_root)
 
         # BEFORE the gate below, so a compose that aborts still leaves the
         # directory holding one run's output rather than two runs' worth.
@@ -529,7 +538,7 @@ class MicroComposer:
                      objective_scenes: "dict[str, str] | None" = None,
                      escort_followed_entities: "set[str] | None" = None,
                      reach_target_entities: "dict[str, int] | None" = None,
-                     game_type: str = "3D") -> None:
+                     game_type: str = "3D", assets_root: Path | None = None) -> None:
         from jinja2 import Environment, FileSystemLoader, StrictUndefined
         from .atoms.backends.unity import unity_atom_snippet
 
@@ -1232,11 +1241,12 @@ class MicroComposer:
         )
         (sdir / "GameWiring.cs").write_text(content, encoding="utf-8")
         (sdir / "GameWiring.cs.meta").write_text(_meta_file(wiring.guid), encoding="utf-8")
-        self._folder_meta(wdir)
-        self._folder_meta(sdir)
+        assets_root = assets_root or micros_root.parent
+        self._folder_meta(wdir, assets_root)
+        self._folder_meta(sdir, assets_root)
 
     def _emit_context(self, units: list[ComposedUnit], micros_root: Path,
-                      has_game_manager: bool) -> None:
+                      has_game_manager: bool, assets_root: Path | None = None) -> None:
         """Emit GameContext.cs — the shared service locator that bridges the
         composed micros (Assets/Micros) and the prompt-authored scripts
         (Assets/Scripts) so all generated assets coexist. `Get<T>()` is the
@@ -1623,8 +1633,9 @@ class MicroComposer:
             (sdir / "NpcDialogLoader.cs.meta").write_text(
                 _meta_file(_make_guid("compose:NpcDialogLoader")), encoding="utf-8")
 
-        self._folder_meta(cdir)
-        self._folder_meta(sdir)
+        assets_root = assets_root or micros_root.parent
+        self._folder_meta(cdir, assets_root)
+        self._folder_meta(sdir, assets_root)
 
     # Built-in modules / packages each composed micro kind needs in manifest.json.
     # Merged into the project's deps so a composed project actually compiles.
