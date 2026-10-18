@@ -4,9 +4,9 @@ Snapshot: 2026-10-17. Read `AGENTS.md` before continuing.
 
 ## Outcome
 
-The durable Unity run-log feature is implemented locally and its normal paths
-are tested, but code review found two unresolved defects. The branch is not
-ready to push or merge.
+The durable Unity run-log feature and both code-review repairs are implemented.
+Focused tests, lint, a real failing CLI smoke, and a controlled hard-kill probe
+pass. The branch is ready for scoped review and merge.
 
 ## Local state
 
@@ -14,8 +14,7 @@ ready to push or merge.
 - Branch: `codex/offline-run-failure-logs`
 - Feature commit: `386d775 feat(cli): persist unity-create run review logs`
 - Base/current `origin/main`: `395e0a7`
-- Remote push: **not performed**
-- Pull request: **not opened**
+- Remote push and pull request state must be verified from GitHub at delivery.
 
 The feature commit changes only:
 
@@ -41,20 +40,17 @@ project path, playability summary, timing, exit code, and traceback.
 These files are operational review evidence only. They are not schema fields,
 Pipeline LLM input, resolver input, or Step 4-7 input.
 
-## Review decision and required fixes
+## Review decision and repairs
 
 See `docs/UNITY_RUN_LOG_CODE_REVIEW_2026-10-17.md` for full evidence.
 
-1. **P1: contain logging I/O failures.** A failed transcript write currently
-   raises into the compiler, and finalization can mask an existing compiler
-   exception. Add a best-effort disable path, guaranteed stream restoration,
-   and regression tests for write/flush/finalization failures.
-2. **P2: identify the actual CLI command.** Searching every argv token produces
-   false activation when another command receives `unity-create` as data. Move
-   activation to the command boundary or parse only the real command slot, with
-   negative tests.
-3. Clarify whether the product requirement covers only Unity `unity-create` or
-   all offline Unity/GTA pipeline commands. Do not silently broaden scope.
+1. **P1 repaired:** failed transcript/manifest I/O now trips a one-way circuit
+   breaker, warns original stderr once, restores streams, and cannot replace a
+   compiler exception or exit code.
+2. **P2 repaired:** activation parses the actual Typer command slot after
+   supported global flags; later positional values cannot activate logging.
+3. **Scope clarified:** this feature records process-level Unity
+   `unity-create` only. GTA and other commands remain out of scope.
 
 ## Verified commands
 
@@ -71,11 +67,13 @@ Run from the worktree using the shared repository virtual environment:
 git diff --check origin/main...HEAD
 ```
 
-Results on 2026-10-17:
+Repair results on 2026-10-17:
 
-- pytest: `14 passed in 2.41s`
+- pytest: `21 passed in 1.36s`
 - Ruff: passed
 - diff check: passed
+- real failing `unity-create`: exit code 2 with finalized failed artifacts
+- controlled hard kill: `status: running` and partial transcript preserved
 
 ## Existing smoke evidence
 
@@ -111,16 +109,11 @@ per-file syntax checks as Unity compilation.
 
 ## Safe continuation sequence
 
-1. Preserve the current worktree and inspect `git status` before editing.
-2. Fix the two review findings in `src/unity_run_log.py` and tests; keep the
-   recorder outside the compiler/schema boundary.
-3. Run the focused validation commands above.
-4. Run a short failing `unity-create` smoke test and inspect both artifacts.
-5. Run a controlled hard-kill test and verify `status: running` plus a partial
-   transcript remain without corrupting other runs.
-6. Commit only explicit source/test/doc paths. Do not add generated Unity
+1. Fetch the current base and integrate it without absorbing unrelated work.
+2. Commit only explicit source/test/doc paths. Do not add generated Unity
    projects, `_run_logs`, caches, or user-owned prompts.
-7. Push only when authorized, then open a scoped GitHub pull request.
+3. Push, open a scoped GitHub pull request, wait for required checks, and merge
+   only when GitHub reports the branch mergeable.
 
 Open a GitHub Pull Request immediately. No feature is considered complete
 until it is PR'd.

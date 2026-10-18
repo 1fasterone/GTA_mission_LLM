@@ -8,7 +8,10 @@ Reviewed commit: `386d775`
 
 Base: `origin/main` at `395e0a7`
 
-Decision: **Request changes**
+Decision: **Approved after repairs**
+
+Original reviewed commit: `386d775` — request changes.
+Repair verification: the findings below are resolved on the branch tip.
 
 ## Scope
 
@@ -25,7 +28,7 @@ call or change deterministic Steps 4-7.
 
 ## Findings
 
-### P1 - A logging I/O failure can abort or replace the pipeline result
+### P1 - Resolved: logging I/O failure could abort or replace the pipeline result
 
 `_Tee.write()` and `_Tee.flush()` write to the review log without containing
 `OSError`. The recorder's `__exit__()` also performs several unguarded log
@@ -57,10 +60,15 @@ Required repair:
 - Add tests for a mid-run write failure, a flush/finalization failure, and a
   logging failure while a different pipeline exception is already active.
 
+Resolution: transcript writes and flushes now pass through a one-way failure
+circuit breaker. The recorder warns the original stderr at most once, restores
+stdout/stderr before final manifest work, and contains transcript, manifest,
+and close errors. Regression tests cover all three requested failure cases.
+
 Relevant code: `src/unity_run_log.py:142-151` and
 `src/unity_run_log.py:266-327`.
 
-### P2 - Recorder activation searches every argument, not the command slot
+### P2 - Resolved: recorder activation searched every argument
 
 `from_argv()` uses `full_argv.index("unity-create")`. Any unrelated command
 whose positional value happens to equal `unity-create` activates the recorder.
@@ -79,6 +87,10 @@ Required repair:
   attach the recorder directly to the `unity-create` command boundary.
 - Add negative tests where `unity-create` appears only as another command's
   value or positional argument.
+
+Resolution: activation now selects the first Typer command token after the
+supported global flags and refuses unknown leading options. Negative tests
+cover `unity-create` as data for both Unity and GTA validation commands.
 
 Relevant code: `src/unity_run_log.py:174-194`.
 
@@ -116,9 +128,17 @@ P1 or the false activation described in P2.
 - Operational artifacts are kept outside schema and generation inputs.
 - Help and ordinary non-target commands are covered by baseline tests.
 
+## Repair verification
+
+- Focused suite: `21 passed`.
+- Ruff: passed for the changed Python files.
+- `git diff --check`: passed.
+- Real failing `unity-create` smoke: exit code 2, finalized `failed` manifest,
+  traceback and transcript preserved.
+- Controlled hard kill: process exit `-1`, manifest remained `running`, and the
+  partial transcript remained reviewable.
+
 ## Merge recommendation
 
-Do not push for review or merge in the current form. Fix P1, add the required
-observer-failure tests, fix P2, then rerun the same focused suite plus one real
-failing `unity-create` smoke test. A hard-kill check should confirm that the
-prewritten `running` manifest and partial transcript remain reviewable.
+The two blocking findings are resolved. The branch is ready for scoped review
+and merge after current-base integration and required remote checks pass.

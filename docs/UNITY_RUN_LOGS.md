@@ -36,3 +36,14 @@ Steps 4-7. Passing a log to a reviewer cannot alter a replay.
 configured log directory cannot be written, the CLI emits a loud
 `RUN LOGGING ERROR` and continues rather than silently claiming that evidence
 was saved.
+
+Transcript and manifest I/O are best-effort observation only. A mid-run write,
+flush, close, or manifest-update failure disables further recording through a
+one-way circuit breaker, emits at most one warning to the original stderr, and
+does not change the compiler's exception or exit code. The original stdout and
+stderr are restored before final manifest work.
+
+This contract covers process-level `unity-create` invocations only. It does not
+record GTA `create`, other Unity commands, or direct in-process calls to the
+Typer app. Manifests contain the full raw prompt and argv, so `_run_logs` may
+contain sensitive user data and should be reviewed before sharing.

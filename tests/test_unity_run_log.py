@@ -4,10 +4,37 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from typing import TextIO
 
 import pytest
 
 from src.unity_run_log import UnityCreateRunRecorder
+
+
+class _FailingLog:
+    def __init__(
+        self,
+        wrapped: TextIO,
+        *,
+        fail_write: bool = False,
+        fail_flush: bool = False,
+    ) -> None:
+        self.wrapped = wrapped
+        self.fail_write = fail_write
+        self.fail_flush = fail_flush
+
+    def write(self, text: str) -> int:
+        if self.fail_write:
+            raise OSError("disk full")
+        return self.wrapped.write(text)
+
+    def flush(self) -> None:
+        if self.fail_flush:
+            raise OSError("volume disconnected")
+        self.wrapped.flush()
+
+    def close(self) -> None:
+        self.wrapped.close()
 
 
 def _config(tmp_path: Path) -> Path:
@@ -107,6 +134,35 @@ def test_non_create_and_help_commands_do_not_create_logs(tmp_path: Path) -> None
     assert not (tmp_path / "unity" / "_run_logs").exists()
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["main.py", "unity-validate", "unity-create"],
+        ["main.py", "validate", "unity-create"],
+        ["main.py", "--unknown-option", "unity-create"],
+    ],
+)
+def test_unity_create_as_noncommand_data_does_not_activate(
+    tmp_path: Path,
+    argv: list[str],
+) -> None:
+    recorder = UnityCreateRunRecorder.from_argv(argv, cwd=tmp_path)
+    assert recorder.active is False
+
+
+def test_supported_global_flags_before_command_activate(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    recorder = UnityCreateRunRecorder.from_argv(
+        [
+            "main.py", "--verbose", "-d", "unity-create", "brief",
+            "--config", str(config),
+        ],
+        cwd=tmp_path,
+    )
+    assert recorder.active is True
+    assert recorder.command_args[0] == "brief"
+
+
 def test_nonzero_system_exit_is_recorded_as_failure(tmp_path: Path) -> None:
     config = _config(tmp_path)
     argv = [
@@ -121,3 +177,65 @@ def test_nonzero_system_exit_is_recorded_as_failure(tmp_path: Path) -> None:
     assert manifest["status"] == "failed"
     assert manifest["exit_code"] == 2
     assert manifest["failure"]["exception_type"] == "SystemExit"
+
+
+def test_mid_run_transcript_failure_disables_logging_once_without_aborting(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    recorder = UnityCreateRunRecorder.from_argv(
+        ["main.py", "unity-create", "brief", "--config", str(config)],
+        cwd=tmp_path,
+    )
+
+    with recorder:
+        original_log = recorder._log_file
+        assert original_log is not None
+        recorder._log_file = _FailingLog(original_log, fail_write=True)
+        print("pipeline output continues")
+        print("second write does not emit a second warning")
+
+    assert recorder._logging_disabled is True
+    assert capsys.readouterr().err.count("RUN LOGGING ERROR") == 1
+
+
+def test_finalization_flush_failure_restores_streams_and_does_not_fail_run(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = _config(tmp_path)
+    recorder = UnityCreateRunRecorder.from_argv(
+        ["main.py", "unity-create", "brief", "--config", str(config)],
+        cwd=tmp_path,
+    )
+
+    with recorder:
+        original_log = recorder._log_file
+        assert original_log is not None
+        recorder._log_file = _FailingLog(original_log, fail_flush=True)
+        print("pipeline completed")
+
+    print("stdout restored")
+    captured = capsys.readouterr()
+    assert "stdout restored" in captured.out
+    assert captured.err.count("RUN LOGGING ERROR") == 1
+
+
+def test_logging_failure_does_not_replace_active_pipeline_exception(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    recorder = UnityCreateRunRecorder.from_argv(
+        ["main.py", "unity-create", "brief", "--config", str(config)],
+        cwd=tmp_path,
+    )
+
+    with pytest.raises(RuntimeError, match="pipeline failed first"):
+        with recorder:
+            original_log = recorder._log_file
+            assert original_log is not None
+            recorder._log_file = _FailingLog(original_log, fail_write=True)
+            raise RuntimeError("pipeline failed first")
+
+    assert recorder._logging_disabled is True
