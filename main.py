@@ -105,6 +105,8 @@ Requires LM Studio running with a model loaded, OR Ollama (set in config.yaml).
 """
 from __future__ import annotations
 
+import sys
+
 from cli.common import app  # noqa: F401  (re-exported: tests do `import main; main.app`)
 
 # Each import below registers its module's @app.command(...) functions onto
@@ -122,4 +124,7 @@ from cli import (  # noqa: F401,E402
 )
 
 if __name__ == "__main__":
-    app()
+    from src.unity_run_log import UnityCreateRunRecorder
+
+    with UnityCreateRunRecorder.from_argv(sys.argv):
+        app()

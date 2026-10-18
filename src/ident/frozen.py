@@ -84,6 +84,9 @@ SITES: tuple[DigestSite, ...] = (
                "keep",
                "contract: raw SHA-256 provenance binds the exact reference "
                "image bytes and visual-context text accepted before Step 4"),
+    DigestSite("src/unity_run_log.py", "_read_raw_input", 2, "keep",
+               "contract: exact SHA-256 records the raw prompt bytes in the "
+               "unity-create-run-log/v1 manifest and names its artifact pair"),
 
     # ── output seeds ──────────────────────────────────────────────────────────
     DigestSite("src/audio/content.py", "_seed_for", 1, "keep",
