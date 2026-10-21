@@ -145,6 +145,13 @@ COVERED_SCRIPT_TYPES = {
     "physics", "input_system",
 }
 
+# Some composed classes own support types emitted beside their primary source
+# file.  Reserve those companions as part of the same ownership boundary so a
+# prompt-authored custom script cannot create a duplicate global definition.
+COMPOSED_COMPANION_TYPES = {
+    "ProjectileController": frozenset({"ProjectilePool"}),
+}
+
 
 def drop_owned_scripts(scripts: list, composed_units: list) -> list:
     """Return LLM-authored scripts minus the ones compose already owns.
@@ -166,6 +173,8 @@ def drop_owned_scripts(scripts: list, composed_units: list) -> list:
     if any(u.kind == "controller" and "shoot" in u.abilities
            for u in composed_units):
         reserved_names.add("ProjectileController")
+    for owner_name in tuple(reserved_names):
+        reserved_names.update(COMPOSED_COMPANION_TYPES.get(owner_name, ()))
     return [s for s in scripts
             if s.type not in COVERED_SCRIPT_TYPES and s.name not in reserved_names]
 

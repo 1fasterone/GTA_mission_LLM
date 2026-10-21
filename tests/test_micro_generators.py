@@ -13,13 +13,13 @@ from src.micro.controller     import ControllerPipeline, ControllerSchema, Weapo
 from src.micro.camera         import CameraRigPipeline,  CameraRigSchema
 from src.micro.physics        import PhysicsPipeline,    PhysicsSchema
 from src.micro.hud            import HUDPipeline,        HUDSchema
-from src.micro.input_actions  import InputPipeline,      InputSchema, InputMap, InputAction
+from src.micro.input_actions  import InputPipeline,      InputSchema
 from src.micro.audio          import AudioPipeline,      AudioSchema
 from src.micro.ai             import AIPipeline,         AISchema, AIState, CoverPoint
 from src.micro.spawner        import SpawnerPipeline,    SpawnerSchema
 from src.micro.saveload       import SaveLoadPipeline,   SaveLoadSchema
 from src.micro.inventory      import InventoryPipeline,  InventorySchema, InventoryItemSpec
-from src.micro.dialogue       import DialoguePipeline,   DialogueSchema, DialogueNode, DialogueChoice
+from src.micro.dialogue       import DialoguePipeline,   DialogueSchema, DialogueNode
 from src.micro.menu           import MenuPipeline,        MenuSchema
 from src.micro.interactable   import InteractablePipeline, InteractableSchema
 from src.micro.transition     import TransitionPipeline,  TransitionSchema
@@ -259,7 +259,7 @@ def test_shoot_controller_emits_dimension_neutral_projectile_foundation(
     assert "private void OnCollisionEnter2D(Collision2D collision)" in projectile
     assert "private void OnTriggerEnter2D(Collider2D other)" in projectile
     assert 'SendMessageUpwards("TakeDamage", damage' in projectile
-    assert "if (_released || _hasImpacted || other == null || IsOwner(other)) return;" in projectile
+    assert "if (_released || _hasImpacted || other == null || IsSelf(other) || IsOwner(other)) return;" in projectile
     controller = (tmp_path / "Scripts" / "Shooter.cs").read_text(encoding="utf-8")
     assert "Physics.Raycast" in controller
     assert "LaunchProjectile" not in controller
@@ -299,9 +299,11 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "_currentAmmo--;" in controller
     assert "projectile.Configure(" in controller
     assert "weaponDamage[_weaponIndex], gameObject," in controller
-    assert "projectile.Launch(aimRay.direction.normalized * projectileSpeed[_weaponIndex]);" in controller
+    assert "ResolveProjectileSpawnPosition(muzzle, launchDirection)" in controller
+    assert "projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);" in controller
     assert "var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);" in controller
     assert "prefab.AddComponent<Rigidbody>();" in controller
+    assert "CollisionDetectionMode.ContinuousSpeculative" in controller
     assert "prefab.AddComponent<ProjectileController>();" in controller
 
     assert "public enum ProjectilePoolGrowthPolicy" in pool
@@ -309,6 +311,7 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "_prefab.GetComponent<Rigidbody>()" in pool
     assert "_prefab.GetComponent<Collider>()" in pool
     assert "_prefab.GetComponent<ProjectileController>()" in pool
+    assert "CollisionDetectionMode.ContinuousSpeculative" in pool
     assert "_growthPolicy == ProjectilePoolGrowthPolicy.GrowByOne" in pool
     assert "if (projectile == null || !_borrowed.Remove(projectile)) return;" in pool
 
@@ -319,7 +322,11 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);" in projectile
     assert "if (_released) return;" in projectile
     assert "_returnToPool(this);" in projectile
-    assert "if (_released || _hasImpacted || other == null || IsOwner(other)) return;" in projectile
+    assert "Physics.SphereCastNonAlloc(" in projectile
+    assert "Physics.IgnoreCollision(projectileCollider, ownerCollider, true);" in projectile
+    assert "Physics.IgnoreCollision(projectileCollider, ownerCollider, false);" in projectile
+    assert "CollisionDetectionMode.ContinuousSpeculative" in projectile
+    assert "if (_released || _hasImpacted || other == null || IsSelf(other) || IsOwner(other)) return;" in projectile
 
 
 def test_3d_projectile_delivery_abstains_for_2d_controller(tmp_path, dummy_config):
