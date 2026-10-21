@@ -81,6 +81,7 @@ public sealed class ProjectilePool : MonoBehaviour
         if (body == null) body = _prefab.AddComponent<Rigidbody>();
         body.isKinematic = true;
         body.useGravity = false;
+        body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         if (_prefab.GetComponent<Collider>() == null)
             _prefab.AddComponent<SphereCollider>();
         if (_prefab.GetComponent<ProjectileController>() == null)

@@ -19,6 +19,11 @@ public sealed class ProjectileController : MonoBehaviour
     private float _expiresAt;
     private bool _hasImpacted;
     private bool _released;
+    private readonly RaycastHit[] _sweepHits = new RaycastHit[16];
+    private Collider[] _projectileColliders = System.Array.Empty<Collider>();
+    private Collider[] _ignoredOwnerColliders = System.Array.Empty<Collider>();
+    private Vector3 _previousPosition;
+    private float _sweepRadius = 0.04f;
 
     /// <summary>Preserves the original foundation configuration surface.</summary>
     public void Configure(float damageAmount, GameObject owner)
@@ -31,6 +36,7 @@ public sealed class ProjectileController : MonoBehaviour
     {
         damage = Mathf.Max(0f, damageAmount);
         lifetimeSeconds = Mathf.Max(0.01f, lifetime);
+        RestoreOwnerCollisions();
         _owner = owner;
         _hasImpacted = false;
         _released = false;
@@ -42,12 +48,16 @@ public sealed class ProjectileController : MonoBehaviour
             _body.angularVelocity = Vector3.zero;
             _body.isKinematic = false;
             _body.useGravity = useGravity;
+            _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         }
+        _previousPosition = transform.position;
+        BindOwnerCollisions();
     }
 
     /// <summary>Assigns velocity after the caller places this instance at its muzzle.</summary>
     public void Launch(Vector3 velocity)
     {
+        _previousPosition = _body != null ? _body.position : transform.position;
         if (_body != null)
             _body.linearVelocity = velocity;
     }
@@ -61,6 +71,7 @@ public sealed class ProjectileController : MonoBehaviour
     /// <summary>Restores deterministic reusable state before the pool parks an instance.</summary>
     public void ResetForPool()
     {
+        RestoreOwnerCollisions();
         _owner = null;
         _hasImpacted = false;
         _released = false;
@@ -72,6 +83,7 @@ public sealed class ProjectileController : MonoBehaviour
             _body.angularVelocity = Vector3.zero;
             _body.useGravity = false;
             _body.isKinematic = true;
+            _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         }
         foreach (var effect in GetComponentsInChildren<ParticleSystem>(true))
             effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
@@ -81,7 +93,54 @@ public sealed class ProjectileController : MonoBehaviour
     {
         lifetimeSeconds = Mathf.Max(0.01f, lifetimeSeconds);
         _body = GetComponent<Rigidbody>();
+        if (_body != null)
+            _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        _projectileColliders = GetComponentsInChildren<Collider>(true);
+        CacheSweepRadius();
+        _previousPosition = transform.position;
         _expiresAt = Time.time + lifetimeSeconds;
+    }
+
+    private void FixedUpdate()
+    {
+        if (_released || _hasImpacted || _body == null || _body.isKinematic) return;
+
+        Vector3 currentPosition = _body.position;
+        Vector3 travel = currentPosition - _previousPosition;
+        float distance = travel.magnitude;
+        if (distance > 0.0001f)
+        {
+            Vector3 direction = travel / distance;
+            int hitCount = Physics.SphereCastNonAlloc(
+                _previousPosition, _sweepRadius, direction, _sweepHits, distance,
+                Physics.AllLayers, QueryTriggerInteraction.Collide);
+            Collider nearest = null;
+            float nearestDistance = float.PositiveInfinity;
+            int nearestId = int.MaxValue;
+            for (int i = 0; i < hitCount; i++)
+            {
+                Collider candidate = _sweepHits[i].collider;
+                if (candidate == null || IsSelf(candidate.gameObject)
+                    || IsOwner(candidate.gameObject)) continue;
+                int candidateId = candidate.GetInstanceID();
+                if (_sweepHits[i].distance < nearestDistance
+                    || (Mathf.Approximately(_sweepHits[i].distance, nearestDistance)
+                        && candidateId < nearestId))
+                {
+                    nearest = candidate;
+                    nearestDistance = _sweepHits[i].distance;
+                    nearestId = candidateId;
+                }
+            }
+            if (nearest != null)
+            {
+                _body.position = _previousPosition
+                    + direction * Mathf.Max(0f, nearestDistance - _sweepRadius);
+                TryImpact(nearest.gameObject);
+                return;
+            }
+        }
+        _previousPosition = currentPosition;
     }
 
     private void Update()
@@ -97,7 +156,7 @@ public sealed class ProjectileController : MonoBehaviour
 
     private void TryImpact(GameObject other)
     {
-        if (_released || _hasImpacted || other == null || IsOwner(other)) return;
+        if (_released || _hasImpacted || other == null || IsSelf(other) || IsOwner(other)) return;
 
         _hasImpacted = true;
         // Health.cs.j2 and AI.cs.j2 already share this runtime contract. Keep
@@ -128,4 +187,51 @@ public sealed class ProjectileController : MonoBehaviour
             || otherTransform.IsChildOf(ownerTransform)
             || ownerTransform.IsChildOf(otherTransform);
     }
+
+    private bool IsSelf(GameObject other)
+    {
+        if (other == null) return false;
+        Transform otherTransform = other.transform;
+        return otherTransform == transform || otherTransform.IsChildOf(transform);
+    }
+
+    private void BindOwnerCollisions()
+    {
+        if (_owner == null) return;
+        _projectileColliders = GetComponentsInChildren<Collider>(true);
+        _ignoredOwnerColliders = _owner.GetComponentsInChildren<Collider>(true);
+        foreach (Collider projectileCollider in _projectileColliders)
+        foreach (Collider ownerCollider in _ignoredOwnerColliders)
+        {
+            if (projectileCollider != null && ownerCollider != null)
+                Physics.IgnoreCollision(projectileCollider, ownerCollider, true);
+        }
+    }
+
+    private void RestoreOwnerCollisions()
+    {
+        foreach (Collider projectileCollider in _projectileColliders)
+        foreach (Collider ownerCollider in _ignoredOwnerColliders)
+        {
+            if (projectileCollider != null && ownerCollider != null)
+                Physics.IgnoreCollision(projectileCollider, ownerCollider, false);
+        }
+        _ignoredOwnerColliders = System.Array.Empty<Collider>();
+    }
+
+    private void CacheSweepRadius()
+    {
+        float radius = float.PositiveInfinity;
+        foreach (Collider projectileCollider in _projectileColliders)
+        {
+            if (projectileCollider == null) continue;
+            Vector3 extents = projectileCollider.bounds.extents;
+            float candidate = Mathf.Min(extents.x, Mathf.Min(extents.y, extents.z));
+            if (candidate > 0f) radius = Mathf.Min(radius, candidate);
+        }
+        if (!float.IsPositiveInfinity(radius))
+            _sweepRadius = Mathf.Max(0.01f, radius * 0.9f);
+    }
+
+    private void OnDestroy() => RestoreOwnerCollisions();
 }

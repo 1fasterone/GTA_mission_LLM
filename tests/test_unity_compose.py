@@ -683,8 +683,8 @@ def test_compose_drops_scripts_that_collide_with_micros_by_name():
     assert kept == {"ScoreTracker"}
 
 
-def test_compose_drops_projectile_support_class_only_when_shooting():
-    """A shooting controller emits ProjectileController as a support file.
+def test_compose_drops_projectile_companion_classes_only_when_shooting():
+    """A shooting controller emits projectile support and pool classes.
 
     It is not the controller unit's primary class, so duplicate prevention must
     reserve it explicitly without claiming the name for non-shoot controllers.
@@ -694,7 +694,8 @@ def test_compose_drops_projectile_support_class_only_when_shooting():
 
     scripts = [
         UnityScript(name="ProjectileController", type="custom", description="x"),
-        UnityScript(name="ScoreTracker", type="custom", description="x"),
+        UnityScript(name="ProjectilePool", type="custom", description="x"),
+        UnityScript(name="HitFx", type="custom", description="x"),
     ]
     shooting = MicroComposer("ProjectileDupGuard").plan(
         subsystems_for("3D", [], genre="fps")
@@ -703,9 +704,9 @@ def test_compose_drops_projectile_support_class_only_when_shooting():
 
     assert "shoot" in next(u.abilities for u in shooting if u.kind == "controller")
     assert "shoot" not in next(u.abilities for u in idle if u.kind == "controller")
-    assert {s.name for s in drop_owned_scripts(scripts, shooting)} == {"ScoreTracker"}
+    assert {s.name for s in drop_owned_scripts(scripts, shooting)} == {"HitFx"}
     assert {s.name for s in drop_owned_scripts(scripts, idle)} == {
-        "ProjectileController", "ScoreTracker"
+        "ProjectileController", "ProjectilePool", "HitFx"
     }
 
 

@@ -1498,6 +1498,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         var body = prefab.AddComponent<Rigidbody>();
         body.isKinematic = true;
         body.useGravity = false;
+        body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         prefab.AddComponent<ProjectileController>();
         prefab.SetActive(false);
         return prefab;
@@ -1515,12 +1516,42 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         Ray aimRay = Camera.main != null
             ? Camera.main.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f))
             : new Ray(muzzle.position, muzzle.forward);
-        projectile.transform.SetPositionAndRotation(muzzle.position, Quaternion.LookRotation(aimRay.direction));
+        Vector3 launchDirection = aimRay.direction.normalized;
+        Vector3 spawnPosition = ResolveProjectileSpawnPosition(muzzle, launchDirection);
+        projectile.transform.SetPositionAndRotation(spawnPosition, Quaternion.LookRotation(launchDirection));
         projectile.Configure(
             weaponDamage[_weaponIndex], gameObject,
             projectileLifetime[_weaponIndex], projectileUseGravity[_weaponIndex]);
-        projectile.Launch(aimRay.direction.normalized * projectileSpeed[_weaponIndex]);
+        projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);
         return true;
+    }
+
+    private Vector3 ResolveProjectileSpawnPosition(Transform muzzle, Vector3 launchDirection)
+    {
+        const float projectileRadius = 0.08f;
+        const float skin = 0.02f;
+        float forwardOffset = projectileRadius + skin;
+        Vector3 absoluteDirection = new Vector3(
+            Mathf.Abs(launchDirection.x),
+            Mathf.Abs(launchDirection.y),
+            Mathf.Abs(launchDirection.z));
+
+        foreach (Collider ownerCollider in GetComponentsInChildren<Collider>(true))
+        {
+            if (ownerCollider == null || !ownerCollider.enabled) continue;
+            Bounds bounds = ownerCollider.bounds;
+            Vector3 closest = ownerCollider.ClosestPoint(muzzle.position);
+            if (!bounds.Contains(muzzle.position)
+                && (closest - muzzle.position).sqrMagnitude > skin * skin) continue;
+
+            float projectedExtent = Vector3.Dot(bounds.extents, absoluteDirection);
+            float projectedCenter = Vector3.Dot(
+                bounds.center - muzzle.position, launchDirection);
+            forwardOffset = Mathf.Max(
+                forwardOffset,
+                projectedCenter + projectedExtent + projectileRadius + skin);
+        }
+        return muzzle.position + launchDirection * Mathf.Max(0f, forwardOffset);
     }
 
     private Transform ResolveProjectileMuzzle()
