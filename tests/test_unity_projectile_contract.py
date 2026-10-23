@@ -1,4 +1,4 @@
-"""Focused acceptance contracts for the deterministic projectile bridge."""
+"""Slice 0 baseline and Slice 1 projectile-profile acceptance contracts."""
 
 from pathlib import Path
 
@@ -25,6 +25,12 @@ def _schema(game_type: str = "3D") -> UnitySchema:
 
 def _controller(subsystems):
     return next(sub for sub in subsystems if sub.kind == "controller")
+
+
+def _contract_for(brief: str) -> dict:
+    contract = physical_projectile_contract_for("3D", brief)
+    assert contract is not None
+    return contract
 
 
 def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
@@ -58,9 +64,8 @@ def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
     ],
 )
 def test_explicit_thrown_rock_uses_gravity_profile(brief):
-    contract = physical_projectile_contract_for("3D", brief)
+    contract = _contract_for(brief)
 
-    assert contract is not None
     assert contract["motion_profile"] == "thrown_object"
     assert contract["emission_profile"] == "throw_release"
     assert contract["visual_profile"] == "rock"
@@ -133,12 +138,9 @@ def test_2d_physical_brief_is_reported_without_forging_a_3d_loadout(brief):
 
 
 def test_compose_emits_pool_and_muzzle_path_only_for_typed_physical_contract(tmp_path):
-    physical = physical_projectile_contract_for(
-        "3D", "A rifle firing physical bullets."
+    physical_subs = subsystems_for(
+        "3D", [], projectile_contract=_contract_for("A rifle firing physical bullets.")
     )
-    assert physical is not None
-
-    physical_subs = subsystems_for("3D", [], projectile_contract=physical)
     physical_controller = _controller(physical_subs)
     assert physical_controller.options["weapons"][0]["delivery"] == "projectile_3d"
     assert "shoot" in physical_controller.options["abilities"]
@@ -165,11 +167,7 @@ def test_compose_emits_pool_and_muzzle_path_only_for_typed_physical_contract(tmp
 
 
 def test_thrown_profile_composes_through_existing_projectile_foundation(tmp_path):
-    physical = physical_projectile_contract_for(
-        "3D", "A hero throwing rocks at practice targets."
-    )
-    assert physical is not None
-
+    physical = _contract_for("A hero throwing rocks at practice targets.")
     subsystems = subsystems_for("3D", [], projectile_contract=physical)
     controller = _controller(subsystems)
     weapon = controller.options["weapons"][0]
@@ -193,3 +191,43 @@ def test_thrown_profile_composes_through_existing_projectile_foundation(tmp_path
     assert "new bool[] { true" in controller_source
     assert "Physics.SphereCastNonAlloc(" in projectile_source
     assert "CollisionDetectionMode.ContinuousSpeculative" in pool_source
+
+
+def test_slice0_locks_generated_projectile_runtime_invariants(tmp_path):
+    """Freeze the runtime foundation beneath every Slice 1 profile."""
+    subsystems = subsystems_for(
+        "3D", [], projectile_contract=_contract_for("A rifle firing physical bullets.")
+    )
+    units = MicroComposer("ProjectileSlice0Baseline").emit(
+        subsystems, Path(tmp_path) / "Assets"
+    )
+    controller_unit = next(unit for unit in units if unit.kind == "controller")
+    scripts = Path(tmp_path) / "Assets" / "Micros" / "controller" / "Scripts"
+    controller = (scripts / f"{controller_unit.class_name}.cs").read_text(
+        encoding="utf-8"
+    )
+    projectile = (scripts / "ProjectileController.cs").read_text(encoding="utf-8")
+    pool = (scripts / "ProjectilePool.cs").read_text(encoding="utf-8")
+
+    assert "ResolveProjectileSpawnPosition(muzzle, launchDirection)" in controller
+    assert "projectile.Configure(" in controller
+    assert "projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);" in controller
+    assert "CollisionDetectionMode.ContinuousSpeculative" in controller
+
+    assert "Physics.SphereCastNonAlloc(" in projectile
+    assert "QueryTriggerInteraction.Collide" in projectile
+    assert "private void TryImpact(GameObject other)" in projectile
+    assert "if (_released || _hasImpacted" in projectile
+    assert "_hasImpacted = true;" in projectile
+    assert "_returnToPool(this);" in projectile
+
+    assert "BindOwnerCollisions();" in projectile
+    assert "RestoreOwnerCollisions();" in projectile
+    assert "_body.linearVelocity = Vector3.zero;" in projectile
+    assert "_body.angularVelocity = Vector3.zero;" in projectile
+    assert "_body.useGravity = false;" in projectile
+    assert "ParticleSystemStopBehavior.StopEmittingAndClear" in projectile
+    assert "CollisionDetectionMode.ContinuousSpeculative" in projectile
+    assert "if (projectile == null || !_borrowed.Remove(projectile)) return;" in pool
+    assert "projectile.ResetForPool();" in pool
+    assert "CollisionDetectionMode.ContinuousSpeculative" in pool
