@@ -1,11 +1,14 @@
-"""Focused acceptance contracts for the deterministic ProjectileController P2 bridge."""
+"""Focused acceptance contracts for the deterministic projectile bridge."""
 
 from pathlib import Path
+
+import pytest
 
 from src.unity_compose import MicroComposer, subsystems_for
 from src.unity_projectile_contract import (
     PHYSICAL_PROJECTILE_META_KEY,
     apply_physical_projectile_contract,
+    physical_projectile_contract_for,
 )
 from src.unity_schema import UnitySchema
 
@@ -24,7 +27,7 @@ def _controller(subsystems):
     return next(sub for sub in subsystems if sub.kind == "controller")
 
 
-def test_explicit_3d_physical_brief_stamps_typed_loadout_and_weapon_entity():
+def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
     schema = _schema()
 
     messages = apply_physical_projectile_contract(
@@ -33,8 +36,13 @@ def test_explicit_3d_physical_brief_stamps_typed_loadout_and_weapon_entity():
     )
 
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
+    assert contract["version"] == "slice2-3d-v2"
     assert contract["delivery"] == "projectile_3d"
+    assert contract["motion_profile"] == "fast_round"
+    assert contract["emission_profile"] == "muzzle"
+    assert contract["visual_profile"] == "bullet"
     assert contract["weapon"]["delivery"] == "projectile_3d"
+    assert contract["weapon"]["projectile_use_gravity"] is False
     assert contract["weapon"]["projectile_pool_size"] == 8
     assert [(e.name, e.kind, e.count) for e in schema.entities] == [
         ("PlayerWeapon", "weapon", 1)
@@ -42,22 +50,79 @@ def test_explicit_3d_physical_brief_stamps_typed_loadout_and_weapon_entity():
     assert any("typed projectile_3d loadout" in message for message in messages)
 
 
+@pytest.mark.parametrize(
+    "brief",
+    [
+        "A third-person game where the hero throws rocks at targets.",
+        "A VR arena where the player hurls a stone at moving drones.",
+    ],
+)
+def test_explicit_thrown_rock_uses_gravity_profile(brief):
+    contract = physical_projectile_contract_for("3D", brief)
+
+    assert contract is not None
+    assert contract["motion_profile"] == "thrown_object"
+    assert contract["emission_profile"] == "throw_release"
+    assert contract["visual_profile"] == "rock"
+    assert contract["weapon"] == {
+        "name": "Thrown Rock",
+        "damage": 20.0,
+        "fire_rate": 0.75,
+        "magazine_size": 6,
+        "reload_time": 1.5,
+        "shoot_range": 35.0,
+        "delivery": "projectile_3d",
+        "projectile_speed": 18.0,
+        "projectile_use_gravity": True,
+        "projectile_lifetime": 8.0,
+        "projectile_pool_size": 8,
+        "projectile_pool_growth": "fixed",
+    }
+
+
+def test_thrown_rock_adds_a_rock_view_model_without_replacing_runtime_delivery():
+    schema = _schema()
+
+    apply_physical_projectile_contract(
+        schema,
+        "A third-person game where the hero tosses rocks at targets.",
+    )
+
+    contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
+    assert contract["delivery"] == "projectile_3d"
+    assert [(e.name, e.kind, e.model_hint, e.scale) for e in schema.entities] == [
+        ("ThrownRock", "weapon", "rough throwing rock stone", 0.22)
+    ]
+
+
+def test_bare_rock_is_not_mistaken_for_a_thrown_projectile():
+    assert physical_projectile_contract_for(
+        "3D", "A rocky canyon containing stone ruins."
+    ) is None
+
+
 def test_bare_fps_and_explicit_hitscan_keep_the_legacy_hitscan_path():
     for brief in (
         "A fast FPS arena shooter.",
         "An FPS with hitscan bullets and a rifle.",
+        "A hitscan game where the hero throws rocks as a cosmetic animation.",
     ):
         schema = _schema()
         assert apply_physical_projectile_contract(schema, brief) == []
         assert PHYSICAL_PROJECTILE_META_KEY not in schema.meta
 
 
-def test_2d_physical_brief_is_reported_without_forging_a_3d_loadout():
+@pytest.mark.parametrize(
+    "brief",
+    [
+        "A 2D slingshot game with physical projectiles.",
+        "A 2D game where the player throws rocks.",
+    ],
+)
+def test_2d_physical_brief_is_reported_without_forging_a_3d_loadout(brief):
     schema = _schema("2D")
 
-    messages = apply_physical_projectile_contract(
-        schema, "A 2D slingshot game with physical projectiles."
-    )
+    messages = apply_physical_projectile_contract(schema, brief)
 
     assert PHYSICAL_PROJECTILE_META_KEY not in schema.meta
     assert schema.entities == []
@@ -68,18 +133,11 @@ def test_2d_physical_brief_is_reported_without_forging_a_3d_loadout():
 
 
 def test_compose_emits_pool_and_muzzle_path_only_for_typed_physical_contract(tmp_path):
-    physical = {
-        "delivery": "projectile_3d",
-        "weapon": {
-            "name": "Projectile Weapon",
-            "delivery": "projectile_3d",
-            "projectile_speed": 60.0,
-            "projectile_use_gravity": False,
-            "projectile_lifetime": 5.0,
-            "projectile_pool_size": 8,
-            "projectile_pool_growth": "fixed",
-        },
-    }
+    physical = physical_projectile_contract_for(
+        "3D", "A rifle firing physical bullets."
+    )
+    assert physical is not None
+
     physical_subs = subsystems_for("3D", [], projectile_contract=physical)
     physical_controller = _controller(physical_subs)
     assert physical_controller.options["weapons"][0]["delivery"] == "projectile_3d"
@@ -104,3 +162,34 @@ def test_compose_emits_pool_and_muzzle_path_only_for_typed_physical_contract(tmp
                       / f"{hitscan_controller.class_name}.cs").read_text(encoding="utf-8")
     assert "private ProjectilePool[] _projectilePools;" not in hitscan_source
     assert "Physics.Raycast" in hitscan_source
+
+
+def test_thrown_profile_composes_through_existing_projectile_foundation(tmp_path):
+    physical = physical_projectile_contract_for(
+        "3D", "A hero throwing rocks at practice targets."
+    )
+    assert physical is not None
+
+    subsystems = subsystems_for("3D", [], projectile_contract=physical)
+    controller = _controller(subsystems)
+    weapon = controller.options["weapons"][0]
+    assert weapon["projectile_speed"] == 18.0
+    assert weapon["projectile_use_gravity"] is True
+
+    units = MicroComposer("ThrownRockProjectile").emit(
+        subsystems, Path(tmp_path) / "Assets"
+    )
+    controller_unit = next(unit for unit in units if unit.kind == "controller")
+    scripts = Path(tmp_path) / "Assets" / "Micros" / "controller" / "Scripts"
+    controller_source = (scripts / f"{controller_unit.class_name}.cs").read_text(
+        encoding="utf-8"
+    )
+    projectile_source = (scripts / "ProjectileController.cs").read_text(
+        encoding="utf-8"
+    )
+    pool_source = (scripts / "ProjectilePool.cs").read_text(encoding="utf-8")
+
+    assert "new float[] { 18" in controller_source
+    assert "new bool[] { true" in controller_source
+    assert "Physics.SphereCastNonAlloc(" in projectile_source
+    assert "CollisionDetectionMode.ContinuousSpeculative" in pool_source
