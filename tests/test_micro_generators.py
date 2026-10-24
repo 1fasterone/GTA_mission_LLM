@@ -301,8 +301,14 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "weaponDamage[_weaponIndex], gameObject," in controller
     assert "ResolveProjectileSpawnPosition(muzzle, launchDirection)" in controller
     assert "projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);" in controller
-    assert "var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);" in controller
+    assert 'var prefab = new GameObject("Projectile3DPrefab_" + weaponIndex);' in controller
     assert "prefab.AddComponent<Rigidbody>();" in controller
+    assert "prefab.AddComponent<SphereCollider>();" in controller
+    assert "BuildResolvedProjectileVisual(" in controller
+    assert "BuildPrimitiveProjectileVisual(profile, prefab.transform)" in controller
+    assert "ProjectileVisualFallback_Bullet" in controller
+    assert "ProjectileVisualFallback_Rock" in controller
+    assert "DisablePresentationPhysics(visual);" in controller
     assert "CollisionDetectionMode.ContinuousSpeculative" in controller
     assert "prefab.AddComponent<ProjectileController>();" in controller
 

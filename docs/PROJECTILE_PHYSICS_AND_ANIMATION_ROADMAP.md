@@ -92,6 +92,10 @@ target at the supported maximum speed.
 
 ### Slice 3 - Projectile prefab and visuals
 
+Status: **complete (2026-10-23)**. The implementation plan and retained live
+Unity evidence are recorded in `docs/PROJECTILE_SLICE3_PLAN.md` and
+`docs/PROJECTILE_SLICE3_ACCEPTANCE.md`.
+
 - Replace the runtime sphere as the normal presentation path.
 - Resolve projectile visuals through the established entity/model chain.
 - Retain a named deterministic primitive fallback when no asset resolves.

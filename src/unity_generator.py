@@ -24,6 +24,7 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
+from .unity_projectile_contract import bind_projectile_visual_resolution
 from .unity_atmosphere import assert_aaa_contract
 from .unity_greybox import (GREYBOX_SCRIPT_TYPES, apply_greybox_spatial_layout,
                              greybox_plus_ir_for_schema, greybox_ir_for_schema,
@@ -3514,6 +3515,7 @@ class UnityProjectGenerator:
             schema, lookups_dir, model_source_dir, model_overrides,
             composed_units, strict_assets, asset_cfg, sketchfab_cfg, llm,
             locked_asset_bindings)
+        bind_projectile_visual_resolution(schema, entity_model_paths)
         any_humanoid = any(m.rig == "humanoid" for m in used_models.values())
 
         # Entity name -> bounds-fit target (0.0 = no fit), for BoundsFit at

@@ -23,7 +23,7 @@ from .unity_schema import EntitySpec, UnitySchema
 
 
 PHYSICAL_PROJECTILE_META_KEY = "physical_projectile_contract"
-PHYSICAL_PROJECTILE_CONTRACT_VERSION = "slice2-3d-v2"
+PHYSICAL_PROJECTILE_CONTRACT_VERSION = "slice3-3d-v3"
 
 _HITSCAN_RE = re.compile(r"\bhit[- ]?scan\b", re.IGNORECASE)
 _PHYSICAL_RE = re.compile(
@@ -66,6 +66,13 @@ _PROJECTILE_PROFILES: dict[str, dict[str, Any]] = {
             "model_hint": "rifle weapon",
             "scale": 0.45,
         },
+        "projectile_visual": {
+            "entity_name": "ProjectileBulletVisual",
+            "kind": "projectile_visual",
+            "model_hint": "bullet cartridge ammunition",
+            "fallback": "bullet",
+            "target_size": 0.20,
+        },
     },
     "thrown_object": {
         "motion_profile": "thrown_object",
@@ -89,6 +96,13 @@ _PROJECTILE_PROFILES: dict[str, dict[str, Any]] = {
             "name": "ThrownRock",
             "model_hint": "rough throwing rock stone",
             "scale": 0.22,
+        },
+        "projectile_visual": {
+            "entity_name": "ProjectileRockVisual",
+            "kind": "projectile_visual",
+            "model_hint": "small rough throwing rock stone",
+            "fallback": "rock",
+            "target_size": 0.24,
         },
     },
 }
@@ -128,6 +142,75 @@ def physical_projectile_contract_for(
         "delivery": "projectile_3d",
     })
     return contract
+
+
+def projectile_visual_spec_for_entity(
+    schema: UnitySchema,
+    entity_name: str,
+) -> dict[str, Any] | None:
+    """Return the compiler-owned visual spec for one synthetic entity.
+
+    The helper is shared with the asset resolver so strict mode can distinguish
+    an allowed projectile primitive fallback from an ordinary unresolved scene
+    entity. It trusts only the versioned deterministic contract stamped by this
+    module; arbitrary schema metadata cannot opt an entity out of strict assets.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    contract = meta.get(PHYSICAL_PROJECTILE_META_KEY)
+    if not isinstance(contract, dict):
+        return None
+    if contract.get("version") != PHYSICAL_PROJECTILE_CONTRACT_VERSION:
+        return None
+    visual = contract.get("projectile_visual")
+    if not isinstance(visual, dict):
+        return None
+    if visual.get("entity_name") != entity_name:
+        return None
+    fallback = visual.get("fallback")
+    if fallback not in {"bullet", "rock"}:
+        return None
+    return visual
+
+
+def bind_projectile_visual_resolution(
+    schema: UnitySchema,
+    entity_model_paths: dict[str, str],
+) -> dict[str, Any] | None:
+    """Bind the resolver result and remove the synthetic entity from the world.
+
+    The asset resolver must see the entity so a real model can enter the normal
+    copy/Resources chain. The scene spawner must not see it as world content,
+    because the controller owns its instances. This is the single deterministic
+    handoff between those two responsibilities.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    contract = meta.get(PHYSICAL_PROJECTILE_META_KEY)
+    if not isinstance(contract, dict):
+        return None
+    visual = contract.get("projectile_visual")
+    if not isinstance(visual, dict):
+        return None
+    entity_name = visual.get("entity_name")
+    fallback = visual.get("fallback")
+    if not isinstance(entity_name, str) or fallback not in {"bullet", "rock"}:
+        return None
+
+    resolved = entity_model_paths.get(entity_name, f"primitive:{fallback}")
+    if resolved.startswith("primitive:"):
+        visual["resolution"] = "primitive"
+        visual["resource_path"] = ""
+    elif resolved.startswith(("skip:", "procedural:", "fx:", "ui:")):
+        visual["resolution"] = "primitive"
+        visual["resource_path"] = ""
+    else:
+        visual["resolution"] = "asset"
+        visual["resource_path"] = resolved
+
+    entity_model_paths[entity_name] = "skip:projectile-visual"
+    recorded_paths = meta.get("entity_model_paths")
+    if isinstance(recorded_paths, dict):
+        recorded_paths[entity_name] = "skip:projectile-visual"
+    return visual
 
 
 def apply_physical_projectile_contract(
@@ -179,5 +262,24 @@ def apply_physical_projectile_contract(
         messages.append(
             "[projectile.p2] added "
             f"{view_model['name']} view-model entity for the held loadout"
+        )
+
+    projectile_visual = contract["projectile_visual"]
+    visual_name = projectile_visual["entity_name"]
+    if not any(entity.name == visual_name for entity in schema.entities):
+        schema.entities.append(EntitySpec(
+            name=visual_name,
+            kind=projectile_visual["kind"],
+            count=1,
+            shape="sphere",
+            placement="single",
+            color_role="accent",
+            scale=projectile_visual["target_size"],
+            model_hint=projectile_visual["model_hint"],
+        ))
+        messages.append(
+            "[projectile.p3] added "
+            f"{visual_name} resolver entity with named "
+            f"{projectile_visual['fallback']} primitive fallback"
         )
     return messages

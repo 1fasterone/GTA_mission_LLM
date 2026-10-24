@@ -5,6 +5,7 @@
 {% set is_bike = variant == "vehicle_bike" -%}
 {% set wheel_count = 2 if is_bike else 4 -%}
 {% set has_physical_projectiles = (s.weapons | selectattr("delivery", "equalto", "projectile_3d") | list | length) > 0 -%}
+{% set projectile_visuals = s.meta.get("projectile_visuals", []) -%}
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -140,6 +141,9 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private float[] projectileLifetime = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.projectile_lifetime) }}f{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private int[] projectilePoolSize = new int[] { {% for w in s.weapons %}{{ w.projectile_pool_size }}{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private bool[] projectilePoolGrows = new bool[] { {% for w in s.weapons %}{{ "true" if w.projectile_pool_growth == "grow_by_one" else "false" }}{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private string[] projectileVisualProfile = new string[] { {% for w in s.weapons %}{% set v = projectile_visuals[loop.index0] if loop.index0 < (projectile_visuals | length) else {} %}"{{ v.get('fallback', 'bullet') }}"{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private string[] projectileVisualResource = new string[] { {% for w in s.weapons %}{% set v = projectile_visuals[loop.index0] if loop.index0 < (projectile_visuals | length) else {} %}"{{ v.get('resource_path', '') }}"{{ "" if loop.last else ", " }}{% endfor %} };
+    [SerializeField] private float[] projectileVisualSize = new float[] { {% for w in s.weapons %}{% set v = projectile_visuals[loop.index0] if loop.index0 < (projectile_visuals | length) else {} %}{{ "%.2f"|format(v.get('target_size', 0.20)) }}f{{ "" if loop.last else ", " }}{% endfor %} };
 {% endif %}    [Tooltip("Ammo a reload draws from once the magazine is empty — an inventory's RestoreAmmo item effect refills this.")]
     [SerializeField] private int      startingReserveAmmo = {{ s.starting_reserve_ammo }};
 {% endif %}
@@ -1491,17 +1495,153 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 
     private GameObject BuildProjectile3DPrefab(int weaponIndex, Transform poolOwner)
     {
-        var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        string profile = projectileVisualProfile[weaponIndex] == "rock" ? "rock" : "bullet";
+        var prefab = new GameObject("Projectile3DPrefab_" + weaponIndex);
         prefab.name = "Projectile3DPrefab_" + weaponIndex;
         prefab.transform.SetParent(poolOwner, false);
-        prefab.transform.localScale = Vector3.one * 0.16f;
+        prefab.transform.localScale = Vector3.one;
         var body = prefab.AddComponent<Rigidbody>();
         body.isKinematic = true;
         body.useGravity = false;
         body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+        var collision = prefab.AddComponent<SphereCollider>();
+        collision.radius = profile == "rock" ? 0.11f : 0.04f;
+
+        GameObject visual = BuildResolvedProjectileVisual(
+            projectileVisualResource[weaponIndex], profile,
+            projectileVisualSize[weaponIndex], prefab.transform);
+        if (visual == null)
+            visual = BuildPrimitiveProjectileVisual(profile, prefab.transform);
+        DisablePresentationPhysics(visual);
+
         prefab.AddComponent<ProjectileController>();
         prefab.SetActive(false);
         return prefab;
+    }
+
+    private GameObject BuildResolvedProjectileVisual(
+        string resourcePath, string profile, float targetSize, Transform parent)
+    {
+        if (string.IsNullOrWhiteSpace(resourcePath)) return null;
+        GameObject modelPrefab = Resources.Load<GameObject>(resourcePath);
+        if (modelPrefab == null) return null;
+
+        var visualRoot = new GameObject("ProjectileVisualResolved_" + profile);
+        visualRoot.transform.SetParent(parent, false);
+        GameObject model = Instantiate(modelPrefab, visualRoot.transform);
+        model.name = "ResolvedModel";
+        model.transform.localPosition = Vector3.zero;
+        model.transform.localRotation = Quaternion.identity;
+
+        if (TryMeasureProjectileVisualBounds(visualRoot.transform, out Bounds bounds))
+        {
+            float largest = Mathf.Max(bounds.size.x, Mathf.Max(bounds.size.y, bounds.size.z));
+            if (largest > 0.0001f)
+                model.transform.localScale *= Mathf.Max(0.001f, targetSize) / largest;
+            if (TryMeasureProjectileVisualBounds(visualRoot.transform, out bounds))
+                model.transform.localPosition -= bounds.center;
+        }
+        return visualRoot;
+    }
+
+    private GameObject BuildPrimitiveProjectileVisual(string profile, Transform parent)
+    {
+        bool rock = profile == "rock";
+        GameObject visual = GameObject.CreatePrimitive(
+            rock ? PrimitiveType.Sphere : PrimitiveType.Capsule);
+        visual.name = rock
+            ? "ProjectileVisualFallback_Rock"
+            : "ProjectileVisualFallback_Bullet";
+        visual.transform.SetParent(parent, false);
+        visual.transform.localPosition = Vector3.zero;
+        visual.transform.localRotation = rock
+            ? Quaternion.Euler(17f, 23f, 11f)
+            : Quaternion.Euler(90f, 0f, 0f);
+        visual.transform.localScale = rock
+            ? new Vector3(0.22f, 0.17f, 0.19f)
+            : new Vector3(0.055f, 0.11f, 0.055f);
+
+        Renderer renderer = visual.GetComponent<Renderer>();
+        if (renderer != null)
+            renderer.sharedMaterial = CreateProjectileFallbackMaterial(profile);
+        if (!rock)
+            CreateProjectileFallbackTrail(visual, renderer != null
+                ? renderer.sharedMaterial : null);
+        return visual;
+    }
+
+    private static Material CreateProjectileFallbackMaterial(string profile)
+    {
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+        if (shader == null) shader = Shader.Find("Standard");
+        if (shader == null) shader = Shader.Find("Unlit/Color");
+        var material = new Material(shader);
+        bool rock = profile == "rock";
+        material.name = rock
+            ? "ProjectileFallbackRockMaterial"
+            : "ProjectileFallbackBulletMaterial";
+        Color color = rock
+            ? new Color(0.30f, 0.24f, 0.18f, 1f)
+            : new Color(1.00f, 0.68f, 0.12f, 1f);
+        material.color = color;
+        if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
+        if (!rock && material.HasProperty("_EmissionColor"))
+        {
+            material.EnableKeyword("_EMISSION");
+            material.SetColor("_EmissionColor", color * 1.5f);
+        }
+        return material;
+    }
+
+    private static void CreateProjectileFallbackTrail(GameObject visual, Material material)
+    {
+        TrailRenderer trail = visual.AddComponent<TrailRenderer>();
+        trail.time = 0.12f;
+        trail.minVertexDistance = 0.01f;
+        trail.startWidth = 0.035f;
+        trail.endWidth = 0f;
+        trail.emitting = false;
+        if (material != null) trail.sharedMaterial = material;
+    }
+
+    private static void DisablePresentationPhysics(GameObject visual)
+    {
+        if (visual == null) return;
+        foreach (Collider collider in visual.GetComponentsInChildren<Collider>(true))
+            collider.enabled = false;
+        foreach (Rigidbody body in visual.GetComponentsInChildren<Rigidbody>(true))
+        {
+            body.detectCollisions = false;
+            body.isKinematic = true;
+            body.useGravity = false;
+            body.linearVelocity = Vector3.zero;
+            body.angularVelocity = Vector3.zero;
+        }
+    }
+
+    private static bool TryMeasureProjectileVisualBounds(Transform root, out Bounds bounds)
+    {
+        bounds = default;
+        bool found = false;
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            Bounds world = renderer.bounds;
+            for (int x = -1; x <= 1; x += 2)
+            for (int y = -1; y <= 1; y += 2)
+            for (int z = -1; z <= 1; z += 2)
+            {
+                Vector3 corner = world.center + Vector3.Scale(
+                    world.extents, new Vector3(x, y, z));
+                Vector3 local = root.InverseTransformPoint(corner);
+                if (!found)
+                {
+                    bounds = new Bounds(local, Vector3.zero);
+                    found = true;
+                }
+                else bounds.Encapsulate(local);
+            }
+        }
+        return found;
     }
 
     private bool LaunchProjectile()

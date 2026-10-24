@@ -705,7 +705,9 @@ def unity_validate(
     subsystems: list = []
     if compose:
         from src.unity_compose import (MicroComposer, drop_owned_scripts,
-                                       refresh_cover_points, subsystems_for)
+                                       refresh_cover_points,
+                                       refresh_projectile_visuals,
+                                       subsystems_for)
         from src.unity_micro_code import CODE_KEYS, merge_authored_code
         from src.unity_pipeline import _compose_palette_rgb
         from src.unity_projectile_contract import PHYSICAL_PROJECTILE_META_KEY
@@ -821,6 +823,11 @@ def unity_validate(
         for msg in refresh_cover_points(
                 subsystems, schema.entities,
                 schema.meta.get("cover_points") if isinstance(schema.meta, dict) else None):
+            console.print(f"  [magenta]FIX[/]  {msg}")
+        for msg in refresh_projectile_visuals(
+                subsystems,
+                schema.meta.get(PHYSICAL_PROJECTILE_META_KEY)
+                if isinstance(schema.meta, dict) else None):
             console.print(f"  [magenta]FIX[/]  {msg}")
         composer.emit(subsystems, root / "Assets",
                       has_game_manager=has_game_manager, wiring=schema.wiring,

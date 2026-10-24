@@ -42,7 +42,7 @@ def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
     )
 
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
-    assert contract["version"] == "slice2-3d-v2"
+    assert contract["version"] == "slice3-3d-v3"
     assert contract["delivery"] == "projectile_3d"
     assert contract["motion_profile"] == "fast_round"
     assert contract["emission_profile"] == "muzzle"
@@ -51,8 +51,16 @@ def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
     assert contract["weapon"]["projectile_use_gravity"] is False
     assert contract["weapon"]["projectile_pool_size"] == 8
     assert [(e.name, e.kind, e.count) for e in schema.entities] == [
-        ("PlayerWeapon", "weapon", 1)
+        ("PlayerWeapon", "weapon", 1),
+        ("ProjectileBulletVisual", "projectile_visual", 1),
     ]
+    assert contract["projectile_visual"] == {
+        "entity_name": "ProjectileBulletVisual",
+        "kind": "projectile_visual",
+        "model_hint": "bullet cartridge ammunition",
+        "fallback": "bullet",
+        "target_size": 0.2,
+    }
     assert any("typed projectile_3d loadout" in message for message in messages)
 
 
@@ -96,7 +104,13 @@ def test_thrown_rock_adds_a_rock_view_model_without_replacing_runtime_delivery()
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
     assert contract["delivery"] == "projectile_3d"
     assert [(e.name, e.kind, e.model_hint, e.scale) for e in schema.entities] == [
-        ("ThrownRock", "weapon", "rough throwing rock stone", 0.22)
+        ("ThrownRock", "weapon", "rough throwing rock stone", 0.22),
+        (
+            "ProjectileRockVisual",
+            "projectile_visual",
+            "small rough throwing rock stone",
+            0.24,
+        ),
     ]
 
 

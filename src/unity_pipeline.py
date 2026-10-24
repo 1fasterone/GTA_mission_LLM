@@ -1057,6 +1057,41 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
             spec.fog = True
             fixes.append(f"Scene '{spec.name}': inferred fog from description")
         kept.append(spec)
+
+    # A declared entity may still be absent from EVERY explicit scene subset.
+    # The strict scene graph is correct to reject that ambiguity, but there is
+    # one case where the schema itself supplies a unique answer: exactly one
+    # non-menu scene exists.  Restore every orphan there instead of discarding
+    # an otherwise valid entity or letting a later graph pass fail.  This also
+    # covers compiler-owned entities injected after Step 3 (for example a
+    # projectile presentation resolver entity).  With two gameplay scenes we
+    # retain the authored subsets and abstain later rather than guessing.
+    specs_by_name = {spec.name: spec for spec in kept}
+    orphaned: list[str] = []
+    for entity in schema.entities:
+        active_somewhere = False
+        for scene_name in schema.scenes:
+            spec = specs_by_name.get(scene_name)
+            if spec is None or spec.entities is None or entity.name in spec.entities:
+                active_somewhere = True
+                break
+        if not active_somewhere:
+            orphaned.append(entity.name)
+
+    gameplay_scene_names = [
+        name for name in schema.scenes
+        if not any(word in (name or "").lower() for word in _MENU_SCENE_WORDS)
+    ]
+    if orphaned and len(gameplay_scene_names) == 1:
+        orphan_host = specs_by_name.get(gameplay_scene_names[0])
+        if orphan_host is not None and orphan_host.entities:
+            orphan_host.entities = list(orphan_host.entities) + [
+                name for name in orphaned if name not in orphan_host.entities
+            ]
+            fixes.append(
+                f"Scene '{orphan_host.name}': restored orphaned entity group(s) "
+                f"{orphaned} — it is the only declared gameplay scene"
+            )
     if dropped_scenes:
         fixes.append("Dropped scene_specs not matching schema.scenes: "
                      + ", ".join(dropped_scenes))
@@ -2509,7 +2544,8 @@ class UnityPipeline:
         # (composer.plan/module_deps/emit/wiring_report) rely on.
         if compose:
             from .unity_compose import (MicroComposer, drop_owned_scripts,
-                                        refresh_cover_points)
+                                        refresh_cover_points,
+                                        refresh_projectile_visuals)
             from .unity_micro_code import (merge_authored_code,
                                            sync_microgens_from_subsystems,
                                            sanitize_subsystem_composed_calls,
@@ -2752,6 +2788,9 @@ class UnityPipeline:
             # cover_shooter unit now — before emit renders its AI.cs.
             for msg in refresh_cover_points(subsystems, schema.entities,
                                             schema.meta.get("cover_points")):
+                self._fix(msg)
+            for msg in refresh_projectile_visuals(
+                    subsystems, schema.meta.get(PHYSICAL_PROJECTILE_META_KEY)):
                 self._fix(msg)
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,

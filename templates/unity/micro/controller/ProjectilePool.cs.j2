@@ -56,8 +56,11 @@ public sealed class ProjectilePool : MonoBehaviour
     {
         if (projectile == null || !_borrowed.Remove(projectile)) return;
 
-        projectile.ResetForPool();
         projectile.transform.SetParent(transform, false);
+        projectile.transform.localPosition = Vector3.zero;
+        projectile.transform.localRotation = Quaternion.identity;
+        projectile.transform.localScale = Vector3.one;
+        projectile.ResetForPool();
         projectile.gameObject.SetActive(false);
         _available.Enqueue(projectile);
     }
@@ -68,6 +71,9 @@ public sealed class ProjectilePool : MonoBehaviour
         instance.name = _prefab.name + "_Pooled";
         var projectile = instance.GetComponent<ProjectileController>();
         projectile.SetPoolReturn(Return);
+        projectile.transform.localPosition = Vector3.zero;
+        projectile.transform.localRotation = Quaternion.identity;
+        projectile.transform.localScale = Vector3.one;
         projectile.ResetForPool();
         instance.SetActive(false);
         return projectile;

@@ -507,6 +507,67 @@ class TestUnityConsistencyChecks:
         assert any("NoSuchScene" in f for f in fixes)
         assert any("GhostGroup" in f for f in fixes)
 
+    def test_unique_gameplay_scene_restores_raw_projectile_orphans(self):
+        from src.scene_graph import build_scene_graph
+        from src.unity_projectile_contract import apply_physical_projectile_contract
+        from src.unity_schema import EntitySpec, SceneSpec
+
+        schema = self._base_schema(
+            scenes=["Main", "MainMenu"],
+            entities=[
+                EntitySpec(name="Player", kind="player"),
+                EntitySpec(name="Targets", kind="enemy", count=3),
+                EntitySpec(name="Bullets", kind="prop", count=8),
+            ],
+            scene_specs=[
+                SceneSpec(name="Main", entities=["Player", "Targets"]),
+                SceneSpec(name="MainMenu", entities=[]),
+            ],
+        )
+        apply_physical_projectile_contract(
+            schema,
+            "A 3D target range where the player fires visible physical bullets.",
+        )
+
+        fixed, fixes = _reconcile_scene_specs(schema)
+
+        main = next(spec for spec in fixed.scene_specs if spec.name == "Main")
+        assert main.entities == [
+            "Player",
+            "Targets",
+            "PlayerWeapon",
+            "Bullets",
+            "ProjectileBulletVisual",
+        ]
+        assert next(spec for spec in fixed.scene_specs
+                    if spec.name == "MainMenu").entities == []
+        assert any("restored orphaned entity group(s)" in fix for fix in fixes)
+        build_scene_graph(fixed)
+
+    def test_multiple_gameplay_scenes_preserve_orphan_ambiguity(self):
+        from src.scene_graph import SceneGraphError, build_scene_graph
+        from src.unity_schema import EntitySpec, SceneSpec
+
+        schema = self._base_schema(
+            scenes=["RangeA", "RangeB"],
+            entities=[
+                EntitySpec(name="Player", kind="player"),
+                EntitySpec(name="TargetsA", kind="enemy"),
+                EntitySpec(name="TargetsB", kind="enemy"),
+                EntitySpec(name="Bullets", kind="prop"),
+            ],
+            scene_specs=[
+                SceneSpec(name="RangeA", entities=["Player", "TargetsA"]),
+                SceneSpec(name="RangeB", entities=["Player", "TargetsB"]),
+            ],
+        )
+
+        fixed, fixes = _reconcile_scene_specs(schema)
+
+        assert not any("restored orphaned entity group(s)" in fix for fix in fixes)
+        with pytest.raises(SceneGraphError, match="entity 'Bullets'.*excluded"):
+            build_scene_graph(fixed)
+
     def test_empty_model_hint_backfilled_from_name(self):
         # The local LLM routinely omits model_hint (TerminalHorizon: all 6
         # empty) — the fixer must backfill deterministically from the name.

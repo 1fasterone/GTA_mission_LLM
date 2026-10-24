@@ -26,6 +26,14 @@ public sealed class ProjectileController : MonoBehaviour
     private Collider[] _ignoredOwnerColliders = System.Array.Empty<Collider>();
     private Vector3 _previousPosition;
     private float _sweepRadius = 0.04f;
+    private Transform[] _presentationTransforms = System.Array.Empty<Transform>();
+    private Vector3[] _presentationPositions = System.Array.Empty<Vector3>();
+    private Quaternion[] _presentationRotations = System.Array.Empty<Quaternion>();
+    private Vector3[] _presentationScales = System.Array.Empty<Vector3>();
+    private Renderer[] _presentationRenderers = System.Array.Empty<Renderer>();
+    private Material[][] _presentationMaterials = System.Array.Empty<Material[]>();
+    private TrailRenderer[] _presentationTrails = System.Array.Empty<TrailRenderer>();
+    private ParticleSystem[] _presentationParticles = System.Array.Empty<ParticleSystem>();
 
     /// <summary>Preserves the original foundation configuration surface.</summary>
     public void Configure(float damageAmount, GameObject owner)
@@ -43,6 +51,7 @@ public sealed class ProjectileController : MonoBehaviour
         _hasImpacted = false;
         _released = false;
         _expiresAt = Time.time + lifetimeSeconds;
+        RestorePresentationState();
 
         if (_body != null)
         {
@@ -62,6 +71,18 @@ public sealed class ProjectileController : MonoBehaviour
         _previousPosition = _body != null ? _body.position : transform.position;
         if (_body != null)
             _body.linearVelocity = velocity;
+        foreach (TrailRenderer trail in _presentationTrails)
+        {
+            if (trail == null) continue;
+            trail.Clear();
+            trail.emitting = true;
+        }
+        foreach (ParticleSystem effect in _presentationParticles)
+        {
+            if (effect == null) continue;
+            effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            effect.Play(true);
+        }
     }
 
     /// <summary>Called by ProjectilePool once; no pool type leaks into this helper.</summary>
@@ -87,8 +108,7 @@ public sealed class ProjectileController : MonoBehaviour
             _body.isKinematic = true;
             _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         }
-        foreach (var effect in GetComponentsInChildren<ParticleSystem>(true))
-            effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        RestorePresentationState();
     }
 
     private void Awake()
@@ -99,6 +119,7 @@ public sealed class ProjectileController : MonoBehaviour
             _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         _projectileColliders = GetComponentsInChildren<Collider>(true);
         CacheSweepRadius();
+        CachePresentationState();
         _previousPosition = transform.position;
         _expiresAt = Time.time + lifetimeSeconds;
     }
@@ -280,6 +301,63 @@ public sealed class ProjectileController : MonoBehaviour
         }
         if (!float.IsPositiveInfinity(radius))
             _sweepRadius = Mathf.Max(0.01f, radius * 0.9f);
+    }
+
+    private void CachePresentationState()
+    {
+        Transform[] allTransforms = GetComponentsInChildren<Transform>(true);
+        int childCount = Mathf.Max(0, allTransforms.Length - 1);
+        _presentationTransforms = new Transform[childCount];
+        _presentationPositions = new Vector3[childCount];
+        _presentationRotations = new Quaternion[childCount];
+        _presentationScales = new Vector3[childCount];
+        int childIndex = 0;
+        foreach (Transform child in allTransforms)
+        {
+            if (child == transform) continue;
+            _presentationTransforms[childIndex] = child;
+            _presentationPositions[childIndex] = child.localPosition;
+            _presentationRotations[childIndex] = child.localRotation;
+            _presentationScales[childIndex] = child.localScale;
+            childIndex++;
+        }
+
+        _presentationRenderers = GetComponentsInChildren<Renderer>(true);
+        _presentationMaterials = new Material[_presentationRenderers.Length][];
+        for (int i = 0; i < _presentationRenderers.Length; i++)
+            _presentationMaterials[i] = _presentationRenderers[i] != null
+                ? _presentationRenderers[i].sharedMaterials
+                : System.Array.Empty<Material>();
+        _presentationTrails = GetComponentsInChildren<TrailRenderer>(true);
+        _presentationParticles = GetComponentsInChildren<ParticleSystem>(true);
+    }
+
+    private void RestorePresentationState()
+    {
+        for (int i = 0; i < _presentationTransforms.Length; i++)
+        {
+            Transform child = _presentationTransforms[i];
+            if (child == null) continue;
+            child.localPosition = _presentationPositions[i];
+            child.localRotation = _presentationRotations[i];
+            child.localScale = _presentationScales[i];
+        }
+        for (int i = 0; i < _presentationRenderers.Length; i++)
+        {
+            Renderer renderer = _presentationRenderers[i];
+            if (renderer != null) renderer.sharedMaterials = _presentationMaterials[i];
+        }
+        foreach (TrailRenderer trail in _presentationTrails)
+        {
+            if (trail == null) continue;
+            trail.emitting = false;
+            trail.Clear();
+        }
+        foreach (ParticleSystem effect in _presentationParticles)
+        {
+            if (effect != null)
+                effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+        }
     }
 
     private void OnDestroy() => RestoreOwnerCollisions();

@@ -41,6 +41,7 @@ from .ident import fhash
 from .unity_asset_catalog import load_catalog, tokenize
 from .unity_concept_layers import load_concept_layers, load_genre_layer_bias
 from .unity_identity_archetypes import IdentityResolution, resolve_identity
+from .unity_projectile_contract import projectile_visual_spec_for_entity
 # One vocabulary decides what a group IS on a board, so the pass that LAYS IT
 # OUT as a panel and the pass that BUILDS it agree. See the UISurface roles
 # section of src/unity_layout_archetype.py.
@@ -1484,7 +1485,17 @@ def resolve_entity_assets(schema,
                       "non-embodied game's unmatched content is UI.",
                       e.name, kind)
             continue
-        if strict:
+        projectile_visual = projectile_visual_spec_for_entity(schema, e.name)
+        if projectile_visual is not None:
+            fallback = projectile_visual["fallback"]
+            entity_model_paths[e.name] = f"primitive:{fallback}"
+            _log.info(
+                "[assets] projectile visual '%s' matched no model — using named "
+                "deterministic %s primitive fallback",
+                e.name,
+                fallback,
+            )
+        elif strict:
             unmatched.append((e.name, e.kind,
                               _nearest_misses(assets, qw, kind)))
         elif prop_fallback is not None:

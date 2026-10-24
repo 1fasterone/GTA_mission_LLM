@@ -218,6 +218,51 @@ def refresh_cover_points(subsystems: list, entities, cover_points: dict | None) 
     return messages
 
 
+def refresh_projectile_visuals(
+    subsystems: list,
+    projectile_contract: dict | None,
+) -> list[str]:
+    """Refresh controller presentation metadata after asset resolution.
+
+    ``subsystems_for`` runs before the generator knows the Resources path, while
+    ``MicroComposer.emit`` runs after it. This late deterministic refresh is the
+    projectile equivalent of ``refresh_cover_points``: it changes only the
+    compiler-owned metadata rendered by the controller template and never calls
+    the Pipeline LLM.
+    """
+    if not isinstance(projectile_contract, dict):
+        return []
+    visual = projectile_contract.get("projectile_visual")
+    if not isinstance(visual, dict):
+        return []
+
+    messages: list[str] = []
+    for sub in subsystems:
+        if sub.kind != "controller":
+            continue
+        weapons = sub.options.get("weapons")
+        if not isinstance(weapons, list):
+            continue
+        refreshed: list[dict] = []
+        used_contract_visual = False
+        for weapon in weapons:
+            delivery = weapon.get("delivery") if isinstance(weapon, dict) else None
+            if delivery == "projectile_3d" and not used_contract_visual:
+                refreshed.append(dict(visual))
+                used_contract_visual = True
+            else:
+                refreshed.append({})
+        meta = sub.options.setdefault("meta", {})
+        previous = meta.get("projectile_visuals")
+        if previous != refreshed:
+            meta["projectile_visuals"] = refreshed
+            messages.append(
+                "compose: controller projectile visual refreshed from resolved "
+                f"{visual.get('resolution', 'primitive')} presentation"
+            )
+    return messages
+
+
 class MicroComposer:
     """Assemble micros into a project's Assets and report how to wire them."""
 
@@ -2482,6 +2527,10 @@ def subsystems_for(
             and projectile_contract.get("delivery") == "projectile_3d"
             and isinstance(projectile_contract.get("weapon"), dict)):
         ctrl_opts["weapons"] = [dict(projectile_contract["weapon"])]
+        if isinstance(projectile_contract.get("projectile_visual"), dict):
+            ctrl_opts.setdefault("meta", {})["projectile_visuals"] = [
+                dict(projectile_contract["projectile_visual"])
+            ]
 
     # Animator variant from locomotion
     anim_variant = {
