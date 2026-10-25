@@ -23,7 +23,7 @@ from .unity_schema import EntitySpec, UnitySchema
 
 
 PHYSICAL_PROJECTILE_META_KEY = "physical_projectile_contract"
-PHYSICAL_PROJECTILE_CONTRACT_VERSION = "slice3-3d-v3"
+PHYSICAL_PROJECTILE_CONTRACT_VERSION = "slice4-3d-v4"
 
 _HITSCAN_RE = re.compile(r"\bhit[- ]?scan\b", re.IGNORECASE)
 _PHYSICAL_RE = re.compile(
@@ -72,6 +72,14 @@ _PROJECTILE_PROFILES: dict[str, dict[str, Any]] = {
             "model_hint": "bullet cartridge ammunition",
             "fallback": "bullet",
             "target_size": 0.20,
+        },
+        "firearm_presentation": {
+            "adapter": "firearm_animation",
+            "release_event": "OnFirearmRelease",
+            "trigger_candidates": ["Fire", "Attack", "Shoot"],
+            "fallback": "generated_recoil_flash",
+            "release_timeout": 0.12,
+            "recoil_distance": 0.06,
         },
     },
     "thrown_object": {
@@ -281,5 +289,10 @@ def apply_physical_projectile_contract(
             "[projectile.p3] added "
             f"{visual_name} resolver entity with named "
             f"{projectile_visual['fallback']} primitive fallback"
+        )
+    if isinstance(contract.get("firearm_presentation"), dict):
+        messages.append(
+            "[projectile.p4] selected deterministic firearm animation adapter "
+            "with OnFirearmRelease and generated recoil/flash fallback"
         )
     return messages

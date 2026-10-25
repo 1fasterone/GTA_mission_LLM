@@ -2531,6 +2531,10 @@ def subsystems_for(
             ctrl_opts.setdefault("meta", {})["projectile_visuals"] = [
                 dict(projectile_contract["projectile_visual"])
             ]
+        if isinstance(projectile_contract.get("firearm_presentation"), dict):
+            ctrl_opts.setdefault("meta", {})["firearm_presentation"] = dict(
+                projectile_contract["firearm_presentation"]
+            )
 
     # Animator variant from locomotion
     anim_variant = {

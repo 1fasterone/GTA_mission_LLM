@@ -55,9 +55,9 @@ public sealed class ProjectileController : MonoBehaviour
 
         if (_body != null)
         {
+            _body.isKinematic = false;
             _body.linearVelocity = Vector3.zero;
             _body.angularVelocity = Vector3.zero;
-            _body.isKinematic = false;
             _body.useGravity = useGravity;
             _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         }
@@ -102,8 +102,11 @@ public sealed class ProjectileController : MonoBehaviour
 
         if (_body != null)
         {
-            _body.linearVelocity = Vector3.zero;
-            _body.angularVelocity = Vector3.zero;
+            if (!_body.isKinematic)
+            {
+                _body.linearVelocity = Vector3.zero;
+                _body.angularVelocity = Vector3.zero;
+            }
             _body.useGravity = false;
             _body.isKinematic = true;
             _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;

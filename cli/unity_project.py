@@ -566,6 +566,17 @@ def unity_validate(
     pipe_cfg = _unity_pipe_cfg(cfg)
     data     = json.loads(Path(schema_file).read_text(encoding="utf-8"))
     schema   = UnitySchema.model_validate(data)
+    # Compiler-owned projectile metadata is derived from the frozen raw brief,
+    # not authored by the schema model.  Refresh it on replay so a saved
+    # pre-Slice-4 schema observes current deterministic lowering in the same
+    # way as a fresh unity-create run.
+    from src.unity_projectile_contract import apply_physical_projectile_contract
+
+    _saved_meta = schema.meta if isinstance(schema.meta, dict) else {}
+    for msg in apply_physical_projectile_contract(
+        schema, str(_saved_meta.get("user_prompt", ""))
+    ):
+        console.print(f"  [magenta]FIX[/]  {msg}")
     spatial_fusion: dict | None = None
     spatial_replay_world: dict | None = None
     # The command is also called directly by CLI regression tests. Typer's

@@ -86,8 +86,7 @@ def test_unity_validate_compose_wires_escort_objective(tmp_path):
 
 
 def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
-    """The saved-schema replay must preserve P2 delivery, not silently regress
-    back to the ControllerSchema hitscan fallback."""
+    """Replay refreshes stale compiler metadata from the frozen raw brief."""
     from cli.unity_project import unity_validate
 
     schema = UnitySchema(
@@ -98,6 +97,9 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
     apply_physical_projectile_contract(
         schema, "An FPS with a rifle and pooled physical bullets."
     )
+    schema.meta["user_prompt"] = "An FPS with a rifle and pooled physical bullets."
+    schema.meta["physical_projectile_contract"]["version"] = "slice3-3d-v3"
+    schema.meta["physical_projectile_contract"].pop("firearm_presentation", None)
     schema_path = tmp_path / "ProjectileReplay.schema.json"
     schema_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
 
@@ -108,6 +110,8 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
               / "controller" / "Scripts" / "PlayerController.cs").read_text(encoding="utf-8")
     assert "private ProjectilePool[] _projectilePools;" in source
     assert "ResolveProjectileMuzzle()" in source
+    assert "public void OnFirearmRelease()" in source
+    assert 'FirearmReleaseEventName = "OnFirearmRelease"' in source
 
 
 def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(tmp_path):

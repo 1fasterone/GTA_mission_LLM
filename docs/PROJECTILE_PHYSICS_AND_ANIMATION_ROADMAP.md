@@ -117,8 +117,8 @@ least two reuse cycles.
 - Provide a deterministic generated presentation fallback when it is not.
 - Preserve ammunition and fire-rate state across either presentation path.
 
-Exit gate: one input produces one visible launch, one ammunition decrement,
-and one impact opportunity.
+Exit gate: one sustained automatic-fire input produces many visible launches,
+matching ammunition decrements, and numerous impact opportunities.
 
 ### Slice 5 - Thrown-object animation adapter
 

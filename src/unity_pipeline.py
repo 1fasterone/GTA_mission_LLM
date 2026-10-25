@@ -1071,8 +1071,9 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
     for entity in schema.entities:
         active_somewhere = False
         for scene_name in schema.scenes:
-            spec = specs_by_name.get(scene_name)
-            if spec is None or spec.entities is None or entity.name in spec.entities:
+            scene_spec = specs_by_name.get(scene_name)
+            if (scene_spec is None or scene_spec.entities is None
+                    or entity.name in scene_spec.entities):
                 active_somewhere = True
                 break
         if not active_somewhere:

@@ -6,6 +6,8 @@
 {% set wheel_count = 2 if is_bike else 4 -%}
 {% set has_physical_projectiles = (s.weapons | selectattr("delivery", "equalto", "projectile_3d") | list | length) > 0 -%}
 {% set projectile_visuals = s.meta.get("projectile_visuals", []) -%}
+{% set firearm_presentation = s.meta.get("firearm_presentation", {}) -%}
+{% set has_firearm_adapter = has_physical_projectiles and firearm_presentation.get("adapter") == "firearm_animation" -%}
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -144,6 +146,13 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private string[] projectileVisualProfile = new string[] { {% for w in s.weapons %}{% set v = projectile_visuals[loop.index0] if loop.index0 < (projectile_visuals | length) else {} %}"{{ v.get('fallback', 'bullet') }}"{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private string[] projectileVisualResource = new string[] { {% for w in s.weapons %}{% set v = projectile_visuals[loop.index0] if loop.index0 < (projectile_visuals | length) else {} %}"{{ v.get('resource_path', '') }}"{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private float[] projectileVisualSize = new float[] { {% for w in s.weapons %}{% set v = projectile_visuals[loop.index0] if loop.index0 < (projectile_visuals | length) else {} %}{{ "%.2f"|format(v.get('target_size', 0.20)) }}f{{ "" if loop.last else ", " }}{% endfor %} };
+{% if has_firearm_adapter %}    [Header("Firearm Presentation")]
+    [Tooltip("Optional Animator on this same GameObject. It is used only when it has a supported trigger and the named release event.")]
+    [SerializeField] private Animator firearmAnimator = null;
+    [Tooltip("Optional visual-only transform moved by the generated recoil fallback.")]
+    [SerializeField] private Transform firearmRecoilTarget = null;
+    [SerializeField] private float firearmRecoilReturnSpeed = 1.20f;
+{% endif %}
 {% endif %}    [Tooltip("Ammo a reload draws from once the magazine is empty — an inventory's RestoreAmmo item effect refills this.")]
     [SerializeField] private int      startingReserveAmmo = {{ s.starting_reserve_ammo }};
 {% endif %}
@@ -343,6 +352,31 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private int   _reserveAmmo;
     private bool  _isReloading;
 {% if has_physical_projectiles %}    private ProjectilePool[] _projectilePools;
+{% if has_firearm_adapter %}    private const string FirearmReleaseEventName = "{{ firearm_presentation.get('release_event', 'OnFirearmRelease') }}";
+    private static readonly string[] FirearmMuzzleSocketNames =
+        { "Muzzle", "ProjectileMuzzle", "MuzzleFlash", "BarrelEnd" };
+    private static readonly string[] FirearmTriggerCandidates =
+        { {% for trigger in firearm_presentation.get('trigger_candidates', ['Fire', 'Attack', 'Shoot']) %}"{{ trigger }}"{{ "" if loop.last else ", " }}{% endfor %} };
+    private readonly Queue<PendingFirearmShot> _pendingFirearmShots =
+        new Queue<PendingFirearmShot>();
+    private Transform _resolvedProjectileMuzzle;
+    private Transform _resolvedFirearmRecoilTarget;
+    private Vector3 _firearmRecoilRestPosition;
+    private float _firearmRecoilOffset;
+    private ParticleSystem _generatedMuzzleFlash;
+    private int _firearmTriggerHash;
+    private int _firearmAnimatorControllerId;
+    private bool _firearmAnimatorCompatible;
+    private int _projectileLaunchCount;
+
+    private sealed class PendingFirearmShot
+    {
+        public ProjectileController Projectile;
+        public ProjectilePool Pool;
+        public int WeaponIndex;
+        public float ReleaseDeadline;
+    }
+{% endif %}
 {% endif %}{% endif %}
 {% if "aim_down_sights" in s.abilities %}
     private bool  _isAiming;
@@ -465,6 +499,12 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     public int  CurrentAmmo  => _currentAmmo;
     public int  ReserveAmmo  => _reserveAmmo;
     public bool IsReloading  => _isReloading;
+{% if has_firearm_adapter %}    public int ProjectileLaunchCount => _projectileLaunchCount;
+    public int PendingProjectileReleases => _pendingFirearmShots.Count;
+    public bool UsesAnimatorFireRelease => _firearmAnimatorCompatible;
+    public string ResolvedProjectileMuzzleName =>
+        _resolvedProjectileMuzzle != null ? _resolvedProjectileMuzzle.name : "";
+{% endif %}
     /// <summary>Refills reserve ammo — the reload draws from this, the magazine
     /// isn't topped up directly. Wired from an inventory's RestoreAmmo item
     /// effect when both are composed (see GameContext.cs.j2).</summary>
@@ -1043,8 +1083,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
                     adsTransitionTime);
         }
 {% endif %}
-        if (fireDown && !_isReloading && _currentAmmo > 0 && Time.time >= _lastFireTime + weaponFireRate[_weaponIndex])
-            TryShoot();
+{% if has_firearm_adapter %}        UpdateGeneratedFirearmRecoil();
+        ReleaseExpiredFirearmShots();
+{% endif %}
+        ProcessFireInput(fireDown);
         if (reloadDown && !_isReloading && _currentAmmo < weaponMagazineSize[_weaponIndex])
             StartCoroutine(ReloadRoutine());
 {% endif %}
@@ -1453,14 +1495,24 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 
     // ═══ SHOOTING METHODS ════════════════════════════════════════════════════
 {% if "shoot" in s.abilities %}
+    private void ProcessFireInput(bool fireHeld)
+    {
+        if (fireHeld && !_isReloading && _currentAmmo > 0
+            && Time.time >= _lastFireTime + weaponFireRate[_weaponIndex])
+            TryShoot();
+    }
+
     private void TryShoot()
     {
 {% if has_physical_projectiles %}        if (weaponDelivery[_weaponIndex] == "projectile_3d")
         {
+{% if has_firearm_adapter %}            if (!QueueFirearmProjectile()) return;
+{% else %}
             if (!LaunchProjectile()) return;
             _lastFireTime = Time.time;
             _currentAmmo--;
             if (muzzleFlash != null) muzzleFlash.Play();
+{% endif %}
             return;
         }
 {% endif %}        _lastFireTime = Time.time;
@@ -1644,12 +1696,20 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         return found;
     }
 
+    private ProjectileController BorrowProjectile(int weaponIndex)
+    {
+        var pool = _projectilePools != null ? _projectilePools[weaponIndex] : null;
+        return pool != null ? pool.Borrow() : null;
+    }
+
     private bool LaunchProjectile()
     {
-        var pool = _projectilePools != null ? _projectilePools[_weaponIndex] : null;
-        if (pool == null) return false;
+        var projectile = BorrowProjectile(_weaponIndex);
+        return projectile != null && LaunchProjectile(projectile, _weaponIndex);
+    }
 
-        var projectile = pool.Borrow();
+    private bool LaunchProjectile(ProjectileController projectile, int weaponIndex)
+    {
         if (projectile == null) return false;
 
         Transform muzzle = ResolveProjectileMuzzle();
@@ -1659,12 +1719,225 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         Vector3 launchDirection = aimRay.direction.normalized;
         Vector3 spawnPosition = ResolveProjectileSpawnPosition(muzzle, launchDirection);
         projectile.transform.SetPositionAndRotation(spawnPosition, Quaternion.LookRotation(launchDirection));
+        projectile.gameObject.SetActive(true);
         projectile.Configure(
-            weaponDamage[_weaponIndex], gameObject,
-            projectileLifetime[_weaponIndex], projectileUseGravity[_weaponIndex]);
-        projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);
+            weaponDamage[weaponIndex], gameObject,
+            projectileLifetime[weaponIndex], projectileUseGravity[weaponIndex]);
+        projectile.Launch(launchDirection * projectileSpeed[weaponIndex]);
+{% if has_firearm_adapter %}        _projectileLaunchCount++;
+{% endif %}
         return true;
     }
+
+{% if has_firearm_adapter %}    private bool QueueFirearmProjectile()
+    {
+        int weaponIndex = _weaponIndex;
+        ProjectileController projectile = BorrowProjectile(weaponIndex);
+        if (projectile == null) return false;
+
+        // Reservation is the one authoritative acceptance point. Cadence and
+        // ammunition advance exactly once here, before either presentation
+        // path can release the projectile.
+        projectile.gameObject.SetActive(false);
+        _lastFireTime = Time.time;
+        _currentAmmo--;
+        _pendingFirearmShots.Enqueue(new PendingFirearmShot
+        {
+            Projectile = projectile,
+            Pool = _projectilePools[weaponIndex],
+            WeaponIndex = weaponIndex,
+            ReleaseDeadline = Time.time + {{ "%.2f"|format(firearm_presentation.get('release_timeout', 0.12)) }}f,
+        });
+
+        if (!TryRequestAnimatorFireRelease())
+            ReleaseNextFirearmShot(true);
+        return true;
+    }
+
+    /// <summary>The one supported AnimationEvent release seam. A compatible
+    /// fire clip calls this exact method; stale or duplicate events are safe
+    /// because an empty reservation queue is a no-op.</summary>
+    public void OnFirearmRelease()
+    {
+        ReleaseNextFirearmShot(false);
+    }
+
+    private void ReleaseExpiredFirearmShots()
+    {
+        while (_pendingFirearmShots.Count > 0
+               && Time.time >= _pendingFirearmShots.Peek().ReleaseDeadline)
+            ReleaseNextFirearmShot(true);
+    }
+
+    private void ReleaseNextFirearmShot(bool generatedFallback)
+    {
+        if (_pendingFirearmShots.Count == 0) return;
+        PendingFirearmShot shot = _pendingFirearmShots.Dequeue();
+        if (LaunchProjectile(shot.Projectile, shot.WeaponIndex))
+            PlayFirearmPresentation(generatedFallback);
+    }
+
+    private bool TryRequestAnimatorFireRelease()
+    {
+        RefreshFirearmAnimatorCompatibility();
+        if (!_firearmAnimatorCompatible || firearmAnimator == null) return false;
+        firearmAnimator.SetTrigger(_firearmTriggerHash);
+        return true;
+    }
+
+    private void RefreshFirearmAnimatorCompatibility()
+    {
+        // AnimationEvents are delivered to components beside the Animator.
+        // A child Animator without a generated relay is therefore not
+        // compatible; use the deterministic fallback instead of losing ammo.
+        if (firearmAnimator == null) firearmAnimator = GetComponent<Animator>();
+        RuntimeAnimatorController controller = firearmAnimator != null
+            ? firearmAnimator.runtimeAnimatorController : null;
+        int controllerId = controller != null ? controller.GetInstanceID() : 0;
+        if (controllerId == _firearmAnimatorControllerId) return;
+
+        _firearmAnimatorControllerId = controllerId;
+        _firearmAnimatorCompatible = false;
+        _firearmTriggerHash = 0;
+        if (controller == null || firearmAnimator.gameObject != gameObject) return;
+
+        bool hasTrigger = false;
+        AnimatorControllerParameter[] parameters = firearmAnimator.parameters;
+        foreach (string candidate in FirearmTriggerCandidates)
+        {
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                if (parameters[i].type != AnimatorControllerParameterType.Trigger
+                    || parameters[i].name != candidate) continue;
+                _firearmTriggerHash = Animator.StringToHash(candidate);
+                hasTrigger = true;
+                break;
+            }
+            if (hasTrigger) break;
+        }
+
+        bool hasReleaseEvent = false;
+        foreach (AnimationClip clip in controller.animationClips)
+        {
+            if (clip == null) continue;
+            foreach (AnimationEvent animationEvent in clip.events)
+            {
+                if (animationEvent.functionName != FirearmReleaseEventName) continue;
+                hasReleaseEvent = true;
+                break;
+            }
+            if (hasReleaseEvent) break;
+        }
+        _firearmAnimatorCompatible = hasTrigger && hasReleaseEvent;
+    }
+
+    private void PlayFirearmPresentation(bool generatedFallback)
+    {
+        ParticleSystem flash = muzzleFlash != null
+            ? muzzleFlash : EnsureGeneratedMuzzleFlash();
+        if (flash != null)
+        {
+            if (flash == _generatedMuzzleFlash) flash.Emit(4);
+            else flash.Play();
+        }
+        if (generatedFallback) KickGeneratedFirearmRecoil();
+    }
+
+    private ParticleSystem EnsureGeneratedMuzzleFlash()
+    {
+        if (_generatedMuzzleFlash != null) return _generatedMuzzleFlash;
+        Transform muzzle = ResolveProjectileMuzzle();
+        var flashObject = new GameObject("GeneratedMuzzleFlash");
+        flashObject.transform.SetParent(muzzle, false);
+        flashObject.transform.localPosition = Vector3.zero;
+        flashObject.transform.localRotation = Quaternion.identity;
+        _generatedMuzzleFlash = flashObject.AddComponent<ParticleSystem>();
+        _generatedMuzzleFlash.Stop(
+            true, ParticleSystemStopBehavior.StopEmittingAndClear);
+
+        var main = _generatedMuzzleFlash.main;
+        main.duration = 0.08f;
+        main.loop = false;
+        main.playOnAwake = false;
+        main.startLifetime = 0.055f;
+        main.startSpeed = 0.3f;
+        main.startSize = 0.16f;
+        main.startColor = new Color(1f, 0.66f, 0.12f, 1f);
+        main.maxParticles = 12;
+        var emission = _generatedMuzzleFlash.emission;
+        emission.enabled = false;
+        var shape = _generatedMuzzleFlash.shape;
+        shape.enabled = false;
+
+        ParticleSystemRenderer flashRenderer =
+            flashObject.GetComponent<ParticleSystemRenderer>();
+        Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+        if (shader == null) shader = Shader.Find("Particles/Standard Unlit");
+        if (shader == null) shader = Shader.Find("Sprites/Default");
+        if (shader != null)
+        {
+            var material = new Material(shader);
+            material.name = "GeneratedMuzzleFlashMaterial";
+            material.color = new Color(1f, 0.66f, 0.12f, 1f);
+            flashRenderer.sharedMaterial = material;
+        }
+        return _generatedMuzzleFlash;
+    }
+
+    private void KickGeneratedFirearmRecoil()
+    {
+        Transform target = ResolveFirearmRecoilTarget();
+        if (target == null) return;
+        _firearmRecoilOffset = Mathf.Max(
+            _firearmRecoilOffset,
+            {{ "%.2f"|format(firearm_presentation.get('recoil_distance', 0.06)) }}f);
+        target.localPosition = _firearmRecoilRestPosition
+            + Vector3.back * _firearmRecoilOffset;
+    }
+
+    private void UpdateGeneratedFirearmRecoil()
+    {
+        if (_resolvedFirearmRecoilTarget == null || _firearmRecoilOffset <= 0f) return;
+        _firearmRecoilOffset = Mathf.MoveTowards(
+            _firearmRecoilOffset, 0f, firearmRecoilReturnSpeed * Time.deltaTime);
+        _resolvedFirearmRecoilTarget.localPosition = _firearmRecoilRestPosition
+            + Vector3.back * _firearmRecoilOffset;
+    }
+
+    private Transform ResolveFirearmRecoilTarget()
+    {
+        if (_resolvedFirearmRecoilTarget != null) return _resolvedFirearmRecoilTarget;
+        if (firearmRecoilTarget != null)
+            _resolvedFirearmRecoilTarget = firearmRecoilTarget;
+
+        Transform eye = transform.Find("Eye");
+        if (_resolvedFirearmRecoilTarget == null && eye != null)
+        {
+            string[] visualNames = { "PlayerWeapon", "Weapon", "Rifle", "Gun" };
+            foreach (string visualName in visualNames)
+            {
+                _resolvedFirearmRecoilTarget = FindNamedDescendant(eye, visualName);
+                if (_resolvedFirearmRecoilTarget != null) break;
+            }
+        }
+        if (_resolvedFirearmRecoilTarget == null)
+        {
+            Transform parent = eye != null ? eye : transform;
+            GameObject visual = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            visual.name = "GeneratedFirearmPresentation";
+            visual.transform.SetParent(parent, false);
+            visual.transform.localPosition = eye != null
+                ? new Vector3(0.28f, -0.22f, 0.52f)
+                : new Vector3(0.28f, 1.30f, 0.52f);
+            visual.transform.localScale = new Vector3(0.16f, 0.12f, 0.62f);
+            Collider visualCollider = visual.GetComponent<Collider>();
+            if (visualCollider != null) visualCollider.enabled = false;
+            _resolvedFirearmRecoilTarget = visual.transform;
+        }
+        _firearmRecoilRestPosition = _resolvedFirearmRecoilTarget.localPosition;
+        return _resolvedFirearmRecoilTarget;
+    }
+{% endif %}
 
     private Vector3 ResolveProjectileSpawnPosition(Transform muzzle, Vector3 launchDirection)
     {
@@ -1696,7 +1969,31 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 
     private Transform ResolveProjectileMuzzle()
     {
-        if (projectileMuzzle != null) return projectileMuzzle;
+{% if has_firearm_adapter %}        if (_resolvedProjectileMuzzle != null) return _resolvedProjectileMuzzle;
+        if (projectileMuzzle != null)
+        {
+            _resolvedProjectileMuzzle = projectileMuzzle;
+            return _resolvedProjectileMuzzle;
+        }
+        Transform eye = transform.Find("Eye");
+        foreach (string socketName in FirearmMuzzleSocketNames)
+        {
+            Transform socket = FindNamedDescendant(eye != null ? eye : transform, socketName);
+            if (socket == null && eye != null)
+                socket = FindNamedDescendant(transform, socketName);
+            if (socket == null) continue;
+            _resolvedProjectileMuzzle = socket;
+            return _resolvedProjectileMuzzle;
+        }
+
+        Transform parent = ResolveFirearmRecoilTarget();
+        var generated = new GameObject("GeneratedProjectileMuzzle").transform;
+        generated.SetParent(parent != null ? parent : (eye != null ? eye : transform), false);
+        generated.localPosition = new Vector3(0f, 0f, 0.42f);
+        generated.localRotation = Quaternion.identity;
+        _resolvedProjectileMuzzle = generated;
+        return _resolvedProjectileMuzzle;
+{% else %}        if (projectileMuzzle != null) return projectileMuzzle;
         var eye = transform.Find("Eye");
         if (eye != null)
         {
@@ -1704,7 +2001,33 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
             if (mountedMuzzle != null) return mountedMuzzle;
         }
         return transform;
+{% endif %}
     }
+{% if has_firearm_adapter %}
+    private static Transform FindNamedDescendant(Transform root, string exactName)
+    {
+        if (root == null) return null;
+        if (root.name == exactName) return root;
+        for (int i = 0; i < root.childCount; i++)
+        {
+            Transform found = FindNamedDescendant(root.GetChild(i), exactName);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private void OnDestroy()
+    {
+        while (_pendingFirearmShots.Count > 0)
+        {
+            PendingFirearmShot shot = _pendingFirearmShots.Dequeue();
+            if (shot.Pool != null && shot.Projectile != null)
+                shot.Pool.Return(shot.Projectile);
+        }
+        if (_resolvedFirearmRecoilTarget != null)
+            _resolvedFirearmRecoilTarget.localPosition = _firearmRecoilRestPosition;
+    }
+{% endif %}
 {% endif %}
     private IEnumerator ReloadRoutine()
     {
