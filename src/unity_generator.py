@@ -24,6 +24,8 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
+from .unity_projectile_contract import (projectile_visual_resolver_entity,
+                                        stamp_projectile_visual_resolution)
 from .unity_atmosphere import assert_aaa_contract
 from .unity_greybox import (GREYBOX_SCRIPT_TYPES, apply_greybox_spatial_layout,
                              greybox_plus_ir_for_schema, greybox_ir_for_schema,
@@ -3247,6 +3249,42 @@ class UnityProjectGenerator:
             lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=strict_assets,
             sketchfab_cfg=sketchfab_cfg, llm=llm,
             locked_asset_bindings=locked_asset_bindings)
+
+        # Slice 3 projectile presentation is a compiler-owned resolver request,
+        # not a world entity.  Resolve it through the exact same catalog/model
+        # registration path so copying, textures, .meta files, attribution and
+        # Resources.Load identity stay unified, but never append it to
+        # schema.entities (which would invent a spawn and a scene-coverage
+        # obligation).  A semantic miss deliberately bypasses the generic prop
+        # fallback: Controller.cs.j2 owns the named primitive fallback.
+        projectile_visual = projectile_visual_resolver_entity(schema)
+        if projectile_visual is not None:
+            visual_schema = schema.model_copy(deep=True)
+            visual_schema.entities = [projectile_visual]
+            visual_locked_bindings = None
+            if (
+                isinstance(locked_asset_bindings, dict)
+                and projectile_visual.name in locked_asset_bindings
+            ):
+                visual_locked_bindings = {
+                    projectile_visual.name: locked_asset_bindings[
+                        projectile_visual.name
+                    ]
+                }
+            visual_paths = resolve_entity_assets(
+                visual_schema, used_models, all_models,
+                lookups_dir=lookups_dir, asset_cfg=asset_cfg, strict=False,
+                sketchfab_cfg=sketchfab_cfg, llm=None,
+                locked_asset_bindings=visual_locked_bindings,
+                allow_prop_fallback=False,
+            )
+            visual_path = visual_paths.get(projectile_visual.name, "")
+            stamp_projectile_visual_resolution(schema, visual_path)
+            if visual_path:
+                # Retain the compiler-only identity in model provenance/copy
+                # tables. EntitySpawner only iterates schema.entities, so this
+                # key can never create a loose world object.
+                entity_model_paths[projectile_visual.name] = visual_path
 
         # Downgrade humanoid -> generic (clean FBX import, no retarget clips) in
         # two independent cases:

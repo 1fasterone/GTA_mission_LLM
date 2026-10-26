@@ -48,7 +48,9 @@ public sealed class ProjectilePool : MonoBehaviour
 
         _borrowed.Add(projectile);
         projectile.transform.SetParent(null, false);
+        projectile.transform.localScale = Vector3.one;
         projectile.gameObject.SetActive(true);
+        projectile.PrepareForCheckout();
         return projectile;
     }
 
@@ -58,6 +60,8 @@ public sealed class ProjectilePool : MonoBehaviour
 
         projectile.ResetForPool();
         projectile.transform.SetParent(transform, false);
+        projectile.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+        projectile.transform.localScale = Vector3.one;
         projectile.gameObject.SetActive(false);
         _available.Enqueue(projectile);
     }
@@ -66,6 +70,8 @@ public sealed class ProjectilePool : MonoBehaviour
     {
         GameObject instance = Instantiate(_prefab, transform);
         instance.name = _prefab.name + "_Pooled";
+        instance.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+        instance.transform.localScale = Vector3.one;
         var projectile = instance.GetComponent<ProjectileController>();
         projectile.SetPoolReturn(Return);
         projectile.ResetForPool();
@@ -82,8 +88,36 @@ public sealed class ProjectilePool : MonoBehaviour
         body.isKinematic = true;
         body.useGravity = false;
         body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
-        if (_prefab.GetComponent<Collider>() == null)
-            _prefab.AddComponent<SphereCollider>();
+        Collider primitiveRootShape = null;
+        foreach (Collider rootShape in _prefab.GetComponents<Collider>())
+        {
+            if (primitiveRootShape == null
+                && (rootShape is SphereCollider
+                    || rootShape is CapsuleCollider
+                    || rootShape is BoxCollider))
+            {
+                primitiveRootShape = rootShape;
+                rootShape.enabled = true;
+            }
+            else
+            {
+                rootShape.enabled = false;
+            }
+        }
+        if (primitiveRootShape == null)
+            primitiveRootShape = _prefab.AddComponent<SphereCollider>();
+        foreach (Collider childShape in _prefab.GetComponentsInChildren<Collider>(true))
+        {
+            if (childShape.transform != _prefab.transform)
+                childShape.enabled = false;
+        }
+        foreach (Rigidbody childBody in _prefab.GetComponentsInChildren<Rigidbody>(true))
+        {
+            if (childBody == body) continue;
+            childBody.detectCollisions = false;
+            childBody.isKinematic = true;
+        }
+        _prefab.transform.localScale = Vector3.one;
         if (_prefab.GetComponent<ProjectileController>() == null)
             _prefab.AddComponent<ProjectileController>();
         _prefab.SetActive(false);

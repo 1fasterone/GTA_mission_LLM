@@ -23,7 +23,7 @@ from .unity_schema import EntitySpec, UnitySchema
 
 
 PHYSICAL_PROJECTILE_META_KEY = "physical_projectile_contract"
-PHYSICAL_PROJECTILE_CONTRACT_VERSION = "slice2-3d-v2"
+PHYSICAL_PROJECTILE_CONTRACT_VERSION = "slice3-3d-v3"
 
 _HITSCAN_RE = re.compile(r"\bhit[- ]?scan\b", re.IGNORECASE)
 _PHYSICAL_RE = re.compile(
@@ -41,6 +41,42 @@ _THROWN_OBJECT_RE = re.compile(
     re.IGNORECASE,
 )
 _THREE_DIMENSIONAL_GAME_TYPES = frozenset({"3d", "2.5d", "vr"})
+
+_PROJECTILE_PRESENTATIONS: dict[str, dict[str, Any]] = {
+    "fast_round": {
+        "resolver_name": "ProjectileVisualFastRound",
+        "model_hint": "bullet projectile round",
+        "resource_path": "",
+        "fallback_name": "ProjectileFallback_FastRound_Capsule",
+        "fallback_primitive": "Capsule",
+        "uniform_scale": 0.08,
+        "local_euler": [90.0, 0.0, 0.0],
+        "fallback_color": [1.0, 0.58, 0.08, 1.0],
+        "physics_radius": 0.04,
+    },
+    "gravity_round": {
+        "resolver_name": "ProjectileVisualGravityRound",
+        "model_hint": "arrow bolt projectile",
+        "resource_path": "",
+        "fallback_name": "ProjectileFallback_GravityRound_Capsule",
+        "fallback_primitive": "Capsule",
+        "uniform_scale": 0.12,
+        "local_euler": [90.0, 0.0, 0.0],
+        "fallback_color": [0.68, 0.47, 0.24, 1.0],
+        "physics_radius": 0.05,
+    },
+    "thrown_object": {
+        "resolver_name": "ProjectileVisualThrownObject",
+        "model_hint": "rough throwing rock stone",
+        "resource_path": "",
+        "fallback_name": "ProjectileFallback_ThrownObject_Cube",
+        "fallback_primitive": "Cube",
+        "uniform_scale": 0.22,
+        "local_euler": [18.0, 31.0, 12.0],
+        "fallback_color": [0.34, 0.27, 0.20, 1.0],
+        "physics_radius": 0.10,
+    },
+}
 
 _PROJECTILE_PROFILES: dict[str, dict[str, Any]] = {
     "fast_round": {
@@ -126,8 +162,73 @@ def physical_projectile_contract_for(
     contract.update({
         "version": PHYSICAL_PROJECTILE_CONTRACT_VERSION,
         "delivery": "projectile_3d",
+        "presentation": deepcopy(_PROJECTILE_PRESENTATIONS[profile_name]),
     })
     return contract
+
+
+def projectile_visual_resolver_entity(schema: UnitySchema) -> EntitySpec | None:
+    """Return the compiler-only resolver request for one physical projectile.
+
+    The request deliberately never enters ``schema.entities``.  It uses the
+    ordinary entity/model resolver as a transient Step-6 query, so the resolved
+    model follows the established copy/.meta/Resources chain without becoming
+    an extra world spawn or a scene-coverage obligation.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    contract = meta.get(PHYSICAL_PROJECTILE_META_KEY)
+    if not isinstance(contract, dict):
+        return None
+    motion_profile = str(contract.get("motion_profile") or "")
+    if motion_profile not in _PROJECTILE_PRESENTATIONS:
+        raise ValueError(
+            "[projectile.visual] unknown closed motion profile "
+            f"{motion_profile!r}; expected one of "
+            f"{sorted(_PROJECTILE_PRESENTATIONS)}"
+        )
+    presentation = contract.get("presentation")
+    if not isinstance(presentation, dict):
+        presentation = deepcopy(_PROJECTILE_PRESENTATIONS[motion_profile])
+        contract["presentation"] = presentation
+    resolver_name = str(presentation.get("resolver_name") or "").strip()
+    model_hint = str(presentation.get("model_hint") or "").strip()
+    if not resolver_name or not model_hint:
+        raise ValueError(
+            "[projectile.visual] closed presentation is missing its resolver "
+            f"identity for {motion_profile!r}"
+        )
+    return EntitySpec(
+        name=resolver_name,
+        kind="prop",
+        count=1,
+        shape="cube",
+        placement="single",
+        color_role="accent",
+        scale=1.0,
+        model_hint=model_hint,
+    )
+
+
+def stamp_projectile_visual_resolution(
+    schema: UnitySchema,
+    resource_path: str,
+) -> None:
+    """Persist Step-6's deterministic visual resolution in compiler metadata."""
+    meta = schema.meta if isinstance(schema.meta, dict) else {}
+    contract = meta.get(PHYSICAL_PROJECTILE_META_KEY)
+    if not isinstance(contract, dict):
+        return
+    motion_profile = str(contract.get("motion_profile") or "")
+    if motion_profile not in _PROJECTILE_PRESENTATIONS:
+        raise ValueError(
+            "[projectile.visual] cannot stamp a visual for unknown motion "
+            f"profile {motion_profile!r}"
+        )
+    presentation = contract.get("presentation")
+    if not isinstance(presentation, dict):
+        presentation = deepcopy(_PROJECTILE_PRESENTATIONS[motion_profile])
+        contract["presentation"] = presentation
+    presentation["resource_path"] = str(resource_path or "")
 
 
 def apply_physical_projectile_contract(
