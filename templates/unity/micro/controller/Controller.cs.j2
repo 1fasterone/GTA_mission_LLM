@@ -5,6 +5,14 @@
 {% set is_bike = variant == "vehicle_bike" -%}
 {% set wheel_count = 2 if is_bike else 4 -%}
 {% set has_physical_projectiles = (s.weapons | selectattr("delivery", "equalto", "projectile_3d") | list | length) > 0 -%}
+{% set projectile_presentation = s.meta.get("projectile_presentation", {}) -%}
+{% set projectile_visual_path = projectile_presentation.get("resource_path", "") -%}
+{% set projectile_fallback_name = projectile_presentation.get("fallback_name", "ProjectileFallback_FastRound_Capsule") -%}
+{% set projectile_fallback_primitive = projectile_presentation.get("fallback_primitive", "Capsule") -%}
+{% set projectile_visual_scale = projectile_presentation.get("uniform_scale", 0.08) -%}
+{% set projectile_visual_euler = projectile_presentation.get("local_euler", [90.0, 0.0, 0.0]) -%}
+{% set projectile_fallback_color = projectile_presentation.get("fallback_color", [1.0, 0.58, 0.08, 1.0]) -%}
+{% set projectile_physics_radius = projectile_presentation.get("physics_radius", 0.04) -%}
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -140,6 +148,20 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     [SerializeField] private float[] projectileLifetime = new float[] { {% for w in s.weapons %}{{ "%.2f"|format(w.projectile_lifetime) }}f{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private int[] projectilePoolSize = new int[] { {% for w in s.weapons %}{{ w.projectile_pool_size }}{{ "" if loop.last else ", " }}{% endfor %} };
     [SerializeField] private bool[] projectilePoolGrows = new bool[] { {% for w in s.weapons %}{{ "true" if w.projectile_pool_growth == "grow_by_one" else "false" }}{{ "" if loop.last else ", " }}{% endfor %} };
+    private const string ProjectileVisualResourcePath = "{{ projectile_visual_path }}";
+    private const string ProjectileFallbackName = "{{ projectile_fallback_name }}";
+    private const string ProjectileFallbackPrimitive = "{{ projectile_fallback_primitive }}";
+    private const float ProjectileVisualUniformScale = {{ "%.4f"|format(projectile_visual_scale) }}f;
+    private const float ProjectilePhysicsRadius = {{ "%.4f"|format(projectile_physics_radius) }}f;
+    private static readonly Vector3 ProjectileVisualEuler = new Vector3(
+        {{ "%.3f"|format(projectile_visual_euler[0]) }}f,
+        {{ "%.3f"|format(projectile_visual_euler[1]) }}f,
+        {{ "%.3f"|format(projectile_visual_euler[2]) }}f);
+    private static readonly Color ProjectileFallbackColor = new Color(
+        {{ "%.3f"|format(projectile_fallback_color[0]) }}f,
+        {{ "%.3f"|format(projectile_fallback_color[1]) }}f,
+        {{ "%.3f"|format(projectile_fallback_color[2]) }}f,
+        {{ "%.3f"|format(projectile_fallback_color[3]) }}f);
 {% endif %}    [Tooltip("Ammo a reload draws from once the magazine is empty — an inventory's RestoreAmmo item effect refills this.")]
     [SerializeField] private int      startingReserveAmmo = {{ s.starting_reserve_ammo }};
 {% endif %}
@@ -1491,17 +1513,113 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 
     private GameObject BuildProjectile3DPrefab(int weaponIndex, Transform poolOwner)
     {
-        var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        if (ProjectileVisualUniformScale <= 0f || ProjectilePhysicsRadius <= 0f)
+            throw new System.InvalidOperationException(
+                "[projectile.visual] closed presentation scale/radius must be positive.");
+
+        var prefab = new GameObject("Projectile3DPrefab_" + weaponIndex);
         prefab.name = "Projectile3DPrefab_" + weaponIndex;
+        prefab.SetActive(false);
         prefab.transform.SetParent(poolOwner, false);
-        prefab.transform.localScale = Vector3.one * 0.16f;
+        prefab.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+        prefab.transform.localScale = Vector3.one;
+        var physicsShape = prefab.AddComponent<SphereCollider>();
+        physicsShape.radius = ProjectilePhysicsRadius;
         var body = prefab.AddComponent<Rigidbody>();
         body.isKinematic = true;
         body.useGravity = false;
         body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         prefab.AddComponent<ProjectileController>();
-        prefab.SetActive(false);
+        BuildProjectileVisual(prefab.transform);
         return prefab;
+    }
+
+    private void BuildProjectileVisual(Transform projectileRoot)
+    {
+        var visualRootObject = new GameObject("ProjectileVisualRoot");
+        Transform visualRoot = visualRootObject.transform;
+        visualRoot.SetParent(projectileRoot, false);
+        visualRoot.SetLocalPositionAndRotation(
+            Vector3.zero, Quaternion.Euler(ProjectileVisualEuler));
+        visualRoot.localScale = Vector3.one * ProjectileVisualUniformScale;
+
+        GameObject visual = null;
+        if (!string.IsNullOrWhiteSpace(ProjectileVisualResourcePath))
+        {
+            GameObject resolved = Resources.Load<GameObject>(ProjectileVisualResourcePath);
+            if (resolved != null)
+            {
+                visual = Instantiate(resolved, visualRoot, false);
+                visual.name = "ProjectileResolvedVisual";
+            }
+            else
+            {
+                Debug.LogWarning(
+                    "[projectile.visual] resolved Resources path '"
+                    + ProjectileVisualResourcePath
+                    + "' could not be loaded; using " + ProjectileFallbackName + ".");
+            }
+        }
+        if (visual == null)
+            visual = BuildProjectilePrimitiveFallback(visualRoot);
+
+        visual.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+        visual.transform.localScale = Vector3.one;
+        StripVisualPhysics(visual);
+    }
+
+    private GameObject BuildProjectilePrimitiveFallback(Transform visualRoot)
+    {
+        PrimitiveType primitive;
+        switch (ProjectileFallbackPrimitive)
+        {
+            case "Capsule": primitive = PrimitiveType.Capsule; break;
+            case "Cube": primitive = PrimitiveType.Cube; break;
+            case "Sphere": primitive = PrimitiveType.Sphere; break;
+            default:
+                throw new System.InvalidOperationException(
+                    "[projectile.visual] unsupported closed fallback primitive '"
+                    + ProjectileFallbackPrimitive + "'.");
+        }
+
+        GameObject fallback = GameObject.CreatePrimitive(primitive);
+        fallback.name = ProjectileFallbackName;
+        fallback.transform.SetParent(visualRoot, false);
+        Renderer renderer = fallback.GetComponent<Renderer>();
+        Shader shader = Shader.Find("Universal Render Pipeline/Lit")
+            ?? Shader.Find("Standard")
+            ?? Shader.Find("Unlit/Color");
+        if (renderer != null && shader != null)
+        {
+            var material = new Material(shader);
+            material.name = ProjectileFallbackName + "_Material";
+            material.color = ProjectileFallbackColor;
+            renderer.sharedMaterial = material;
+        }
+        return fallback;
+    }
+
+    private static void StripVisualPhysics(GameObject visual)
+    {
+        foreach (Collider collider in visual.GetComponentsInChildren<Collider>(true))
+        {
+            collider.enabled = false;
+            Destroy(collider);
+        }
+        foreach (Rigidbody body in visual.GetComponentsInChildren<Rigidbody>(true))
+        {
+            body.detectCollisions = false;
+            body.isKinematic = true;
+            Destroy(body);
+        }
+        foreach (CharacterController controller
+                 in visual.GetComponentsInChildren<CharacterController>(true))
+        {
+            controller.enabled = false;
+            Destroy(controller);
+        }
+        foreach (Joint joint in visual.GetComponentsInChildren<Joint>(true))
+            Destroy(joint);
     }
 
     private bool LaunchProjectile()
@@ -1528,9 +1646,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 
     private Vector3 ResolveProjectileSpawnPosition(Transform muzzle, Vector3 launchDirection)
     {
-        const float projectileRadius = 0.08f;
         const float skin = 0.02f;
-        float forwardOffset = projectileRadius + skin;
+        float forwardOffset = ProjectilePhysicsRadius + skin;
         Vector3 absoluteDirection = new Vector3(
             Mathf.Abs(launchDirection.x),
             Mathf.Abs(launchDirection.y),
@@ -1549,7 +1666,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
                 bounds.center - muzzle.position, launchDirection);
             forwardOffset = Mathf.Max(
                 forwardOffset,
-                projectedCenter + projectedExtent + projectileRadius + skin);
+                projectedCenter + projectedExtent + ProjectilePhysicsRadius + skin);
         }
         return muzzle.position + launchDirection * Mathf.Max(0f, forwardOffset);
     }

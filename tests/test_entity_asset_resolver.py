@@ -356,6 +356,21 @@ def test_nonstrict_no_match_falls_back_to_prop(env, tmp_path):
     assert "prop" in used                        # fallback registered for copy
 
 
+def test_compiler_owned_visual_can_retain_its_named_fallback(env, tmp_path):
+    all_models = _default_models(tmp_path)
+    used: dict = {}
+    paths = resolve_entity_assets(
+        _schema([EntitySpec(name="Zzgrbl", kind="dragon", count=1)]),
+        used,
+        all_models,
+        lookups_dir=str(env),
+        strict=False,
+        allow_prop_fallback=False,
+    )
+    assert "Zzgrbl" not in paths
+    assert "prop" not in used
+
+
 def test_missing_asset_file_is_skipped(env, tmp_path):
     # Catalog entry whose file vanished must not be picked.
     (Path(json.loads((env / "unity" / "asset_catalog.json")

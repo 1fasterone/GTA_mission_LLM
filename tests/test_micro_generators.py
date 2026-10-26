@@ -301,7 +301,10 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "weaponDamage[_weaponIndex], gameObject," in controller
     assert "ResolveProjectileSpawnPosition(muzzle, launchDirection)" in controller
     assert "projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);" in controller
-    assert "var prefab = GameObject.CreatePrimitive(PrimitiveType.Sphere);" in controller
+    assert 'var prefab = new GameObject("Projectile3DPrefab_" + weaponIndex);' in controller
+    assert "var physicsShape = prefab.AddComponent<SphereCollider>();" in controller
+    assert "BuildProjectileVisual(prefab.transform);" in controller
+    assert "StripVisualPhysics(visual);" in controller
     assert "prefab.AddComponent<Rigidbody>();" in controller
     assert "CollisionDetectionMode.ContinuousSpeculative" in controller
     assert "prefab.AddComponent<ProjectileController>();" in controller
@@ -309,7 +312,9 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "public enum ProjectilePoolGrowthPolicy" in pool
     assert "Fixed," in pool and "GrowByOne," in pool
     assert "_prefab.GetComponent<Rigidbody>()" in pool
-    assert "_prefab.GetComponent<Collider>()" in pool
+    assert "_prefab.GetComponents<Collider>()" in pool
+    assert "rootShape is SphereCollider" in pool
+    assert "childShape.transform != _prefab.transform" in pool
     assert "_prefab.GetComponent<ProjectileController>()" in pool
     assert "CollisionDetectionMode.ContinuousSpeculative" in pool
     assert "_growthPolicy == ProjectilePoolGrowthPolicy.GrowByOne" in pool
@@ -319,7 +324,10 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "public void ResetForPool()" in projectile
     assert "_body.linearVelocity = Vector3.zero;" in projectile
     assert "_body.useGravity = false;" in projectile
-    assert "effect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);" in projectile
+    assert (
+        "state.Target.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);"
+        in projectile
+    )
     assert "if (_released) return;" in projectile
     assert "_returnToPool(this);" in projectile
     assert "Physics.SphereCastNonAlloc(" in projectile

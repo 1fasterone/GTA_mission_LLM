@@ -14,6 +14,7 @@ the real scene template is P2.
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 import re
 from pathlib import Path
@@ -215,6 +216,43 @@ def refresh_cover_points(subsystems: list, entities, cover_points: dict | None) 
                 f"layout — {len(fresh)} point(s), was {len(stale or [])} from the "
                 "pre-re-layout bake")
             sub.options["cover_points"] = fresh
+    return messages
+
+
+def refresh_projectile_presentation(
+    subsystems: list,
+    projectile_contract: dict | None,
+) -> list[str]:
+    """Refresh controller presentation after Step 6 resolves its model path.
+
+    ``subsystems_for`` necessarily runs before generator.write() so composer
+    planning can wire the scene.  The projectile Resources path is only known
+    inside that write, after the ordinary model resolver runs.  Re-point the
+    controller's existing ``meta`` option between write and emit, mirroring the
+    model-aware cover-point refresh above without changing the planned class,
+    GUID, target, or physics contract.
+    """
+    contract = projectile_contract if isinstance(projectile_contract, dict) else {}
+    presentation = contract.get("presentation")
+    if not isinstance(presentation, dict):
+        return []
+    fresh = deepcopy(presentation)
+    messages: list[str] = []
+    for sub in subsystems:
+        if sub.kind != "controller":
+            continue
+        weapons = sub.options.get("weapons") or []
+        if not any(isinstance(w, dict) and w.get("delivery") == "projectile_3d"
+                   for w in weapons):
+            continue
+        meta = sub.options.setdefault("meta", {})
+        stale = meta.get("projectile_presentation")
+        if stale != fresh:
+            meta["projectile_presentation"] = deepcopy(fresh)
+            messages.append(
+                "compose: controller projectile presentation refreshed from "
+                "resolved compiler metadata"
+            )
     return messages
 
 
@@ -2482,6 +2520,10 @@ def subsystems_for(
             and projectile_contract.get("delivery") == "projectile_3d"
             and isinstance(projectile_contract.get("weapon"), dict)):
         ctrl_opts["weapons"] = [dict(projectile_contract["weapon"])]
+        if isinstance(projectile_contract.get("presentation"), dict):
+            ctrl_opts.setdefault("meta", {})["projectile_presentation"] = deepcopy(
+                projectile_contract["presentation"]
+            )
 
     # Animator variant from locomotion
     anim_variant = {

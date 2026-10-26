@@ -42,11 +42,22 @@ def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
     )
 
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
-    assert contract["version"] == "slice2-3d-v2"
+    assert contract["version"] == "slice3-3d-v3"
     assert contract["delivery"] == "projectile_3d"
     assert contract["motion_profile"] == "fast_round"
     assert contract["emission_profile"] == "muzzle"
     assert contract["visual_profile"] == "bullet"
+    assert contract["presentation"] == {
+        "resolver_name": "ProjectileVisualFastRound",
+        "model_hint": "bullet projectile round",
+        "resource_path": "",
+        "fallback_name": "ProjectileFallback_FastRound_Capsule",
+        "fallback_primitive": "Capsule",
+        "uniform_scale": 0.08,
+        "local_euler": [90.0, 0.0, 0.0],
+        "fallback_color": [1.0, 0.58, 0.08, 1.0],
+        "physics_radius": 0.04,
+    }
     assert contract["weapon"]["delivery"] == "projectile_3d"
     assert contract["weapon"]["projectile_use_gravity"] is False
     assert contract["weapon"]["projectile_pool_size"] == 8
@@ -69,6 +80,12 @@ def test_explicit_thrown_rock_uses_gravity_profile(brief):
     assert contract["motion_profile"] == "thrown_object"
     assert contract["emission_profile"] == "throw_release"
     assert contract["visual_profile"] == "rock"
+    assert contract["presentation"]["resolver_name"] == "ProjectileVisualThrownObject"
+    assert contract["presentation"]["fallback_name"] == (
+        "ProjectileFallback_ThrownObject_Cube"
+    )
+    assert contract["presentation"]["fallback_primitive"] == "Cube"
+    assert contract["presentation"]["uniform_scale"] == 0.22
     assert contract["weapon"] == {
         "name": "Thrown Rock",
         "damage": 20.0,

@@ -2509,7 +2509,8 @@ class UnityPipeline:
         # (composer.plan/module_deps/emit/wiring_report) rely on.
         if compose:
             from .unity_compose import (MicroComposer, drop_owned_scripts,
-                                        refresh_cover_points)
+                                        refresh_cover_points,
+                                        refresh_projectile_presentation)
             from .unity_micro_code import (merge_authored_code,
                                            sync_microgens_from_subsystems,
                                            sanitize_subsystem_composed_calls,
@@ -2752,6 +2753,11 @@ class UnityPipeline:
             # cover_shooter unit now — before emit renders its AI.cs.
             for msg in refresh_cover_points(subsystems, schema.entities,
                                             schema.meta.get("cover_points")):
+                self._fix(msg)
+            for msg in refresh_projectile_presentation(
+                    subsystems,
+                    schema.meta.get(PHYSICAL_PROJECTILE_META_KEY)
+                    if isinstance(schema.meta, dict) else None):
                 self._fix(msg)
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,

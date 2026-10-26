@@ -517,7 +517,8 @@ def resolve_entity_assets(schema,
                           strict: bool = False,
                           sketchfab_cfg: Optional[dict] = None,
                           llm: Optional[Any] = None,
-                          locked_asset_bindings: Optional[dict[str, dict]] = None
+                          locked_asset_bindings: Optional[dict[str, dict]] = None,
+                          allow_prop_fallback: bool = True,
                           ) -> dict[str, str]:
     """Assign a real model to every entity group.
 
@@ -554,6 +555,12 @@ def resolve_entity_assets(schema,
     parameter adds a capability, it never removes one.
 
     Raises ValueError in strict mode when an entity matches nothing real.
+
+    ``allow_prop_fallback=False`` is reserved for compiler-owned transient
+    visual requests.  A semantic miss then returns no path so the owning
+    compiler feature can use its own named primitive fallback rather than
+    silently presenting the library's generic prop as the requested visual.
+    The default preserves every ordinary entity caller byte-for-byte.
     """
     cfg = asset_cfg or {}
     min_score = float(cfg.get("min_match_score", _DEFAULT_MIN_SCORE))
@@ -1487,10 +1494,16 @@ def resolve_entity_assets(schema,
         if strict:
             unmatched.append((e.name, e.kind,
                               _nearest_misses(assets, qw, kind)))
-        elif prop_fallback is not None:
+        elif allow_prop_fallback and prop_fallback is not None:
             used_models.setdefault("prop", prop_fallback)
             entity_model_paths[e.name] = prop_fallback.resource_path
             defaulted.append((e.name, e.kind))
+        else:
+            _log.info(
+                "[assets] entity '%s' (kind=%s) matched no model and generic "
+                "prop fallback is disabled — caller-owned fallback remains active",
+                e.name, e.kind,
+            )
 
     if unmatched:
         detail = "; ".join(
