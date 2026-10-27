@@ -9,7 +9,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.27
 numpy>=1.24            # procedural audio synth (src/audio) — wav rendering
 pillow>=10.0           # unity-path --image: trace a drawn course into route points
-rembg>=2.0             # sprite background removal (src/sprites) — U2-Net segmentation,
+rembg>=2.0.86             # sprite background removal (src/sprites) — U2-Net segmentation,
                        # not color keying; see src/sprites/matte.py's module docstring
                        # for why. First use downloads u2net.onnx (~176 MB) to
                        # ~/.rembg/models/ and caches it there.
