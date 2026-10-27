@@ -1,65 +1,105 @@
-# Quickstart — describe a game, get a wired Unity project
+# Quick start
 
-Five minutes from zero to a Unity project assembled from the micro library.
+This guide takes a fresh clone to a generated Unity project using a local LLM.
 
-## 1. Prerequisites
+## 1. Install the prerequisites
 
-- **Python 3.11+**
-- **[LM Studio](https://lmstudio.ai)** (free) — runs a local LLM. Load any instruct model
-  (Llama 3.1 8B, Qwen 2.5/3.5, etc.) and start its server (**Developer → Start Server**, port 1234).
-- **Unity 6000.x** (via Unity Hub) — only needed to open/verify the generated project.
+- Python 3.11+
+- [LM Studio](https://lmstudio.ai/) or [Ollama](https://ollama.com/)
+- Unity 6000.x if you want to open or compile-check the generated project
 
-## 2. Install
+## 2. Create the environment
+
+Windows PowerShell:
 
 ```powershell
-./scripts/install.ps1        # makes a .venv, installs pinned deps (requirements.lock)
+git clone https://github.com/1fasterone/GTA_mission_LLM.git
+cd GTA_mission_LLM
+py -3.11 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.lock
+Copy-Item config.example.yaml config.yaml
 ```
-Or manually:
-```bash
-python -m venv .venv && . .venv/Scripts/activate    # (.venv/bin/activate on macOS/Linux)
-pip install -r requirements.lock
-cp config.example.yaml config.yaml                  # then set lm_studio.model (see step 3)
-```
-RAG (local ChromaDB index) is **optional** — skip `rag-build` to run in local-lookup mode.
 
-## 3. Pick your model
-
-Set `lm_studio.model` in `config.yaml` to the id shown in LM Studio (e.g.
-`meta-llama-3.1-8b-instruct`), **or** override per-run with `--model`:
+macOS or Linux:
 
 ```bash
-python main.py unity-tools list          # see all 15 micro-generators
+git clone https://github.com/1fasterone/GTA_mission_LLM.git
+cd GTA_mission_LLM
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.lock
+cp config.example.yaml config.yaml
 ```
 
-## 4. Generate a composed game
+## 3. Start a model server
+
+For LM Studio, load an instruction model, start the local server, and set
+`lm_studio.model` in `config.yaml` to the exact identifier LM Studio exposes.
+The default endpoint is `http://localhost:1234/v1`.
+
+For Ollama, pull a model and change `lm_studio.backend` to `ollama`:
 
 ```bash
-python main.py unity-create --compose "a top-down survival game with waves of enemies" \
-  --model meta-llama-3.1-8b-instruct
+ollama pull qwen2.5:7b
 ```
-`--compose` assembles micros into one **wired** project: a controller on the Player, a camera rig
-on the Main Camera, a HUD + pause menu on the Canvas, a health system wired to the HUD bar, plus
-save/audio/AI on a `_Systems` object — all connected by a generated `GameWiring.cs`. Output lands in
+
+Then set `ollama.model` to the pulled tag.
+
+## 4. Generate a game
+
+```bash
+python main.py unity-create --compose "a top-down survival game with waves of enemies"
+```
+
+The generated project and its canonical schema are written under
 `output/unity/<ProjectName>/`.
 
-Want a single subsystem instead of a whole game? Any micro runs standalone:
+To use a reference image:
+
 ```bash
-python main.py unity-health "player with regenerating shields" --variant shielded
-python main.py unity-hud "minimal health + ammo HUD" --variant full_hud_bundle
+python main.py unity-create --compose --viz reference.png "a bright sci-fi arena shooter"
 ```
 
-## 5. Open it / verify it
+## 5. Open or verify the project
 
-- **Open:** Unity Hub → *Add project from disk* → pick `output/unity/<ProjectName>/`.
-- **Headless compile-check** (needs Unity installed):
-  ```bash
-  python unity_cli.py verify --source output/unity/<ProjectName>
-  ```
-  Prints `PASS — compiles clean` or every C# error mapped back to its template.
+- In Unity Hub, choose **Add project from disk** and select the generated
+  project directory.
+- For a headless compile check, run:
+
+```bash
+python unity_cli.py verify --source output/unity/<ProjectName>
+```
+
+## 6. Replay without the model
+
+```bash
+python main.py unity-validate output/unity/<ProjectName>/<ProjectName>.schema.json --compose
+```
+
+The replay uses the saved schema and frozen enrichment data. Steps 4–7 remain
+LLM-free.
+
+## Optional paths
+
+```bash
+python main.py serve
+python main.py unity-tools list
+python main.py generate "infiltrate the docks at night"
+python main.py rag-status
+```
+
+RAG is optional. Set `basic_mode: true` in `config.yaml` to use the bundled
+local lookup catalogs only.
 
 ## Troubleshooting
 
-- **"LM Studio did not respond / empty response"** — load a model and start the server on `:1234`.
-  Reasoning models (e.g. Phi-4-reasoning) are slow; raise `lm_studio.timeout` in `config.yaml`.
-- **Web UI** instead of CLI: `python main.py serve` → http://127.0.0.1:8000
-- **Different model?** Just `--model <id>` — the pipeline is hardened across Qwen / Llama / deepseek.
+- **Connection refused:** load a model and start the configured local server.
+- **Model not found:** copy the model identifier exactly as the server exposes it.
+- **Unity not found:** configure the Unity path in `config.yaml` or open the
+  generated project manually in Unity Hub.
+- **The compiler abstains:** follow the named remedy in the error; do not hide
+  the missing or ambiguous input with a silent fallback.
+- **Need all options:** run `python main.py unity-create --help`.

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/1fasterone/GTA_mission_LLM/security/advisories/new
+    about: Report vulnerabilities privately.
+  - name: Questions and showcases
+    url: https://github.com/1fasterone/GTA_mission_LLM/discussions
+    about: Ask for help or share what you generated.
