@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a deterministic compiler capability or workflow improvement
+title: "feature: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or compiler problem should be solved?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed capability
+      description: Describe inputs, deterministic outputs, backend scope, and abstention behavior.
+    validations:
+      required: true
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Pipeline boundary
+      options:
+        - Step 2–3.5 (Pipeline LLM)
+        - Step 4 resolver
+        - Step 5 fixer
+        - Step 6 generator
+        - Step 7 playability
+        - Developer tooling or documentation
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: What deterministic tests and live runtime evidence would prove completion?
+    validations:
+      required: true
