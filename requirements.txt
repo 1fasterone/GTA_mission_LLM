@@ -7,7 +7,7 @@ typer>=0.12
 python-dotenv>=1.0
 fastapi>=0.110
 uvicorn[standard]>=0.27
-numpy>=1.24            # procedural audio synth (src/audio) — wav rendering
+numpy>=2.5.4            # procedural audio synth (src/audio) — wav rendering
 pillow>=10.0           # unity-path --image: trace a drawn course into route points
 rembg>=2.0             # sprite background removal (src/sprites) — U2-Net segmentation,
                        # not color keying; see src/sprites/matte.py's module docstring
