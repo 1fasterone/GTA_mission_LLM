@@ -15,7 +15,7 @@ rembg>=2.0             # sprite background removal (src/sprites) — U2-Net segm
                        # ~/.rembg/models/ and caches it there.
 # RAG ontology (local vector index — no API key needed):
 chromadb>=1.5
-fastembed>=0.6          # ONNX embedding (replaces sentence-transformers on Windows).
+fastembed>=0.9.1          # ONNX embedding (replaces sentence-transformers on Windows).
                         # >=0.6 for fastembed.ImageEmbedding (CLIP image tower),
                         # used by src/unity_semantic_embed.py — confirm this floor
                         # against the installed version's `from fastembed import
