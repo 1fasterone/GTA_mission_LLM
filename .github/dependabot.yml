@@ -4,6 +4,10 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
+    # requirements.txt uses compatible lower bounds. Do not raise a lower
+    # bound merely because a newer release exists; update a resolved version
+    # or constraint only when the current requirement excludes the update.
+    versioning-strategy: increase-if-necessary
     open-pull-requests-limit: 5
     labels:
       - dependencies
