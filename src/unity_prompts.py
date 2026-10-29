@@ -5,14 +5,11 @@ Same philosophy as GTA5: LLM = storyteller/specifier, pipeline = deterministic c
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 
 from .unity_schema import FEATURE_FLAG_VALUES
-
-_log = logging.getLogger(__name__)
 
 # One closed vocabulary serves both schema validation and the LLM instruction.
 # Rendering it here removes a second manually-maintained feature list.
@@ -357,20 +354,17 @@ Output ONLY the JSON. No other text."""
 # the concept paraphrased away have one more chance to survive Step 3 directly,
 # on top of (not instead of) the deterministic rescue-layer re-parses
 # (unity_concept_entities.py, unity_concept_scripts.py) that already run after it.
-BRIEF_CAP_CHARS = 4000   # conservative char->token guess; local models run 8k-16k context
-                          # and the schema prompt above is already ~3.5k tokens on its own.
-
-
 def brief_block(user_prompt: str) -> str:
+    """Include the complete original brief without a character-based cutoff.
+
+    The model server's context window still bounds the complete request plus
+    its response. Let the server report capacity errors rather than silently
+    removing requirements from the brief.
+    """
     if not user_prompt:
         return ""
-    text = user_prompt
-    if len(text) > BRIEF_CAP_CHARS:
-        _log.warning("user_prompt truncated to %d chars for Step 3 brief block (was %d)",
-                      BRIEF_CAP_CHARS, len(text))
-        text = text[:BRIEF_CAP_CHARS]
     return (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
-            f"priority over the concept above):\n{text}\n")
+            f"priority over the concept above):\n{user_prompt}\n")
 
 
 # ── STEP 3b: multimodal IR block ──────────────────────────────────────────────
