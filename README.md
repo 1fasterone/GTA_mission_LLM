@@ -91,7 +91,7 @@ cd GTA_mission_LLM
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.lock
+python -m pip install -r requirements.txt -r requirements.lock
 Copy-Item config.example.yaml config.yaml
 ```
 
