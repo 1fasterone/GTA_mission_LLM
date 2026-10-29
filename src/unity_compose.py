@@ -2350,7 +2350,11 @@ def subsystems_for(
     cover_points:  dict | None      = None,         # schema.meta["cover_points"] — see unity_cover_points.py
     projectile_contract: dict | None = None,        # deterministic Slice-2 typed physical loadout
 ) -> list[Subsystem]:
-    """Map a project's game_type + features + locomotion + capabilities to subsystems.
+    """Pre-generation selector for game_type/features/locomotion/capabilities.
+
+    Schema-driven generation must use unity_compose_selection.selected_subsystems
+    instead. This low-level selector may read a brief; persist its decisions at
+    the Step-5/6 boundary rather than calling it again during generation/replay.
 
     Deterministic — no LLM. Capabilities (when present) override controller
     parameters so the composed output matches the schema's typed declarations

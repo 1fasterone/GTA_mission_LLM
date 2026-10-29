@@ -112,49 +112,14 @@ def _compose_palette_rgb(schema) -> dict:
     `palette_rgb` context, so the runtime lighting guard and the scene YAML's
     m_Ambient*Color agree instead of fighting each other.
     """
-    from .unity_generator import _unity_color
-    pal = getattr(schema, "color_palette", None)
-    if pal is None:
-        return {}
-    return {slot: _unity_color(getattr(pal, slot))
-            for slot in ("primary", "secondary", "accent", "background", "trim")}
+    from .unity_compose_selection import palette_rgb
+    return palette_rgb(schema)
 
 
-def _compose_subsystems(schema, user_prompt: str,
-                        features: list[str] | None = None) -> list:
-    """The composed-micro plan for `schema` — a pure function of the schema.
-
-    One call site for both readers: Step 3.5 plans against the freshly filled
-    schema to know which micros to author code for, and Step 6 re-plans
-    against the fixed schema to compose them. `features` overrides
-    schema.features without mutating it (Step 3.5 must see compose's
-    always-on audio before Step 6 injects it).
-    """
-    from .unity_compose import subsystems_for
-    meta = schema.meta if isinstance(schema.meta, dict) else {}
-    return subsystems_for(schema.game_type,
-                          list(schema.features if features is None else features),
-                          locomotion=schema.locomotion,
-                          locomotion_modes=schema.locomotion_modes,
-                          flying_abilities=meta.get("flying_abilities"),
-                          capabilities=schema.capabilities,
-                          user_prompt=user_prompt,
-                          scenes=schema.scenes,
-                          entities=schema.entities,
-                          scripts=schema.scripts,
-                          genre=meta.get("genre", "universal"),
-                          audio_specs=schema.audio_specs,
-                          vfx_specs=schema.vfx,
-                          shaders=schema.shaders,
-                          animations=schema.animations,
-                          characters=schema.characters,
-                          missions=schema.missions,
-                          behavior_trees=schema.behavior_trees,
-                          environment=schema.environment,
-                          visual_style=schema.visual_style,
-                          palette_rgb=_compose_palette_rgb(schema),
-                          cover_points=meta.get("cover_points"),
-                          projectile_contract=meta.get(PHYSICAL_PROJECTILE_META_KEY))
+def _compose_subsystems(schema) -> list:
+    """Replay schema-owned selection without accepting a brief."""
+    from .unity_compose_selection import selected_subsystems
+    return selected_subsystems(schema)
 
 
 # npc_dialog variant -> the interaction type the dialog extractor is asked for.
@@ -1372,8 +1337,8 @@ class UnityPipeline:
                 e.name for e in schema.entities
                 if (e.sketchfab_query or "").strip())
 
-        # The composed-micro plan this schema implies. Step 6 re-plans against
-        # the FIXED schema; bodies authored here reach it through
+        # Preliminary composition for enrichment. Step 5 persists the final
+        # plan after schema repairs; bodies authored here reach it through
         # schema.microgens (merge_authored_code), keyed by kind.
         subsystems: list = []
         if compose:
@@ -1381,7 +1346,8 @@ class UnityPipeline:
             if "audio" not in features:
                 features.append("audio")   # Step 6 always composes audio
             try:
-                subsystems = _compose_subsystems(schema, user_prompt, features)
+                from .unity_compose_selection import select_subsystems
+                subsystems = select_subsystems(schema, user_prompt, features)
             except Exception as exc:  # noqa: BLE001
                 self._warn(f"Step 3.5 could not plan composed micros "
                            f"({type(exc).__name__}: {exc}) — micro code, NPC "
@@ -2488,6 +2454,17 @@ class UnityPipeline:
         else:
             self._ok(f"Spatial sidecars 6.2–6.6 prepared ({_spatial_status})")
 
+        # Final Step-5 composition decision. Generation and replay consume this
+        # ordered record and never re-read the raw prompt to select a controller
+        # or micro. Keep the record in the schema sidecar, not process memory.
+        if compose:
+            from .unity_compose_selection import persist_selection
+            if "audio" not in (schema.features or []):
+                schema.features = list(schema.features or []) + ["audio"]
+                self._fix("compose: injected 'audio' feature for SA3 clip generation")
+            for msg in persist_selection(schema, user_prompt):
+                self._warn(msg)
+
         # STEP 6 — generate ───────────────────────────────────────────────────
         self._step(6, "Generator compiles schema -> Unity project folder")
         # Blender model fulfilment: build real models from the story and feed them
@@ -2519,11 +2496,7 @@ class UnityPipeline:
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
-            # Ensure audio is always composed — it's a core game system.
-            if "audio" not in (schema.features or []):
-                schema.features = list(schema.features or []) + ["audio"]
-                self._fix("compose: injected 'audio' feature for SA3 clip generation")
-            subsystems = _compose_subsystems(schema, user_prompt)
+            subsystems = _compose_subsystems(schema)
             if no_llm or visual_context_mode or visual_compile:
                 _reason = (
                     "visual asset mode" if visual_context_mode

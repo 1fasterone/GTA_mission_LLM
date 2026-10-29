@@ -759,6 +759,29 @@ def apply_intent(schema, intent: UnityIntent, *, min_confidence: int = 3) -> lis
     """
     msgs: list[str] = []
 
+    # Preserve the original schema value before an override destroys it. This
+    # is provenance, not a change to the existing classifier precedence policy.
+    conflicts = list(schema.meta.get("intent_conflicts") or [])
+    for axis_name, proposed, confidence in (
+        ("game_type", intent.game_type, intent.game_type_confidence),
+        ("locomotion", intent.locomotion, intent.locomotion_confidence),
+    ):
+        original = getattr(schema, axis_name)
+        if proposed and confidence >= min_confidence and original != proposed:
+            protected = axis_name == "locomotion" and original == "none"
+            conflict = {
+                "kind": "classifier_disagreement", "field": axis_name,
+                "schema_value": original, "classifier_value": proposed,
+                "confidence": confidence, "matched": list(intent.matched.get(axis_name, [])),
+                "resolution": "schema" if protected else "classifier",
+                "reason": "non-embodied schema is protected" if protected
+                          else "existing classifier threshold policy",
+            }
+            if conflict not in conflicts:
+                conflicts.append(conflict)
+    if conflicts:
+        schema.meta["intent_conflicts"] = conflicts
+
     if (intent.game_type and intent.game_type_confidence >= min_confidence
             and schema.game_type != intent.game_type):
         old = schema.game_type
