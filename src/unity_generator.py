@@ -170,13 +170,18 @@ _ATMOSPHERE_WORDS = frozenset({
 def wants_atmosphere(schema) -> bool:
     """Deterministic gate: 3D URP project whose concept implies a real sky.
 
-    Scans the compressed schema fields AND the original Step-2 inputs
+    A persisted compose selection is authoritative. Before selection (and for
+    legacy non-composed projects), scans schema fields and Step-2 inputs
     (schema.meta["user_prompt"]/["concept"]) — the Step-2 LLM elaboration
     routinely compresses a rich brief down to a terse schema.description
     that drops style/atmosphere words the user actually wrote (e.g. "sky"),
     which silently starved this gate even when the user's own prompt asked
     for one. The raw prompt is the ground truth for what the user wants.
     """
+    selection = (getattr(schema, "meta", None) or {}).get("compose_selection")
+    if isinstance(selection, dict):
+        from .unity_compose_selection import ComposeSelection
+        return ComposeSelection.model_validate(selection).atmosphere
     if schema.render_pipeline != "URP" or schema.game_type not in ("3D", "VR"):
         return False
     if getattr(schema, "locomotion", "walk") == "fly":
@@ -2092,10 +2097,14 @@ def _lighting_variant_for(schema, composed_units=None) -> str:
 def _is_climbing_contract(schema: UnitySchema) -> bool:
     """True when the deterministic project contract is wall climbing.
 
-    This is intentionally derived from the held-out brief/schema content and
-    existing entity vocabulary. It does not ask the Pipeline LLM to invent a
-    controller mode or rewrite the schema.
+    A persisted compose selection follows the chosen climbing controller.
+    Legacy projects derive it from brief/schema content and entity vocabulary;
+    this helper never asks the Pipeline LLM to invent a controller mode.
     """
+    selection = (getattr(schema, "meta", None) or {}).get("compose_selection")
+    if isinstance(selection, dict):
+        from .unity_compose_selection import ComposeSelection
+        return ComposeSelection.model_validate(selection).climbing_contract
     meta = getattr(schema, "meta", None) or {}
     text = " ".join([
         str(getattr(schema, "description", "") or ""),

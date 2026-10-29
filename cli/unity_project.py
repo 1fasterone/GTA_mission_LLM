@@ -548,9 +548,9 @@ def unity_validate(
     """Recompile a saved Unity schema to a project folder without re-running the LLM.
 
     \b
-    `--compose` note: `subsystems_for()` and `MicroComposer.plan()/emit()` are
-    pure functions of the schema, so this reconstructs Assets/Micros/** and the
-    scene wiring byte-for-byte deterministically — no LLM call. Per-micro C#
+    `--compose` reads the saved meta.compose_selection record for controller,
+    micro and option choices. Legacy schemas warn and use schema-only defaults;
+    raw brief text never selects micros during replay. No LLM call. Per-micro C#
     BODIES are a different story: the original `unity-create --compose` run's
     `enrich_subsystems` step writes its output into `Subsystem.options` in
     memory only. Since this schema.json's write, that output round-trips
@@ -705,26 +705,12 @@ def unity_validate(
     subsystems: list = []
     if compose:
         from src.unity_compose import (MicroComposer, drop_owned_scripts,
-                                       refresh_cover_points, subsystems_for)
+                                       refresh_cover_points)
         from src.unity_micro_code import CODE_KEYS, merge_authored_code
-        from src.unity_pipeline import _compose_palette_rgb
-        from src.unity_projectile_contract import PHYSICAL_PROJECTILE_META_KEY
-
-        _meta = schema.meta if isinstance(schema.meta, dict) else {}
+        from src.unity_compose_selection import selected_subsystems
         composer = MicroComposer(schema.project_name, template_dir=template_dir,
                                  project_config=cfg)
-        subsystems = subsystems_for(
-            schema.game_type, schema.features, locomotion=schema.locomotion,
-            capabilities=schema.capabilities, user_prompt=_meta.get("user_prompt", ""),
-            scenes=schema.scenes, entities=schema.entities, scripts=schema.scripts,
-            genre=_meta.get("genre", "universal"), audio_specs=schema.audio_specs,
-            vfx_specs=schema.vfx, shaders=schema.shaders, animations=schema.animations,
-            characters=schema.characters, missions=schema.missions,
-            behavior_trees=schema.behavior_trees, environment=schema.environment,
-            visual_style=schema.visual_style, render_pipeline=schema.render_pipeline,
-            palette_rgb=_compose_palette_rgb(schema),
-            projectile_contract=_meta.get(PHYSICAL_PROJECTILE_META_KEY),
-        )
+        subsystems = selected_subsystems(schema)
         # No-LLM fallback only — see the docstring above for what this can and
         # cannot recover relative to the original `enrich_subsystems` call.
         for msg in merge_authored_code(subsystems, schema.microgens):
@@ -817,7 +803,7 @@ def unity_validate(
         # may have re-laid out the scene with measured footprints and re-baked
         # schema.meta["cover_points"]; the cover_shooter unit was built before
         # that. Before this call the recompile never handed the AI ANY cover
-        # points — subsystems_for() above is not given the table.
+        # points — saved selection may predate the final model-aware layout.
         for msg in refresh_cover_points(
                 subsystems, schema.entities,
                 schema.meta.get("cover_points") if isinstance(schema.meta, dict) else None):
