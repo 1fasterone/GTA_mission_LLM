@@ -43,6 +43,21 @@ External fork PRs do not receive repository secrets; they cannot pass the Unity
 job until an authorized maintainer runs the change from a trusted branch with
 access to the required license. The job must not silently pass in that case.
 
+## Unity workflow action policy
+
+The first hosted Unity run failed before job startup because the repository
+currently allows only GitHub-owned or `1fasterone`-owned actions, all pinned to
+full commit SHAs. The proposed Unity job references the pinned third-party
+`game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213` action.
+No action-policy change has been applied.
+
+If the repository owner approves that dependency, an administrator can use
+**Settings → Actions → General → Actions permissions** to allow that exact
+repository-and-SHA entry while retaining GitHub-owned actions and the full-SHA
+requirement. Preserve any existing allowlist entries. Avoid granting wildcard
+access to all third-party actions. Rerun the Unity job and inspect its result
+before requiring its status check. Unity license secrets are still needed.
+
 ## Verification after application
 
 - Inspect the effective `main` ruleset and bypass actors in GitHub settings.
