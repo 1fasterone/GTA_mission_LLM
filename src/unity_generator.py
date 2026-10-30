@@ -351,7 +351,10 @@ _CAMERA_PRESETS = {
 
 # ── Script type -> template file ───────────────────────────────────────────────
 
-_SCRIPT_TEMPLATES = {
+# Deprecated compatibility map for historical non-compose schema replay.
+# New unity-create runs default to Compose Micros; do not add gameplay systems
+# here. MechanicRegistry + MicroComposer are the active assembly pathway.
+_LEGACY_SCRIPT_TEMPLATES = {
     "player":           "PlayerController.cs.j2",
     "camera":           "CameraFollow.cs.j2",
     "game_manager":     "GameManager.cs.j2",
@@ -4415,7 +4418,7 @@ class UnityProjectGenerator:
             if s.type in GREYBOX_SCRIPT_TYPES:
                 m["Assets/Editor/GreyboxLevelGenerator.cs"] = "editor/LevelGenerator.cs.j2"
                 continue
-            tpl = _SCRIPT_TEMPLATES.get(s.type)
+            tpl = _LEGACY_SCRIPT_TEMPLATES.get(s.type)
             if tpl:
                 m[f"Assets/Scripts/{s.name}.cs"] = f"scripts/{tpl}"
         for mesh in schema.procedural_meshes:
@@ -4787,7 +4790,7 @@ class UnityProjectGenerator:
     def _generate_script(self, schema: UnitySchema, script: UnityScript,
                          base_ctx: dict,
                          known_types: "frozenset[str]" = frozenset()) -> tuple[str, str]:
-        tpl_file = _SCRIPT_TEMPLATES.get(script.type)
+        tpl_file = _LEGACY_SCRIPT_TEMPLATES.get(script.type)
         pn       = schema.project_name
 
         # Greybox generators live in Assets/Editor — handled in generate(); emit nothing here.

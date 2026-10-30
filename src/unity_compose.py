@@ -2349,6 +2349,7 @@ def subsystems_for(
     palette_rgb:   dict | None      = None,         # {slot: {r,g,b}} — see unity_generator
     cover_points:  dict | None      = None,         # schema.meta["cover_points"] — see unity_cover_points.py
     projectile_contract: dict | None = None,        # deterministic Slice-2 typed physical loadout
+    intent_exclusions: list[str] | None = None,     # resolved explicit user exclusions
 ) -> list[Subsystem]:
     """Map a project's game_type + features + locomotion + capabilities to subsystems.
 
@@ -2431,7 +2432,8 @@ def subsystems_for(
                    "mx bike", "quad bike", "moped", "scooter", "chopper",
                    "sportbike", "sport bike", "two-wheeler", "two wheeler",
                    "lean angle", "leaning into", "countersteer")
-    is_bike = any(w in prompt_low for w in _bike_words)
+    exclusions = set(intent_exclusions or [])
+    is_bike = "bike" not in exclusions and any(w in prompt_low for w in _bike_words)
 
     if gt in ("3d", "top_down", "isometric", "vr"):
         loco_ctrl = {"drive": "vehicle_car", "fly": "flying", "swim": "swimming"}
@@ -2829,7 +2831,8 @@ def subsystems_for(
     _bike_micro_words = ("bike", "motorbike", "motorcycle", "dirt bike",
                          "ride a bike", "riding a bike", "bike section",
                          "bike level")
-    if gt == "2d" and any(w in prompt_low for w in _bike_micro_words):
+    if (gt == "2d" and "bike" not in exclusions
+            and any(w in prompt_low for w in _bike_micro_words)):
         subs.append(Subsystem(kind="bike", variant="mountable_2d", target="world",
                               name="Bike"))
 

@@ -1,0 +1,45 @@
+name: Unity Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  unity-compile:
+    name: Unity generated-project compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt pytest
+      - name: Generate deterministic Unity project
+        run: python tools/generate_ci_unity_project.py --output work/ci-unity
+      - name: Require configured Unity license
+        shell: bash
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "UNITY_LICENSE repository secret is required for the mandatory compile gate."
+            exit 1
+          fi
+      - name: Compile project in Unity 6000.1.4f1
+        uses: game-ci/unity-builder@4423ee75828dff56037d1d1cfdac6b68e3a6ba00 # v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          projectPath: work/ci-unity
+          unityVersion: 6000.1.4f1
+          targetPlatform: StandaloneLinux64
+          buildMethod: CiCompileCheck.Perform
+          buildMethod: CiCompileCheck.Perform

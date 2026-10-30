@@ -746,85 +746,17 @@ def classify(prompt: str, concept: str = "") -> UnityIntent:
 # ── Override ─────────────────────────────────────────────────────────────────
 
 def apply_intent(schema, intent: UnityIntent, *, min_confidence: int = 3) -> list[str]:
+    """Compatibility entry point routed through the canonical resolver.
+
+    The classifier contributes claims only. Mutation happens in
+    ``intent.resolver.apply_resolution`` so there is one authority for game
+    type, locomotion, genre and control-surface decisions.
     """
-    Called after Step 3 fills the schema. Only overrides a field when the
-    classifier's confidence is at least `min_confidence` (default 3 = one direct
-    prompt keyword hit, not just a soft concept echo) AND the LLM's own value
-    disagrees. genre is always written to schema.meta regardless of confidence
-    (default "universal") so Step 4 can filter genre_atom RAG queries by it —
-    that wiring is a separate follow-up, but the value needs to exist first.
+    from .intent.claims import claims_from_classifier, claims_from_schema
+    from .intent.ledger import IntentLedger
+    from .intent.resolver import apply_resolution, resolve_intent
 
-    Returns log messages in the same style as archetypes.apply_scaffold, meant
-    to be printed via self._fix(msg) in unity_pipeline.run().
-    """
-    msgs: list[str] = []
-
-    if (intent.game_type and intent.game_type_confidence >= min_confidence
-            and schema.game_type != intent.game_type):
-        old = schema.game_type
-        schema.game_type = intent.game_type
-        hits = ", ".join(intent.matched.get("game_type", []))
-        msgs.append(
-            f"Intent classifier: game_type '{old}' -> '{intent.game_type}' "
-            f"(prompt said: {hits})"
-        )
-
-    # locomotion="none" is a POSITIVE declaration that the game has no avatar,
-    # and it is sticky: the schema-fill step read the whole brief, this
-    # classifier reads keywords. A repo-teaching game whose description happens
-    # to say "walk through the commit history" must not be flipped back to an
-    # embodied game by that one word — it would restore the false NOT PLAYABLE
-    # the declaration exists to prevent. Every other value stays overridable.
-    if (intent.locomotion and intent.locomotion_confidence >= min_confidence
-            and schema.locomotion != intent.locomotion
-            and schema.locomotion != "none"):
-        old = schema.locomotion
-        schema.locomotion = intent.locomotion
-        hits = ", ".join(intent.matched.get("locomotion", []))
-        msgs.append(
-            f"Intent classifier: locomotion '{old}' -> '{intent.locomotion}' "
-            f"(prompt said: {hits})"
-        )
-
-    schema.meta["genre"] = intent.genre
-    if intent.genre_confidence >= min_confidence:
-        hits = ", ".join(intent.matched.get("genre", []))
-        msgs.append(f"Intent classifier: genre = '{intent.genre}' (prompt said: {hits})")
-
-    # Control Surface Stack (docs/CONTROL_SURFACE_STACK.md) — FILL only, never
-    # override. Every other field above overwrites a disagreeing LLM answer,
-    # but `intent.locomotion_modes` is only ever a fallback for the "Step 3
-    # never mentions it at all" case (the gap this exists to close — the LLM
-    # left this a same-shape empty list across 4 consecutive live runs, 2
-    # different local models, despite explicit schema-prompt guidance). A
-    # schema that already carries an explicit registry — even a single entry,
-    # even one `_check_multi_mode_registry` will WARN on — keeps it: an
-    # author who wrote something here made a real call this classifier's
-    # keyword scoring cannot see (per-mode abilities, a specific
-    # default_mode, deliberately excluding a kind the brief also mentions).
-    if (intent.locomotion_modes and intent.locomotion_modes_confidence >= min_confidence
-            and not schema.locomotion_modes):
-        schema.locomotion_modes = list(intent.locomotion_modes)
-        hits = ", ".join(intent.matched.get("locomotion_modes_switch_signal", []))
-        kinds = ", ".join(intent.locomotion_modes)
-        msgs.append(
-            f"Intent classifier: locomotion_modes [] -> [{kinds}] "
-            f"(prompt said: {hits})"
-        )
-
-    # flaps/landing_gear on the flying entry — same FILL-only discipline as
-    # locomotion_modes just above (never overrides an author's own call), and
-    # the same reason it lands in schema.meta rather than a typed field: the
-    # actual ControllerMode registry is a compose-time construct
-    # (unity_compose.py's ctrl_opts["modes"]), not something that exists on
-    # UnitySchema yet at this point in the pipeline — genre is the precedent
-    # for stashing a classifier annotation there.
-    if intent.flying_abilities and not schema.meta.get("flying_abilities"):
-        schema.meta["flying_abilities"] = list(intent.flying_abilities)
-        hits = ", ".join(intent.matched.get("flying_abilities", []))
-        msgs.append(
-            f"Intent classifier: flying_abilities [] -> {intent.flying_abilities} "
-            f"(prompt said: {hits})"
-        )
-
-    return msgs
+    ledger = IntentLedger()
+    ledger.extend(claims_from_schema(schema, source="schema_llm"))
+    ledger.extend(claims_from_classifier(intent, min_confidence=min_confidence))
+    return apply_resolution(schema, resolve_intent(ledger))

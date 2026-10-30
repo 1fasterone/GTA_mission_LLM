@@ -1,0 +1,661 @@
+[
+  {
+    "id": "structured_fps_projectile",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 3D\nGENRE: FPS\nLOCOMOTION: walk\nWEAPON: physical bullets",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "structured_platformer",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 2D\nGENRE: platformer\nLOCOMOTION: walk",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "genre": "platformer",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_platformer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_racing",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 3D\nGENRE: racing\nLOCOMOTION: drive\nVEHICLE: rally car",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "racing",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_swim",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 3D\nLOCOMOTION: swim\nENVIRONMENT: underwater reef",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_flight",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 3D\nLOCOMOTION: fly\nPLAYER: aircraft",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_vr",
+    "category": "structured",
+    "prompt": "GAME_TYPE: VR\nLOCOMOTION: walk\nPLATFORM: headset",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "VR",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_board",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 2D\nLOCOMOTION: none\nINTERACTION: pointer board game",
+    "seed": {
+      "game_type": "2D",
+      "locomotion": "none"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_no_bike",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 3D\nLOCOMOTION: drive\nVEHICLES: cars only, no bikes",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "drive"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "exclusions": [
+          "bike"
+        ],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_isometric",
+    "category": "structured",
+    "prompt": "GAME_TYPE: isometric\nLOCOMOTION: walk\nGENRE: action RPG",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "isometric",
+        "locomotion": "walk",
+        "genre": "rpg",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "top_down",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_thrown",
+    "category": "structured",
+    "prompt": "GAME_TYPE: 3D\nLOCOMOTION: walk\nMECHANIC: throw rocks at targets",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "third_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "natural_neon_fps",
+    "category": "natural",
+    "prompt": "A fully 3D neon arena shooter where the player fires physical bullets at drones.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "natural_cozy_platformer",
+    "category": "natural",
+    "prompt": "A cozy side-scrolling 2D platformer about a fox collecting lanterns.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "genre": "platformer",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_platformer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_rally",
+    "category": "natural",
+    "prompt": "An arcade rally racing game with cars sliding around forest hairpins.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "racing",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_scuba",
+    "category": "natural",
+    "prompt": "Explore a coral reef by swimming in six directions and photograph fish.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_glider",
+    "category": "natural",
+    "prompt": "Pilot a glider through floating islands in a free-flight adventure.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_board",
+    "category": "natural",
+    "prompt": "A board game where ducks play monopoly and the player clicks pieces.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_vr_archery",
+    "category": "natural",
+    "prompt": "A room-scale HTC Vive archery range with physical arrows.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "VR",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "natural_topdown",
+    "category": "natural",
+    "prompt": "A top-down dungeon crawler with real 3D models and NavMesh enemies.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "top_down",
+        "locomotion": "walk",
+        "genre": "rpg",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "top_down",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_zelda",
+    "category": "natural",
+    "prompt": "A 2D zelda-like adventure with dungeons and puzzles.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "2d_topdown",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_topdown",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_rock_throw",
+    "category": "natural",
+    "prompt": "A third-person hero tosses rocks at moving targets.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "third_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "regression_survive_not_vr",
+    "category": "regression",
+    "prompt": "Collect data logs, survive predators, and escape before oxygen runs out.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "swim"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_drifting_clouds",
+    "category": "regression",
+    "prompt": "A freefall survival game with an animated title over drifting clouds.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "fly"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_driving_music",
+    "category": "regression",
+    "prompt": "A 3D arena FPS on foot with a driving synth music bed.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_denied_aircraft",
+    "category": "regression",
+    "prompt": "You work a radar desk. You are never in an aircraft.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "none"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_no_3d",
+    "category": "regression",
+    "prompt": "A flat interface puzzle. No 3D scenery of any kind.",
+    "seed": {
+      "game_type": "2D",
+      "locomotion": "none"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "puzzle",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_no_bikes",
+    "category": "regression",
+    "prompt": "Drive cars through the city, with no bikes or motorcycles.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "drive"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "exclusions": [
+          "bike"
+        ],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_hitscan",
+    "category": "regression",
+    "prompt": "An FPS with hitscan bullets and a rifle.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_rocky_canyon",
+    "category": "regression",
+    "prompt": "A rocky canyon containing stone ruins and ancient paths.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "third_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_flying_colours",
+    "category": "regression",
+    "prompt": "A quiz game you pass with flying colours.",
+    "seed": {
+      "game_type": "2D",
+      "locomotion": "none"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_drift_snow",
+    "category": "regression",
+    "prompt": "A calm scene with drifting clouds and a drift of snow across the field.",
+    "seed": {
+      "game_type": "3D",
+      "locomotion": "walk"
+    },
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "third_person",
+      "mechanics": [],
+      "assets": []
+    }
+  }
+]

@@ -159,16 +159,10 @@ _DEFAULT_TIER = 0.40
 
 def select_primitive(game_type: str, locomotion: str,
                      has_route: bool = False) -> str:
-    """The spatial primitive this schema's declared shape calls for.
+    """Compatibility wrapper around the single PrimitiveProvider pathway."""
+    from .unity_primitive_provider import PrimitiveProvider
 
-    An authored route wins over locomotion: a path is an explicit statement
-    about where the play space goes, whereas locomotion only says how the
-    player moves along it (a flying racer still races down its course).
-    """
-    if has_route:
-        return ROUTE_CORRIDOR
-    return _PRIMITIVE_BY_LOCOMOTION.get((locomotion or "").lower(),
-                                        GROUND_PLANE)
+    return PrimitiveProvider.select(game_type, locomotion, has_route=has_route)
 
 
 def is_grounded(entity: EntitySpec) -> bool:

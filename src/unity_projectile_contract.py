@@ -235,50 +235,45 @@ def apply_physical_projectile_contract(
     schema: UnitySchema,
     user_prompt: str,
 ) -> list[str]:
-    """Stamp the deterministic contract and ensure one held projectile model.
+    """Deprecated validation-only compatibility wrapper.
 
-    ``meta`` here is compiler provenance, not an LLM-invented schema field. It
-    is overwritten from the raw brief on every pass so an LLM-authored meta
-    value can never silently switch a hitscan game to physical delivery.
+    Prompt-to-contract conversion now registers an intent claim and the schema
+    stage materializes the resolved decision. This function intentionally
+    performs no writes; callers should migrate to
+    :func:`validate_physical_projectile_contract`.
     """
-    prompt = user_prompt or ""
-    contract = physical_projectile_contract_for(schema.game_type, prompt)
-    meta = dict(schema.meta or {})
-    previous = meta.pop(PHYSICAL_PROJECTILE_META_KEY, None)
-    if contract is None:
-        schema.meta = meta
-        if (_profile_for(prompt) is not None
-                and str(schema.game_type or "").strip().lower()
-                not in _THREE_DIMENSIONAL_GAME_TYPES):
-            return [
-                "[projectile.p2] physical projectile request is outside Slice 2's "
-                "3D contract; preserved hitscan delivery (2D belongs to Slice 4)."
-            ]
-        return []
-
-    meta[PHYSICAL_PROJECTILE_META_KEY] = contract
-    schema.meta = meta
-    messages = []
-    if previous != contract:
+    messages = validate_physical_projectile_contract(schema)
+    expected = physical_projectile_contract_for(schema.game_type, user_prompt)
+    actual = (schema.meta or {}).get(PHYSICAL_PROJECTILE_META_KEY)
+    if expected != actual:
         messages.append(
-            "[projectile.p2] explicit 3D physical-projectile brief -> "
-            f"typed projectile_3d loadout ({contract['motion_profile']})"
-        )
-
-    if not any(str(entity.kind).lower() == "weapon" for entity in schema.entities):
-        view_model = contract["view_model"]
-        schema.entities.append(EntitySpec(
-            name=view_model["name"],
-            kind="weapon",
-            count=1,
-            shape="cube",
-            placement="single",
-            color_role="accent",
-            scale=view_model["scale"],
-            model_hint=view_model["model_hint"],
-        ))
-        messages.append(
-            "[projectile.p2] added "
-            f"{view_model['name']} view-model entity for the held loadout"
+            "[projectile.intent] schema contract does not match resolved prompt "
+            "intent; rerun intent resolution"
         )
     return messages
+
+
+def validate_physical_projectile_contract(schema: UnitySchema) -> list[str]:
+    """Validate the resolved projectile contract without mutating schema."""
+    contract = (schema.meta or {}).get(PHYSICAL_PROJECTILE_META_KEY)
+    if contract is None:
+        return []
+    if not isinstance(contract, dict):
+        return ["[projectile.validation] contract must be an object"]
+    errors: list[str] = []
+    if contract.get("delivery") != "projectile_3d":
+        errors.append("[projectile.validation] delivery must be projectile_3d")
+    motion_profile = contract.get("motion_profile")
+    if motion_profile not in _PROJECTILE_PROFILES:
+        errors.append(
+            "[projectile.validation] unknown motion_profile "
+            f"{motion_profile!r}"
+        )
+    weapon = contract.get("weapon")
+    if not isinstance(weapon, dict):
+        errors.append("[projectile.validation] weapon contract is missing")
+    elif weapon.get("delivery") != "projectile_3d":
+        errors.append("[projectile.validation] weapon delivery must be projectile_3d")
+    if not any(str(entity.kind).lower() == "weapon" for entity in schema.entities):
+        errors.append("[projectile.validation] resolved contract has no weapon entity")
+    return errors

@@ -1,0 +1,930 @@
+[
+  {
+    "id": "structured_fps_projectile",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "structured_platformer",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "genre": "platformer",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_platformer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "genre": "platformer",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_platformer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_racing",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "racing",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "racing",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_swim",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_flight",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_vr",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "VR",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "VR",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_board",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_no_bike",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "exclusions": [
+          "bike"
+        ],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "exclusions": [
+          "bike"
+        ],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_isometric",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "isometric",
+        "locomotion": "walk",
+        "genre": "rpg",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "top_down",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "isometric",
+        "locomotion": "walk",
+        "genre": "rpg",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "top_down",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "structured_thrown",
+    "category": "structured",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "third_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "third_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "natural_neon_fps",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "natural_cozy_platformer",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "genre": "platformer",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_platformer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "walk",
+        "genre": "platformer",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_platformer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_rally",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "racing",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "racing",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_scuba",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_glider",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_board",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_vr_archery",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "VR",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    },
+    "actual": {
+      "schema": {
+        "game_type": "VR",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "first_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "natural_topdown",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "top_down",
+        "locomotion": "walk",
+        "genre": "rpg",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "top_down",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "top_down",
+        "locomotion": "walk",
+        "genre": "rpg",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "top_down",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_zelda",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "2d_topdown",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_topdown",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "2d_topdown",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "2d_topdown",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "natural_rock_throw",
+    "category": "natural",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "third_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": true
+      },
+      "controller": "third_person",
+      "mechanics": [
+        "fire",
+        "projectile"
+      ],
+      "assets": [
+        "weapon"
+      ]
+    }
+  },
+  {
+    "id": "regression_survive_not_vr",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "swim",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "swimming",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_drifting_clouds",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "fly",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "flying",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_driving_music",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_denied_aircraft",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_no_3d",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "puzzle",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "puzzle",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_no_bikes",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "exclusions": [
+          "bike"
+        ],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "exclusions": [
+          "bike"
+        ],
+        "projectile": false
+      },
+      "controller": "vehicle_car",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_hitscan",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "fps",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "first_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_rocky_canyon",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "third_person",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "third_person",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_flying_colours",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "2D",
+        "locomotion": "none",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "pointer",
+      "mechanics": [],
+      "assets": []
+    }
+  },
+  {
+    "id": "regression_drift_snow",
+    "category": "regression",
+    "pass": true,
+    "expected": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "third_person",
+      "mechanics": [],
+      "assets": []
+    },
+    "actual": {
+      "schema": {
+        "game_type": "3D",
+        "locomotion": "walk",
+        "genre": "universal",
+        "exclusions": [],
+        "projectile": false
+      },
+      "controller": "third_person",
+      "mechanics": [],
+      "assets": []
+    }
+  }
+]

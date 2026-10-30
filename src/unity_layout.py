@@ -88,7 +88,8 @@ from .unity_route_axis import sample as _route_sample
 from .unity_route_axis import sample_n as _route_sample_n
 from .unity_schema import EntitySpec, UnitySchema, WorldRegion, WorldSpec, is_embodied
 from .unity_spatial import (VOLUME_PRIMITIVES, assign_elevations, band_key,
-                            describe, select_primitive, tier_of)
+                            describe, tier_of)
+from .unity_primitive_provider import PrimitiveProvider
 
 _log = logging.getLogger(__name__)
 
@@ -2405,8 +2406,9 @@ def _layout_arena_plane(
     # Which SHAPE of space is this game played in (src/unity_spatial.py)?
     # Surface games (ground_plane / route_corridor) get an empty elevation map
     # and are laid out exactly as before this selection existed.
-    primitive = select_primitive(schema.game_type, schema.locomotion,
-                                 has_route=primary is not None)
+    primitive = PrimitiveProvider.select(
+        schema.game_type, schema.locomotion, has_route=primary is not None
+    )
     elevations = assign_elevations(packable, primitive)
 
     # Groups whose relationship to the route is "route_gate" (a checkpoint or
