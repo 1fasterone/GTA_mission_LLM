@@ -1,0 +1,67 @@
+name: Unity validation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unity-compile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unity-generated-compile:
+    name: Unity generated-project compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - name: Require Unity license credentials
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        run: |
+          python - <<'PYCODE'
+          import os
+          if not os.environ.get("UNITY_EMAIL") or not os.environ.get("UNITY_PASSWORD"):
+              raise SystemExit("Unity CI requires UNITY_EMAIL and UNITY_PASSWORD secrets")
+          if not (os.environ.get("UNITY_LICENSE") or os.environ.get("UNITY_SERIAL")):
+              raise SystemExit("Unity CI requires UNITY_LICENSE or UNITY_SERIAL secret")
+          PYCODE
+      - run: pip install -r requirements.txt
+      - name: Generate frozen-schema project
+        run: python -m tools.ci_prepare_unity_fixture --output output/ci-unity
+      - name: Compile and run the generated-project smoke test
+        id: unity
+        uses: game-ci/unity-test-runner@32e57712352b500e17974b245a6dce9e11a73213 # v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+        with:
+          projectPath: output/ci-unity/projects/DropZoneArcade
+          unityVersion: 6000.0.66f2
+          testMode: EditMode
+          artifactsPath: artifacts/unity-compile
+          coverageEnabled: false
+      - name: Require an executed passing compile smoke
+        run: python -m tools.ci_verify_unity_results artifacts/unity-compile
+      - name: Upload Unity results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unity-generated-compile
+          path: artifacts/unity-compile
+          if-no-files-found: warn
