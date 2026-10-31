@@ -19,6 +19,10 @@ intentionally mandatory. The repository still needs a `UNITY_LICENSE` secret;
 until it is configured, the workflow fails loudly and merge remains blocked
 instead of silently skipping compilation.
 
+The repository Actions policy requires full-SHA pinning, allows GitHub-owned
+actions, and narrowly allowlists `game-ci/unity-builder@*` as the only
+third-party action needed by the Unity compile gate.
+
 Audit with:
 
 ```powershell
