@@ -7,7 +7,6 @@ import pytest
 from src.unity_compose import MicroComposer, subsystems_for
 from src.unity_projectile_contract import (
     PHYSICAL_PROJECTILE_META_KEY,
-    apply_physical_projectile_contract,
     physical_projectile_contract_for,
     validate_physical_projectile_contract,
 )

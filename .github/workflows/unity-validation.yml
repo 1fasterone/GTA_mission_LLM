@@ -42,4 +42,3 @@ jobs:
           unityVersion: 6000.1.4f1
           targetPlatform: StandaloneLinux64
           buildMethod: CiCompileCheck.Perform
-          buildMethod: CiCompileCheck.Perform
