@@ -41,4 +41,6 @@ jobs:
           projectPath: work/ci-unity
           unityVersion: 6000.1.4f1
           targetPlatform: StandaloneLinux64
+          # The generated compile fixture has no release version.
+          versioning: 'None'
           buildMethod: CiCompileCheck.Perform
