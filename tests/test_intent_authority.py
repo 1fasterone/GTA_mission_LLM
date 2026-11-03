@@ -85,3 +85,61 @@ def test_thirty_golden_intent_cases_are_partitioned_and_pass():
             }
     failures = [result for result in run_intent_evals() if not result["pass"]]
     assert failures == []
+
+
+@pytest.mark.parametrize(("seed", "resolved"), [("2D", "3D"), ("3D", "2D")])
+def test_projectile_delivery_uses_resolved_dimension(seed, resolved):
+    from src.unity_pipeline_stages import ResolveIntentStage
+
+    schema = _schema("ProjectileDimension")
+    schema.game_type = seed
+    ledger = IntentLedger()
+    ledger.register(IntentClaim("game_type", resolved, "user", 1.0, "explicit dimension"))
+    ResolveIntentStage().run(
+        schema, ledger, prompt="The hero tosses rocks at targets.", schema_source="schema_llm"
+    )
+    assert schema.game_type == resolved
+    assert ("physical_projectile_contract" in schema.meta) == (resolved == "3D")
+    assert any(entity.kind == "weapon" for entity in schema.entities) == (resolved == "3D")
+
+
+@pytest.mark.parametrize("brief", ["An FPS with hitscan bullets.", "Explore a canyon."])
+def test_resolution_clears_stale_projectile_contract(brief):
+    from src.unity_pipeline_stages import ResolveIntentStage
+    from src.unity_projectile_contract import physical_projectile_contract_for
+
+    schema = _schema("StaleProjectile")
+    schema.meta["physical_projectile_contract"] = physical_projectile_contract_for(
+        "3D", "The hero tosses rocks at targets."
+    )
+    assert schema.meta["physical_projectile_contract"]
+    resolution, _ = ResolveIntentStage().run(
+        schema, IntentLedger(), prompt=brief, schema_source="schema_llm"
+    )
+    assert resolution.decisions["projectile_contract"] is None
+    assert "physical_projectile_contract" not in schema.meta
+
+
+def test_vehicle_exclusion_changes_controller_and_removes_vehicle_mode():
+    from src.unity_compose import subsystems_for
+    from src.unity_pipeline_stages import ResolveIntentStage
+
+    schema = _schema("VehicleExcluded")
+    schema.locomotion = "drive"
+    schema.locomotion_modes = ["on_foot", "vehicle_car"]
+    brief = "No vehicles."
+    ledger = IntentLedger()
+    ledger.extend(explicit_exclusion_claims(brief))
+    resolution, _ = ResolveIntentStage().run(
+        schema, ledger, prompt=brief, schema_source="schema_llm"
+    )
+    assert schema.locomotion == "walk"
+    assert resolution.winners["locomotion"].source == "user_exclusion"
+    assert schema.locomotion_modes == ["on_foot"]
+    subsystems = subsystems_for(
+        schema.game_type, schema.features, locomotion=schema.locomotion,
+        locomotion_modes=schema.locomotion_modes, intent_exclusions=list(resolution.exclusions),
+        user_prompt=brief,
+    )
+    controller = next(sub.variant for sub in subsystems if sub.kind == "controller")
+    assert controller != "multi_mode" and not controller.startswith("vehicle_")

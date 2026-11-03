@@ -62,8 +62,9 @@ class ResolveIntentStage:
     def run(self, schema: Any, ledger: IntentLedger, *, prompt: str,
             schema_source: str) -> tuple[IntentResolution, list[str]]:
         ledger.extend(claims_from_schema(schema, source=schema_source))
-        contract = physical_projectile_contract_for(schema.game_type, prompt)
-        ledger.extend(projectile_claims(schema.game_type, prompt, contract))
+        game_type = resolve_intent(ledger).decisions["game_type"]
+        contract = physical_projectile_contract_for(game_type, prompt)
+        ledger.extend(projectile_claims(game_type, prompt, contract))
         resolution = resolve_intent(ledger)
         messages = apply_resolution(schema, resolution)
         _materialize_projectile_view_model(schema, resolution)

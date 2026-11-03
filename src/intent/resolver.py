@@ -58,9 +58,21 @@ def resolve_intent(ledger: IntentLedger) -> IntentResolution:
             decisions["locomotion_modes"] = modes
         elif "locomotion_modes" in decisions:
             decisions["locomotion_modes"] = []
-    if "vehicle" in exclusions and decisions.get("locomotion") == "drive":
-        decisions.pop("locomotion", None)
-        winners.pop("locomotion", None)
+    if "vehicle" in exclusions:
+        if "locomotion_modes" in decisions:
+            decisions["locomotion_modes"] = [
+                mode for mode in decisions["locomotion_modes"] if mode != "vehicle_car"
+            ]
+        if decisions.get("locomotion") == "drive":
+            alternatives = [
+                claim for claim in ledger.for_field("locomotion") if claim.value != "drive"
+            ]
+            winner = max(alternatives, key=_rank, default=IntentClaim(
+                "locomotion", "walk", "user_exclusion", 1.0,
+                "vehicle exclusion requires a non-driving fallback",
+            ))
+            decisions["locomotion"] = winner.value
+            winners["locomotion"] = winner
     return IntentResolution(decisions, winners, tuple(sorted(set(exclusions))))
 
 
@@ -97,7 +109,11 @@ def apply_resolution(schema: Any, resolution: IntentResolution) -> list[str]:
         key = "physical_projectile_contract" if field == "projectile_contract" else field
         old = meta.get(key)
         new = resolution.decisions[field]
-        if old != new:
+        if field == "projectile_contract" and new is None:
+            if key in meta:
+                del meta[key]
+                messages.append(f"Intent resolver: cleared {key}")
+        elif old != new:
             meta[key] = new
             messages.append(f"Intent resolver: {key} {old!r} -> {new!r}")
     if resolution.exclusions:

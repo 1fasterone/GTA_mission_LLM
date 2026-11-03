@@ -42,7 +42,10 @@ def main() -> int:
     schema, files, _log = replay(schema)
     output = args.output.resolve()
     for relative, content in files.items():
-        destination = output / relative
+        generated_path = Path(relative).relative_to(schema.project_name)
+        if not generated_path.parts or ".." in generated_path.parts:
+            raise ValueError(f"Invalid generated project path: {relative}")
+        destination = output / generated_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         if isinstance(content, bytes):
             destination.write_bytes(content)

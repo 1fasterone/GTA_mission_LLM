@@ -130,8 +130,8 @@ def claims_from_schema(schema: Any, *, source: str) -> list[IntentClaim]:
 
 def projectile_claims(game_type: str, prompt: str, contract: dict[str, Any] | None) -> Iterable[IntentClaim]:
     """Register projectile detection as intent evidence, never schema mutation."""
-    if contract is not None:
-        yield IntentClaim(
-            "projectile_contract", contract, "projectile_classifier", 0.95,
-            f"explicit physical projectile language for {game_type}",
-        )
+    rationale = (
+        f"explicit physical projectile language for {game_type}"
+        if contract is not None else f"no physical projectile contract for {game_type}"
+    )
+    yield IntentClaim("projectile_contract", contract, "projectile_classifier", 0.95, rationale)
