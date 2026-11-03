@@ -58,8 +58,9 @@ class UnityMicroPipeline(MicroPipeline):
 
         Calls microgen_atoms(self.kind) to get the canonical atom sequence for this
         micro kind, then emits a <Kind>DefaultBehavior.cs coroutine stub alongside
-        the generated micro files. Kinds with no atom sequence (controller, hud, ...)
-        are silently skipped.
+        the generated micro files. Kinds with no mapped atom sequence are skipped;
+        CameraRig overrides this hook to suppress conflicting companion behavior.
+        Writing a companion does not prove attachment or ownership of gameplay.
         """
         from ..atoms.behavior_map import microgen_atoms, behavior_loops
         from ..atoms.backends.unity import unity_coroutine_body

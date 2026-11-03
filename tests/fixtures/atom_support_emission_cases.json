@@ -1,0 +1,22 @@
+{
+  "unity:WireBoardToObjectives": {
+    "match_key": "audit_piece",
+    "objective_id": "audit_place"
+  },
+  "unity:WireHealthToAudio": {
+    "cue_hurt": "audit_hurt"
+  },
+  "unity:WireInteractableToObjectives": {
+    "objective_id": "audit_collect"
+  },
+  "unity:WireReachTargetRelay": {
+    "entity_base_name": "AuditTarget",
+    "objective_id": "audit_reach"
+  },
+  "unity:WireSpawnerToObjectives": {
+    "objective_id": "audit_eliminate"
+  },
+  "unity:WireTriggerToObjectives": {
+    "objective_id": "audit_reach"
+  }
+}
