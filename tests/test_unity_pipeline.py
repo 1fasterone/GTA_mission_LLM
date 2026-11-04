@@ -1237,3 +1237,36 @@ class TestBriefAndFeatureReconciliation:
             "Enemies Are Friendly Clouds.\n"
         )
         assert not _is_structured_brief(brief)
+
+
+def test_compose_selection_is_persisted_before_generation(
+        unity_pipeline_config, unity_schema_json_2d, monkeypatch):
+    """Engineer-authored mocked fill: the Step-6 consumer may only read the plan."""
+    from src.unity_compose_selection import SELECTION_KEY, persist_selection
+    import src.unity_compose_selection as selection
+
+    captured = []
+    def capture(schema, brief):
+        messages = persist_selection(schema, brief)
+        captured.append(schema)
+        return messages
+    monkeypatch.setattr(selection, "persist_selection", capture)
+    config = dict(unity_pipeline_config)
+    config["assets"] = {"strict": False}
+    config["audio"] = {"backend": "dsp"}
+    pipeline = UnityPipeline(config)
+    pipeline.llm.chat = MagicMock(side_effect=["A simple platform game.", unity_schema_json_2d])
+    step = pipeline._step
+    def check_boundary(number, label):
+        if number == 6:
+            assert len(captured) == 1
+            assert captured[0].meta[SELECTION_KEY]["subsystems"]
+            captured[0].meta["user_prompt"] = "Hovercraft inventory climbing motorcycles"
+            monkeypatch.setattr(selection, "select_subsystems",
+                                lambda *a, **kw: pytest.fail("Step 6 reselected micros"))
+        step(number, label)
+    monkeypatch.setattr(pipeline, "_step", check_boundary)
+    project = pipeline.run("A simple platform game.", compose=True, micro_code=False, theme="none")
+    saved = UnitySchema.model_validate_json(
+        (project / "PixelPlatformer.schema.json").read_text(encoding="utf-8"))
+    assert saved.meta[SELECTION_KEY]["stage"] == "step5"

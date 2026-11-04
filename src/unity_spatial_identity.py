@@ -39,6 +39,9 @@ _GENERATED_ENTITY_FIELDS = (
     "sketchfab_query",
 )
 _GENERATED_META_FIELDS = (
+    # Step 5 persists controller/micro codegen choices after spatial preparation.
+    # Their options include geometry bindings but add no spatial constraints.
+    "compose_selection",
     "cover_points",
     "layout_archetype",
     "layout_archetype_decision",

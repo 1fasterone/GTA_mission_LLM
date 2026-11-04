@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from src.unity_compose_selection import persist_selection
+
 import pytest
 
 from src.intent.claims import IntentClaim, explicit_exclusion_claims
@@ -196,7 +198,8 @@ def test_allowed_car_survives_resolution_and_composition(prompt):
     assert resolution.exclusions == ("bike",)
     assert resolution.decisions["locomotion"] == schema.locomotion == "drive"
     assert schema.meta["intent_exclusions"] == ["bike"]
-    subsystems = _compose_subsystems(schema, prompt)
+    persist_selection(schema, prompt)
+    subsystems = _compose_subsystems(schema)
     assert next(sub.variant for sub in subsystems if sub.kind == "controller") == "vehicle_car"
     assert not any(sub.kind == "bike" for sub in subsystems)
 
@@ -211,7 +214,8 @@ def test_allowed_car_mode_survives_bike_exclusion():
     schema.locomotion_modes = ["on_foot", "vehicle_car"]
     _intent, ledger = ExtractIntentStage().run(prompt)
     ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
-    controller = next(sub for sub in _compose_subsystems(schema, prompt) if sub.kind == "controller")
+    persist_selection(schema, prompt)
+    controller = next(sub for sub in _compose_subsystems(schema) if sub.kind == "controller")
     assert controller.variant == "multi_mode"
     assert [mode["kind"] for mode in controller.options["modes"]] == ["on_foot", "vehicle_car"]
 
@@ -230,7 +234,8 @@ def test_fresh_resolution_clears_saved_exclusion_before_composition():
     )
     assert resolution.exclusions == ()
     assert schema.meta["intent_exclusions"] == []
-    controller = next(sub for sub in _compose_subsystems(schema, prompt) if sub.kind == "controller")
+    persist_selection(schema, prompt)
+    controller = next(sub for sub in _compose_subsystems(schema) if sub.kind == "controller")
     assert controller.variant == "vehicle_bike"
 
 
@@ -243,7 +248,8 @@ def test_pointer_game_stays_unembodied_after_exclusion_resolution():
     prompt = "A 3D board game with no bikes but cars displayed as cards."
     _intent, ledger = ExtractIntentStage().run(prompt)
     ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
-    subsystems = _compose_subsystems(schema, prompt)
+    persist_selection(schema, prompt)
+    subsystems = _compose_subsystems(schema)
     assert schema.locomotion == "none"
     assert next(sub.variant for sub in subsystems if sub.kind == "controller") == "pointer"
     assert not any(sub.target == "player" for sub in subsystems)
@@ -259,7 +265,8 @@ def test_allowed_car_controller_is_materialized(tmp_path):
     prompt = "A 3D driving game. No motorcycles but cars are allowed."
     _intent, ledger = ExtractIntentStage().run(prompt)
     ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
-    units = MicroComposer(schema.project_name).emit(_compose_subsystems(schema, prompt), tmp_path / "Assets")
+    persist_selection(schema, prompt)
+    units = MicroComposer(schema.project_name).emit(_compose_subsystems(schema), tmp_path / "Assets")
     controller = next(unit for unit in units if unit.kind == "controller")
     assert controller.variant == "vehicle_car"
     source = tmp_path / "Assets/Micros/controller/Scripts" / f"{controller.class_name}.cs"
