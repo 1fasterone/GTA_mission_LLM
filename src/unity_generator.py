@@ -167,16 +167,21 @@ _ATMOSPHERE_WORDS = frozenset({
 })
 
 
-def wants_atmosphere(schema) -> bool:
+def wants_atmosphere(schema, *, schema_only: bool = False) -> bool:
     """Deterministic gate: 3D URP project whose concept implies a real sky.
 
-    Scans the compressed schema fields AND the original Step-2 inputs
+    A persisted compose selection is authoritative. Before selection (and for
+    legacy non-composed projects), scans schema fields and Step-2 inputs
     (schema.meta["user_prompt"]/["concept"]) — the Step-2 LLM elaboration
     routinely compresses a rich brief down to a terse schema.description
     that drops style/atmosphere words the user actually wrote (e.g. "sky"),
     which silently starved this gate even when the user's own prompt asked
     for one. The raw prompt is the ground truth for what the user wants.
     """
+    meta = getattr(schema, "meta", None) or {}
+    if "compose_selection" in meta:
+        from .unity_compose_selection import ComposeSelection
+        return ComposeSelection.model_validate(meta["compose_selection"]).atmosphere
     if schema.render_pipeline != "URP" or schema.game_type not in ("3D", "VR"):
         return False
     if getattr(schema, "locomotion", "walk") == "fly":
@@ -186,8 +191,8 @@ def wants_atmosphere(schema) -> bool:
         schema.description or "",
         " ".join(schema.scenes or []),
         " ".join(sp.description or "" for sp in getattr(schema, "scene_specs", []) or []),
-        str(meta.get("user_prompt") or ""),
-        str(meta.get("concept") or ""),
+        "" if schema_only else str(meta.get("user_prompt") or ""),
+        "" if schema_only else str(meta.get("concept") or ""),
     ]).lower()
     words = set(re.split(r"[^a-z]+", text))
     return bool(words & _ATMOSPHERE_WORDS)
@@ -2092,13 +2097,20 @@ def _lighting_variant_for(schema, composed_units=None) -> str:
     )
 
 
-def _is_climbing_contract(schema: UnitySchema) -> bool:
+def _is_climbing_contract(schema: UnitySchema, composed_units: list | None = None) -> bool:
     """True when the deterministic project contract is wall climbing.
 
-    This is intentionally derived from the held-out brief/schema content and
-    existing entity vocabulary. It does not ask the Pipeline LLM to invent a
-    controller mode or rewrite the schema.
+    A persisted compose selection follows the chosen climbing controller.
+    Legacy projects derive it from brief/schema content and entity vocabulary;
+    this helper never asks the Pipeline LLM to invent a controller mode.
     """
+    meta = getattr(schema, "meta", None) or {}
+    if "compose_selection" in meta:
+        from .unity_compose_selection import ComposeSelection
+        return ComposeSelection.model_validate(meta["compose_selection"]).climbing_contract
+    if composed_units is not None:
+        return any(unit.kind == "controller" and unit.variant == "climbing"
+                   for unit in composed_units)
     meta = getattr(schema, "meta", None) or {}
     text = " ".join([
         str(getattr(schema, "description", "") or ""),
@@ -3844,7 +3856,7 @@ class UnityProjectGenerator:
             "kenney_assets":     kenney_assets,
             "materials":         schema.materials,
             "shaders":           schema.shaders,
-            "climbing_contract": _is_climbing_contract(schema),
+            "climbing_contract": _is_climbing_contract(schema, composed_units),
             "greybox_enabled":   greybox_ir is not None,
             "greybox_ir":        greybox_ir.model_dump(mode="json") if greybox_ir else None,
             "greybox_seed":      greybox_ir.seed if greybox_ir else 0,
@@ -4288,7 +4300,7 @@ class UnityProjectGenerator:
             # directional light. When atmosphere IS shipping, its own runtime
             # bootstrap owns sky/ambient, so this fallback stays off.
             files[script_path] = self._render(editor_tpl, {
-                **base_ctx, "has_atmosphere": wants_atmosphere(schema),
+                **base_ctx, "has_atmosphere": wants_atmosphere(schema, schema_only=composed_units is not None),
             })
             files[f"{script_path}.meta"] = _meta_file(
                 _make_guid(f"{pn}/Editor/SetupRenderPipeline")
@@ -4331,7 +4343,7 @@ class UnityProjectGenerator:
         # write() copies the vendored feature + profile binaries; here we emit
         # the two glue scripts: run-once renderer registration and the runtime
         # bootstrap that spawns the effect in every scene.
-        if wants_atmosphere(schema):
+        if wants_atmosphere(schema, schema_only=composed_units is not None):
             sa_path = f"{pn}/Assets/Editor/SetupAtmosphere.cs"
             files[sa_path]           = self._render("editor/SetupAtmosphere.cs.j2", base_ctx)
             files[f"{sa_path}.meta"] = _meta_file(_make_guid(f"{pn}/Editor/SetupAtmosphere"))
@@ -4388,7 +4400,7 @@ class UnityProjectGenerator:
             "packages":    sorted(manifest_deps.items()),
             "scene_specs_by_name": {sp.name: sp for sp in schema.scene_specs},
             "locomotion":      getattr(schema, "locomotion", "walk"),
-            "has_atmosphere":  wants_atmosphere(schema),
+            "has_atmosphere":  wants_atmosphere(schema, schema_only=composed_units is not None),
             "has_scene_audio": "audio" in schema.features or bool(schema.audio_tracks),
         }
         files[f"{pn}/README.md"] = self._render("readme.md.j2", readme_ctx)
@@ -4398,7 +4410,7 @@ class UnityProjectGenerator:
         # the template that produced it, so `unity_cli.py verify` can attribute a
         # compile error to its source .j2 during the template-hardening loop.
         files[f"{pn}/.compile_map.json"] = json.dumps(
-            self._compile_map(schema, bool(kenney_assets)), indent=2
+            self._compile_map(schema, bool(kenney_assets), composed_units), indent=2
         )
 
         # Regeneration is the deterministic repair action for a missing pass:
@@ -4411,7 +4423,7 @@ class UnityProjectGenerator:
 
     # ── compile-map ────────────────────────────────────────────────────────────
 
-    def _compile_map(self, schema: UnitySchema, has_kenney: bool) -> dict[str, str]:
+    def _compile_map(self, schema: UnitySchema, has_kenney: bool, composed_units: list | None = None) -> dict[str, str]:
         """file (relative to project root) -> source template path under templates/unity/."""
         m: dict[str, str] = {}
         for s in schema.scripts:
@@ -4433,7 +4445,7 @@ class UnityProjectGenerator:
             "scripts/AAAAtmosphere.cs.j2"
             if schema.render_pipeline in ("URP", "HDRP")
             else "scripts/AAAAtmosphereBuiltin.cs.j2")
-        if _is_climbing_contract(schema):
+        if _is_climbing_contract(schema, composed_units):
             m["Assets/Scripts/IClimbingState.cs"] = "scripts/IClimbingState.cs.j2"
         if has_kenney:
             m["Assets/Editor/KenneyImporter.cs"] = "editor/KenneyImporter.cs.j2"
@@ -4596,7 +4608,7 @@ class UnityProjectGenerator:
         # their original .metas so the profile→compute-shader GUID references
         # stay intact; the default profile lands under Resources for the
         # runtime bootstrap. copytree handles the binary files (png/asset).
-        if wants_atmosphere(schema):
+        if wants_atmosphere(schema, schema_only=composed_units is not None):
             import shutil
             vendor = Path(self.template_dir) / "vendor" / "URPAtmosphere"
             if vendor.is_dir():

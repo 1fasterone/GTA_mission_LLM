@@ -100,6 +100,10 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
     ResolveIntentStage().run(
         schema, ledger, prompt=prompt, schema_source="schema_llm"
     )
+    from src.unity_compose_selection import persist_selection
+    persist_selection(schema, prompt)
+    # Synthetic saved Step-5 selection predates asset resolution. Replay must
+    # rebind presentation from the final contract, just as live generation does.
     schema_path = tmp_path / "ProjectileReplay.schema.json"
     schema_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
 
@@ -110,6 +114,10 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
               / "controller" / "Scripts" / "PlayerController.cs").read_text(encoding="utf-8")
     assert "private ProjectilePool[] _projectilePools;" in source
     assert "ResolveProjectileMuzzle()" in source
+    saved = json.loads((tmp_path / "out" / "ProjectileReplay" / "ProjectileReplay.schema.json").read_text())
+    presentation = saved["meta"]["physical_projectile_contract"]["presentation"]
+    assert presentation["resource_path"]
+    assert f'ProjectileVisualResourcePath = "{presentation["resource_path"]}"' in source
 
 
 def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(tmp_path):
@@ -143,3 +151,28 @@ def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(t
     }}
     with pytest.raises(ValueError, match="not in its collection"):
         _frozen_collection_replay(schema)
+
+
+def test_compose_replay_uses_saved_selection_despite_changed_brief(tmp_path, monkeypatch):
+    from cli.unity_project import unity_validate
+    from src.unity_compose_selection import persist_selection
+
+    schema = _escort_schema()
+    schema.locomotion = "drive"
+    persist_selection(schema, "Ride a motorcycle with an inventory.")
+    schema_path = tmp_path / "selection.schema.json"
+    config = _minimal_config(tmp_path)
+    schema_path.write_text(schema.model_dump_json(), encoding="utf-8")
+    monkeypatch.setattr("src.unity_compose_selection.select_subsystems",
+                        lambda *a, **kw: pytest.fail("replay re-interpreted brief"))
+    unity_validate(str(schema_path), config=config, blender_models=False, compose=True)
+    micros = tmp_path / "out" / schema.project_name / "Assets" / "Micros"
+    before = {str(p.relative_to(micros)): p.read_bytes()
+              for p in micros.rglob("*") if p.is_file()}
+    schema.meta["user_prompt"] = "No inventory. A hovercraft, climbing and flying enemies."
+    schema_path.write_text(schema.model_dump_json(), encoding="utf-8")
+    unity_validate(str(schema_path), config=config, blender_models=False, compose=True)
+    after = {str(p.relative_to(micros)): p.read_bytes()
+             for p in micros.rglob("*") if p.is_file()}
+    assert before
+    assert before == after
