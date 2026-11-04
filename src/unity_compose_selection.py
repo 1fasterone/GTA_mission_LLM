@@ -70,7 +70,8 @@ def select_subsystems(schema: UnitySchema, user_prompt: str,
                           palette_rgb=palette_rgb(schema),
                           cover_points=meta.get("cover_points"),
                           render_pipeline=schema.render_pipeline,
-                          projectile_contract=meta.get(PHYSICAL_PROJECTILE_META_KEY))
+                          projectile_contract=meta.get(PHYSICAL_PROJECTILE_META_KEY),
+                          intent_exclusions=meta.get("intent_exclusions"))
 
 
 def persist_selection(schema: UnitySchema, user_prompt: str) -> list[str]:
@@ -106,12 +107,26 @@ def persist_selection(schema: UnitySchema, user_prompt: str) -> list[str]:
     selection_source = schema.model_copy(deep=True)
     selection_source.meta.pop(SELECTION_KEY, None)
     selection_source.meta["user_prompt"] = user_prompt
+    # Preserve canonical resolver evidence without re-ranking it or reviving
+    # the pre-authority classifier override in apply_intent.
+    provenance = []
+    resolution = schema.meta.get("intent_resolution") or {}
+    ledger = schema.meta.get("intent_ledger") or {}
+    for field, decision in sorted(resolution.get("decisions", {}).items()):
+        claims = [claim for claim in ledger.get("claims", [])
+                  if claim.get("field") == field]
+        if any(claim.get("value") != decision for claim in claims):
+            provenance.append({
+                "kind": "intent_resolution", "field": field,
+                "claims": deepcopy(claims), "decision": deepcopy(decision),
+                "winner": deepcopy(resolution.get("winners", {}).get(field)),
+            })
     record = ComposeSelection(
         subsystems=selected,
         atmosphere=wants_atmosphere(selection_source),
         climbing_contract=any(sub.kind == "controller" and sub.variant == "climbing"
                               for sub in selected),
-        disagreements=deepcopy(schema.meta.get("intent_conflicts") or []) + differences,
+        disagreements=deepcopy(schema.meta.get("intent_conflicts") or []) + provenance + differences,
     )
     schema.meta[SELECTION_KEY] = record.model_dump(mode="json")
     return [

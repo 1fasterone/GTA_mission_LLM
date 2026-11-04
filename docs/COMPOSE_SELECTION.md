@@ -10,8 +10,8 @@ The version-1 record contains:
 - `version` and `stage` (`step5`).
 - `subsystems`: the ordered list of kind, variant, target, name and complete
   options. Order matters for deterministic scene file IDs.
-- `disagreements`: classifier/schema conflicts (original value, classifier
-  value, matched keywords, score, chosen source and reason), plus differences
+- `disagreements`: canonical resolver conflicts (captured claims, decision and
+  winning evidence), preserved legacy conflict records when present, plus differences
   between schema-derived default selections and brief-derived selections.
 - `atmosphere` and `climbing_contract`: generator gates that previously read
   raw brief text independently of composition. The climbing scene contract now
@@ -31,8 +31,10 @@ unsupported record fails validation instead of silently selecting another game.
 To make different choices, rerun selection before generation; editing raw prompt
 metadata on a saved schema does not reselect micros.
 
-This change preserves the existing pre-generation classifier and keyword
-precedence policies. Recording a conflict does not establish that its chosen
+Integration with #282 retains `intent/resolver.py` as the only meaning authority.
+The selection adapter forwards resolved exclusions and reads existing resolver/ledger
+provenance; it does not restore the old classifier override or re-rank claims.
+This change preserves the existing pre-generation selection and keyword policies. Recording a conflict does not establish that its chosen
 side is correct. In particular, existing substring/negation limitations remain
 in the selection pass; this is persistence and provenance, not a claim-fidelity
 or model-quality improvement. Schema-derived defaults are labelled as defaults,

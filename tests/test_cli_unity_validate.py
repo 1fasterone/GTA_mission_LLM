@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from src.unity_escort_follow import resolve_escort_follow
-from src.unity_projectile_contract import apply_physical_projectile_contract
+from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
 from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
 
 
@@ -95,9 +95,15 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
         platform="PC", render_pipeline="URP", unity_version="6000.0",
         color_space="Linear", description="physical projectile test", scenes=["Main"],
     )
-    apply_physical_projectile_contract(
-        schema, "An FPS with a rifle and pooled physical bullets."
+    prompt = "An FPS with a rifle and pooled physical bullets."
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    ResolveIntentStage().run(
+        schema, ledger, prompt=prompt, schema_source="schema_llm"
     )
+    from src.unity_compose_selection import persist_selection
+    persist_selection(schema, prompt)
+    # Synthetic saved Step-5 selection predates asset resolution. Replay must
+    # rebind presentation from the final contract, just as live generation does.
     schema_path = tmp_path / "ProjectileReplay.schema.json"
     schema_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")
 
@@ -108,6 +114,10 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
               / "controller" / "Scripts" / "PlayerController.cs").read_text(encoding="utf-8")
     assert "private ProjectilePool[] _projectilePools;" in source
     assert "ResolveProjectileMuzzle()" in source
+    saved = json.loads((tmp_path / "out" / "ProjectileReplay" / "ProjectileReplay.schema.json").read_text())
+    presentation = saved["meta"]["physical_projectile_contract"]["presentation"]
+    assert presentation["resource_path"]
+    assert f'ProjectileVisualResourcePath = "{presentation["resource_path"]}"' in source
 
 
 def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(tmp_path):

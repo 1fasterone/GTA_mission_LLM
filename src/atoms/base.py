@@ -1,19 +1,10 @@
-"""
-Atom IR — the smallest, deterministic, engine-agnostic action units.
+"""Typed deterministic atom vocabulary and bound invocations.
 
-An AtomDef describes WHAT an atom does and what parameters it accepts.
-An AtomInvocation is a single call to an atom with bound argument values.
-
-Atoms are:
-  - engine-valid    (each backend translator knows how to emit them)
-  - schema-valid    (Pydantic-enforced params)
-  - RAG-grounded    (every atom is a corpus entry the LLM can reference by name)
-  - deterministic   (same invocation → same code, every time)
-  - reusable        (shared across Unity, GTA5, and any future engine)
-  - composable      (sequences of AtomInvocations form composite behaviors)
-
-Atoms are NOT scenes, missions, behaviors, patterns, or multi-step logic.
-One atom = one side-effect-predictable action.
+AtomDef describes an action and its intended backend scope. Neither registration
+nor an engines entry proves a lowerer, valid generated C#, attachment, or runtime
+acceptance. See support_audit.py and docs/ATOM_BACKEND_SUPPORT.md. Atoms may express
+multi-step deterministic actions; micro behavior remains separately owned until
+its executable migration is verified.
 """
 
 from __future__ import annotations

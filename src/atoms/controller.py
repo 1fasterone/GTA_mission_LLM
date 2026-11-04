@@ -1,7 +1,9 @@
 """Character controller atoms — per-tick input/movement primitive opcodes.
 
 NOT goal-directed (MoveTo goes somewhere; Move applies velocity this frame).
-These are the raw opcodes a character controller executes each tick.
+These describe intended controller operations. Current controller micro runtime
+is template-owned; it does not dispatch these opcodes each tick. Backend lowering
+coverage is recorded by support_audit, separately from runtime acceptance.
 
 Groups:
   LOCOMOTION  — Move, Rotate, Jump, Sprint, Crouch, Look, Ascend, Descend, Boost, Dash

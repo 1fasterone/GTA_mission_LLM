@@ -161,8 +161,10 @@ def unity_create(
                                               help="Seed for twist-seed selection (reproducibility)"),
     model:       Optional[str] = typer.Option(None, "--model", "-m",
                                               help="Override the configured LM Studio model for this run"),
-    compose:     bool          = typer.Option(False, "--compose",
-                                              help="Assemble micros into the project + wire them into the scene (combinatorial mode)"),
+    compose:     bool          = typer.Option(
+        True, "--compose/--legacy-templates",
+        help="Use Compose Micros (default); --legacy-templates is retained only for historical replay",
+    ),
     geometry_only: bool        = typer.Option(False, "--geometry-only",
                                               help="Generate only the deterministic ProBuilder dungeon greybox (also enabled by explicit greybox/blockout prompts)"),
     greybox_plus: bool         = typer.Option(False, "--greybox-plus",
@@ -601,8 +603,18 @@ def unity_validate(
             + "; correct the source IR or disable acceptance.reject_lossy_normalization"
         )
     resolver = UnityResolver(lookups_dir=pipe_cfg.get("lookups_dir", "lookups"))
-    schema   = resolver.resolve_schema(schema)
-    schema   = resolver.inject_required_packages(schema)
+    from src.unity_pipeline import _check_consistency, _programmatic_fix
+
+    schema = _programmatic_fix(schema, compose=compose)
+    schema, _consistency_fixes = _check_consistency(
+        schema, reconcile_scenes=False
+    )
+    for msg in _consistency_fixes:
+        console.print(f"  [magenta]FIX[/]  {msg}")
+    schema = resolver.inject_required_packages(schema)
+    # One resolver execution, after replay fixers have added every required
+    # script/package/behavior. This mirrors the live pipeline authority order.
+    schema = resolver.resolve_schema(schema)
     # A saved schema carries the previous layout output. Replaying the
     # deterministic spatial contract here is required for `unity-validate` to
     # observe layout/compiler fixes made after that schema was authored (and is
@@ -640,9 +652,8 @@ def unity_validate(
     )
 
     # Mission -> scene inference (see _infer_mission_scenes's docstring).
-    # `unity-validate` skips `_check_consistency`/Step 5 entirely, so this
-    # deterministic, LLM-free pass must be re-run here too or a saved schema
-    # recompiled through this command would never get the fix a fresh
+    # This deterministic, LLM-free pass must be re-run here too or a saved
+    # schema recompiled through this command would never get the fix a fresh
     # `unity-create` run already applies — SEAM 8's per-scene wiring (below,
     # only when --compose) and EntitySpawner's per-scene entity groups both
     # depend on schema.meta["mission_scenes"] being set.
@@ -657,10 +668,9 @@ def unity_validate(
             "[yellow]WARN[/]  mission_scenes: could not infer a scene for "
             "mission(s) " + ", ".join(_titles.get(mid, mid) for mid in _unmapped_missions)
             + " — their objectives keep the global (ungated) SEAM 8 binding")
-    if _mission_scenes:
-        schema, _mission_scene_fixes = _reconcile_scene_specs(schema)
-        for msg in _mission_scene_fixes:
-            console.print(f"  [magenta]FIX[/]  {msg}")
+    schema, _mission_scene_fixes = _reconcile_scene_specs(schema)
+    for msg in _mission_scene_fixes:
+        console.print(f"  [magenta]FIX[/]  {msg}")
 
     model_overrides: dict = {}
     if blender_models:
@@ -705,9 +715,10 @@ def unity_validate(
     subsystems: list = []
     if compose:
         from src.unity_compose import (MicroComposer, drop_owned_scripts,
-                                       refresh_cover_points)
+                                       refresh_cover_points, refresh_projectile_presentation)
         from src.unity_micro_code import CODE_KEYS, merge_authored_code
         from src.unity_compose_selection import selected_subsystems
+        from src.unity_projectile_contract import PHYSICAL_PROJECTILE_META_KEY
         composer = MicroComposer(schema.project_name, template_dir=template_dir,
                                  project_config=cfg)
         subsystems = selected_subsystems(schema)
@@ -807,6 +818,9 @@ def unity_validate(
         for msg in refresh_cover_points(
                 subsystems, schema.entities,
                 schema.meta.get("cover_points") if isinstance(schema.meta, dict) else None):
+            console.print(f"  [magenta]FIX[/]  {msg}")
+        for msg in refresh_projectile_presentation(
+                subsystems, schema.meta.get(PHYSICAL_PROJECTILE_META_KEY)):
             console.print(f"  [magenta]FIX[/]  {msg}")
         composer.emit(subsystems, root / "Assets",
                       has_game_manager=has_game_manager, wiring=schema.wiring,

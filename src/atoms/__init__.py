@@ -1,7 +1,7 @@
 """
 Atom IR — Phase 2 of the compiler pipeline.
 
-26 engine-agnostic atomic actions across 7 categories.
+Registered action vocabulary; actual backend support is audited separately.
 These are the smallest deterministic building blocks the LLM and composer use.
 
 Usage:

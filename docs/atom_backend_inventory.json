@@ -1,0 +1,5135 @@
+{
+  "atoms": [
+    {
+      "advertised": false,
+      "aliases": [
+        "ads",
+        "aim_down_sights",
+        "iron_sights",
+        "zoom"
+      ],
+      "atom": "AimDownSights",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:209"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "add_force",
+        "apply_force",
+        "push",
+        "thrust"
+      ],
+      "atom": "ApplyForce",
+      "backend": "gta5",
+      "category": "physics",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/physics.py:11"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "apply_impulse",
+        "impulse",
+        "kick",
+        "knockback"
+      ],
+      "atom": "ApplyImpulse",
+      "backend": "gta5",
+      "category": "physics",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/physics.py:25"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "ascend",
+        "fly_up",
+        "rise",
+        "swim_up"
+      ],
+      "atom": "Ascend",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:99"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "bind_action",
+        "map_action",
+        "register_action"
+      ],
+      "atom": "BindAction",
+      "backend": "gta5",
+      "category": "input",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/input.py:14"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "bind_axis",
+        "map_axis",
+        "register_axis"
+      ],
+      "atom": "BindAxis",
+      "backend": "gta5",
+      "category": "input",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/input.py:29"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "blend_anim",
+        "crossfade",
+        "lerp_animation"
+      ],
+      "atom": "BlendAnimation",
+      "backend": "gta5",
+      "category": "animation",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/animation.py:30"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_blend_animation",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "block",
+        "defend",
+        "guard",
+        "parry"
+      ],
+      "atom": "Block",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:304"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "boost",
+        "nitro_burst",
+        "turbo"
+      ],
+      "atom": "Boost",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:123"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "brake",
+        "decelerate",
+        "foot_brake"
+      ],
+      "atom": "Brake",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:402"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "camera_fov",
+        "field_of_view",
+        "set_fov",
+        "zoom_camera"
+      ],
+      "atom": "CameraFOV",
+      "backend": "gta5",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:42"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_camera_fov",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "aim_camera",
+        "camera_look_at",
+        "focus_camera",
+        "look_at"
+      ],
+      "atom": "CameraLookAt",
+      "backend": "gta5",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_camera_look_at",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "camera_offset",
+        "move_camera",
+        "nudge_camera"
+      ],
+      "atom": "CameraOffset",
+      "backend": "gta5",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:29"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_camera_offset",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "camera_shake",
+        "impact_shake",
+        "screen_shake",
+        "shake_cam"
+      ],
+      "atom": "CameraShake",
+      "backend": "gta5",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:17"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_camera_shake",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "branch_on_flag",
+        "check_flag",
+        "condition",
+        "if_flag"
+      ],
+      "atom": "ConditionCheck",
+      "backend": "gta5",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:41"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_condition_check",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "crouch",
+        "duck",
+        "prone"
+      ],
+      "atom": "Crouch",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:74"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "cycle_weapon",
+        "next_weapon",
+        "switch_weapon"
+      ],
+      "atom": "CycleWeapon",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:234"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "dash",
+        "quick_step",
+        "roll_evade"
+      ],
+      "atom": "Dash",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:137"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "descend",
+        "fly_down",
+        "sink",
+        "swim_down"
+      ],
+      "atom": "Descend",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:111"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "despawn",
+        "destroy",
+        "kill_entity",
+        "remove_entity"
+      ],
+      "atom": "Despawn",
+      "backend": "gta5",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:21"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_despawn",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "dodge",
+        "evade",
+        "roll_evade",
+        "sidestep"
+      ],
+      "atom": "Dodge",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:316"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "arm",
+        "equip_weapon",
+        "give_item",
+        "give_weapon"
+      ],
+      "atom": "EquipWeapon",
+      "backend": "gta5",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:47"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_equip_weapon",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "escort",
+        "follow",
+        "trail"
+      ],
+      "atom": "Follow",
+      "backend": "gta5",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:59"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_follow",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "grab",
+        "grapple",
+        "suplex",
+        "throw_opponent"
+      ],
+      "atom": "Grab",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:331"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "clear_hud",
+        "hide_hud",
+        "hud_off"
+      ],
+      "atom": "HideHUD",
+      "backend": "gta5",
+      "category": "hud",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/hud.py:27"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "activate",
+        "interact",
+        "pick_up",
+        "talk",
+        "use"
+      ],
+      "atom": "Interact",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:347"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "jump",
+        "leap",
+        "vault"
+      ],
+      "atom": "Jump",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:50"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "flash_light",
+        "light_flash",
+        "muzzle_flash",
+        "strobe"
+      ],
+      "atom": "LightFlash",
+      "backend": "gta5",
+      "category": "fx",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/fx.py:21"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_light_flash",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "aim",
+        "look",
+        "look_input",
+        "mouse_look"
+      ],
+      "atom": "Look",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:87"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "input_event",
+        "map_input_to_event",
+        "on_input"
+      ],
+      "atom": "MapInputToEvent",
+      "backend": "gta5",
+      "category": "input",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/input.py:61"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "butt_stroke",
+        "melee_attack",
+        "whip"
+      ],
+      "atom": "MeleeAttack",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:259"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "apply_velocity",
+        "move",
+        "strafe",
+        "walk"
+      ],
+      "atom": "Move",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:23"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "go_to",
+        "move_to",
+        "run_to",
+        "walk_to"
+      ],
+      "atom": "MoveTo",
+      "backend": "gta5",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_move_to",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "approach",
+        "chase",
+        "follow_entity",
+        "move_to_entity"
+      ],
+      "atom": "MoveToEntity",
+      "backend": "gta5",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:21"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_move_to_entity",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "nitro",
+        "nitrous",
+        "nos"
+      ],
+      "atom": "Nitro",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:414"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "inventory_panel",
+        "open_inventory",
+        "toggle_inventory"
+      ],
+      "atom": "OpenInventory",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:369"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "minimap",
+        "open_map",
+        "toggle_map"
+      ],
+      "atom": "OpenMap",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:379"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "esc_menu",
+        "pause",
+        "toggle_pause"
+      ],
+      "atom": "Pause",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:389"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "elevator",
+        "nose_down",
+        "nose_up",
+        "pitch"
+      ],
+      "atom": "Pitch",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:155"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "animate",
+        "play_anim",
+        "play_animation",
+        "trigger_anim"
+      ],
+      "atom": "PlayAnimation",
+      "backend": "gta5",
+      "category": "animation",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/animation.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_play_animation",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "bgm",
+        "play_music",
+        "set_music",
+        "start_music"
+      ],
+      "atom": "PlayMusic",
+      "backend": "gta5",
+      "category": "audio",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/audio.py:19"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_play_music",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "play_sfx",
+        "play_sound",
+        "sfx",
+        "sound_effect"
+      ],
+      "atom": "PlaySFX",
+      "backend": "gta5",
+      "category": "audio",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/audio.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_play_sfx",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "jab",
+        "light_attack",
+        "primary_attack",
+        "punch"
+      ],
+      "atom": "PrimaryAttack",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:276"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "check_input",
+        "poll_action",
+        "read_input"
+      ],
+      "atom": "ReadInput",
+      "backend": "gta5",
+      "category": "input",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/input.py:46"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "refill",
+        "reload",
+        "reload_weapon"
+      ],
+      "atom": "Reload",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:222"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "aileron",
+        "bank",
+        "roll_plane"
+      ],
+      "atom": "RollPlane",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:167"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "rotate",
+        "turn",
+        "yaw"
+      ],
+      "atom": "Rotate",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:37"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "face_direction",
+        "rotate_to",
+        "turn_to"
+      ],
+      "atom": "RotateTo",
+      "backend": "gta5",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:34"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_rotate_to",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "ScatterTerrainDetails",
+      "backend": "gta5",
+      "category": "terrain",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/terrain.py:19"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fade_in",
+        "fade_out",
+        "fade_to_black",
+        "fade_to_white",
+        "screen_fade"
+      ],
+      "atom": "ScreenFade",
+      "backend": "gta5",
+      "category": "fx",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/fx.py:36"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_screen_fade",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "heavy_attack",
+        "kick",
+        "roundhouse",
+        "secondary_attack"
+      ],
+      "atom": "SecondaryAttack",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:290"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "anim_state",
+        "animator_param",
+        "set_anim_param",
+        "set_animation_state"
+      ],
+      "atom": "SetAnimationState",
+      "backend": "gta5",
+      "category": "model",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/model.py:53"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "flag",
+        "mark",
+        "set_bool",
+        "set_checkpoint",
+        "set_flag"
+      ],
+      "atom": "SetFlag",
+      "backend": "gta5",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:18"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_set_flag",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "gravity",
+        "set_gravity",
+        "toggle_gravity",
+        "zero_g"
+      ],
+      "atom": "SetGravity",
+      "backend": "gta5",
+      "category": "physics",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/physics.py:39"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "damage",
+        "heal",
+        "set_health",
+        "set_hp"
+      ],
+      "atom": "SetHealth",
+      "backend": "gta5",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:33"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_set_health",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "force_lod",
+        "lod_level",
+        "set_lod"
+      ],
+      "atom": "SetLOD",
+      "backend": "gta5",
+      "category": "model",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/model.py:40"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "apply_material",
+        "assign_material",
+        "set_material",
+        "swap_material"
+      ],
+      "atom": "SetMaterial",
+      "backend": "gta5",
+      "category": "model",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/model.py:25"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "assign_model",
+        "load_model",
+        "set_model",
+        "swap_model"
+      ],
+      "atom": "SetModel",
+      "backend": "gta5",
+      "category": "model",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/model.py:12"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "fire",
+        "fire_weapon",
+        "primary_fire",
+        "shoot"
+      ],
+      "atom": "Shoot",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:195"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "display_hud",
+        "hud_on",
+        "show_hud"
+      ],
+      "atom": "ShowHUD",
+      "backend": "gta5",
+      "category": "hud",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/hud.py:15"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "create_entity",
+        "instantiate",
+        "spawn",
+        "spawn_entity",
+        "spawn_prefab"
+      ],
+      "atom": "SpawnEntity",
+      "backend": "gta5",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_spawn_entity",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fx",
+        "particle_effect",
+        "spawn_particle",
+        "spawn_vfx",
+        "vfx"
+      ],
+      "atom": "SpawnParticle",
+      "backend": "gta5",
+      "category": "fx",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/fx.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_spawn_particle",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "dash_speed",
+        "run",
+        "sprint"
+      ],
+      "atom": "Sprint",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:62"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "idle",
+        "reset_anim",
+        "stop_anim",
+        "stop_animation"
+      ],
+      "atom": "StopAnimation",
+      "backend": "gta5",
+      "category": "animation",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/animation.py:19"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_stop_animation",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fade_music",
+        "silence_music",
+        "stop_music"
+      ],
+      "atom": "StopMusic",
+      "backend": "gta5",
+      "category": "audio",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/audio.py:32"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_stop_music",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "set_position",
+        "snap_to",
+        "teleport",
+        "warp"
+      ],
+      "atom": "Teleport",
+      "backend": "gta5",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:46"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_teleport",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "engine_power",
+        "throttle",
+        "thrust"
+      ],
+      "atom": "Throttle",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:179"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "frag",
+        "grenade",
+        "lob",
+        "throw_grenade"
+      ],
+      "atom": "ThrowGrenade",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:246"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "disable_collider",
+        "enable_collider",
+        "ghost",
+        "set_collision",
+        "toggle_collision"
+      ],
+      "atom": "ToggleCollision",
+      "backend": "gta5",
+      "category": "physics",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/physics.py:52"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "broadcast",
+        "fire_event",
+        "send_event",
+        "send_message",
+        "trigger_event"
+      ],
+      "atom": "TriggerEvent",
+      "backend": "gta5",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:30"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_trigger_event",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "ammo_ui",
+        "set_ammo",
+        "update_ammo"
+      ],
+      "atom": "UpdateAmmo",
+      "backend": "gta5",
+      "category": "hud",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/hud.py:52"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "health_ui",
+        "set_health_bar",
+        "update_health"
+      ],
+      "atom": "UpdateHealth",
+      "backend": "gta5",
+      "category": "hud",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/hud.py:39"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "objective_ui",
+        "set_objective",
+        "show_objective",
+        "update_objective"
+      ],
+      "atom": "UpdateObjective",
+      "backend": "gta5",
+      "category": "hud",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/hud.py:65"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [
+        "activate_item",
+        "consume",
+        "use_item"
+      ],
+      "atom": "UseItem",
+      "backend": "gta5",
+      "category": "controller",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/controller.py:359"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "delay",
+        "hold",
+        "pause",
+        "sleep",
+        "wait"
+      ],
+      "atom": "Wait",
+      "backend": "gta5",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/gta5.py:_wait",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireBoardToObjectives",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:219"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireFSMToAnimator",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:66"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireGroundedBridge",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:111"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireHealthToAudio",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:42"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireHealthToFSM",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:28"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireHealthToHUD",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:14"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireInputToController",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:81"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireInputToFSM",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:96"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireInteractableToObjectives",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:180"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireInventoryToHUD",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:276"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireObjectivesToHUD",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:251"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireReachTargetRelay",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:147"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireSpawnerToObjectives",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:199"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireTriggerToObjectives",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:127"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireTriggerToSave",
+      "backend": "gta5",
+      "category": "wiring",
+      "classification": "unsupported",
+      "definitions": [
+        "src/atoms/wiring.py:295"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "ads",
+        "aim_down_sights",
+        "iron_sights",
+        "zoom"
+      ],
+      "atom": "AimDownSights",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:209"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "add_force",
+        "apply_force",
+        "push",
+        "thrust"
+      ],
+      "atom": "ApplyForce",
+      "backend": "unity",
+      "category": "physics",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/physics.py:11"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_apply_force",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "apply_impulse",
+        "impulse",
+        "kick",
+        "knockback"
+      ],
+      "atom": "ApplyImpulse",
+      "backend": "unity",
+      "category": "physics",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/physics.py:25"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_apply_impulse",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "ascend",
+        "fly_up",
+        "rise",
+        "swim_up"
+      ],
+      "atom": "Ascend",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:99"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "bind_action",
+        "map_action",
+        "register_action"
+      ],
+      "atom": "BindAction",
+      "backend": "unity",
+      "category": "input",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/input.py:14"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_bind_action",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "bind_axis",
+        "map_axis",
+        "register_axis"
+      ],
+      "atom": "BindAxis",
+      "backend": "unity",
+      "category": "input",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/input.py:29"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_bind_axis",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "blend_anim",
+        "crossfade",
+        "lerp_animation"
+      ],
+      "atom": "BlendAnimation",
+      "backend": "unity",
+      "category": "animation",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/animation.py:30"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_blend_animation",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "block",
+        "defend",
+        "guard",
+        "parry"
+      ],
+      "atom": "Block",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:304"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "boost",
+        "nitro_burst",
+        "turbo"
+      ],
+      "atom": "Boost",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:123"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "brake",
+        "decelerate",
+        "foot_brake"
+      ],
+      "atom": "Brake",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:402"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "camera_fov",
+        "field_of_view",
+        "set_fov",
+        "zoom_camera"
+      ],
+      "atom": "CameraFOV",
+      "backend": "unity",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:42"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_camera_fov",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "aim_camera",
+        "camera_look_at",
+        "focus_camera",
+        "look_at"
+      ],
+      "atom": "CameraLookAt",
+      "backend": "unity",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_camera_look_at",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "camera_offset",
+        "move_camera",
+        "nudge_camera"
+      ],
+      "atom": "CameraOffset",
+      "backend": "unity",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:29"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_camera_offset",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "camera_shake",
+        "impact_shake",
+        "screen_shake",
+        "shake_cam"
+      ],
+      "atom": "CameraShake",
+      "backend": "unity",
+      "category": "camera",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/camera.py:17"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_camera_shake",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "branch_on_flag",
+        "check_flag",
+        "condition",
+        "if_flag"
+      ],
+      "atom": "ConditionCheck",
+      "backend": "unity",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:41"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_condition_check",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "crouch",
+        "duck",
+        "prone"
+      ],
+      "atom": "Crouch",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/controller.py:74"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_crouch",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "cycle_weapon",
+        "next_weapon",
+        "switch_weapon"
+      ],
+      "atom": "CycleWeapon",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:234"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "dash",
+        "quick_step",
+        "roll_evade"
+      ],
+      "atom": "Dash",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:137"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "descend",
+        "fly_down",
+        "sink",
+        "swim_down"
+      ],
+      "atom": "Descend",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:111"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "despawn",
+        "destroy",
+        "kill_entity",
+        "remove_entity"
+      ],
+      "atom": "Despawn",
+      "backend": "unity",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:21"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_despawn",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "dodge",
+        "evade",
+        "roll_evade",
+        "sidestep"
+      ],
+      "atom": "Dodge",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:316"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "arm",
+        "equip_weapon",
+        "give_item",
+        "give_weapon"
+      ],
+      "atom": "EquipWeapon",
+      "backend": "unity",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:47"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_equip_weapon",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "escort",
+        "follow",
+        "trail"
+      ],
+      "atom": "Follow",
+      "backend": "unity",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:59"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_follow",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "grab",
+        "grapple",
+        "suplex",
+        "throw_opponent"
+      ],
+      "atom": "Grab",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:331"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "clear_hud",
+        "hide_hud",
+        "hud_off"
+      ],
+      "atom": "HideHUD",
+      "backend": "unity",
+      "category": "hud",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/hud.py:27"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_hide_hud",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "activate",
+        "interact",
+        "pick_up",
+        "talk",
+        "use"
+      ],
+      "atom": "Interact",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:347"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "jump",
+        "leap",
+        "vault"
+      ],
+      "atom": "Jump",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/controller.py:50"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_jump",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "flash_light",
+        "light_flash",
+        "muzzle_flash",
+        "strobe"
+      ],
+      "atom": "LightFlash",
+      "backend": "unity",
+      "category": "fx",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/fx.py:21"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_light_flash",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "aim",
+        "look",
+        "look_input",
+        "mouse_look"
+      ],
+      "atom": "Look",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/controller.py:87"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_look",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "input_event",
+        "map_input_to_event",
+        "on_input"
+      ],
+      "atom": "MapInputToEvent",
+      "backend": "unity",
+      "category": "input",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/input.py:61"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_map_input_to_event",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "butt_stroke",
+        "melee_attack",
+        "whip"
+      ],
+      "atom": "MeleeAttack",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:259"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "apply_velocity",
+        "move",
+        "strafe",
+        "walk"
+      ],
+      "atom": "Move",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/controller.py:23"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_move",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "go_to",
+        "move_to",
+        "run_to",
+        "walk_to"
+      ],
+      "atom": "MoveTo",
+      "backend": "unity",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_move_to",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "approach",
+        "chase",
+        "follow_entity",
+        "move_to_entity"
+      ],
+      "atom": "MoveToEntity",
+      "backend": "unity",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:21"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_move_to_entity",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "nitro",
+        "nitrous",
+        "nos"
+      ],
+      "atom": "Nitro",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:414"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "inventory_panel",
+        "open_inventory",
+        "toggle_inventory"
+      ],
+      "atom": "OpenInventory",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:369"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "minimap",
+        "open_map",
+        "toggle_map"
+      ],
+      "atom": "OpenMap",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:379"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "esc_menu",
+        "pause",
+        "toggle_pause"
+      ],
+      "atom": "Pause",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:389"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "elevator",
+        "nose_down",
+        "nose_up",
+        "pitch"
+      ],
+      "atom": "Pitch",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:155"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "animate",
+        "play_anim",
+        "play_animation",
+        "trigger_anim"
+      ],
+      "atom": "PlayAnimation",
+      "backend": "unity",
+      "category": "animation",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/animation.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_play_animation",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "bgm",
+        "play_music",
+        "set_music",
+        "start_music"
+      ],
+      "atom": "PlayMusic",
+      "backend": "unity",
+      "category": "audio",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/audio.py:19"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_play_music",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "play_sfx",
+        "play_sound",
+        "sfx",
+        "sound_effect"
+      ],
+      "atom": "PlaySFX",
+      "backend": "unity",
+      "category": "audio",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/audio.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_play_sfx",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "jab",
+        "light_attack",
+        "primary_attack",
+        "punch"
+      ],
+      "atom": "PrimaryAttack",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:276"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "check_input",
+        "poll_action",
+        "read_input"
+      ],
+      "atom": "ReadInput",
+      "backend": "unity",
+      "category": "input",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/input.py:46"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_read_input",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "refill",
+        "reload",
+        "reload_weapon"
+      ],
+      "atom": "Reload",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:222"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "aileron",
+        "bank",
+        "roll_plane"
+      ],
+      "atom": "RollPlane",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:167"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "rotate",
+        "turn",
+        "yaw"
+      ],
+      "atom": "Rotate",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/controller.py:37"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_rotate",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "face_direction",
+        "rotate_to",
+        "turn_to"
+      ],
+      "atom": "RotateTo",
+      "backend": "unity",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:34"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_rotate_to",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "ScatterTerrainDetails",
+      "backend": "unity",
+      "category": "terrain",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/terrain.py:19"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_scatter_terrain_details",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fade_in",
+        "fade_out",
+        "fade_to_black",
+        "fade_to_white",
+        "screen_fade"
+      ],
+      "atom": "ScreenFade",
+      "backend": "unity",
+      "category": "fx",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/fx.py:36"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_screen_fade",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "heavy_attack",
+        "kick",
+        "roundhouse",
+        "secondary_attack"
+      ],
+      "atom": "SecondaryAttack",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:290"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "anim_state",
+        "animator_param",
+        "set_anim_param",
+        "set_animation_state"
+      ],
+      "atom": "SetAnimationState",
+      "backend": "unity",
+      "category": "model",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/model.py:53"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_animation_state",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "flag",
+        "mark",
+        "set_bool",
+        "set_checkpoint",
+        "set_flag"
+      ],
+      "atom": "SetFlag",
+      "backend": "unity",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:18"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_flag",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "gravity",
+        "set_gravity",
+        "toggle_gravity",
+        "zero_g"
+      ],
+      "atom": "SetGravity",
+      "backend": "unity",
+      "category": "physics",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/physics.py:39"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_gravity",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "damage",
+        "heal",
+        "set_health",
+        "set_hp"
+      ],
+      "atom": "SetHealth",
+      "backend": "unity",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:33"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_health",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "force_lod",
+        "lod_level",
+        "set_lod"
+      ],
+      "atom": "SetLOD",
+      "backend": "unity",
+      "category": "model",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/model.py:40"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_lod",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "apply_material",
+        "assign_material",
+        "set_material",
+        "swap_material"
+      ],
+      "atom": "SetMaterial",
+      "backend": "unity",
+      "category": "model",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/model.py:25"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_material",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "assign_model",
+        "load_model",
+        "set_model",
+        "swap_model"
+      ],
+      "atom": "SetModel",
+      "backend": "unity",
+      "category": "model",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/model.py:12"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_set_model",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fire",
+        "fire_weapon",
+        "primary_fire",
+        "shoot"
+      ],
+      "atom": "Shoot",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:195"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "display_hud",
+        "hud_on",
+        "show_hud"
+      ],
+      "atom": "ShowHUD",
+      "backend": "unity",
+      "category": "hud",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/hud.py:15"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_show_hud",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "create_entity",
+        "instantiate",
+        "spawn",
+        "spawn_entity",
+        "spawn_prefab"
+      ],
+      "atom": "SpawnEntity",
+      "backend": "unity",
+      "category": "entity",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/entity.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_spawn_entity",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fx",
+        "particle_effect",
+        "spawn_particle",
+        "spawn_vfx",
+        "vfx"
+      ],
+      "atom": "SpawnParticle",
+      "backend": "unity",
+      "category": "fx",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/fx.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_spawn_particle",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "dash_speed",
+        "run",
+        "sprint"
+      ],
+      "atom": "Sprint",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/controller.py:62"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_sprint",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "idle",
+        "reset_anim",
+        "stop_anim",
+        "stop_animation"
+      ],
+      "atom": "StopAnimation",
+      "backend": "unity",
+      "category": "animation",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/animation.py:19"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_stop_animation",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "fade_music",
+        "silence_music",
+        "stop_music"
+      ],
+      "atom": "StopMusic",
+      "backend": "unity",
+      "category": "audio",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/audio.py:32"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_stop_music",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "set_position",
+        "snap_to",
+        "teleport",
+        "warp"
+      ],
+      "atom": "Teleport",
+      "backend": "unity",
+      "category": "movement",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/movement.py:46"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_teleport",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "engine_power",
+        "throttle",
+        "thrust"
+      ],
+      "atom": "Throttle",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:179"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "frag",
+        "grenade",
+        "lob",
+        "throw_grenade"
+      ],
+      "atom": "ThrowGrenade",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:246"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "disable_collider",
+        "enable_collider",
+        "ghost",
+        "set_collision",
+        "toggle_collision"
+      ],
+      "atom": "ToggleCollision",
+      "backend": "unity",
+      "category": "physics",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/physics.py:52"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_toggle_collision",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "broadcast",
+        "fire_event",
+        "send_event",
+        "send_message",
+        "trigger_event"
+      ],
+      "atom": "TriggerEvent",
+      "backend": "unity",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:30"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_trigger_event",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "ammo_ui",
+        "set_ammo",
+        "update_ammo"
+      ],
+      "atom": "UpdateAmmo",
+      "backend": "unity",
+      "category": "hud",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/hud.py:52"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_update_ammo",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "health_ui",
+        "set_health_bar",
+        "update_health"
+      ],
+      "atom": "UpdateHealth",
+      "backend": "unity",
+      "category": "hud",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/hud.py:39"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_update_health",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "objective_ui",
+        "set_objective",
+        "show_objective",
+        "update_objective"
+      ],
+      "atom": "UpdateObjective",
+      "backend": "unity",
+      "category": "hud",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/hud.py:65"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_update_objective",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "activate_item",
+        "consume",
+        "use_item"
+      ],
+      "atom": "UseItem",
+      "backend": "unity",
+      "category": "controller",
+      "classification": "descriptive",
+      "definitions": [
+        "src/atoms/controller.py:359"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "not_applicable",
+      "evidence": "no lowerer",
+      "handler": null,
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [
+        "delay",
+        "hold",
+        "pause",
+        "sleep",
+        "wait"
+      ],
+      "atom": "Wait",
+      "backend": "unity",
+      "category": "logic",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/logic.py:6"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wait",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireBoardToObjectives",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:219"
+      ],
+      "emission_fixture": "tests/fixtures/atom_support_emission_cases.json",
+      "emission_smoke": "passed",
+      "evidence": "synthetic bound emission fixture",
+      "handler": "src/atoms/backends/unity.py:_wire_board_to_objectives",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireFSMToAnimator",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:66"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_fsm_to_animator",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireGroundedBridge",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:111"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_grounded_bridge",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireHealthToAudio",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:42"
+      ],
+      "emission_fixture": "tests/fixtures/atom_support_emission_cases.json",
+      "emission_smoke": "passed",
+      "evidence": "synthetic bound emission fixture",
+      "handler": "src/atoms/backends/unity.py:_wire_health_to_audio",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireHealthToFSM",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:28"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_health_to_fsm",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireHealthToHUD",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:14"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_health_to_hud",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireInputToController",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:81"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_input_to_controller",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireInputToFSM",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:96"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_input_to_fsm",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireInteractableToObjectives",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:180"
+      ],
+      "emission_fixture": "tests/fixtures/atom_support_emission_cases.json",
+      "emission_smoke": "passed",
+      "evidence": "synthetic bound emission fixture",
+      "handler": "src/atoms/backends/unity.py:_wire_interactable_to_objectives",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireInventoryToHUD",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:276"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_inventory_to_hud",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireObjectivesToHUD",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:251"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_objectives_to_hud",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireReachTargetRelay",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:147"
+      ],
+      "emission_fixture": "tests/fixtures/atom_support_emission_cases.json",
+      "emission_smoke": "passed",
+      "evidence": "synthetic bound emission fixture",
+      "handler": "src/atoms/backends/unity.py:_wire_reach_target_relay",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireSpawnerToObjectives",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:199"
+      ],
+      "emission_fixture": "tests/fixtures/atom_support_emission_cases.json",
+      "emission_smoke": "passed",
+      "evidence": "synthetic bound emission fixture",
+      "handler": "src/atoms/backends/unity.py:_wire_spawner_to_objectives",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireTriggerToObjectives",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:127"
+      ],
+      "emission_fixture": "tests/fixtures/atom_support_emission_cases.json",
+      "emission_smoke": "passed",
+      "evidence": "synthetic bound emission fixture",
+      "handler": "src/atoms/backends/unity.py:_wire_trigger_to_objectives",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": true,
+      "aliases": [],
+      "atom": "WireTriggerToSave",
+      "backend": "unity",
+      "category": "wiring",
+      "classification": "executable",
+      "definitions": [
+        "src/atoms/wiring.py:295"
+      ],
+      "emission_fixture": "AtomDef defaults",
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_wire_trigger_to_save",
+      "runtime_acceptance": "unverified",
+      "structural_fixture": "tests/test_atom_support_audit.py"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "EndDialog",
+      "backend": "unity",
+      "classification": "internal",
+      "evidence": "dispatch-only; no AtomDef; not a public atom",
+      "handler": "src/atoms/backends/unity.py:_end_dialog",
+      "runtime_acceptance": "unverified"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "Gesture",
+      "backend": "unity",
+      "classification": "internal",
+      "evidence": "dispatch-only; no AtomDef; not a public atom",
+      "handler": "src/atoms/backends/unity.py:_gesture",
+      "runtime_acceptance": "unverified"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "LookAt",
+      "backend": "unity",
+      "classification": "internal",
+      "evidence": "dispatch-only; no AtomDef; not a public atom",
+      "handler": "src/atoms/backends/unity.py:_look_at",
+      "runtime_acceptance": "unverified"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "PlayDialogAudio",
+      "backend": "unity",
+      "classification": "internal",
+      "evidence": "dispatch-only; no AtomDef; not a public atom",
+      "handler": "src/atoms/backends/unity.py:_play_dialog_audio",
+      "runtime_acceptance": "unverified"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "SayLine",
+      "backend": "unity",
+      "classification": "internal",
+      "evidence": "dispatch-only; no AtomDef; not a public atom",
+      "handler": "src/atoms/backends/unity.py:_say_line",
+      "runtime_acceptance": "unverified"
+    },
+    {
+      "advertised": false,
+      "aliases": [],
+      "atom": "WireTriggerToEscortObjective",
+      "backend": "unity",
+      "classification": "internal",
+      "evidence": "dispatch-only; no AtomDef; not a public atom",
+      "handler": "src/atoms/backends/unity.py:_wire_trigger_to_escort_objective",
+      "runtime_acceptance": "unverified"
+    }
+  ],
+  "call_paths": {
+    "gta5": [
+      {
+        "caller": "src/micro/gta5_base.py:GTA5MicroPipeline._after_write",
+        "host": "standalone Script",
+        "input": "GTA5_MICROGEN_ATOM_MAP (companion, not primary micro behavior)",
+        "phase": "Tick, once behind _ran; optional yielding loop"
+      }
+    ],
+    "unity": [
+      {
+        "caller": "src/unity_generator.py:UnityProjectGenerator.generate",
+        "host": "GameManager",
+        "input": "schema.atoms",
+        "phase": "Start coroutine, once",
+        "template": "templates/unity/GameSequencer.cs.j2"
+      },
+      {
+        "caller": "src/unity_generator.py:UnityProjectGenerator.generate",
+        "host": "EntitySpawner.AddComponent",
+        "input": "entity.atoms",
+        "phase": "Start coroutine, may restart",
+        "template": "templates/unity/EntityBehavior.cs.j2"
+      },
+      {
+        "caller": "src/unity_compose.py:MicroComposer._emit_wiring",
+        "host": "GameWiring",
+        "input": "compiler-selected wiring atoms only",
+        "phase": "Awake subscriptions, Update bridges and event callbacks",
+        "template": "templates/unity/compose/GameWiring.cs.j2"
+      }
+    ]
+  },
+  "errors": [],
+  "evidence_level": "structural_and_emission_only",
+  "format": "atom-backend-support/v1",
+  "identity_conflicts": [
+    "identity 'Pause' belongs to both Wait and Pause",
+    "identity 'kick' belongs to both SecondaryAttack and ApplyImpulse",
+    "identity 'roll_evade' belongs to both Dash and Dodge",
+    "identity 'thrust' belongs to both Throttle and ApplyForce"
+  ],
+  "micros": [
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "ai",
+      "mapped_atoms": [
+        "MoveTo",
+        "Wait",
+        "MoveTo",
+        "Wait"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/ai.py",
+      "variants": [
+        "behaviour_tree_lite",
+        "chase_player",
+        "cover_shooter",
+        "flocking",
+        "flying_swarm",
+        "fsm_guard",
+        "navmesh_patrol",
+        "waypoint_follow"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "animator",
+      "mapped_atoms": [
+        "SetAnimationState",
+        "SetAnimationState"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/animator.py",
+      "variants": [
+        "creature",
+        "humanoid",
+        "object",
+        "ui",
+        "vehicle"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "audio",
+      "mapped_atoms": [
+        "PlayMusic"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/audio.py",
+      "variants": [
+        "2d_simple",
+        "3d_spatial",
+        "categorical_mixer",
+        "crossfade_zones",
+        "music_layers"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "behavior_tree",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/behavior_tree.py",
+      "variants": [
+        "tree"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "bike",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/bike.py",
+      "variants": [
+        "mountable_2d"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "board",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/board.py",
+      "variants": [
+        "drag",
+        "drag_and_terminal",
+        "terminal"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "suppressed by camera override",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "camera",
+      "mapped_atoms": [
+        "CameraLookAt"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/camera.py",
+      "variants": [
+        "board_framing",
+        "cinemachine_3p",
+        "cinemachine_topdown",
+        "cinematic_dolly",
+        "climbing_follow",
+        "first_person",
+        "follow",
+        "follow_2_5d",
+        "follow_2d",
+        "orbit",
+        "rts_pan_zoom",
+        "vehicle_chase"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "controller",
+      "mapped_atoms": [
+        "Look",
+        "Move",
+        "Sprint",
+        "Jump"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/controller.py",
+      "variants": [
+        "2d_fighting",
+        "2d_platformer",
+        "2d_topdown",
+        "aircraft",
+        "climbing",
+        "fighting",
+        "first_person",
+        "flying",
+        "multi_mode",
+        "platformer_2_5d",
+        "pointer",
+        "swimming",
+        "third_person",
+        "top_down",
+        "vehicle_bike",
+        "vehicle_car",
+        "vehicle_hover"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "dialogue",
+      "mapped_atoms": [
+        "TriggerEvent"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/dialogue.py",
+      "variants": [
+        "barks",
+        "branching",
+        "cutscene",
+        "linear",
+        "localized",
+        "typewriter"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "health",
+      "mapped_atoms": [
+        "CameraShake",
+        "PlaySFX",
+        "LightFlash"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/health.py",
+      "variants": [
+        "armor",
+        "lives",
+        "regenerating",
+        "shielded",
+        "simple"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "hud",
+      "mapped_atoms": [
+        "ShowHUD",
+        "UpdateHealth",
+        "UpdateObjective"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/hud.py",
+      "variants": [
+        "ammo_counter",
+        "crosshair",
+        "dialogue_box",
+        "full_hud_bundle",
+        "health_bar",
+        "interaction_prompt",
+        "minimap",
+        "pause_menu",
+        "racing_hud",
+        "score_panel"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "input",
+      "mapped_atoms": [
+        "BindAction",
+        "MapInputToEvent"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/input_actions.py",
+      "variants": [
+        "dual_stick",
+        "gamepad",
+        "keyboard_mouse",
+        "pointer",
+        "racing_wheel",
+        "touch",
+        "vr_xr"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "interactable",
+      "mapped_atoms": [
+        "PlaySFX",
+        "TriggerEvent",
+        "Despawn"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/interactable.py",
+      "variants": [
+        "button_switch",
+        "door",
+        "lever",
+        "npc_talk",
+        "pickup",
+        "readable"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "inventory",
+      "mapped_atoms": [
+        "TriggerEvent"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/inventory.py",
+      "variants": [
+        "equipment",
+        "grid",
+        "hotbar",
+        "slot_based",
+        "unlimited",
+        "weight_based"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "lighting",
+      "mapped_atoms": [
+        "LightFlash"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/lighting.py",
+      "variants": [
+        "flat_2d",
+        "interior_practical",
+        "outdoor_sun",
+        "stylized_flood",
+        "three_point"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "menu",
+      "mapped_atoms": [
+        "ScreenFade"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/menu.py",
+      "variants": [
+        "confirm_dialog",
+        "game_over",
+        "level_select",
+        "main_menu",
+        "pause_menu",
+        "settings_menu"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "model",
+      "mapped_atoms": [
+        "SetModel",
+        "SetAnimationState"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "asset_pipeline",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/model.py",
+      "variants": [
+        "bike",
+        "boat",
+        "car",
+        "furniture",
+        "humanoid",
+        "plane",
+        "weapon"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "npc_dialog",
+      "mapped_atoms": [
+        "LookAt",
+        "SayLine",
+        "Gesture",
+        "EndDialog"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/npc_dialog.py",
+      "variants": [
+        "ambient_bark",
+        "combat_chatter",
+        "cutscene",
+        "follower",
+        "quest_giver",
+        "vendor"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "objectives",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/objectives.py",
+      "variants": [
+        "tracker"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "physics",
+      "mapped_atoms": [
+        "SetGravity",
+        "ApplyForce"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/physics.py",
+      "variants": [
+        "buoyancy",
+        "destructible_object",
+        "kinematic_character",
+        "ragdoll",
+        "rigidbody_2d",
+        "rigidbody_3d",
+        "soft_body_stub",
+        "trigger_zone",
+        "vehicle_wheels"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "platform",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/platform.py",
+      "variants": [
+        "falling",
+        "oscillate",
+        "waypoint_loop",
+        "waypoint_pingpong"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "rules",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/rules.py",
+      "variants": [
+        "guided",
+        "hud_only"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "saveload",
+      "mapped_atoms": [
+        "SetFlag"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/saveload.py",
+      "variants": [
+        "autosave",
+        "checkpoint",
+        "encrypted_json",
+        "json_file",
+        "playerprefs_kv",
+        "save_slots"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "shader",
+      "mapped_atoms": [
+        "SetMaterial"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/shader.py",
+      "variants": [
+        "color_cycle",
+        "dissolve",
+        "hit_flash",
+        "outline_pulse",
+        "uv_scroll"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "spawner",
+      "mapped_atoms": [
+        "SpawnEntity"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/spawner.py",
+      "variants": [
+        "continuous_spawner",
+        "object_pool",
+        "point_spawner",
+        "radial_spawner",
+        "trigger_spawner",
+        "wave_spawner"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "sprite_animator",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/sprite_animator.py",
+      "variants": [
+        "enemy",
+        "npc",
+        "player",
+        "prop"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "statemachine",
+      "mapped_atoms": [
+        "TriggerEvent",
+        "Wait"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/statemachine.py",
+      "variants": [
+        "enemy_fsm",
+        "game_fsm",
+        "object_fsm",
+        "player_fsm"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "transition",
+      "mapped_atoms": [
+        "ScreenFade",
+        "Wait",
+        "ScreenFade"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/transition.py",
+      "variants": [
+        "async_additive",
+        "fade",
+        "instant",
+        "loading_bar",
+        "trigger_door"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "trigger",
+      "mapped_atoms": [
+        "TriggerEvent"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/trigger.py",
+      "variants": [
+        "click_zone",
+        "compound",
+        "distance_trigger",
+        "timer_trigger",
+        "zone_enter",
+        "zone_exit"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "vfx",
+      "mapped_atoms": [
+        "SpawnParticle",
+        "LightFlash"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/vfx.py",
+      "variants": [
+        "impact_fx",
+        "particle_system",
+        "screen_fx",
+        "vfx_sequence"
+      ]
+    },
+    {
+      "backend": "unity",
+      "companion_attachment": "unverified",
+      "companion_emission": "none",
+      "composed_companion": "not emitted by MicroComposer.write_files",
+      "kind": "waypoint",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/waypoint.py",
+      "variants": [
+        "edge_arrow"
+      ]
+    },
+    {
+      "backend": "gta5",
+      "companion_attachment": "standalone Script",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not evidence of minigame inclusion",
+      "kind": "hud",
+      "mapped_atoms": [
+        "PlaySFX"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/gta5/hud.py",
+      "variants": [
+        "score_ticker",
+        "timer_bar",
+        "wave_banner"
+      ]
+    },
+    {
+      "backend": "gta5",
+      "companion_attachment": "standalone Script",
+      "companion_emission": "none",
+      "composed_companion": "not evidence of minigame inclusion",
+      "kind": "menu",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/gta5/menu.py",
+      "variants": [
+        "leaderboard_view",
+        "pause_menu",
+        "settings_panel"
+      ]
+    },
+    {
+      "backend": "gta5",
+      "companion_attachment": "standalone Script",
+      "companion_emission": "none",
+      "composed_companion": "not evidence of minigame inclusion",
+      "kind": "saveload",
+      "mapped_atoms": [],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/gta5/saveload.py",
+      "variants": [
+        "highscore_table",
+        "settings_profile"
+      ]
+    },
+    {
+      "backend": "gta5",
+      "companion_attachment": "standalone Script",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not evidence of minigame inclusion",
+      "kind": "spawner",
+      "mapped_atoms": [
+        "SpawnEntity",
+        "PlaySFX"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/gta5/spawner.py",
+      "variants": [
+        "prop_scatter",
+        "radial_arena",
+        "vehicle_pursuit"
+      ]
+    },
+    {
+      "backend": "gta5",
+      "companion_attachment": "standalone Script",
+      "companion_emission": "standalone _after_write",
+      "composed_companion": "not evidence of minigame inclusion",
+      "kind": "waves",
+      "mapped_atoms": [
+        "SetFlag",
+        "TriggerEvent",
+        "Wait"
+      ],
+      "mapping_status": "descriptive; companion emission does not transfer ownership",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/gta5/waves.py",
+      "variants": [
+        "exponential",
+        "linear",
+        "timed_pressure"
+      ]
+    }
+  ],
+  "reference_limit": "static Python atom invocations/dicts/direct emitters; dynamic bindings unverified",
+  "references": [
+    {
+      "atom": "ApplyForce",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:174"
+      ]
+    },
+    {
+      "atom": "BarkOnSight",
+      "resolution": "unregistered",
+      "sources": [
+        "src/capability_resolver.py:109"
+      ]
+    },
+    {
+      "atom": "BindAction",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:178",
+        "src/capability_resolver.py:88"
+      ]
+    },
+    {
+      "atom": "CameraFOV",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:105"
+      ]
+    },
+    {
+      "atom": "CameraLookAt",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:104",
+        "src/atoms/behavior_map.py:131"
+      ]
+    },
+    {
+      "atom": "CameraShake",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:78"
+      ]
+    },
+    {
+      "atom": "Crouch",
+      "resolution": "registered",
+      "sources": [
+        "src/capability_resolver.py:48"
+      ]
+    },
+    {
+      "atom": "Despawn",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:64",
+        "src/atoms/behavior_map.py:70",
+        "src/atoms/behavior_map.py:75"
+      ]
+    },
+    {
+      "atom": "EnableNavMesh",
+      "resolution": "unregistered",
+      "sources": [
+        "src/capability_resolver.py:116"
+      ]
+    },
+    {
+      "atom": "EnableParticles",
+      "resolution": "unregistered",
+      "sources": [
+        "src/capability_resolver.py:126"
+      ]
+    },
+    {
+      "atom": "EnablePostProcessing",
+      "resolution": "unregistered",
+      "sources": [
+        "src/capability_resolver.py:128"
+      ]
+    },
+    {
+      "atom": "EndDialog",
+      "resolution": "dispatch_only",
+      "sources": [
+        "src/atoms/behavior_map.py:205"
+      ]
+    },
+    {
+      "atom": "Follow",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:37",
+        "src/unity_escort_follow.py:68"
+      ]
+    },
+    {
+      "atom": "Gesture",
+      "resolution": "dispatch_only",
+      "sources": [
+        "src/atoms/behavior_map.py:204"
+      ]
+    },
+    {
+      "atom": "InitDialogSystem",
+      "resolution": "unregistered",
+      "sources": [
+        "src/capability_resolver.py:107"
+      ]
+    },
+    {
+      "atom": "Jump",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:127",
+        "src/capability_resolver.py:46"
+      ]
+    },
+    {
+      "atom": "LightFlash",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:210",
+        "src/atoms/behavior_map.py:215",
+        "src/atoms/behavior_map.py:68",
+        "src/atoms/behavior_map.py:80"
+      ]
+    },
+    {
+      "atom": "Look",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:124",
+        "src/capability_resolver.py:34"
+      ]
+    },
+    {
+      "atom": "LookAt",
+      "resolution": "dispatch_only",
+      "sources": [
+        "src/atoms/behavior_map.py:202"
+      ]
+    },
+    {
+      "atom": "MapInputToEvent",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:179"
+      ]
+    },
+    {
+      "atom": "Move",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:125",
+        "src/capability_resolver.py:38"
+      ]
+    },
+    {
+      "atom": "MoveTo",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:31",
+        "src/atoms/behavior_map.py:33",
+        "src/atoms/behavior_map.py:50",
+        "src/atoms/behavior_map.py:52"
+      ]
+    },
+    {
+      "atom": "PlayAnimation",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:46",
+        "src/atoms/behavior_map.py:57",
+        "src/atoms/behavior_map.py:59",
+        "src/atoms/behavior_map.py:62",
+        "src/atoms/behavior_map.py:86"
+      ]
+    },
+    {
+      "atom": "PlayMusic",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:135"
+      ]
+    },
+    {
+      "atom": "PlaySFX",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:236",
+        "src/atoms/behavior_map.py:248",
+        "src/atoms/behavior_map.py:67",
+        "src/atoms/behavior_map.py:73",
+        "src/atoms/behavior_map.py:79"
+      ]
+    },
+    {
+      "atom": "RotateTo",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:41",
+        "src/atoms/behavior_map.py:43",
+        "src/atoms/behavior_map.py:54"
+      ]
+    },
+    {
+      "atom": "SayLine",
+      "resolution": "dispatch_only",
+      "sources": [
+        "src/atoms/behavior_map.py:203"
+      ]
+    },
+    {
+      "atom": "ScatterTerrainDetails",
+      "resolution": "registered",
+      "sources": [
+        "src/micro/terrain.py:84"
+      ]
+    },
+    {
+      "atom": "ScreenFade",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:101",
+        "src/atoms/behavior_map.py:159",
+        "src/atoms/behavior_map.py:89",
+        "src/atoms/behavior_map.py:91",
+        "src/atoms/behavior_map.py:94",
+        "src/atoms/behavior_map.py:96",
+        "src/atoms/behavior_map.py:99"
+      ]
+    },
+    {
+      "atom": "SetAIBehavior",
+      "resolution": "unregistered",
+      "sources": [
+        "src/capability_resolver.py:117"
+      ]
+    },
+    {
+      "atom": "SetAnimationState",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:184",
+        "src/atoms/behavior_map.py:197",
+        "src/atoms/behavior_map.py:198",
+        "src/capability_resolver.py:143",
+        "src/capability_resolver.py:98"
+      ]
+    },
+    {
+      "atom": "SetFlag",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:163",
+        "src/atoms/behavior_map.py:242"
+      ]
+    },
+    {
+      "atom": "SetGravity",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:173",
+        "src/capability_resolver.py:56"
+      ]
+    },
+    {
+      "atom": "SetHealth",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:85"
+      ]
+    },
+    {
+      "atom": "SetLOD",
+      "resolution": "registered",
+      "sources": [
+        "src/capability_resolver.py:141"
+      ]
+    },
+    {
+      "atom": "SetMaterial",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:220"
+      ]
+    },
+    {
+      "atom": "SetModel",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:183",
+        "src/capability_resolver.py:134"
+      ]
+    },
+    {
+      "atom": "ShowHUD",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:167",
+        "src/capability_resolver.py:67"
+      ]
+    },
+    {
+      "atom": "SpawnEntity",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:139",
+        "src/atoms/behavior_map.py:234"
+      ]
+    },
+    {
+      "atom": "SpawnParticle",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:209"
+      ]
+    },
+    {
+      "atom": "Sprint",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:126",
+        "src/capability_resolver.py:42"
+      ]
+    },
+    {
+      "atom": "Teleport",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:84"
+      ]
+    },
+    {
+      "atom": "ToggleCollision",
+      "resolution": "registered",
+      "sources": [
+        "src/capability_resolver.py:59",
+        "src/capability_resolver.py:61"
+      ]
+    },
+    {
+      "atom": "TriggerEvent",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:151",
+        "src/atoms/behavior_map.py:155",
+        "src/atoms/behavior_map.py:188",
+        "src/atoms/behavior_map.py:193",
+        "src/atoms/behavior_map.py:243",
+        "src/atoms/behavior_map.py:69",
+        "src/atoms/behavior_map.py:74"
+      ]
+    },
+    {
+      "atom": "UpdateAmmo",
+      "resolution": "registered",
+      "sources": [
+        "src/capability_resolver.py:74"
+      ]
+    },
+    {
+      "atom": "UpdateHealth",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:168",
+        "src/capability_resolver.py:70"
+      ]
+    },
+    {
+      "atom": "UpdateObjective",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:169",
+        "src/capability_resolver.py:78"
+      ]
+    },
+    {
+      "atom": "Wait",
+      "resolution": "registered",
+      "sources": [
+        "src/atoms/behavior_map.py:100",
+        "src/atoms/behavior_map.py:189",
+        "src/atoms/behavior_map.py:244",
+        "src/atoms/behavior_map.py:32",
+        "src/atoms/behavior_map.py:34",
+        "src/atoms/behavior_map.py:40",
+        "src/atoms/behavior_map.py:42",
+        "src/atoms/behavior_map.py:47",
+        "src/atoms/behavior_map.py:51",
+        "src/atoms/behavior_map.py:53",
+        "src/atoms/behavior_map.py:58",
+        "src/atoms/behavior_map.py:63",
+        "src/atoms/behavior_map.py:90",
+        "src/atoms/behavior_map.py:95"
+      ]
+    },
+    {
+      "atom": "WireBoardToObjectives",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:893"
+      ]
+    },
+    {
+      "atom": "WireFSMToAnimator",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:748"
+      ]
+    },
+    {
+      "atom": "WireGroundedBridge",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:814"
+      ]
+    },
+    {
+      "atom": "WireHealthToAudio",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:729"
+      ]
+    },
+    {
+      "atom": "WireHealthToFSM",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:696"
+      ]
+    },
+    {
+      "atom": "WireHealthToHUD",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:682"
+      ]
+    },
+    {
+      "atom": "WireInputToController",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:782"
+      ]
+    },
+    {
+      "atom": "WireInputToFSM",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:794"
+      ]
+    },
+    {
+      "atom": "WireInventoryToHUD",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:1191"
+      ]
+    },
+    {
+      "atom": "WireObjectivesToHUD",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:1135"
+      ]
+    },
+    {
+      "atom": "WireReachTargetRelay",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:1039"
+      ]
+    },
+    {
+      "atom": "WireTriggerToEscortObjective",
+      "resolution": "dispatch_only",
+      "sources": [
+        "src/unity_compose.py:934"
+      ]
+    },
+    {
+      "atom": "WireTriggerToSave",
+      "resolution": "registered",
+      "sources": [
+        "src/unity_compose.py:831"
+      ]
+    }
+  ],
+  "runtime_acceptance": "unverified",
+  "summary": {
+    "gta5": {
+      "executable": 26,
+      "unsupported": 64
+    },
+    "unity": {
+      "descriptive": 25,
+      "executable": 65,
+      "internal": 6
+    }
+  }
+}

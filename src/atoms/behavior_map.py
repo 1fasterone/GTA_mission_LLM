@@ -115,7 +115,7 @@ _KEYWORD_ORDER = [
 
 
 # ── Microgen → atom composition map ───────────────────────────────────────────
-# Documents which atom sequences each microgen kind is built on.
+# Descriptive defaults; these sequences do not own primary micro gameplay.
 # Used for RAG corpus + future composite microgen assembly (Phase 3+).
 
 MICROGEN_ATOM_MAP: dict[str, list[dict]] = {

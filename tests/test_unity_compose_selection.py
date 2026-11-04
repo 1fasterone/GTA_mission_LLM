@@ -6,7 +6,10 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.unity_archetypes import apply_intent, classify
+from src.unity_archetypes import classify
+from src.intent.claims import claims_from_classifier, claims_from_schema
+from src.intent.ledger import IntentLedger
+from src.intent.resolver import apply_resolution, resolve_intent
 from src.unity_compose import MicroComposer
 from src.unity_compose_selection import (
     SELECTION_KEY, persist_selection, selected_subsystems,
@@ -75,23 +78,25 @@ def test_selection_records_controller_and_added_micro_disagreements():
     assert messages
 
 
-def test_classifier_disagreement_preserves_both_values_and_resolution():
-    schema = _schema(locomotion="walk")
-    apply_intent(schema, classify("A swimming game underwater in the ocean."))
-    conflict = next(d for d in schema.meta["intent_conflicts"] if d["field"] == "locomotion")
-    assert conflict["schema_value"] == "walk"
-    assert conflict["classifier_value"] == "swim"
-    assert conflict["resolution"] == "classifier"
+@pytest.mark.parametrize("original,expected_source", [("walk", "keyword_classifier"), ("none", "schema_llm")])
+def test_selection_preserves_canonical_resolution_disagreements(original, expected_source):
+    schema = _schema(locomotion=original)
+    ledger = IntentLedger()
+    ledger.extend(claims_from_schema(schema, source="schema_llm"))
+    ledger.extend(claims_from_classifier(classify("A swimming game underwater in the ocean.")))
+    resolution = resolve_intent(ledger)
+    apply_resolution(schema, resolution)
+    schema.meta["intent_ledger"] = ledger.to_dict()
     persist_selection(schema, "")
-    assert conflict in schema.meta[SELECTION_KEY]["disagreements"]
-
-
-def test_protected_schema_value_records_classifier_disagreement():
-    schema = _schema(locomotion="none")
-    apply_intent(schema, classify("Drive a car in a racing game."))
-    conflict = next(d for d in schema.meta["intent_conflicts"] if d["field"] == "locomotion")
-    assert conflict["resolution"] == "schema"
-    assert schema.locomotion == "none"
+    conflict = next(d for d in schema.meta[SELECTION_KEY]["disagreements"]
+                    if d.get("kind") == "intent_resolution" and d["field"] == "locomotion")
+    assert {c["value"] for c in conflict["claims"]} == {original, "swim"}
+    assert conflict["decision"] == resolution.decisions["locomotion"]
+    assert conflict["winner"]["source"] == expected_source
+    # The report is detached from the ledger and resolver, retaining #282's
+    # deep-copy boundary rather than creating another authority.
+    conflict["claims"][0]["value"] = "modified report"
+    assert ledger.claims[0].value != "modified report"
 
 
 def test_legacy_schema_ignores_prompt_and_announces_missing_provenance(capsys):
@@ -153,3 +158,31 @@ def test_full_generator_output_ignores_changed_raw_prompt_after_selection():
         return gen.generate(model, {}, composed_units=units, strict_assets=False,
                             sketchfab_cfg={"enabled": False})
     assert generate(schema) == generate(changed)
+
+
+def test_legacy_composed_generation_gates_follow_schema_and_selected_controller(tmp_path):
+    from src.unity_generator import UnityProjectGenerator, _is_climbing_contract, wants_atmosphere
+    from src.unity_schema import UnityScript
+
+    schema = _schema(scripts=[UnityScript(name="StaminaSystem", type="custom", attach_to="player", description="Synthetic stamina fixture")])
+    schema.render_pipeline = "URP"
+    before = schema.model_dump_json()
+    units = MicroComposer(schema.project_name).plan(selected_subsystems(schema))
+    generator = UnityProjectGenerator()
+    a = generator.generate(schema.model_copy(deep=True), {}, composed_units=units, strict_assets=False)
+    changed = schema.model_copy(deep=True)
+    changed.meta["user_prompt"] = "Climb a vertical wall with handholds and a stamina meter under an atmospheric sky."
+    changed.meta["concept"] = "Climb toward the clouds."
+    assert not _is_climbing_contract(changed, units)
+    assert not wants_atmosphere(changed, schema_only=True)
+    b = generator.generate(changed.model_copy(deep=True), {}, composed_units=units, strict_assets=False)
+    assert a == b
+    assert 'GetComponent<IClimbingState>' not in b[f"{schema.project_name}/Assets/Scripts/StaminaSystem.cs"]
+    # write() also has an independent atmosphere materialization branch.
+    one, _ = generator.write(schema.model_copy(deep=True), {}, output_dir=str(tmp_path / "a"), composed_units=units)
+    two, _ = generator.write(changed.model_copy(deep=True), {}, output_dir=str(tmp_path / "b"), composed_units=units)
+    def sources(root):
+        return {p.relative_to(root).as_posix(): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    assert sources(one) == sources(two)
+    assert schema.model_dump_json() == before
+    assert SELECTION_KEY not in changed.meta
