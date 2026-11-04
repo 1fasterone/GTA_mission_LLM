@@ -19,7 +19,7 @@ import pytest
 import yaml
 
 from src.unity_escort_follow import resolve_escort_follow
-from src.unity_projectile_contract import apply_physical_projectile_contract
+from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
 from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
 
 
@@ -95,8 +95,10 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
         platform="PC", render_pipeline="URP", unity_version="6000.0",
         color_space="Linear", description="physical projectile test", scenes=["Main"],
     )
-    apply_physical_projectile_contract(
-        schema, "An FPS with a rifle and pooled physical bullets."
+    prompt = "An FPS with a rifle and pooled physical bullets."
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    ResolveIntentStage().run(
+        schema, ledger, prompt=prompt, schema_source="schema_llm"
     )
     schema_path = tmp_path / "ProjectileReplay.schema.json"
     schema_path.write_text(schema.model_dump_json(indent=2), encoding="utf-8")

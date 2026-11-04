@@ -11,10 +11,14 @@
        build then fails NETSDK1005. Assigning it from an ordinary property
        keeps restore and build in agreement.
 
-       Defaults let the project still build by hand on a net9.0 SDK. -->
+       Defaults derive both values from the active SDK so `dotnet build`
+       remains a real, portable CI gate instead of requiring Python to inject
+       otherwise-hidden properties. -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <GateTfm Condition="'$(GateTfm)' == ''">net9.0</GateTfm>
+    <SdkMajor>$([System.Version]::Parse('$(NETCoreSdkVersion)').Major)</SdkMajor>
+    <GateTfm Condition="'$(GateTfm)' == ''">net$(SdkMajor).0</GateTfm>
+    <RoslynDir Condition="'$(RoslynDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildSDKsPath)/../Roslyn/bincore'))</RoslynDir>
     <TargetFramework>$(GateTfm)</TargetFramework>
     <AssemblyName>SyntaxGate</AssemblyName>
     <RootNamespace>SyntaxGate</RootNamespace>
