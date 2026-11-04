@@ -37,19 +37,28 @@ _EXCLUSION_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Contrastive clauses can permit a capability after excluding another one.
+# Keep and/or available for coordinated exclusions such as "no cars or bikes".
+_EXCLUSION_CLAUSE_BOUNDARIES = (
+    r"(?:but|yet|however|although|though|whereas|while|except|instead|rather|otherwise|then)"
+)
+
+
 def explicit_exclusion_claims(prompt: str) -> list[IntentClaim]:
     """Extract closed-vocabulary user exclusions such as ``no bikes``.
 
-    The short clause window deliberately ends at punctuation/conjunctions so a
-    denial cannot silence an assertion later in the sentence.
+    Allow at most two noun modifiers. End the span at punctuation, line breaks
+    or a contrastive clause so a denial cannot silence a later assertion.
     """
     text = prompt or ""
     claims: list[IntentClaim] = []
+    horizontal_space = r"[^\S\r\n]+"
+    modifier = rf"(?!{_EXCLUSION_CLAUSE_BOUNDARIES}\b)\w+(?:-\w+)*"
     for capability, terms in _EXCLUSION_TERMS.items():
         term_pattern = "|".join(re.escape(term) for term in terms)
         pattern = re.compile(
-            rf"\b(?:no|without|exclude|excluding|never\s+(?:use|include|enable))\s+"
-            rf"(?:\w+\s+){{0,2}}(?:{term_pattern})\b",
+            rf"\b(?:no|without|exclude|excluding|never{horizontal_space}(?:use|include|enable))"
+            rf"{horizontal_space}(?:{modifier}{horizontal_space}){{0,2}}(?:{term_pattern})\b",
             re.IGNORECASE,
         )
         match = pattern.search(text)

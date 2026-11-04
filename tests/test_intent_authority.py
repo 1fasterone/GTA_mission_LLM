@@ -143,3 +143,125 @@ def test_vehicle_exclusion_changes_controller_and_removes_vehicle_mode():
     )
     controller = next(sub.variant for sub in subsystems if sub.kind == "controller")
     assert controller != "multi_mode" and not controller.startswith("vehicle_")
+
+
+@pytest.mark.parametrize(("prompt", "excluded"), [
+    ("No bikes but cars are allowed.", {"bike"}),
+    ("No bikes yet cars are allowed.", {"bike"}),
+    ("No bikes however cars are allowed.", {"bike"}),
+    ("No bikes although cars are allowed.", {"bike"}),
+    ("No bikes whereas cars are allowed.", {"bike"}),
+    ("No bikes while cars are allowed.", {"bike"}),
+    ("No bikes except cars are allowed.", {"bike"}),
+    ("No bikes instead cars are allowed.", {"bike"}),
+    ("NO BIKES BUT CARS ARE ALLOWED.", {"bike"}),
+    ("No bikes; cars are allowed.", {"bike"}),
+    ("No bikes. Cars are allowed.", {"bike"}),
+    ("No bikes\nCars are allowed.", {"bike"}),
+    ("No bikes\r\nCars are allowed.", {"bike"}),
+    ("No cars but motorcycles are allowed.", {"vehicle"}),
+    ("No planes but motorcycles are allowed.", {"aircraft"}),
+    ("No physical projectiles but cars are allowed.", {"projectile"}),
+    ("Without any motorcycles, drive cars.", {"bike"}),
+    ("Exclude all motorized vehicles.", {"vehicle"}),
+    ("Never include any bikes.", {"bike"}),
+    ("No four-wheeled cars.", {"vehicle"}),
+    ("No cars or bikes.", {"vehicle", "bike"}),
+    ("Exclude cars and bikes.", {"vehicle", "bike"}),
+    ("No bikes, but no cars either.", {"vehicle", "bike"}),
+    ("Drive cars alongside motorcycles and aircraft.", set()),
+])
+def test_exclusions_respect_clause_boundaries_and_noun_modifiers(prompt, excluded):
+    actual = {claim.field.removeprefix("capability.")
+              for claim in explicit_exclusion_claims(prompt)}
+    assert actual == excluded
+
+
+@pytest.mark.parametrize("prompt", [
+    "A 3D driving game. No bikes but cars are allowed.",
+    "A 3D driving game. No motorcycles yet cars are allowed.",
+    "A 3D driving game. Without any motorcycles, drive cars.",
+    "A 3D driving game. No bikes\nCars are allowed.",
+])
+def test_allowed_car_survives_resolution_and_composition(prompt):
+    from src.unity_pipeline import _compose_subsystems
+    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+
+    schema = _schema("AllowedCar")
+    schema.locomotion = "drive"
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    resolution, _messages = ResolveIntentStage().run(
+        schema, ledger, prompt=prompt, schema_source="schema_llm"
+    )
+    assert resolution.exclusions == ("bike",)
+    assert resolution.decisions["locomotion"] == schema.locomotion == "drive"
+    assert schema.meta["intent_exclusions"] == ["bike"]
+    subsystems = _compose_subsystems(schema, prompt)
+    assert next(sub.variant for sub in subsystems if sub.kind == "controller") == "vehicle_car"
+    assert not any(sub.kind == "bike" for sub in subsystems)
+
+
+def test_allowed_car_mode_survives_bike_exclusion():
+    from src.unity_pipeline import _compose_subsystems
+    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+
+    prompt = "A 3D driving game. No bikes but cars are allowed."
+    schema = _schema("AllowedCarMode")
+    schema.locomotion = "drive"
+    schema.locomotion_modes = ["on_foot", "vehicle_car"]
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
+    controller = next(sub for sub in _compose_subsystems(schema, prompt) if sub.kind == "controller")
+    assert controller.variant == "multi_mode"
+    assert [mode["kind"] for mode in controller.options["modes"]] == ["on_foot", "vehicle_car"]
+
+
+def test_fresh_resolution_clears_saved_exclusion_before_composition():
+    from src.unity_pipeline import _compose_subsystems
+    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+
+    schema = _schema("ReallowedBike")
+    schema.locomotion = "drive"
+    schema.meta["intent_exclusions"] = ["bike"]
+    prompt = "A 3D motorcycle driving game."
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    resolution, _messages = ResolveIntentStage().run(
+        schema, ledger, prompt=prompt, schema_source="schema_llm"
+    )
+    assert resolution.exclusions == ()
+    assert schema.meta["intent_exclusions"] == []
+    controller = next(sub for sub in _compose_subsystems(schema, prompt) if sub.kind == "controller")
+    assert controller.variant == "vehicle_bike"
+
+
+def test_pointer_game_stays_unembodied_after_exclusion_resolution():
+    from src.unity_pipeline import _compose_subsystems
+    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+
+    schema = _schema("PointerExclusion")
+    schema.locomotion = "none"
+    prompt = "A 3D board game with no bikes but cars displayed as cards."
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
+    subsystems = _compose_subsystems(schema, prompt)
+    assert schema.locomotion == "none"
+    assert next(sub.variant for sub in subsystems if sub.kind == "controller") == "pointer"
+    assert not any(sub.target == "player" for sub in subsystems)
+
+
+def test_allowed_car_controller_is_materialized(tmp_path):
+    from src.unity_compose import MicroComposer
+    from src.unity_pipeline import _compose_subsystems
+    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+
+    schema = _schema("CarExclusionFixture")
+    schema.locomotion = "drive"
+    prompt = "A 3D driving game. No motorcycles but cars are allowed."
+    _intent, ledger = ExtractIntentStage().run(prompt)
+    ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
+    units = MicroComposer(schema.project_name).emit(_compose_subsystems(schema, prompt), tmp_path / "Assets")
+    controller = next(unit for unit in units if unit.kind == "controller")
+    assert controller.variant == "vehicle_car"
+    source = tmp_path / "Assets/Micros/controller/Scripts" / f"{controller.class_name}.cs"
+    assert source.is_file()
+    assert "WheelCollider" in source.read_text(encoding="utf-8")

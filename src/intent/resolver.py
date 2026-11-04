@@ -116,8 +116,9 @@ def apply_resolution(schema: Any, resolution: IntentResolution) -> list[str]:
         elif old != new:
             meta[key] = new
             messages.append(f"Intent resolver: {key} {old!r} -> {new!r}")
-    if resolution.exclusions:
-        meta["intent_exclusions"] = list(resolution.exclusions)
+    # Composition reads this field, including when a fresh resolution clears
+    # exclusions retained in a saved schema.
+    meta["intent_exclusions"] = list(resolution.exclusions)
     meta["intent_resolution"] = resolution.to_dict()
     schema.meta = meta
     return messages
