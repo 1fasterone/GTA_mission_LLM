@@ -354,6 +354,34 @@ Output ONLY the JSON. No other text."""
 # the concept paraphrased away have one more chance to survive Step 3 directly,
 # on top of (not instead of) the deterministic rescue-layer re-parses
 # (unity_concept_entities.py, unity_concept_scripts.py) that already run after it.
+@dataclass(frozen=True)
+class PromptTruncation:
+    original_chars: int
+    retained_chars: int
+
+    @property
+    def dropped_chars(self) -> int:
+        return self.original_chars - self.retained_chars
+
+    def to_dict(self) -> dict[str, int | str]:
+        return {
+            "severity": "WARNING",
+            "message": "Prompt truncated",
+            "original_chars": self.original_chars,
+            "retained_chars": self.retained_chars,
+            "dropped_chars": self.dropped_chars,
+        }
+
+    def render(self) -> str:
+        return (
+            "Prompt truncated — "
+            f"Original: {self.original_chars:,} chars; "
+            f"Retained: {self.retained_chars:,} chars; "
+            f"Dropped: {self.dropped_chars:,} chars"
+        )
+
+
+
 def brief_block(user_prompt: str) -> str:
     """Include the complete original brief without a character-based cutoff.
 
@@ -365,6 +393,15 @@ def brief_block(user_prompt: str) -> str:
         return ""
     return (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
             f"priority over the concept above):\n{user_prompt}\n")
+
+
+def brief_block_report(user_prompt: str) -> tuple[str, PromptTruncation | None]:
+    """Preserve the report interface; complete transport never reports a drop.
+
+    PromptTruncation remains readable for historical execution reports. No
+    application character cap is applied to new Step-3 requests.
+    """
+    return brief_block(user_prompt), None
 
 
 # ── STEP 3b: multimodal IR block ──────────────────────────────────────────────

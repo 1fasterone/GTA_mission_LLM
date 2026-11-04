@@ -1,0 +1,57 @@
+name: Unity Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  unity-compile:
+    name: Unity generated-project compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      # Linux compilation uses the SDKs inside the Unity container. Reclaim
+      # the hosted runner's unused Android SDK before unpacking that image.
+      - name: Free hosted runner space for Unity
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          df -h /
+      - run: pip install -r requirements.txt pytest
+      - name: Generate deterministic Unity project
+        id: generate
+        run: python tools/generate_ci_unity_project.py --output work/ci-unity --github-output "$GITHUB_OUTPUT"
+      - name: Require configured Unity license
+        shell: bash
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ] || [ -z "$UNITY_EMAIL" ] || [ -z "$UNITY_PASSWORD" ]; then
+            echo "Unity Personal activation requires the UNITY_LICENSE, UNITY_EMAIL, and UNITY_PASSWORD repository secrets."
+            exit 1
+          fi
+      - name: Compile project in Unity 6000.1.4f1
+        uses: game-ci/unity-builder@4423ee75828dff56037d1d1cfdac6b68e3a6ba00 # v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: ${{ steps.generate.outputs.project_path }}
+          unityVersion: 6000.1.4f1
+          targetPlatform: StandaloneLinux64
+          # The generated compile fixture has no release version.
+          versioning: 'None'
+          buildMethod: CiCompileCheck.Perform

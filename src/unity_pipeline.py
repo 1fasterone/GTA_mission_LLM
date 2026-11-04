@@ -32,12 +32,11 @@ from .unity_prompts      import (
     UNITY_SCHEMA_FILL_SYSTEM, UNITY_SCHEMA_FILL_USER,
     GAMECONTEXT_SCHEMA_GUIDANCE, GREYBOX_ONLY_SCHEMA_GUIDANCE,
     GREYBOX_PLUS_SCHEMA_GUIDANCE,
-    render_multimodal_block, brief_block,
+    render_multimodal_block, brief_block_report,
 )
 from .themes              import (
     resolve_theme, render_concept_bias, render_schema_hints,
 )
-from .unity_archetypes    import classify as classify_intent, apply_intent
 from .unity_racetrack     import compose_racetrack, is_racing_degenerate
 from .unity_concept_entities import (extract_named_entities,
                                      inject_missing_concept_entities,
@@ -55,7 +54,7 @@ from .unity_concept_title import (inject_missing_concept_title,
                                   render_title_checklist)
 from .unity_concept_missions import inject_missing_concept_missions
 from .unity_projectile_contract import (PHYSICAL_PROJECTILE_META_KEY,
-                                        apply_physical_projectile_contract)
+                                        validate_physical_projectile_contract)
 from .unity_layout        import compute_layout
 from .unity_cover_points  import compute_cover_points
 from .unity_greybox       import (GREYBOX_SCRIPT_TYPES,
@@ -77,8 +76,8 @@ from .unity_objective_targets import resolve_objective_targets
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 from .unity_reference_image import ReferenceImageError, encode_reference_image
-from .unity_visual_bindings import (bind_visual_assets,
-                                    ensure_visual_scene_coverage)
+from .unity_visual_bindings import ensure_visual_scene_coverage
+from .unity_asset_binder import AssetBinder
 from .visual_reasoning_compile import render_visual_entity_checklist
 from .unity_spatial_pipeline import (
     SpatialPipelineError,
@@ -87,6 +86,17 @@ from .unity_spatial_pipeline import (
     prepare_spatial_layout,
 )
 from .unity_build_provenance import write_build_provenance
+from .mechanics import default_mechanic_registry
+from .unity_pipeline_stages import (
+    BindAssetsStage,
+    ComposeStage,
+    ExtractIntentStage,
+    GenerateSchemaStage,
+    GenerateStage,
+    ResolveIntentStage,
+    StageExecutionRegistry,
+    ValidateSchemaStage,
+)
 
 console = Console()
 
@@ -154,7 +164,8 @@ def _compose_subsystems(schema, user_prompt: str,
                           visual_style=schema.visual_style,
                           palette_rgb=_compose_palette_rgb(schema),
                           cover_points=meta.get("cover_points"),
-                          projectile_contract=meta.get(PHYSICAL_PROJECTILE_META_KEY))
+                          projectile_contract=meta.get(PHYSICAL_PROJECTILE_META_KEY),
+                          intent_exclusions=meta.get("intent_exclusions"))
 
 
 # npc_dialog variant -> the interaction type the dialog extractor is asked for.
@@ -587,7 +598,8 @@ _OBJECTIVE_KIND_TAGS: dict[str, str] = {
 }
 
 
-def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
+def _check_consistency(schema: UnitySchema, *,
+                       reconcile_scenes: bool = True) -> tuple[UnitySchema, list[str]]:
     """
     Ensure script types and features are coherent.
     Returns (fixed_schema, list_of_fix_messages).
@@ -766,8 +778,9 @@ def _check_consistency(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     # descriptions deterministically imply a mood when the LLM leaves the
     # explicit fields unset ("thunderheads, lightning arcs" should LOOK like a
     # storm without anyone re-typing fog:true).
-    schema, scene_fixes = _reconcile_scene_specs(schema)
-    fixes.extend(scene_fixes)
+    if reconcile_scenes:
+        schema, scene_fixes = _reconcile_scene_specs(schema)
+        fixes.extend(scene_fixes)
 
     return schema, fixes
 
@@ -1618,6 +1631,8 @@ class UnityPipeline:
             geometry_only: bool = False,
             greybox_plus: bool = False) -> Path:
         locked_asset_bindings: dict[str, dict] | None = None
+        stage_registry = StageExecutionRegistry()
+        prompt_truncation = None
         greybox_request_text = "\n".join(
             part for part in (user_prompt, visual_context or "",
                               precomputed_concept or "") if part
@@ -1767,7 +1782,17 @@ class UnityPipeline:
         # Deterministic intent detection — game_type / locomotion / genre from
         # keyword scoring, same weighting archetypes.py uses for GTA5 missions.
         # No LLM involved; runs once against the raw prompt.
-        intent = classify_intent(user_prompt)
+        intent, intent_ledger = stage_registry.run(
+            ExtractIntentStage.name,
+            lambda: ExtractIntentStage().run(user_prompt),
+        )
+        intent_ledger.snapshot_state("Pre-Step3", {
+            "claims": len(intent_ledger.claims),
+            "exclusions": [
+                claim.field for claim in intent_ledger.claims
+                if claim.source == "user_exclusion"
+            ],
+        })
         if not visual_compile:
             theme_block  += intent.concept_hint()
             schema_hints += intent.structure_hint()
@@ -1941,10 +1966,13 @@ class UnityPipeline:
             mm = render_multimodal_block(concept, user_prompt,
                                          max_optional=self.multimodal_max_sections)
             self._ok("Multimodal IR sections requested: " + ", ".join(mm.sections))
+            rendered_brief, prompt_truncation = brief_block_report(user_prompt)
+            if prompt_truncation is not None:
+                self._warn(prompt_truncation.render())
             schema_user = UNITY_SCHEMA_FILL_USER.format(concept=concept,
                                                         schema_hints=schema_hints,
                                                         multimodal_block=mm.text,
-                                                        brief_block=brief_block(user_prompt))
+                                                        brief_block=rendered_brief)
             if geometry_only:
                 schema_user += GREYBOX_ONLY_SCHEMA_GUIDANCE
             if greybox_plus:
@@ -2049,14 +2077,10 @@ class UnityPipeline:
             for msg in clamp_msgs:
                 self._fix(msg)
 
-        if visual_asset_bindings is not None and not visual_compile:
-            locked_asset_bindings = bind_visual_assets(
-                schema, visual_asset_bindings
-            )
-            self._ok(
-                f"Locked {len(locked_asset_bindings)} Slice-4 visual asset "
-                "binding(s) before deterministic generation"
-            )
+        schema = stage_registry.run(
+            GenerateSchemaStage.name,
+            lambda: GenerateSchemaStage().accept(schema),
+        )
 
         # Shared tail of Steps 2-3 — runs for both fills. The offline fill has
         # already written meta.user_prompt/concept/fill; re-writing them here
@@ -2104,12 +2128,41 @@ class UnityPipeline:
         # (unity_layout_archetype._schema_height).
         attach_spatial_facts(schema, _spatial_facts)
 
-        # Deterministic override: if the classifier had a confident direct hit
-        # on the raw prompt and the LLM's own game_type/locomotion disagree,
-        # trust the keyword match over the LLM. genre is always stamped into
-        # schema.meta (default "universal") regardless of confidence.
-        for msg in apply_intent(schema, intent):
+        # Every producer has registered evidence; this is the one stage allowed
+        # to choose canonical game type, locomotion, exclusions and projectile
+        # delivery. Classifiers and validators cannot write schema directly.
+        intent_ledger.snapshot("Post-Step3", schema)
+        _intent_resolution, _intent_messages = stage_registry.run(
+            ResolveIntentStage.name,
+            lambda: ResolveIntentStage().run(
+                schema,
+                intent_ledger,
+                prompt=user_prompt,
+                schema_source="schema_deterministic" if no_llm else "schema_llm",
+            ),
+        )
+        for msg in _intent_messages:
             self._fix(msg)
+        intent_ledger.snapshot("Post-Resolution", schema)
+
+        schema.meta["mechanic_registry"] = default_mechanic_registry().manifest(schema)
+        execution_report = dict(schema.meta.get("execution_report") or {})
+        execution_report["format"] = "unity-execution-report/v1"
+        execution_report["warnings"] = (
+            [prompt_truncation.to_dict()] if prompt_truncation is not None else []
+        )
+        schema.meta["execution_report"] = execution_report
+        schema.meta["intent_ledger"] = intent_ledger.to_dict()
+
+        if visual_asset_bindings is not None and not visual_compile:
+            locked_asset_bindings = stage_registry.run(
+                BindAssetsStage.name,
+                lambda: AssetBinder().bind_records(schema, visual_asset_bindings),
+            )
+            self._ok(
+                f"Locked {len(locked_asset_bindings)} Slice-4 visual asset "
+                "binding(s) before deterministic generation"
+            )
 
         self._ok(
             f"Game: {schema.game_type}  Pipeline: {schema.render_pipeline}  "
@@ -2140,22 +2193,19 @@ class UnityPipeline:
         self.llm = freeze(self.llm)
         self._ok("Freeze boundary crossed — Steps 4-7 run without the LLM")
 
-        # STEP 4 — resolve packages + inject required ─────────────────────────
-        self._step(4, "Resolver maps packages to Unity Package Manager IDs")
-        schema = self.resolver.resolve_schema(schema)
+        # STEP 4 — resolve packages (single-execution stage). First collect
+        # requirements; resolution runs once after all
+        # deterministic schema passes have finished adding packages/behaviors.
+        self._step(4, "Collect required Unity Package Manager dependencies")
         schema = self.resolver.inject_required_packages(schema)
-        unresolved = schema.unresolved_packages()
-        if unresolved:
-            self._warn(f"Still unresolved: {unresolved}")
-        else:
-            self._ok(f"All {len(schema.packages)} packages resolved")
+        self._ok(f"Collected {len(schema.packages)} package requirements")
 
         # STEP 5 — validate + fix ─────────────────────────────────────────────
         self._step(5, "Programmatic fixer + consistency check")
         schema = _programmatic_fix(schema, compose=compose)
         self._ok("Programmatic fixes applied (naming, scenes, script names)")
 
-        schema, fix_msgs = _check_consistency(schema)
+        schema, fix_msgs = _check_consistency(schema, reconcile_scenes=False)
         for msg in fix_msgs:
             self._fix(msg)
         if not fix_msgs:
@@ -2168,13 +2218,6 @@ class UnityPipeline:
         # enrichment, asset resolution) runs against schema.entities.
         _n_entities_before_rescue = len(schema.entities)
         for msg in inject_missing_concept_entities(schema):
-            self._fix(msg)
-
-        # Slice 2's physical delivery is a deterministic compiler contract,
-        # not an LLM-authored scene or a replacement for bare hitscan shooting.
-        # It runs before scene reconciliation so its held weapon is included in
-        # a scene that names an explicit entity subset.
-        for msg in apply_physical_projectile_contract(schema, user_prompt):
             self._fix(msg)
 
         # Concept-named SCENE rescue — Solution #3's sibling for the world's
@@ -2194,9 +2237,7 @@ class UnityPipeline:
         # into the schema and then filtered straight back out of the only
         # gameplay scene. No-op when the rescue added nothing.
         if len(schema.entities) != _n_entities_before_rescue:
-            schema, _rescue_scene_fixes = _reconcile_scene_specs(schema)
-            for msg in _rescue_scene_fixes:
-                self._fix(msg)
+            self._ok("Entity rescue changed the schema; final reconciliation queued")
 
         # Ramp tilt rescue: an entity the LLM clearly intends as a ramp (name
         # or model_hint mentions "ramp") but left tilt_deg at its 0 default —
@@ -2302,9 +2343,7 @@ class UnityPipeline:
             # lists would filter them straight back out (same failure the
             # concept-entity rescue hit). No-op when nothing was injected.
             if len(schema.entities) != _n_before_scene:
-                schema, _scene_fixes = _reconcile_scene_specs(schema)
-                for msg in _scene_fixes:
-                    self._fix(msg)
+                self._ok("Authored scene added entities; final reconciliation queued")
 
         # Layout pass: select a spatial archetype for the scene, then lay every
         # {single,line,ring,grid,scatter} entity group out inside it and bake
@@ -2380,10 +2419,12 @@ class UnityPipeline:
                 + ", ".join(_titles.get(mid, mid) for mid in _unmapped_missions)
                 + " — their objectives keep today's global (ungated) SEAM 8 "
                   "binding and their targets are not restored into any scene")
-        if _mission_scenes:
-            schema, _mission_scene_fixes = _reconcile_scene_specs(schema)
-            for msg in _mission_scene_fixes:
-                self._fix(msg)
+        # One reconciliation owns all scene subset repair after every pass that
+        # can add an entity, scene or mission mapping.
+        schema, _scene_fixes = _reconcile_scene_specs(schema)
+        for msg in _scene_fixes:
+            self._fix(msg)
+        intent_ledger.snapshot("Post-Reconciliation", schema)
 
         # Step 5c — playability pre-flight. Step 7 grades the finished project,
         # which is too late to change it: a build the evaluator knows cannot be
@@ -2411,18 +2452,30 @@ class UnityPipeline:
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
 
-        # Re-resolve anything that consistency check added before deriving the
-        # spatial identity. Package/version resolution and behavior expansion
-        # are deterministic schema mutations; running them after Slice 6.3
-        # would make the fusion hash stale before the generator consumes it.
-        schema = self.resolver.resolve_schema(schema)
-        if visual_compile:
-            from .visual_reasoning_compile import (
-                bind_visual_assets as bind_visual_compile_assets,
-            )
+        validation_messages = stage_registry.run(
+            ValidateSchemaStage.name,
+            lambda: ValidateSchemaStage().run(
+                schema, [validate_physical_projectile_contract]
+            ),
+        )
+        if validation_messages:
+            raise ValueError("; ".join(validation_messages))
 
+        # Resolve once, after every pass that can add requirements or behaviors.
+        # This keeps package IDs and expanded atoms consistent with the final
+        # canonical schema and makes repeated resolution impossible by design.
+        schema = self.resolver.resolve_schema(schema)
+        unresolved = schema.unresolved_packages()
+        if unresolved:
+            self._warn(f"Still unresolved: {unresolved}")
+        else:
+            self._ok(f"All {len(schema.packages)} packages resolved")
+        if visual_compile:
             assert visual_compile_plan is not None
-            visual_binding = bind_visual_compile_assets(schema, visual_compile_plan)
+            visual_binding = stage_registry.run(
+                BindAssetsStage.name,
+                lambda: AssetBinder().bind_closed_plan(schema, visual_compile_plan),
+            )
             locked_asset_bindings = {
                 name: dict(binding["selection"])
                 for name, binding in visual_binding["bindings"].items()
@@ -2439,6 +2492,8 @@ class UnityPipeline:
                 f"Bound {len(locked_asset_bindings)} exact Slice-4 visual asset(s) "
                 "to schema entities"
             )
+        elif BindAssetsStage.name not in stage_registry.executed:
+            stage_registry.run(BindAssetsStage.name, lambda: {})
         manifest_deps = self.resolver.build_manifest_deps(
             schema, inject_mcp_bridge=self.inject_mcp_bridge
         )
@@ -2508,6 +2563,7 @@ class UnityPipeline:
         # this function's later, separately-gated `if compose ...:` blocks
         # (composer.plan/module_deps/emit/wiring_report) rely on.
         if compose:
+            stage_registry.run(ComposeStage.name, lambda: True)
             from .unity_compose import (MicroComposer, drop_owned_scripts,
                                         refresh_cover_points,
                                         refresh_projectile_presentation)
@@ -2615,6 +2671,10 @@ class UnityPipeline:
             # renders real, concept-driven Kokoro clips.
             for msg in _inject_npc_dialog_lines(subsystems, schema.meta):
                 self._ok(msg)
+        if ComposeStage.name not in stage_registry.executed:
+            stage_registry.run(ComposeStage.name, lambda: False)
+        intent_ledger.snapshot("Post-Compose", schema)
+        schema.meta["intent_ledger"] = intent_ledger.to_dict()
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = dict(self.config.get("sketchfab", {}) or {})
         if _sketchfab_cfg.get("auto_fetch"):
@@ -2649,8 +2709,11 @@ class UnityPipeline:
                 "and wire the selected filename without post-schema LLM calls"
             )
         from .csharp_syntax_gate import CSharpSyntaxError
-        try:
-            project_root, file_count = self.generator.write(
+        intent_ledger.snapshot("Pre-Generation", schema)
+        schema.meta["intent_ledger"] = intent_ledger.to_dict()
+
+        def _generate_project():
+            return self.generator.write(
                 schema, manifest_deps, self.output_dir, composed_units=composed_units,
                 model_overrides=model_overrides,
                 strict_assets=bool(_asset_cfg.get("strict", True)),
@@ -2658,6 +2721,11 @@ class UnityPipeline:
                 project_config=self.config, llm=None,
                 locked_asset_bindings=locked_asset_bindings,
                 spatial_fusion=_spatial_bundle["spatial_fusion"])
+
+        try:
+            project_root, file_count = stage_registry.run(
+                GenerateStage.name, _generate_project
+            )
         except (ValueError, CSharpSyntaxError) as exc:
             # Two distinct FAIL-FAST doctrines both trip AFTER the expensive
             # LLM stages, inside generator.write(): the asset library

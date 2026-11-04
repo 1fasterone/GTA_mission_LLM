@@ -1,0 +1,176 @@
+{
+  "format": "atom-support-debt/v1",
+  "identity_conflicts": {
+    "identity 'Pause' belongs to both Wait and Pause": {
+      "next_slice": "S0-followup-alias-compatibility",
+      "reason": "Existing cross-atom identity collision. Preserve current lookup precedence until an explicit vocabulary compatibility decision."
+    },
+    "identity 'kick' belongs to both SecondaryAttack and ApplyImpulse": {
+      "next_slice": "S0-followup-alias-compatibility",
+      "reason": "Existing cross-atom identity collision. Preserve current lookup precedence until an explicit vocabulary compatibility decision."
+    },
+    "identity 'roll_evade' belongs to both Dash and Dodge": {
+      "next_slice": "S0-followup-alias-compatibility",
+      "reason": "Existing cross-atom identity collision. Preserve current lookup precedence until an explicit vocabulary compatibility decision."
+    },
+    "identity 'thrust' belongs to both Throttle and ApplyForce": {
+      "next_slice": "S0-followup-alias-compatibility",
+      "reason": "Existing cross-atom identity collision. Preserve current lookup precedence until an explicit vocabulary compatibility decision."
+    }
+  },
+  "internal_handlers": {
+    "unity:EndDialog": {
+      "next_slice": "S0-followup-vocabulary-review",
+      "reason": "Legacy dialog dispatch helper with no AtomDef. Public registration/removal decision pending; do not advertise."
+    },
+    "unity:Gesture": {
+      "next_slice": "S0-followup-vocabulary-review",
+      "reason": "Legacy dialog dispatch helper with no AtomDef. Public registration/removal decision pending; do not advertise."
+    },
+    "unity:LookAt": {
+      "next_slice": "S0-followup-vocabulary-review",
+      "reason": "Legacy dialog dispatch helper with no AtomDef. Public registration/removal decision pending; do not advertise."
+    },
+    "unity:PlayDialogAudio": {
+      "next_slice": "S0-followup-vocabulary-review",
+      "reason": "Legacy dialog dispatch helper with no AtomDef. Public registration/removal decision pending; do not advertise."
+    },
+    "unity:SayLine": {
+      "next_slice": "S0-followup-vocabulary-review",
+      "reason": "Legacy dialog dispatch helper with no AtomDef. Public registration/removal decision pending; do not advertise."
+    },
+    "unity:WireTriggerToEscortObjective": {
+      "next_slice": "S0-followup-vocabulary-review",
+      "reason": "Compiler-internal escort seam called by MicroComposer; not public atom vocabulary."
+    }
+  },
+  "missing_lowerers": {
+    "unity:AimDownSights": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Ascend": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Block": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Boost": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Brake": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:CycleWeapon": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Dash": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Descend": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Dodge": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Grab": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Interact": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:MeleeAttack": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Nitro": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:OpenInventory": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:OpenMap": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Pause": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Pitch": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:PrimaryAttack": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Reload": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:RollPlane": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:SecondaryAttack": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Shoot": {
+      "next_slice": "S5",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:Throttle": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:ThrowGrenade": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    },
+    "unity:UseItem": {
+      "next_slice": "S6",
+      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
+    }
+  },
+  "review_base": "7e41326e027a70565386dc9d164e86c7b387cd56",
+  "unregistered_references": {
+    "BarkOnSight": {
+      "next_slice": "S0-followup-capability-vocabulary",
+      "reason": "Capability resolver constructs this unregistered atom name; no Unity lowerer exists. Preserve as visible legacy debt, not executable coverage."
+    },
+    "EnableNavMesh": {
+      "next_slice": "S0-followup-capability-vocabulary",
+      "reason": "Capability resolver constructs this unregistered atom name; no Unity lowerer exists. Preserve as visible legacy debt, not executable coverage."
+    },
+    "EnableParticles": {
+      "next_slice": "S0-followup-capability-vocabulary",
+      "reason": "Capability resolver constructs this unregistered atom name; no Unity lowerer exists. Preserve as visible legacy debt, not executable coverage."
+    },
+    "EnablePostProcessing": {
+      "next_slice": "S0-followup-capability-vocabulary",
+      "reason": "Capability resolver constructs this unregistered atom name; no Unity lowerer exists. Preserve as visible legacy debt, not executable coverage."
+    },
+    "InitDialogSystem": {
+      "next_slice": "S0-followup-capability-vocabulary",
+      "reason": "Capability resolver constructs this unregistered atom name; no Unity lowerer exists. Preserve as visible legacy debt, not executable coverage."
+    },
+    "SetAIBehavior": {
+      "next_slice": "S0-followup-capability-vocabulary",
+      "reason": "Capability resolver constructs this unregistered atom name; no Unity lowerer exists. Preserve as visible legacy debt, not executable coverage."
+    }
+  }
+}
