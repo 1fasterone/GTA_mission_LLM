@@ -21,6 +21,12 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
+      # Linux compilation uses the SDKs inside the Unity container. Reclaim
+      # the hosted runner's unused Android SDK before unpacking that image.
+      - name: Free hosted runner space for Unity
+        run: |
+          sudo rm -rf /usr/local/lib/android
+          df -h /
       - run: pip install -r requirements.txt pytest
       - name: Generate deterministic Unity project
         id: generate
