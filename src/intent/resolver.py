@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -29,7 +30,7 @@ class IntentResolution:
     def to_dict(self) -> dict[str, Any]:
         return {
             "format": "intent-resolution/v1",
-            "decisions": self.decisions,
+            "decisions": deepcopy(self.decisions),
             "winners": {field: asdict(claim) for field, claim in self.winners.items()},
             "exclusions": list(self.exclusions),
         }
@@ -73,7 +74,8 @@ def resolve_intent(ledger: IntentLedger) -> IntentResolution:
             ))
             decisions["locomotion"] = winner.value
             winners["locomotion"] = winner
-    return IntentResolution(decisions, winners, tuple(sorted(set(exclusions))))
+    # Keep decisions, winning evidence and the ledger independent of each other.
+    return IntentResolution(deepcopy(decisions), deepcopy(winners), tuple(sorted(set(exclusions))))
 
 
 def apply_resolution(schema: Any, resolution: IntentResolution) -> list[str]:
@@ -114,7 +116,7 @@ def apply_resolution(schema: Any, resolution: IntentResolution) -> list[str]:
                 del meta[key]
                 messages.append(f"Intent resolver: cleared {key}")
         elif old != new:
-            meta[key] = new
+            meta[key] = deepcopy(new)
             messages.append(f"Intent resolver: {key} {old!r} -> {new!r}")
     # Composition reads this field, including when a fresh resolution clears
     # exclusions retained in a saved schema.

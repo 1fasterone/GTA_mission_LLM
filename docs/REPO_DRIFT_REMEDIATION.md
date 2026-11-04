@@ -28,3 +28,10 @@ For any generated schema, inspect `meta.intent_ledger`:
 
 This is the deterministic answer to “Why did the generator produce this
 game?” and is persisted with the schema rather than reconstructed from logs.
+
+Ledger checkpoints capture nested state by value. Registered claims, returned
+resolutions and applied schema metadata have separate ownership, so later
+asset binding can update the working schema without rewriting the evidence or
+prior checkpoints. Ledger reports and diffs are detached exports; editing them
+does not change recorded history. The persisted formats remain
+`intent-ledger/v1` and `intent-resolution/v1`.

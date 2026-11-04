@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable
 
@@ -14,7 +15,8 @@ class IntentLedger:
     snapshots: list[dict[str, Any]] = field(default_factory=list)
 
     def register(self, claim: IntentClaim) -> None:
-        self.claims.append(claim)
+        # Producers retain their own mutable payloads; recorded evidence does not.
+        self.claims.append(deepcopy(claim))
 
     def extend(self, claims: Iterable[IntentClaim]) -> None:
         for claim in claims:
@@ -24,16 +26,17 @@ class IntentLedger:
         return [claim for claim in self.claims if claim.field == field]
 
     def snapshot(self, name: str, schema: Any) -> None:
-        self.snapshots.append({"name": name, "state": _schema_state(schema)})
+        self.snapshot_state(name, _schema_state(schema))
 
     def snapshot_state(self, name: str, state: dict[str, Any]) -> None:
-        self.snapshots.append({"name": name, "state": dict(state)})
+        # Later asset binding must not rewrite an earlier pipeline checkpoint.
+        self.snapshots.append({"name": name, "state": deepcopy(state)})
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "format": "intent-ledger/v1",
             "claims": [asdict(claim) for claim in self.claims],
-            "snapshots": list(self.snapshots),
+            "snapshots": deepcopy(self.snapshots),
             "diffs": self.diffs(),
         }
 
@@ -52,7 +55,8 @@ class IntentLedger:
                         "from": before["name"],
                         "to": after["name"],
                     })
-        return changes
+        # Reports are editable exports, detached from the stored checkpoints.
+        return deepcopy(changes)
 
 
 def _schema_state(schema: Any) -> dict[str, Any]:
