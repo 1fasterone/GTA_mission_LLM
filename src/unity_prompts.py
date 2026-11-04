@@ -361,16 +361,52 @@ BRIEF_CAP_CHARS = 4000   # conservative char->token guess; local models run 8k-1
                           # and the schema prompt above is already ~3.5k tokens on its own.
 
 
-def brief_block(user_prompt: str) -> str:
+@dataclass(frozen=True)
+class PromptTruncation:
+    original_chars: int
+    retained_chars: int
+
+    @property
+    def dropped_chars(self) -> int:
+        return self.original_chars - self.retained_chars
+
+    def to_dict(self) -> dict[str, int | str]:
+        return {
+            "severity": "WARNING",
+            "message": "Prompt truncated",
+            "original_chars": self.original_chars,
+            "retained_chars": self.retained_chars,
+            "dropped_chars": self.dropped_chars,
+        }
+
+    def render(self) -> str:
+        return (
+            "Prompt truncated — "
+            f"Original: {self.original_chars:,} chars; "
+            f"Retained: {self.retained_chars:,} chars; "
+            f"Dropped: {self.dropped_chars:,} chars"
+        )
+
+
+def brief_block_report(user_prompt: str) -> tuple[str, PromptTruncation | None]:
+    """Render the Step-3 brief block and return visible truncation evidence."""
     if not user_prompt:
-        return ""
-    text = user_prompt
-    if len(text) > BRIEF_CAP_CHARS:
-        _log.warning("user_prompt truncated to %d chars for Step 3 brief block (was %d)",
-                      BRIEF_CAP_CHARS, len(text))
-        text = text[:BRIEF_CAP_CHARS]
-    return (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
-            f"priority over the concept above):\n{text}\n")
+        return "", None
+    original = len(user_prompt)
+    text = user_prompt[:BRIEF_CAP_CHARS]
+    warning = (
+        PromptTruncation(original, len(text))
+        if original > BRIEF_CAP_CHARS else None
+    )
+    if warning is not None:
+        _log.warning(warning.render())
+    block = (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
+             f"priority over the concept above):\n{text}\n")
+    return block, warning
+
+
+def brief_block(user_prompt: str) -> str:
+    return brief_block_report(user_prompt)[0]
 
 
 # ── STEP 3b: multimodal IR block ──────────────────────────────────────────────

@@ -7,9 +7,10 @@ import pytest
 from src.unity_compose import MicroComposer, subsystems_for
 from src.unity_projectile_contract import (
     PHYSICAL_PROJECTILE_META_KEY,
-    apply_physical_projectile_contract,
     physical_projectile_contract_for,
+    validate_physical_projectile_contract,
 )
+from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
 from src.unity_schema import UnitySchema
 
 
@@ -33,12 +34,19 @@ def _contract_for(brief: str) -> dict:
     return contract
 
 
-def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
+def _resolve(schema: UnitySchema, brief: str) -> list[str]:
+    _intent, ledger = ExtractIntentStage().run(brief)
+    _resolution, messages = ResolveIntentStage().run(
+        schema, ledger, prompt=brief, schema_source="schema_llm"
+    )
+    return messages
+
+
+def test_resolved_3d_physical_intent_stamps_fast_round_and_weapon_entity():
     schema = _schema()
 
-    messages = apply_physical_projectile_contract(
-        schema,
-        "A fast FPS shooter where the player fires pooled physical bullets.",
+    messages = _resolve(
+        schema, "A fast FPS shooter where the player fires pooled physical bullets."
     )
 
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
@@ -64,7 +72,7 @@ def test_explicit_3d_physical_brief_stamps_fast_round_and_weapon_entity():
     assert [(e.name, e.kind, e.count) for e in schema.entities] == [
         ("PlayerWeapon", "weapon", 1)
     ]
-    assert any("typed projectile_3d loadout" in message for message in messages)
+    assert any("physical_projectile_contract" in message for message in messages)
 
 
 @pytest.mark.parametrize(
@@ -102,13 +110,10 @@ def test_explicit_thrown_rock_uses_gravity_profile(brief):
     }
 
 
-def test_thrown_rock_adds_a_rock_view_model_without_replacing_runtime_delivery():
+def test_resolved_thrown_rock_adds_a_rock_view_model():
     schema = _schema()
 
-    apply_physical_projectile_contract(
-        schema,
-        "A third-person game where the hero tosses rocks at targets.",
-    )
+    _resolve(schema, "A third-person game where the hero tosses rocks at targets.")
 
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
     assert contract["delivery"] == "projectile_3d"
@@ -130,7 +135,7 @@ def test_bare_fps_and_explicit_hitscan_keep_the_legacy_hitscan_path():
         "A hitscan game where the hero throws rocks as a cosmetic animation.",
     ):
         schema = _schema()
-        assert apply_physical_projectile_contract(schema, brief) == []
+        _resolve(schema, brief)
         assert PHYSICAL_PROJECTILE_META_KEY not in schema.meta
 
 
@@ -144,14 +149,24 @@ def test_bare_fps_and_explicit_hitscan_keep_the_legacy_hitscan_path():
 def test_2d_physical_brief_is_reported_without_forging_a_3d_loadout(brief):
     schema = _schema("2D")
 
-    messages = apply_physical_projectile_contract(schema, brief)
+    _resolve(schema, brief)
 
     assert PHYSICAL_PROJECTILE_META_KEY not in schema.meta
     assert schema.entities == []
-    assert messages == [
-        "[projectile.p2] physical projectile request is outside Slice 2's 3D contract; "
-        "preserved hitscan delivery (2D belongs to Slice 4)."
-    ]
+    assert validate_physical_projectile_contract(schema) == []
+
+
+def test_projectile_validator_reports_drift_without_mutating_schema():
+    schema = _schema()
+    schema.meta[PHYSICAL_PROJECTILE_META_KEY] = {
+        "delivery": "hitscan", "motion_profile": "unknown"
+    }
+    before = schema.model_dump(mode="json")
+
+    messages = validate_physical_projectile_contract(schema)
+
+    assert messages
+    assert schema.model_dump(mode="json") == before
 
 
 def test_compose_emits_pool_and_muzzle_path_only_for_typed_physical_contract(tmp_path):

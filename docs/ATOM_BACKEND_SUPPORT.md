@@ -1,24 +1,27 @@
 # Atom/backend support audit (S0)
 
-This audit starts from main `7e41326e027a70565386dc9d164e86c7b387cd56`.
-No open branch is a prerequisite for inventorying the code that main actually runs.
+This audit was integrated with main `c83646b240fb4222ac112777fee1761d656acca1`
+after the #282 squash merge. The inventory is regenerated from this integrated tree.
 No gameplay implementation or vocabulary is changed by this slice.
 
 ## Branch readiness
 
-The open branches were checked before starting the audit:
+Integration status checked November 4, 2026:
 
 | PR | Work | Audit dependency | Disposition |
 | --- | --- | --- | --- |
 | #279 | Persist composed controller/micro selection | Required for later replay integration, not S0 inventory | Leave separate draft open |
 | #280 | Complete Step 3 brief and beta startup | Independent of dispatch/ownership inventory | Leave separate draft open |
 | #281 | Phase 0 authority and compilation infrastructure | Independent of S0; overlaps #282 | Leave separate draft open |
-| #282 | Intent authority, registry pilot and infrastructure | Independent of S0; does not change atom dispatch | Leave open; hosted Unity check fails at missing license |
+| #282 | Intent authority, registry pilot and infrastructure | Integrated prerequisite for current main | Merged as `c83646b`; shared-policy generation preserved |
 
-No prerequisite merges were needed. PR #282's GitHub Actions
-run `41182579072` failed at `Require configured Unity license`; compilation was
-skipped. Its passing Python/.NET jobs do not make that Unity gate pass. This
-slice does not change review requirements, branch protection, secrets or gates.
+PR #282 is merged. Its validated tree passed the real Unity Editor compile gate
+(run `41793840269`); earlier missing-license reports are historical. Unity
+credentials are configured. This S0 integration still requires its own Python,
+generated-C# and Unity CI results; the earlier run is not evidence for this head.
+The generated shared policy remains owned by
+`docs/policies/shared-agent-guidance.md` and `tools/sync_agent_guidance.py`.
+This slice does not change review requirements, protection, secrets or gates.
 
 ## Authority and meaning
 

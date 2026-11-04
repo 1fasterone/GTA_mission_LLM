@@ -228,20 +228,15 @@ def replay(schema: UnitySchema, *,
     log: list[str] = []
     resolver = UnityResolver(lookups_dir=lookups)
 
-    # Step 4 — resolver
-    schema = resolver.resolve_schema(schema)
+    # Step 4 — collect requirements; resolve once after all schema mutations.
     schema = resolver.inject_required_packages(schema)
 
     # Step 5 — fixer, consistency, concept rescues, scaffold, normalization
     schema = _programmatic_fix(schema)
-    schema, msgs = _check_consistency(schema)
+    schema, msgs = _check_consistency(schema, reconcile_scenes=False)
     log += msgs
-    n_before = len(schema.entities)
     log += inject_missing_concept_entities(schema)
     log += inject_missing_concept_scenes(schema)
-    if len(schema.entities) != n_before:
-        schema, scene_msgs = _reconcile_scene_specs(schema)
-        log += scene_msgs
     log += inject_missing_concept_scripts(schema)
     log += inject_missing_concept_audio(schema)
     log += inject_missing_concept_narrative(schema)
@@ -251,9 +246,11 @@ def replay(schema: UnitySchema, *,
             and is_racing_degenerate(schema)):
         log += compose_racetrack(schema)
     log += normalize_paths(schema)
+    schema, scene_msgs = _reconcile_scene_specs(schema)
+    log += scene_msgs
     log += compute_layout(schema)
 
-    # Step 6 — generator. strict_assets stays off: an eval must grade
+    # Step 6 — resolve once, then generate. strict_assets stays off: an eval must grade
     # playability, not fail on a local asset library it did not ship with.
     schema = resolver.resolve_schema(schema)
     deps = resolver.build_manifest_deps(schema, inject_mcp_bridge=False)
