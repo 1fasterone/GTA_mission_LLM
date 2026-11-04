@@ -12,8 +12,9 @@ def atom_snippet(engine: str, atom: str, args: dict | None = None) -> str:
     """Engine-neutral dispatcher: render `atom` for `engine`.
 
     Raises ValueError for an unknown engine, an unknown atom, or an atom whose
-    AtomDef.engines doesn't include the requested engine (FAIL-FAST — never a
-    comment stub).
+    AtomDef.engines doesn't include the requested engine. Legacy Unity entries
+    without lowerers still return a TODO comment; support_audit records that debt
+    explicitly. An engines entry is not proof of backend execution.
     """
     fn = _ENGINE_SNIPPETS.get(engine)
     if fn is None:

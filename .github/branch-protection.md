@@ -1,31 +1,36 @@
 # Main branch protection
 
-`main` is an integration branch. Codex, human, and Dependabot changes follow
-the same pull-request path.
+`main` is an integration branch. Human, Codex and Dependabot changes follow
+the same reviewed pull-request path. Do not bypass CI or push directly to main.
 
-Required repository settings:
+## Observed settings (November 4, 2026)
 
-- Require a pull request before merging.
-- Require one approving review and dismiss stale approvals.
-- Require branches to be up to date.
-- Require `Lint (ruff)`, `Type check (mypy)`, `Test (pytest)`,
-  `Acceptance (frozen Step 3.5)`, `Generated C# (dotnet build)`, and
-  `Unity generated-project compile`.
-- Apply the rules to administrators and block force pushes/deletions.
-- Disable auto-merge and direct pushes to `main`.
+The active public `Protect main` ruleset (`24466454`) requires:
 
-Applied to the GitHub `main` branch on 2026-10-30. The Unity status is
-intentionally mandatory. The repository still needs a `UNITY_LICENSE` secret;
-until it is configured, the workflow fails loudly and merge remains blocked
-instead of silently skipping compilation.
+- A pull request with resolved review threads and squash merging only.
+- Zero required approving identities, supporting the solo maintainer workflow.
+- Up-to-date branches and passing `Lint (ruff)`, `Type check (mypy)`,
+  `Test (pytest)`, `Acceptance (frozen Step 3.5)` and `Test (blender_render)`.
+- Linear history; blocked force pushes and branch deletion; no bypass actors.
 
-The repository Actions policy requires full-SHA pinning, allows GitHub-owned
-actions, and narrowly allowlists `game-ci/unity-builder@*` as the only
-third-party action needed by the Unity compile gate.
+The separate branch-protection endpoint returns 403 for the integration, so
+its additional requirements cannot be independently enumerated here. The
+repository policy also requires passing `Generated C# (dotnet build)` and
+`Unity generated-project compile` before merge, even when a ruleset read lists
+only the five checks above. Preserve every required check and re-read live
+policy before merging. An agent review is review evidence, not a GitHub
+approving identity.
+
+Unity credentials are configured; #282's Unity compile reached
+`CiCompileCheck.Perform` successfully. Earlier missing-license statements are
+historical. Each new PR head needs its own successful compile result.
+
+The Actions policy requires full-SHA pinning and narrowly permits
+`game-ci/unity-builder@*`. Preserve its pinned action and credential handling.
 
 Audit with:
 
 ```powershell
+gh api repos/1fasterone/GTA_mission_LLM/rulesets/24466454
 gh api repos/1fasterone/GTA_mission_LLM/branches/main/protection
-gh api repos/1fasterone/GTA_mission_LLM/actions/permissions
 ```

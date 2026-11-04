@@ -75,18 +75,27 @@ Step 3.5 and is persisted into the schema. Never introduce nondeterminism.
 
 # Atoms (Required Mental Model)
 
-Atoms are the smallest deterministic actions the compiler can execute:
-primitive verbs, engine-valid, schema-valid, RAG-grounded, safe building
-blocks for micro-generators and scenes. Atoms may contain branching, loops,
-and multi-step logic — determinism and engine/schema validity are the only
-hard requirements left.
+<!-- atom-support:start -->
+Atoms are typed deterministic action definitions. Both roles must use only atoms
+already defined in the schema, keep outputs deterministic, and keep sequences
+valid for their target backend. Branching, loops and multi-step logic are allowed.
+Registration and an `engines`
+entry describe vocabulary and intended scope; they do not prove an executable
+backend or runtime behavior. The target is executable atom-founded composition.
+Current controller, board, rules and projectile gameplay remains template-owned.
+`fire` aliases canonical `Shoot`; Unity currently has no `Shoot` snippet lowerer.
 
-Atoms live in src/atoms/ (definitions + registry) and src/micro/
-(compositions).
-
-Both roles must: never invent new atom types, only use atoms defined in the
-schema, keep atom outputs deterministic, keep atom sequences valid for the
-Unity/GTA backends. Atoms are the foundation of all microgens.
+The support authority is `python -m src.atoms.support_audit --check`, with derived
+`docs/atom_backend_inventory.json` and reviewed legacy debt in
+`lookups/atoms/support_baseline.json`. Executable in this inventory means a real
+lowerer emits deterministic statements; actual C# compilation and runtime
+acceptance remain **unverified** until separately executed. A companion script
+or descriptive micro-to-atom mapping does not establish attachment or ownership.
+See `docs/ATOM_BACKEND_SUPPORT.md` for call paths, variant ownership and the
+migration queue. New missing implementations, duplicate identities, unsupported
+backend registrations and unreviewed coverage claims fail the audit. Do not
+invent new public atom vocabulary to resolve a dispatch-only helper.
+<!-- atom-support:end -->
 
 # How the Engineer Should Behave
 
