@@ -52,7 +52,8 @@ def test_compile_workflows_are_mandatory_not_skip_gates():
     unity = (ROOT / ".github" / "workflows" / "unity-validation.yml").read_text(encoding="utf-8")
     assert "dotnet build" in build
     assert "Unity generated-project compile" in unity
-    assert "UNITY_LICENSE repository secret is required" in unity
+    assert "Unity Personal activation requires" in unity
+    assert "UNITY_LICENSE, UNITY_EMAIL, and UNITY_PASSWORD repository secrets" in unity
     assert "game-ci/unity-builder@4423ee75828dff56037d1d1cfdac6b68e3a6ba00" in unity
     assert unity.count("buildMethod: CiCompileCheck.Perform") == 1
     assert "public static class CiCompileCheck" in COMPILE_CHECK

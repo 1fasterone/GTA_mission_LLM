@@ -23,7 +23,8 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt pytest
       - name: Generate deterministic Unity project
-        run: python tools/generate_ci_unity_project.py --output work/ci-unity
+        id: generate
+        run: python tools/generate_ci_unity_project.py --output work/ci-unity --github-output "$GITHUB_OUTPUT"
       - name: Require configured Unity license
         shell: bash
         env:
@@ -42,7 +43,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          projectPath: work/ci-unity
+          projectPath: ${{ steps.generate.outputs.project_path }}
           unityVersion: 6000.1.4f1
           targetPlatform: StandaloneLinux64
           # The generated compile fixture has no release version.
