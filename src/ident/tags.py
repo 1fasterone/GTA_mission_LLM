@@ -28,8 +28,12 @@ LAYOUT = "layout"                # a solved layout (Track C)
 WIRING = "wiring"                # a micro-to-micro binding (Track B5)
 BUILD = "build"                  # the root of a build's identity chain
 
+COMPONENT_API = "component.api"  # rendered API manifest/tool/selection identity (S1)
+COMPONENT_API_SOURCE = "component.api.source"  # exact rendered source text
+
 COMPILER_TAGS: frozenset[str] = frozenset({
     ASSET, ASSET_BIN, ASSET_RECIPE, NODE, SCENE, LAYOUT, WIRING, BUILD,
+    COMPONENT_API, COMPONENT_API_SOURCE,
 })
 
 # ── vstack reference kernel (src/vstack/) — its V1-V5 spec identity chain ─────

@@ -30,7 +30,7 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - name: Generate deterministic Unity project
         id: generate
-        run: python tools/generate_ci_unity_project.py --output work/ci-unity --github-output "$GITHUB_OUTPUT"
+        run: python tools/generate_ci_unity_project.py --output work/ci-unity --component-api-fixtures --github-output "$GITHUB_OUTPUT"
       - name: Require configured Unity license
         shell: bash
         env:

@@ -97,3 +97,7 @@ config.granite.yaml
 
 # Session scratch (A/B run captures, generated project copies)
 SCRATCH/
+
+# Pinned SDK component API outputs
+tools/csharp_component_api/bin/
+tools/csharp_component_api/obj/

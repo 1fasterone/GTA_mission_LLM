@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>ComponentApi</AssemblyName><Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Deterministic>true</Deterministic>
+    <RoslynDir>$([System.IO.Path]::GetFullPath('$(MSBuildSDKsPath)/../Roslyn/bincore'))</RoslynDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Reference Include="Microsoft.CodeAnalysis"><HintPath>$(RoslynDir)/Microsoft.CodeAnalysis.dll</HintPath><Private>true</Private></Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp"><HintPath>$(RoslynDir)/Microsoft.CodeAnalysis.CSharp.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+</Project>
