@@ -175,7 +175,7 @@ class AudioPipeline(UnityMicroPipeline):
         self.config = config or {}
         self._gen_seed = 0
         self._gen_prompt = ""
-        self._with_clips = None        # None -> config audio.generate_clips (default on)
+        self._with_clips: bool | None = None        # None -> config audio.generate_clips (default on)
 
     # Captures seed/prompt for the deterministic content pass and adds an LLM-free
     # path (`use_llm=False`) that builds the bank from the game-type's required cues.
@@ -330,6 +330,14 @@ class AudioPipeline(UnityMicroPipeline):
         # MonoBehaviour is <name>AudioManager (composer wired the SO before —
         # "does not derive from MonoBehaviour" at runtime).
         return f"{schema.name}AudioManager"
+
+    def write_api_sources(self, schema, variant: str, out_dir: Path) -> int:
+        previous = self._with_clips
+        self._with_clips = False
+        try:
+            return self.write_files(schema, variant, out_dir)
+        finally:
+            self._with_clips = previous
 
     def write_files(self, schema, variant, out_dir: Path) -> int:
         env = self.jinja()

@@ -169,6 +169,22 @@ class AnimatorPipeline(UnityMicroPipeline):
     _RESERVED_FIELD_NAMES = {"_anim"}
     _TEMPLATE_USINGS = {"UnityEngine"}
 
+    @classmethod
+    def api_baseline_options(cls, options: dict) -> dict:
+        clean = super().api_baseline_options(options)
+        if "params" in clean:
+            params = []
+            for original in clean["params"]:
+                param = dict(original)
+                if param.get("driven_by"):
+                    # Truthiness controls whether a backing field/public setter
+                    # exists. Keep that choice while excluding the authored C#.
+                    value_type = param.get("param_type", "float")
+                    param["driven_by"] = {"bool": "false", "int": "0"}.get(value_type, "0f")
+                params.append(param)
+            clean["params"] = params
+        return clean
+
     def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "AnimationController")
         if not schema.params:

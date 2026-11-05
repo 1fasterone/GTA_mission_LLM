@@ -251,7 +251,7 @@ class NpcDialogPipeline(UnityMicroPipeline):
         self.config      = config or {}
         self._gen_seed   = 0
         self._gen_prompt = ""
-        self._with_audio = None   # None → config audio.generate_clips (default on)
+        self._with_audio: bool | None = None   # None → config audio.generate_clips (default on)
         self._audio_style: str | None = None  # CLI override; applied in default_fix
 
     def run(self, user_prompt: str, *, use_llm: bool = True,
@@ -465,6 +465,14 @@ class NpcDialogPipeline(UnityMicroPipeline):
         class (the templates only define <name>Player/Trigger/Data), so the default
         attach_class (schema.name) would make GameWiring emit a CS0246 reference."""
         return f"{schema.name}Player"
+
+    def write_api_sources(self, schema, variant: str, out_dir: Path) -> int:
+        previous = self._with_audio
+        self._with_audio = False
+        try:
+            return self.write_files(schema, variant, out_dir)
+        finally:
+            self._with_audio = previous
 
     def write_files(self, schema, variant, out_dir: Path) -> int:
         env         = self.jinja()

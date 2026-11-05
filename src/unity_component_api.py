@@ -163,11 +163,14 @@ def render_baseline(composer: Any, subsystems: Sequence[Any]) -> tuple[dict[str,
             sub = original.model_copy(deep=True)
             for channel in _AUTHORING_CHANNELS:
                 sub.options.pop(channel, None)
+            from .micro import REGISTRY
+            pipeline_cls = REGISTRY.get(sub.kind)
+            prepare = getattr(pipeline_cls, "api_baseline_options", None)
+            if prepare is not None:
+                sub.options = prepare(sub.options)
             pipeline, schema, variant, class_name, _guid = composer._resolve(sub)
-            if hasattr(pipeline, "_with_clips"):
-                pipeline._with_clips = False  # asset synthesis is separate from C# rendering
             out = Path(temporary) / str(index)
-            pipeline.write_files(schema, variant, out)
+            pipeline.write_api_sources(schema, variant, out)
             for path in sorted(out.rglob("*.cs")):
                 production = f"{sub.kind}/{path.relative_to(out).as_posix()}"
                 logical = f"{index:03d}-{sub.kind}/{path.relative_to(out).as_posix()}"
