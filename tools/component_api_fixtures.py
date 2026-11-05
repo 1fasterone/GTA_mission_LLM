@@ -13,6 +13,14 @@ def selections():
         'PlainSave': [Subsystem(kind='saveload',variant='json_file',name='PlainArchive')],
         'SlottedSave': [Subsystem(kind='saveload',variant='save_slots',name='SlottedArchive')],
         'DynamicAnimator': [Subsystem(kind='animator',name='CreatureDriver',options={'params':[{'name':'Oxygen','param_type':'float'},{'name':'Dive','param_type':'trigger'}]})],
+        'DrivenAnimator': [Subsystem(kind='animator',name='DrivenDriver',options={'params':[
+            {'name':'Speed','param_type':'float','driven_by':'Time.deltaTime'},
+            {'name':'Visible','param_type':'bool','driven_by':'true'},
+            {'name':'Charge','param_type':'int','driven_by':'1'}]})],
+        'NestedStateMachine': [Subsystem(kind='statemachine',variant='object_fsm',name='StateDriver',options={
+            'states':[{'name':'Inactive','on_enter':'Debug.Log("authored");'},{'name':'Active'}],
+            'transitions':[{'from_state':'Inactive','to_state':'Active','condition':'true'}]})],
+        'SpriteSourceOnly': [Subsystem(kind='sprite_animator',variant='player',name='SpriteDriver')],
     }
     for label,variant,options in [('OrdinaryController','third_person',{}),('PointerController','pointer',{}),('MultiController','multi_mode',{'modes':[{'kind':'on_foot'},{'kind':'vehicle_car'}]})]:
         matrix[label]=[Subsystem(kind='controller',variant=variant,name='FixturePilot',options={'input_backend':'legacy',**options}),Subsystem(kind='input',variant='keyboard_mouse',name='FixtureInput')]

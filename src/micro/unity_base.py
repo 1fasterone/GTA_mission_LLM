@@ -11,6 +11,7 @@ Lua/SHVDN-appropriate system prompts and a different template root.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -52,6 +53,24 @@ class UnityMicroPipeline(MicroPipeline):
             / "micro"
             / (self.template_subdir or self.kind)
         )
+
+    @classmethod
+    def api_baseline_options(cls, options: dict) -> dict:
+        """Clone structural options for API inspection, before default_fix.
+
+        Writers with nested C# channels override this hook to neutralize those
+        bodies without changing the branch choices that determine declarations.
+        This never rewrites the persisted selection or production schema.
+        """
+        return deepcopy(options)
+
+    def write_api_sources(self, schema, variant: str, out_dir: Path) -> int:
+        """Render the production declarations for read-only API inspection.
+
+        Deterministic writers can reuse write_files. Writers that fulfill assets
+        must override this hook and omit synthesis, backend calls and batching.
+        """
+        return self.write_files(schema, variant, out_dir)
 
     def _after_write(self, schema: BaseModel, variant: str, out_dir: Path, name: str) -> None:
         """Inject atom-driven behavior stubs after the micro's main files are written.

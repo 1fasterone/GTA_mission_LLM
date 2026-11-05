@@ -290,6 +290,16 @@ class StateMachinePipeline(UnityMicroPipeline):
     _RESERVED_FIELD_NAMES = {"_currentState", "_prevState"}
     _TEMPLATE_USINGS = {"UnityEngine", "System.Collections"}
 
+    @classmethod
+    def api_baseline_options(cls, options: dict) -> dict:
+        clean = super().api_baseline_options(options)
+        if "states" in clean:
+            clean["states"] = [dict(state, on_enter="", on_update="", on_exit="")
+                               for state in clean["states"]]
+        if "transitions" in clean:
+            clean["transitions"] = [dict(edge, condition="false") for edge in clean["transitions"]]
+        return clean
+
     def default_fix(self, schema, variant):
         schema.name = to_pascal(schema.name, "StateMachine")
 

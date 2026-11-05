@@ -10,10 +10,21 @@ registration entry.
 `src/unity_component_api.py:extract_components` accepts the existing selected
 Subsystem list and composer. It clones selection, removes authoring channels
 before schema/default-fix, calls the production `MicroComposer._resolve` and each
-micro's existing `write_files`, then extracts every emitted C# helper and primary
-class. It does not reinterpret a prompt, call an LLM, mutate the input selection,
-or invent schema fields. Audio clip synthesis is disabled separately from C#
-rendering. The fragment cannot define the declarations used to judge itself.
+micro's `write_api_sources` hook, then extracts every emitted C# helper and primary
+class. Deterministic writers reuse `write_files`; asset-producing writers bypass
+synthesis through their own source-inspection hook. It does not reinterpret a prompt, call an LLM, mutate the input selection,
+or invent schema fields. Sprite inspection shares the exact C# renderer used by
+normal generation and never calls its image backend. Audio and NPC-dialog
+inspection suppress synthesis and batching, restoring prior writer flags even
+on failure. Normal production generation continues to fulfill its assets.
+
+Writer-owned `api_baseline_options` hooks also remove nested authored C# before
+default-fix: FSM entry/update/exit bodies and transition conditions, plus animator
+driving expressions. State/edge identities and terminal markers remain; driven
+animator parameters retain their driven status, so inspection does not invent a
+public setter. Only cloned inspection options are neutralized. Production source
+and saved selection retain the original authored bodies. The fragment cannot
+define the declarations used to judge itself.
 S2 must independently validate approved additions before extending that baseline.
 
 `extract_sources` accepts actual project sources. `extract_components` also has
@@ -67,10 +78,13 @@ the manifest exactly. A shadow fixture demonstrates the old union table's
 false acceptance of `ShowLine` on a health-only HUD. S1 does not switch production
 consumers; S2 must extend mutation coverage to prompts, wiring and validation.
 
-`tools/component_api_fixtures.py` renders eight selected configurations into
+`tools/component_api_fixtures.py` renders eleven selected configurations into
 separate namespaces within the real writer-reported CI project root. The Unity
 Editor job compiles all configurations, including actual input/vehicle
-interfaces. The fixture components are not attached to the captured game scene.
+interfaces, source-only sprite rendering, nested FSM handling and driven animator
+parameters. Regression probes preserve original input, retain the driven setter
+shape, prevent public declarations escaping nested fragments, and forbid asset
+backend calls even when extraction tooling is unavailable. The fixture components are not attached to the captured game scene.
 Only a successful Editor job establishes semantic compilation. Syntax parsing
 and a tool build do not prove overload/type binding, runtime behavior or LLM
 fidelity. Existing Unity version, action pins and credential handling are kept.

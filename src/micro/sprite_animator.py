@@ -173,6 +173,17 @@ class SpriteAnimatorPipeline(UnityMicroPipeline):
         except Exception as exc:  # noqa: BLE001
             self._warn(f"unload request failed ({type(exc).__name__}: {exc})")
 
+    def write_api_sources(self, schema, variant: str, out_dir: Path) -> int:
+        actions = _ACTIONS_BY_ROLE.get(variant, ["idle"])
+        scripts_dir = out_dir / "Scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (scripts_dir / f"{schema.name}.cs").write_text(
+            self.jinja().get_template("SpriteFrameAnimator.cs.j2").render(
+                s=schema, variant=variant, actions=actions),
+            encoding="utf-8",
+        )
+        return 1
+
     def write_files(self, schema, variant, out_dir: Path) -> int:
         from ..sprites.content import SpriteCue, generate_sprite_bank
 
@@ -205,11 +216,7 @@ class SpriteAnimatorPipeline(UnityMicroPipeline):
         (resources_dir / "sprite_manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8")
 
-        (scripts_dir / f"{schema.name}.cs").write_text(
-            env.get_template("SpriteFrameAnimator.cs.j2").render(
-                s=schema, variant=variant, actions=actions),
-            encoding="utf-8",
-        )
+        self.write_api_sources(schema, variant, out_dir)
         (out_dir / "README.md").write_text(
             env.get_template("README.md.j2").render(s=schema, variant=variant, actions=actions),
             encoding="utf-8",

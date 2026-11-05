@@ -162,3 +162,123 @@ def test_selected_writers_cannot_overwrite_each_others_contract(roslyn):
 def test_legitimate_partial_project_declarations_are_combined(roslyn):
     contract=extract_sources({'A.cs':'public partial class Fixture {public void First() {}}','B.cs':'public partial class Fixture {public void Second() {}}'})
     assert {'First','Second'} <= members(contract)
+
+# Engineer-authored adversarial fixtures. These exercise the inspection boundary;
+# they are not Pipeline LLM output or runtime gameplay evidence.
+_FSM_DECLARATION_ESCAPE = (
+    'break;\n }\n }\n public void Invented() {}\n'
+    ' private void CarryOn() { switch (0) { case 0:'
+)
+_ANIMATOR_DECLARATION_ESCAPE = (
+    '0f); } public void Invented() {} '
+    'private void Padding(){ _anim.SetFloat(0, 0f'
+)
+
+
+@pytest.mark.parametrize('channel', ['on_enter', 'on_update', 'on_exit'])
+def test_nested_fsm_code_cannot_define_baseline_declarations(roslyn, channel):
+    selected=Subsystem(kind='statemachine',variant='object_fsm',name='Fixture',options={
+        'states':[{'name':'Inactive',channel:_FSM_DECLARATION_ESCAPE},{'name':'Active'}],
+        'transitions':[{'from_state':'Inactive','to_state':'Active','condition':'true'}]})
+    before=selected.model_dump_json()
+    contract=extract_components(MicroComposer('NestedFsm'),[selected])
+    assert 'Invented' not in members(contract)
+    assert {'Inactive','Active'} <= {m['name'] for m in contract.type('Fixture.State')['members']}
+    assert not contract.document['diagnostics']
+    assert selected.model_dump_json()==before
+
+
+def test_fsm_condition_is_excluded_before_fixer_infers_members(roslyn):
+    def selected(condition):
+        return Subsystem(kind='statemachine',variant='object_fsm',name='Fixture',options={
+            'states':[{'name':'Inactive'},{'name':'Active'}],
+            'transitions':[{'from_state':'Inactive','to_state':'Active','condition':condition}]})
+    composer=MicroComposer('Conditions')
+    before=selected('_authoredFlag').model_dump_json()
+    first=selected('_authoredFlag')
+    contract=extract_components(composer,[first])
+    assert '_authoredFlag' not in {m['name'] for m in contract.type('Fixture')['members']}
+    assert contract.to_json()==extract_components(composer,[selected('AnotherAuthoredCall()')]).to_json()
+    assert first.model_dump_json()==before
+
+
+@pytest.mark.parametrize('param_type', ['float','int','bool'])
+def test_animator_expression_is_excluded_but_driven_shape_is_retained(roslyn,param_type):
+    sub=Subsystem(kind='animator',name='Fixture',options={'params':[
+        {'name':'Driven','param_type':param_type,'driven_by':_ANIMATOR_DECLARATION_ESCAPE},
+        {'name':'External','param_type':param_type,'driven_by':''},
+        {'name':'Pulse','param_type':'trigger','driven_by':''}]})
+    before=sub.model_dump_json()
+    contract=extract_components(MicroComposer('Driven'),[sub])
+    assert not {'Invented','SetDriven'} & members(contract)
+    assert {'SetExternal','PlayPulse'} <= members(contract)
+    other=sub.model_copy(deep=True)
+    other.options['params'][0]['driven_by']='_differentAuthoredExpression'
+    assert contract.to_json()==extract_components(MicroComposer('Driven'),[other]).to_json()
+    assert sub.model_dump_json()==before
+
+
+def test_normal_writers_preserve_nested_authored_code(tmp_path):
+    composer=MicroComposer('NormalProduction')
+    fsm=Subsystem(kind='statemachine',variant='object_fsm',name='NormalFsm',options={
+        'states':[{'name':'Inactive','on_enter':'Debug.Log("authored hook");'},{'name':'Active'}],
+        'transitions':[{'from_state':'Inactive','to_state':'Active','condition':'true'}]})
+    animator=Subsystem(kind='animator',name='NormalAnimator',options={
+        'params':[{'name':'Depth','param_type':'float','driven_by':'Time.deltaTime'}]})
+    for sub,marker in [(fsm,'Debug.Log("authored hook");'),(animator,'Time.deltaTime')]:
+        pipeline,schema,variant,_,_=composer._resolve(sub)
+        out=tmp_path/sub.kind;pipeline.write_files(schema,variant,out)
+        assert marker in '\n'.join(p.read_text() for p in out.rglob('*.cs'))
+
+
+@pytest.mark.parametrize('backend',['openrouter','comfyui'])
+def test_sprite_inspection_never_invokes_generation_even_without_sdk(monkeypatch,tmp_path,backend):
+    from unittest.mock import Mock
+    bank=Mock(side_effect=AssertionError('inspection must not synthesize sprites'))
+    monkeypatch.setattr('src.sprites.content.generate_sprite_bank',bank)
+    monkeypatch.setattr('src.unity_component_api.shutil.which',lambda _:None)
+    selected=Subsystem(kind='sprite_animator',name='Fixture')
+    before=selected.model_dump_json()
+    with pytest.raises(ComponentApiUnavailable):
+        extract_components(MicroComposer('SpriteInspection',project_config={'sprites':{'backend':backend}}),[selected],output_dir=tmp_path)
+    bank.assert_not_called()
+    assert 'class Fixture' in (tmp_path/'sources/000-sprite_animator/Scripts/Fixture.cs').read_text()
+    assert selected.model_dump_json()==before
+
+
+def test_sprite_inspection_and_normal_writer_share_exact_csharp(tmp_path,monkeypatch):
+    from unittest.mock import Mock
+    bank=Mock(return_value={'generated':24,'placeholders':0,'frame_count':24})
+    monkeypatch.setattr('src.sprites.content.generate_sprite_bank',bank)
+    sub=Subsystem(kind='sprite_animator',name='Fixture')
+    composer=MicroComposer('SharedSpriteWriter')
+    inspected,_=render_baseline(composer,[sub])
+    bank.assert_not_called()
+    pipeline,schema,variant,_,_=composer._resolve(sub)
+    out=tmp_path/'normal';pipeline.write_files(schema,variant,out)
+    assert bank.call_count==1 and len(bank.call_args.args[0])==24
+    actual=(out/'Scripts/Fixture.cs').read_bytes().decode('utf-8')
+    assert inspected['000-sprite_animator/Scripts/Fixture.cs']==actual
+    # The production renderer still owns and emits its normal asset manifest.
+    assert (out/'Resources/sprite_manifest.json').is_file()
+
+
+def test_audio_and_dialog_inspection_never_fulfills_assets(monkeypatch,tmp_path):
+    from unittest.mock import Mock
+    audio=Mock(side_effect=AssertionError('unexpected clip synthesis'))
+    dialog=Mock(side_effect=AssertionError('unexpected voice synthesis'))
+    monkeypatch.setattr('src.audio.safe_content.generate_bank_safe',audio)
+    monkeypatch.setattr('src.audio.dialog_content.generate_dialog_bank',dialog)
+    composer=MicroComposer('AudioInspection',project_config={'audio':{'generate_clips':True,'backend':'stable3','defer_stable3':True}})
+    selected=[Subsystem(kind='audio',variant='crossfade_zones',name='Bank'),Subsystem(kind='npc_dialog',name='Speaker')]
+    sources,_=render_baseline(composer,selected)
+    assert any(p.endswith('BankCrossfadeZone.cs') for p in sources)
+    assert any(p.endswith('SpeakerPlayer.cs') for p in sources)
+    audio.assert_not_called();dialog.assert_not_called()
+    # Inspection must also restore a writer's prior synthesis setting.
+    for sub,flag in zip(selected,['_with_clips','_with_audio']):
+        pipeline,schema,variant,_,_=composer._resolve(sub)
+        setattr(pipeline,flag,True)
+        out=tmp_path/sub.kind;pipeline.write_api_sources(schema,variant,out)
+        assert getattr(pipeline,flag) is True
+        assert not list(out.rglob('*.wav')) and not list(out.rglob('*batch*'))
