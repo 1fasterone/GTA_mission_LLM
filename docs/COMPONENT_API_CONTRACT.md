@@ -97,3 +97,46 @@ Step-3.5 LLM freeze remain unchanged. Current consumers/sanitizers and all three
 copied tables stay authoritative in S1. Rollback reverts the extraction tool,
 shadow adapter, tests and CI fixture as a coherent slice. S2 requires a separate
 contract/consumer rollback; no second runtime owner is activated for comparison.
+
+
+## S2 preparation: independent consumer checks (production cutover pending)
+
+`src/unity_component_check.py` adds an explicit shadow check over an immutable
+source snapshot. `ComponentApi.document`, `.sources`, and `.type()` return
+independent views. The selected declaration manifest and exact UTF-8 source bytes
+remain unchanged when callers modify a returned dictionary.
+
+`check_candidate(baseline, candidates, references=..., output_dir=...)` overlays
+one proposal on that snapshot and invokes SDK Roslyn binding. It retains every
+compiler diagnostic, including unknown Unity types, missing dependencies and
+errors located on assignment RHS expressions. Reports include receiver, member,
+callsite, line text, source identities, pinned toolchain, defines and supplied
+assembly byte hashes. An explicit reference profile supplies its own core library;
+the host CoreLib is used only when no references were supplied. No diagnostic allowlist or permissive framework stub is
+used. SDK binding against the supplied assemblies does not establish Unity Editor
+compilation or runtime behavior.
+
+`approve_candidate` accepts exactly one source owner per proposal and extends
+only after a clean check. Later consumers can use that returned contract; rejected
+or unresolved additions cannot bootstrap an unapproved sibling. Every approved
+extension records its check identity. Whole baseline and candidate source trees
+are preserved separately; nonempty evidence directories cannot be overwritten.
+Missing SDK/reference files produce an explicit failure with preserved input.
+
+The CLI `python tools/check_component_candidate.py --help` checks a saved baseline
+and one attempt. `--candidate LOGICAL_PATH LOCAL_FILE` names a replacement/new
+source, `--reference` supplies an actual assembly, and `--extend` requests an
+independently checked contract extension. Use a new output directory for every
+attempt. The CLI re-extracts the saved baseline to reject stale or edited source
+manifests. This is engineer tooling, with no model or asset calls.
+
+Engineer-authored fixtures cover private/member/arity/static/event errors,
+overloads/optional/params/generics, project inheritance, field/local/parameter/
+getter/null-conditional receivers, assignment conversions, immutable views,
+missing SDK/references, and a real HUD export mutation. The health-only HUD check
+retains both its absent ShowLine error and missing Unity references; it is not
+reported as a successful Unity compilation.
+
+The production tables, prompt consumers and deleting sanitizers remain unchanged
+in this preparation. [S2_CONSUMER_CUTOVER.md](S2_CONSUMER_CUTOVER.md) records the
+concrete consumer map and required coherent cutover. S2 acceptance remains open.
