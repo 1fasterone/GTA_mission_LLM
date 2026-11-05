@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--case", default="dropzone_arcade")
     parser.add_argument("--github-output", type=Path, help="Actions output file receiving project_path")
+    parser.add_argument("--component-api-fixtures", action="store_true", help="Compile the S1 rendered variant matrix")
     args = parser.parse_args()
 
     case = load_cases(only=[args.case])[0]
@@ -59,6 +60,9 @@ def main() -> int:
     compile_check = output / "Assets" / "Editor" / "CiCompileCheck.cs"
     compile_check.parent.mkdir(parents=True, exist_ok=True)
     compile_check.write_text(COMPILE_CHECK, encoding="utf-8")
+    if args.component_api_fixtures:
+        from tools.component_api_fixtures import materialize
+        materialize(output, REPO_ROOT / "templates/unity")
     if args.github_output is not None:
         project_path = output.relative_to(Path.cwd().resolve()).as_posix()
         with args.github_output.open("a", encoding="utf-8") as outputs:

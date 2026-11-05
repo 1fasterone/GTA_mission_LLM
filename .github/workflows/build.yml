@@ -22,10 +22,17 @@ jobs:
           python-version: "3.11"
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: "9.0.x"
+          dotnet-version: "9.0.312"
       - run: pip install -r requirements.txt pytest
       - name: Build the Roslyn generation gate
         run: dotnet build tools/csharp_syntax_gate/SyntaxGate.csproj --configuration Release
+      - name: Build pinned component API extractor
+        working-directory: tools/csharp_component_api
+        run: dotnet build ComponentApi.csproj --configuration Release
+      - name: Extract rendered component contracts and prove mutation gate
+        env:
+          REQUIRE_COMPONENT_API: "1"
+        run: pytest -q tests/test_unity_component_api.py
       - name: Exercise generated C# binding guards
         run: >-
           pytest -q
