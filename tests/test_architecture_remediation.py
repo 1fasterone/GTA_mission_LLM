@@ -60,6 +60,14 @@ def test_compile_workflows_are_mandatory_not_skip_gates():
     assert "public static void Perform()" in COMPILE_CHECK
     assert "EditorUtility.scriptCompilationFailed" in COMPILE_CHECK
     assert "continue-on-error" not in unity
+    # The full pytest job executes extraction too; an unrelated preinstalled
+    # SDK must not turn a pinned-tool requirement into failures or skips.
+    import yaml
+    ci = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = ci["jobs"]["test"]
+    assert job["env"]["REQUIRE_COMPONENT_API"] == "1"
+    sdk = next(step for step in job["steps"] if "actions/setup-dotnet@" in step.get("uses", ""))
+    assert sdk["with"]["dotnet-version"] == "9.0.312"
 
 
 def test_agent_guidance_is_generated_from_shared_policy():
