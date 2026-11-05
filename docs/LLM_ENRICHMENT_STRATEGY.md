@@ -360,8 +360,9 @@ declared; a body cannot be invented), and that one case drops the edge by name.
 
 **2. ~~Feed Step 3 the brief, not only the concept.~~ DONE.**
 `brief_block(user_prompt)` (`src/unity_prompts.py`) threads the raw brief into
-`UNITY_SCHEMA_FILL_USER` right after `{concept}`, capped at `BRIEF_CAP_CHARS` (4000
-chars, logged if truncated) to stay inside a local model's context window. The
+`UNITY_SCHEMA_FILL_USER` right after `{concept}`, preserving the complete brief.
+There is no application character cutoff; the loaded model server's context
+window still bounds the full request plus response. The
 rescue injectors (`unity_concept_entities.py`, `unity_concept_scripts.py`) remain a
 safety net rather than the primary recall mechanism — see `docs/COMPILER_AUDIT.md`
 Gap B for the measured before/after.

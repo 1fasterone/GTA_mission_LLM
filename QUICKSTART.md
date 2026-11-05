@@ -18,7 +18,7 @@ cd GTA_mission_LLM
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.lock
+python -m pip install -r requirements.txt -r requirements.lock
 Copy-Item config.example.yaml config.yaml
 ```
 
@@ -30,7 +30,7 @@ cd GTA_mission_LLM
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -r requirements.lock
+python -m pip install -r requirements.txt -r requirements.lock
 cp config.example.yaml config.yaml
 ```
 
@@ -62,6 +62,13 @@ To use a reference image:
 ```bash
 python main.py unity-create --compose --viz reference.png "a bright sci-fi arena shooter"
 ```
+
+Step 3 receives your complete original brief without an application character
+limit. The loaded model's context window must still fit the full request and its
+response. If the server reports a context-length error, increase its loaded
+context or choose a model with sufficient capacity; the application does not
+truncate the brief to make it fit. `lm_studio.max_tokens` controls the response
+budget, not the server's loaded context size.
 
 ## 5. Open or verify the project
 

@@ -5,14 +5,11 @@ Same philosophy as GTA5: LLM = storyteller/specifier, pipeline = deterministic c
 
 from __future__ import annotations
 
-import logging
 import re
 from dataclasses import dataclass
 from functools import lru_cache
 
 from .unity_schema import FEATURE_FLAG_VALUES
-
-_log = logging.getLogger(__name__)
 
 # One closed vocabulary serves both schema validation and the LLM instruction.
 # Rendering it here removes a second manually-maintained feature list.
@@ -357,10 +354,6 @@ Output ONLY the JSON. No other text."""
 # the concept paraphrased away have one more chance to survive Step 3 directly,
 # on top of (not instead of) the deterministic rescue-layer re-parses
 # (unity_concept_entities.py, unity_concept_scripts.py) that already run after it.
-BRIEF_CAP_CHARS = 4000   # conservative char->token guess; local models run 8k-16k context
-                          # and the schema prompt above is already ~3.5k tokens on its own.
-
-
 @dataclass(frozen=True)
 class PromptTruncation:
     original_chars: int
@@ -388,25 +381,27 @@ class PromptTruncation:
         )
 
 
-def brief_block_report(user_prompt: str) -> tuple[str, PromptTruncation | None]:
-    """Render the Step-3 brief block and return visible truncation evidence."""
-    if not user_prompt:
-        return "", None
-    original = len(user_prompt)
-    text = user_prompt[:BRIEF_CAP_CHARS]
-    warning = (
-        PromptTruncation(original, len(text))
-        if original > BRIEF_CAP_CHARS else None
-    )
-    if warning is not None:
-        _log.warning(warning.render())
-    block = (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
-             f"priority over the concept above):\n{text}\n")
-    return block, warning
-
 
 def brief_block(user_prompt: str) -> str:
-    return brief_block_report(user_prompt)[0]
+    """Include the complete original brief without a character-based cutoff.
+
+    The model server's context window still bounds the complete request plus
+    its response. Let the server report capacity errors rather than silently
+    removing requirements from the brief.
+    """
+    if not user_prompt:
+        return ""
+    return (f"\nUSER'S ORIGINAL BRIEF (verbatim — names, counts, and ids here take "
+            f"priority over the concept above):\n{user_prompt}\n")
+
+
+def brief_block_report(user_prompt: str) -> tuple[str, PromptTruncation | None]:
+    """Preserve the report interface; complete transport never reports a drop.
+
+    PromptTruncation remains readable for historical execution reports. No
+    application character cap is applied to new Step-3 requests.
+    """
+    return brief_block(user_prompt), None
 
 
 # ── STEP 3b: multimodal IR block ──────────────────────────────────────────────

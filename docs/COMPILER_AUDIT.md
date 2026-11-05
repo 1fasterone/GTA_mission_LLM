@@ -195,9 +195,9 @@ parser can't interpret. Identity and meaning are different recall problems.
 
 **Fixed:** `brief_block(user_prompt)` (`src/unity_prompts.py`) threads the raw brief into
 `UNITY_SCHEMA_FILL_USER` immediately after `{concept}` — reading as a direct correction to
-the paraphrase above it — capped at `BRIEF_CAP_CHARS` (4000 chars, logged if truncated) to
-stay inside a local model's 8k-16k context window alongside the ~3.5k-token schema prompt
-already there. The rescue injectors (`unity_concept_entities.py`, `unity_concept_scripts.py`)
+the paraphrase above it — with the complete original brief preserved. The former
+4,000-character cutoff has been removed; the loaded model server's context window
+still limits the full request plus response. The rescue injectors (`unity_concept_entities.py`, `unity_concept_scripts.py`)
 remain a safety net rather than the primary recall mechanism.
 
 **Fixed (solution #3, follow-up):** the rescue-layer pattern itself now extends to

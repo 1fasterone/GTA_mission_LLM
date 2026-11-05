@@ -29,19 +29,24 @@ For Unity testing, additionally:
 
 ---
 
-## Install (two commands)
+## Install and start
 
-1. Unzip the build to a folder of your choice.
+1. Unzip the build to a folder of your choice. Install Python 3.11 if needed.
 2. From PowerShell in that folder:
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1
+   py -3.11 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install --upgrade pip
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements.lock
+   if (!(Test-Path config.yaml)) { Copy-Item config.example.yaml config.yaml }
+   .\.venv\Scripts\python.exe main.py serve
    ```
-3. Then:
-   ```powershell
-   python main.py serve
-   ```
-4. The terminal prints a localhost URL — open it in your browser. The
+   These commands use the environment's Python directly; no activation script
+   or execution-policy change is needed. The dependency list installs the full
+   application, with the core versions pinned by `requirements.lock`.
+3. The terminal prints a localhost URL — open it in your browser. The
    sidebar's **Tutorial** tab walks you through the first run.
+4. On later visits, run `.\.venv\Scripts\python.exe main.py serve` from
+   the same folder. The setup preserves an existing `config.yaml`.
 
 ---
 
@@ -51,7 +56,8 @@ The Tutorial tab will guide you, but in short:
 
 1. **Backends** page → pick LM Studio or Ollama, point at the right URL,
    click **Test Connection**. The LLM light up top turns green.
-2. **(Optional)** Run `python main.py rag-build` and `rag-build --unity` in
+2. **(Optional)** Run `.\.venv\Scripts\python.exe main.py rag-build` and
+   `.\.venv\Scripts\python.exe main.py rag-build --unity` in
    a terminal to build the local RAG index for both domains.
    If you skip this, turn **Basic Mode** on instead.
 3. **Prompt** page → pick GTA or Unity, type one sentence, hit **Generate**.

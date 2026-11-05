@@ -1,6 +1,7 @@
-# Pinned, reproducible dependency set (generated from a known-good environment).
-# install.ps1 prefers this over requirements.txt so every tester runs identical
-# versions. Regenerate after intentional upgrades:  pip freeze > requirements.lock
+# Core package pins (not a complete dependency list).
+# Install alongside requirements.txt to include all application dependencies.
+# Regenerate after intentional upgrades:
+# pip freeze > requirements.lock
 #
 # Direct dependencies
 httpx==0.28.1

@@ -9,7 +9,7 @@ from src.intent.ledger import IntentLedger
 from src.intent_eval import load_intent_cases, run_intent_evals
 from src.mechanics import default_mechanic_registry
 from src.unity_pipeline_stages import StageExecutionRegistry, ValidateSchemaStage
-from src.unity_prompts import BRIEF_CAP_CHARS, brief_block_report
+from src.unity_prompts import PromptTruncation, brief_block_report
 from src.unity_schema import UnitySchema
 
 
@@ -63,9 +63,15 @@ def test_validator_stage_detects_mutation():
         ValidateSchemaStage().run(schema, [mutating_validator])
 
 
-def test_prompt_truncation_is_machine_and_human_visible():
-    _block, warning = brief_block_report("x" * (BRIEF_CAP_CHARS + 17))
-    assert warning is not None
+def test_complete_brief_transport_reports_no_truncation():
+    brief = "x" * 4017
+    block, warning = brief_block_report(brief)
+    assert brief in block
+    assert warning is None
+
+
+def test_historical_prompt_truncation_report_remains_readable():
+    warning = PromptTruncation(original_chars=4017, retained_chars=4000)
     assert warning.dropped_chars == 17
     assert warning.to_dict()["message"] == "Prompt truncated"
     assert "Dropped: 17 chars" in warning.render()

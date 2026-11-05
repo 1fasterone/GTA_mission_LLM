@@ -16,7 +16,6 @@ import pytest
 from src.atoms import get_atom
 from src.unity_compose import subsystems_for
 from src.unity_prompts import (
-    BRIEF_CAP_CHARS,
     FEATURE_FLAG_GUIDANCE,
     GAMECONTEXT_SCHEMA_GUIDANCE,
     UNITY_SCHEMA_FILL_SYSTEM,
@@ -88,11 +87,13 @@ def test_feature_flag_guidance_is_derived_from_the_schema_vocabulary():
     assert f"  {FEATURE_FLAG_GUIDANCE}" in full_prompt(block())
 
 
-def test_brief_block_caps_length():
-    huge = "x" * 10_000
-    # +200 headroom for the fixed "USER'S ORIGINAL BRIEF..." header text wrapped
-    # around the capped brief itself, not part of the cap being tested.
-    assert len(brief_block(huge)) <= BRIEF_CAP_CHARS + 200
+@pytest.mark.parametrize("length", [3999, 4000, 4001, 10_000, 100_000])
+def test_brief_block_preserves_the_entire_brief(length):
+    # Synthetic engineer-authored input, not a held-out model evaluation.
+    brief = "x" * length + '\nFinal requirement: 七 rivals, {literal braces}, café.\r\n'
+    rendered = brief_block(brief)
+    body = rendered.split("priority over the concept above):\n", 1)[1]
+    assert body == brief + "\n"
 
 
 def test_brief_block_empty_for_no_prompt():
