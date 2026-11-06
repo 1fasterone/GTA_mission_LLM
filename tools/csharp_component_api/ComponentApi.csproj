@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
+    <Compile Include="ConsumerCheck.cs" />
     <Reference Include="Microsoft.CodeAnalysis"><HintPath>$(RoslynDir)/Microsoft.CodeAnalysis.dll</HintPath><Private>true</Private></Reference>
     <Reference Include="Microsoft.CodeAnalysis.CSharp"><HintPath>$(RoslynDir)/Microsoft.CodeAnalysis.CSharp.dll</HintPath><Private>true</Private></Reference>
   </ItemGroup>

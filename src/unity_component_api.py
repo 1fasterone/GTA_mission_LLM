@@ -41,12 +41,26 @@ class ComponentApiUnavailable(ComponentApiError):
     """Required pinned toolchain could not be built or run."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class ComponentApi:
-    document: dict[str, Any]
+    # Canonical serialized snapshots prevent mutation through nested public dicts.
+    _document_json: str
+    _sources_json: str
+
+    def __init__(self, document: Mapping[str, Any], sources: Mapping[str, str]):
+        object.__setattr__(self, "_document_json", canonical_json(document))
+        object.__setattr__(self, "_sources_json", canonical_json(sources))
+
+    @property
+    def document(self) -> dict[str, Any]:
+        return json.loads(self._document_json)
+
+    @property
+    def sources(self) -> dict[str, str]:
+        return json.loads(self._sources_json)
 
     def to_json(self) -> str:
-        return canonical_json(self.document)
+        return self._document_json
 
     @property
     def fingerprint(self) -> str:
@@ -66,7 +80,7 @@ def _tool(sources: Mapping[str, str]) -> tuple[Path, dict[str, str]]:
     try:
         pin = json.loads((TOOL_DIR / "global.json").read_text())["sdk"]["version"]
         tool_hash = digest({name: (TOOL_DIR / name).read_bytes().decode("utf-8")
-                            for name in ("Program.cs", "ComponentApi.csproj", "global.json")})
+                            for name in ("Program.cs", "ConsumerCheck.cs", "ComponentApi.csproj", "global.json")})
     except (OSError, ValueError, KeyError) as exc:
         raise ComponentApiUnavailable(f"extractor sources/pin unavailable: {exc}", sources) from exc
     try:
@@ -139,7 +153,7 @@ def extract_sources(sources: Mapping[str, str], *, selection: Sequence[dict] = (
         if len(ids) != len(set(ids)):
             raise ComponentApiError("ambiguous duplicate project type declarations", ordered, document)
         _preserve(output_dir, ordered, document)
-        return ComponentApi(document)
+        return ComponentApi(document, ordered)
     except ComponentApiError as exc:
         _preserve(output_dir, ordered, {**identity, **exc.report, "failure": str(exc)})
         raise

@@ -86,6 +86,8 @@ internal static class Program
         {
             using var request = JsonDocument.Parse(Console.In.ReadToEnd());
             var root = request.RootElement;
+            if (root.TryGetProperty("action", out var action) && action.GetString() == "check")
+                return ConsumerCheck.Run(root);
             var defines = root.TryGetProperty("defines", out var d) ? d.EnumerateArray().Select(v => v.GetString()).OrderBy(s => s, StringComparer.Ordinal).ToArray() : Array.Empty<string>();
             var options = new CSharpParseOptions(LanguageVersion.CSharp9, preprocessorSymbols: defines);
             var trees = root.GetProperty("sources").EnumerateArray().Select(s => CSharpSyntaxTree.ParseText(
