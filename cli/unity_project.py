@@ -736,6 +736,37 @@ def unity_validate(
             )
 
         composed_units = composer.plan(subsystems)
+        # Replay consumes the saved selection and proves its final selected
+        # declarations again.  It never reselects from prompt text or uses a
+        # hand-maintained component API table.
+        try:
+            from src.unity_component_api import (check_authored_components,
+                                                 extract_components)
+            final_component_api = extract_components(composer, subsystems)
+            authored_check = check_authored_components(composer, subsystems)
+            schema.meta["component_api_final"] = {
+                "format": final_component_api.document["format"],
+                "fingerprint": final_component_api.fingerprint,
+                "selection": final_component_api.document["selection"],
+                "status": "verified",
+                "authored_source_check": {
+                    "accepted": authored_check.accepted,
+                    "diagnostics": authored_check.errors,
+                    "scope": "SDK binding; Unity Editor execution unverified",
+                },
+            }
+            if authored_check.errors:
+                console.print("[yellow]WARN[/] final authored component source has "
+                              f"{len(authored_check.errors)} SDK diagnostic(s); "
+                              "source is preserved for the Unity Editor gate")
+        except Exception as exc:  # noqa: BLE001 - preserve replay evidence on unavailable SDK
+            schema.meta["component_api_final"] = {
+                "status": "unavailable",
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            console.print("WARN final selected component contract unavailable "
+                          f"({type(exc).__name__}: {exc}); replay is not component-API accepted",
+                          markup=False)
         before = len(schema.scripts)
         schema.scripts = drop_owned_scripts(schema.scripts, composed_units)
         if before != len(schema.scripts):

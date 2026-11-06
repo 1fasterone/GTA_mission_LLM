@@ -993,23 +993,23 @@ class TestUnityProgrammaticFix:
         fixed = _programmatic_fix(schema, compose=True)
         assert "GameContext.Instance.Get<PlayerHealth>()" in fixed.scripts[0].update_extra
 
-    def test_gamecontext_call_stripped_without_compose(self):
-        # No GameContext exists outside --compose, so the locator call must be
-        # stripped (it would be CS0246) rather than left to break compilation.
+    def test_gamecontext_call_is_retained_without_compose(self):
+        # S2 retains the source and leaves the final contract/compiler to
+        # diagnose the missing service rather than erasing intended gameplay.
         schema = self._schema(scripts=[
             UnityScript(name="Bridger", type="custom", description="x",
                         update_extra="var hp = GameContext.Instance.Get<PlayerHealth>();"),
         ])
         fixed = _programmatic_fix(schema)   # compose defaults to False
-        assert "GameContext" not in fixed.scripts[0].update_extra
+        assert "GameContext.Instance.Get<PlayerHealth>()" in fixed.scripts[0].update_extra
 
-    def test_invented_singleton_still_stripped_in_compose(self):
+    def test_invented_singleton_is_retained_for_final_diagnostics(self):
         schema = self._schema(scripts=[
             UnityScript(name="Bridger", type="custom", description="x",
                         update_extra="FooManager.Instance.DoThing();"),
         ])
         fixed = _programmatic_fix(schema, compose=True)
-        assert "FooManager" not in fixed.scripts[0].update_extra
+        assert "FooManager.Instance.DoThing()" in fixed.scripts[0].update_extra
 
     def test_gamecontext_guidance_constant(self):
         from src.unity_prompts import GAMECONTEXT_SCHEMA_GUIDANCE
@@ -1019,7 +1019,7 @@ class TestUnityProgrammaticFix:
     # ── Real-world catches: live E2E run of prompts/newprompt.txt (SiegePlatformer,
     #    2026-07-06) hit both of these verbatim in 2 different custom scripts. ──
 
-    def test_bogus_inputsystem_guard_stripped(self):
+    def test_bogus_inputsystem_guard_is_repaired_without_erasing_body(self):
         # InputSystem is a real static class (GetDevice<T>(), devices, ...) but
         # has no `.current`, and a type name can never be null-compared — this
         # exact guard is always CS0119 + CS0117, never a real check.
@@ -1029,7 +1029,8 @@ class TestUnityProgrammaticFix:
                                      "{ DoThing(); }"),
         ])
         fixed = _programmatic_fix(schema, compose=True)
-        assert "InputSystem" not in fixed.scripts[0].update_extra
+        assert "Mouse.current" in fixed.scripts[0].update_extra
+        assert "DoThing()" in fixed.scripts[0].update_extra
 
     def test_valid_inputsystem_getdevice_call_preserved(self):
         # A real InputSystem API call must not be caught by the bogus-guard regex.
@@ -1040,17 +1041,16 @@ class TestUnityProgrammaticFix:
         fixed = _programmatic_fix(schema, compose=True)
         assert "InputSystem.GetDevice<Keyboard>()" in fixed.scripts[0].update_extra
 
-    def test_gamemanager_member_via_get_bound_variable_validated(self):
-        # `var context = GameContext.Instance.Get<GameManager>();` then
-        # `context.SiegeTimer` — SiegeTimer isn't part of _GAME_MANAGER_API, so
-        # this must be caught the same way as GameManager.Instance.SiegeTimer.
+    def test_gamemanager_member_via_get_bound_variable_is_retained(self):
+        # A selected-source consumer check reports this invalid member at the
+        # final boundary; Step 5 must not silently delete it.
         schema = self._schema(scripts=[
             UnityScript(name="Debris", type="custom", description="x",
                         update_extra="var context = GameContext.Instance.Get<GameManager>(); "
                                      "if (context != null && context.SiegeTimer > 0f) DoThing();"),
         ])
         fixed = _programmatic_fix(schema, compose=True)
-        assert "SiegeTimer" not in fixed.scripts[0].update_extra
+        assert "SiegeTimer" in fixed.scripts[0].update_extra
 
     def test_gamemanager_member_via_get_bound_variable_valid_member_kept(self):
         # context.AddScore(0) IS in _GAME_MANAGER_API — must survive untouched.
@@ -1062,10 +1062,9 @@ class TestUnityProgrammaticFix:
         fixed = _programmatic_fix(schema, compose=True)
         assert "context.AddScore(0)" in fixed.scripts[0].update_extra
 
-    def test_live_e2e_debris_physics_sync_bug_fully_sanitized(self):
-        # Exact update_extra the LLM produced for DebrisPhysicsSync.cs — hit both
-        # bugs at once (bogus InputSystem guard wrapping an invalid SiegeTimer
-        # access) and failed to compile with 3 errors (CS0119, CS0117, CS1061).
+    def test_live_e2e_debris_physics_sync_retains_unresolved_intent(self):
+        # Structural InputSystem syntax is repaired, while the unresolved
+        # project member remains available to final selected-source diagnostics.
         schema = self._schema(scripts=[
             UnityScript(name="DebrisPhysicsSync", type="custom", description="x",
                         update_extra=(
@@ -1079,8 +1078,8 @@ class TestUnityProgrammaticFix:
         ])
         fixed = _programmatic_fix(schema, compose=True)
         result = fixed.scripts[0].update_extra
-        assert "InputSystem" not in result
-        assert "SiegeTimer" not in result
+        assert "Mouse.current" in result
+        assert "SiegeTimer" in result
 
     # ── InputSystem.current hallucination (live regression: StackMaster) ─────
 

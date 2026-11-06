@@ -3429,11 +3429,8 @@ class UnityProjectGenerator:
         # Done here — not in the pipeline — so unity-validate and the webui get
         # it too. CustomBehaviour.cs.j2 emits no fields of its own, so the only
         # reserved name is nothing; usings dedupe against the template's.
-        # Service-locator validation context: a custom script's public surface
-        # is its PUBLIC extra_methods only (never extra_fields — always
-        # private); canonical/composed/Unity classes are opaque (validated by
-        # their own dedicated passes).
-        _custom_api = _custom_script_api(schema.scripts)
+        # Stub-avoidance has to know every type this project emits.  This is
+        # declaration ownership only; it is not a guessed member API.
         _opaque_types: frozenset[str] = frozenset(
             {s.name for s in schema.scripts if s.type != "custom"}
             | {u.class_name for u in (composed_units or [])})
@@ -3492,10 +3489,6 @@ class UnityProjectGenerator:
                 _sanitize_invented_find_object_type_calls(s, _stub_known_types)
                 _sanitize_builtin_component_call_arity(s)
                 _sanitize_coroutine_field_type(s)
-                _sanitize_composed_component_calls(s, composed_units)
-                _sanitize_project_service_calls(s, _custom_api, _opaque_types)
-                _sanitize_field_typed_member_calls(s, _custom_api, composed_units)
-                _sanitize_param_typed_member_calls(s, _custom_api, composed_units)
                 _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
                 _sanitize_vector_scale_misuse(s)          # Vector3 * Vector3 -> CS0019
                 # Sibling custom fields are only a source of an explicit

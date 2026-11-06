@@ -1160,7 +1160,7 @@ class TestCustomScripts:
         units = MicroComposer("O2T").plan(subsystems_for("3D", []))
         files = gen.generate(schema, {}, composed_units=units)
         cs = files["O2T/Assets/Scripts/O2Manager.cs"]
-        assert "GetSpeed" not in cs
+        assert "GetSpeed" in cs
         assert "[SerializeField] private float _oxygenLevel = 100f;" in cs   # field untouched
 
     def test_getcomponent_call_to_real_member_survives(self, gen):
@@ -1211,7 +1211,7 @@ class TestCustomScripts:
         units = MicroComposer("AbyssalDiver").plan(subsystems_for("3D", []))
         files = gen.generate(schema, {}, composed_units=units)
         cs = files["AbyssalDiver/Assets/Scripts/OxygenManager.cs"]
-        assert "Die" not in cs
+        assert "Die" in cs
         assert "[SerializeField] private float _oxygenLevel = 100.0f;" in cs
 
     def test_gamecontext_variable_call_to_real_member_survives(self, gen):

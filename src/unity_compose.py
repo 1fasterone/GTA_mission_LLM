@@ -307,6 +307,35 @@ class MicroComposer:
             variant=variant,
             **sub.options,
         )
+        # Step 3.5 code is authoring evidence, not structural configuration.
+        # Template/default normalizers predate the selected-source consumer and
+        # can rewrite or delete a valid-looking fragment before Roslyn has a
+        # chance to report its actual binding failure.  Run structural
+        # normalization with these channels empty, then restore their exact
+        # validated schema values for rendering and compiler diagnostics.
+        authored_keys = (
+            "extra_usings", "extra_fields", "awake_extra", "update_extra",
+            "fixed_update_extra", "extra_methods", "extensions_fields",
+            "extensions_methods", "extensions_metadata",
+        )
+        authored = {
+            key: getattr(schema, key)
+            for key in authored_keys if hasattr(schema, key)
+        }
+        declaration_keys = {"extra_fields", "extra_methods"}
+        normalization_visible_keys = set(declaration_keys)
+        if sub.kind == "controller":
+            normalization_visible_keys.update(
+                {"awake_extra", "update_extra", "fixed_update_extra"})
+        for key, value in authored.items():
+            if key in normalization_visible_keys:
+                continue
+            if isinstance(value, list):
+                setattr(schema, key, [])
+            elif isinstance(value, dict):
+                setattr(schema, key, {})
+            else:
+                setattr(schema, key, "")
         # Generic compose-time context stamp, available to every kind's template
         # the same way game_type/genre already are — lets a template (e.g.
         # Health.cs.j2's difficulty scaling) tell "this instance is the player's"
@@ -315,12 +344,47 @@ class MicroComposer:
         if hasattr(schema, "meta") and isinstance(schema.meta, dict):
             schema.meta.setdefault("target", sub.target)
         schema = pipeline.default_fix(schema, variant)
+        structural_declarations: dict[str, list] = {}
+        for key in declaration_keys & authored.keys():
+            original = list(authored[key])
+            original_ids = {
+                getattr(item, "name", None) or getattr(item, "signature", None)
+                for item in original
+            }
+            structural_declarations[key] = [
+                item for item in list(getattr(schema, key))
+                if (getattr(item, "name", None) or getattr(item, "signature", None))
+                not in original_ids
+            ]
+        for key, value in authored.items():
+            if isinstance(value, list):
+                setattr(schema, key, [])
+            elif isinstance(value, dict):
+                setattr(schema, key, {})
+            else:
+                setattr(schema, key, "")
         # The compose path does not go through MicroPipeline.run, so it must run
         # the template reconciliation itself — this is where the TurboToys
         # PlayerHealth.cs duplicate members and SceneTrigger.cs missing
         # System.Collections.Generic came from.
         for msg in pipeline.harden(schema):
             console.print(f"  [magenta]FIX[/]  {msg}")
+        for key, value in authored.items():
+            if key in structural_declarations:
+                value = [*value, *structural_declarations[key]]
+            setattr(schema, key, value)
+        # Restoration must retain the two explicitly non-destructive safety
+        # passes: add missing namespaces, and reject only impossible extension
+        # defaults/collisions with a recorded abstention.  Neither pass removes
+        # an authored body or invents a replacement API surface.
+        from .micro.code_fields import apply_extensions_safe_block, heal_missing_usings
+        template_usings = set(getattr(pipeline, "_TEMPLATE_USINGS", ()))
+        for msg in heal_missing_usings(schema, template_usings=template_usings):
+            console.print(f"  [magenta]FIX[/]  {msg}")
+        extension_keys = ("extensions_fields", "extensions_methods", "extensions_metadata")
+        if all(hasattr(schema, key) for key in extension_keys):
+            reserved = set(getattr(pipeline, "_RESERVED_FIELD_NAMES", ()))
+            apply_extensions_safe_block(schema, reserved=reserved)
         # attach_class: the scene-attachable MonoBehaviour (≠ schema.name when a
         # micro's primary file is a ScriptableObject, e.g. the audio bank).
         class_name = pipeline.attach_class(schema)

@@ -228,97 +228,6 @@ _CANONICAL_SCRIPT_NAMES = {
     "health":       "HealthSystem",
 }
 
-# Known public API of the canonical GameManager template (class members the LLM
-# can safely call via GameManager.Instance.<member>).  Calls to anything outside
-# this set are stripped from custom script bodies to prevent CS0246/CS1061.
-_GAME_MANAGER_API: frozenset[str] = frozenset({
-    "Instance", "State", "Score", "Lives", "Level",
-    "OnScoreChanged", "OnLivesChanged", "OnStateChanged",
-    "AddScore", "LoseLife", "ResumeGame", "AdvanceLevel",
-    "RestartLevel", "LoadMainMenu",
-})
-
-# Public API of the composed GameContext locator (compose mode only). Custom
-# scripts reach other subsystems via GameContext.Instance.Get<T>().
-_GAME_CONTEXT_API: frozenset[str] = frozenset({"Instance", "Get"})
-
-# Regex to find "SomeName.Instance.Whatever" singleton calls in C# body strings.
-_SINGLETON_CALL_RE = re.compile(r"\b(\w+)\.Instance\.(\w+)\b")
-# Line-level split (keeps \n in place for the join).
-_LINE_RE = re.compile(r"[^\n]*\n?")
-
-# GameManager reached indirectly via the compose locator — `var x =
-# GameContext.Instance.Get<GameManager>();` then `x.Member` — must be validated
-# the same way as a direct `GameManager.Instance.Member` call. _SINGLETON_CALL_RE
-# only sees the `Get<GameManager>()` call itself (a valid GameContext.Get), not
-# what the LLM does with the returned reference afterward.
-_GET_GAMEMANAGER_BIND_RE = re.compile(r"\b(\w+)\s*=\s*GameContext\.Instance\.Get<GameManager>\s*\(\s*\)")
-
-# Hallucinated "is the Input System available" guard. InputSystem is a real
-# static class (GetDevice<T>(), devices, AddDevice() — no `.current`, and a type
-# name can never be null-compared), so this pattern is always a compile error
-# (CS0119 + CS0117), not a real check — the package is either referenced or not,
-# resolved at compile time. No real guard is needed, so any line containing it
-# is dropped like other invalid calls.
-_BOGUS_INPUTSYSTEM_GUARD_RE = re.compile(r"\bInputSystem\s*!=\s*null\b|\bInputSystem\.current\b")
-
-
-def _sanitize_singleton_calls(body: str, known_classes: set[str],
-                              allow_context: bool = False) -> str:
-    """Strip lines from a C# body string that call undefined singleton methods.
-
-    Cases handled:
-      1. ``UndefinedClass.Instance.Foo(...)`` where UndefinedClass has no script
-         in the schema → entire line removed.
-      2. ``GameManager.Instance.UndefinedProp(...)`` where the property/method is
-         not part of the canonical GameManager template API → entire line removed.
-      3. ``GameContext.Instance.Get<...>(...)`` — kept ONLY when allow_context
-         (i.e. --compose, where the GameContext locator exists); otherwise the
-         locator is undefined and the line is removed.
-      4. ``var x = GameContext.Instance.Get<GameManager>(); ... x.UndefinedProp``
-         — same undefined-member check as case 2, applied to the local variable
-         the reference was bound to, not just the literal class name.
-      5. ``InputSystem != null`` / ``InputSystem.current`` — a hallucinated,
-         always-invalid "is input available" guard → entire line removed.
-
-    Only lines that exclusively contain the bad call are dropped; lines with
-    multiple statements are stripped only of the offending statement.
-    """
-    gamemanager_vars = {m.group(1) for m in _GET_GAMEMANAGER_BIND_RE.finditer(body)}
-    member_re = None
-    if gamemanager_vars:
-        alt = "|".join(re.escape(v) for v in gamemanager_vars)
-        member_re = re.compile(rf"\b(?:{alt})\.(\w+)\b")
-
-    lines_out: list[str] = []
-    for line in body.splitlines(keepends=True):
-        keep = True
-        if _BOGUS_INPUTSYSTEM_GUARD_RE.search(line):
-            keep = False
-        if keep:
-            for m in _SINGLETON_CALL_RE.finditer(line):
-                cls, member = m.group(1), m.group(2)
-                if cls == "GameContext":
-                    if allow_context and member in _GAME_CONTEXT_API:
-                        continue
-                    keep = False
-                    break
-                if cls not in known_classes:
-                    keep = False
-                    break
-                if cls == "GameManager" and member not in _GAME_MANAGER_API:
-                    keep = False
-                    break
-        if keep and member_re:
-            for m in member_re.finditer(line):
-                if m.group(1) not in _GAME_MANAGER_API:
-                    keep = False
-                    break
-        if keep:
-            lines_out.append(line)
-    return "".join(lines_out)
-
-
 # Unity's new Input System has no `InputSystem.current` accessor — the LLM
 # regularly confuses the static package namespace (UnityEngine.InputSystem)
 # with the per-device singletons (Mouse.current, Keyboard.current, ...) and
@@ -509,14 +418,12 @@ def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema
         deduped.append(script)
     schema.scripts = deduped
 
-    # Strip singleton calls in custom script bodies that reference undefined
-    # classes (e.g. UIManager.Instance.XXX when no UIManager exists) or
-    # undefined GameManager methods (e.g. GameManager.Instance.ActiveZone).
-    # Also fix two recurring LLM API hallucinations in the same fragments:
+    # Repair only structural, independently-known C# mistakes here.  Project
+    # API calls remain intact for final selected-source validation; Step 5 must
+    # not erase gameplay because a copied member table cannot prove it exists.
+    # Also fix two recurring LLM API hallucinations:
     # the nonexistent InputSystem.current accessor, and RaycastHit members
     # called on Physics.Raycast's bool return instead of its out-parameter.
-    known_classes: set[str] = {s.name for s in schema.scripts}
-
     def _clean(body: str) -> str:
         # Rewrite recoverable InputSystem.current[.device] hallucinations to
         # their real per-device accessor BEFORE the singleton-call sanitizer's
@@ -524,7 +431,6 @@ def _programmatic_fix(schema: UnitySchema, compose: bool = False) -> UnitySchema
         # "InputSystem.current" substring) eats the whole line first and the
         # rewrite below never gets a chance to run.
         body = _fix_input_system_current(body)
-        body = _sanitize_singleton_calls(body, known_classes, allow_context=compose)
         body = _fix_raycast_bool_member_access(body)
         return body
 
@@ -1366,20 +1272,40 @@ class UnityPipeline:
                            "dialog and audio cue enrichment skipped; micros "
                            "keep their deterministic baseline")
 
+        component_api = None
+        if subsystems and micro_code:
+            try:
+                from .unity_component_api import extract_components
+                from .unity_compose import MicroComposer
+                component_api = extract_components(
+                    MicroComposer(schema.project_name, template_dir=self.template_dir,
+                                  project_config=self.config),
+                    subsystems,
+                )
+                record["component_api"] = {
+                    "format": component_api.document["format"],
+                    "fingerprint": component_api.fingerprint,
+                    "selection": component_api.document["selection"],
+                }
+            except Exception as exc:  # noqa: BLE001 - unavailable contract blocks authored code
+                self._warn("Step 3.5 selected component contract unavailable "
+                           f"({type(exc).__name__}: {exc}) — authored C# enrichment "
+                           "is blocked; deterministic baseline bodies remain")
+
         # `type: custom` script bodies. Its template is a bare shell, so with
         # no author it ships a class of fields with no behaviour. `subsystems`
         # lets the contract name the composed-micro classes reachable via
         # GameContext.
-        if schema.scripts and micro_code:
+        if schema.scripts and micro_code and (not subsystems or component_api is not None):
             from .unity_micro_code import enrich_scripts
             for msg in enrich_scripts(schema.scripts, llm=self.llm,
                                       concept=concept, user_prompt=user_prompt,
-                                      subsystems=subsystems):
+                                      subsystems=subsystems, component_api=component_api):
                 self._fix(msg)
 
         # Composed-micro bodies. Only the extras vocabulary is writable
         # (unity_micro_code.CODE_KEYS), so wiring stays deterministic.
-        if subsystems and micro_code:
+        if subsystems and micro_code and component_api is not None:
             from .unity_micro_code import (enrich_subsystems,
                                            sync_microgens_from_subsystems)
             # The tags TagManager will actually define:
@@ -1389,7 +1315,8 @@ class UnityPipeline:
                             and (e.tag or "").strip() != "Untagged"})
             for msg in enrich_subsystems(subsystems, llm=self.llm,
                                          concept=concept,
-                                         user_prompt=user_prompt, tags=_tags):
+                                         user_prompt=user_prompt, tags=_tags,
+                                         component_api=component_api):
                 self._fix(msg)
             for msg in sync_microgens_from_subsystems(subsystems, schema.microgens):
                 self._fix(msg)
@@ -2544,10 +2471,7 @@ class UnityPipeline:
                                         refresh_cover_points,
                                         refresh_projectile_presentation)
             from .unity_micro_code import (merge_authored_code,
-                                           sync_microgens_from_subsystems,
-                                           sanitize_subsystem_composed_calls,
-                                           sanitize_subsystem_invented_constructors,
-                                           sanitize_subsystem_builtin_call_arity)
+                                           sync_microgens_from_subsystems)
             composer  = MicroComposer(schema.project_name,
                                       template_dir=self.template_dir,
                                       project_config=self.config)
@@ -2575,25 +2499,39 @@ class UnityPipeline:
             # rendered, and a later no-LLM `unity-validate --compose` recompile
             # would reintroduce the very calls this pass strips.
             composed_units = composer.plan(subsystems)
-            # Subsystems get the same composed-sibling-class member validation
-            # schema.scripts (`type: custom`) already has via
-            # _sanitize_composed_component_calls — a subsystem's extra_methods/
-            # awake_extra/etc. can reach another composed micro via
-            # GameContext.Instance.Get<T>() exactly like a custom script can, and
-            # nothing about that path was previously checked against the
-            # composed class's verified public API (src/unity_generator.py
-            # _COMPOSED_CLASS_API).
-            for msg in sanitize_subsystem_composed_calls(subsystems, composed_units):
-                self._fix(msg)
-            # Same isolation gap as above, for a type the subsystem invented
-            # outright (`new ShaderPass(...)`) rather than a bad member on a
-            # real composed class — see _sanitize_invented_constructor_calls.
-            for msg in sanitize_subsystem_invented_constructors(subsystems, composed_units):
-                self._fix(msg)
-            # Same isolation gap, for GetComponent-family calls made with an
-            # argument count their real overloads don't have.
-            for msg in sanitize_subsystem_builtin_call_arity(subsystems):
-                self._fix(msg)
+            # Step 5 is allowed to change selected variants and structural
+            # options.  Re-extract the fragment-free selected declarations
+            # after that work rather than trusting the Step-3.5 snapshot.
+            # The record is compatible sidecar evidence: generation and replay
+            # still derive their selection solely from meta.compose_selection.
+            try:
+                from .unity_component_api import (check_authored_components,
+                                                  extract_components)
+                final_component_api = extract_components(composer, subsystems)
+                authored_check = check_authored_components(composer, subsystems)
+                schema.meta["component_api_final"] = {
+                    "format": final_component_api.document["format"],
+                    "fingerprint": final_component_api.fingerprint,
+                    "selection": final_component_api.document["selection"],
+                    "status": "verified",
+                    "authored_source_check": {
+                        "accepted": authored_check.accepted,
+                        "diagnostics": authored_check.errors,
+                        "scope": "SDK binding; Unity Editor execution unverified",
+                    },
+                }
+                if authored_check.errors:
+                    self._warn("final authored component source has "
+                               f"{len(authored_check.errors)} SDK diagnostic(s); "
+                               "source is preserved for the Unity Editor gate")
+            except Exception as exc:  # noqa: BLE001 - record an unavailable required gate
+                schema.meta["component_api_final"] = {
+                    "status": "unavailable",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                self._warn("final selected component contract unavailable "
+                           f"({type(exc).__name__}: {exc}); this build is not "
+                           "component-API accepted")
             # See sync_microgens_from_subsystems' own docstring: this is what lets
             # a later no-LLM `unity-validate --compose` recover this run's
             # enrich_subsystems output instead of regressing to baseline bodies.
