@@ -40,12 +40,7 @@ from pathlib import Path
 
 from src.micro import REGISTRY
 from src.unity_compose import MicroComposer, Subsystem
-from src.unity_micro_code import (
-    code_keys_for,
-    sanitize_subsystem_builtin_call_arity,
-    sanitize_subsystem_composed_calls,
-    sanitize_subsystem_invented_constructors,
-)
+from src.unity_micro_code import code_keys_for
 
 _PROJECT_CONFIG = {"audio": {"backend": "dsp"}}
 
@@ -161,12 +156,6 @@ def run_one(kind: str, *, variant: str, backend: str | None) -> list[Finding]:
     name = "".join(w.title() for w in kind.split("_")) + "Stress"
     stressed = Subsystem(kind=kind, variant=variant, target="world", name=name, options=options)
     subs = [stressed, *_target_subsystems(kind)]
-
-    plan_composer = MicroComposer("MicroStress", project_config=_PROJECT_CONFIG)
-    composed_units = plan_composer.plan(subs)
-    sanitize_subsystem_composed_calls(subs, composed_units)
-    sanitize_subsystem_invented_constructors(subs, composed_units)
-    sanitize_subsystem_builtin_call_arity(subs)
 
     with tempfile.TemporaryDirectory() as d:
         assets = Path(d) / "Assets"

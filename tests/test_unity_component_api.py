@@ -4,7 +4,9 @@ import json
 import os
 import shutil
 import pytest
-from src.unity_component_api import ComponentApiError, ComponentApiUnavailable, extract_components, extract_sources, render_baseline
+from src.unity_component_api import (ComponentApiError, ComponentApiUnavailable,
+                                     check_authored_components, extract_components,
+                                     extract_sources, render_baseline)
 from src.unity_compose import MicroComposer, Subsystem
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,6 +66,25 @@ def test_animator_dynamic_names_and_optional_arguments(roslyn):
     assert {'SetOxygen','PlayDive','SetGrounded'} <= members(contract)
     assert 'PlayInvented' not in members(contract)
     assert member(contract,'CrossFade')['parameters'][1]['optional']
+
+def test_own_class_contract_keeps_private_template_members(roslyn):
+    from src.unity_micro_code import _contract_for
+    sub=Subsystem(kind='animator',name='Fixture')
+    prompt=_contract_for(sub,component_api=api('animator'))
+    assert 'private Animator _anim' in prompt
+
+@pytest.mark.parametrize(('kind','name','attachment'),[
+    ('audio','Soundscape','SoundscapeAudioManager'),
+    ('npc_dialog','Guide','GuidePlayer'),
+])
+def test_contract_uses_manifest_selected_attachment_class(roslyn,kind,name,attachment):
+    from src.unity_micro_code import _contract_for, _script_contract
+    sub=Subsystem(kind=kind,name=name)
+    contract=extract_components(MicroComposer('AttachmentFixture'),[sub])
+    prompt=_contract_for(sub,component_api=contract)
+    siblings=_script_contract(object(),composed_subsystems=[sub],component_api=contract)
+    assert attachment in prompt
+    assert f'GameContext.Instance.Get<{attachment}>()' in siblings
 
 def test_authored_fragment_cannot_define_its_judged_baseline(roslyn):
     sub=Subsystem(kind='hud',variant='health_bar',name='Fixture',options={
@@ -139,7 +160,7 @@ def test_compile_matrix_contains_actual_selected_variants_and_project_interfaces
     from tools.component_api_fixtures import materialize,selections
     report=materialize(tmp_path,ROOT/'templates/unity',extract=True)
     assert {row['fixture'] for row in report['selections']}==set(selections())
-    sources={logical:(tmp_path/'Assets/ComponentApiFixtures'/logical).read_text() for logical in report['sources']}
+    sources={logical:(tmp_path/'Assets/ComponentApiFixtures'/logical).read_text(encoding="utf-8") for logical in report['sources']}
     contract=extract_sources(sources,selection=report['selections'])
     interface=next(b for b in contract.type('ComponentApiFixtures.MultiController.FixturePilot')['bases'] if b['definition'].endswith('IVehicleState'))
     assert interface['scope']=='project'
@@ -229,6 +250,82 @@ def test_normal_writers_preserve_nested_authored_code(tmp_path):
         pipeline,schema,variant,_,_=composer._resolve(sub)
         out=tmp_path/sub.kind;pipeline.write_files(schema,variant,out)
         assert marker in '\n'.join(p.read_text() for p in out.rglob('*.cs'))
+
+
+def test_normal_writer_preserves_unresolved_authored_collaborator_for_diagnostics(tmp_path):
+    sub = Subsystem(kind='trigger', name='Probe', options={
+        'extra_fields': [{'name': '_helper', 'type': 'UnprovidedHelper'}],
+        'update_extra': '_helper.Run();',
+    })
+    composer = MicroComposer('SourcePreservation')
+    pipeline, schema, variant, _, _ = composer._resolve(sub)
+    out = tmp_path / 'trigger'
+    pipeline.write_files(schema, variant, out)
+    source = '\n'.join(path.read_text(encoding='utf-8') for path in out.rglob('*.cs'))
+    assert 'UnprovidedHelper _helper' in source
+
+
+def test_authored_check_preserves_invalid_rendered_source_and_diagnostics(roslyn, tmp_path):
+    sub = Subsystem(kind='trigger', name='Probe', options={
+        'extra_fields': [{'name': '_helper', 'type': 'UnprovidedHelper'}],
+    })
+    check = check_authored_components(MicroComposer('SourceDiagnostics'), [sub],
+                                      output_dir=tmp_path)
+    assert not check.accepted
+    assert any(diagnostic['code'] == 'CS0246' for diagnostic in check.errors)
+    rendered = next(source for source in check.sources.values()
+                    if 'class Probe' in source)
+    assert 'UnprovidedHelper _helper' in rendered
+    assert (tmp_path / 'sources/000-trigger/Scripts/Probe.cs').is_file()
+
+
+def test_restored_authoring_keeps_additive_usings_and_extension_abstains():
+    composer = MicroComposer('RestoredAuthoring')
+    trigger = Subsystem(kind='trigger', name='Probe', options={
+        'extra_fields': [{'name': '_audio', 'type': 'List<AudioSource>'}],
+    })
+    _pipeline, trigger_schema, _variant, _class, _guid = composer._resolve(trigger)
+    assert 'System.Collections.Generic' in trigger_schema.extra_usings
+
+    controller = Subsystem(kind='controller', name='Pilot', options={
+        'extensions_fields': [{
+            'name': '_invalidOrigin', 'type': 'Vector3',
+            'default': 'new Vector3({x: 0f, y: 0f, z: 0f})',
+        }],
+    })
+    _pipeline, controller_schema, _variant, _class, _guid = composer._resolve(controller)
+    assert controller_schema.extensions_fields[0].default is None
+    assert controller_schema.meta['extensions_conflicts']
+
+
+def test_restoration_keeps_default_fsm_condition_fields_and_authored_helpers():
+    composer = MicroComposer('RestoredFsm')
+    baseline = Subsystem(kind='statemachine', variant='object_fsm', name='ObjectFsm')
+    _pipeline, baseline_schema, _variant, _class, _guid = composer._resolve(baseline)
+    assert {'_triggered', '_activeDone', '_cooldownDone', '_hp'} <= {
+        field.name for field in baseline_schema.extra_fields
+    }
+
+    authored = Subsystem(kind='statemachine', variant='object_fsm', name='AuthoredFsm', options={
+        'states': [{'name': 'Inactive'}, {'name': 'Active'}],
+        'transitions': [{'from_state': 'Inactive', 'to_state': 'Active',
+                         'condition': 'CanActivate()'}],
+        'extra_methods': [{'signature': 'private bool CanActivate()',
+                           'body': 'return true;'}],
+    })
+    _pipeline, authored_schema, _variant, _class, _guid = composer._resolve(authored)
+    assert authored_schema.transitions[0].condition == 'CanActivate()'
+
+
+def test_restoration_keeps_controller_bodies_visible_to_ability_inference():
+    controller = Subsystem(kind='controller', variant='2d_fighting',
+                           name='BrawlerController', options={
+                               'abilities': [],
+                               'update_extra': 'TryThrow();',
+                           })
+    _pipeline, schema, _variant, _class, _guid = MicroComposer('RestoredController')._resolve(controller)
+    assert 'throw' in schema.abilities
+    assert schema.update_extra == 'TryThrow();'
 
 
 @pytest.mark.parametrize('backend',['openrouter','comfyui'])

@@ -89,7 +89,7 @@ def check_candidate(baseline: ComponentApi, candidates: Mapping[str, str], *,
             "defines": identity["defines"], "references": [str(p) for p in supplied],
         }
         process = subprocess.run([dotnet, str(binary)], input=canonical_json(request),
-                                 capture_output=True, text=True, timeout=300)
+                                 capture_output=True, text=True, encoding="utf-8", timeout=300)
         if process.returncode not in (0, 1):
             raise ComponentApiUnavailable(f"consumer check failed: {process.stderr}", sources)
         raw = json.loads(process.stdout)

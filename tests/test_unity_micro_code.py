@@ -176,27 +176,16 @@ _INVENTED_COLLABORATOR = {
 }
 
 
-def test_invented_collaborator_type_is_dropped(tmp_path):
+def test_invented_collaborator_type_is_retained_for_contract_diagnostics(tmp_path):
     sub = _controller_sub()
     msgs = enrich_subsystems([sub], llm=FakeLLM({"controller": _INVENTED_COLLABORATOR}),
                              concept="diver runs out of air")
-    assert any("unresolvable collaborator type" in m for m in msgs)
-
     names = [f["name"] for f in sub.options["extra_fields"]]
-    assert "_oxygenManager" not in names
-    assert "_drainRate" in names, "the valid float field must survive"
+    assert {"_oxygenManager", "_drainRate"} <= set(names)
 
     src = _emit(tmp_path, [sub])["Micros/controller/Scripts/DiverController.cs"]
-    assert "private OxygenManager" not in src          # the CS0246 declaration
-    # Surviving mentions are only inside AUDIT comments, which deliberately
-    # preserve the original line for traceability (same as every other lint_*
-    # pass). No live code may reference it.
-    live = [ln for ln in src.splitlines()
-            if "_oxygenManager" in ln and not ln.lstrip().startswith("//")]
-    assert live == [], live
-    # The method body depended entirely on the dropped field, so the whole
-    # method goes rather than shipping an empty shell.
-    assert "private void ApplyDrain()" not in src
+    assert "private OxygenManager _oxygenManager" in src
+    assert "private void ApplyDrain()" in src
 
 
 def test_sibling_micro_class_is_a_resolvable_type():
@@ -225,7 +214,7 @@ def test_guard_applies_to_the_fallback_path_too():
     merge_authored_code([sub], [MicrogensSpec(kind="controller",
                                               input=dict(_INVENTED_COLLABORATOR))])
     names = [f["name"] for f in sub.options.get("extra_fields", [])]
-    assert names == ["_drainRate"]
+    assert names == ["_oxygenManager", "_drainRate"]
 
 
 # ── supplier A — microgens[].input fallback ───────────────────────────────────
@@ -518,22 +507,19 @@ def test_signature_type_extraction(signature, expected):
     assert _signature_type_names(signature) == expected
 
 
-def test_method_with_an_unresolvable_parameter_type_is_dropped():
+def test_method_with_an_unresolvable_parameter_type_is_retained():
     sub = Subsystem(kind="spawner", variant="wave", target="systems",
                     name="EnemySpawner")
     msgs = merge_authored_code([sub], [MicrogensSpec(kind="spawner",
                                                      input=dict(_INVENTED_IN_SIGNATURE))])
     sigs = [m["signature"] for m in sub.options.get("extra_methods", [])]
 
-    assert sigs == ["private void Tick(float dt)"], sigs
-    assert any("EnemyController" in m for m in msgs), msgs
-    # The valid float field is untouched — only the declarations that cannot
-    # resolve go.
+    assert "private void ApplyRubberBandLogic(List<EnemyController> rivals, float p)" in sigs
+    assert "private void OnRivalFinished(EnemyController rival)" in sigs
     assert [f["name"] for f in sub.options["extra_fields"]] == ["_rubberBandMultiplier"]
 
 
-def test_calls_to_a_dropped_method_are_neutralized():
-    """A dropped method leaves its call sites behind — CS0103 next build."""
+def test_calls_to_an_unresolved_method_are_retained():
     sub = Subsystem(kind="spawner", variant="wave", target="systems",
                     name="EnemySpawner")
     payload = dict(_INVENTED_IN_SIGNATURE)
@@ -541,9 +527,7 @@ def test_calls_to_a_dropped_method_are_neutralized():
     merge_authored_code([sub], [MicrogensSpec(kind="spawner", input=payload)])
 
     update = sub.options.get("update_extra", "")
-    live = [ln for ln in update.splitlines()
-            if "OnRivalFinished" in ln and not ln.lstrip().startswith("//")]
-    assert live == [], live
+    assert "OnRivalFinished(null);" in update
 
 
 def test_signature_naming_only_real_types_is_untouched():

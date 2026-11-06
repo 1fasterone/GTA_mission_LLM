@@ -48,11 +48,6 @@ from pathlib import Path
 import pytest
 
 from src.unity_compose import MicroComposer, subsystems_for
-from src.unity_micro_code import (
-    sanitize_subsystem_builtin_call_arity,
-    sanitize_subsystem_composed_calls,
-    sanitize_subsystem_invented_constructors,
-)
 
 # One poison line per sanitizer this project has (each keyed to the bug that
 # motivated it), all aimed at GameHud from a single project's worth of authored
@@ -109,13 +104,6 @@ def _live_code(src: str) -> str:
                      if "// AUDIT:" not in line)
 
 
-def _sanitize_subsystems(subs, composed_units) -> None:
-    """Exactly the order unity_pipeline.py runs before composer.emit()."""
-    sanitize_subsystem_composed_calls(subs, composed_units)
-    sanitize_subsystem_invented_constructors(subs, composed_units)
-    sanitize_subsystem_builtin_call_arity(subs)
-
-
 def _build_stressed_project(tmp_path: Path, backend: str) -> str:
     """A full composed project (subsystems_for — the same call --compose makes)
     with GameHud's own content replaced by the maximal poison+legit+widget
@@ -136,19 +124,6 @@ def _build_stressed_project(tmp_path: Path, backend: str) -> str:
         "body": poison_block,
     }]
 
-    plan_composer = MicroComposer("HudStress", project_config={"audio": {"backend": "dsp"}})
-    composed_units = plan_composer.plan(subs)
-    _sanitize_subsystems(subs, composed_units)
-
-    # Every poison line must be gone from the SUBSYSTEM options before a
-    # schema is even built from them — this is what the pipeline actually
-    # gates on; the rendered file (checked below) confirms it stuck.
-    for name, line in _POISON.items():
-        if name == "root_ref":
-            continue   # backend-conditional; only micro/hud.py's own default_fix can judge it
-        assert line not in hud.options["update_extra"], f"{name!r} survived subsystem sanitization"
-        assert line not in hud.options["extra_methods"][0]["body"], f"{name!r} survived (extra_methods)"
-
     assets = tmp_path / "Assets"
     emit_composer = MicroComposer("HudStress", project_config={"audio": {"backend": "dsp"}})
     emit_composer.emit(subs, assets, has_game_manager=False)
@@ -156,23 +131,12 @@ def _build_stressed_project(tmp_path: Path, backend: str) -> str:
 
 
 @pytest.mark.parametrize("backend", ["uGUI", "UIToolkit"])
-def test_hud_poison_never_reaches_the_rendered_file(tmp_path, backend):
+def test_hud_authored_source_reaches_the_rendered_file_for_diagnostics(tmp_path, backend):
     src = _build_stressed_project(tmp_path / backend, backend)
 
     live_code = _live_code(src)
     for name, line in _POISON.items():
-        if name == "root_ref":
-            continue   # asserted separately below — its fate depends on `backend`
-        assert line not in src, f"{name!r} reached GameHud.cs at all"
-
-    if backend == "uGUI":
-        # _root does not exist under this backend — live only inside the
-        # AUDIT trail, never as executable code.
-        assert "_root" not in live_code
-        assert "// AUDIT: removed reference to unavailable field" in src
-    else:
-        # Under UIToolkit, _root is real — the same line must survive.
-        assert "_root.style.opacity = 1f" in live_code
+        assert line in live_code, f"{name!r} was erased before diagnostics"
 
 
 @pytest.mark.parametrize("backend", ["uGUI", "UIToolkit"])

@@ -203,9 +203,10 @@ from .micro.code_fields import correct_qualified_type
 from .micro.code_fields import lint_invalid_member_uses
 from .micro.code_fields import (template_method_params,
                                 template_field_types)
-from .unity_generator import (_CS_BUILTIN_TYPES, _COMPOSED_CLASS_API,
+from .unity_generator import (_CS_BUILTIN_TYPES,
                               _extract_base_type, _make_composed_call_stripper,
                               _strip_invented_constructors, _strip_builtin_call_arity)
+from .unity_component_contract import (public_surface, render_own_class_surface)
 
 _FRAGMENT_KEYS = ("awake_extra", "update_extra", "fixed_update_extra")
 
@@ -375,15 +376,22 @@ def _drop_unresolvable_types(kind: str, candidate: dict,
 
 
 def _apply(sub, candidate: dict, known_types: frozenset[str] = frozenset()) -> list[str]:
-    """Validate `candidate` against `sub`'s schema and merge what survives."""
+    """Validate `candidate` shape and merge it without deleting collaborators.
+
+    Member/type truth belongs to the selected-source contract and final C#
+    diagnostics.  Earlier S1 code removed fields and methods merely because a
+    local Python name list could not prove their collaborator type; that made
+    intended gameplay disappear before the authoritative consumer could report
+    it.  ``known_types`` remains an API-compatible ignored parameter while
+    callers migrate to the compiler-backed check.
+    """
     if not candidate:
         return []
-    candidate, msgs = _drop_unresolvable_types(sub.kind, candidate, known_types)
     kept, validation_msgs = _validate(sub.kind, sub.variant or "", sub.name or "",
                                       dict(sub.options), candidate)
     if kept:
         sub.options.update(kept)
-    return msgs + validation_msgs
+    return validation_msgs
 
 
 def _would_not_bind(sub, payload: dict) -> list[str]:
@@ -736,7 +744,7 @@ def _template_dir_for(sub) -> "Path | None":
     return d if d.is_dir() else None
 
 
-def _contract_for(sub, *, tags: Sequence[str] = ()) -> str:
+def _contract_for(sub, *, tags: Sequence[str] = (), component_api=None) -> str:
     """What this class ACTUALLY offers the author.
 
     The compiler has always computed this — `template_members`,
@@ -751,6 +759,18 @@ def _contract_for(sub, *, tags: Sequence[str] = ()) -> str:
     anything it did reach for deleted for not binding. Showing it the same table
     the judge uses is the whole of this fix.
     """
+    if component_api is not None:
+        try:
+            lines = ["", "WHAT THIS CLASS ALREADY HAS — selected rendered declarations"]
+            lines.append(render_own_class_surface(
+                component_api, _selected_component_class(component_api, sub)))
+            if tags:
+                lines.append("  tags THIS PROJECT defines (no others exist — "
+                             "GameObject.FindGameObjectWithTag THROWS on an undefined "
+                             "tag): " + ", ".join(sorted(tags)))
+            return "\n".join(lines)
+        except ValueError:
+            return ""
     tdir = _template_dir_for(sub)
     if tdir is None:
         return ""
@@ -802,6 +822,26 @@ def _contract_for(sub, *, tags: Sequence[str] = ()) -> str:
                      "GameObject.FindGameObjectWithTag THROWS on an undefined "
                      "tag): " + ", ".join(sorted(tags)))
     return "\n".join(lines)
+
+
+def _selected_component_class(component_api, sub) -> str:
+    """Return the manifest-recorded attachment class for one composed subsystem."""
+    selection = component_api.document.get("selection", [])
+    if not selection:
+        return str(getattr(sub, "name", "") or "")
+    identity = {
+        "kind": str(getattr(sub, "kind", "") or ""),
+        "name": str(getattr(sub, "name", "") or ""),
+        "target": str(getattr(sub, "target", "") or ""),
+    }
+    matches = [row for row in selection
+               if all(str(row.get(key, "") or "") == value
+                      for key, value in identity.items())]
+    if len(matches) != 1:
+        raise ValueError(
+            "[component-api] selected attachment class resolves to "
+            f"{len(matches)} manifest rows for {identity!r}")
+    return str(matches[0]["class_name"])
 
 
 def _user_prompt_for(sub, *, concept: str, user_prompt: str,
@@ -860,7 +900,8 @@ console = Console()
 
 def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                       user_prompt: str = "", temperature: float = 0.35,
-                      attempts: int = 3, tags: Sequence[str] = ()) -> list[str]:
+                      attempts: int = 3, tags: Sequence[str] = (),
+                      component_api=None) -> list[str]:
     """Ask the LLM for prompt-specific C# fragments, one subsystem at a time.
 
     One focused call per subsystem rather than one bloated call for all of them:
@@ -890,7 +931,7 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
             skipped_kinds.append(sub.kind)
             continue
 
-        contract = _contract_for(sub, tags=tags)
+        contract = _contract_for(sub, tags=tags, component_api=component_api)
         payload: dict = {}
         correction = ""
         for attempt in range(attempts):
@@ -1043,7 +1084,8 @@ def _script_has_code(script) -> bool:
 
 
 def _script_contract(script, siblings: Sequence[Any] = (),
-                     composed_subsystems: Sequence[Any] = ()) -> str:
+                     composed_subsystems: Sequence[Any] = (),
+                     component_api=None) -> str:
     """What this script really has, and what it may really reach for.
 
     The same lesson as `_contract_for`: the compiler has always known this and
@@ -1087,17 +1129,16 @@ def _script_contract(script, siblings: Sequence[Any] = (),
     # verified table entry — an unlisted composed kind (e.g. EnemyAI, VFX) has
     # no ground truth here and stays unmentioned rather than guessed at, same
     # restraint `_composed_member_ok` applies at judge time.
-    composed_names = sorted({str(getattr(s, "name", "") or "")
-                             for s in composed_subsystems} & _COMPOSED_CLASS_API.keys())
-    if composed_names:
+    if component_api is not None and composed_subsystems:
         lines.append("")
-        lines.append("COMPOSED PROJECT SYSTEMS YOU MAY CALL (verified public API "
-                     "only — anything not listed here does not exist on that "
-                     "class and will be stripped)")
-        for name in composed_names:
-            members = sorted(_COMPOSED_CLASS_API[name])
-            surface = ", ".join(members) if members else \
-                "no public members beyond MonoBehaviour basics"
+        lines.append("COMPOSED PROJECT SYSTEMS YOU MAY CALL (selected public API only)")
+        for sub in sorted(composed_subsystems, key=lambda item: str(getattr(item, "name", "") or "")):
+            try:
+                name = _selected_component_class(component_api, sub)
+                members = public_surface(component_api, name)
+            except ValueError:
+                continue
+            surface = "; ".join(members) or "no public declarations beyond real base types"
             lines.append(f"  GameContext.Instance.Get<{name}>() -> {surface}")
     return "\n".join(lines)
 
@@ -1530,7 +1571,8 @@ def _bind_script(script) -> list[str]:
 
 def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                    user_prompt: str = "", temperature: float = 0.35,
-                   attempts: int = 3, subsystems: Sequence[Any] = ()) -> list[str]:
+                   attempts: int = 3, subsystems: Sequence[Any] = (),
+                   component_api=None) -> list[str]:
     """Author bodies for `type: custom` scripts, one focused call each.
 
     Same shape as `enrich_subsystems`: a narrow window per script, the real
@@ -1557,7 +1599,7 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
     msgs: list[str] = []
     enriched = 0
     for script in targets:
-        contract = _script_contract(script, scripts, subsystems)
+        contract = _script_contract(script, scripts, subsystems, component_api)
         payload: dict = {}
         correction = ""
         for attempt in range(attempts):
@@ -1617,7 +1659,6 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
 
         if payload and _apply_script(script, payload):
             enriched += 1
-            msgs.extend(_bind_script(script))
 
     if enriched:
         msgs.insert(0, f"script-code: LLM authored behaviour for "

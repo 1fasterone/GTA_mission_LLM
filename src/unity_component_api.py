@@ -131,7 +131,8 @@ def extract_sources(sources: Mapping[str, str], *, selection: Sequence[dict] = (
         request = {"sources": [{"path": p, "text": s} for p, s in ordered.items()], "defines": sorted(set(defines))}
         try:
             process = subprocess.run([dotnet, str(binary)], input=canonical_json(request),
-                                     cwd=TOOL_DIR, capture_output=True, text=True, timeout=300)
+                                     cwd=TOOL_DIR, capture_output=True, text=True,
+                                     encoding="utf-8", timeout=300)
         except (OSError, subprocess.SubprocessError) as exc:
             raise ComponentApiUnavailable(f"extractor could not run: {exc}", ordered) from exc
         if process.returncode not in (0, 1):
@@ -167,20 +168,22 @@ _AUTHORING_CHANNELS = frozenset({
 })
 
 
-def render_baseline(composer: Any, subsystems: Sequence[Any]) -> tuple[dict[str, str], list[dict]]:
-    """Clone selection and use the production fixed-schema C# writer."""
+def _render_sources(composer: Any, subsystems: Sequence[Any], *,
+                    include_authored: bool) -> tuple[dict[str, str], list[dict]]:
+    """Render selected C# with or without Step 3.5 authored channels."""
     sources: dict[str, str] = {}
     selections: list[dict] = []
     production_paths: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="component-api-render-") as temporary:
         for index, original in enumerate(subsystems):
             sub = original.model_copy(deep=True)
-            for channel in _AUTHORING_CHANNELS:
-                sub.options.pop(channel, None)
+            if not include_authored:
+                for channel in _AUTHORING_CHANNELS:
+                    sub.options.pop(channel, None)
             from .micro import REGISTRY
             pipeline_cls = REGISTRY.get(sub.kind)
             prepare = getattr(pipeline_cls, "api_baseline_options", None)
-            if prepare is not None:
+            if not include_authored and prepare is not None:
                 sub.options = prepare(sub.options)
             pipeline, schema, variant, class_name, _guid = composer._resolve(sub)
             out = Path(temporary) / str(index)
@@ -193,8 +196,19 @@ def render_baseline(composer: Any, subsystems: Sequence[Any]) -> tuple[dict[str,
                     raise ComponentApiError(f"selected writers collide at Micros/{production}", sources)
                 production_paths.add(production)
             selections.append({"kind": sub.kind, "variant": variant, "class_name": class_name,
-                               "target": sub.target, "schema_hash": digest(schema.model_dump(mode="json"))})
+                               "name": sub.name, "target": sub.target,
+                               "schema_hash": digest(schema.model_dump(mode="json"))})
     return sources, selections
+
+
+def render_baseline(composer: Any, subsystems: Sequence[Any]) -> tuple[dict[str, str], list[dict]]:
+    """Render the fragment-free selected baseline using production writers."""
+    return _render_sources(composer, subsystems, include_authored=False)
+
+
+def render_authored_sources(composer: Any, subsystems: Sequence[Any]) -> tuple[dict[str, str], list[dict]]:
+    """Render selected writers with exact persisted Step 3.5 fragments."""
+    return _render_sources(composer, subsystems, include_authored=True)
 
 
 def extract_components(composer: Any, subsystems: Sequence[Any], *, output_dir: Path | None = None,
@@ -210,3 +224,31 @@ def extract_components(composer: Any, subsystems: Sequence[Any], *, output_dir: 
             raise ValueError(f"[component-api] duplicate project source path: {path}")
         sources[path] = source
     return extract_sources(sources, selection=selection, output_dir=output_dir)
+
+
+def check_authored_components(composer: Any, subsystems: Sequence[Any], *,
+                              output_dir: Path | None = None):
+    """Diagnose rendered Step-3.5 source against one selected baseline.
+
+    This never sanitizes, drops, or approves authored code.  It is deliberately
+    an SDK-only diagnostic: missing Unity references remain in the report for
+    the later Editor compile gate rather than being hidden as a successful
+    fallback.
+    """
+    from .unity_component_check import check_candidate
+
+    baseline = extract_components(composer, subsystems)
+    authored, selection = render_authored_sources(composer, subsystems)
+    selection_identity = lambda rows: [
+        {key: row[key] for key in ("kind", "variant", "class_name", "name", "target")}
+        for row in rows
+    ]
+    if selection_identity(selection) != selection_identity(baseline.document["selection"]):
+        raise ComponentApiError("selected source rendering drifted during authored check",
+                                authored, {"baseline": baseline.document["selection"],
+                                           "authored": selection})
+    candidates = {
+        path: source for path, source in authored.items()
+        if baseline.sources.get(path) != source
+    }
+    return check_candidate(baseline, candidates, output_dir=output_dir)

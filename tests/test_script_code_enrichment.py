@@ -158,19 +158,27 @@ def test_only_a_siblings_PUBLIC_methods_are_offered():
 
 
 def test_composed_micros_offer_only_their_verified_public_api():
-    """The same table `unity_generator._sanitize_project_service_calls` uses to
-    strip a call it can't verify — shown up front instead of only at judge
-    time. Confirmed live: OxygenManager called Get<PlayerHealth>().Die()
-    (private, CS0122); the author never had a reason not to reach for it."""
+    """Selected Roslyn declarations, not a cross-variant Python union, guide authors."""
+    from src.unity_component_api import ComponentApi
     from src.unity_compose import Subsystem
     subsystems = [Subsystem(kind="health", target="player", name="PlayerHealth"),
                   Subsystem(kind="camera", target="camera", name="PlayerCamera")]
-    contract = _script_contract(_codebranchsim()[0], [], subsystems)
+    selected = ComponentApi({"types": [
+        {"id": "PlayerHealth", "name": "PlayerHealth", "members": [
+            {"name": "TakeDamage", "kind": "method", "accessibility": "public",
+             "type": "void", "is_static": False, "generic_arity": 0,
+             "parameters": [{"name": "amount", "type": "float"}]},
+            {"name": "Die", "kind": "method", "accessibility": "private",
+             "type": "void", "is_static": False, "generic_arity": 0, "parameters": []},
+        ]},
+        {"id": "PlayerCamera", "name": "PlayerCamera", "members": []},
+    ]}, {})
+    contract = _script_contract(_codebranchsim()[0], [], subsystems, selected)
     assert "GameContext.Instance.Get<PlayerHealth>()" in contract
     assert "TakeDamage" in contract
     assert "Die" not in contract          # private — never offered
     assert "GameContext.Instance.Get<PlayerCamera>()" in contract
-    assert "no public members beyond MonoBehaviour basics" in contract
+    assert "no public declarations beyond real base types" in contract
 
 
 def test_a_composed_kind_with_no_verified_api_stays_unmentioned():
@@ -204,11 +212,13 @@ def test_enrich_scripts_passes_subsystems_into_the_contract():
     """unity_pipeline.run() now computes `subsystems` before this call so the
     writer can be shown the real composed-micro surface — this pins the plumbing."""
     from src.unity_compose import Subsystem
+    from src.unity_component_api import ComponentApi
     scripts = _codebranchsim()
     llm = _StubLLM()
+    selected = ComponentApi({"types": [{"id": "PlayerHealth", "name": "PlayerHealth", "members": []}]}, {})
     enrich_scripts(scripts, llm=llm, concept="A git teaching sim.",
                    subsystems=[Subsystem(kind="health", target="player",
-                                         name="PlayerHealth")])
+                                         name="PlayerHealth")], component_api=selected)
     assert "GameContext.Instance.Get<PlayerHealth>()" in llm.prompts[0]
 
 
