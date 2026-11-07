@@ -13,7 +13,7 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from src.unity_compose import MicroComposer, subsystems_for
-from src.unity_projectile_contract import physical_projectile_contract_for
+from src.intent.projectile import physical_projectile_contract_for
 
 PROJECTILE_COMPANIONS = ("ProjectileController.cs", "ProjectilePool.cs")
 

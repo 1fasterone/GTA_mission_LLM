@@ -94,7 +94,9 @@ def test_failed_run_preserves_raw_input_stage_traceback_and_project(
     assert manifest["playability_summary"] == "PLAYABILITY 91/100 NOT PLAYABLE"
     assert manifest["failure"]["exception_type"] == "RuntimeError"
     assert "raise RuntimeError" in manifest["failure"]["traceback"]
-    assert manifest["source_lineage"]["classification"] == "unavailable"
+    assert Path(manifest["source_lineage"]["repo_root"]) == Path(
+        __file__
+    ).resolve().parents[1]
 
     log_text = Path(manifest["log_path"]).read_text(encoding="utf-8")
     assert "STEP 7 -- Playability evaluator grades the build" in log_text
