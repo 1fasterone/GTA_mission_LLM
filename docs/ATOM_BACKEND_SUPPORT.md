@@ -1,8 +1,10 @@
-# Atom/backend support audit (S0)
+# Atom/backend support and mechanic ownership audits (S0-S3)
 
-This audit was integrated with main `c83646b240fb4222ac112777fee1761d656acca1`
-after the #282 squash merge. The inventory is regenerated from this integrated tree.
-No gameplay implementation or vocabulary is changed by this slice.
+The S0 support audit was integrated with main `c83646b240fb4222ac112777fee1761d656acca1`
+after the #282 squash merge. S2 later made selected rendered C# source authoritative
+for consumer-visible APIs. S3 adds structural mechanic connection and ownership
+closure in [MECHANIC_OWNERSHIP.md](MECHANIC_OWNERSHIP.md). No gameplay
+implementation, public vocabulary, or runtime owner is changed by S3.
 
 ## Branch readiness
 
@@ -29,6 +31,7 @@ Run from the repository root:
 
 ```sh
 python -m src.atoms.support_audit --check
+python -m src.atoms.ownership_audit --check
 ```
 
 The command inspects actual atom definitions, aliases, backend dispatch tables,
@@ -86,10 +89,14 @@ Four identity collisions are recorded without silently changing precedence:
 
 ## Ownership and reachability
 
-- Schema-level atoms run once through GameSequencer.Start's coroutine. Entity
-  atom scripts are attached through EntitySpawner and may restart their coroutine.
-  Custom-script atoms are an additional generator path; this audit makes no
-  claim that they replace micro gameplay.
+- Schema-level atoms lower into `GameSequencer.Start`, but S3 found no generated
+  scene or prefab component attachment for `GameSequencer`; emission is therefore
+  `connected_but_not_attached`, not an invoked runtime claim.
+- The representative behavior-map entity route resolves a behavior class, renders
+  `EntityBehavior`, attaches through `EntitySpawner`, and may restart its coroutine.
+  S3 does not generalize that proof to a raw `EntitySpec.atoms` value whose behavior
+  class was not deterministically selected. Custom-script atoms remain a separate
+  generator path and do not replace micro gameplay.
 - Unity wiring atoms are explicitly called by MicroComposer to emit subscriptions,
   Update bridges and event handlers into GameWiring. These are the existing
   executable composition seams, not a universal lifecycle binding system.
@@ -114,7 +121,7 @@ slice. It is a ratchet, not a second public API or implementation table.
 | --- | --- |
 | S0 vocabulary/alias review | Decide compatible resolution for four collisions and five legacy dialog helpers |
 | S1–S2 | Extract selected rendered C# APIs with Roslyn and remove copied API tables |
-| S3 | Validate mechanic descriptor connection and ownership closure |
+| S3 | Structural representative closure implemented; preserve explicit unattached/missing-provider abstentions in `mechanic_ownership_inventory.json` |
 | S4 | Persist typed host/phase/trigger/provider bindings with versioned replay |
 | S5 | Share one firing provider between input and Shoot; prove ammo/cooldown and failure behavior |
 | S6 | Migrate controller behaviors one at a time, with per-variant advancing tests |
@@ -130,6 +137,9 @@ there is no second active runtime implementation to disable.
 python -m src.atoms.support_audit --write
 python -m src.atoms.support_audit --check
 python -m pytest -q tests/test_atom_support_audit.py
+python -m src.atoms.ownership_audit --write
+python -m src.atoms.ownership_audit --check
+python -m pytest -q tests/test_mechanic_ownership_audit.py
 ```
 
 `--write` cannot approve new missing lowerers or identity conflicts. New debt,
