@@ -105,6 +105,38 @@ def _literal_call_refs(relative: str, call_name: str) -> dict[str, str]:
     return dict(sorted(result.items()))
 
 
+def _has_hosted_script_binding(template: str, guid_expression: str) -> bool:
+    expected_script = (
+        "m_Script: {fileID: 11500000, guid: "
+        f"{{{{ {guid_expression} }}}}, type: 3}}"
+    )
+    for block in template.split("--- !u!114"):
+        lines = tuple(line.strip() for line in block.splitlines())
+        if "MonoBehaviour:" not in lines or expected_script not in lines:
+            continue
+        for line in lines:
+            prefix = "m_GameObject: {fileID: "
+            if line.startswith(prefix) and line.endswith("}"):
+                file_id = line.removeprefix(prefix).removesuffix("}").strip()
+                if file_id and file_id != "0":
+                    return True
+    return False
+
+
+def _scene_component_attachment_ref(
+    relative: str,
+    guid_expression: str,
+) -> str | None:
+    template = (ROOT / relative).read_text(encoding="utf-8")
+    if not _has_hosted_script_binding(template, guid_expression):
+        return None
+    token = (
+        "m_Script: {fileID: 11500000, guid: "
+        f"{{{{ {guid_expression} }}}}, type: 3}}"
+    )
+    return _token_ref(relative, token)
+
+
 def _path_from_ref(reference: str) -> Path:
     return ROOT / reference.rsplit(":", 1)[0]
 
@@ -266,12 +298,14 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
     wait_provider = _source_ref(unity._SNIPPETS["Wait"])
     move_provider = _source_ref(unity._SNIPPETS["MoveTo"])
     wiring_provider = _source_ref(unity._SNIPPETS["WireInputToController"])
-    scene_template = (ROOT / "templates/unity/scene.unity.j2").read_text(encoding="utf-8")
-    sequencer_attachment = (
-        _token_ref("templates/unity/scene.unity.j2", "GameSequencer")
-        if "GameSequencer" in scene_template else None
+    sequencer_attachment = _scene_component_attachment_ref(
+        "templates/unity/scene.unity.j2",
+        "game_sequencer_guid",
     )
-    companion_attached = "DefaultBehavior" in scene_template
+    companion_attachment = _scene_component_attachment_ref(
+        "templates/unity/scene.unity.j2",
+        "controller_default_behavior_guid",
+    )
     controller_atoms = {entry["atom"] for entry in MICROGEN_ATOM_MAP["controller"]}
     if "Move" not in controller_atoms:
         raise OwnershipEvidenceError("controller default descriptor no longer contains Move")
@@ -337,10 +371,12 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
             provider=_source_ref(UnityMicroPipeline._after_write),
             owner_candidates=["ControllerDefaultBehavior"],
             generated_host="ControllerDefaultBehavior",
-            lifecycle_seam=(
-                "scene component attachment" if companion_attached else None
+            lifecycle_seam=companion_attachment,
+            missing_seam=(
+                None
+                if companion_attachment
+                else "generated scene component or runtime AddComponent"
             ),
-            missing_seam=None if companion_attached else "generated scene component or runtime AddComponent",
             provenance=[
                 _source_ref(UnityMicroPipeline._after_write),
                 _source_ref(MicroComposer.compose),

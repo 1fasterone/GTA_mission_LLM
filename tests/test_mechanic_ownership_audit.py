@@ -16,6 +16,7 @@ from src.atoms.ownership_audit import (
     REPORT,
     ROOT,
     OwnershipEvidenceError,
+    _has_hosted_script_binding,
     build_report,
     classify_connection,
     validate_report,
@@ -64,6 +65,26 @@ def test_emission_alone_does_not_establish_attachment(report):
     assert companion["classification"] == CONNECTED_BUT_NOT_ATTACHED
     assert sequencer["missing_seam"]
     assert companion["missing_seam"]
+
+
+def test_attachment_requires_a_hosted_specific_guid_binding():
+    mentions_only = """{# GameSequencer #}
+# ControllerDefaultBehavior and AnotherDefaultBehavior
+m_Script: {fileID: 11500000, guid: {{ unrelated_guid }}, type: 3}
+"""
+    unhosted = """--- !u!114 &100
+MonoBehaviour:
+  m_GameObject: {fileID: 0}
+  m_Script: {fileID: 11500000, guid: {{ game_sequencer_guid }}, type: 3}
+"""
+    hosted = """--- !u!114 &100
+MonoBehaviour:
+  m_GameObject: {fileID: 200}
+  m_Script: {fileID: 11500000, guid: {{ game_sequencer_guid }}, type: 3}
+"""
+    assert not _has_hosted_script_binding(mentions_only, "game_sequencer_guid")
+    assert not _has_hosted_script_binding(unhosted, "game_sequencer_guid")
+    assert _has_hosted_script_binding(hosted, "game_sequencer_guid")
 
 
 def test_entity_and_wiring_routes_have_real_hosts(report):
