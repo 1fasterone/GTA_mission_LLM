@@ -60,6 +60,7 @@ jobs:
           dotnet-version: "9.0.312"
       - run: pip install -r requirements.txt pytest
       - run: python -m src.atoms.support_audit --check
+      - run: python -m src.atoms.ownership_audit --check
       - run: pytest
 
   frozen-step35-acceptance:

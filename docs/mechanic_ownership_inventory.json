@@ -1,0 +1,258 @@
+{
+  "descriptor_producers": [
+    {
+      "consumers": [
+        "src/capability_resolver.py:225",
+        "src/capability_resolver.py:267",
+        "src/unity_generator.py:3388"
+      ],
+      "producer": "UnitySchema.atoms",
+      "source": "src/unity_schema.py:1301"
+    },
+    {
+      "consumers": [
+        "src/capability_resolver.py:267",
+        "src/unity_generator.py:3388"
+      ],
+      "producer": "MicrogensSpec.atoms",
+      "source": "src/unity_schema.py:1000"
+    },
+    {
+      "consumers": [
+        "src/unity_resolver.py:307",
+        "src/unity_generator.py:3388"
+      ],
+      "descriptor_source": "src/atoms/behavior_map.py:29",
+      "producer": "EntitySpec.atoms and behavior map",
+      "source": "src/unity_schema.py:337"
+    },
+    {
+      "consumers": [
+        "src/unity_resolver.py:307",
+        "src/unity_generator.py:3388"
+      ],
+      "producer": "UnityScript.atoms",
+      "source": "src/unity_schema.py:1221"
+    },
+    {
+      "consumers": [
+        "src/micro/unity_base.py:75"
+      ],
+      "producer": "Unity micro default atom descriptors",
+      "source": "src/atoms/behavior_map.py:121"
+    },
+    {
+      "consumers": [
+        "src/micro/gta5_base.py:60"
+      ],
+      "producer": "GTA5 micro default atom descriptors",
+      "source": "src/atoms/behavior_map.py:231"
+    },
+    {
+      "consumers": [
+        "templates/unity/compose/GameWiring.cs.j2:40"
+      ],
+      "descriptors": [
+        "WireBoardToObjectives",
+        "WireFSMToAnimator",
+        "WireGroundedBridge",
+        "WireHealthToAudio",
+        "WireHealthToFSM",
+        "WireHealthToHUD",
+        "WireInputToController",
+        "WireInputToFSM",
+        "WireInventoryToHUD",
+        "WireObjectivesToHUD",
+        "WireReachTargetRelay",
+        "WireTriggerToEscortObjective",
+        "WireTriggerToSave"
+      ],
+      "producer": "Unity wiring atom calls",
+      "source": "src/unity_compose.py:648"
+    },
+    {
+      "consumers": [
+        "src/unity_compose.py:291",
+        "src/unity_compose.py:520",
+        "templates/unity/scene.unity.j2:1323"
+      ],
+      "producer": "Unity composed subsystem descriptors",
+      "source": "src/unity_compose.py:36"
+    }
+  ],
+  "evidence_level": "structural_source_only",
+  "format": "mechanic-ownership/v1",
+  "protected_template_owners": [
+    {
+      "mechanic": "controller",
+      "migrated": false,
+      "owner": "ControllerPipeline",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/controller.py:662"
+    },
+    {
+      "mechanic": "board",
+      "migrated": false,
+      "owner": "BoardPipeline",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/board.py:386"
+    },
+    {
+      "mechanic": "rules",
+      "migrated": false,
+      "owner": "RulesPipeline",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "src/micro/rules.py:137"
+    },
+    {
+      "attachment": "templates/unity/micro/controller/Controller.cs.j2:1502",
+      "mechanic": "projectile",
+      "migrated": false,
+      "owner": "ControllerPipeline controller/projectile templates",
+      "ownership": "template_owned",
+      "runtime_acceptance": "unverified",
+      "source": "templates/unity/micro/controller/ProjectileController.cs.j2:12"
+    }
+  ],
+  "representative_connections": [
+    {
+      "classification": "connected_but_not_attached",
+      "descriptor": "unity:UnitySchema.atoms:Wait",
+      "diagnostic": "provider emits GameSequencer, but no generated attachment is proven; missing seam: scene or prefab component attachment",
+      "generated_host": "GameSequencer",
+      "lifecycle_seam": null,
+      "missing_seam": "scene or prefab component attachment",
+      "mode": "schema_level_atom",
+      "next_slice": null,
+      "owner_candidates": [
+        "GameSequencer"
+      ],
+      "provenance": [
+        "src/unity_generator.py:3388",
+        "templates/unity/GameSequencer.cs.j2:12"
+      ],
+      "provider": "src/atoms/backends/unity.py:292",
+      "runtime_acceptance": "unverified",
+      "selection": "src/unity_schema.py:1301",
+      "template_owner_preserved": null
+    },
+    {
+      "classification": "connected_and_owned",
+      "descriptor": "unity:behavior_map:patrol:MoveTo",
+      "diagnostic": "connected and owned by EntityBehavior through EntitySpawner.AddComponent -> EntityBehavior.Start coroutine",
+      "generated_host": "spawned entity GameObject",
+      "lifecycle_seam": "EntitySpawner.AddComponent -> EntityBehavior.Start coroutine",
+      "missing_seam": null,
+      "mode": "entity_attachment",
+      "next_slice": null,
+      "owner_candidates": [
+        "EntityBehavior"
+      ],
+      "provenance": [
+        "src/atoms/behavior_map.py:29",
+        "src/unity_resolver.py:331",
+        "templates/unity/EntityBehavior.cs.j2:9",
+        "templates/unity/EntitySpawner.cs.j2:495"
+      ],
+      "provider": "src/atoms/backends/unity.py:42",
+      "runtime_acceptance": "unverified",
+      "selection": "src/unity_resolver.py:307",
+      "template_owner_preserved": null
+    },
+    {
+      "classification": "connected_and_owned",
+      "descriptor": "unity:wiring:WireInputToController",
+      "diagnostic": "connected and owned by GameWiring through scene component -> GameWiring.Awake subscription",
+      "generated_host": "_Systems",
+      "lifecycle_seam": "scene component -> GameWiring.Awake subscription",
+      "missing_seam": null,
+      "mode": "unity_wiring_seam",
+      "next_slice": null,
+      "owner_candidates": [
+        "GameWiring"
+      ],
+      "provenance": [
+        "src/unity_compose.py:394",
+        "templates/unity/compose/GameWiring.cs.j2:40",
+        "templates/unity/scene.unity.j2:1334"
+      ],
+      "provider": "src/atoms/backends/unity.py:747",
+      "runtime_acceptance": "unverified",
+      "selection": "src/unity_compose.py:846",
+      "template_owner_preserved": null
+    },
+    {
+      "classification": "connected_but_not_attached",
+      "descriptor": "unity:MICROGEN_ATOM_MAP:controller:Move",
+      "diagnostic": "provider emits ControllerDefaultBehavior, but no generated attachment is proven; missing seam: generated scene component or runtime AddComponent",
+      "generated_host": "ControllerDefaultBehavior",
+      "lifecycle_seam": null,
+      "missing_seam": "generated scene component or runtime AddComponent",
+      "mode": "standalone_companion",
+      "next_slice": null,
+      "owner_candidates": [
+        "ControllerDefaultBehavior"
+      ],
+      "provenance": [
+        "src/micro/unity_base.py:75",
+        "src/unity_compose.py:520",
+        "src/unity_compose.py:543"
+      ],
+      "provider": "src/micro/unity_base.py:75",
+      "runtime_acceptance": "unverified",
+      "selection": "src/atoms/behavior_map.py:121",
+      "template_owner_preserved": "ControllerPipeline"
+    },
+    {
+      "classification": "connected_and_owned",
+      "descriptor": "unity:Subsystem:controller",
+      "diagnostic": "connected and owned by ControllerPipeline through MicroComposer.plan GUID -> scene player component",
+      "generated_host": "Player",
+      "lifecycle_seam": "MicroComposer.plan GUID -> scene player component",
+      "missing_seam": null,
+      "mode": "template_owned_mechanic",
+      "next_slice": null,
+      "owner_candidates": [
+        "ControllerPipeline"
+      ],
+      "provenance": [
+        "src/micro/__init__.py:78",
+        "src/unity_compose.py:394",
+        "templates/unity/scene.unity.j2:1381"
+      ],
+      "provider": "src/micro/controller.py:995",
+      "runtime_acceptance": "unverified",
+      "selection": "src/unity_compose.py:291",
+      "template_owner_preserved": "ControllerPipeline"
+    },
+    {
+      "classification": "missing_provider",
+      "descriptor": "unity:AtomDef:Shoot",
+      "diagnostic": "missing provider for unity:AtomDef:Shoot; later migration: S5",
+      "generated_host": null,
+      "lifecycle_seam": null,
+      "missing_seam": "Unity atom lowerer and typed runtime binding",
+      "mode": "missing_provider",
+      "next_slice": "S5",
+      "owner_candidates": [],
+      "provenance": [
+        "lookups/atoms/support_baseline.json:132",
+        "src/atoms/controller.py:196"
+      ],
+      "provider": null,
+      "runtime_acceptance": "unverified",
+      "selection": "src/atoms/controller.py:19",
+      "template_owner_preserved": "controller/projectile templates"
+    }
+  ],
+  "runtime_acceptance": "unverified",
+  "scope_limit": "Representative S3 structural closure only; no typed S4 binding persistence, runtime migration, compilation claim, or advancing runtime acceptance.",
+  "summary": {
+    "connected_and_owned": 3,
+    "connected_but_not_attached": 2,
+    "missing_provider": 1
+  }
+}
