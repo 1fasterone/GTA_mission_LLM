@@ -32,7 +32,7 @@ def editor_inventory(root: Path) -> list[dict]:
 
 
 def input_inventory(repo: Path) -> list[dict]:
-    rows = []
+    rows: list[dict[str, object]] = []
     for name in CANDIDATES:
         source = repo / 'prompts' / name
         if not source.is_file():
