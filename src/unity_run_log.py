@@ -24,9 +24,12 @@ from typing import Any, Literal, TextIO
 
 import yaml
 
+from .unity_run_lineage import capture_source_lineage
+
 
 _ANSI_RE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))")
 _STEP_RE = re.compile(r"^\s*STEP\s+(\d+)\s+--\s+(.+?)\s*$", re.MULTILINE)
+_COMPILER_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _PROJECT_RE = re.compile(r"Project written to:\s*(.+?)\s*$", re.MULTILINE)
 _PLAYABILITY_RE = re.compile(r"^\s*PLAYABILITY\s+.+$", re.MULTILINE)
 
@@ -228,6 +231,7 @@ class UnityCreateRunRecorder:
             self.command_args, self.cwd
         )
         raw_input = _read_raw_input(self.command_args, self.cwd)
+        source_lineage = capture_source_lineage(_COMPILER_REPOSITORY_ROOT)
         log_dir = output_root / "_run_logs"
         stamp = self.started.strftime("%Y%m%dT%H%M%S.%fZ")
         stem = f"unity-create-{stamp}-{raw_input['sha256'][:12]}-{os.getpid()}"
@@ -248,7 +252,7 @@ class UnityCreateRunRecorder:
             return self
 
         self._manifest = {
-            "format": "unity-create-run-log/v1",
+            "format": "unity-create-run-log/v2",
             "status": "running",
             "command": "unity-create",
             "argv": self.argv,
@@ -261,6 +265,7 @@ class UnityCreateRunRecorder:
             "offline_no_llm": "--no-llm" in self.command_args,
             "compose": "--compose" in self.command_args,
             "raw_input": raw_input,
+            "source_lineage": source_lineage,
             "log_path": str(self.log_path),
             "last_step": None,
             "project_path": None,

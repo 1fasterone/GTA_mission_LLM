@@ -22,6 +22,51 @@ from .common import app, console, _cfg, _load_authored_scene, _scene_cache_dir, 
 
 # ── Unity commands ─────────────────────────────────────────────────────────────
 
+@app.command("unity-run-lineage")
+def unity_run_lineage(
+    config: str = typer.Option(
+        "config.yaml", "--config", "-c", help="Pipeline config path"
+    ),
+    logs_dir: Optional[Path] = typer.Option(
+        None, "--logs-dir", help="Override the configured _run_logs directory"
+    ),
+    output: Optional[Path] = typer.Option(
+        None, "--output", "-o", help="Write the JSON discovery report"
+    ),
+    require_exact: bool = typer.Option(
+        False,
+        "--require-exact",
+        help="Fail when any manifest lacks an exact clean source revision",
+    ),
+) -> None:
+    """Discover whether each Unity run predates or contains accepted S2."""
+    from src.unity_run_lineage import discover_run_lineage, write_lineage_report
+
+    cfg = _cfg(config)
+    configured_output = Path(
+        _unity_pipe_cfg(cfg).get("unity_output_dir", "output/unity")
+    )
+    selected_logs = logs_dir or configured_output / "_run_logs"
+    repo_root = Path(__file__).resolve().parents[1]
+    report = discover_run_lineage(selected_logs, repo_root=repo_root)
+    summary = report["summary"]
+    console.print(
+        f"[cyan]S2 run lineage:[/] {summary['run_count']} manifest(s), "
+        f"{summary['exact_source_count']} exact clean revision(s)"
+    )
+    for row in report["runs"]:
+        marker = "exact" if row["exact_source"] else "bounded"
+        console.print(
+            f"  {Path(row['manifest']).name}: {row['classification']} "
+            f"[{marker}] — {row['evidence']}",
+            markup=False,
+        )
+    if output is not None:
+        target = write_lineage_report(report, output)
+        console.print(f"[green]Lineage report written[/] {target}")
+    if require_exact and summary["exact_source_count"] != summary["run_count"]:
+        raise typer.Exit(code=1)
+
 def _frozen_collection_replay(schema: UnitySchema) -> tuple[Path | None, dict[str, dict], list[dict]]:
     """Return the verified Step-3.5 collection inputs for a no-LLM replay.
 
@@ -718,7 +763,6 @@ def unity_validate(
                                        refresh_cover_points, refresh_projectile_presentation)
         from src.unity_micro_code import CODE_KEYS, merge_authored_code
         from src.unity_compose_selection import selected_subsystems
-        from src.unity_projectile_contract import PHYSICAL_PROJECTILE_META_KEY
         composer = MicroComposer(schema.project_name, template_dir=template_dir,
                                  project_config=cfg)
         subsystems = selected_subsystems(schema)
@@ -851,7 +895,7 @@ def unity_validate(
                 schema.meta.get("cover_points") if isinstance(schema.meta, dict) else None):
             console.print(f"  [magenta]FIX[/]  {msg}")
         for msg in refresh_projectile_presentation(
-                subsystems, schema.meta.get(PHYSICAL_PROJECTILE_META_KEY)):
+                subsystems, gen.last_projectile_presentation):
             console.print(f"  [magenta]FIX[/]  {msg}")
         composer.emit(subsystems, root / "Assets",
                       has_game_manager=has_game_manager, wiring=schema.wiring,

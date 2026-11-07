@@ -78,6 +78,7 @@ def test_failed_run_preserves_raw_input_stage_traceback_and_project(
             raise RuntimeError("playability gate failed")
 
     manifest = _manifest(tmp_path)
+    assert manifest["format"] == "unity-create-run-log/v2"
     assert manifest["status"] == "failed"
     assert manifest["exit_code"] == 1
     assert manifest["raw_input"]["kind"] == "file"
@@ -93,6 +94,9 @@ def test_failed_run_preserves_raw_input_stage_traceback_and_project(
     assert manifest["playability_summary"] == "PLAYABILITY 91/100 NOT PLAYABLE"
     assert manifest["failure"]["exception_type"] == "RuntimeError"
     assert "raise RuntimeError" in manifest["failure"]["traceback"]
+    assert Path(manifest["source_lineage"]["repo_root"]) == Path(
+        __file__
+    ).resolve().parents[1]
 
     log_text = Path(manifest["log_path"]).read_text(encoding="utf-8")
     assert "STEP 7 -- Playability evaluator grades the build" in log_text

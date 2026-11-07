@@ -123,38 +123,41 @@ it. The controller reset must:
 
 ## 7. Exact template insertion points
 
-1. `src/unity_projectile_contract.py`
-   - beside `_PROJECTILE_PROFILES`: define the closed presentation table;
+1. `src/intent/projectile.py`
+   - beside the closed projectile profiles: define the presentation table;
    - inside `physical_projectile_contract_for`: attach the selected
-     presentation record;
-   - beside `apply_physical_projectile_contract`: expose transient resolver and
-     resolved-path stamping helpers.
-2. `src/unity_generator.py`
+     presentation record as intent evidence.
+2. `src/unity_projectile_contract.py`
+   - validate the resolved contract only; never interpret prompt text, resolve
+     assets, or mutate schema.
+3. `src/unity_projectile_assets.py`
+   - expose the transient resolver request and detached resolved presentation.
+4. `src/unity_generator.py`
    - inside `_resolve_all_models`, immediately after normal entity resolution:
      resolve the transient projectile visual through the same entity resolver,
-     stamp the path into contract metadata, and retain the path for copying and
-     provenance.
-3. `src/unity_compose.py`
+     retain the detached path for copying and composition without stamping the
+     canonical schema.
+5. `src/unity_compose.py`
    - in `subsystems_for`, copy presentation metadata into controller `meta`;
    - beside `refresh_cover_points`, add the post-model-resolution controller
      metadata refresh.
-4. `src/unity_pipeline.py`
+6. `src/unity_pipeline.py`
    - immediately after `generator.write` and before `composer.emit`: invoke the
      projectile-presentation refresh.
-5. `templates/unity/micro/controller/Controller.cs.j2`
+7. `templates/unity/micro/controller/Controller.cs.j2`
    - physical-projectile field block: emit closed presentation constants;
    - `BuildProjectile3DPrefab`: replace `CreatePrimitive(Sphere)` with the empty
      root, primitive collider, and separate visual-root construction;
    - adjacent helper methods: load the resolved model, build the named fallback,
      and strip visual physics components.
-6. `templates/unity/micro/controller/ProjectileController.cs.j2`
+8. `templates/unity/micro/controller/ProjectileController.cs.j2`
    - cached runtime fields: add baseline child, renderer/material, particle, and
      trail snapshots;
    - `Awake`: capture the immutable visual baseline;
    - new `PrepareForCheckout`: execute the checkout reset;
    - `ResetForPool`: execute the parked reset;
    - `OnDestroy`: restore owner collisions and dispose per-instance materials.
-7. `templates/unity/micro/controller/ProjectilePool.cs.j2`
+9. `templates/unity/micro/controller/ProjectilePool.cs.j2`
    - `Borrow`: normalize root scale and call `PrepareForCheckout`;
    - `Return`: reset root local position, rotation, and scale after reparenting;
    - `EnsurePrefabContract`: enforce a primitive root collider and disable

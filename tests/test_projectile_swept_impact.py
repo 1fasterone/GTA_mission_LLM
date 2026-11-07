@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from src.unity_compose import MicroComposer, subsystems_for
-from src.unity_projectile_contract import physical_projectile_contract_for
+from src.intent.projectile import physical_projectile_contract_for
 
 
 def _generated_projectile_source(tmp_path: Path) -> str:

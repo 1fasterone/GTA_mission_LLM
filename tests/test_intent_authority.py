@@ -6,9 +6,17 @@ import pytest
 
 from src.intent.claims import IntentClaim, explicit_exclusion_claims
 from src.intent.ledger import IntentLedger
+from src.intent.projectile import physical_projectile_contract_for
 from src.intent_eval import load_intent_cases, run_intent_evals
 from src.mechanics import default_mechanic_registry
-from src.unity_pipeline_stages import StageExecutionRegistry, ValidateSchemaStage
+from src.schema_validation import read_only_schema_validator
+from src.unity_pipeline_stages import (
+    ExtractIntentStage,
+    GenerateSchemaStage,
+    ResolveIntentStage,
+    StageExecutionRegistry,
+    ValidateSchemaStage,
+)
 from src.unity_prompts import PromptTruncation, brief_block_report
 from src.unity_schema import UnitySchema
 
@@ -21,6 +29,14 @@ def _schema(name: str) -> UnitySchema:
         render_pipeline="URP",
         scenes=["Main"],
     )
+
+
+def _resolve(schema: UnitySchema, ledger: IntentLedger, prompt: str):
+    resolution = ResolveIntentStage().run(
+        schema, ledger, prompt=prompt, schema_source="schema_llm"
+    )
+    _schema_value, messages = GenerateSchemaStage().run(schema, resolution)
+    return resolution, messages
 
 
 def test_intent_claim_rejects_invalid_confidence():
@@ -61,6 +77,20 @@ def test_validator_stage_detects_mutation():
 
     with pytest.raises(RuntimeError, match="validator mutated"):
         ValidateSchemaStage().run(schema, [mutating_validator])
+    assert schema.locomotion == "walk"
+
+
+def test_decorated_validator_direct_call_cannot_mutate_canonical_schema():
+    schema = _schema("DirectValidation")
+
+    @read_only_schema_validator
+    def mutating_validator(value):
+        value.locomotion = "fly"
+        return []
+
+    with pytest.raises(RuntimeError, match="validator mutated"):
+        mutating_validator(schema)
+    assert schema.locomotion == "walk"
 
 
 def test_complete_brief_transport_reports_no_truncation():
@@ -97,15 +127,11 @@ def test_thirty_golden_intent_cases_are_partitioned_and_pass():
 
 @pytest.mark.parametrize(("seed", "resolved"), [("2D", "3D"), ("3D", "2D")])
 def test_projectile_delivery_uses_resolved_dimension(seed, resolved):
-    from src.unity_pipeline_stages import ResolveIntentStage
-
     schema = _schema("ProjectileDimension")
     schema.game_type = seed
     ledger = IntentLedger()
     ledger.register(IntentClaim("game_type", resolved, "user", 1.0, "explicit dimension"))
-    ResolveIntentStage().run(
-        schema, ledger, prompt="The hero tosses rocks at targets.", schema_source="schema_llm"
-    )
+    _resolve(schema, ledger, "The hero tosses rocks at targets.")
     assert schema.game_type == resolved
     assert ("physical_projectile_contract" in schema.meta) == (resolved == "3D")
     assert any(entity.kind == "weapon" for entity in schema.entities) == (resolved == "3D")
@@ -113,34 +139,25 @@ def test_projectile_delivery_uses_resolved_dimension(seed, resolved):
 
 @pytest.mark.parametrize("brief", ["An FPS with hitscan bullets.", "Explore a canyon."])
 def test_resolution_clears_stale_projectile_contract(brief):
-    from src.unity_pipeline_stages import ResolveIntentStage
-    from src.unity_projectile_contract import physical_projectile_contract_for
-
     schema = _schema("StaleProjectile")
     schema.meta["physical_projectile_contract"] = physical_projectile_contract_for(
         "3D", "The hero tosses rocks at targets."
     )
     assert schema.meta["physical_projectile_contract"]
-    resolution, _ = ResolveIntentStage().run(
-        schema, IntentLedger(), prompt=brief, schema_source="schema_llm"
-    )
+    resolution, _ = _resolve(schema, IntentLedger(), brief)
     assert resolution.decisions["projectile_contract"] is None
     assert "physical_projectile_contract" not in schema.meta
 
 
 def test_vehicle_exclusion_changes_controller_and_removes_vehicle_mode():
     from src.unity_compose import subsystems_for
-    from src.unity_pipeline_stages import ResolveIntentStage
-
     schema = _schema("VehicleExcluded")
     schema.locomotion = "drive"
     schema.locomotion_modes = ["on_foot", "vehicle_car"]
     brief = "No vehicles."
     ledger = IntentLedger()
     ledger.extend(explicit_exclusion_claims(brief))
-    resolution, _ = ResolveIntentStage().run(
-        schema, ledger, prompt=brief, schema_source="schema_llm"
-    )
+    resolution, _ = _resolve(schema, ledger, brief)
     assert schema.locomotion == "walk"
     assert resolution.winners["locomotion"].source == "user_exclusion"
     assert schema.locomotion_modes == ["on_foot"]
@@ -193,14 +210,10 @@ def test_exclusions_respect_clause_boundaries_and_noun_modifiers(prompt, exclude
 ])
 def test_allowed_car_survives_resolution_and_composition(prompt):
     from src.unity_pipeline import _compose_subsystems
-    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
-
     schema = _schema("AllowedCar")
     schema.locomotion = "drive"
     _intent, ledger = ExtractIntentStage().run(prompt)
-    resolution, _messages = ResolveIntentStage().run(
-        schema, ledger, prompt=prompt, schema_source="schema_llm"
-    )
+    resolution, _messages = _resolve(schema, ledger, prompt)
     assert resolution.exclusions == ("bike",)
     assert resolution.decisions["locomotion"] == schema.locomotion == "drive"
     assert schema.meta["intent_exclusions"] == ["bike"]
@@ -212,14 +225,12 @@ def test_allowed_car_survives_resolution_and_composition(prompt):
 
 def test_allowed_car_mode_survives_bike_exclusion():
     from src.unity_pipeline import _compose_subsystems
-    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
-
     prompt = "A 3D driving game. No bikes but cars are allowed."
     schema = _schema("AllowedCarMode")
     schema.locomotion = "drive"
     schema.locomotion_modes = ["on_foot", "vehicle_car"]
     _intent, ledger = ExtractIntentStage().run(prompt)
-    ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
+    _resolve(schema, ledger, prompt)
     persist_selection(schema, prompt)
     controller = next(sub for sub in _compose_subsystems(schema) if sub.kind == "controller")
     assert controller.variant == "multi_mode"
@@ -228,16 +239,12 @@ def test_allowed_car_mode_survives_bike_exclusion():
 
 def test_fresh_resolution_clears_saved_exclusion_before_composition():
     from src.unity_pipeline import _compose_subsystems
-    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
-
     schema = _schema("ReallowedBike")
     schema.locomotion = "drive"
     schema.meta["intent_exclusions"] = ["bike"]
     prompt = "A 3D motorcycle driving game."
     _intent, ledger = ExtractIntentStage().run(prompt)
-    resolution, _messages = ResolveIntentStage().run(
-        schema, ledger, prompt=prompt, schema_source="schema_llm"
-    )
+    resolution, _messages = _resolve(schema, ledger, prompt)
     assert resolution.exclusions == ()
     assert schema.meta["intent_exclusions"] == []
     persist_selection(schema, prompt)
@@ -247,13 +254,11 @@ def test_fresh_resolution_clears_saved_exclusion_before_composition():
 
 def test_pointer_game_stays_unembodied_after_exclusion_resolution():
     from src.unity_pipeline import _compose_subsystems
-    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
-
     schema = _schema("PointerExclusion")
     schema.locomotion = "none"
     prompt = "A 3D board game with no bikes but cars displayed as cards."
     _intent, ledger = ExtractIntentStage().run(prompt)
-    ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
+    _resolve(schema, ledger, prompt)
     persist_selection(schema, prompt)
     subsystems = _compose_subsystems(schema)
     assert schema.locomotion == "none"
@@ -264,13 +269,11 @@ def test_pointer_game_stays_unembodied_after_exclusion_resolution():
 def test_allowed_car_controller_is_materialized(tmp_path):
     from src.unity_compose import MicroComposer
     from src.unity_pipeline import _compose_subsystems
-    from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
-
     schema = _schema("CarExclusionFixture")
     schema.locomotion = "drive"
     prompt = "A 3D driving game. No motorcycles but cars are allowed."
     _intent, ledger = ExtractIntentStage().run(prompt)
-    ResolveIntentStage().run(schema, ledger, prompt=prompt, schema_source="schema_llm")
+    _resolve(schema, ledger, prompt)
     persist_selection(schema, prompt)
     units = MicroComposer(schema.project_name).emit(_compose_subsystems(schema), tmp_path / "Assets")
     controller = next(unit for unit in units if unit.kind == "controller")

@@ -4,6 +4,7 @@ import inspect
 from pathlib import Path
 
 from src import unity_pipeline
+from src.intent.ledger import IntentLedger
 from src.unity_pipeline_stages import (
     BindAssetsStage,
     ComposeStage,
@@ -14,6 +15,7 @@ from src.unity_pipeline_stages import (
     ValidateSchemaStage,
 )
 from src.unity_projectile_contract import validate_physical_projectile_contract
+from src.unity_schema import UnitySchema
 from tools.generate_ci_unity_project import COMPILE_CHECK
 
 
@@ -45,6 +47,37 @@ def test_projectile_validator_is_read_only_by_contract():
     source = inspect.getsource(validate_physical_projectile_contract)
     assert "schema.meta =" not in source
     assert "schema.entities.append" not in source
+
+
+def test_projectile_contract_module_is_validation_only():
+    source = (ROOT / "src" / "unity_projectile_contract.py").read_text(
+        encoding="utf-8"
+    )
+    assert "re.compile" not in source
+    assert "physical_projectile_contract_for" not in source
+    assert "projectile_visual_resolver_entity" not in source
+
+
+def test_resolution_decides_and_schema_generation_materializes():
+    schema = UnitySchema(
+        project_name="AuthorityBoundary",
+        game_type="3D",
+        platform="pc",
+        render_pipeline="URP",
+        scenes=["Main"],
+    )
+    before = schema.model_dump(mode="json")
+    resolution = ResolveIntentStage().run(
+        schema,
+        IntentLedger(),
+        prompt="The hero throws physical rocks at targets.",
+        schema_source="schema_llm",
+    )
+    assert schema.model_dump(mode="json") == before
+
+    materialized, _messages = GenerateSchemaStage().run(schema, resolution)
+    assert materialized.meta["physical_projectile_contract"]
+    assert any(entity.kind == "weapon" for entity in materialized.entities)
 
 
 def test_compile_workflows_are_mandatory_not_skip_gates():

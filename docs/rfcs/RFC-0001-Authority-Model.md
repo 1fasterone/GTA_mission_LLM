@@ -7,7 +7,8 @@ Status: Accepted
 The compiler uses an evidence-to-decision chain:
 
 ```text
-Prompt -> claims -> IntentLedger -> IntentResolver -> canonical UnitySchema
+Prompt -> claims + Step-3 candidate schema -> IntentLedger -> IntentResolver
+       -> GenerateSchemaStage materialization -> canonical UnitySchema
        -> read-only validation -> composition -> asset binding -> generation
 ```
 
@@ -18,9 +19,11 @@ upstream output but cannot reinterpret or silently repair meaning.
 | --- | --- | --- | --- |
 | Intent | `src/intent/claims.py` producers | append claims | choose winners or edit schema |
 | Resolution | `src/intent/resolver.py` | canonical decisions and provenance | generate code |
-| Schema | Step 3 plus schema materialization | typed project IR | invent intent after resolution |
+| Schema | `GenerateSchemaStage` materialization | resolved typed project IR | reinterpret prompt text |
 | Composition | Compose Micros | subsystem plan and wiring | override resolved intent |
-| Projectiles | resolved intent plus registry | typed projectile schema contract | mutate inside validation |
+| Projectile intent | `src/intent/projectile.py` | append a closed claim value | receive or mutate schema |
+| Projectile validation | `src/unity_projectile_contract.py` | findings only | materialize, repair, or enrich schema |
+| Projectile assets | `src/unity_projectile_assets.py` | detached visual binding | write resolved paths into canonical schema |
 | Assets | `AssetBinder` | frozen entity-to-asset selections | change entity identity |
 | Generation | deterministic generators | files derived from schema | reinterpret prompt text |
 | Validation | validators | findings only | mutate schema or add mechanics |
@@ -30,8 +33,11 @@ upstream output but cannot reinterpret or silently repair meaning.
 
 - `IntentLedger` is append-only and records source, confidence, and rationale.
 - `StageExecutionRegistry` rejects a second execution of any named stage.
-- `ValidateSchemaStage` compares the schema before/after every validator and
-  raises if a validator writes anything.
+- `src/schema_validation.py` gives every validator an isolated deep copy and
+  raises if that copy changes. Decorated validators retain the guard on direct
+  calls; `ValidateSchemaStage` guards ad-hoc validators too.
+- `ResolveIntentStage` chooses decisions without schema writes;
+  `GenerateSchemaStage` alone materializes those decisions.
 - Pipeline snapshots are persisted at Pre-Step3, Post-Step3,
   Post-Resolution, Post-Reconciliation, Post-Compose, and Pre-Generation.
 - Mechanics are registered once in `MechanicRegistry`; Fire, Projectile, and
@@ -42,4 +48,6 @@ upstream output but cannot reinterpret or silently repair meaning.
 
 Adding a mechanic requires a schema contract, one registry entry, its runtime
 implementation, and tests. Prompt classifiers remain replaceable evidence
-sources. A behavior change is traceable through the ledger and snapshot diff.
+sources. Intent-controlled behavior is traceable through the ledger and
+snapshot diff. Deterministic fixer, layout, composition, and asset-provenance
+writes do not yet have a universal per-write mutation journal.

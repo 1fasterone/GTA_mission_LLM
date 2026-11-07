@@ -4,17 +4,17 @@ from pathlib import Path
 
 import pytest
 
+from src.intent.projectile import physical_projectile_contract_for
 from src.unity_compose import (
     MicroComposer,
     refresh_projectile_presentation,
     subsystems_for,
 )
-from src.unity_projectile_contract import (
-    PHYSICAL_PROJECTILE_META_KEY,
-    physical_projectile_contract_for,
+from src.unity_projectile_assets import (
     projectile_visual_resolver_entity,
-    stamp_projectile_visual_resolution,
+    resolved_projectile_presentation,
 )
+from src.unity_projectile_contract import PHYSICAL_PROJECTILE_META_KEY
 from src.unity_schema import UnitySchema
 
 
@@ -40,7 +40,7 @@ def _generated_sources(tmp_path: Path, brief: str) -> tuple[str, str, str]:
     )
 
 
-def test_visual_request_is_compiler_only_and_resolution_stays_in_meta():
+def test_visual_request_and_resolution_never_mutate_schema():
     contract = _contract("A rifle fires visible physical bullets at targets.")
     schema = UnitySchema(
         project_name="ProjectileVisualResolution",
@@ -51,6 +51,7 @@ def test_visual_request_is_compiler_only_and_resolution_stays_in_meta():
         meta={PHYSICAL_PROJECTILE_META_KEY: contract},
     )
 
+    before = schema.model_dump(mode="json")
     request = projectile_visual_resolver_entity(schema)
     assert request is not None
     assert request.name == "ProjectileVisualFastRound"
@@ -58,9 +59,11 @@ def test_visual_request_is_compiler_only_and_resolution_stays_in_meta():
     assert request.model_hint == "bullet projectile round"
     assert schema.entities == []
 
-    stamp_projectile_visual_resolution(schema, "Models/Kenney/Projectile/Bullet")
-    presentation = schema.meta[PHYSICAL_PROJECTILE_META_KEY]["presentation"]
+    presentation = resolved_projectile_presentation(
+        schema, "Models/Kenney/Projectile/Bullet"
+    )
     assert presentation["resource_path"] == "Models/Kenney/Projectile/Bullet"
+    assert schema.model_dump(mode="json") == before
     assert schema.entities == []
 
 
@@ -74,7 +77,7 @@ def test_unknown_motion_profile_abstains_loudly():
         meta={PHYSICAL_PROJECTILE_META_KEY: {"motion_profile": "invented_round"}},
     )
 
-    with pytest.raises(ValueError, match="unknown closed motion profile"):
+    with pytest.raises(ValueError, match="has no presentation"):
         projectile_visual_resolver_entity(schema)
 
 
@@ -82,9 +85,10 @@ def test_post_resolution_refresh_reaches_controller_without_schema_fields():
     contract = _contract("A rifle fires visible physical bullets.")
     subsystems = subsystems_for("3D", [], projectile_contract=contract)
     controller = next(sub for sub in subsystems if sub.kind == "controller")
-    contract["presentation"]["resource_path"] = "Models/Kenney/Projectile/Bullet"
+    presentation = dict(contract["presentation"])
+    presentation["resource_path"] = "Models/Kenney/Projectile/Bullet"
 
-    messages = refresh_projectile_presentation(subsystems, contract)
+    messages = refresh_projectile_presentation(subsystems, presentation)
 
     assert controller.options["meta"]["projectile_presentation"]["resource_path"] == (
         "Models/Kenney/Projectile/Bullet"

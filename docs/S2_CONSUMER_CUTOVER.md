@@ -1,8 +1,9 @@
-# S2 consumer cutover — concrete implementation map
+# S2 consumer cutover — accepted implementation map
 
-Baseline: `6919e7ebb0e7d45a046af6486f700120fbf685a5` (#285). This document is a
-compiler engineering plan. It does not establish a completed S2 cutover, a model
-evaluation, Unity compilation, or advancing gameplay execution.
+Preparation baseline: `6919e7ebb0e7d45a046af6486f700120fbf685a5`
+(#285). Accepted cutover: `c239ac826ba62f9cb39a981679085e8032a56e36`.
+The tables below preserve the engineering map used for that cutover. Runtime
+claims still require their separate Unity acceptance evidence.
 
 ## Order and authority
 

@@ -7,12 +7,13 @@ import pytest
 
 from src.intent.claims import IntentClaim
 from src.intent.ledger import IntentLedger
-from src.intent.resolver import apply_resolution, resolve_intent
-from src.unity_pipeline_stages import ResolveIntentStage
-from src.unity_projectile_contract import (
-    physical_projectile_contract_for,
-    stamp_projectile_visual_resolution,
+from src.intent.projectile import physical_projectile_contract_for
+from src.intent.resolver import resolve_intent
+from src.unity_pipeline_stages import (
+    GenerateSchemaStage,
+    ResolveIntentStage,
 )
+from src.unity_projectile_assets import resolved_projectile_presentation
 from src.unity_schema import UnitySchema
 
 
@@ -37,23 +38,22 @@ def _two_snapshots():
     return ledger
 
 
-def test_schema_snapshots_preserve_projectile_asset_resolution_history():
+def test_projectile_asset_resolution_is_detached_from_schema_history():
     schema = _schema()
     schema.meta["physical_projectile_contract"] = _contract()
+    schema_before = schema.model_dump(mode="json")
     ledger = IntentLedger()
     ledger.snapshot("Post-Resolution", schema)
-    stamp_projectile_visual_resolution(schema, "Models/Rock")
+    presentation = resolved_projectile_presentation(schema, "Models/Rock")
     ledger.snapshot("Pre-Generation", schema)
 
     report = ledger.to_dict()
     before, after = report["snapshots"]
     assert before["state"]["projectile_contract"]["presentation"]["resource_path"] == ""
-    assert after["state"]["projectile_contract"]["presentation"]["resource_path"] == "Models/Rock"
-    assert report["diffs"] == [{
-        "field": "projectile_contract", "before": before["state"]["projectile_contract"],
-        "after": after["state"]["projectile_contract"],
-        "from": "Post-Resolution", "to": "Pre-Generation",
-    }]
+    assert after["state"]["projectile_contract"]["presentation"]["resource_path"] == ""
+    assert presentation["resource_path"] == "Models/Rock"
+    assert report["diffs"] == []
+    assert schema.model_dump(mode="json") == schema_before
 
 
 def test_snapshot_state_detaches_nested_containers_from_its_input():
@@ -118,17 +118,19 @@ def test_resolution_and_its_export_do_not_rewrite_registered_evidence():
 def test_asset_binding_preserves_claims_resolution_and_saved_report():
     schema = _schema()
     ledger = IntentLedger()
-    resolution, _ = ResolveIntentStage().run(
+    resolution = ResolveIntentStage().run(
         schema, ledger, prompt="The hero tosses rocks at targets.", schema_source="schema_llm",
     )
+    schema, _ = GenerateSchemaStage().run(schema, resolution)
     ledger.snapshot("Post-Resolution", schema)
     report = ledger.to_dict()
     report_json = json.dumps(report, sort_keys=True)
     resolution_json = json.dumps(resolution.to_dict(), sort_keys=True)
     schema.meta["intent_ledger"] = report
 
-    stamp_projectile_visual_resolution(schema, "Models/Rock")
+    presentation = resolved_projectile_presentation(schema, "Models/Rock")
     ledger.snapshot("Pre-Generation", schema)
+    assert presentation["resource_path"] == "Models/Rock"
     assert json.dumps(report, sort_keys=True) == report_json
     assert json.dumps(resolution.to_dict(), sort_keys=True) == resolution_json
     assert json.dumps(schema.meta["intent_resolution"], sort_keys=True) == resolution_json
@@ -136,7 +138,7 @@ def test_asset_binding_preserves_claims_resolution_and_saved_report():
 
     replayed = UnitySchema.model_validate_json(schema.model_dump_json())
     replayed_resolution = resolve_intent(ledger)
-    apply_resolution(replayed, replayed_resolution)
+    replayed, _ = GenerateSchemaStage().run(replayed, replayed_resolution)
     assert replayed.meta["physical_projectile_contract"]["presentation"]["resource_path"] == ""
     assert json.dumps(replayed.meta["intent_resolution"], sort_keys=True) == resolution_json
     assert json.loads(report_json)["format"] == ledger.to_dict()["format"] == "intent-ledger/v1"
