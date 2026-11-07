@@ -19,7 +19,11 @@ import pytest
 import yaml
 
 from src.unity_escort_follow import resolve_escort_follow
-from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+from src.unity_pipeline_stages import (
+    ExtractIntentStage,
+    GenerateSchemaStage,
+    ResolveIntentStage,
+)
 from src.unity_schema import EntitySpec, MissionObjective, MissionSpec, UnitySchema
 
 
@@ -97,9 +101,10 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
     )
     prompt = "An FPS with a rifle and pooled physical bullets."
     _intent, ledger = ExtractIntentStage().run(prompt)
-    ResolveIntentStage().run(
+    resolution = ResolveIntentStage().run(
         schema, ledger, prompt=prompt, schema_source="schema_llm"
     )
+    GenerateSchemaStage().run(schema, resolution)
     from src.unity_compose_selection import persist_selection
     persist_selection(schema, prompt)
     # Synthetic saved Step-5 selection predates asset resolution. Replay must
@@ -116,8 +121,9 @@ def test_unity_validate_compose_replays_physical_projectile_contract(tmp_path):
     assert "ResolveProjectileMuzzle()" in source
     saved = json.loads((tmp_path / "out" / "ProjectileReplay" / "ProjectileReplay.schema.json").read_text())
     presentation = saved["meta"]["physical_projectile_contract"]["presentation"]
-    assert presentation["resource_path"]
-    assert f'ProjectileVisualResourcePath = "{presentation["resource_path"]}"' in source
+    assert presentation["resource_path"] == ""
+    assert "ProjectileVisualResourcePath =" in source
+    assert 'ProjectileVisualResourcePath = "";' not in source
 
 
 def test_frozen_collection_replay_rejects_binding_outside_the_saved_collection(tmp_path):

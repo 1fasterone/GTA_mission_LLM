@@ -8,7 +8,7 @@ reconciliation/resolution pass.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, TypeVar
+from typing import Any, Callable, Iterable, TypeVar
 
 from ..intent.claims import (
     claims_from_classifier,
@@ -17,9 +17,10 @@ from ..intent.claims import (
     projectile_claims,
 )
 from ..intent.ledger import IntentLedger
+from ..intent.projectile import physical_projectile_contract_for
 from ..intent.resolver import IntentResolution, apply_resolution, resolve_intent
+from ..schema_validation import execute_schema_validator
 from ..unity_archetypes import classify
-from ..unity_projectile_contract import physical_projectile_contract_for
 
 T = TypeVar("T")
 
@@ -50,25 +51,30 @@ class ExtractIntentStage:
 class GenerateSchemaStage:
     name = "generate_schema"
 
-    def accept(self, schema: Any) -> Any:
+    def run(
+        self,
+        schema: Any,
+        resolution: IntentResolution,
+    ) -> tuple[Any, list[str]]:
+        """Materialize resolved intent through the only schema-write boundary."""
         if schema is None:
             raise ValueError("schema generation produced no schema")
-        return schema
+        messages = apply_resolution(schema, resolution)
+        _materialize_projectile_view_model(schema, resolution)
+        return schema, messages
 
 
 class ResolveIntentStage:
     name = "resolve_intent"
 
     def run(self, schema: Any, ledger: IntentLedger, *, prompt: str,
-            schema_source: str) -> tuple[IntentResolution, list[str]]:
+            schema_source: str) -> IntentResolution:
+        """Choose canonical decisions without writing the schema."""
         ledger.extend(claims_from_schema(schema, source=schema_source))
         game_type = resolve_intent(ledger).decisions["game_type"]
         contract = physical_projectile_contract_for(game_type, prompt)
         ledger.extend(projectile_claims(game_type, prompt, contract))
-        resolution = resolve_intent(ledger)
-        messages = apply_resolution(schema, resolution)
-        _materialize_projectile_view_model(schema, resolution)
-        return resolution, messages
+        return resolve_intent(ledger)
 
 
 def _materialize_projectile_view_model(schema: Any,
@@ -99,14 +105,14 @@ def _materialize_projectile_view_model(schema: Any,
 class ValidateSchemaStage:
     name = "validate_schema"
 
-    def run(self, schema: Any, validators: list[Callable[[Any], list[str]]]) -> list[str]:
+    def run(
+        self,
+        schema: Any,
+        validators: list[Callable[[Any], Iterable[str]]],
+    ) -> list[str]:
         messages: list[str] = []
-        before = schema.model_dump(mode="json")
         for validator in validators:
-            messages.extend(validator(schema))
-        after = schema.model_dump(mode="json")
-        if before != after:
-            raise RuntimeError("validator mutated schema; validators are read-only")
+            messages.extend(execute_schema_validator(schema, validator))
         return messages
 
 

@@ -24,8 +24,10 @@ from .unity_entity_asset_resolver import (resolve_entity_assets,
 from .unity_model_resolver import resolve_default_models, models_for_schema
 from .unity_layout import terrain_bounds
 from .unity_layout_archetype import pick_player_entity
-from .unity_projectile_contract import (projectile_visual_resolver_entity,
-                                        stamp_projectile_visual_resolution)
+from .unity_projectile_assets import (
+    projectile_visual_resolver_entity,
+    resolved_projectile_presentation,
+)
 from .unity_atmosphere import assert_aaa_contract
 from .unity_greybox import (GREYBOX_SCRIPT_TYPES, apply_greybox_spatial_layout,
                              greybox_plus_ir_for_schema, greybox_ir_for_schema,
@@ -3019,6 +3021,7 @@ class UnityProjectGenerator:
         # only authority that sees measured catalog bounds, so the persisted
         # 6.5 artifact must use this exact table rather than re-discovering it.
         self.last_measured_footprints: dict[str, float] = {}
+        self.last_projectile_presentation: dict[str, Any] = {}
 
     # ── model resolution (single source of truth) ──────────────────────────────
 
@@ -3247,6 +3250,7 @@ class UnityProjectGenerator:
 
         Returns (used_models, entity_model_paths).
         """
+        self.last_projectile_presentation = {}
         _override_kinds = set(model_overrides.keys()) if model_overrides else None
         all_models = _apply_model_overrides(
             resolve_default_models(lookups_dir=lookups_dir,
@@ -3294,7 +3298,9 @@ class UnityProjectGenerator:
                 allow_prop_fallback=False,
             )
             visual_path = visual_paths.get(projectile_visual.name, "")
-            stamp_projectile_visual_resolution(schema, visual_path)
+            self.last_projectile_presentation = resolved_projectile_presentation(
+                schema, visual_path
+            )
             if visual_path:
                 # Retain the compiler-only identity in model provenance/copy
                 # tables. EntitySpawner only iterates schema.entities, so this
@@ -3406,6 +3412,7 @@ class UnityProjectGenerator:
         `_GameSystems` GameObject carrying one MonoBehaviour per composed micro,
         referenced by its deterministic .cs.meta GUID.
         """
+        self.last_projectile_presentation = {}
         if is_geometry_only_greybox(schema):
             return self._generate_greybox_only_files(schema, manifest_deps)
 

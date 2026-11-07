@@ -4,13 +4,17 @@ from pathlib import Path
 
 import pytest
 
+from src.intent.projectile import physical_projectile_contract_for
 from src.unity_compose import MicroComposer, subsystems_for
 from src.unity_projectile_contract import (
     PHYSICAL_PROJECTILE_META_KEY,
-    physical_projectile_contract_for,
     validate_physical_projectile_contract,
 )
-from src.unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+from src.unity_pipeline_stages import (
+    ExtractIntentStage,
+    GenerateSchemaStage,
+    ResolveIntentStage,
+)
 from src.unity_schema import UnitySchema
 
 
@@ -36,9 +40,10 @@ def _contract_for(brief: str) -> dict:
 
 def _resolve(schema: UnitySchema, brief: str) -> list[str]:
     _intent, ledger = ExtractIntentStage().run(brief)
-    _resolution, messages = ResolveIntentStage().run(
+    resolution = ResolveIntentStage().run(
         schema, ledger, prompt=brief, schema_source="schema_llm"
     )
+    _schema, messages = GenerateSchemaStage().run(schema, resolution)
     return messages
 
 

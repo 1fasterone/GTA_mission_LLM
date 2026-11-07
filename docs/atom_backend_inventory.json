@@ -5032,91 +5032,91 @@
       "atom": "WireBoardToObjectives",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:957"
+        "src/unity_compose.py:955"
       ]
     },
     {
       "atom": "WireFSMToAnimator",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:812"
+        "src/unity_compose.py:810"
       ]
     },
     {
       "atom": "WireGroundedBridge",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:878"
+        "src/unity_compose.py:876"
       ]
     },
     {
       "atom": "WireHealthToAudio",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:793"
+        "src/unity_compose.py:791"
       ]
     },
     {
       "atom": "WireHealthToFSM",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:760"
+        "src/unity_compose.py:758"
       ]
     },
     {
       "atom": "WireHealthToHUD",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:746"
+        "src/unity_compose.py:744"
       ]
     },
     {
       "atom": "WireInputToController",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:846"
+        "src/unity_compose.py:844"
       ]
     },
     {
       "atom": "WireInputToFSM",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:858"
+        "src/unity_compose.py:856"
       ]
     },
     {
       "atom": "WireInventoryToHUD",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:1255"
+        "src/unity_compose.py:1253"
       ]
     },
     {
       "atom": "WireObjectivesToHUD",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:1199"
+        "src/unity_compose.py:1197"
       ]
     },
     {
       "atom": "WireReachTargetRelay",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:1103"
+        "src/unity_compose.py:1101"
       ]
     },
     {
       "atom": "WireTriggerToEscortObjective",
       "resolution": "dispatch_only",
       "sources": [
-        "src/unity_compose.py:998"
+        "src/unity_compose.py:996"
       ]
     },
     {
       "atom": "WireTriggerToSave",
       "resolution": "registered",
       "sources": [
-        "src/unity_compose.py:895"
+        "src/unity_compose.py:893"
       ]
     }
   ],

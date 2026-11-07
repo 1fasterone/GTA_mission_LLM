@@ -53,8 +53,7 @@ from .unity_concept_narrative import (inject_missing_concept_narrative,
 from .unity_concept_title import (inject_missing_concept_title,
                                   render_title_checklist)
 from .unity_concept_missions import inject_missing_concept_missions
-from .unity_projectile_contract import (PHYSICAL_PROJECTILE_META_KEY,
-                                        validate_physical_projectile_contract)
+from .unity_projectile_contract import validate_physical_projectile_contract
 from .unity_layout        import compute_layout
 from .unity_cover_points  import compute_cover_points
 from .unity_greybox       import (GREYBOX_SCRIPT_TYPES,
@@ -1969,11 +1968,6 @@ class UnityPipeline:
             for msg in clamp_msgs:
                 self._fix(msg)
 
-        schema = stage_registry.run(
-            GenerateSchemaStage.name,
-            lambda: GenerateSchemaStage().accept(schema),
-        )
-
         # Shared tail of Steps 2-3 — runs for both fills. The offline fill has
         # already written meta.user_prompt/concept/fill; re-writing them here
         # keeps one source of truth for the theme + spatial-fact stamps.
@@ -2024,7 +2018,7 @@ class UnityPipeline:
         # to choose canonical game type, locomotion, exclusions and projectile
         # delivery. Classifiers and validators cannot write schema directly.
         intent_ledger.snapshot("Post-Step3", schema)
-        _intent_resolution, _intent_messages = stage_registry.run(
+        _intent_resolution = stage_registry.run(
             ResolveIntentStage.name,
             lambda: ResolveIntentStage().run(
                 schema,
@@ -2032,6 +2026,10 @@ class UnityPipeline:
                 prompt=user_prompt,
                 schema_source="schema_deterministic" if no_llm else "schema_llm",
             ),
+        )
+        schema, _intent_messages = stage_registry.run(
+            GenerateSchemaStage.name,
+            lambda: GenerateSchemaStage().run(schema, _intent_resolution),
         )
         for msg in _intent_messages:
             self._fix(msg)
@@ -2734,8 +2732,7 @@ class UnityPipeline:
                 self._fix(msg)
             for msg in refresh_projectile_presentation(
                     subsystems,
-                    schema.meta.get(PHYSICAL_PROJECTILE_META_KEY)
-                    if isinstance(schema.meta, dict) else None):
+                    self.generator.last_projectile_presentation):
                 self._fix(msg)
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,

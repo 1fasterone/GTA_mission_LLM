@@ -9,7 +9,11 @@ from typing import Any
 
 from .mechanics import default_mechanic_registry
 from .unity_compose import subsystems_for
-from .unity_pipeline_stages import ExtractIntentStage, ResolveIntentStage
+from .unity_pipeline_stages import (
+    ExtractIntentStage,
+    GenerateSchemaStage,
+    ResolveIntentStage,
+)
 from .unity_schema import UnitySchema
 
 
@@ -47,9 +51,10 @@ def evaluate_intent_case(case: dict[str, Any]) -> dict[str, Any]:
     )
     prompt = str(case["prompt"])
     _classified, ledger = ExtractIntentStage().run(prompt)
-    resolution, _messages = ResolveIntentStage().run(
+    resolution = ResolveIntentStage().run(
         schema, ledger, prompt=prompt, schema_source="schema_llm"
     )
+    schema, _messages = GenerateSchemaStage().run(schema, resolution)
     schema.meta["mechanic_registry"] = default_mechanic_registry().manifest(schema)
     subsystems = subsystems_for(
         schema.game_type,

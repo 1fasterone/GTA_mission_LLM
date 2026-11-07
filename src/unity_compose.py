@@ -221,22 +221,20 @@ def refresh_cover_points(subsystems: list, entities, cover_points: dict | None) 
 
 def refresh_projectile_presentation(
     subsystems: list,
-    projectile_contract: dict | None,
+    resolved_presentation: dict | None,
 ) -> list[str]:
-    """Refresh controller presentation after Step 6 resolves its model path.
+    """Refresh controller options from detached Step-6 asset-binding output.
 
     ``subsystems_for`` necessarily runs before generator.write() so composer
     planning can wire the scene.  The projectile Resources path is only known
     inside that write, after the ordinary model resolver runs.  Re-point the
     controller's existing ``meta`` option between write and emit, mirroring the
-    model-aware cover-point refresh above without changing the planned class,
-    GUID, target, or physics contract.
+    model-aware cover-point refresh above without writing the canonical schema
+    or changing the planned class, GUID, target, or physics contract.
     """
-    contract = projectile_contract if isinstance(projectile_contract, dict) else {}
-    presentation = contract.get("presentation")
-    if not isinstance(presentation, dict):
+    if not isinstance(resolved_presentation, dict):
         return []
-    fresh = deepcopy(presentation)
+    fresh = deepcopy(resolved_presentation)
     messages: list[str] = []
     for sub in subsystems:
         if sub.kind != "controller":
