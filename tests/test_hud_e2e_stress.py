@@ -6,14 +6,14 @@ kinds, per-project ids), ten variants x two backends, and three wiring seams
 (SEAM 1/9/10) that publish into it from elsewhere in the composed project. It
 was also the direct subject of the backend-mismatched-field bug (`_root`
 referenced under a uGUI backend — see micro/hud.py's `neutralize_unavailable_
-names` call) and sits behind three of the composed-sibling-call sanitizers
-(arity, invented constructors, GetComponent-family arity) that a unit test can
-only ever poke one at a time.
+names` call) and the composed-sibling-call poison shapes (arity, invented
+constructors, GetComponent-family arity) that a unit test can only ever poke
+one at a time.
 
 This drives HUD through the REAL composed pipeline — `subsystems_for` (the
 same function a live `--compose` run uses to build the project's subsystem
-list), the same `sanitize_subsystem_*` passes `unity_pipeline.py` runs before
-composer.emit(), then a real `MicroComposer.emit()` producing an actual
+list), then a real `MicroComposer.emit()` (whose per-micro
+`harden_against_template` is what removes the poison) producing an actual
 `GameHud.cs` on disk — with every sanitizer's poison pill present at once,
 plus widget-count/collision stress beyond anything a single unit test
 exercises, and confirms none of the poison reaches the rendered file while

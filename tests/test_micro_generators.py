@@ -2437,86 +2437,7 @@ def test_hud_never_emits_a_headerless_field_block(
 
 # ── CS0103: `_grid` declared, `grid` written ─────────────────────────────────
 
-class TestUnderscoreAliasRebinding:
-    """Live regression (Gridfall/InputHandler): the author declared
-    `[SerializeField] private GridLogic _grid`, guarded with
-    `if (_grid == null) return;`, then called `grid.SetScore(...)` — three
-    CS0103s in one file. Rebinding to the declared field is the only repair
-    that keeps the behaviour: neutralizing deletes it, and declaring a second
-    `grid` field ships a collaborator nothing ever wires.
-    """
-
-    def _fix(self, body, unbound, declared):
-        from src.micro.code_fields import lint_underscore_alias_references
-        return lint_underscore_alias_references(
-            body, unbound=unbound, declared=declared)
-
-    def test_rebinds_to_the_declared_field(self):
-        out, rebound = self._fix(
-            "grid.SetScore(grid.GetScore() + 1);", {"grid"}, {"_grid"})
-        assert out == "_grid.SetScore(_grid.GetScore() + 1);"
-        assert rebound == {"grid"}
-
-    def test_leaves_a_longer_identifier_alone(self):
-        out, rebound = self._fix("int n = gridSize;", {"grid"}, {"_grid"})
-        assert out == "int n = gridSize;"
-        assert not rebound
-
-    def test_leaves_strings_and_comments_alone(self):
-        src = 'var s = "grid";  // grid\n'
-        out, rebound = self._fix(src, {"grid"}, {"_grid"})
-        assert out == src
-        assert not rebound
-
-    def test_leaves_a_bound_local_alone(self):
-        # Not in `unbound`, so it compiles today and must not be touched.
-        src = "var grid = New(); grid.Go();"
-        assert self._fix(src, set(), {"_grid"})[0] == src
-
-    def test_does_not_double_underscore_a_member_access(self):
-        src = "other._grid.Ping();"
-        assert self._fix(src, {"grid"}, {"_grid"})[0] == src
-
-
 # ── Authored bodies that need an import, or contradict their own field type ──
-
-class TestAuthoredBodyRepairs:
-    """Both hit live in one Gridfall build of GridLogic."""
-
-    def test_array_use_requires_system(self):
-        from src.micro.code_fields import required_usings_for
-        # lint_usings only ever FILTERED what the model asked for, so a body
-        # calling Array.Fill shipped without `using System;` -> CS0103.
-        assert required_usings_for("Array.Fill(grid[0], -1);") == ["System"]
-
-    def test_generic_collection_requires_its_namespace(self):
-        from src.micro.code_fields import required_usings_for
-        assert required_usings_for("var p = new List<int>();") == [
-            "System.Collections.Generic"]
-
-    def test_random_is_left_alone_because_it_is_ambiguous(self):
-        from src.micro.code_fields import required_usings_for
-        # UnityEngine.Random and System.Random are both real — importing
-        # System here would trade CS0103 for CS0104.
-        assert required_usings_for("Random.Range(0, 3);") == []
-
-    def test_jagged_rank_follows_the_authors_own_declaration(self):
-        from src.micro.code_fields import jagged_rank_corrections
-        body = "int[][] grid = _grid; grid[y][x] = -1;"
-        assert jagged_rank_corrections([("_grid", "int[][][]")], body) == {
-            "_grid": "int[][]"}
-
-    def test_jagged_rank_abstains_without_an_explicit_declaration(self):
-        from src.micro.code_fields import jagged_rank_corrections
-        # Indexing depth alone is a guess; a wrong guess ships a wrong program.
-        assert jagged_rank_corrections([("_grid", "int[][][]")],
-                                       "_grid[y][x] = 1;") == {}
-
-    def test_jagged_rank_abstains_on_conflicting_declarations(self):
-        from src.micro.code_fields import jagged_rank_corrections
-        assert jagged_rank_corrections(
-            [("_grid", "int[][][]")], "int[][] a = _grid; int[] b = _grid;") == {}
-
 
 class TestBracketLiteralDefaults:
     """`private Vector2 _targetRect = [0.5, 0.5];` — Python/JS list syntax in a
@@ -2850,30 +2771,6 @@ class TestDoubleQuotedStringExpressionDefaults:
 
     def test_unterminated_literal_is_dropped(self):
         assert self._s("string", '"') is None
-
-
-class TestMisqualifiedTypes:
-    """`UnityEngine.Touchscreen` — CS0234. Touch types read like core engine
-    types but live in UnityEngine.InputSystem. Live on BlockWell's TouchInput,
-    which had already imported the right namespace and over-qualified anyway.
-    """
-
-    def _f(self, ty):
-        from src.micro.code_fields import correct_qualified_type
-        return correct_qualified_type(ty)
-
-    def test_touchscreen_is_requalified(self):
-        assert self._f("UnityEngine.Touchscreen") == (
-            "Touchscreen", "UnityEngine.InputSystem")
-
-    def test_already_correct_is_untouched(self):
-        assert self._f("UnityEngine.InputSystem.Touchscreen")[1] == ""
-
-    def test_a_real_unityengine_type_is_untouched(self):
-        assert self._f("UnityEngine.Transform") == ("UnityEngine.Transform", "")
-
-    def test_an_unknown_qualified_type_is_left_alone(self):
-        assert self._f("MyNs.Thing") == ("MyNs.Thing", "")
 
 
 class TestRunawayBodyCapLeavesParseableCode:

@@ -1993,10 +1993,8 @@ def canonical_declared_type(type_name: str) -> str:
 def usings_for_declared_types(types) -> "list[str]":
     """Namespaces the DECLARED TYPES of authored fields need, in first-seen order.
 
-    `required_usings_for` reads BODIES, where a type appears as `Name.`,
-    `Name<` or `Name(` — the three shapes `_TYPE_USE_RES` matches. A field
-    declaration has none of them: the type is followed by the field's own name.
-    So a micro that declared `[SerializeField] private VisualElement _pauseTint`
+    A field declaration's type is followed by the field's own name, not by
+    `.`, `<` or `(`, so body-oriented type scans never see it. So a micro that declared `[SerializeField] private VisualElement _pauseTint`
     imported nothing for it and shipped CS0246 "The type or namespace name
     'VisualElement' could not be found". Hit live on Chromabreak's composed
     `menu` micro, which is a uGUI menu the model gave a UI Toolkit field.
@@ -2006,100 +2004,6 @@ def usings_for_declared_types(types) -> "list[str]":
         for token in _TYPE_TOKEN_RE.findall(str(raw or "")):
             ns = _TYPE_NAMESPACES.get(token)
             if ns and ns not in out:
-                out.append(ns)
-    return out
-
-# `Array.Fill(` / `new List<` / `List<int> x` — a real reference, not the word
-# appearing inside an identifier or a string.
-_TYPE_USE_RES: "dict[str, re.Pattern[str]]" = {
-    name: re.compile(r"(?<![\w.])" + re.escape(name)
-                     + r"(?=\s*[.<(])")
-    for name in _TYPE_NAMESPACES
-}
-
-
-def _rank(type_name: str) -> int:
-    """How many `[]` suffixes a jagged-array type carries. `int[][]` -> 2."""
-    return str(type_name or "").count("[]")
-
-
-def jagged_rank_corrections(fields: "list[tuple[str, str]]", body: str
-                            ) -> "dict[str, str]":
-    """`{field_name: corrected_type}` where the author's own code contradicts
-    the rank they declared for a jagged array.
-
-    Only ONE signal is trusted, and it is the author stating the type
-    themselves: an explicit local declaration initialised straight from the
-    field —
-
-        [SerializeField] private int[][][] _grid;   // declared rank 3
-        ...
-        int[][] grid = _grid;                       // used as rank 2, x5
-
-    That is the author disagreeing with the author, in writing, and the local
-    is the side they went on to index. Every other kind of rank mismatch is
-    left alone: inferring a type from indexing depth guesses, and a guess that
-    lowers a rank correctly used elsewhere trades a compile error for a wrong
-    program. Hit live in Gridfall's GridLogic — one bad declaration produced
-    seven CS0029s across five methods.
-    """
-    out: "dict[str, str]" = {}
-    if not body:
-        return out
-    for name, declared in fields:
-        if _rank(declared) < 2 or not name:
-            continue
-        base = declared.split("[")[0].strip()
-        rx = re.compile(re.escape(base) + r"((?:\[\])+)\s+\w+\s*=\s*"
-                        + re.escape(name) + r"\b")
-        ranks = {len(m.group(1)) // 2 for m in rx.finditer(body)}
-        ranks = {r for r in ranks if 0 < r < _rank(declared)}
-        if len(ranks) == 1:
-            out[name] = base + "[]" * ranks.pop()
-    return out
-
-
-# Types a model routinely qualifies with the WRONG namespace. `Touchscreen`,
-# `Gamepad` and friends read like core engine types, so an author writing a
-# mobile input script reaches for `UnityEngine.Touchscreen` — CS0234, "does not
-# exist in the namespace 'UnityEngine'". They live in UnityEngine.InputSystem.
-# Live on BlockWell's TouchInput, which had already imported the right
-# namespace and then over-qualified the type anyway.
-_MISQUALIFIED_TYPES: "dict[str, str]" = {
-    name: "UnityEngine.InputSystem" for name in (
-        "Touchscreen", "Keyboard", "Mouse", "Gamepad", "Pointer", "Pen",
-        "InputAction", "InputActionAsset", "InputActionMap", "InputControl",
-        "InputDevice", "InputSystem", "TouchPhase",
-    )
-}
-
-
-def correct_qualified_type(type_str: str) -> "tuple[str, str]":
-    """`UnityEngine.Touchscreen` -> `("Touchscreen", "UnityEngine.InputSystem")`.
-
-    Returns `(type, required_namespace)`; the namespace is "" when nothing was
-    corrected. Only rewrites a qualifier we can name a correct home for — an
-    unknown `Foo.Bar` is left exactly as written.
-    """
-    raw = (type_str or "").strip()
-    if "." not in raw:
-        return raw, ""
-    head, _, tail = raw.rpartition(".")
-    ns = _MISQUALIFIED_TYPES.get(tail)
-    if ns and head != ns:
-        return tail, ns
-    return raw, ""
-
-
-def required_usings_for(text: str) -> "list[str]":
-    """Namespaces `text` uses but may not have imported, in declaration order."""
-    if not text:
-        return []
-    out: "list[str]" = []
-    for name, rx in _TYPE_USE_RES.items():
-        if rx.search(text):
-            ns = _TYPE_NAMESPACES[name]
-            if ns not in out:
                 out.append(ns)
     return out
 
@@ -5678,66 +5582,6 @@ def _neutralize_flagged_lines(text: str, bad: "dict[int, set[str]]", *,
         out.append(f"{indent}// AUDIT: removed {reason} "
                    f"{', '.join(sorted(names))} -- {line.strip()}")
     return "\n".join(out), flagged
-
-
-# CS0103 — the author declared `_grid` and then wrote `grid`.
-#
-# Like lint_undeclared_catch_exception_var above, this is a fully MECHANICAL
-# fix rather than a neutralize-the-line fallback, and it is safe for the same
-# reason: the name being rewritten provably does not bind (it is in `unbound`),
-# so no code that compiles today can change meaning.
-#
-# It matters more than the compile error it clears. The alternative repairs are
-# both wrong on CONTENT: neutralizing the statement deletes behaviour the author
-# meant to write, and DECLARING a second `grid` field leaves two references to
-# the same collaborator where only one is ever wired in the scene — the script
-# compiles and then silently does nothing at runtime. Rebinding to the field
-# the author already declared is the only repair that keeps the intent.
-#
-# Hit live on Gridfall's InputHandler: `[SerializeField] private GridLogic
-# _grid` declared, `if (_grid == null) return;` guarding, then
-# `grid.SetScore(grid.GetScore() + 1);` — three CS0103s in one file.
-_ALIAS_SKIP_RE = re.compile(
-    r'"(?:\\.|[^"\\])*"'        # string literal
-    r"|'(?:\\.|[^'\\])*'"       # char literal
-    r"|//[^\n]*"                  # line comment
-    r"|/\*.*?\*/",                # block comment
-    re.DOTALL,
-)
-
-
-def lint_underscore_alias_references(text: str, *, unbound: "set[str]",
-                                     declared: "set[str] | frozenset[str]"
-                                     ) -> "tuple[str, set[str]]":
-    """Rewrite an unbound `name` to `_name` when `_name` IS a declared member.
-
-    Returns `(text, rebound_names)`. Only names present in `unbound` are ever
-    touched, so a genuine local variable called `grid` is left alone. String
-    and comment regions are skipped so prose is never rewritten.
-    """
-    targets = {n for n in unbound if n and f"_{n}" in declared and n not in declared}
-    if not text or not targets:
-        return text, set()
-
-    pattern = re.compile(r"(?<![\w.])(" + "|".join(sorted(map(re.escape, targets),
-                                                         key=len, reverse=True))
-                         + r")\b")
-    rebound: set[str] = set()
-
-    def _fix_code(chunk: str) -> str:
-        def _sub(m: "re.Match") -> str:
-            rebound.add(m.group(1))
-            return "_" + m.group(1)
-        return pattern.sub(_sub, chunk)
-
-    out: list[str] = []
-    pos = 0
-    for m in _ALIAS_SKIP_RE.finditer(text):
-        out.append(_fix_code(text[pos:m.start()]))
-        out.append(m.group(0))          # strings/comments pass through verbatim
-        pos = m.end()
-    out.append(_fix_code(text[pos:]))
-    return "".join(out), rebound
 
 
 def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",

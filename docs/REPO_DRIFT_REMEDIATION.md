@@ -95,6 +95,14 @@ First pass (branch `codex/r0-s2-closeout`):
 - Removed a duplicate `_PARAM_MODIFIERS` binding that silently shadowed the
   fuller set used by `_signature_type_names`; `readonly`/`scoped` parameter
   modifiers are now stripped as that function's own definition intended.
+- Removed the custom-script repair helpers only `_bind_script` called
+  (`lint_underscore_alias_references`, `required_usings_for`,
+  `jagged_rank_corrections`, `correct_qualified_type`). Custom scripts get no
+  missing-using insertion, jagged-rank fix or qualified-type correction; the
+  Roslyn contract and Editor gate report those defects instead.
+- `_script_would_not_bind` no longer hides a bare name whose underscored twin
+  is declared. It assumed a rebinding pass that was unreachable, so the
+  author was never told and the script shipped CS0103.
 - Isolated the four token-less Sketchfab client tests from a developer
   `SKETCHFAB_API_TOKEN` (two had been passing only via a live network call).
 

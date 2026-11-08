@@ -2451,8 +2451,6 @@ class TestFragmentSanitizers:
         _strip_undeclared_foreach(ok)
         assert "foreach" in ok.update_extra             # declared local → kept
 
-    # ── _custom_script_api: extra_fields always private, methods need `public` ──
-
     # ── Nullable value-type null-conditional chains (CS1503) ──────────────────
 
     def test_nullable_valuetype_fixed_at_use_site_not_declaration(self):
@@ -2586,28 +2584,9 @@ class TestFragmentSanitizers:
         assert field.default == "2.5f"
 
 
-# ── _sanitize_composed_component_calls: per-composed-class member validation ──
+# ── Invented constructor / FindObjectOfType / GetComponent-arity passes ────
 
-class TestComposedClassApiCoverage:
-    def _script(self, update_extra):
-        return UnityScript(name="Custom", type="custom", description="d",
-                           update_extra=update_extra)
-
-    def _unit(self, class_name):
-        from src.unity_compose import ComposedUnit
-        return ComposedUnit(kind="x", variant="x", class_name=class_name,
-                            guid="g", target="world")
-
-# ── _sanitize_field_typed_member_calls: field-declared cross-reference type ──
-# (binding and call site split across two methods; the per-body getter-chain
-# passes above cannot see across that split)
-
-class TestFieldTypedMemberCalls:
-    def _unit(self, class_name):
-        from src.unity_compose import ComposedUnit
-        return ComposedUnit(kind="x", variant="x", class_name=class_name,
-                            guid="g", target="world")
-
+class TestInventedCallSanitizers:
     def test_invented_constructor_call_is_stripped(self):
         # Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) —
         # ShaderPass is not a real Unity/URP type, and it never touches a
@@ -2711,14 +2690,6 @@ class TestFieldTypedMemberCalls:
         _sanitize_builtin_component_call_arity(s)
         assert "TryGetComponent<Rigidbody>(out var rb)" in s.update_extra
 
-# ── _sanitize_param_typed_member_calls: cross-reference type on a PARAMETER ──
-# (not a field — a parameter's scope is its own method only)
-
-class TestParamTypedMemberCalls:
-    def _unit(self, class_name):
-        from src.unity_compose import ComposedUnit
-        return ComposedUnit(kind="x", variant="x", class_name=class_name,
-                            guid="g", target="world")
 
 # ── Undeclared self-reference: bare field/method the script never declared ────
 

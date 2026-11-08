@@ -2198,17 +2198,6 @@ def test_a_system_random_instance_is_left_alone():
     assert "UnityEngine.Random" not in out
 
 
-def test_input_system_device_types_pull_their_namespace():
-    """Live (Chromabreak): a model writes `Mouse.current.delta` for mouse-look
-    whatever input_backend the variant declares, and the legacy-backend
-    controller template imports nothing for it — eight CS0103 in one file."""
-    from src.micro.code_fields import required_usings_for
-    assert "UnityEngine.InputSystem" in required_usings_for(
-        "Vector2 d = Mouse.current.delta.ReadValue();")
-    assert "UnityEngine.InputSystem" in required_usings_for(
-        "if (Keyboard.current.spaceKey.wasPressedThisFrame) Jump();")
-
-
 # ── CS1001/CS1003: a list of literals in a SCALAR field's initializer ─────────
 
 def test_a_literal_list_promotes_the_field_to_an_array():

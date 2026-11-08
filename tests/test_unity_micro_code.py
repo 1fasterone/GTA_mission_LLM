@@ -295,29 +295,6 @@ def test_sync_then_fallback_round_trips_enrichment():
     assert reconstructed.options["extra_methods"] == original.options["extra_methods"]
 
 
-# ── composed-sibling-class member validation — sanitize_subsystem_composed_calls
-# The same check schema.scripts (`type: custom`) already gets from
-# _sanitize_composed_component_calls (src/unity_generator.py), extended to
-# schema.microgens: a subsystem's authored extras are written by an LLM call
-# that never sees another subsystem's real generated source, yet can still
-# reach one via GameContext.Instance.Get<T>() exactly like a custom script
-# can — nothing validated that path before this.
-
-def _trigger_sub(**opts) -> Subsystem:
-    return Subsystem(kind="trigger", target="world", name="ExitTrigger",
-                     options=dict(opts))
-
-
-# ── invented-type construction — sanitize_subsystem_invented_constructors ─────
-# Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) — ShaderPass
-# is not a real Unity/URP type, invisible to every existing check because it
-# never touches a declared field (that's _sanitize_stub_type_usage's job).
-
-# ── GetComponent-family arity — sanitize_subsystem_builtin_call_arity ─────────
-# Live shape: TeaBreakObjectives called GetComponent<T>() with an argument
-# count that overload doesn't have — CS1501, invisible to every other check
-# since GetComponent is always exempted as a legitimate name.
-
 # ── the wiring invariant ──────────────────────────────────────────────────────
 
 def test_enrichment_cannot_move_a_guid_class_name_or_file_id():

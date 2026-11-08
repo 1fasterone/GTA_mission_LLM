@@ -858,10 +858,6 @@ def _script_would_not_bind(script, payload: dict) -> list[str]:
                         body, known=known | _signature_param_names(sig),
                         signature=sig).values():
                     cuts.extend(names)
-        # A name whose underscored twin IS declared is not a correction for the
-        # model to make — the underscore-alias lint resolves `grid` to `_grid`
-        # deterministically. Asking anyway burns a retry on a solved problem.
-        cuts = [n for n in cuts if f"_{n}" not in known]
         # Deduplicated and capped: a correction listing forty names teaches the
         # model less than one listing six.
         return sorted(set(cuts))[:6]

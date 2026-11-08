@@ -131,16 +131,13 @@ scripts' public methods).
 The one piece that stayed open after #141 — **composed micros reachable
 through `GameContext`** from a custom script — closed in this session:
 `_script_contract` now lists every composed subsystem this project actually
-has whose class carries a verified entry in `unity_generator._COMPOSED_CLASS_API`
-(the same maximal-per-kind table `_sanitize_project_service_calls` already used
-only to judge), e.g. `GameContext.Instance.Get<PlayerHealth>() -> CurrentHealth,
+has, read from the selected rendered source (the S2 Roslyn contract; the
+earlier copied `_COMPOSED_CLASS_API` table was removed in R0), e.g. `GameContext.Instance.Get<PlayerHealth>() -> CurrentHealth,
 MaxHealth, TakeDamage, Heal, ...` — not `Die()`, which is private. Composed
 subsystems reaching OTHER composed subsystems (rather than a custom script
 reaching a composed one) stays open: `_contract_for` was deliberately left
-unchanged because nothing downstream sanitizes a subsystem's own extra_methods
-the way `_sanitize_project_service_calls` sanitizes a custom script's — showing
-that surface without a corresponding backstop would trade a silent bug for a
-confidently-wrong one. `unity_pipeline.run()` now computes the composed
+unchanged at the time; S2 later moved both contracts to the selected-source
+Roslyn surface. `unity_pipeline.run()` now computes the composed
 subsystem list ahead of Step 3.5a (script enrichment) instead of after it, so
 the class names are known in time — a pure reordering, `subsystems_for` itself
 is unchanged.
@@ -164,9 +161,8 @@ neutralized/dropped) and extended to scripts in PR #141 (`_script_would_not_bind
 scoped to unbound identifiers rather than the full binder since a custom script
 has no micro template to check against). Not yet covered by the correction
 loop: a composed-micro-call binding error surfaced through `_script_contract`'s
-new section above only shows up at generation time via
-`_sanitize_project_service_calls`, not during the author→compile→re-author
-round — the checker (`_script_would_not_bind`) still only validates bare
+new section above only shows up in the S2 Roslyn check or the Editor compile
+gate, not during the author→compile→re-author round — the checker (`_script_would_not_bind`) still only validates bare
 identifiers, not dotted `Get<T>().Member` calls.
 
 ### Stage 6.4c — the binder replaces the neutraliser

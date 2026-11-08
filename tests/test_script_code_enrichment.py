@@ -345,3 +345,13 @@ def test_the_schema_prompt_shows_a_filled_custom_script():
     assert script["extra_fields"] and script["extra_methods"]
     assert "NOTHING ELSE RENDERS" in script["update_extra"]
     assert script["awake_extra"].strip()
+
+
+def test_a_bare_name_with_a_declared_underscore_twin_is_still_reported():
+    """R0: no pass rebinds `grid` to a declared `_grid` any more (the custom
+    script binder that did was unreachable and removed), so the author must
+    be told instead of the name silently shipping as CS0103."""
+    script = _codebranchsim()[1]
+    payload = {"extra_fields": [{"name": "_grid", "type": "int", "default": "0"}],
+               "update_extra": "grid += 1;"}
+    assert "grid" in _script_would_not_bind(script, payload)
