@@ -27,7 +27,7 @@ generator's OWN template — `GameContext` is not in `_KNOWN_SYMBOLS` and no
 composed-sibling class name ever is, so it neutralizes ANY
 `GameContext.Instance.Get<T>()` reference authored into a micro-generator's
 own extra_* fields wholesale, correct or not. That is a much blunter net than
-this project's `_COMPOSED_CLASS_API`-based checks, and it means a composed
+the S2 selected-source contract check, and it means a composed
 cross-subsystem call never survives inside microgen content regardless of
 whether it is valid — only inside a `type: custom` script (which never goes
 through `harden_against_template` at all) does a VALID one actually survive.
@@ -58,13 +58,12 @@ _POISON = {
     # `_root` is UI-Toolkit-only; live under a uGUI backend it's CS0103.
     "root_ref": "if (_root != null) _root.style.opacity = 1f;",
     # invented constructor, never touches a declared field
-    # (_sanitize_invented_constructor_calls / sanitize_subsystem_invented_constructors)
+    # (harden_against_template's unbound-identifier scan)
     "invented_ctor": "Graphics.Blit(source, dest, new ShaderPass(profile), 0);",
     # real member, wrong arity, on a composed sibling
-    # (_COMPOSED_METHOD_ARITY / sanitize_subsystem_composed_calls)
+    # (harden_against_template's wholesale GameContext strip)
     "arity_mismatch": "GameContext.Instance.Get<PauseMenu>()?.Activate();",
-    # invented member on a composed sibling that IS in _COMPOSED_CLASS_API
-    # (the LightingDirector coverage gap)
+    # invented member on a composed sibling (the LightingDirector shape)
     "invented_member": "GameContext.Instance.Get<LightingDirector>()?.SetTimeOfDay(0.5f);",
     # GetComponent-family call, wrong arity (_MB_METHOD_ARITY)
     "getcomponent_arity": "var rb = GetComponent<Rigidbody>(gameObject, true);",

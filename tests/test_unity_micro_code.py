@@ -12,17 +12,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
-from src.unity_compose import ComposedUnit, MicroComposer, Subsystem, subsystems_for
+from src.unity_compose import MicroComposer, Subsystem, subsystems_for
 from src.unity_micro_code import (
     CODE_KEYS,
     code_keys_for,
     enrich_subsystems,
     merge_authored_code,
-    sanitize_subsystem_composed_calls,
     sync_microgens_from_subsystems,
-    _signature_type_names,
 )
 from src.unity_schema import MicrogensSpec
 
@@ -311,135 +308,15 @@ def _trigger_sub(**opts) -> Subsystem:
                      options=dict(opts))
 
 
-def _health_unit() -> ComposedUnit:
-    # PlayerHealth is a real _COMPOSED_CLASS_API entry (Health.cs.j2's public
-    # surface): CurrentHealth/MaxHealth/TakeDamage/Heal/OnHealthChanged/
-    # OnDamaged/OnHealed/OnDeath. Die() is real but PRIVATE — only reachable
-    # indirectly via TakeDamage — so it is not in the verified set.
-    return ComposedUnit(kind="health", variant="simple", class_name="PlayerHealth",
-                        guid="g", target="player")
-
-
-def test_composed_call_to_invented_member_is_stripped():
-    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
-    msgs = sanitize_subsystem_composed_calls([sub], [_health_unit()])
-    assert any("trigger" in m for m in msgs)
-    assert "Die" not in sub.options["update_extra"]
-
-
-def test_composed_call_to_real_member_survives():
-    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>()?.TakeDamage(5f);")
-    msgs = sanitize_subsystem_composed_calls([sub], [_health_unit()])
-    assert msgs == []
-    assert "TakeDamage" in sub.options["update_extra"]
-
-
-def test_composed_call_checked_inside_extra_methods_dict_shape():
-    """Subsystem.options stores extra_methods as plain JSON dicts (see
-    _apply/_validate), never CodeMethod objects — unlike the schema.scripts
-    path this mirrors, so the sanitizer must handle dict shape directly."""
-    sub = _trigger_sub(extra_methods=[
-        {"signature": "private void OnEnter()",
-         "body": "GameContext.Instance.Get<PlayerHealth>().Die();"},
-    ])
-    sanitize_subsystem_composed_calls([sub], [_health_unit()])
-    assert "Die" not in sub.options["extra_methods"][0]["body"]
-
-
-def test_composed_call_sanitizer_noop_without_composed_units():
-    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
-    assert sanitize_subsystem_composed_calls([sub], None) == []
-    assert sanitize_subsystem_composed_calls([sub], []) == []
-    assert "Die" in sub.options["update_extra"]       # untouched
-
-
-def test_composed_call_sanitization_reaches_the_rendered_cs(tmp_path):
-    """End-to-end, wired the same order unity_pipeline.py uses: composer.plan()
-    (which is what names the class PlayerHealth) BEFORE emit() — the stripped
-    call must never reach the .cs file the trigger micro actually writes."""
-    health = Subsystem(kind="health", target="player", name="PlayerHealth")
-    trigger = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
-    subs = [health, trigger]
-    composer = MicroComposer("ProbeProj", project_config={"audio": {"backend": "dsp"}})
-    units = composer.plan(subs)
-    sanitize_subsystem_composed_calls(subs, units)
-    src = _emit(tmp_path, subs)["Micros/trigger/Scripts/ExitTrigger.cs"]
-    assert "Die()" not in src
-
-
 # ── invented-type construction — sanitize_subsystem_invented_constructors ─────
 # Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) — ShaderPass
 # is not a real Unity/URP type, invisible to every existing check because it
 # never touches a declared field (that's _sanitize_stub_type_usage's job).
 
-def test_invented_constructor_call_is_stripped():
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(
-        update_extra="Graphics.Blit(source, dest, new ShaderPass(profile), 0);")
-    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert any("trigger" in m for m in msgs)
-    assert "ShaderPass" not in sub.options["update_extra"]
-
-
-def test_real_unity_constructor_survives():
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(update_extra="var v = new Vector3(1f, 2f, 3f);")
-    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert msgs == []
-    assert "new Vector3" in sub.options["update_extra"]
-
-
-def test_composed_class_constructor_survives():
-    # A subsystem constructing a POCO whose type name happens to match a real
-    # composed sibling class must not be flagged — it already resolves.
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(update_extra="var h = new PlayerHealth();")
-    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert msgs == []
-    assert "new PlayerHealth" in sub.options["update_extra"]
-
-
-def test_invented_constructor_checked_inside_extra_methods_dict_shape():
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(extra_methods=[
-        {"signature": "private void OnEnter()",
-         "body": "Graphics.Blit(source, dest, new ShaderPass(profile), 0);"},
-    ])
-    sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert "ShaderPass" not in sub.options["extra_methods"][0]["body"]
-
-
 # ── GetComponent-family arity — sanitize_subsystem_builtin_call_arity ─────────
 # Live shape: TeaBreakObjectives called GetComponent<T>() with an argument
 # count that overload doesn't have — CS1501, invisible to every other check
 # since GetComponent is always exempted as a legitimate name.
-
-def test_get_component_wrong_arity_is_stripped():
-    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
-    sub = _trigger_sub(
-        update_extra="var rb = GetComponent<Rigidbody>(gameObject, true);")
-    msgs = sanitize_subsystem_builtin_call_arity([sub])
-    assert any("trigger" in m for m in msgs)
-    assert "GetComponent" not in sub.options["update_extra"]
-
-
-def test_get_component_valid_arity_survives():
-    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
-    sub = _trigger_sub(update_extra="var rb = GetComponent<Rigidbody>();")
-    msgs = sanitize_subsystem_builtin_call_arity([sub])
-    assert msgs == []
-    assert "GetComponent<Rigidbody>()" in sub.options["update_extra"]
-
-
-def test_get_component_wrong_arity_checked_inside_extra_methods_dict_shape():
-    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
-    sub = _trigger_sub(extra_methods=[
-        {"signature": "private void OnEnter()",
-         "body": "var rb = GetComponent<Rigidbody>(gameObject, true);"},
-    ])
-    sanitize_subsystem_builtin_call_arity([sub])
-    assert "GetComponent" not in sub.options["extra_methods"][0]["body"]
-
 
 # ── the wiring invariant ──────────────────────────────────────────────────────
 
@@ -491,20 +368,6 @@ _INVENTED_IN_SIGNATURE = {
          "body": "_rubberBandMultiplier -= dt;"},
     ],
 }
-
-
-@pytest.mark.parametrize("signature, expected", [
-    ("private void Ok(Vector3 p, float t)",                    {"void", "Vector3", "float"}),
-    ("public bool IsAlive()",                                  {"bool"}),
-    ("private IEnumerator Wait(float s)",                      {"IEnumerator", "float"}),
-    ("public void Bar(ref Vector3 v, out bool hit)",           {"void", "Vector3", "bool"}),
-    ("private void Rubber(List<EnemyController> r, float p)",  {"void", "EnemyController", "float"}),
-    # A generic's own comma must not split the parameter — the type that
-    # matters is on the far side of it.
-    ("public void Map(Dictionary<string, EnemyController> b)", {"void", "EnemyController"}),
-])
-def test_signature_type_extraction(signature, expected):
-    assert _signature_type_names(signature) == expected
 
 
 def test_method_with_an_unresolvable_parameter_type_is_retained():

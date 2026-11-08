@@ -2232,8 +2232,8 @@ def _disable_bad_header(line: str, names: "list[str] | set[str]") -> "str | None
 
 def _neutralize_lines(text: str, get_bad_names, make_comment) -> tuple[str, set, set]:
     """Shared line-oriented neutralization walk used by lint_hash_references,
-    lint_member_references, and unity_micro_code._neutralize_refs -- all
-    three comment out (or disable the condition of) any physical line that
+    lint_member_references, and neutralize_unavailable_names -- all three
+    comment out (or disable the condition of) any physical line that
     references a name which turned out to be invalid. Centralized so the one
     cross-line invariant they all depend on is enforced exactly once: a bare
     (brace-less) `if`/`while` whose only embedded statement IS the very next
@@ -4176,9 +4176,8 @@ def neutralize_unavailable_names(schema: _ExtensibleLike, names: "set[str]") -> 
     DECLARING a new field with a colliding name — it was never a "these
     names already exist and are safe to read" allowlist, and nothing
     upstream validates extra_* content against template-declared fields at
-    all (see unity_micro_code.py's `_neutralize_refs` docstring: the
-    per-micro reserved-name sets are known too incomplete to support a
-    general undeclared-identifier scan). This closes that gap only where a
+    all (the per-micro reserved-name sets are known too incomplete to
+    support a general undeclared-identifier scan). This closes that gap only where a
     caller can hand over an exact, backend/variant-resolved name set —
     never a guess.
     """
@@ -4833,8 +4832,8 @@ def _method_name(signature: str) -> str:
 # What makes the check possible now is `template_members`: until it existed the
 # per-micro `_RESERVED_FIELD_NAMES` sets were the only notion of what a class
 # contains, and they are hand-maintained and incomplete — which is exactly why
-# `_drop_unresolvable_types` (unity_micro_code.py) restricted itself to names it
-# had removed moments earlier rather than judging identifiers in general. The
+# the former S1 collaborator-type dropper restricted itself to names it had
+# removed moments earlier rather than judging identifiers in general. The
 # template IS the ground truth for the class, so the judgement is now sound.
 #
 # Scope is chosen so the ground truth is COMPLETE for what it judges:

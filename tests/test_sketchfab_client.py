@@ -46,7 +46,10 @@ class _FakeRequest:
         return self._responses.pop(0)
 
 
-def test_available_requires_token():
+def test_available_requires_token(monkeypatch):
+    # The env token outranks config (see the next test); a developer shell
+    # with SKETCHFAB_API_TOKEN set must not make "no token" look available.
+    monkeypatch.delenv("SKETCHFAB_API_TOKEN", raising=False)
     assert not SketchfabClient({}).available()
     assert SketchfabClient({"api_token": "tok"}).available()
 
@@ -83,7 +86,8 @@ def test_filter_licensed_keeps_only_accepted():
     assert [m["uid"] for m in client.filter_licensed(results)] == ["a"]
 
 
-def test_search_no_token_returns_empty():
+def test_search_no_token_returns_empty(monkeypatch):
+    monkeypatch.delenv("SKETCHFAB_API_TOKEN", raising=False)
     assert SketchfabClient({}).search("shoe") == []
 
 
@@ -147,7 +151,8 @@ def test_search_swallows_exception(monkeypatch):
     assert client.search("shoe") == []
 
 
-def test_get_model_no_token_returns_empty():
+def test_get_model_no_token_returns_empty(monkeypatch):
+    monkeypatch.delenv("SKETCHFAB_API_TOKEN", raising=False)
     assert SketchfabClient({}).get_model("abc") == {}
 
 
@@ -186,7 +191,8 @@ def test_get_model_never_raises(monkeypatch):
     assert client.get_model("abc") == {}
 
 
-def test_get_download_urls_no_token_returns_empty():
+def test_get_download_urls_no_token_returns_empty(monkeypatch):
+    monkeypatch.delenv("SKETCHFAB_API_TOKEN", raising=False)
     assert SketchfabClient({}).get_download_urls("abc") == {}
 
 

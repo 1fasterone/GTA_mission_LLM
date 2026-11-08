@@ -218,8 +218,6 @@ def test_define_changes_actual_candidate_binding():
 
 
 def test_actual_selected_hud_shadow_check_preserves_variant_failure(tmp_path):
-    from src.unity_generator import _COMPOSED_CLASS_API
-    assert 'ShowLine' in _COMPOSED_CLASS_API['GameHud']
     selected = [Subsystem(kind='hud', variant='health_bar', name='GameHud')]
     contract = extract_components(MicroComposer('Shadow'), selected)
     source = consumer('target.ShowLine("text");', parameters='GameHud target')

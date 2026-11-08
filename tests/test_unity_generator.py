@@ -2440,31 +2440,6 @@ class TestFragmentSanitizers:
             extra_fields=[{"name": "safeVelocityLimit", "type": "float",
                            "default": "45.0f"}])
 
-    def test_phantom_service_type_calls_stripped(self):
-        # Get<PlayerFSM>() where PlayerFSM exists nowhere → CS1061 live.
-        from src.unity_generator import _sanitize_project_service_calls
-        s = self._script(
-            'var playerFSM = GameContext.Instance.Get<PlayerFSM>(); '
-            'if (playerFSM != null) { playerFSM.SetState("Blackout"); }')
-        _sanitize_project_service_calls(s, {"VelocityManager": frozenset()}, set())
-        assert "PlayerFSM" not in s.update_extra
-
-    def test_known_custom_class_member_check(self):
-        from src.unity_generator import _sanitize_project_service_calls
-        api = {"DialogueManager": frozenset({"ShowLine"})}
-        good = self._script('GameContext.Instance.Get<DialogueManager>().ShowLine();')
-        bad  = self._script('GameContext.Instance.Get<DialogueManager>().TriggerBeat();')
-        _sanitize_project_service_calls(good, api, set())
-        _sanitize_project_service_calls(bad, api, set())
-        assert "ShowLine" in good.update_extra          # declared → kept
-        assert "TriggerBeat" not in bad.update_extra    # undeclared → stripped
-
-    def test_opaque_types_left_alone(self):
-        from src.unity_generator import _sanitize_project_service_calls
-        s = self._script('GameContext.Instance.Get<GameHud>().SetObjective("x");')
-        _sanitize_project_service_calls(s, {}, {"GameHud"})
-        assert "SetObjective" in s.update_extra
-
     def test_undeclared_foreach_stripped_declared_kept(self):
         from src.unity_generator import _strip_undeclared_foreach
         s = self._script(
@@ -2477,40 +2452,6 @@ class TestFragmentSanitizers:
         assert "foreach" in ok.update_extra             # declared local → kept
 
     # ── _custom_script_api: extra_fields always private, methods need `public` ──
-
-    def test_custom_script_api_excludes_fields(self):
-        from src.unity_generator import _custom_script_api
-        s = UnityScript(name="InventoryManager", type="custom", description="d",
-                        extra_fields=[{"name": "moraleValue", "type": "int", "default": "100"}])
-        api = _custom_script_api([s])
-        assert "moraleValue" not in api["InventoryManager"]
-
-    def test_custom_script_api_excludes_private_methods(self):
-        from src.unity_generator import _custom_script_api
-        s = UnityScript(name="InventoryManager", type="custom", description="d",
-                        extra_methods=[
-                            {"signature": "private void Restock()", "body": ""},
-                            {"signature": "public void Refill()", "body": ""},
-                        ])
-        api = _custom_script_api([s])
-        assert "Restock" not in api["InventoryManager"]
-        assert "Refill" in api["InventoryManager"]
-
-    def test_custom_script_field_access_stripped_always_private(self):
-        # Live bug: MoraleSystem.cs did `inv.moraleValue` where inv = Get<
-        # InventoryManager>() and moraleValue is one of InventoryManager's OWN
-        # extra_fields — extra_fields always render private (CS0122).
-        from src.unity_generator import _custom_script_api, _sanitize_project_service_calls
-        inventory = UnityScript(name="InventoryManager", type="custom", description="d",
-                                extra_fields=[{"name": "moraleValue", "type": "int", "default": "100"}])
-        morale = self._script(
-            'if (GameContext.Instance.Get<InventoryManager>() != null) { '
-            'var inv = GameContext.Instance.Get<InventoryManager>(); '
-            'if (inv.moraleValue > moraleLevel) { moraleLevel = inv.moraleValue; } }')
-        morale.name = "MoraleSystem"
-        custom_api = _custom_script_api([inventory, morale])
-        _sanitize_project_service_calls(morale, custom_api, set())
-        assert "moraleValue" not in morale.update_extra
 
     # ── Nullable value-type null-conditional chains (CS1503) ──────────────────
 
@@ -2657,164 +2598,6 @@ class TestComposedClassApiCoverage:
         return ComposedUnit(kind="x", variant="x", class_name=class_name,
                             guid="g", target="world")
 
-    def test_world_interactable_member_validated(self):
-        # Live bug: InventoryManager.cs did interact.CanPickup()/interact.ItemName
-        # where interact = Get<WorldInteractable>() — neither exists on the real
-        # template (only OnPrompt/OnInteract/OnToggled events + Interact()).
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            'if (GameContext.Instance.Get<WorldInteractable>() != null) { '
-            'var interact = GameContext.Instance.Get<WorldInteractable>(); '
-            'if (interact != null && interact.CanPickup()) { '
-            'inventoryList.Add(interact.ItemName); moraleValue += 5; } }')
-        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
-        assert "CanPickup" not in s.update_extra
-        assert "ItemName" not in s.update_extra
-
-    def test_world_interactable_real_member_kept(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<WorldInteractable>()?.Interact();")
-        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
-        assert "Interact()" in s.update_extra
-
-    def test_world_interactable_event_called_as_method_stripped(self):
-        # OnToggled IS a real, listed member of WorldInteractable's verified
-        # API (_COMPOSED_CLASS_API) — but it's a C# EVENT
-        # (`public event Action<bool> OnToggled;`, Interactable.cs.j2), only
-        # invocable with parens from WITHIN its own declaring class. A
-        # membership-only check (the pre-fix `_composed_member_ok`) waved
-        # this through as a real, real-arity call; live it is CS1061.
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<WorldInteractable>().OnToggled();")
-        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
-        assert "OnToggled()" not in s.update_extra
-
-    def test_world_interactable_event_subscription_kept(self):
-        # The legal shape (`+=`) must survive — only a paren-CALL of an event
-        # is illegal from outside the declaring class.
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            "GameContext.Instance.Get<WorldInteractable>().OnToggled += "
-            "on => Debug.Log(on);")
-        _sanitize_composed_component_calls(s, [self._unit("WorldInteractable")])
-        assert "OnToggled +=" in s.update_extra
-
-    def test_player_camera_has_zero_public_members(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<PlayerCamera>()?.Shake(1f);")
-        _sanitize_composed_component_calls(s, [self._unit("PlayerCamera")])
-        assert "Shake" not in s.update_extra
-
-    def test_player_camera_base_monobehaviour_member_kept(self):
-        # Regression guard: base MonoBehaviour access must survive even for a
-        # composed type with an empty verified API.
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            "GameContext.Instance.Get<PlayerCamera>()?.gameObject.SetActive(false);")
-        _sanitize_composed_component_calls(s, [self._unit("PlayerCamera")])
-        assert "gameObject" in s.update_extra
-
-    def test_player_animator_dynamic_setter_kept(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<PlayerAnimator>()?.SetOxygenLevel(0.5f);")
-        _sanitize_composed_component_calls(s, [self._unit("PlayerAnimator")])
-        assert "SetOxygenLevel" in s.update_extra
-
-    def test_player_animator_invented_member_stripped(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<PlayerAnimator>()?.ForceIdlePose();")
-        _sanitize_composed_component_calls(s, [self._unit("PlayerAnimator")])
-        assert "ForceIdlePose" not in s.update_extra
-
-    def test_var_bound_property_read_to_invented_member_stripped(self):
-        # Live bug (SkyRace2D): EngineSound.cs did
-        #   var pc = GameContext.Instance.Get<PlayerController>();
-        #   if (pc != null) { float speed = pc.currentSpeed; ... }
-        # currentSpeed is a bare PROPERTY READ (no trailing parens) through a
-        # bound variable — the var-bound regex used to require a trailing `(`
-        # so it only ever caught var-bound METHOD calls, never property reads,
-        # and this line reached Unity untouched (CS1061: no such member).
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            "var pc = GameContext.Instance.Get<PlayerController>(); "
-            "if (pc != null) { float speed = pc.currentSpeed; }")
-        _sanitize_composed_component_calls(s, [self._unit("PlayerController")])
-        assert "currentSpeed" not in s.update_extra
-
-    def test_var_bound_property_read_to_real_member_survives(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            "var pc = GameContext.Instance.Get<PlayerController>(); "
-            "if (pc != null) { float speed = pc.CurrentSpeed; }")
-        _sanitize_composed_component_calls(s, [self._unit("PlayerController")])
-        assert "pc.CurrentSpeed" in s.update_extra
-
-    def test_lighting_director_member_validated(self):
-        # LightingDirector was advertised in GAMECONTEXT_SCHEMA_GUIDANCE as
-        # Get<T>()-able with no entry in _COMPOSED_CLASS_API — any invented
-        # member on it was invisible to every check.
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<LightingDirector>()?.SetTimeOfDay(0.5f);")
-        _sanitize_composed_component_calls(s, [self._unit("LightingDirector")])
-        assert "SetTimeOfDay" not in s.update_extra
-
-    def test_lighting_director_real_member_kept(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<LightingDirector>()?.Apply();")
-        _sanitize_composed_component_calls(s, [self._unit("LightingDirector")])
-        assert "Apply()" in s.update_extra
-
-    def test_composed_class_api_covers_every_gamecontext_advertised_type(self):
-        # Regression guard for exactly the drift LightingDirector hit: every
-        # class name GAMECONTEXT_SCHEMA_GUIDANCE tells the LLM it may Get<T>()
-        # must have a _COMPOSED_CLASS_API entry, or an invented member on it
-        # silently reaches Unity untouched. GameManager is advertised via a
-        # separate sentence/mechanism (GameManager.Instance, validated by
-        # _sanitize_singleton_calls) and is deliberately excluded here.
-        import re
-        from src.unity_generator import _COMPOSED_CLASS_API
-        from src.unity_prompts import GAMECONTEXT_SCHEMA_GUIDANCE
-        m = re.search(
-            r"Composed subsystem types you may Get<T>\(\):\s*(.+?)\.\s*\n",
-            GAMECONTEXT_SCHEMA_GUIDANCE, re.DOTALL)
-        assert m, "GAMECONTEXT_SCHEMA_GUIDANCE's advertised-types sentence moved or was reworded"
-        listed = m.group(1).replace("\n", " ")
-        listed = re.sub(r"\(plus\s+GameManager\)", "", listed)
-        names = {n.strip() for n in listed.split(",") if n.strip()}
-        missing = names - set(_COMPOSED_CLASS_API)
-        assert not missing, f"advertised but unverified in _COMPOSED_CLASS_API: {missing}"
-
-    def test_arity_mismatch_zero_args_stripped(self):
-        # Live bug: PauseMenu.Activate() called with none of its 1 required
-        # arg — a real member, wrong arity, invisible to a name-only check.
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script("GameContext.Instance.Get<PauseMenu>()?.Activate();")
-        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
-        assert "Activate" not in s.update_extra
-
-    def test_arity_match_survives(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script('GameContext.Instance.Get<PauseMenu>()?.Activate("Play");')
-        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
-        assert 'Activate("Play")' in s.update_extra
-
-    def test_var_bound_arity_mismatch_stripped(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            "var menu = GameContext.Instance.Get<PauseMenu>(); "
-            "if (menu != null) { menu.Activate(); }")
-        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
-        assert "Activate" not in s.update_extra
-
-    def test_var_bound_arity_match_survives(self):
-        from src.unity_generator import _sanitize_composed_component_calls
-        s = self._script(
-            "var menu = GameContext.Instance.Get<PauseMenu>(); "
-            'if (menu != null) { menu.Activate("Resume"); }')
-        _sanitize_composed_component_calls(s, [self._unit("PauseMenu")])
-        assert 'Activate("Resume")' in s.update_extra
-
-
 # ── _sanitize_field_typed_member_calls: field-declared cross-reference type ──
 # (binding and call site split across two methods; the per-body getter-chain
 # passes above cannot see across that split)
@@ -2824,101 +2607,6 @@ class TestFieldTypedMemberCalls:
         from src.unity_compose import ComposedUnit
         return ComposedUnit(kind="x", variant="x", class_name=class_name,
                             guid="g", target="world")
-
-    def test_composed_field_bound_and_called_in_different_methods(self):
-        # Same shape as the live AutomatonCitadel bug (SaveShrineTrigger.cs
-        # bound `_saveSystem` in OnEnable(), then called a member on it from a
-        # separate ActivateShrine() extra_method) but with an invented member
-        # name that is NOT in _COMPOSED_CLASS_API's cross-variant union for
-        # ANY SaveSystem variant — unlike SetCheckpoint (real on the
-        # "checkpoint" variant, so the union table intentionally still lets it
-        # through as an accepted false negative on other variants; see
-        # _COMPOSED_CLASS_API's own docstring). Neither the GameContext.Get<T>
-        # ()-chain regex nor the var-decl regex in the other sanitizers scans
-        # across method bodies, so a genuinely invented member reached this
-        # split-method shape untouched before this pass existed.
-        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="SaveShrineTrigger", type="custom", description="d",
-            extra_fields=[{"name": "_saveSystem", "type": "SaveSystem", "default": None}],
-            awake_extra="_saveSystem = GameContext.Instance.Get<SaveSystem>();",
-            extra_methods=[{
-                "signature": "public void ActivateShrine()",
-                "body": "if (_saveSystem != null) _saveSystem.ForceReload();",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("SaveSystem")])
-        assert "ForceReload" not in s.extra_methods[0].body
-
-    def test_composed_field_real_member_survives(self):
-        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="SaveShrineTrigger", type="custom", description="d",
-            extra_fields=[{"name": "_saveSystem", "type": "SaveSystem", "default": None}],
-            awake_extra="_saveSystem = GameContext.Instance.Get<SaveSystem>();",
-            extra_methods=[{
-                "signature": "public void ActivateShrine()",
-                "body": "if (_saveSystem != null) _saveSystem.Save();",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("SaveSystem")])
-        assert "_saveSystem.Save()" in s.extra_methods[0].body
-
-    def test_custom_script_field_public_method_validated_across_methods(self):
-        # Same split-method gap, but the field's declared type is ANOTHER
-        # generated custom script rather than a composed micro class.
-        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
-        dialogue = UnityScript(
-            name="NPCDialogueManager", type="custom", description="d",
-            extra_methods=[{"signature": "public void PlayDialogue(string a, string b)", "body": ""}],
-        )
-        shrine = UnityScript(
-            name="SaveShrineTrigger", type="custom", description="d",
-            extra_fields=[{"name": "_npc", "type": "NPCDialogueManager", "default": None}],
-            awake_extra="_npc = GameContext.Instance.Get<NPCDialogueManager>();",
-            extra_methods=[{
-                "signature": "public void ActivateShrine()",
-                "body": "if (_npc != null) _npc.TriggerBeat();",
-            }],
-        )
-        custom_api = _custom_script_api([dialogue, shrine])
-        _sanitize_field_typed_member_calls(shrine, custom_api, [])
-        assert "TriggerBeat" not in shrine.extra_methods[0].body
-
-    def test_field_typed_arity_mismatch_stripped(self):
-        # Same split-method shape as the SaveShrineTrigger cases above, but
-        # the member IS real on PauseMenu (Activate) — only the argument
-        # count is wrong, the defect _COMPOSED_METHOD_ARITY exists to catch.
-        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="ShrineMenuTrigger", type="custom", description="d",
-            extra_fields=[{"name": "_menu", "type": "PauseMenu", "default": None}],
-            awake_extra="_menu = GameContext.Instance.Get<PauseMenu>();",
-            extra_methods=[{
-                "signature": "public void ActivateShrine()",
-                "body": "if (_menu != null) _menu.Activate();",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("PauseMenu")])
-        assert "Activate" not in s.extra_methods[0].body
-
-    def test_field_typed_arity_match_survives(self):
-        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="ShrineMenuTrigger", type="custom", description="d",
-            extra_fields=[{"name": "_menu", "type": "PauseMenu", "default": None}],
-            awake_extra="_menu = GameContext.Instance.Get<PauseMenu>();",
-            extra_methods=[{
-                "signature": "public void ActivateShrine()",
-                "body": '_menu.Activate("Resume");',
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_field_typed_member_calls(s, custom_api, [self._unit("PauseMenu")])
-        assert 'Activate("Resume")' in s.extra_methods[0].body
 
     def test_invented_constructor_call_is_stripped(self):
         # Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) —
@@ -3023,28 +2711,6 @@ class TestFieldTypedMemberCalls:
         _sanitize_builtin_component_call_arity(s)
         assert "TryGetComponent<Rigidbody>(out var rb)" in s.update_extra
 
-    def test_field_typed_hud_arity_mismatch_stripped(self):
-        # Same defect through the hud_api branch (per-project setter list
-        # overrides the static membership table for hud kind, but arity
-        # still comes from _COMPOSED_METHOD_ARITY either way).
-        from src.unity_generator import _sanitize_field_typed_member_calls, _custom_script_api
-        from src.unity_compose import ComposedUnit
-        hud_unit = ComposedUnit(kind="hud", variant="health_bar", class_name="GameHud",
-                                 guid="g", target="world", setters=["SetHealth"])
-        s = UnityScript(
-            name="ArenaHudTrigger", type="custom", description="d",
-            extra_fields=[{"name": "_hud", "type": "GameHud", "default": None}],
-            awake_extra="_hud = GameContext.Instance.Get<GameHud>();",
-            extra_methods=[{
-                "signature": "public void OnHit()",
-                "body": "if (_hud != null) _hud.SetHealth(50f);",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_field_typed_member_calls(s, custom_api, [hud_unit])
-        assert "SetHealth" not in s.extra_methods[0].body
-
-
 # ── _sanitize_param_typed_member_calls: cross-reference type on a PARAMETER ──
 # (not a field — a parameter's scope is its own method only)
 
@@ -3053,73 +2719,6 @@ class TestParamTypedMemberCalls:
         from src.unity_compose import ComposedUnit
         return ComposedUnit(kind="x", variant="x", class_name=class_name,
                             guid="g", target="world")
-
-    def test_param_typed_event_called_as_method_stripped(self):
-        # Live bug: InventoryManager.cs — TryUnlockGate(WorldInteractable gate)
-        # and TryUnlockGateWithCog(WorldInteractable gate) both called
-        # gate.OnToggled() on the PARAMETER, never a field or a
-        # GameContext.Get<T>() chain, so _sanitize_field_typed_member_calls
-        # (fields only) and _sanitize_composed_component_calls (getter chains
-        # only) both missed it entirely. OnToggled is a real, listed member
-        # (_COMPOSED_CLASS_API) but an EVENT — CS1061 either way.
-        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="InventoryManager", type="custom", description="d",
-            extra_methods=[{
-                "signature": "public bool TryUnlockGate(WorldInteractable gate)",
-                "body": "if (gate == null) return false;\ngate.OnToggled();\nreturn true;",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
-        assert "OnToggled()" not in s.extra_methods[0].body
-        assert "return false;" in s.extra_methods[0].body   # unrelated code untouched
-        assert "return true;" in s.extra_methods[0].body
-
-    def test_param_typed_real_method_survives(self):
-        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="InventoryManager", type="custom", description="d",
-            extra_methods=[{
-                "signature": "public bool TryUnlockGate(WorldInteractable gate)",
-                "body": "if (gate == null) return false; gate.Interact(); return true;",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
-        assert "gate.Interact();" in s.extra_methods[0].body
-
-    def test_param_typed_invented_member_stripped(self):
-        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="InventoryManager", type="custom", description="d",
-            extra_methods=[{
-                "signature": "public bool TryUnlockGate(WorldInteractable gate)",
-                "body": "if (gate.CanPickup()) return true; return false;",
-            }],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
-        assert "CanPickup" not in s.extra_methods[0].body
-
-    def test_param_typed_call_in_other_method_untouched(self):
-        # A parameter's scope is its OWN method only — a same-named
-        # identifier in a DIFFERENT method (not typed the same way there)
-        # must not be checked against WorldInteractable's API at all.
-        from src.unity_generator import _sanitize_param_typed_member_calls, _custom_script_api
-        s = UnityScript(
-            name="InventoryManager", type="custom", description="d",
-            extra_methods=[
-                {"signature": "public bool TryUnlockGate(WorldInteractable gate)",
-                 "body": "gate.Interact(); return true;"},
-                {"signature": "public void Reset()",
-                 "body": "var gate = 0; gate = gate + 1;"},
-            ],
-        )
-        custom_api = _custom_script_api([s])
-        _sanitize_param_typed_member_calls(s, custom_api, [self._unit("WorldInteractable")])
-        assert "gate = gate + 1;" in s.extra_methods[1].body
-
 
 # ── Undeclared self-reference: bare field/method the script never declared ────
 
@@ -3779,3 +3378,12 @@ class TestSignatureTypeStubs:
         # written as `public class <name>`, so a non-identifier must be dropped
         # rather than compiled into a syntax error.
         assert self._names([self._F("float lockoutSeconds =")], []) == []
+
+    def test_readonly_and_scoped_modifiers_are_not_part_of_the_type(self):
+        # R0: a second, narrower `_PARAM_MODIFIERS` binding later in the module
+        # used to shadow this set, so `ref readonly Vector3 v` read as the
+        # "type" `readonly Vector3`.
+        from src.unity_generator import _signature_type_names
+        assert _signature_type_names(
+            [self._M("public void Nudge(ref readonly Vector3 v, scoped Span<int> s)")]
+        ) == ["void", "Vector3", "Span<int>"]

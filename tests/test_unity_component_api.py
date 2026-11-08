@@ -148,12 +148,14 @@ def test_real_template_export_mutation_changes_contract_without_table_edit(rosly
     template.write_text(original)
     assert extract_components(composer,selected).to_json()==before.to_json()
 
-def test_shadow_comparison_exposes_union_false_positive_without_cutover(roslyn):
-    from src.unity_generator import _COMPOSED_CLASS_API
+def test_selected_variant_api_has_no_cross_variant_union(roslyn):
+    import src.unity_generator as generator
     contract=api('hud','health_bar','GameHud')
-    assert 'ShowLine' in _COMPOSED_CLASS_API['GameHud']
     assert 'ShowLine' not in members(contract,'GameHud')
-    assert 'SetHealth' in _COMPOSED_CLASS_API['GameHud'] & members(contract,'GameHud')
+    assert 'SetHealth' in members(contract,'GameHud')
+    # S2 closeout: the copied cross-variant member tables are gone for good.
+    for table in ('_COMPOSED_CLASS_API','_COMPOSED_METHOD_ARITY','_COMPOSED_CLASS_EVENTS'):
+        assert not hasattr(generator,table)
 
 
 def test_compile_matrix_contains_actual_selected_variants_and_project_interfaces(roslyn,tmp_path):

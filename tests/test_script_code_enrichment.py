@@ -144,8 +144,7 @@ def test_a_script_with_no_fields_is_told_to_declare_them():
 
 def test_only_a_siblings_PUBLIC_methods_are_offered():
     """A sibling's extra_fields always render `[SerializeField] private`, so
-    reaching one is CS0122 — which is exactly what the generator's
-    _sanitize_project_service_calls strips after the fact."""
+    reaching one is CS0122; only its public methods are offered."""
     scripts = _codebranchsim()
     scripts[1].extra_methods = [
         CodeMethod(signature="public void Commit()", body="_commitCount++;"),
@@ -182,11 +181,8 @@ def test_composed_micros_offer_only_their_verified_public_api():
 
 
 def test_a_composed_kind_with_no_verified_api_stays_unmentioned():
-    """VFX has no _COMPOSED_CLASS_API entry — no ground truth to show, so
-    (same restraint _composed_member_ok applies at judge time) it is left
-    out rather than guessed at. (LightingDirector used to be this example —
-    it moved once LightingDirector got a verified entry; see
-    _COMPOSED_CLASS_API's own docstring for why that was a live gap.)"""
+    """With no extracted selected-source contract there is no ground truth
+    to show, so a composed kind is left out rather than guessed at."""
     from src.unity_compose import Subsystem
     subsystems = [Subsystem(kind="vfx", target="world", name="VFX")]
     contract = _script_contract(_codebranchsim()[0], [], subsystems)

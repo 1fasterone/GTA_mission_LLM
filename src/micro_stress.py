@@ -54,8 +54,8 @@ _NO_SCHEMA = {"model"}
 # whichever kind is under test. Keys double as the finding label.
 _POISON: dict[str, str] = {
     # Invented constructor whose OTHER tokens are all well-known (gameObject,
-    # a Camera field) — isolates _sanitize_invented_constructor_calls /
-    # sanitize_subsystem_invented_constructors specifically: harden_against_
+    # a Camera field) — isolates _sanitize_invented_constructor_calls
+    # specifically: harden_against_
     # template's unbound-identifier scan has nothing else to flag here.
     "invented_ctor_isolated": "Graphics.Blit(gameObject.GetComponent<Camera>().targetTexture, null, new ShaderPass(gameObject), 0);",
     # Same defect, but every OTHER token is ALSO unknown — the shape that hit
@@ -65,8 +65,8 @@ _POISON: dict[str, str] = {
     # harden_against_template's wholesale GameContext strip (see module doc).
     "composed_arity_mismatch": "GameContext.Instance.Get<PauseMenu>()?.Activate();",
     "composed_invented_member": "GameContext.Instance.Get<LightingDirector>()?.SetTimeOfDay(0.5f);",
-    # GetComponent-family call, wrong arity — isolates _MB_METHOD_ARITY /
-    # sanitize_subsystem_builtin_call_arity: every token here (GetComponent,
+    # GetComponent-family call, wrong arity — isolates _MB_METHOD_ARITY:
+    # every token here (GetComponent,
     # gameObject, Rigidbody, true) is individually well-known, so harden_
     # against_template's unbound-identifier scan finds nothing wrong at all.
     "getcomponent_arity": "var rb = GetComponent<Rigidbody>(gameObject, true);",

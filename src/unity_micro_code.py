@@ -67,13 +67,11 @@ from .micro import REGISTRY
 from pathlib import Path
 
 from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
-                                build_missing_fields, find_unbound_identifiers,
-                                lint_method, lint_unbound_identifiers,
-                                sanitize_default, template_members,
+                                find_unbound_identifiers,
+                                lint_method, sanitize_default, template_members,
                                 _promote_list_default_to_array,
                                 template_method_arities, template_usings,
-                                _KNOWN_SYMBOLS, _MONO_INHERITED, _method_name,
-                                _signature_param_names,
+                                _KNOWN_SYMBOLS, _MONO_INHERITED, _signature_param_names,
                                 _code_brace_depth, _code_paren_depth)
 
 # ── What may be written ───────────────────────────────────────────────────────
@@ -176,214 +174,21 @@ def _filter_keys(kind: str, raw: object) -> dict:
     return {k: v for k, v in raw.items() if k in allowed and v not in (None, "", [], {})}
 
 
-# ── Unresolvable collaborator types (CS0246) ─────────────────────────────────
-# Asked for concept-specific behavior, a model reaches for a collaborator class
-# that does not exist. Confirmed live on a "deep-sea diver / oxygen" brief: the
-# composed controller came back with
-#   [SerializeField] private OxygenManager _oxygenManager;
-# and an extra_method calling `_oxygenManager.Consume(drain)`. Nothing named
-# OxygenManager exists, so the micro fails CS0246 and takes the assembly with it.
-#
-# unity_generator solves this for prompt-authored scripts by backfilling an empty
-# stub class (_collect_custom_type_stubs) — but it deliberately refuses to stub
-# `*Manager`/`*System`/`*Controller`/`*Handler` names, since those are meant to be
-# real separate scripts, which is exactly the shape a model reaches for here. The
-# micro templates emit no stubs at all, so for this path the field has to go.
-#
-# Deliberately narrow: only the fields whose declared TYPE cannot resolve are
-# dropped, then only the lines referencing those now-undeclared names. That has
-# no false positives — the identifiers were removed moments earlier in the same
-# pass — unlike guessing at undeclared identifiers in general, which the
-# incomplete per-micro `_RESERVED_FIELD_NAMES` sets cannot support.
-from .micro.code_fields import _neutralize_lines
-from .micro.code_fields import lint_underscore_alias_references
-from .micro.code_fields import required_usings_for
-from .micro.code_fields import jagged_rank_corrections
-from .micro.code_fields import correct_qualified_type
-from .micro.code_fields import lint_invalid_member_uses
 from .micro.code_fields import (template_method_params,
                                 template_field_types)
-from .unity_generator import (_CS_BUILTIN_TYPES,
-                              _extract_base_type, _make_composed_call_stripper,
-                              _strip_invented_constructors, _strip_builtin_call_arity)
 from .unity_component_contract import (public_surface, render_own_class_surface)
 
 _FRAGMENT_KEYS = ("awake_extra", "update_extra", "fixed_update_extra")
 
 
-def _neutralize_refs(text: str, names: set[str]) -> str:
-    """Comment out statements referencing a dropped field. Reuses the lint
-    layer's own shared walk (_neutralize_lines) rather than a second copy: a
-    bare `if (...)` header whose brace opens on a later line must have its
-    CONDITION disabled, never be commented out, or the guarded block silently
-    becomes unconditional -- and if that header's body is itself the very
-    next (brace-less) line and also references a dropped name, that body must
-    not be blanked to a bare comment, or the disabled header is left with no
-    statement at all (CS1525/CS1002).
-    """
-    if not text or not names:
-        return text
-    pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
-
-    def make_comment(_names: list, line: str) -> str:
-        return (f"// AUDIT: removed reference to unresolvable "
-                f"collaborator type -- {line.strip()}")
-
-    result, _flagged, _skipped = _neutralize_lines(
-        text, lambda _i, line: pattern.findall(line), make_comment)
-    return result
-
-
-# A method SIGNATURE names types too, and the field-only check above walked
-# straight past them. Hit live on a TurboToys run, EnemySpawner.cs(106,44) and
-# (116,34):
-#
-#     private void ApplyRubberBandLogic(List<EnemyController> rivals, float p)
-#     private void OnRivalFinished(EnemyController rival)
-#
-# — CS0246 twice for a collaborator class the project never generates. Same
-# defect as the field case, same remedy, one declaration site further along:
-# the parameter and return types are declarations exactly like a field's, and
-# neither has a repair (inventing the class would ship a stub nothing drives).
-# Matched against the same two allowlists, so a signature naming only real
-# Unity/BCL types or a real sibling micro is never touched.
-_SIG_PARAMS_RE = re.compile(r"\((.*)\)", re.DOTALL)
-# Modifiers that precede the return type; never types themselves.
-_SIG_MODIFIERS = frozenset({
-    "public", "private", "protected", "internal", "static", "virtual",
-    "override", "sealed", "async", "extern", "new", "unsafe", "partial",
-    "readonly", "event", "ref", "out", "in", "params", "this",
-})
-
-
-def _split_params(params: str) -> list[str]:
-    """Split a parameter list on the commas that SEPARATE parameters — the ones
-    inside `Dictionary<string, int>` belong to the type, and splitting on them
-    leaves two fragments that look like neither a type nor a name."""
-    out: list[str] = []
-    depth = 0
-    current: list[str] = []
-    for ch in params:
-        if ch in "<([":
-            depth += 1
-        elif ch in ">)]":
-            depth -= 1
-        if ch == "," and depth == 0:
-            out.append("".join(current))
-            current = []
-            continue
-        current.append(ch)
-    out.append("".join(current))
-    return out
-
-
-def _signature_type_names(signature: str) -> set[str]:
-    """Every type a method signature declares — return type and parameters.
-
-    Deliberately shallow: a token that is not plainly `<type> <name>` is skipped
-    rather than guessed at, so this can flag a type that is genuinely absent but
-    never invent one that is not there.
-    """
-    if not signature:
-        return set()
-    params_match = _SIG_PARAMS_RE.search(signature)
-    params = params_match.group(1) if params_match else ""
-    head = signature[: params_match.start()] if params_match else signature
-
-    names: set[str] = set()
-    # The declared name is always the LAST token; everything before it, once the
-    # modifiers are off, is the type. Joining rather than taking one token keeps
-    # `Dictionary<string, EnemyController>` in one piece — a whitespace split
-    # cuts it at the generic's own comma and loses the type that matters.
-    head_tokens = [t for t in re.split(r"\s+", head.strip()) if t]
-    while head_tokens and head_tokens[0].lower() in _SIG_MODIFIERS:
-        head_tokens.pop(0)
-    if len(head_tokens) >= 2:
-        names.add(_extract_base_type(" ".join(head_tokens[:-1])))
-    for raw in _split_params(params):
-        tokens = [t for t in re.split(r"\s+", raw.strip()) if t
-                  and t.lower() not in _SIG_MODIFIERS]
-        if len(tokens) >= 2:                     # "<type> <name>"
-            names.add(_extract_base_type(" ".join(tokens[:-1])))
-    return {n for n in names if n and re.match(r"^[A-Za-z_]\w*$", n)}
-
-
-def _drop_unresolvable_types(kind: str, candidate: dict,
-                             known_types: frozenset[str]) -> tuple[dict, list[str]]:
-    """Strip fields and methods whose declared types cannot resolve, plus every
-    reference to what was removed."""
-    fields = candidate.get("extra_fields")
-    if not isinstance(fields, list):
-        fields = []
-
-    kept_fields: list = []
-    dropped: set[str] = set()
-    for f in fields:
-        decl = (f.get("type") if isinstance(f, dict) else getattr(f, "type", "")) or ""
-        name = (f.get("name") if isinstance(f, dict) else getattr(f, "name", "")) or ""
-        base = _extract_base_type(str(decl))
-        if base and base not in known_types and base not in _CS_BUILTIN_TYPES:
-            dropped.add(str(name))
-            continue
-        kept_fields.append(f)
-
-    # Methods whose signature names a type nothing in the project defines.
-    methods_in = candidate.get("extra_methods")
-    kept_methods: list = []
-    bad_types: set[str] = set()
-    if isinstance(methods_in, list):
-        for m in methods_in:
-            sig = (m.get("signature") if isinstance(m, dict)
-                   else getattr(m, "signature", "")) or ""
-            unresolved = {t for t in _signature_type_names(str(sig))
-                          if t not in known_types and t not in _CS_BUILTIN_TYPES}
-            if unresolved:
-                bad_types |= unresolved
-                name_m = re.search(r"\b([A-Za-z_]\w*)\s*\(", str(sig))
-                if name_m:
-                    # The method is gone; calls to it would be CS0103 next.
-                    dropped.add(name_m.group(1))
-                continue
-            kept_methods.append(m)
-
-    if not dropped:
-        return candidate, []
-
-    out = dict(candidate)
-    if fields:
-        out["extra_fields"] = kept_fields
-    if isinstance(methods_in, list):
-        out["extra_methods"] = kept_methods
-    for key in _FRAGMENT_KEYS:
-        if isinstance(out.get(key), str):
-            out[key] = _neutralize_refs(out[key], dropped)
-    methods = out.get("extra_methods")
-    if isinstance(methods, list):
-        surviving = []
-        for m in methods:
-            if not isinstance(m, dict):
-                surviving.append(m)
-                continue
-            body = _neutralize_refs(str(m.get("body") or ""), dropped)
-            # A method left with nothing but AUDIT comments is dead weight.
-            if any(ln.strip() and not ln.lstrip().startswith("//")
-                   for ln in body.splitlines()):
-                surviving.append({**m, "body": body})
-        out["extra_methods"] = surviving
-    detail = (f" ({', '.join(sorted(bad_types))})" if bad_types else "")
-    return out, [f"micro-code: dropped {kind} member(s) {', '.join(sorted(dropped))} "
-                 f"— unresolvable collaborator type{detail} (CS0246)"]
-
-
-def _apply(sub, candidate: dict, known_types: frozenset[str] = frozenset()) -> list[str]:
+def _apply(sub, candidate: dict) -> list[str]:
     """Validate `candidate` shape and merge it without deleting collaborators.
 
     Member/type truth belongs to the selected-source contract and final C#
     diagnostics.  Earlier S1 code removed fields and methods merely because a
     local Python name list could not prove their collaborator type; that made
     intended gameplay disappear before the authoritative consumer could report
-    it.  ``known_types`` remains an API-compatible ignored parameter while
-    callers migrate to the compiler-backed check.
+    it.
     """
     if not candidate:
         return []
@@ -431,12 +236,6 @@ def _would_not_bind(sub, payload: dict) -> list[str]:
         return []
 
 
-def _project_types(subsystems: Sequence[Any]) -> frozenset[str]:
-    """Class names this project generates — a field typed after a sibling micro
-    (e.g. `DiverHealth`) resolves at compile time and must not be dropped."""
-    return frozenset(str(s.name) for s in subsystems if getattr(s, "name", ""))
-
-
 # ── Supplier A — schema.microgens[].input (no extra LLM calls) ────────────────
 
 def merge_authored_code(subsystems: Sequence[Any],
@@ -469,12 +268,11 @@ def merge_authored_code(subsystems: Sequence[Any],
 
     msgs: list[str] = []
     filled = 0
-    known = _project_types(subsystems)
     for sub in subsystems:
         authored = by_kind.get(sub.kind)
         if not authored or _has_code(sub.options):
             continue
-        applied = _apply(sub, authored, known)
+        applied = _apply(sub, authored)
         msgs.extend(applied)
         if _has_code(sub.options):
             filled += 1
@@ -524,184 +322,6 @@ def sync_microgens_from_subsystems(subsystems: Sequence[Any],
         msgs.append(f"micro-code: synced {synced} subsystem(s)' authored code "
                     f"into schema.microgens[].input (round-trip for "
                     f"unity-validate --compose)")
-    return msgs
-
-
-def sanitize_subsystem_composed_calls(subsystems: Sequence[Any],
-                                      composed_units: list | None) -> list[str]:
-    """Strip calls a subsystem's authored code makes to an invalid member of a
-    composed sibling class — the same check `_sanitize_composed_component_calls`
-    (src/unity_generator.py) already applies to `schema.scripts` (`type:
-    custom`), extended to cover `schema.microgens`.
-
-    A subsystem's extra_methods/awake_extra/update_extra/fixed_update_extra
-    are authored by `enrich_subsystems` in complete isolation — that LLM call
-    never sees the real generated source of any other micro, only its own
-    kind's prompt. It can still reach a composed sibling exactly like a custom
-    script does (`GameContext.Instance.Get<PlayerHealth>().Die()`), and
-    nothing validated that path before this: `lint_extensible`
-    (src/micro/code_fields.py) checks a subsystem's authored code against its
-    OWN template's members, never against another composed class's verified
-    public API.
-
-    Must run AFTER `composer.plan(subsystems)` produces `composed_units` (the
-    class names are not known before that) and BEFORE
-    `sync_microgens_from_subsystems` persists `Subsystem.options` into
-    `schema.microgens[].input` — otherwise the schema written to disk would
-    disagree with what actually got rendered.
-
-    `Subsystem.options` is a plain dict of JSON-shaped values (not the typed
-    CodeMethod/CodeField models `schema.scripts` uses — see `_apply`/
-    `_validate`'s docstrings), so `extra_methods` here is a list of dicts with
-    a `"body"` key, not objects with a `.body` attribute.
-    """
-    strip = _make_composed_call_stripper(composed_units)
-    if strip is None:
-        return []
-    flagged: set[str] = set()
-    touched = 0
-    for sub in subsystems:
-        opts = sub.options
-        changed = False
-        for key in _FRAGMENT_KEYS:
-            before = opts.get(key)
-            if not isinstance(before, str) or not before:
-                continue
-            after = strip(before)
-            if after != before:
-                opts[key] = after
-                changed = True
-        methods = opts.get("extra_methods")
-        if isinstance(methods, list):
-            new_methods = []
-            for m in methods:
-                if not isinstance(m, dict):
-                    new_methods.append(m)
-                    continue
-                body = m.get("body")
-                if isinstance(body, str) and body:
-                    stripped = strip(body)
-                    if stripped != body:
-                        m = {**m, "body": stripped}
-                        changed = True
-                new_methods.append(m)
-            if changed:
-                opts["extra_methods"] = new_methods
-        if changed:
-            touched += 1
-            flagged.add(sub.kind)
-    msgs: list[str] = []
-    if touched:
-        msgs.append(f"micro-code: stripped statement(s) referencing invalid "
-                    f"composed-sibling-class member(s) from {touched} "
-                    f"subsystem(s) (CS1061/CS0122): {', '.join(sorted(flagged))}")
-    return msgs
-
-
-def sanitize_subsystem_invented_constructors(subsystems: Sequence[Any],
-                                             composed_units: list | None) -> list[str]:
-    """Strip a subsystem's `new T(...)` construction of a type nobody
-    declares anywhere — the same check `_sanitize_invented_constructor_calls`
-    (src/unity_generator.py) already applies to `schema.scripts` (`type:
-    custom`), extended to cover `schema.microgens` for the same reason
-    `sanitize_subsystem_composed_calls` does: `enrich_subsystems` authors each
-    subsystem's extra_* fields in isolation, with no upstream check against
-    what types actually exist in this project.
-
-    `known_types` here is deliberately narrower than the custom-script call
-    site's (composed micro class names only, no sibling `schema.scripts`
-    names) — the same scope `sanitize_subsystem_composed_calls` already uses
-    for the identical reason: a subsystem cannot address a custom script by
-    name any other way either.
-    """
-    known_types = frozenset(u.class_name for u in (composed_units or []))
-    flagged: set[str] = set()
-    touched = 0
-    for sub in subsystems:
-        opts = sub.options
-        changed = False
-        for key in _FRAGMENT_KEYS:
-            before = opts.get(key)
-            if not isinstance(before, str) or not before:
-                continue
-            after = _strip_invented_constructors(before, known_types)
-            if after != before:
-                opts[key] = after
-                changed = True
-        methods = opts.get("extra_methods")
-        if isinstance(methods, list):
-            new_methods = []
-            for m in methods:
-                if not isinstance(m, dict):
-                    new_methods.append(m)
-                    continue
-                body = m.get("body")
-                if isinstance(body, str) and body:
-                    stripped = _strip_invented_constructors(body, known_types)
-                    if stripped != body:
-                        m = {**m, "body": stripped}
-                        changed = True
-                new_methods.append(m)
-            if changed:
-                opts["extra_methods"] = new_methods
-        if changed:
-            touched += 1
-            flagged.add(sub.kind)
-    msgs: list[str] = []
-    if touched:
-        msgs.append(f"micro-code: stripped statement(s) constructing an invented "
-                    f"type from {touched} subsystem(s) (CS0246): "
-                    f"{', '.join(sorted(flagged))}")
-    return msgs
-
-
-def sanitize_subsystem_builtin_call_arity(subsystems: Sequence[Any]) -> list[str]:
-    """Strip a subsystem's GetComponent-family call (or a sibling —
-    GetComponents/*InChildren/*InParent/TryGetComponent) made with an
-    argument count that method's real overloads don't have — the same check
-    `_sanitize_builtin_component_call_arity` (src/unity_generator.py) already
-    applies to `schema.scripts` (`type: custom`), extended to cover
-    `schema.microgens` for the same isolation reason
-    `sanitize_subsystem_composed_calls` documents: `enrich_subsystems`
-    authors each subsystem in isolation, so nothing upstream ever checked
-    this path either. See `_MB_METHOD_ARITY` for the overload shapes."""
-    flagged: set[str] = set()
-    touched = 0
-    for sub in subsystems:
-        opts = sub.options
-        changed = False
-        for key in _FRAGMENT_KEYS:
-            before = opts.get(key)
-            if not isinstance(before, str) or not before:
-                continue
-            after = _strip_builtin_call_arity(before)
-            if after != before:
-                opts[key] = after
-                changed = True
-        methods = opts.get("extra_methods")
-        if isinstance(methods, list):
-            new_methods = []
-            for m in methods:
-                if not isinstance(m, dict):
-                    new_methods.append(m)
-                    continue
-                body = m.get("body")
-                if isinstance(body, str) and body:
-                    stripped = _strip_builtin_call_arity(body)
-                    if stripped != body:
-                        m = {**m, "body": stripped}
-                        changed = True
-                new_methods.append(m)
-            if changed:
-                opts["extra_methods"] = new_methods
-        if changed:
-            touched += 1
-            flagged.add(sub.kind)
-    msgs: list[str] = []
-    if touched:
-        msgs.append(f"micro-code: stripped GetComponent-family call(s) with an "
-                    f"invalid argument count from {touched} subsystem(s) "
-                    f"(CS1501): {', '.join(sorted(flagged))}")
     return msgs
 
 
@@ -923,7 +543,6 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
     msgs: list[str] = []
     enriched = 0
     skipped_kinds: list[str] = []
-    known = _project_types(subsystems)
 
     for sub in subsystems:
         keys = code_keys_for(sub.kind)
@@ -1001,7 +620,7 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
 
         if not payload:
             continue
-        msgs.extend(_apply(sub, payload, known))
+        msgs.extend(_apply(sub, payload))
         if _has_code(sub.options):
             enriched += 1
 
@@ -1039,8 +658,8 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
 #
 # Containment is NOT rebuilt here: unity_generator already runs a battery of
 # sanitizers over `script.awake_extra` / `update_extra` / `fixed_update_extra` /
-# `extra_methods[].body` (_sanitize_project_service_calls,
-# _strip_undeclared_foreach, _strip_undeclared_self_reference, ...). This adds
+# `extra_methods[].body` (_strip_undeclared_foreach,
+# _sanitize_undeclared_self_calls, ...). This adds
 # the supplier those passes have always been waiting for.
 
 _SCRIPT_SYSTEM = (
@@ -1091,13 +710,11 @@ def _script_contract(script, siblings: Sequence[Any] = (),
     The same lesson as `_contract_for`: the compiler has always known this and
     only ever used it to JUDGE the answer. A custom script's surface is small
     and exact — MonoBehaviour, its own serialized fields, the PUBLIC methods of
-    its sibling custom scripts (the only cross-script access
-    `unity_generator._sanitize_project_service_calls` lets through — a
-    sibling's extra_fields always render `[SerializeField] private`, so
-    reaching one is CS0122 from anywhere else), and the verified public API of
-    whichever composed micros this project actually has (`_COMPOSED_CLASS_API`
-    — the same maximal-per-kind table `_sanitize_project_service_calls` already
-    uses to strip a call it can't verify). Confirmed live: OxygenManager called
+    its sibling custom scripts (a sibling's extra_fields always render
+    `[SerializeField] private`, so reaching one is CS0122 from anywhere else),
+    and the public API extracted from the selected rendered source of whichever
+    composed micros this project actually has (`component_api`, the S2
+    contract). Confirmed live: OxygenManager called
     `Get<PlayerHealth>().Die()` (private, CS0122), InventoryManager called
     `Get<WorldInteractable>().CanPickup()`/`.ItemName` (neither exists, CS1061
     x2) — both classes the model could see existed but never the shape of.
@@ -1125,10 +742,8 @@ def _script_contract(script, siblings: Sequence[Any] = (),
         lines.append("OTHER SCRIPTS YOU MAY CALL (public methods only)")
         lines.extend(reachable)
 
-    # Only classes this project actually composes, and only the ones with a
-    # verified table entry — an unlisted composed kind (e.g. EnemyAI, VFX) has
-    # no ground truth here and stays unmentioned rather than guessed at, same
-    # restraint `_composed_member_ok` applies at judge time.
+    # Only classes this project actually composes, read from the selected
+    # rendered source; with no extracted contract nothing is guessed at.
     if component_api is not None and composed_subsystems:
         lines.append("")
         lines.append("COMPOSED PROJECT SYSTEMS YOU MAY CALL (selected public API only)")
@@ -1244,7 +859,7 @@ def _script_would_not_bind(script, payload: dict) -> list[str]:
                         signature=sig).values():
                     cuts.extend(names)
         # A name whose underscored twin IS declared is not a correction for the
-        # model to make — `_bind_script` rewrites `grid` to `_grid`
+        # model to make — the underscore-alias lint resolves `grid` to `_grid`
         # deterministically. Asking anyway burns a retry on a solved problem.
         cuts = [n for n in cuts if f"_{n}" not in known]
         # Deduplicated and capped: a correction listing forty names teaches the
@@ -1371,202 +986,6 @@ def _apply_script(script, payload: dict) -> bool:
         script.extra_usings = have + [u for u in usings
                                       if isinstance(u, str) and u not in have]
     return wrote
-
-
-def _bind_script(script) -> list[str]:
-    """Post-apply binding pass for a custom script: DECLARE any identifier the
-    author used but never defined (`build_missing_fields`), then NEUTRALIZE
-    whatever is still unbound after that — the same two-tier "build before you
-    cut" contract `bind_authored_code` already runs for every micro
-    (`schema.microgens`), just never extended to `schema.scripts`.
-
-    The retry loop's own bind-check (`_script_would_not_bind`) only ever runs
-    on attempts BEFORE the last (`if attempt + 1 >= attempts: break` happens
-    first) — there is nowhere left to retry to, so the final attempt is
-    accepted unconditionally, unbound identifiers included. `_apply_script`
-    only checks STRUCTURAL validity (`lint_method`/brace-balance), never
-    identifier binding, so nothing catches this before codegen. Confirmed
-    live: TeaBrewing.cs assigned `_onComplete = onComplete;` in `StartBrew()`
-    — no `_onComplete` field was ever declared (a near-miss of the real one,
-    `_brewCompleteEvent`) — CS0103, silently shipped.
-
-    A custom script's template (`CustomBehaviour.cs.j2`) is a bare shell with
-    no variant branches, so unlike `bind_authored_code` this needs no
-    `template_scope_members` call — the known-symbol universe is just
-    MonoBehaviour + `_KNOWN_SYMBOLS` + the script's own declared fields and
-    method names, the same set `_script_would_not_bind` already computes for
-    the retry loop. Returns fixer-log messages, same shape as
-    `bind_authored_code`'s."""
-    known = set(_MONO_INHERITED) | set(_KNOWN_SYMBOLS) | {script.name}
-    for f in (getattr(script, "extra_fields", None) or []):
-        known.add(str(getattr(f, "name", "") or ""))
-    methods = list(getattr(script, "extra_methods", None) or [])
-    for m in methods:
-        known.add(_method_name(getattr(m, "signature", "") or ""))
-
-    blob = "\n".join(
-        [str(getattr(script, key, "") or "") for key in _FRAGMENT_KEYS]
-        + [str(getattr(m, "body", "") or "") for m in methods]
-    )
-    wanted: set[str] = set()
-    for key in _FRAGMENT_KEYS:
-        for names in find_unbound_identifiers(
-                getattr(script, key, "") or "", known=known).values():
-            wanted |= names
-    for m in methods:
-        sig = getattr(m, "signature", "") or ""
-        for names in find_unbound_identifiers(
-                getattr(m, "body", "") or "",
-                known=known | _signature_param_names(sig),
-                signature=sig).values():
-            wanted |= names
-
-    # Rebind `grid` -> `_grid` BEFORE building or cutting anything. The author
-    # declared the field and then referred to it without the underscore; the
-    # other two repairs available here are both wrong on content — neutralizing
-    # deletes the behaviour, and declaring a second `grid` field leaves a
-    # collaborator that is never wired in the scene, so the script compiles and
-    # does nothing. See lint_underscore_alias_references.
-    rebound_all: set[str] = set()
-    for key in _FRAGMENT_KEYS:
-        before = getattr(script, key, "") or ""
-        if not before:
-            continue
-        after, rebound = lint_underscore_alias_references(
-            before, unbound=wanted, declared=known)
-        if rebound:
-            setattr(script, key, after)
-            rebound_all |= rebound
-    for m in methods:
-        before = getattr(m, "body", "") or ""
-        if not before:
-            continue
-        after, rebound = lint_underscore_alias_references(
-            before, unbound=wanted, declared=known)
-        if rebound:
-            m.body = after
-            rebound_all |= rebound
-    if rebound_all:
-        wanted -= rebound_all
-
-    built = build_missing_fields(script, wanted, blob)
-    if built:
-        known |= {b.split()[-1] for b in built}
-
-    # Invented members on real engine types (CS0117/CS1061). A custom script
-    # has no template to check against, but its own extra_fields declare the
-    # types, which is all this needs. No surface built -> no opinion.
-    from .unity_api_surface import default_api_surface
-    api_surface = default_api_surface()
-    declared_types = {str(getattr(f, "name", "") or ""): str(getattr(f, "type", "") or "")
-                      for f in (getattr(script, "extra_fields", None) or [])}
-
-    flagged: set[str] = set()
-    for key in _FRAGMENT_KEYS:
-        before = getattr(script, key, "") or ""
-        if not before:
-            continue
-        after, names = lint_unbound_identifiers(before, known=known)
-        after, mnames = lint_invalid_member_uses(
-            after, field_types=declared_types, surface=api_surface)
-        names |= mnames
-        if names:
-            setattr(script, key, after)
-            flagged |= names
-    for m in methods:
-        before = getattr(m, "body", "") or ""
-        if not before:
-            continue
-        sig = getattr(m, "signature", "") or ""
-        after, names = lint_unbound_identifiers(
-            before, known=known | _signature_param_names(sig), signature=sig)
-        after, mnames = lint_invalid_member_uses(
-            after, field_types=declared_types, surface=api_surface)
-        names |= mnames
-        if names:
-            m.body = after
-            flagged |= names
-
-    # Add the namespaces the authored body USES but never imported. Nothing
-    # else does this: lint_usings only ever filters what the model asked for,
-    # so `Array.Fill(...)` shipped without `using System;` and failed as
-    # CS0103 — which reads like an invented symbol, not a missing import.
-    added_usings: list[str] = []
-    try:
-        blob_all = "\n".join(
-            [str(getattr(script, key, "") or "") for key in _FRAGMENT_KEYS]
-            + [str(getattr(m, "body", "") or "") for m in methods]
-        )
-        have = {str(u).strip().rstrip(";").replace("using ", "")
-                for u in (getattr(script, "extra_usings", None) or [])}
-        for ns in required_usings_for(blob_all):
-            if ns not in have:
-                script.extra_usings = list(
-                    getattr(script, "extra_usings", None) or []) + [ns]
-                have.add(ns)
-                added_usings.append(ns)
-    except Exception:                      # noqa: BLE001 — never block codegen
-        added_usings = []
-
-    # The author declared a jagged array one rank deeper than their own code
-    # then used it — see jagged_rank_corrections for why only the explicit
-    # local-declaration signal is trusted.
-    rank_fixes: dict[str, str] = {}
-    try:
-        declared_pairs = [(str(getattr(f, "name", "") or ""),
-                           str(getattr(f, "type", "") or ""))
-                          for f in (getattr(script, "extra_fields", None) or [])]
-        rank_fixes = jagged_rank_corrections(declared_pairs, blob_all)
-        for f in (getattr(script, "extra_fields", None) or []):
-            fixed = rank_fixes.get(str(getattr(f, "name", "") or ""))
-            if fixed:
-                f.type = fixed
-    except Exception:                      # noqa: BLE001 — never block codegen
-        rank_fixes = {}
-
-    # `UnityEngine.Touchscreen` -> `Touchscreen` + the namespace it really
-    # lives in. See correct_qualified_type.
-    ns_fixes: list[str] = []
-    try:
-        for f in (getattr(script, "extra_fields", None) or []):
-            was = str(getattr(f, "type", "") or "")
-            fixed, need_ns = correct_qualified_type(was)
-            if not need_ns:
-                continue
-            f.type = fixed
-            ns_fixes.append(f"{was} -> {fixed}")
-            have_ns = {str(u).strip().rstrip(";").replace("using ", "")
-                       for u in (getattr(script, "extra_usings", None) or [])}
-            if need_ns not in have_ns:
-                script.extra_usings = list(
-                    getattr(script, "extra_usings", None) or []) + [need_ns]
-    except Exception:                      # noqa: BLE001 — never block codegen
-        ns_fixes = []
-
-    msgs: list[str] = []
-    if ns_fixes:
-        msgs.append(f"script-code: {script.name} — REQUALIFIED type(s) written "
-                    f"with the wrong namespace: " + ", ".join(ns_fixes))
-    if rank_fixes:
-        msgs.append(f"script-code: {script.name} — CORRECTED array rank on "
-                    + ", ".join(f"{n} -> {ty}" for n, ty in sorted(rank_fixes.items()))
-                    + " (the body's own declaration disagreed with the field's)")
-    if added_usings:
-        msgs.append(f"script-code: {script.name} — ADDED using(s) the body "
-                    f"needs: {', '.join(added_usings)}")
-    if rebound_all:
-        msgs.append(f"script-code: {script.name} — REBOUND {len(rebound_all)} "
-                    f"reference(s) to the field already declared for them: "
-                    + ", ".join(f"{n} -> _{n}" for n in sorted(rebound_all)))
-    if built:
-        msgs.append(f"script-code: {script.name} — BUILT {len(built)} "
-                    f"field(s) used but not declared: "
-                    f"{', '.join(sorted(set(built)))}")
-    if flagged:
-        msgs.append(f"script-code: {script.name} neutralized "
-                    f"{len(flagged)} unbindable reference(s): "
-                    f"{', '.join(sorted(flagged))}")
-    return msgs
 
 
 def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
