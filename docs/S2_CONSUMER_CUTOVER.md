@@ -43,6 +43,13 @@ There must be no partial green cutover with old project API authority underneath
 | Saved replay | `cli.unity_project.unity_validate` reads `selected_subsystems`, merges code, plans | Reuse saved `meta.compose_selection`; same contract/check path; never raw-prompt reselection |
 | Secondary consumers | `cli/unity_eval.py`, `src/micro_stress.py` invoke subsystem sanitizers | Exercise same source-preserving check; update legacy deletion expectations honestly |
 
+R0 closeout (docs/REPO_DRIFT_REMEDIATION.md) completed the Micro correction,
+Per-micro resolve, HUD, Generator collaborator erasers and Framework checks
+rows: Roslyn against real Unity reference assemblies is the only judge, the
+binder and erasers are deleted, and HUD setters come from the selected
+contract. `_reject_unbalanced_custom_bodies` and the stub emitter remain, as
+recorded there.
+
 The three generator tables are `_COMPOSED_CLASS_API`, `_COMPOSED_METHOD_ARITY`
 and `_COMPOSED_CLASS_EVENTS`. Earlier copies are `_GAME_MANAGER_API` and
 `_GAME_CONTEXT_API`. Broad `_ANIMATOR_DYNAMIC_MEMBER_RE` acceptance must disappear

@@ -90,20 +90,10 @@ class ObjectivesSchema(CodeExtensibleSchema):
     description: str                    = "Mission objective tracker"
     meta:        dict                   = Field(default_factory=dict)
     # Derived (default_fix), never authored: the distinct `objectives[].type`
-    # values present, as a plain list[str] — the one shape render_facts()
-    # actually turns into a fact `bind_authored_code` can evaluate.
-    # Objectives.cs.j2 gates `_surviveTimer` and its Update() body on whether
-    # a `survive` objective exists, but `objectives` itself is a list of
-    # OBJECTS (not list[str]), so render_facts() cannot see it and the
-    # `{% if survive_objs %}` guard was permanently "undecidable" — which
-    # `_drop_dead_variant_branches` conservatively resolves to "keep it",
-    # reserving `_surviveTimer` in scope for EVERY objectives tracker, survive
-    # objective or not. Live regression: ChampionshipLandingObjectives (reach
-    # only) authored `_surviveTimer -= Time.deltaTime` in update_extra —
-    # `bind_authored_code` judged it against a scope that falsely included
-    # `_surviveTimer`, so the reference sailed through as CS0103. Rewriting
-    # the guard to `"survive" in s.objective_types` (a real list[str] field)
-    # closes it without teaching the fact-evaluator a new condition shape.
+    # values present, as a plain list[str]. Objectives.cs.j2 gates
+    # `_surviveTimer` and its Update() body on `"survive" in
+    # s.objective_types`, a real list[str] field, so the template's own
+    # declarations follow the objectives this schema actually has.
     objective_types: list[str]          = Field(default_factory=list)
 
     @field_validator("variant", mode="before")
@@ -292,7 +282,7 @@ class ObjectivesPipeline(UnityMicroPipeline):
         # elsewhere (an authored extra_method colliding with a template
         # method, e.g. ReportProgress itself, would otherwise ship as a
         # duplicate unchecked).
-        msgs += harden_against_template(schema, self.template_root, engine=self.engine)
+        msgs += harden_against_template(schema, self.template_root)
         return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

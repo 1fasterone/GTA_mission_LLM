@@ -34,10 +34,11 @@ def _emit_profile(
 
     with tempfile.TemporaryDirectory(prefix="projectile-slice3-") as temp_dir:
         staging_assets = Path(temp_dir) / "Assets"
-        units = MicroComposer("ProjectileSlice3Acceptance").emit(
-            subsystems_for("3D", [], projectile_contract=contract),
-            staging_assets,
-        )
+        subsystems = subsystems_for("3D", [], projectile_contract=contract)
+        composer = MicroComposer("ProjectileSlice3Acceptance")
+        # HUD seams read setter availability from the selected contract.
+        composer.bind_component_contract(subsystems)
+        units = composer.emit(subsystems, staging_assets)
         generated_micros = staging_assets / "Micros"
         generated_scripts = generated_micros / "controller" / "Scripts"
         if full_micro_tree:

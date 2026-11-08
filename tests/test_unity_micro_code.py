@@ -427,37 +427,6 @@ def test_contract_names_only_the_projects_own_tags():
     assert "FileIcon, Folder" in c and "THROWS" in c
 
 
-def test_bad_bind_is_reported_before_anything_is_cut():
-    from src.unity_micro_code import _would_not_bind
-    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
-                         "name": "MissionObjectives", "options": {}})()
-    cuts = _would_not_bind(sub, {"extra_methods": [
-        {"signature": "private void Check()", "body": "OnObjectiveComplete();"}]})
-    assert any("needs 1..1" in c for c in cuts), cuts
-
-
-def test_clean_payload_triggers_no_retry():
-    from src.unity_micro_code import _would_not_bind
-    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
-                         "name": "MissionObjectives", "options": {}})()
-    assert _would_not_bind(sub, {"extra_methods": [
-        {"signature": "private void Check()",
-         "body": 'OnObjectiveComplete("obj_1");'}]}) == []
-
-
-def test_would_not_bind_never_mutates_the_payload():
-    """The check runs on a throwaway; the real payload must reach _apply intact
-    so a retry can improve on it rather than on an already-gutted body."""
-    from src.unity_micro_code import _would_not_bind
-    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
-                         "name": "MissionObjectives", "options": {}})()
-    payload = {"extra_methods": [
-        {"signature": "private void Check()", "body": "OnObjectiveComplete();"}]}
-    before = payload["extra_methods"][0]["body"]
-    _would_not_bind(sub, payload)
-    assert payload["extra_methods"][0]["body"] == before
-
-
 # ── _brief_job_for / _script_user_prompt ─────────────────────────────────────
 #
 # Regression cover (Gridfall/GridLogic): a brief states its SCRIPTS section near
@@ -533,3 +502,55 @@ def test_script_user_prompt_falls_back_to_schema_description_when_unbriefed():
         concept="c", user_prompt="a one-line vibe prompt",
         keys=(), contract="")
     assert "its job:     schema paraphrase" in out
+
+
+# ── R0: Step 3.5 corrections come from Roslyn, not a Python binder ───────────
+
+class _OneShotChecker:
+    """Compiler wording for the first proposal only (stands in for
+    AuthoredSourceChecker; the real one is exercised in
+    tests/test_unity_authored_check.py)."""
+
+    def __init__(self):
+        self.seen: list[dict] = []
+
+    def subsystem(self, _sub, payload):
+        from src.unity_authored_check import AuthoredFindings
+        self.seen.append(dict(payload))
+        findings = AuthoredFindings()
+        if len(self.seen) == 1:
+            findings.introduced = [{"code": "CS1501", "message":
+                                    "No overload for method 'GetComponent' takes 3 arguments",
+                                    "callsite": {"line_text": "  GetComponent<Rigidbody>(1, 2, 3);"}}]
+        return findings
+
+
+def test_compiler_findings_drive_the_correction_round():
+    sub = _controller_sub()
+    checker = _OneShotChecker()
+    llm = FakeLLM({"controller": _SWIM_CODE})
+    msgs = enrich_subsystems([sub], llm=llm, concept="diving", checker=checker)
+    assert llm.calls == ["controller", "controller"]
+    assert any("re-authored after 1" in m for m in msgs)
+    # The proposal is judged, never mutated, by the checker.
+    assert checker.seen[0]["update_extra"] == _SWIM_CODE["update_extra"]
+
+
+def test_a_clean_compiler_verdict_triggers_no_retry():
+    class _Clean:
+        def subsystem(self, *_a):
+            from src.unity_authored_check import AuthoredFindings
+            return AuthoredFindings()
+
+    llm = FakeLLM({"controller": _SWIM_CODE})
+    enrich_subsystems([_controller_sub()], llm=llm, concept="diving", checker=_Clean())
+    assert llm.calls == ["controller"]
+
+
+def test_no_checker_is_recorded_and_the_proposal_is_kept():
+    sub = _controller_sub()
+    llm = FakeLLM({"controller": _SWIM_CODE})
+    msgs = enrich_subsystems([sub], llm=llm, concept="diving")
+    assert llm.calls == ["controller"]
+    assert any("no compiler correction check" in m for m in msgs)
+    assert sub.options["update_extra"] == _SWIM_CODE["update_extra"]

@@ -155,21 +155,18 @@ pile of hand-written special cases (which is exactly what today's repair passes
 are). With it, the model does its own binding when it is finally told what is
 wrong — including for cases nobody anticipated.
 
-Shipped in PR #133 for subsystems (`_would_not_bind` runs `bind_authored_code`
-against a throwaway schema instance and feeds back exactly what would be
-neutralized/dropped) and extended to scripts in PR #141 (`_script_would_not_bind`,
-scoped to unbound identifiers rather than the full binder since a custom script
-has no micro template to check against). Not yet covered by the correction
-loop: a composed-micro-call binding error surfaced through `_script_contract`'s
-new section above only shows up in the S2 Roslyn check or the Editor compile
-gate, not during the author→compile→re-author round — the checker (`_script_would_not_bind`) still only validates bare
-identifiers, not dotted `Get<T>().Member` calls.
+Shipped in PR #133 for subsystems and extended to scripts in PR #141, first
+as Python name-binding checks. R0 replaced both with the selected-source Roslyn
+check against the real Unity reference profile (`src/unity_authored_check.py`):
+a proposal is rendered by its production writer and compiled, and every error
+it introduces — including a dotted `GameContext.Instance.Get<T>().Member`
+call on a composed sibling — is handed back in compiler wording.
 
 ### Stage 6.4c — the binder replaces the neutraliser
 
-`bind_authored_code` stops commenting things out. It resolves by the three
-tiers, and the only terminal state is **escalate**, which fails the build with
-the named mechanic rather than shipping a green build with a hole in it.
+R0 retired the neutraliser outright: `bind_authored_code` is gone, so authored
+statements are no longer commented out. Defects reach the Roslyn record and
+the Editor compile gate with the author's source intact.
 
 Every AUDIT removal that does survive gets stamped on
 `schema.meta["authored_code_removed"]`, and a Step 7 check

@@ -123,6 +123,19 @@ unity_pipeline:
     # UPM_CACHE_ROOT override when it is set.
     # global_root: ''
 
+# Real Unity reference assemblies for the SDK Roslyn consumer check (R0).
+# Step 3.5 corrections and the final authored-source check bind authored C#
+# against these, never against a Python member table. `unity_editor` is a
+# Unity Hub install root (the folder containing Editor/); match the Editor
+# the compile gate uses (CI: 6000.1.4f1). Without it, corrections abstain
+# loudly and the final check runs SDK-only.
+# `package_assemblies` may list compiled package DLLs (or folders of them,
+# e.g. an imported project's Library/ScriptAssemblies) for uGUI, TextMeshPro
+# and the Input System; without them those namespaces stay unverified.
+component_api:
+  unity_editor: C:/Program Files/Unity/Hub/Editor/6000.1.4f1
+  package_assemblies: []
+
 playability:
   # Pipeline Step 7 (src/unity_playability.py) grades every build on whether
   # it is actually a GAME — the player has an avatar, a controller, an

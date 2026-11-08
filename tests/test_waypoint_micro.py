@@ -15,6 +15,7 @@ from src.csharp_syntax_gate import check_files
 from src.micro import REGISTRY
 from src.micro.waypoint import VARIANTS, WaypointPipeline, WaypointSchema
 from src.unity_compose import MicroComposer, subsystems_for
+from tests.conftest import bound_composer
 from src.unity_schema import MissionObjective, MissionSpec
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -139,7 +140,7 @@ class TestComposeWiring:
 
     def test_game_wiring_forwards_the_same_target_ref_the_hud_reads(self, tmp_path):
         subs = subsystems_for("3D", [], missions=[_mission()])
-        MicroComposer("WPTest").emit(subs, tmp_path / "Assets")
+        bound_composer("WPTest", subs).emit(subs, tmp_path / "Assets")
         wiring_cs = (tmp_path / "Assets" / "Micros" / "wiring" / "Scripts" / "GameWiring.cs")
         text = wiring_cs.read_text(encoding="utf-8")
         assert "string targetRef" in text

@@ -31,10 +31,11 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="projectile-slice2-") as temp_dir:
         staging_assets = Path(temp_dir) / "Assets"
-        units = MicroComposer("ProjectileSlice2Acceptance").emit(
-            subsystems_for("3D", [], projectile_contract=contract),
-            staging_assets,
-        )
+        subsystems = subsystems_for("3D", [], projectile_contract=contract)
+        composer = MicroComposer("ProjectileSlice2Acceptance")
+        # HUD seams read setter availability from the selected contract.
+        composer.bind_component_contract(subsystems)
+        units = composer.emit(subsystems, staging_assets)
         generated_scripts = (
             staging_assets / "Micros" / "controller" / "Scripts"
         )

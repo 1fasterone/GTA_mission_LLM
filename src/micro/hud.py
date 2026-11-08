@@ -210,23 +210,6 @@ class HUDPipeline(UnityMicroPipeline):
     }
     _TEMPLATE_USINGS = {"UnityEngine", "UnityEngine.UI", "TMPro", "UnityEngine.UIElements"}
 
-    # Methods each variant's baseline already declares. A widget whose setter
-    # collides with one would be CS0111 (duplicate member), so it is dropped
-    # rather than emitted — the variant's own version already does that job.
-    _VARIANT_SETTERS: dict[str, set[str]] = {
-        "health_bar":         {"SetHealth"},
-        "ammo_counter":       {"SetAmmo"},
-        "score_panel":        {"SetScore"},
-        "interaction_prompt": {"Show", "Hide"},
-        "dialogue_box":       {"ShowLine"},
-        "pause_menu":         {"SetPaused"},
-        "minimap":            set(),
-        "crosshair":          set(),
-        "racing_hud":         {"SetSpeed", "SetLap", "SetPosition", "SetCoins",
-                               "SetBoost", "ShowCountdown", "HideCountdown", "Ordinal"},
-        "full_hud_bundle":    {"SetHealth", "SetAmmo", "SetScore"},
-    }
-
     # The serialized refs each variant's baseline actually declares (HUD.cs.j2).
     # Distinct from _RESERVED_FIELD_NAMES, which is the variant-agnostic union
     # used to police LLM-authored extra_fields: applying that union to widgets
@@ -265,7 +248,14 @@ class HUDPipeline(UnityMicroPipeline):
         de-duplicate the rest. Returns human-readable notes (never raises) so the
         caller can report exactly what was dropped instead of silently shrinking
         the HUD."""
-        owned_setters = self._VARIANT_SETTERS.get(variant, set())
+        # Methods the selected variant's baseline already declares, read from
+        # the variant-scoped template this writer renders (no copied table). A
+        # widget whose setter collides with one would be CS0111 (duplicate
+        # member), so it is dropped — the variant's own version does that job.
+        from .code_fields import template_method_arities
+        template_dir = (getattr(self, "template_root", None)
+                        or Path("templates/unity/micro") / (self.template_subdir or self.kind))
+        owned_setters = set(template_method_arities(str(template_dir), variant))
         # uGUI and UI Toolkit fields are mutually exclusive in the template —
         # union them only for whichever backend the schema actually resolved to.
         owned_fields = (self._UITOOLKIT_FIELDS if schema.backend == "UIToolkit"
@@ -352,16 +342,3 @@ class HUDPipeline(UnityMicroPipeline):
         )
         count += 1
         return count
-
-
-def hud_setters(variant: str, widgets: list[HudWidget]) -> set[str]:
-    """Every public setter the emitted HUD class will declare: the variant
-    baseline's own, plus one per widget that survived `_lint_widgets`.
-
-    The composer gates its HUD seams on this rather than on the variant name, so
-    a seam can never call a method the class does not declare (CS1061) and never
-    skips one it does. Call it with the POST-`default_fix` widget list.
-    """
-    return set(HUDPipeline._VARIANT_SETTERS.get(variant, set())) | {
-        w.setter for w in widgets
-    }

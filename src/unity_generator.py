@@ -572,218 +572,6 @@ def _stub_type_names(extra_fields: list,
     return names
 
 
-def _collect_custom_type_stubs(extra_fields: list,
-                               known_types: "frozenset[str]" = frozenset()) -> list[str]:
-    """Return [System.Serializable] stub strings for LLM-invented types in extra_fields.
-
-    Types already defined in Unity/C# (_CS_BUILTIN_TYPES) are skipped, as are
-    Manager/System/Controller singletons (those are expected to be separate scripts)
-    and anything in `known_types` (already a real class in this project — see
-    `_stub_type_names`).
-    """
-    return [
-        f"[System.Serializable]\n"
-        f"public class {name}\n"
-        f"{{\n"
-        f"    // Auto-generated stub — add fields as needed\n"
-        f"}}\n"
-        for name in _stub_type_names(extra_fields, known_types)
-    ]
-
-
-# ── Invented type via inline `new T(...)` (never touches a declared field) ───
-# _collect_custom_type_stubs/_sanitize_stub_type_usage only ever see an
-# invented type reached through a DECLARED field -- a constructor call used
-# inline, as a bare statement or buried in an argument list, never appears in
-# extra_fields at all and is invisible to every check above. Hit live:
-#   Graphics.Blit(source, dest, new ShaderPass(profile), 0);
-# `ShaderPass` is not a real Unity or URP type -- not a missing `using`, a
-# type that does not exist anywhere in the engine. (Graphics.Blit also has no
-# overload matching those arguments, but overload resolution is out of reach
-# for a regex pass; the invented TYPE is the part checked here.)
-#
-# `_EXPRESSION_BUILTIN_TYPES` widens `_CS_BUILTIN_TYPES` with common BCL
-# utility/exception types that legitimately appear in a `new T(...)`
-# EXPRESSION but would never be the declared TYPE of a `[SerializeField]`
-# field -- so they were never candidates for the narrower, field-oriented list.
-_EXPRESSION_BUILTIN_TYPES: frozenset[str] = _CS_BUILTIN_TYPES | frozenset({
-    "Exception", "ArgumentException", "ArgumentNullException",
-    "InvalidOperationException", "NotImplementedException",
-    "NotSupportedException", "IndexOutOfRangeException", "NullReferenceException",
-    "StringBuilder", "Regex", "TimeSpan", "DateTime", "Random",
-    "WaitUntil", "WaitWhile", "GUILayoutOption", "Tuple", "ValueTuple",
-    "Guid", "Uri",
-})
-_NEW_EXPR_RE = re.compile(r"\bnew\s+([A-Za-z_]\w*)\s*(?:<[^>()]*>)?\s*\(")
-
-
-def _invented_constructor_type(name: str, known_types: "frozenset[str]") -> bool:
-    """True if `name` (the type argument of a `new name(...)` expression) is
-    not `_EXPRESSION_BUILTIN_TYPES`, not in `known_types` (every sibling
-    script and composed micro class name -- same ground truth
-    `_sanitize_stub_type_usage` uses), and not a Manager/System/Controller/
-    Handler-suffixed name (those are expected to be separate scripts this
-    check cannot see the full project roster of -- same exemption
-    `_stub_type_names` applies)."""
-    return not (
-        name in _EXPRESSION_BUILTIN_TYPES
-        or name in known_types
-        or name.endswith("Manager")
-        or name.endswith("System")
-        or name.endswith("Controller")
-        or name.endswith("Handler")
-    )
-
-
-def _strip_invented_constructors(body: str, known_types: "frozenset[str]") -> str:
-    """Drop any physical line constructing a type nobody declares anywhere —
-    see `_sanitize_invented_constructor_calls` for the live bug this exists
-    for. There is no field to null out here and no stub that would make the
-    call meaningful in place, so the whole statement goes."""
-    if not body or "new " not in body:
-        return body
-    out = []
-    for line in body.splitlines(keepends=True):
-        bad = any(_invented_constructor_type(m.group(1), known_types)
-                  for m in _NEW_EXPR_RE.finditer(line))
-        if not bad:
-            out.append(line)
-    return "".join(out)
-
-
-def _sanitize_invented_constructor_calls(script: UnityScript,
-                                         known_types: "frozenset[str]" = frozenset()) -> None:
-    """Strip any statement that constructs a type nobody declares anywhere:
-    not `_EXPRESSION_BUILTIN_TYPES`, not `known_types` (every sibling script
-    and composed micro class name -- same ground truth `_sanitize_stub_type_
-    usage` uses), and not a Manager/System/Controller/Handler-suffixed name
-    (those are expected to be separate scripts this pass cannot see the full
-    project roster of -- same exemption `_stub_type_names` applies). There is
-    no field to null out here and no stub that would make the call
-    meaningful in place, so the statement is dropped outright rather than
-    half-repaired."""
-    script.awake_extra        = _strip_invented_constructors(script.awake_extra, known_types)
-    script.update_extra       = _strip_invented_constructors(script.update_extra, known_types)
-    script.fixed_update_extra = _strip_invented_constructors(script.fixed_update_extra, known_types)
-    for m in script.extra_methods:
-        m.body = _strip_invented_constructors(m.body, known_types)
-
-
-# ── Invented type via a Find*ObjectType<T>() lookup (the other reach-for-a-
-# nonexistent-class shape) ────────────────────────────────────────────────────
-# `_sanitize_invented_constructor_calls` (above) catches `new T(...)`; this is
-# the sibling call shape a model reaches for when it wants "the X already in
-# the scene" instead of "a new X" -- FindObjectOfType<T>() and its four
-# spellings, all of which require T to be a real UnityEngine.Object-derived
-# type. Hit live: MirrorSpawning.cs (Grandma's Antique Shop),
-# SpawnRaider() calling `FindFirstObjectByType<AntiqueMirror>()` where
-# AntiqueMirror is the BRIEF'S ENTITY NAME (schema.entities), never a class --
-# entities are GameObjects instantiated by EntitySpawner at a runtime-composed
-# name, not compiled types, so no stub could make this resolve to the real
-# one. Unlike a field's invented type (_sanitize_stub_type_usage), there is
-# nothing to stub here that would help: an empty class satisfies the compiler
-# but FindFirstObjectByType<T>() over an empty stub can never find an
-# instance, and retyping the argument to a real base type (GameObject) would
-# compile while silently returning an ARBITRARY object in the scene instead
-# of failing loudly -- worse than doing nothing. Same "prefer inert over
-# broken" contract as the constructor case: drop the statement.
-_FIND_OBJECT_TYPE_RE = re.compile(
-    r"\b(?:FindObjectOfType|FindObjectsOfType|FindFirstObjectByType|"
-    r"FindAnyObjectByType|FindObjectsByType)\s*<\s*([A-Za-z_]\w*)\s*>\s*\(")
-
-
-def _strip_invented_find_calls(body: str, known_types: "frozenset[str]") -> str:
-    """Drop any physical line calling a Find*ObjectType<T>() lookup where T is
-    a type nobody declares anywhere. See the module comment above this
-    function's sibling `_sanitize_invented_find_object_type_calls` for the
-    live bug this exists for."""
-    if not body or "Find" not in body:
-        return body
-    out = []
-    for line in body.splitlines(keepends=True):
-        bad = any(_invented_constructor_type(m.group(1), known_types)
-                  for m in _FIND_OBJECT_TYPE_RE.finditer(line))
-        if not bad:
-            out.append(line)
-    return "".join(out)
-
-
-def _sanitize_invented_find_object_type_calls(script: UnityScript,
-                                              known_types: "frozenset[str]" = frozenset()) -> None:
-    """Strip any statement calling FindObjectOfType/FindObjectsOfType/
-    FindFirstObjectByType/FindAnyObjectByType/FindObjectsByType with a type
-    argument that is not `_EXPRESSION_BUILTIN_TYPES`, not `known_types`
-    (every sibling script and composed micro class name -- same ground truth
-    `_sanitize_invented_constructor_calls` uses), and not a Manager/System/
-    Controller/Handler-suffixed name (same exemption, same reason: those are
-    expected to be separate scripts this pass cannot see the full project
-    roster of). There is no field to null out and no stub that would make
-    the call resolve to anything meaningful, so the statement is dropped
-    outright rather than retyped to something that compiles but returns the
-    wrong object."""
-    script.awake_extra        = _strip_invented_find_calls(script.awake_extra, known_types)
-    script.update_extra       = _strip_invented_find_calls(script.update_extra, known_types)
-    script.fixed_update_extra = _strip_invented_find_calls(script.fixed_update_extra, known_types)
-    for m in script.extra_methods:
-        m.body = _strip_invented_find_calls(m.body, known_types)
-
-
-# ── Built-in Component-lookup call, wrong argument count ──────────────────────
-# GetComponent and its siblings are exempted from every other check in this
-# module (_BARE_CALLABLE_ALLOW, _MB_COMMON_MEMBERS) because they legitimately
-# exist on every MonoBehaviour/Component/GameObject -- but "exists" was never
-# "called with a valid argument count." Hit-live shape: a script calling
-# GetComponent<T>() with an extra argument that overload doesn't have
-# (CS1501) -- scoped to the
-# fixed, well-known Component-lookup family rather than attempting general
-# Unity API arity checking (unbounded, no closed set to check against).
-_MB_METHOD_ARITY: dict[str, frozenset[int]] = {
-    "GetComponent":             frozenset({0, 1}),   # <T>() | (Type) | (string)
-    "GetComponents":            frozenset({0, 1}),   # <T>() | <T>(List<T> results)
-    "GetComponentInChildren":   frozenset({0, 1}),   # <T>() | <T>(bool includeInactive)
-    "GetComponentsInChildren":  frozenset({0, 1}),   # <T>() | <T>(bool) | <T>(List<T>)
-    "GetComponentInParent":     frozenset({0, 1}),   # <T>() | <T>(bool includeInactive)
-    "GetComponentsInParent":    frozenset({0, 1}),   # <T>() | <T>(bool) | <T>(List<T>)
-    "TryGetComponent":          frozenset({1, 2}),   # <T>(out T) | (Type, out Component)
-}
-_MB_METHOD_CALL_RE = re.compile(
-    r"\b(" + "|".join(_MB_METHOD_ARITY) + r")\s*(?:<[^<>()]*>)?\s*\("
-)
-
-
-def _strip_builtin_call_arity(body: str) -> str:
-    """Drop any physical line calling a GetComponent-family method with an
-    argument count that method's overloads don't have. See `_MB_METHOD_ARITY`
-    for the real overload shapes this validates against."""
-    if not body:
-        return body
-    out = []
-    for line in body.splitlines(keepends=True):
-        bad = False
-        for m in _MB_METHOD_CALL_RE.finditer(line):
-            allowed = _MB_METHOD_ARITY[m.group(1)]
-            count = _call_arg_count(line, m.end() - 1)
-            if count is not None and count not in allowed:
-                bad = True
-                break
-        if not bad:
-            out.append(line)
-    return "".join(out)
-
-
-def _sanitize_builtin_component_call_arity(script: UnityScript) -> None:
-    """Strip a statement calling GetComponent<T>() (or a sibling —
-    GetComponents/*InChildren/*InParent/TryGetComponent) with an argument
-    count that method's real overloads don't have — CS1501, a real member,
-    wrong arity, invisible to every other check here since these names are
-    always exempted as legitimate (see `_MB_METHOD_ARITY`'s docstring)."""
-    script.awake_extra        = _strip_builtin_call_arity(script.awake_extra)
-    script.update_extra       = _strip_builtin_call_arity(script.update_extra)
-    script.fixed_update_extra = _strip_builtin_call_arity(script.fixed_update_extra)
-    for m in script.extra_methods:
-        m.body = _strip_builtin_call_arity(m.body)
-
-
 # ── Field holding a StartCoroutine() result, declared with the wrong type ───
 # StartCoroutine's return type is fixed by the engine API -- always
 # `UnityEngine.Coroutine`, never `IEnumerator` -- so a field the LLM declared
@@ -816,160 +604,6 @@ def _sanitize_coroutine_field_type(script: UnityScript) -> None:
             f.type = "Coroutine"
 
 
-# ── Field type qualified with an invented namespace (never resolves) ─────────
-# `_stub_type_names` exempts any field type containing a "." on the assumption
-# a dot always means "already fully qualified, will resolve" -- true for a
-# genuine `UnityEngine.X` / `System.X` spelling, false for a wholesale
-# invented root. Hit live: TimelineController.cs declared
-# `[SerializeField] private Timeline.TimelineClip _timelineClip` -- Unity's
-# real namespace is `UnityEngine.Timeline`, not a bare `Timeline`, so this was
-# CS0246 on the FIELD DECLARATION itself, one step before
-# `_sanitize_stub_type_usage` (CS1061) ever gets a chance to run.
-_TRUSTED_NAMESPACE_ROOTS: frozenset[str] = frozenset({
-    "UnityEngine", "UnityEditor", "System", "TMPro", "Unity", "Cinemachine",
-})
-
-
-def _sanitize_invented_namespace_field_types(script: UnityScript,
-                                             known_types: "frozenset[str]" = frozenset()) -> None:
-    """Flatten a field's dotted type to its bare leaf name when the dotted
-    prefix is neither a real namespace root (`_TRUSTED_NAMESPACE_ROOTS`) nor a
-    class this project already defines (`known_types`) -- the same "prefer
-    inert over broken" repair `_collect_custom_type_stubs` applies to a bare
-    invented name, extended to a dotted one so it reaches that stub machinery
-    at all instead of being waved through as already-qualified. Must run
-    BEFORE `_sanitize_stub_type_usage`/`_collect_custom_type_stubs`: both key
-    off `_extract_base_type(f.type)`, which only sees the invented type once
-    it is flat."""
-    for f in script.extra_fields:
-        raw = getattr(f, "type", "") or ""
-        base = _extract_base_type(raw)
-        if "." not in base:
-            continue
-        prefix = base.split(".", 1)[0]
-        if prefix in known_types or prefix in _TRUSTED_NAMESPACE_ROOTS:
-            continue
-        leaf = base.rsplit(".", 1)[-1]
-        f.type = raw.replace(base, leaf, 1)
-
-
-def _sanitize_stub_type_usage(script: UnityScript,
-                              known_types: "frozenset[str]" = frozenset()) -> None:
-    """LLM-invented field types get an EMPTY auto-generated stub class (see
-    _collect_custom_type_stubs) — that alone prevents CS0246 (type not found),
-    but the LLM's own code fragments routinely still call methods on that field
-    (e.g. a hand-rolled polymorphic FSM state object with .Update()/.NextState())
-    or assign it an invented enum-like default (e.g. `= Idle`) — both guaranteed
-    CS1061 / CS0103 since the stub has zero members (hit live: ClimbStateFSM.cs,
-    2x CS0103 + 3x CS1061). Deterministically strip any statement that calls a
-    method on a stub-typed field (mirrors _sanitize_singleton_calls' line-level
-    strip for undefined singletons) and clear an unresolvable default so the
-    field just defaults to null — the same "prefer inert over broken" contract
-    _collect_custom_type_stubs already uses for the type itself."""
-    stub_names = set(_stub_type_names(script.extra_fields, known_types))
-    if not stub_names:
-        return
-
-    _bare_ident_re = re.compile(r"^[A-Za-z_]\w*$")
-    stub_fields: set[str] = set()
-    for f in script.extra_fields:
-        if _extract_base_type(f.type or "") not in stub_names:
-            continue
-        stub_fields.add(f.name)
-        default = (f.default or "").strip()
-        if default and default not in ("null", "true", "false") and _bare_ident_re.match(default):
-            f.default = None   # e.g. `= Idle` — Idle is never declared anywhere
-
-    if not stub_fields:
-        return
-    # `\??\.` (not `\.`) — a stub field reached through the C# null-conditional
-    # operator (`_activeTimeline?.Play()`) is exactly how the model guards a
-    # SerializeField it expects to be assigned in the inspector, and was the
-    # live failure shape (TimelineController.cs CS1061: stub `Timeline` has no
-    # `Play()`) that a bare `\.` silently let through uncaught.
-    #
-    # No trailing `\(` requirement — a stub class has ZERO real members by
-    # construction (_collect_custom_type_stubs emits an empty body), so a bare
-    # PROPERTY/field read off one (`_timeline.IsPaused`) is exactly as invalid
-    # as a method call, just without the parens the old pattern required. Hit
-    # live: FinishSequence.cs CS1061 `_timeline.IsPaused` — read, never called
-    # — sailed through this check while a same-shaped `.Play()` call next to it
-    # would have been caught.
-    call_re = re.compile(r"\b(?:" + "|".join(re.escape(n) for n in stub_fields) + r")\s*\??\.\s*\w+\b")
-
-    def _strip(body: str) -> str:
-        if not body:
-            return body
-        return "".join(line for line in body.splitlines(keepends=True) if not call_re.search(line))
-
-    script.awake_extra        = _strip(script.awake_extra)
-    script.update_extra       = _strip(script.update_extra)
-    script.fixed_update_extra = _strip(script.fixed_update_extra)
-    surviving_methods = []
-    for m in script.extra_methods:
-        before = m.body
-        m.body = _strip(before)
-        # A method left with no live (non-blank, non-comment) statement after
-        # stripping still has to satisfy its own signature — a non-void method
-        # with an empty body is CS0161, a new error traded for the one just
-        # fixed. Only reached when this pass actually removed something
-        # (`before != m.body`); an author method that was already empty is not
-        # this pass's problem to solve.
-        if before != m.body and not any(
-                ln.strip() and not ln.lstrip().startswith("//")
-                for ln in m.body.splitlines()):
-            continue
-        surviving_methods.append(m)
-    script.extra_methods = surviving_methods
-
-
-def _call_arg_count(line: str, idx: int) -> "int | None":
-    """Argument count for the call whose '(' should appear at-or-after
-    `idx` (the position right after a matched member name). Returns None
-    for a property/field read (no '(' there) or a call whose parens don't
-    balance on this single line (e.g. a multi-line argument list) — both
-    left unchecked rather than guessed at, matching every other pass in
-    this module's false-negatives-over-false-positives stance."""
-    n = len(line)
-    while idx < n and line[idx] in " \t":
-        idx += 1
-    if idx >= n or line[idx] != "(":
-        return None
-    depth = 0
-    args = 0
-    seen_token = False
-    in_str = False
-    i = idx
-    while i < n:
-        c = line[i]
-        if in_str:
-            if c == "\\":
-                i += 2
-                continue
-            if c == '"':
-                in_str = False
-        elif c == '"':
-            in_str = True
-            seen_token = True
-        elif c in "([{":
-            depth += 1
-            if depth > 1:
-                seen_token = True
-        elif c in ")]}":
-            depth -= 1
-            if depth == 0 and c == ")":
-                if seen_token:
-                    args += 1
-                return args
-        elif depth == 1 and c == ",":
-            args += 1
-            seen_token = False
-        elif not c.isspace():
-            seen_token = True
-        i += 1
-    return None   # unbalanced on this line — don't guess
-
-
 # Members every MonoBehaviour/Component/Object instance legitimately has — never
 # grounds to strip. Shared by the undeclared self-call and condition-read
 # passes so a member allowed on one path is allowed on the other.
@@ -984,11 +618,6 @@ _MB_COMMON_MEMBERS = frozenset({
 })
 
 
-_SIG_NAME_RE   = re.compile(r"(\w+)\s*\(")
-
-
-_FOREACH_BARE_RE = re.compile(
-    r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+\w+\s+in\s+([A-Za-z_]\w*)\s*\)")
 _LOCAL_DECL_RE = re.compile(r"\b(?:var|[\w<>\[\],.]+)\s+(\w+)\s*=")
 # A bare declaration with no initializer -- `RaycastHit hit;` ahead of
 # `Physics.Raycast(..., out hit, ...)` -- never matched _LOCAL_DECL_RE (it
@@ -1004,36 +633,6 @@ _LOCAL_DECL_NO_INIT_RE = re.compile(
     r"|int|float|bool|string|double|long|byte|short|char|uint|ulong|var))"
     r"\s+(\w+)\s*;")
 _FOREACH_VAR_RE = re.compile(r"foreach\s*\(\s*(?:var|[\w<>\[\],.\s]+?)\s+(\w+)\s+in\b")
-
-
-def _strip_undeclared_foreach(script: UnityScript) -> None:
-    """foreach over a bare identifier that is declared NOWHERE (not a field,
-    not a local, not a loop variable) is a guaranteed CS0103 — the LLM
-    referenced a collection it never created (hit live: TerminalHorizon's
-    BirdSwarmFlocking iterated `birds`). Strip the offending line; everything
-    declared stays untouched."""
-    fields = {f.name for f in script.extra_fields}
-
-    def _strip(body: str) -> str:
-        if not body or "foreach" not in body:
-            return body
-        declared = set(fields)
-        declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
-        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(body))
-        declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
-        out = []
-        for line in body.splitlines(keepends=True):
-            bad = any(m.group(1) not in declared
-                      for m in _FOREACH_BARE_RE.finditer(line))
-            if not bad:
-                out.append(line)
-        return "".join(out)
-
-    script.awake_extra        = _strip(script.awake_extra)
-    script.update_extra       = _strip(script.update_extra)
-    script.fixed_update_extra = _strip(script.fixed_update_extra)
-    for m in script.extra_methods:
-        m.body = _strip(m.body)
 
 
 # ── Undeclared self-reference (bare field/method the script never declared) ──
@@ -1052,70 +651,7 @@ def _strip_undeclared_foreach(script: UnityScript) -> None:
 # validation, not a real parser, so it's split into two confidence tiers and
 # scoped narrowly rather than scanning the whole body indiscriminately.
 
-# Part A — bare method calls (`Foo()`, no receiver). Higher confidence: a truly
-# bare call in this codebase's generated C# is either a self-authored method or
-# one of a small, fixed set of inherited MonoBehaviour/Component/Object methods.
-_BARE_CALL_RE = re.compile(r"(?<![.\w])(new\s+)?([A-Za-z_]\w*)\s*\(")
-_KEYWORD_PAREN_ALLOW = frozenset({
-    "if", "while", "for", "foreach", "switch", "catch", "using", "lock", "fixed",
-    "typeof", "nameof", "sizeof", "default", "checked", "unchecked", "return", "new",
-})
-# Inherited MonoBehaviour/Component/Object methods legitimately called with no
-# receiver (implicit `this`) — never authored by the template itself.
-_BARE_CALLABLE_ALLOW = frozenset({
-    "Instantiate", "Destroy", "StartCoroutine", "StopCoroutine", "StopAllCoroutines",
-    "Invoke", "InvokeRepeating", "CancelInvoke", "GetComponent", "GetComponents",
-    "GetComponentInChildren", "GetComponentsInChildren", "GetComponentInParent",
-    "TryGetComponent", "AddComponent", "SendMessage", "BroadcastMessage",
-    "CompareTag", "GetType", "GetHashCode", "ToString", "Equals",
-})
-_DELEGATE_TYPE_RE = re.compile(r"\b(?:Action|Func|UnityEvent)\b")
 
-
-def _sanitize_undeclared_self_calls(script: UnityScript) -> None:
-    """Strip a bare method call (no receiver — not `x.Foo()`/`x?.Foo()`, those
-    are already excluded by the `(?<![.\\w])` lookbehind) that is neither one of
-    this script's own extra_methods, a delegate/Action/Func/UnityEvent-typed
-    extra_field invoked with bare-call syntax (e.g. onCollapse()), nor a
-    legitimate inherited MonoBehaviour method — always CS0103."""
-    own_callable: set[str] = set()
-    for m in script.extra_methods:
-        mm = _SIG_NAME_RE.search(m.signature or "")
-        if mm:
-            own_callable.add(mm.group(1))
-    for f in script.extra_fields:
-        if _DELEGATE_TYPE_RE.search(f.type or ""):
-            own_callable.add(f.name)
-    known = own_callable | _BARE_CALLABLE_ALLOW
-
-    def _strip(body: str) -> str:
-        if not body:
-            return body
-        out = []
-        for line in body.splitlines(keepends=True):
-            bad = any(
-                m.group(1) is None                      # not `new Foo(...)`
-                and m.group(2) not in known
-                and m.group(2) not in _KEYWORD_PAREN_ALLOW
-                for m in _BARE_CALL_RE.finditer(line)
-            )
-            if not bad:
-                out.append(line)
-        return "".join(out)
-
-    script.awake_extra        = _strip(script.awake_extra)
-    script.update_extra       = _strip(script.update_extra)
-    script.fixed_update_extra = _strip(script.fixed_update_extra)
-    for m in script.extra_methods:
-        m.body = _strip(m.body)
-
-
-# Part B — bare value reads inside if/while conditions. Deliberately scoped to
-# boolean-condition context only (not the whole body) — a condition is far
-# less likely to contain a type-declaration position than arbitrary code, so
-# this is the safest place to catch a bare undeclared read without risking a
-# false-positive strip of legitimate type/constructor syntax elsewhere.
-_COND_KEYWORD_ALLOW = frozenset({"true", "false", "null", "this", "base", "is", "var"})
 _STATIC_CLASS_ALLOW = frozenset({
     "Time", "Mathf", "Debug", "Physics", "Physics2D", "Input", "Keyboard", "Gamepad",
     "Random", "Resources", "Application", "SceneManager",
@@ -1127,38 +663,7 @@ _STATIC_CLASS_ALLOW = frozenset({
 # is declared anywhere else, so both must be seeded as "known" for that body.
 _IS_PATTERN_RE   = re.compile(r"\bis\s+(\w+)(?:\s+(\w+))?")
 _LAMBDA_PARAM_RE = re.compile(r"(\w+)\s*=>")
-_COND_HEADER_RE  = re.compile(r"\b(?:if|while)\s*\(")
-# Bare identifier not preceded by `.`/word-char (collapses dotted chains like
-# `transform.position.y` to just the root `transform`) and not immediately
-# followed by `(` — OR by a generic type-argument list then `(`, e.g.
-# `ReadValue<Vector2>(...)` (that's Part A's job, a method call, not a value
-# read). Missing the generic case here misread InputActionReference.
-# ReadValue<Vector2>(...) inside an `if (...)` as a bare undeclared VALUE,
-# stripping the whole condition line -- if that line also carried the
-# block's own opening `{` (K&R `if (cond) {` style), the strip took the
-# brace with it, orphaning the body and its closer (CS1022/CS8803/CS0106).
-# Confirmed live: VectorCore's InputMapper.cs.
-_COND_TOKEN_RE   = re.compile(r"(?<![.\w])([A-Za-z_]\w*)\b(?!\s*(?:<[^<>()]*>)?\s*\()")
 _METHOD_PARAM_LIST_RE = re.compile(r"\(([^)]*)\)")
-
-
-def _extract_conditions(text: str) -> list[str]:
-    """Text inside every if(...)/while(...) in `text`, matched by paren-count
-    (not a naive non-greedy regex, which truncates at the first `)` inside a
-    nested call like `if (Foo(x) > 0 && Bar())`)."""
-    conditions = []
-    for m in _COND_HEADER_RE.finditer(text):
-        depth = 1
-        i = m.end()
-        start = i
-        while i < len(text) and depth > 0:
-            if text[i] == "(":
-                depth += 1
-            elif text[i] == ")":
-                depth -= 1
-            i += 1
-        conditions.append(text[start:i - 1])
-    return conditions
 
 
 def _method_param_names(signature: str) -> set[str]:
@@ -1173,55 +678,6 @@ def _method_param_names(signature: str) -> set[str]:
         if tokens:
             names.add(tokens[-1].lstrip("*"))
     return names
-
-
-def _sanitize_undeclared_condition_reads(script: UnityScript) -> None:
-    """Strip an if/while condition that reads a bare value declared NOWHERE —
-    always CS0103 (hit live: PlatformTrigger.cs checked `healthThreshold < 0.2f`
-    with extra_fields=[] — the LLM invented a field it never declared)."""
-    own_fields = {f.name for f in script.extra_fields}
-
-    def _strip(body: str, extra_declared: frozenset = frozenset()) -> str:
-        if not body:
-            return body
-        declared = set(own_fields) | set(extra_declared)
-        declared.update(m.group(1) for m in _LOCAL_DECL_RE.finditer(body))
-        declared.update(m.group(2) for m in _LOCAL_DECL_NO_INIT_RE.finditer(body))
-        declared.update(m.group(1) for m in _FOREACH_VAR_RE.finditer(body))
-        for m in _IS_PATTERN_RE.finditer(body):
-            declared.add(m.group(1))
-            if m.group(2):
-                declared.add(m.group(2))
-        declared.update(m.group(1) for m in _LAMBDA_PARAM_RE.finditer(body))
-
-        out = []
-        for line in body.splitlines(keepends=True):
-            bad = False
-            for cond in _extract_conditions(line):
-                # String/char literal content ("Fire1", "Horizontal", ...) is
-                # not a value read — Input.GetButtonDown("Jump")-shaped calls
-                # are common, real Unity API, not an undeclared identifier.
-                mask = _code_mask(cond)
-                for m in _COND_TOKEN_RE.finditer(cond):
-                    if not mask[m.start(1)]:
-                        continue
-                    tok = m.group(1)
-                    if (tok in declared or tok in _COND_KEYWORD_ALLOW
-                            or tok in _STATIC_CLASS_ALLOW or tok in _MB_COMMON_MEMBERS):
-                        continue
-                    bad = True
-                    break
-                if bad:
-                    break
-            if not bad:
-                out.append(line)
-        return "".join(out)
-
-    script.awake_extra        = _strip(script.awake_extra)
-    script.update_extra       = _strip(script.update_extra)
-    script.fixed_update_extra = _strip(script.fixed_update_extra)
-    for m in script.extra_methods:
-        m.body = _strip(m.body, frozenset(_method_param_names(m.signature)))
 
 
 # ── Nullable value-type null-conditional chains ────────────────────────────────
@@ -2446,6 +1902,55 @@ _HUD_PANELSETTINGS_META = (
 )
 
 
+def normalize_custom_script(s: UnityScript, scripts: "list[UnityScript]") -> None:
+    """The deterministic pre-render passes every `type: custom` script gets.
+
+    Shared by Step 6 (`UnityProjectGenerator.generate`) and the Step 3.5
+    correction oracle (`unity_authored_check`), so a proposal is judged as
+    exactly the source that will ship. Mutates `s` in place.
+    """
+    # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra
+    # (and emits an Awake() whenever it is non-empty), so an
+    # instance-referencing initializer the model wrote one line too
+    # early — `private Rigidbody rb = GetComponent<Rigidbody>();`,
+    # CS0236, live on a Monaco monobike run — is moved into Awake()
+    # rather than dropped to a null the scene never assigns.
+    lint_extensible(s, reserved_fields=set(),
+                    template_usings={"UnityEngine"},
+                    hoist_field_inits=True)
+    # R0: collaborator erasers (invented namespace/stub/constructor/
+    # find filters, wrong-arity GetComponent strips, undeclared
+    # self-call/condition/foreach filters) are retired. Their
+    # defects are now reported, with the authored source intact, by
+    # the selected-source Roslyn check against the real Unity
+    # reference profile (schema.meta.component_api_final
+    # .script_source_check) and by the Editor compile gate. Only
+    # the structural normalizers below remain: each rewrites a
+    # value whose correct form is fixed by the engine API.
+    _sanitize_coroutine_field_type(s)
+    _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
+    _sanitize_vector_scale_misuse(s)          # Vector3 * Vector3 -> CS0019
+    # Sibling custom fields are only a source of an explicit
+    # default for a same-named numeric read; they do not create a
+    # cross-component reference or alter schema semantics.
+    _auto_declare_undeclared_scalars(
+        s, {
+            f.name: f.default
+            for other in scripts
+            if other is not s and other.type == "custom"
+            for f in (other.extra_fields or [])
+            if f.default and (f.type or "").lower() in {
+                "float", "double", "int", "long",
+            }
+        })
+    # Must run LAST: a final brace/paren-balance check over the
+    # cumulative effect of every pass above (see its own
+    # docstring — lint_extensible's check at the top of this loop
+    # only catches an already-unbalanced LLM body, not one a
+    # later regex rewrite unbalances as a side effect).
+    _reject_unbalanced_custom_bodies(s)
+
+
 class UnityProjectGenerator:
     def __init__(self, template_dir: str = "templates/unity"):
         tpl_path = Path(template_dir)
@@ -2926,53 +2431,7 @@ class UnityProjectGenerator:
             s.name for s in schema.scripts) | frozenset(_micro_types)
         for s in schema.scripts:
             if s.type == "custom":
-                # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra
-                # (and emits an Awake() whenever it is non-empty), so an
-                # instance-referencing initializer the model wrote one line too
-                # early — `private Rigidbody rb = GetComponent<Rigidbody>();`,
-                # CS0236, live on a Monaco monobike run — is moved into Awake()
-                # rather than dropped to a null the scene never assigns.
-                lint_extensible(s, reserved_fields=set(),
-                                template_usings={"UnityEngine"},
-                                hoist_field_inits=True)
-                # Must run AFTER lint_extensible: it needs the final, cleaned
-                # extra_fields to know which field types are our own stubs.
-                # _stub_known_types (not _opaque_types): must agree with the
-                # stub-generation call below on what counts as "already real,"
-                # or a field whose type resolves to a REAL sibling script (no
-                # stub emitted for it) gets its method calls stripped here as
-                # if it pointed at an empty stub.
-                # Must run BEFORE _sanitize_stub_type_usage: see its docstring.
-                _sanitize_invented_namespace_field_types(s, _stub_known_types)
-                _sanitize_stub_type_usage(s, _stub_known_types)
-                _sanitize_invented_constructor_calls(s, _stub_known_types)
-                _sanitize_invented_find_object_type_calls(s, _stub_known_types)
-                _sanitize_builtin_component_call_arity(s)
-                _sanitize_coroutine_field_type(s)
-                _sanitize_nullable_valuetype_access(s)    # X?.transform.position -> CS1503
-                _sanitize_vector_scale_misuse(s)          # Vector3 * Vector3 -> CS0019
-                # Sibling custom fields are only a source of an explicit
-                # default for a same-named numeric read; they do not create a
-                # cross-component reference or alter schema semantics.
-                _auto_declare_undeclared_scalars(
-                    s, {
-                        f.name: f.default
-                        for other in schema.scripts
-                        if other is not s and other.type == "custom"
-                        for f in (other.extra_fields or [])
-                        if f.default and (f.type or "").lower() in {
-                            "float", "double", "int", "long",
-                        }
-                    })
-                _strip_undeclared_foreach(s)
-                _sanitize_undeclared_self_calls(s)        # bare self-call, no receiver
-                _sanitize_undeclared_condition_reads(s)   # bare if/while value read
-                # Must run LAST: a final brace/paren-balance check over the
-                # cumulative effect of every pass above (see its own
-                # docstring — lint_extensible's check at the top of this loop
-                # only catches an already-unbalanced LLM body, not one a
-                # later regex rewrite unbalances as a side effect).
-                _reject_unbalanced_custom_bodies(s)
+                normalize_custom_script(s, schema.scripts)
                 # A custom script can only attach to the Player if one exists.
                 if s.attach_to == "player" and not any(
                         x.type == "player" for x in schema.scripts):

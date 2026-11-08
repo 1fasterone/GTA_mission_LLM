@@ -1291,6 +1291,28 @@ class UnityPipeline:
                            f"({type(exc).__name__}: {exc}) — authored C# enrichment "
                            "is blocked; deterministic baseline bodies remain")
 
+        # The ONLY Step 3.5 correction judge: Roslyn against the real Unity
+        # reference profile. No profile, no correction round — recorded loudly,
+        # never replaced by a Python name list.
+        authored_checker = None
+        if micro_code and (component_api is not None or schema.scripts):
+            from .unity_authored_check import AuthoredSourceChecker, resolve_references
+            _refs, _profile = resolve_references(self.config)
+            record["reference_profile"] = _profile
+            if not _refs:
+                self._warn(f"Step 3.5 compiler corrections unavailable: {_profile['error']}")
+            elif component_api is None:
+                self._warn("Step 3.5 compiler corrections unavailable: no selected "
+                           "component contract (no composed micros) — custom-script "
+                           "proposals are not corrected before the Editor gate")
+            else:
+                from .unity_compose import MicroComposer
+                authored_checker = AuthoredSourceChecker(
+                    composer=MicroComposer(schema.project_name, template_dir=self.template_dir,
+                                           project_config=self.config),
+                    subsystems=subsystems, component_api=component_api,
+                    references=_refs, schema=schema, template_dir=self.template_dir)
+
         # `type: custom` script bodies. Its template is a bare shell, so with
         # no author it ships a class of fields with no behaviour. `subsystems`
         # lets the contract name the composed-micro classes reachable via
@@ -1299,7 +1321,8 @@ class UnityPipeline:
             from .unity_micro_code import enrich_scripts
             for msg in enrich_scripts(schema.scripts, llm=self.llm,
                                       concept=concept, user_prompt=user_prompt,
-                                      subsystems=subsystems, component_api=component_api):
+                                      subsystems=subsystems, component_api=component_api,
+                                      checker=authored_checker):
                 self._fix(msg)
 
         # Composed-micro bodies. Only the extras vocabulary is writable
@@ -1315,7 +1338,8 @@ class UnityPipeline:
             for msg in enrich_subsystems(subsystems, llm=self.llm,
                                          concept=concept,
                                          user_prompt=user_prompt, tags=_tags,
-                                         component_api=component_api):
+                                         component_api=component_api,
+                                         checker=authored_checker):
                 self._fix(msg)
             for msg in sync_microgens_from_subsystems(subsystems, schema.microgens):
                 self._fix(msg)
@@ -2496,40 +2520,19 @@ class UnityPipeline:
             # schema.microgens[].input would disagree with what actually got
             # rendered, and a later no-LLM `unity-validate --compose` recompile
             # would reintroduce the very calls this pass strips.
-            composed_units = composer.plan(subsystems)
             # Step 5 is allowed to change selected variants and structural
             # options.  Re-extract the fragment-free selected declarations
-            # after that work rather than trusting the Step-3.5 snapshot.
-            # The record is compatible sidecar evidence: generation and replay
-            # still derive their selection solely from meta.compose_selection.
-            try:
-                from .unity_component_api import (check_authored_components,
-                                                  extract_components)
-                final_component_api = extract_components(composer, subsystems)
-                authored_check = check_authored_components(composer, subsystems)
-                schema.meta["component_api_final"] = {
-                    "format": final_component_api.document["format"],
-                    "fingerprint": final_component_api.fingerprint,
-                    "selection": final_component_api.document["selection"],
-                    "status": "verified",
-                    "authored_source_check": {
-                        "accepted": authored_check.accepted,
-                        "diagnostics": authored_check.errors,
-                        "scope": "SDK binding; Unity Editor execution unverified",
-                    },
-                }
-                if authored_check.errors:
-                    self._warn("final authored component source has "
-                               f"{len(authored_check.errors)} SDK diagnostic(s); "
-                               "source is preserved for the Unity Editor gate")
-            except Exception as exc:  # noqa: BLE001 - record an unavailable required gate
-                schema.meta["component_api_final"] = {
-                    "status": "unavailable",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-                self._warn("final selected component contract unavailable "
-                           f"({type(exc).__name__}: {exc}); this build is not "
-                           "component-API accepted")
+            # after that work rather than trusting the Step-3.5 snapshot, and
+            # bind them to the composer BEFORE plan(): HUD seams read setter
+            # availability from this contract. The record is compatible
+            # sidecar evidence: generation and replay still derive their
+            # selection solely from meta.compose_selection.
+            from .unity_authored_check import final_component_record
+            record, warnings = final_component_record(composer, subsystems, self.config, schema)
+            schema.meta["component_api_final"] = record
+            for warning in warnings:
+                self._warn(warning)
+            composed_units = composer.plan(subsystems)
             # See sync_microgens_from_subsystems' own docstring: this is what lets
             # a later no-LLM `unity-validate --compose` recover this run's
             # enrich_subsystems output instead of regressing to baseline bodies.

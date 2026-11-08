@@ -31,7 +31,7 @@ Reviewed on main `1d75000`.
 | S0 atom/backend support audit | Done | #283; `support_audit --check` passes (Unity 65 executable / 25 descriptive / 6 internal) |
 | S0 vocabulary/alias review | Open | 16 baseline entries tagged `S0-followup-*` in `lookups/atoms/support_baseline.json` |
 | S1 Roslyn API extraction | Done | #284, #285 |
-| S2 consumer cutover | Done, closeout in R0 | `c239ac8`; copied API tables survived as dead code (see R0) |
+| S2 consumer cutover | Done; R0 closeout complete | `c239ac8`; R0 removed the surviving tables, binder and erasers (see R0) |
 | S3 ownership closure | Done | #289; 3 `connected_and_owned`, 2 `connected_but_not_attached`, 1 `missing_provider` |
 | Phase 3 schema authority | Done | #290 |
 | Untouched-brief preflight | Done | #291 |
@@ -73,7 +73,8 @@ Open decisions:
 - `codex/recover-mechanics-playtest` (9 commits, September) applies
   deterministic schema and atom patches outside the resolver. Port it as
   resolver claims under the Phase 3 authority model, or archive it.
-- Framework member tables in R0 (see above).
+- ~~Framework member tables in R0~~ — decided: real Unity reference
+  assemblies (`component_api.unity_editor`), both tables deleted. See R0.
 - R1 collision policy: canonical meaning per token, or document the current
   first-registered-wins behavior.
 
@@ -106,8 +107,35 @@ First pass (branch `codex/r0-s2-closeout`):
 - Isolated the four token-less Sketchfab client tests from a developer
   `SKETCHFAB_API_TOKEN` (two had been passing only via a live network call).
 
-Remaining R0 items: correction-check contract migration, HUD setter
-derivation, live collaborator erasers, framework table decision.
+Second pass (same branch) — the four remaining items:
+
+| Item | Change |
+| --- | --- |
+| Framework table decision | Real Unity references. `src/unity_reference_profile.py` resolves `component_api.unity_editor` (+ optional `package_assemblies`) to the Editor's `UnityEngine*.dll` and .NET Standard 2.1; absence abstains loudly with a remedy. `_MB_METHOD_ARITY`, `_MONO_INHERITED`, `_KNOWN_SYMBOLS` deleted; the frozen `unity_api_surface` (+ `unity-api-surface` command, `lookups/unity/api_surface.json`) lost its only consumer and was removed. |
+| Correction-check migration | `src/unity_authored_check.py`: a proposal is rendered by its production writer, overlaid on the selected baseline and compiled by the pinned Roslyn against the reference profile; only errors it INTRODUCES go back to the model, in compiler wording. `_would_not_bind` / `_script_would_not_bind` deleted. Package namespaces outside the profile are reported as unverified, not as corrections. No profile → no correction round, recorded. |
+| Binder retirement | `bind_authored_code` and its helper chain (≈1,150 lines) removed from `harden_against_template`, which now only drops duplicate template members (CS0102/CS0111) and heals usings. The `engine` parameter it gated went with it. |
+| Live collaborator erasers | Invented namespace/stub-usage/constructor/find filters, wrong-arity GetComponent strip, undeclared self-call/condition/foreach filters deleted. `normalize_custom_script` (shared by Step 6 and the Step 3.5 checker) keeps only engine-fixed structural normalizers. Defects are recorded with source intact in `meta.component_api_final.script_source_check`. |
+| HUD setter derivation | `MicroComposer.bind_component_contract` + `plan()` read HUD setters from the selected Roslyn contract (public methods of the rendered class). No contract → HUD seams abstain loudly. `_VARIANT_SETTERS` / `hud_setters` deleted; widget collision reads the variant-scoped template. Pipeline and replay bind the final contract before `plan()`. |
+
+`micro_stress` now asserts preservation: a finding is an authored poison line
+that did NOT reach the emitted source (it had reported every kind as FAIL since
+S2, inverted).
+
+Remaining, recorded rather than silently kept:
+
+- `_reject_unbalanced_custom_bodies` (empties an unparseable body) and the
+  invented-field-type stub emitter stay: both are structural, not collaborator
+  judgements. The S2 table lists them; retiring them needs the syntax gate to
+  carry the rejection instead.
+- `_auto_declare_undeclared_scalars` still consults `_MB_COMMON_MEMBERS` /
+  `_STATIC_CLASS_ALLOW` so it never declares `transform` as a float. It adds
+  fields rather than erasing; moving it onto Roslyn CS0103 sites is R2 work.
+- `_VARIANT_FIELDS` (HUD field collision) is still a per-variant table.
+
+Exit criterion status: no copied project API table remains; framework
+semantics come from real assemblies. ruff, mypy, full pytest and both audits
+pass locally. The real Unity Editor compile gate (`pytest -m unity_compile`,
+`unity-validation.yml`) must still be run on this branch before merge.
 
 ## Trace answer
 

@@ -970,97 +970,7 @@ class TestCustomScripts:
         assert "private void Update()" not in cs   # rejected fragment → no Update emitted
 
     # ── Stub-typed field usage (invented OOP behavior on an empty stub class) ──
-    def test_stub_type_method_calls_stripped(self, gen):
-        # Regression (live Unity, AscentStickman run): the LLM invented a
-        # polymorphic FSM "state object" field (ClimbStateType) with .Update()/
-        # .ShouldTransition()/.NextState() methods it never defined anywhere.
-        # _collect_custom_type_stubs backfills an EMPTY class for the invented
-        # type (prevents CS0246), but calling methods on that empty stub is
-        # guaranteed CS1061 x3, and the field's `= Idle` default (an enum-like
-        # member that also doesn't exist) is CS0103. A 4th CS0103 (`SwitchState`,
-        # a bare undefined method on the script itself) shared the same line and
-        # must be swept up too. 2 CS0103 + 3 CS1061 observed live — this test
-        # locks in that the generator neutralizes all five deterministically.
-        from src.unity_schema import UnitySchema
-        schema = UnitySchema(
-            project_name="StubT", company_name="C", description="",
-            game_type="2D", platform="pc", render_pipeline="URP",
-            unity_version="6000.0", color_space="Linear",
-            features=[], scenes=["Main"], packages=[],
-            scripts=[UnityScript(
-                name="ClimbStateFSM", type="custom", description="climb fsm",
-                extra_fields=[
-                    {"name": "currentState", "type": "ClimbStateType", "default": "Idle"},
-                    {"name": "transitionTimer", "type": "float", "default": "0f"},
-                ],
-                update_extra=(
-                    "if (currentState != null) { currentState.Update(this); "
-                    "if (currentState.ShouldTransition()) { transitionTimer = 0.5f; } "
-                    "else if (transitionTimer > 0) { transitionTimer -= Time.deltaTime; "
-                    "if (transitionTimer <= 0) SwitchState(currentState.NextState()); } }"
-                ),
-            )],
-        )
-        files = gen.generate(schema, {})
-        cs = files["StubT/Assets/Scripts/ClimbStateFSM.cs"]
-        assert "= Idle" not in cs                    # CS0103 #1: undeclared enum-like member
-        assert "SwitchState" not in cs                # CS0103 #2: undefined method
-        assert ".Update(this)" not in cs              # CS1061 #1
-        assert ".ShouldTransition()" not in cs         # CS1061 #2
-        assert ".NextState()" not in cs                # CS1061 #3
-        assert "private ClimbStateType currentState;" in cs   # field kept, defaults to null
-        assert "[SerializeField] private float transitionTimer = 0f;" in cs   # unrelated field untouched
 
-    def test_stub_type_null_conditional_call_stripped(self, gen):
-        # Live bug (AutomatonCitadel run, TimelineController.cs CS1061): the
-        # LLM reached a stub-typed field through the null-conditional operator
-        # (`_activeTimeline?.Play()`) — the SerializeField-inspector-assigned
-        # idiom — rather than a plain `.`. The old call_re required a bare
-        # `\.` immediately after the field name and missed this shape entirely.
-        from src.unity_schema import UnitySchema
-        schema = UnitySchema(
-            project_name="StubNC", company_name="C", description="",
-            game_type="3D", platform="pc", render_pipeline="URP",
-            unity_version="6000.0", color_space="Linear",
-            features=[], scenes=["Main"], packages=[],
-            scripts=[UnityScript(
-                name="TimelineController", type="custom", description="d",
-                extra_fields=[
-                    {"name": "_activeTimeline", "type": "Timeline", "default": None},
-                ],
-                awake_extra="_activeTimeline?.Play();",
-            )],
-        )
-        files = gen.generate(schema, {})
-        cs = files["StubNC/Assets/Scripts/TimelineController.cs"]
-        assert "?.Play()" not in cs
-        assert "public class Timeline" in cs   # stub still emitted (prevents CS0246)
-
-    def test_dotted_invented_namespace_field_type_flattened(self, gen):
-        # Live bug (this run, TimelineController.cs CS0246): the LLM typed a
-        # field as `Timeline.TimelineClip` — dotted, so _stub_type_names
-        # unconditionally treated it as "already qualified" and never stubbed
-        # it. Unity's real namespace is `UnityEngine.Timeline`, not a bare
-        # `Timeline`, so the field failed to resolve on the DECLARATION line
-        # itself, before the CS1061 stub-call sanitizer above ever runs.
-        from src.unity_schema import UnitySchema
-        schema = UnitySchema(
-            project_name="StubNS", company_name="C", description="",
-            game_type="3D", platform="pc", render_pipeline="URP",
-            unity_version="6000.0", color_space="Linear",
-            features=[], scenes=["Main"], packages=[],
-            scripts=[UnityScript(
-                name="TimelineController", type="custom", description="d",
-                extra_fields=[
-                    {"name": "_timelineClip", "type": "Timeline.TimelineClip", "default": None},
-                ],
-            )],
-        )
-        files = gen.generate(schema, {})
-        cs = files["StubNS/Assets/Scripts/TimelineController.cs"]
-        assert "Timeline.TimelineClip" not in cs                      # invented namespace gone
-        assert "[SerializeField] private TimelineClip _timelineClip;" in cs  # flattened to bare leaf
-        assert "public class TimelineClip" in cs                      # stub emitted (prevents CS0246)
 
     def test_dotted_trusted_namespace_field_type_survives(self, gen):
         # A genuinely qualified UnityEngine type must NOT be flattened or
@@ -2440,16 +2350,6 @@ class TestFragmentSanitizers:
             extra_fields=[{"name": "safeVelocityLimit", "type": "float",
                            "default": "45.0f"}])
 
-    def test_undeclared_foreach_stripped_declared_kept(self):
-        from src.unity_generator import _strip_undeclared_foreach
-        s = self._script(
-            'foreach (var bird in FindObjectsOfType<BirdSwarmFlocking>()) { '
-            'foreach (var b in birds) b.Disperse(); }')
-        _strip_undeclared_foreach(s)
-        assert "birds" not in s.update_extra            # undeclared → line gone
-        ok = self._script('var flock = GetFlock(); foreach (var b in flock) b.ToString();')
-        _strip_undeclared_foreach(ok)
-        assert "foreach" in ok.update_extra             # declared local → kept
 
     # ── Nullable value-type null-conditional chains (CS1503) ──────────────────
 
@@ -2586,110 +2486,6 @@ class TestFragmentSanitizers:
 
 # ── Invented constructor / FindObjectOfType / GetComponent-arity passes ────
 
-class TestInventedCallSanitizers:
-    def test_invented_constructor_call_is_stripped(self):
-        # Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) —
-        # ShaderPass is not a real Unity/URP type, and it never touches a
-        # declared field so _sanitize_stub_type_usage never sees it.
-        from src.unity_generator import _sanitize_invented_constructor_calls
-        s = UnityScript(
-            name="PostFxTrigger", type="custom", description="d",
-            update_extra="Graphics.Blit(source, dest, new ShaderPass(profile), 0);",
-        )
-        _sanitize_invented_constructor_calls(s)
-        assert "ShaderPass" not in s.update_extra
-
-    def test_invented_constructor_survives_when_builtin(self):
-        from src.unity_generator import _sanitize_invented_constructor_calls
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="transform.position = new Vector3(1f, 0f, 0f);")
-        _sanitize_invented_constructor_calls(s)
-        assert "new Vector3" in s.update_extra
-
-    def test_invented_constructor_survives_when_known_project_type(self):
-        from src.unity_generator import _sanitize_invented_constructor_calls
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var log = new AuditLog();")
-        _sanitize_invented_constructor_calls(s, known_types=frozenset({"AuditLog"}))
-        assert "new AuditLog" in s.update_extra
-
-    def test_invented_constructor_survives_manager_suffix(self):
-        # Same exemption _stub_type_names applies: *Manager/*System/
-        # *Controller/*Handler are expected separate scripts this pass
-        # cannot see the full project roster of.
-        from src.unity_generator import _sanitize_invented_constructor_calls
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var mgr = new OxygenManager();")
-        _sanitize_invented_constructor_calls(s)
-        assert "new OxygenManager" in s.update_extra
-
-    def test_invented_find_object_type_call_is_stripped(self):
-        # Live bug: MirrorSpawning.cs (Grandma's Antique Shop) —
-        # FindFirstObjectByType<AntiqueMirror>() where AntiqueMirror is the
-        # brief's ENTITY name, not a script anywhere in the project. CS0246.
-        from src.unity_generator import _sanitize_invented_find_object_type_calls
-        s = UnityScript(
-            name="MirrorSpawning", type="custom", description="d",
-            extra_methods=[{
-                "signature": "private void SpawnRaider()",
-                "body": "var mirror = FindFirstObjectByType<AntiqueMirror>();",
-            }],
-        )
-        _sanitize_invented_find_object_type_calls(s)
-        assert "AntiqueMirror" not in s.extra_methods[0].body
-
-    def test_invented_find_object_type_survives_when_builtin(self):
-        from src.unity_generator import _sanitize_invented_find_object_type_calls
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var cam = FindFirstObjectByType<Camera>();")
-        _sanitize_invented_find_object_type_calls(s)
-        assert "FindFirstObjectByType<Camera>" in s.update_extra
-
-    def test_invented_find_object_type_survives_when_known_project_type(self):
-        from src.unity_generator import _sanitize_invented_find_object_type_calls
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var hub = FindObjectOfType<GossipHub>();")
-        _sanitize_invented_find_object_type_calls(s, known_types=frozenset({"GossipHub"}))
-        assert "FindObjectOfType<GossipHub>" in s.update_extra
-
-    def test_invented_find_object_type_survives_manager_suffix(self):
-        from src.unity_generator import _sanitize_invented_find_object_type_calls
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var mgr = FindObjectOfType<OxygenManager>();")
-        _sanitize_invented_find_object_type_calls(s)
-        assert "FindObjectOfType<OxygenManager>" in s.update_extra
-
-    def test_get_component_wrong_arity_stripped(self):
-        # Live shape: GetComponent<T>() called with an extra argument that
-        # overload doesn't have — CS1501, invisible to every other check
-        # because GetComponent is always exempted as a legitimate name.
-        from src.unity_generator import _sanitize_builtin_component_call_arity
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var rb = GetComponent<Rigidbody>(gameObject, true);")
-        _sanitize_builtin_component_call_arity(s)
-        assert "GetComponent" not in s.update_extra
-
-    def test_get_component_zero_args_survives(self):
-        from src.unity_generator import _sanitize_builtin_component_call_arity
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var rb = GetComponent<Rigidbody>();")
-        _sanitize_builtin_component_call_arity(s)
-        assert "GetComponent<Rigidbody>()" in s.update_extra
-
-    def test_get_component_in_children_bool_arg_survives(self):
-        from src.unity_generator import _sanitize_builtin_component_call_arity
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="var rb = GetComponentInChildren<Rigidbody>(true);")
-        _sanitize_builtin_component_call_arity(s)
-        assert "GetComponentInChildren<Rigidbody>(true)" in s.update_extra
-
-    def test_try_get_component_out_param_survives(self):
-        from src.unity_generator import _sanitize_builtin_component_call_arity
-        s = UnityScript(name="X", type="custom", description="d",
-                        update_extra="if (TryGetComponent<Rigidbody>(out var rb)) { }")
-        _sanitize_builtin_component_call_arity(s)
-        assert "TryGetComponent<Rigidbody>(out var rb)" in s.update_extra
-
 
 # ── Undeclared self-reference: bare field/method the script never declared ────
 
@@ -2703,168 +2499,25 @@ class TestUndeclaredSelfReferenceSanitizers:
         )
 
     # ── regression: exact live bug string ──
-    def test_platform_trigger_live_bug_stripped(self):
-        from src.unity_generator import (_sanitize_undeclared_self_calls,
-                                         _sanitize_undeclared_condition_reads)
-        s = self._script(
-            "var enemy = GameContext.Instance.Get<EnemyAI>(); "
-            "if (enemy != null && healthThreshold < 0.2f) TriggerCollapse();")
-        _sanitize_undeclared_self_calls(s)
-        _sanitize_undeclared_condition_reads(s)
-        assert "TriggerCollapse" not in s.update_extra
-        assert "healthThreshold" not in s.update_extra
 
     # ── Part A: must strip ──
-    def test_bare_undeclared_method_call_stripped(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("DoSomethingInvented();")
-        _sanitize_undeclared_self_calls(s)
-        assert "DoSomethingInvented" not in s.update_extra
 
-    def test_declared_extra_method_call_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("TriggerCollapse();",
-                         extra_methods=[{"signature": "private void TriggerCollapse()", "body": ""}])
-        _sanitize_undeclared_self_calls(s)
-        assert "TriggerCollapse" in s.update_extra
-
-    def test_delegate_field_bare_invocation_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("onCollapse();",
-                         extra_fields=[{"name": "onCollapse", "type": "Action"}])
-        _sanitize_undeclared_self_calls(s)
-        assert "onCollapse()" in s.update_extra
 
     # ── Part A: must NOT strip (legitimate Unity/C# shapes) ──
-    def test_new_vector3_construction_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("var v = new Vector3(1f, 2f, 3f);")
-        _sanitize_undeclared_self_calls(s)
-        assert "new Vector3" in s.update_extra
 
-    def test_instantiate_call_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("Instantiate(prefab);")
-        _sanitize_undeclared_self_calls(s)
-        assert "Instantiate(prefab)" in s.update_extra
-
-    def test_get_component_generic_call_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("var rb = GetComponent<Rigidbody>();")
-        _sanitize_undeclared_self_calls(s)
-        assert "GetComponent<Rigidbody>()" in s.update_extra
-
-    def test_null_conditional_dotted_call_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("interact?.Interact();")
-        _sanitize_undeclared_self_calls(s)
-        assert "interact?.Interact()" in s.update_extra
-
-    def test_keyword_paren_constructs_kept(self):
-        from src.unity_generator import _sanitize_undeclared_self_calls
-        s = self._script("if (transform.position.y < 0f) { while (true) { break; } }")
-        _sanitize_undeclared_self_calls(s)
-        assert "if (transform.position.y" in s.update_extra
-        assert "while (true)" in s.update_extra
 
     # ── Part B: must strip ──
-    def test_bare_undeclared_condition_value_stripped(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script("if (healthThreshold < 0.2f) enabled = false;")
-        _sanitize_undeclared_condition_reads(s)
-        assert "healthThreshold" not in s.update_extra
 
-    def test_declared_field_condition_kept(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script("if (healthThreshold < 0.2f) enabled = false;",
-                         extra_fields=[{"name": "healthThreshold", "type": "float", "default": "0.3f"}])
-        _sanitize_undeclared_condition_reads(s)
-        assert "healthThreshold" in s.update_extra
 
     # ── Part B: must NOT strip (legitimate Unity/C# shapes) ──
-    def test_transform_position_condition_kept(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script("if (transform.position.y < 0f) { enabled = false; }")
-        _sanitize_undeclared_condition_reads(s)
-        assert "transform.position.y" in s.update_extra
 
-    def test_is_pattern_match_kept(self):
-        # Real false-positive risk: `EnemyAI` (type) and `enemyAi` (pattern var)
-        # are both bare inside the condition and declared nowhere else. `other`
-        # is declared as the method's own parameter, isolating the is-pattern
-        # behavior from an unrelated "other is undeclared" false failure.
-        from src.unity_generator import (_sanitize_undeclared_self_calls,
-                                         _sanitize_undeclared_condition_reads)
-        s = self._script("", extra_methods=[
-            {"signature": "private void OnHit(Collider other)",
-             "body": "if (other is EnemyAI enemyAi) { enemyAi.Alert(); }"},
-        ])
-        _sanitize_undeclared_self_calls(s)
-        _sanitize_undeclared_condition_reads(s)
-        assert "is EnemyAI enemyAi" in s.extra_methods[0].body
-
-    def test_local_declared_before_condition_kept(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script("var speed = 5f; if (speed > walkSpeed) { }",
-                         extra_fields=[{"name": "walkSpeed", "type": "float", "default": "5f"}])
-        _sanitize_undeclared_condition_reads(s)
-        assert "speed > walkSpeed" in s.update_extra
 
     # ── regression: exact live bug string (VectorCore's InputMapper.cs) ──
-    # A generic method call in a K&R-style `if (cond) {` condition was
-    # misread as a bare undeclared VALUE read (the type-argument list
-    # confused the "not a method call" exclusion), so the whole line —
-    # including its opening `{` — was dropped, orphaning the block body and
-    # its closer (CS1022/CS8803/CS0106 downstream).
-    def test_generic_method_call_in_condition_kept(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script(
-            "if (_groundInputAction.ReadValue<Vector2>().magnitude > 0.1f) { "
-            "SetGrounded(); }",
-            extra_fields=[{"name": "_groundInputAction", "type": "InputActionReference"}],
-            extra_methods=[{"signature": "private void SetGrounded()", "body": ""}],
-        )
-        _sanitize_undeclared_condition_reads(s)
-        assert "ReadValue<Vector2>()" in s.update_extra
-        assert s.update_extra.count("{") == s.update_extra.count("}")
 
     # ── regression: string-literal content misread as a bare identifier ──
-    # "Fire1" inside Input.GetButtonDown("Fire1") was extracted as if it
-    # were an undeclared identifier `Fire1` and the whole condition line
-    # dropped — Input.GetButtonDown("Jump")/GetAxis("Horizontal")-shaped
-    # calls are common, real Unity API, not a value read.
-    def test_string_literal_argument_in_condition_kept(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script('if (Input.GetButtonDown("Fire1")) { Shoot(); }',
-                         extra_methods=[{"signature": "private void Shoot()", "body": ""}])
-        _sanitize_undeclared_condition_reads(s)
-        assert 'Input.GetButtonDown("Fire1")' in s.update_extra
 
-    def test_string_literal_argument_does_not_hide_a_real_undeclared_name(self):
-        # The string-literal fix must not become a blanket exemption — an
-        # actually-undeclared bare identifier alongside a string literal in
-        # the same condition still gets caught.
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script('if (Input.GetButtonDown("Fire1") && healthThreshold < 0.2f) '
-                         '{ enabled = false; }')
-        _sanitize_undeclared_condition_reads(s)
-        assert "healthThreshold" not in s.update_extra
 
     # ── regression: bare no-initializer declaration ahead of an out-param ──
-    # (VectorCore's SurfaceTypeDetector.cs) — `RaycastHit hit;` followed by
-    # `Physics.Raycast(..., out hit, ...)` never registered `hit` as declared
-    # (the declared-locals scan required a trailing `=`), so a later
-    # `if (hit.collider != null)` read `hit` as an undeclared bare value and
-    # the whole line — including its opening `{` — was dropped.
-    def test_bare_out_param_declaration_condition_kept(self):
-        from src.unity_generator import _sanitize_undeclared_condition_reads
-        s = self._script(
-            "RaycastHit hit;\n"
-            "Physics.Raycast(transform.position, Vector3.down, out hit, 1f);\n"
-            "if (hit.collider != null) { enabled = false; }")
-        _sanitize_undeclared_condition_reads(s)
-        assert "if (hit.collider != null)" in s.update_extra
-        assert s.update_extra.count("{") == s.update_extra.count("}")
 
     def test_bare_declaration_regex_ignores_statement_keywords(self):
         # `return x;`/`throw e;`/`yield return x;` must never be misread as
@@ -3358,3 +3011,42 @@ class TestSignatureTypeStubs:
         assert _signature_type_names(
             [self._M("public void Nudge(ref readonly Vector3 v, scoped Span<int> s)")]
         ) == ["void", "Vector3", "Span<int>"]
+
+
+# ── R0: collaborator erasers retired — authored source ships intact ──────────
+
+@pytest.mark.parametrize("line", [
+    "var p = FindFirstObjectByType<AntiqueMirror>();",       # invented find target
+    "Graphics.Blit(source, dest, new ShaderPass(profile), 0);",  # invented ctor
+    "var rb = GetComponent<Rigidbody>(gameObject, true);",   # wrong arity
+    "foreach (var b in birds) b.Flap();",                     # undeclared collection
+    "TriggerCollapse();",                                     # undeclared self-call
+    "if (healthThreshold < 0.2f) Debug.Log(\"low\");",       # undeclared condition read
+])
+def test_generator_preserves_authored_defects_for_the_compiler(gen, line):
+    """Each line used to be deleted by a regex eraser before render. R0 keeps
+    the author's source and lets the selected-source Roslyn check
+    (component_api_final.script_source_check) and the Editor gate report it."""
+    from src.unity_schema import UnitySchema
+    schema = UnitySchema(
+        project_name="KeepT", company_name="C", description="",
+        game_type="3D", platform="pc", render_pipeline="URP",
+        unity_version="6000.0", color_space="Linear",
+        features=[], scenes=["Main"], packages=[],
+        scripts=[UnityScript(name="Keeper", type="custom", description="k",
+                             update_extra=line)])
+    cs = gen.generate(schema, {})["KeepT/Assets/Scripts/Keeper.cs"]
+    assert line in cs
+
+
+def test_invented_namespace_field_type_is_not_flattened(gen):
+    from src.unity_schema import UnitySchema
+    schema = UnitySchema(
+        project_name="KeepT", company_name="C", description="",
+        game_type="3D", platform="pc", render_pipeline="URP",
+        unity_version="6000.0", color_space="Linear",
+        features=[], scenes=["Main"], packages=[],
+        scripts=[UnityScript(name="Keeper", type="custom", description="k",
+                             extra_fields=[{"name": "_clip", "type": "Timeline.TimelineClip"}])])
+    cs = gen.generate(schema, {})["KeepT/Assets/Scripts/Keeper.cs"]
+    assert "private Timeline.TimelineClip _clip;" in cs

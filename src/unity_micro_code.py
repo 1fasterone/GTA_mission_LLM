@@ -57,7 +57,6 @@ bodies gain prompt-specific content.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Iterable, Sequence
 
 from pydantic import ValidationError
@@ -66,12 +65,10 @@ from rich.console import Console
 from .micro import REGISTRY
 from pathlib import Path
 
-from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS, bind_authored_code,
-                                find_unbound_identifiers,
+from .micro.code_fields import (UNITY_EXTRA_INSTRUCTIONS,
                                 lint_method, sanitize_default, template_members,
                                 _promote_list_default_to_array,
                                 template_method_arities, template_usings,
-                                _KNOWN_SYMBOLS, _MONO_INHERITED, _signature_param_names,
                                 _code_brace_depth, _code_paren_depth)
 
 # ── What may be written ───────────────────────────────────────────────────────
@@ -199,41 +196,30 @@ def _apply(sub, candidate: dict) -> list[str]:
     return validation_msgs
 
 
-def _would_not_bind(sub, payload: dict) -> list[str]:
-    """What the binder WOULD cut out of this payload, without cutting it.
+def _compiler_corrections(judge, label: str, msgs: list[str]) -> list[str]:
+    """Roslyn's own wording for what a proposal introduces, or [] when clean.
 
-    The diagnostics already exist and are precise — `bind_authored_code` reports
-    `OnObjectiveComplete(0 args, needs 1..1)` — they have simply never been shown
-    to the author. Run the same pass over a throwaway copy so the model can be
-    told what is wrong while it can still fix it.
+    `judge` is a bound `AuthoredSourceChecker.subsystem`/`.script` call. The
+    proposal is rendered by its production writer and compiled against the
+    real Unity references; only errors the proposal ADDS over the selected
+    baseline are returned, so the model is never asked to fix the template.
 
-    Returns [] when everything binds. Never raises: a checker that can fail the
-    build is worse than one that occasionally has nothing to say.
+    A checker failure is loud (recorded in `msgs`) and yields no correction:
+    there is no Python fallback judge to quietly take its place.
     """
-    tdir = _template_dir_for(sub)
-    if tdir is None:
-        return []
-    cls = REGISTRY.get(sub.kind)
-    schema_cls = getattr(cls, "schema_cls", None)
-    if schema_cls is None:
-        return []
     try:
-        # A REAL schema instance, not a bare carrier: `bind_authored_code` reads
-        # `.signature`/`.body` off CodeMethod objects, and handing it the raw
-        # JSON dicts makes every check silently inspect nothing and report a
-        # clean bill of health. It mutates what it is given, which is exactly
-        # why this is a throwaway built from the payload rather than `sub`.
-        fields = getattr(schema_cls, "model_fields", {})
-        fixed: dict[str, Any] = {}
-        if "name" in fields and sub.name:
-            fixed["name"] = sub.name
-        if "variant" in fields and sub.variant:
-            fixed["variant"] = sub.variant
-        probe = schema_cls(**fixed, **dict(sub.options), **payload)
-        return [m for m in bind_authored_code(probe, tdir)
-                if "neutralized" in m or "dropped" in m]
-    except Exception:                       # noqa: BLE001
+        findings = judge()
+    except Exception as exc:                # noqa: BLE001 - recorded, never silent
+        msgs.append(f"{label}: compiler correction check unavailable "
+                    f"({type(exc).__name__}: {str(exc)[:200]}) — proposal kept "
+                    "unjudged for the Editor gate")
         return []
+    if findings.unverified:
+        codes = sorted({str(d.get("code")) for d in findings.unverified})
+        msgs.append(f"{label}: {len(findings.unverified)} diagnostic(s) unverified "
+                    f"({', '.join(codes)}) — a package namespace is outside the "
+                    "configured Unity reference profile")
+    return findings.corrections()
 
 
 # ── Supplier A — schema.microgens[].input (no extra LLM calls) ────────────────
@@ -521,8 +507,13 @@ console = Console()
 def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                       user_prompt: str = "", temperature: float = 0.35,
                       attempts: int = 3, tags: Sequence[str] = (),
-                      component_api=None) -> list[str]:
+                      component_api=None, checker=None) -> list[str]:
     """Ask the LLM for prompt-specific C# fragments, one subsystem at a time.
+
+    `checker` is an `AuthoredSourceChecker` (src/unity_authored_check.py).
+    It is the ONLY correction judge: with none, proposals get no correction
+    round and that absence is recorded, rather than a Python name list
+    standing in for the compiler.
 
     One focused call per subsystem rather than one bloated call for all of them:
     the local model gets the same narrow window the standalone micro pipelines
@@ -543,6 +534,10 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
     msgs: list[str] = []
     enriched = 0
     skipped_kinds: list[str] = []
+    if checker is None:
+        msgs.append("micro-code: no compiler correction check (Unity reference "
+                    "profile unavailable) — authored proposals are not "
+                    "corrected before the Editor gate")
 
     for sub in subsystems:
         keys = code_keys_for(sub.kind)
@@ -569,17 +564,17 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
                     continue
                 payload = candidate
 
-                # Close the loop. Anything the binder would cut is handed BACK
-                # as a diagnostic while the author can still fix it — the whole
-                # point being that a mechanic the model meant to write survives
-                # as working code instead of as an AUDIT comment. Only the last
-                # attempt is allowed to reach the binder uncorrected. Structural
-                # errors (unbalanced braces/parens) get the same treatment — a
-                # method can be fully bound (every name it uses is declared) and
-                # still fail to parse, which the binder alone never catches.
+                # Close the loop. Every error the proposal introduces, in
+                # Roslyn's own words against the real Unity references, is
+                # handed BACK while the author can still fix it — a mechanic the
+                # model meant to write survives as working code. Only the last
+                # attempt reaches the Editor gate uncorrected. Structural errors
+                # (unbalanced braces/parens) get a round of their own.
                 if attempt + 1 >= attempts:
                     break
-                cuts = _would_not_bind(sub, payload)
+                cuts = ([] if checker is None else _compiler_corrections(
+                    lambda: checker.subsystem(sub, payload),
+                    f"micro-code: {sub.kind}", msgs))
                 struct_errors = _method_structural_errors(payload)
                 if not cuts and not struct_errors:
                     break
@@ -656,11 +651,11 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
 # injecting an `update_extra` into a class that has its own Update loop is a
 # different and riskier change than filling an empty shell.
 #
-# Containment is NOT rebuilt here: unity_generator already runs a battery of
-# sanitizers over `script.awake_extra` / `update_extra` / `fixed_update_extra` /
-# `extra_methods[].body` (_strip_undeclared_foreach,
-# _sanitize_undeclared_self_calls, ...). This adds
-# the supplier those passes have always been waiting for.
+# Judgement is NOT rebuilt here: a proposal is compiled by the selected-source
+# Roslyn contract against the real Unity references (`checker`, see
+# src/unity_authored_check.py), and unity_generator.normalize_custom_script
+# applies only the structural normalizers whose correct form the engine API
+# fixes. This adds the supplier the script channel was always waiting for.
 
 _SCRIPT_SYSTEM = (
     "You are a senior Unity gameplay engineer. You are handed ONE script from a "
@@ -819,52 +814,6 @@ Return ONE JSON object containing only these keys: {", ".join(keys)}
 """
 
 
-def _script_would_not_bind(script, payload: dict) -> list[str]:
-    """Identifiers in this payload the generator's sanitizers would strip.
-
-    A custom script has no micro template to check against, so the scope is
-    built directly: MonoBehaviour, the known-symbol allowlist, the fields it
-    declares (existing and proposed), and its own method names.
-    """
-    def _get(row, key):
-        return str((row or {}).get(key, "") if isinstance(row, dict)
-                   else getattr(row, key, "") or "")
-
-    try:
-        known = set(_MONO_INHERITED) | set(_KNOWN_SYMBOLS) | {script.name}
-        for f in (getattr(script, "extra_fields", None) or []):
-            known.add(str(getattr(f, "name", "") or ""))
-        for f in (payload.get("extra_fields") or []):
-            known.add(_get(f, "name"))
-        methods = payload.get("extra_methods") or []
-        sigs = [_get(m, "signature") for m in methods]
-        for sig in sigs:
-            hit = re.search(r"\b([A-Za-z_]\w*)\s*\(", sig)
-            if hit:
-                known.add(hit.group(1))
-
-        cuts: list[str] = []
-        for key in _FRAGMENT_KEYS:
-            body = str(payload.get(key) or "")
-            if body:
-                for names in find_unbound_identifiers(body, known=known).values():
-                    cuts.extend(names)
-        for row, sig in zip(methods, sigs):
-            body = _get(row, "body")
-            if body:
-                # A method's own parameters are in scope for its own body —
-                # `signature` alone only feeds argument TYPE inference.
-                for names in find_unbound_identifiers(
-                        body, known=known | _signature_param_names(sig),
-                        signature=sig).values():
-                    cuts.extend(names)
-        # Deduplicated and capped: a correction listing forty names teaches the
-        # model less than one listing six.
-        return sorted(set(cuts))[:6]
-    except Exception:                      # noqa: BLE001 — never block authoring
-        return []
-
-
 def _method_structural_errors(payload: dict) -> list[str]:
     """Candidate `extra_methods` bodies that would fail `lint_method`'s
     structural checks (unbalanced parens, or more '}' than '{') -- checked
@@ -873,7 +822,7 @@ def _method_structural_errors(payload: dict) -> list[str]:
     error does, instead of going straight to a silent drop. Confirmed live:
     GossipHub's OnGossipSelected had zero unbound identifiers (every name it
     used was validly declared) but was missing two `if`/`else if` headers,
-    orphaning their bodies and a closing brace -- `_script_would_not_bind`
+    orphaning their bodies and a closing brace -- a name-binding check
     saw nothing wrong, so the retry loop accepted it on the first try and
     the only recourse left was `_apply_script` cutting the whole method.
     """
@@ -904,8 +853,8 @@ def _apply_script(script, payload: dict) -> bool:
 
     Pydantic validates on assignment, but that only checks field SHAPE (is
     `body` a string?) — not C# validity. An `extra_methods` body is additionally
-    run through `lint_method`, the same structural lint `bind_authored_code`
-    already applies to every micro subsystem: it rejects an over-closed
+    run through `lint_method`, the same structural lint every micro
+    subsystem gets: it rejects an over-closed
     fragment (more `}` than `{`) outright rather than let it reach codegen,
     because a surplus `}` closes the enclosing class early and takes every
     member after it down (CS8803/CS0106/CS1022). Confirmed live: GossipHub.cs
@@ -987,7 +936,7 @@ def _apply_script(script, payload: dict) -> bool:
 def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                    user_prompt: str = "", temperature: float = 0.35,
                    attempts: int = 3, subsystems: Sequence[Any] = (),
-                   component_api=None) -> list[str]:
+                   component_api=None, checker=None) -> list[str]:
     """Author bodies for `type: custom` scripts, one focused call each.
 
     Same shape as `enrich_subsystems`: a narrow window per script, the real
@@ -1013,6 +962,10 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
 
     msgs: list[str] = []
     enriched = 0
+    if checker is None:
+        msgs.append("script-code: no compiler correction check (Unity reference "
+                    "profile unavailable) — authored proposals are not "
+                    "corrected before the Editor gate")
     for script in targets:
         contract = _script_contract(script, scripts, subsystems, component_api)
         payload: dict = {}
@@ -1036,16 +989,19 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                 payload = candidate
                 if attempt + 1 >= attempts:
                     break
-                cuts = _script_would_not_bind(script, payload)
+                cuts = ([] if checker is None else _compiler_corrections(
+                    lambda: checker.script(script, payload),
+                    f"script-code: {script.name}", msgs))
                 struct_errors = _method_structural_errors(payload)
                 if not cuts and not struct_errors:
                     break
                 sections = []
                 if cuts:
                     sections.append(
-                        "These names are not declared anywhere:\n"
+                        "The compiler reports:\n"
                         + "\n".join("  - " + c for c in cuts) +
-                        "\nDeclare what you need in extra_fields.")
+                        "\nUse only what the contract above lists, and declare "
+                        "anything else you need in extra_fields.")
                 if struct_errors:
                     sections.append(
                         "These methods do not parse as valid C# (unbalanced "
