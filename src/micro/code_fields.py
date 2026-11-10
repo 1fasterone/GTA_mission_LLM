@@ -1305,93 +1305,6 @@ def _repair_bang_count_comparison(text: str) -> str:
     return new
 
 
-# CS0023 — a second, unrelated way `!` lands on a non-bool expression: negating
-# a call to a template-declared method whose return type is `void`. The model
-# treats a state-setting helper as if it answered a yes/no question. Confirmed
-# live, DropZone's PauseMenu.cs(151):
-#
-#     private void OnPauseStateChanged()
-#     {
-#         _isPaused = !SetPaused(true);
-#     }
-#
-# `SetPaused(bool)` (PauseMenu.cs.j2's own helper) just sets `Time.timeScale`
-# and returns nothing. Unlike the numeric-comparison misparse above, there is
-# no De Morgan flip that recovers the intended condition — the model invented
-# a return value that was never there, so this is judged for neutralization,
-# same as every other invented-member case in this module, rather than
-# guessed at.
-_BANG_CALL_RE = re.compile(r"!\s*([A-Za-z_]\w*)\s*\(")
-_VOID_CALL_ASSIGNMENT_RE = re.compile(
-    r"(?<![=!<>])=(?!=)\s*([A-Za-z_]\w*)\s*\(")
-
-
-def find_void_method_negated(text: str, *, void_methods: "frozenset[str]"
-                             ) -> "dict[int, set[str]]":
-    """`{line_index: {"!MethodName(...)", ...}}` for `!` applied to a call of
-    a template-declared method whose return type is `void` (CS0023).
-    `void_methods` is `template_void_methods()` — the same template scan
-    `template_method_return_types` draws its (non-void) half from."""
-    if not text or "!" not in text or not void_methods:
-        return {}
-    mask = _code_mask(text)
-    bad: "dict[int, set[str]]" = {}
-    for m in _BANG_CALL_RE.finditer(text):
-        if not mask[m.start()]:
-            continue
-        name = m.group(1)
-        if name not in void_methods:
-            continue
-        line = text.count("\n", 0, m.start())
-        bad.setdefault(line, set()).add(f"!{name}(...)")
-    return bad
-
-
-def lint_void_method_negated(text: str, *, void_methods: "frozenset[str]"
-                             ) -> "tuple[str, set[str]]":
-    """Neutralize `!` applied to a known-void method call. Same three-way
-    repair as every other `lint_*` pass here."""
-    bad = find_void_method_negated(text, void_methods=void_methods)
-    if not bad:
-        return text, set()
-    return _neutralize_flagged_lines(
-        text, bad, reason="'!' applied to a void method's result")
-
-
-def find_void_method_assigned(text: str, *, void_methods: "frozenset[str]"
-                              ) -> "dict[int, set[str]]":
-    """Locate assignments that use a template-declared ``void`` call as a value.
-
-    A state-setting template helper can be called as a statement, but it can
-    never be assigned into a field/property.  The only safe deterministic
-    repair is to neutralize the authored statement rather than invent a return
-    value.  ``==`` and other comparisons are excluded by the assignment token.
-    """
-    if not text or "=" not in text or not void_methods:
-        return {}
-    mask = _code_mask(text)
-    bad: "dict[int, set[str]]" = {}
-    for m in _VOID_CALL_ASSIGNMENT_RE.finditer(text):
-        if not mask[m.start()]:
-            continue
-        name = m.group(1)
-        if name not in void_methods:
-            continue
-        line = text.count("\n", 0, m.start())
-        bad.setdefault(line, set()).add(f"{name}(...)")
-    return bad
-
-
-def lint_void_method_assigned(text: str, *, void_methods: "frozenset[str]"
-                              ) -> "tuple[str, set[str]]":
-    """Neutralize assignments whose right hand side is a known-void call."""
-    bad = find_void_method_assigned(text, void_methods=void_methods)
-    if not bad:
-        return text, set()
-    return _neutralize_flagged_lines(
-        text, bad, reason="a void method's result assigned as a value")
-
-
 # CS0103: LLMs write the pre-C#7 raycast idiom `Physics.Raycast(ray, out hit, …)`
 # without ever declaring `hit`. Modern C# allows an inline `out var hit`, so
 # declare the out parameter in place. Only lowercase, non-field (`_`-prefixed)
@@ -1877,12 +1790,9 @@ _USING_TRIGGERS: list[tuple[str, str]] = [
     (r"\.Count\s*\([^)]*=>", "System.Linq"),
     # `catch (Exception e)` / `catch (ArgumentException ex)` / a bare
     # `throw new SomeException(...)` — every BCL exception type lives in
-    # `System`, and `_KNOWN_SYMBOLS` already treats them all as legitimate
-    # names (so `bind_authored_code` never flags one as unbound), but nothing
-    # ever added the import those names actually need. The known-symbol check
-    # answers "is this a real type" (CS0103); Unity's compiler still asks
-    # "which assembly" (CS0246) — a different question this table exists to
-    # answer. Hit live, SaveLoadManager.cs(34) CS0246: "The type or namespace
+    # `System`, but nothing ever added the import those names actually need.
+    # Unity's compiler asks "which assembly" (CS0246) — the question this
+    # table exists to answer. Hit live, SaveLoadManager.cs(34) CS0246: "The type or namespace
     # name 'Exception' could not be found" with `using System.IO;` and
     # `using UnityEngine.UI;` and nothing from bare `System`.
     (r"\bcatch\s*\(\s*\w*Exception\b|\bnew\s+\w*Exception\s*\(", "System"),
@@ -1993,10 +1903,8 @@ def canonical_declared_type(type_name: str) -> str:
 def usings_for_declared_types(types) -> "list[str]":
     """Namespaces the DECLARED TYPES of authored fields need, in first-seen order.
 
-    `required_usings_for` reads BODIES, where a type appears as `Name.`,
-    `Name<` or `Name(` — the three shapes `_TYPE_USE_RES` matches. A field
-    declaration has none of them: the type is followed by the field's own name.
-    So a micro that declared `[SerializeField] private VisualElement _pauseTint`
+    A field declaration's type is followed by the field's own name, not by
+    `.`, `<` or `(`, so body-oriented type scans never see it. So a micro that declared `[SerializeField] private VisualElement _pauseTint`
     imported nothing for it and shipped CS0246 "The type or namespace name
     'VisualElement' could not be found". Hit live on Chromabreak's composed
     `menu` micro, which is a uGUI menu the model gave a UI Toolkit field.
@@ -2006,100 +1914,6 @@ def usings_for_declared_types(types) -> "list[str]":
         for token in _TYPE_TOKEN_RE.findall(str(raw or "")):
             ns = _TYPE_NAMESPACES.get(token)
             if ns and ns not in out:
-                out.append(ns)
-    return out
-
-# `Array.Fill(` / `new List<` / `List<int> x` — a real reference, not the word
-# appearing inside an identifier or a string.
-_TYPE_USE_RES: "dict[str, re.Pattern[str]]" = {
-    name: re.compile(r"(?<![\w.])" + re.escape(name)
-                     + r"(?=\s*[.<(])")
-    for name in _TYPE_NAMESPACES
-}
-
-
-def _rank(type_name: str) -> int:
-    """How many `[]` suffixes a jagged-array type carries. `int[][]` -> 2."""
-    return str(type_name or "").count("[]")
-
-
-def jagged_rank_corrections(fields: "list[tuple[str, str]]", body: str
-                            ) -> "dict[str, str]":
-    """`{field_name: corrected_type}` where the author's own code contradicts
-    the rank they declared for a jagged array.
-
-    Only ONE signal is trusted, and it is the author stating the type
-    themselves: an explicit local declaration initialised straight from the
-    field —
-
-        [SerializeField] private int[][][] _grid;   // declared rank 3
-        ...
-        int[][] grid = _grid;                       // used as rank 2, x5
-
-    That is the author disagreeing with the author, in writing, and the local
-    is the side they went on to index. Every other kind of rank mismatch is
-    left alone: inferring a type from indexing depth guesses, and a guess that
-    lowers a rank correctly used elsewhere trades a compile error for a wrong
-    program. Hit live in Gridfall's GridLogic — one bad declaration produced
-    seven CS0029s across five methods.
-    """
-    out: "dict[str, str]" = {}
-    if not body:
-        return out
-    for name, declared in fields:
-        if _rank(declared) < 2 or not name:
-            continue
-        base = declared.split("[")[0].strip()
-        rx = re.compile(re.escape(base) + r"((?:\[\])+)\s+\w+\s*=\s*"
-                        + re.escape(name) + r"\b")
-        ranks = {len(m.group(1)) // 2 for m in rx.finditer(body)}
-        ranks = {r for r in ranks if 0 < r < _rank(declared)}
-        if len(ranks) == 1:
-            out[name] = base + "[]" * ranks.pop()
-    return out
-
-
-# Types a model routinely qualifies with the WRONG namespace. `Touchscreen`,
-# `Gamepad` and friends read like core engine types, so an author writing a
-# mobile input script reaches for `UnityEngine.Touchscreen` — CS0234, "does not
-# exist in the namespace 'UnityEngine'". They live in UnityEngine.InputSystem.
-# Live on BlockWell's TouchInput, which had already imported the right
-# namespace and then over-qualified the type anyway.
-_MISQUALIFIED_TYPES: "dict[str, str]" = {
-    name: "UnityEngine.InputSystem" for name in (
-        "Touchscreen", "Keyboard", "Mouse", "Gamepad", "Pointer", "Pen",
-        "InputAction", "InputActionAsset", "InputActionMap", "InputControl",
-        "InputDevice", "InputSystem", "TouchPhase",
-    )
-}
-
-
-def correct_qualified_type(type_str: str) -> "tuple[str, str]":
-    """`UnityEngine.Touchscreen` -> `("Touchscreen", "UnityEngine.InputSystem")`.
-
-    Returns `(type, required_namespace)`; the namespace is "" when nothing was
-    corrected. Only rewrites a qualifier we can name a correct home for — an
-    unknown `Foo.Bar` is left exactly as written.
-    """
-    raw = (type_str or "").strip()
-    if "." not in raw:
-        return raw, ""
-    head, _, tail = raw.rpartition(".")
-    ns = _MISQUALIFIED_TYPES.get(tail)
-    if ns and head != ns:
-        return tail, ns
-    return raw, ""
-
-
-def required_usings_for(text: str) -> "list[str]":
-    """Namespaces `text` uses but may not have imported, in declaration order."""
-    if not text:
-        return []
-    out: "list[str]" = []
-    for name, rx in _TYPE_USE_RES.items():
-        if rx.search(text):
-            ns = _TYPE_NAMESPACES[name]
-            if ns not in out:
                 out.append(ns)
     return out
 
@@ -2232,8 +2046,8 @@ def _disable_bad_header(line: str, names: "list[str] | set[str]") -> "str | None
 
 def _neutralize_lines(text: str, get_bad_names, make_comment) -> tuple[str, set, set]:
     """Shared line-oriented neutralization walk used by lint_hash_references,
-    lint_member_references, and unity_micro_code._neutralize_refs -- all
-    three comment out (or disable the condition of) any physical line that
+    lint_member_references, and neutralize_unavailable_names -- all three
+    comment out (or disable the condition of) any physical line that
     references a name which turned out to be invalid. Centralized so the one
     cross-line invariant they all depend on is enforced exactly once: a bare
     (brace-less) `if`/`while` whose only embedded statement IS the very next
@@ -3905,10 +3719,8 @@ def lint_extensible(schema: _ExtensibleLike, *,
     template_dir, variant, facts)`) names the template's get-only,
     expression-bodied properties whose body is too complex for
     `_repair_readonly_property_assign` to rewrite an assignment into (a
-    simple `Name => _field;` passthrough still gets that value-preserving
-    rewrite via `bind_authored_code`'s own path for `type: custom` scripts,
-    but `lint_extensible` never had it either — see
-    `find_readonly_property_misuse`). An assignment into one of these is
+    simple `Name => _field;` passthrough was never rewritten here either —
+    see `find_readonly_property_misuse`). An assignment into one of these is
     refused outright (CS0200) rather than left broken. Defaults to empty.
     """
     schema.extra_usings = lint_usings(schema.extra_usings, already_in_template=template_usings,
@@ -3975,9 +3787,8 @@ def lint_extensible(schema: _ExtensibleLike, *,
     schema.extra_fields = retype_string_fields_used_as_audioclip(
         schema.extra_fields, blob=_authored_blob(schema))
 
-    # Self-field-type misuse: `lint_extensible` originally had no cross-check
-    # against a TEMPLATE's field types the way `bind_authored_code` does for
-    # `type: custom` scripts — only the SCHEMA'S OWN extra_fields were ground
+    # Self-field-type misuse: `lint_extensible` has no cross-check against a
+    # TEMPLATE's field types — only the SCHEMA'S OWN extra_fields are ground
     # truth here. Confirmed live, StealthAudioManager.cs(20,38): two
     # `object`-typed extra_fields (cross-script references with no sanctioned
     # real type — see docs/model-pipeline-architecture.md) had real-sounding
@@ -4176,9 +3987,8 @@ def neutralize_unavailable_names(schema: _ExtensibleLike, names: "set[str]") -> 
     DECLARING a new field with a colliding name — it was never a "these
     names already exist and are safe to read" allowlist, and nothing
     upstream validates extra_* content against template-declared fields at
-    all (see unity_micro_code.py's `_neutralize_refs` docstring: the
-    per-micro reserved-name sets are known too incomplete to support a
-    general undeclared-identifier scan). This closes that gap only where a
+    all (the per-micro reserved-name sets are known too incomplete to
+    support a general undeclared-identifier scan). This closes that gap only where a
     caller can hand over an exact, backend/variant-resolved name set —
     never a guess.
     """
@@ -4387,8 +4197,7 @@ _ATOM_IN_RE = re.compile(
 # list. Confirmed live: an authored `_boostTimer`/`_boostCooldownTimer` got
 # deleted as a false CS0102 duplicate of a block that, for this schema's
 # actual (boost-less) abilities list, never rendered — leaving CS0103s at
-# every surviving usage. See render_facts's list[str] handling for the write
-# side this reads.
+# every surviving usage. A list[str] fact arrives joined on `_LIST_FACT_SEP`.
 _ATOM_MEMBERSHIP_RE = re.compile(
     r"""^\s*['"](?P<lit>[^'"]*)['"]\s+(?P<op>not\s+in|in)\s+(?:s\.)?(?P<name>[A-Za-z_]\w*)\s*$""")
 _LIST_FACT_SEP = "\x1f"
@@ -4444,7 +4253,7 @@ def _drop_dead_variant_branches(raw: str, variant: str,
     """Remove the bodies of branches this render will not produce.
 
     `facts` carries the schema's own string AND list[str] fields (the latter
-    joined on `_LIST_FACT_SEP` — see render_facts) as `((name, value), ...)`;
+    joined on `_LIST_FACT_SEP`) as `((name, value), ...)`;
     `variant` is folded in under both `variant` and `s.variant`, the two spellings
     the templates use. Conservative in one direction only: a condition this
     cannot decide keeps its body, so the scope can still be too WIDE but never
@@ -4477,40 +4286,6 @@ def _drop_dead_variant_branches(raw: str, variant: str,
     return "".join(out)
 
 
-# Fields whose VALUE is free-text rather than an enum. A template never branches
-# on them, and feeding prose to the condition evaluator only risks a spurious
-# match, so they are left out of the facts.
-_NON_ENUM_FACTS = frozenset({"name", "description"})
-
-
-def render_facts(schema) -> "tuple[tuple[str, str], ...]":
-    """The schema's string AND list[str] fields as a hashable `((name, value), ...)`.
-
-    These are what a template's `{% if s.<field> == "…" %}` / `{% if "x" in
-    s.<field> %}` tests, so they are what decides which of its members the
-    produced file will really have. Sorted so the tuple is a stable cache key.
-
-    A list[str] field (e.g. ControllerSchema.abilities) is stored joined on
-    `_LIST_FACT_SEP` so the tuple stays a flat str->str mapping — see
-    `_eval_atom`'s membership branch for the read side. An empty list is still
-    recorded (as `""`), deliberately: a field's ABSENCE from facts means
-    "unknown, cannot decide" (keeps the branch), but a field present with no
-    members means "known — nothing is in it", which correctly decides a bare
-    `"x" in s.field` test to False instead of leaving it undecided.
-    """
-    fields = getattr(type(schema), "model_fields", None) or {}
-    out: "dict[str, str]" = {}
-    for fname in fields:
-        if fname in _NON_ENUM_FACTS:
-            continue
-        value = getattr(schema, fname, None)
-        if isinstance(value, str):
-            out[fname] = value
-        elif isinstance(value, list) and all(isinstance(v, str) for v in value):
-            out[fname] = _LIST_FACT_SEP.join(value)
-    return tuple(sorted(out.items()))
-
-
 # Some micro folders hold WHOLE-FILE variant alternatives instead of the
 # usual always-co-existing sibling classes (SaveData.cs.j2 alongside
 # SaveSystem.cs.j2, AIState.cs.j2 alongside AI.cs.j2, ...) — write_files picks
@@ -4519,7 +4294,7 @@ def render_facts(schema) -> "tuple[tuple[str, str], ...]":
 # case correctly does, falsely puts a pointer-only method like ApplyHighlight
 # (PointerController.cs.j2) "in scope" for a multi_mode-variant fragment,
 # which never sees that file at all. Confirmed live, PlayerController.cs(565)
-# CS0103 that survived `bind_authored_code` entirely because the scan folded
+# CS0103 that survived the (since-retired) name-binder because the scan folded
 # PointerController.cs.j2's members into scope for every variant. Keyed by the
 # directory's own name (== the micro `kind`) since this table only needs to
 # name the one directory it's true for.
@@ -4585,104 +4360,6 @@ def template_members(template_dir: str, variant: str = "",
         m = _TEMPLATE_MEMBER_RE.match(line)
         if m:
             names.add(m.group(1))
-    return frozenset(names)
-
-
-# Which file's members are actually IN SCOPE for authored code: the one the
-# extras are injected into. A micro folder can hold more than one class, and a
-# sibling class's fields are not in scope — they are reachable only through an
-# instance, which is a member access this module never judges. Hit live on the
-# TurboToys dialogue micro: `Node.cs.j2` declares `public string text;`, so a
-# folder-wide member set swore `text` was in scope and
-# SparkyDialogue.cs(120,16) CS0103 shipped.
-#
-# Deliberately NOT applied to `template_members`, whose job is the opposite —
-# reserving a name so an authored member cannot redeclare it (CS0102). There,
-# over-reserving is the documented safe direction.
-_INJECTION_MARKERS = ("extra_methods", "extra_fields", "extra_usings",
-                      "awake_extra", "update_extra", "fixed_update_extra",
-                      "inject.")
-
-
-def _has_injection_marker(raw: str) -> bool:
-    """True if `raw` genuinely RENDERS one of `_INJECTION_MARKERS` — i.e. the
-    marker text appears outside a `//`/`///`/`/* */` comment.
-
-    A plain substring search over `raw` self-defeats the moment a file's OWN
-    comment explains that it does NOT render extras: DialogTrigger.cs.j2 says
-    so in exactly those words ("This class is intentionally NOT an extras
-    injection point: extra_fields/extra_methods/extra_usings render only into
-    DialogPlayer.cs.j2..."), which made the substring search treat it as an
-    injection site anyway. `template_scope_members` then folded DialogTrigger's
-    own `_player` field into scope for DialogPlayer's authored code — confirmed
-    live, NpcDialogPlayer.cs(150) CS0103, `_player` does not exist on that
-    class at all. `_code_mask` already answers "is this position code, not a
-    comment or string?" for exactly this reason.
-    """
-    mask = _code_mask(raw)
-    for mark in _INJECTION_MARKERS:
-        start = 0
-        while True:
-            idx = raw.find(mark, start)
-            if idx < 0:
-                break
-            if mask[idx]:
-                return True
-            start = idx + 1
-    return False
-
-
-@lru_cache(maxsize=64)
-def template_scope_members(template_dir: str, variant: str = "",
-                           facts: "tuple[tuple[str, str], ...]" = ()) -> frozenset[str]:
-    """Member names in scope for code injected into this micro's template.
-
-    Excludes members declared inside a NESTED class/struct — a nested type's
-    field is reachable only through an instance of it (`step.ask`, never bare
-    `ask`), the same principle `_has_injection_marker` already applies across
-    sibling FILES. A flat, brace-depth-blind scan cannot tell a nested type's
-    own member from the outer (injectable) class's, so it folded both into
-    one flat name set. Confirmed live, GameRules.cs(122) CS0103: `Step` is a
-    small nested data class (`public string ask;` among its fields) and the
-    authored `update_extra` assigned bare `ask = "...";` — `bind_authored_code`
-    judged it against a scope that included every `Step` field as if GameRules
-    itself declared them, so the hallucinated reference was never flagged.
-
-    Depth-tracked rather than a real parser: `pending_since` remembers the
-    depth a nested type_decl was seen at, covering the Allman-style "class
-    Foo" / "{" split across two lines every template here uses (`pending_since`
-    persists across any blank/attribute lines between them); `nested_from` is
-    the depth the nested type's OWN body starts at once its "{" is seen, so
-    its closing brace — which drops depth back BELOW that — is what ends the
-    exclusion. Good enough for machine-generated templates that never
-    obfuscate braces in strings/comments on these particular lines.
-    """
-    injecting = [text for _name, text, raw in _template_files(template_dir, variant, facts)
-                 if _has_injection_marker(raw)]
-    if not injecting:
-        # No identifiable injection site — fall back to the folder-wide set
-        # rather than claiming an empty scope, which would accuse everything.
-        return template_members(template_dir, variant, facts)
-    names: set[str] = set()
-    for text in injecting:
-        depth = 0
-        nested_from: "int | None" = None
-        pending_since: "int | None" = None
-        for line in text.splitlines():
-            is_type_decl = bool(_TYPE_DECL_RE.search(line))
-            if not is_type_decl and nested_from is None:
-                m = _TEMPLATE_MEMBER_RE.match(line)
-                if m:
-                    names.add(m.group(1))
-            if (is_type_decl and depth >= 1
-                    and nested_from is None and pending_since is None):
-                pending_since = depth        # awaiting this nested type's own "{"
-            depth += line.count("{") - line.count("}")
-            if pending_since is not None and depth > pending_since:
-                nested_from = depth
-                pending_since = None
-            if nested_from is not None and depth < nested_from:
-                nested_from = None
     return frozenset(names)
 
 
@@ -4777,24 +4454,6 @@ def template_method_return_types(template_dir: str, variant: str = "",
     return out
 
 
-def template_void_methods(template_dir: str, variant: str = "",
-                          facts: "tuple[tuple[str, str], ...]" = ()
-                          ) -> frozenset[str]:
-    """Names of methods the template declares with a void return type.
-
-    Sibling to template_method_return_types just above, which deliberately
-    EXCLUDES these -- ground truth for the opposite question:
-    find_void_method_negated needs to know which calls return nothing, not
-    what non-void type the others return.
-    """
-    out: set[str] = set()
-    for line in _template_text(template_dir, variant, facts).splitlines():
-        m = _TEMPLATE_METHOD_RETURN_RE.match(line)
-        if m and m.group("ret").lower() == "void":
-            out.add(m.group("name"))
-    return frozenset(out)
-
-
 @lru_cache(maxsize=64)
 def template_usings(template_dir: str) -> frozenset[str]:
     """Namespaces the micro's template already imports.
@@ -4833,8 +4492,8 @@ def _method_name(signature: str) -> str:
 # What makes the check possible now is `template_members`: until it existed the
 # per-micro `_RESERVED_FIELD_NAMES` sets were the only notion of what a class
 # contains, and they are hand-maintained and incomplete — which is exactly why
-# `_drop_unresolvable_types` (unity_micro_code.py) restricted itself to names it
-# had removed moments earlier rather than judging identifiers in general. The
+# the former S1 collaborator-type dropper restricted itself to names it had
+# removed moments earlier rather than judging identifiers in general. The
 # template IS the ground truth for the class, so the judgement is now sound.
 #
 # Scope is chosen so the ground truth is COMPLETE for what it judges:
@@ -4849,101 +4508,6 @@ def _method_name(signature: str) -> str:
 # replacement. A micro that lost one statement still builds; a micro that keeps
 # it takes the whole assembly down.
 
-# Instance members every generated MonoBehaviour inherits. They are real and
-# referable but appear nowhere in the template text, so the template-derived
-# ground truth cannot see them and would otherwise flag `transform`.
-_MONO_INHERITED = frozenset({
-    "transform", "gameObject", "name", "tag", "enabled", "isActiveAndEnabled",
-    "hideFlags", "useGUILayout", "runInEditMode", "didAwake", "didStart",
-    "GetComponent", "GetComponents", "GetComponentInChildren", "TryGetComponent",
-    "GetComponentsInChildren", "GetComponentInParent", "GetComponentsInParent",
-    "CompareTag", "SendMessage", "SendMessageUpwards", "BroadcastMessage",
-    "StartCoroutine", "StopCoroutine", "StopAllCoroutines",
-    "Invoke", "InvokeRepeating", "CancelInvoke", "IsInvoking",
-    "Instantiate", "Destroy", "DestroyImmediate", "DontDestroyOnLoad",
-    "FindObjectOfType", "FindObjectsOfType", "FindAnyObjectByType",
-    "FindFirstObjectByType", "FindObjectsByType", "print",
-    "Equals", "ReferenceEquals", "GetHashCode", "GetType", "ToString",
-})
-
-# Types and static classes a generated MonoBehaviour may name without declaring
-# anything. Deliberately generous: a name missing from this set costs one
-# commented-out statement and a loud fixer line, so the set errs toward
-# admitting a symbol rather than accusing it.
-_KNOWN_SYMBOLS = frozenset({
-    # C# primitives / BCL
-    "bool", "byte", "char", "decimal", "double", "float", "int", "long",
-    "object", "sbyte", "short", "string", "uint", "ulong", "ushort", "void",
-    "Boolean", "Byte", "Char", "Decimal", "Double", "Int16", "Int32", "Int64",
-    "SByte", "Single", "String", "UInt16", "UInt32", "UInt64", "Object",
-    "Math", "Convert", "Array", "Enum", "Guid", "DateTime", "DateTimeOffset",
-    "TimeSpan", "Environment", "BitConverter", "Buffer", "Activator", "Type",
-    "Attribute", "Nullable", "Tuple", "ValueTuple", "KeyValuePair", "Comparer",
-    "EqualityComparer", "StringComparison", "StringComparer", "StringSplitOptions",
-    "Exception", "ArgumentException", "ArgumentNullException", "IOException",
-    "ArgumentOutOfRangeException", "InvalidOperationException", "FormatException",
-    "NotImplementedException", "NotSupportedException", "OverflowException",
-    "IndexOutOfRangeException", "NullReferenceException", "SystemException",
-    "Action", "Func", "Predicate", "Comparison", "EventHandler", "EventArgs",
-    "Delegate", "IDisposable", "IComparable", "IEquatable", "IEnumerable",
-    "IEnumerator", "ICollection", "IList", "IDictionary", "IReadOnlyList",
-    "IReadOnlyCollection", "IReadOnlyDictionary", "List", "Dictionary",
-    "HashSet", "Queue", "Stack", "LinkedList", "SortedList", "SortedSet",
-    "SortedDictionary", "Enumerable", "StringBuilder", "Encoding", "Regex",
-    "Match", "CultureInfo", "NumberStyles", "Path", "File", "Directory",
-    "FileInfo", "DirectoryInfo", "StreamReader", "StreamWriter", "MemoryStream",
-    "FileMode", "FileAccess", "Task", "Thread", "CancellationToken",
-    "Interlocked", "Stopwatch", "Console", "Serializable", "NonSerialized",
-    # UnityEngine statics / structs / utility types
-    "Application", "Camera", "Cursor", "Debug", "Display", "Event", "Gizmos",
-    "Graphics", "GUI", "GUILayout", "GUIUtility", "Handheld", "Input",
-    "JsonUtility", "LayerMask", "Mathf", "Physics", "Physics2D", "PlayerPrefs",
-    "Profiler", "QualitySettings", "Random", "Resources", "Screen", "Shader",
-    "SystemInfo", "Time", "Vector2", "Vector2Int", "Vector3", "Vector3Int",
-    "Vector4", "Quaternion", "Matrix4x4", "Color", "Color32", "Gradient",
-    "Rect", "RectInt", "RectOffset", "Bounds", "BoundsInt", "Plane", "Ray",
-    "Ray2D", "RaycastHit", "RaycastHit2D", "AnimationCurve", "Keyframe",
-    "Mesh", "Material", "MaterialPropertyBlock", "Texture", "Texture2D",
-    "RenderTexture", "Sprite", "Font", "GUIStyle", "GUIContent", "Debug",
-    # UnityEngine components
-    "Transform", "RectTransform", "GameObject", "MonoBehaviour", "Component",
-    "ScriptableObject", "Behaviour", "Renderer", "MeshRenderer", "MeshFilter",
-    "SkinnedMeshRenderer", "SpriteRenderer", "LineRenderer", "TrailRenderer",
-    "Rigidbody", "Rigidbody2D", "Collider", "Collider2D", "BoxCollider",
-    "SphereCollider", "CapsuleCollider", "MeshCollider", "CharacterController",
-    "BoxCollider2D", "CircleCollider2D", "PolygonCollider2D", "EdgeCollider2D",
-    "Animator", "Animation", "AnimationClip", "AnimatorStateInfo", "Avatar",
-    "AudioSource", "AudioClip", "AudioListener", "AudioMixer", "AudioMixerGroup",
-    "Light", "Canvas", "CanvasGroup", "CanvasScaler", "GraphicRaycaster",
-    "EventSystem", "ParticleSystem", "NavMeshAgent", "NavMesh", "NavMeshPath",
-    "Terrain", "TerrainData", "Joint", "SpringJoint", "HingeJoint",
-    "ConfigurableJoint", "CharacterJoint", "WheelCollider", "Skybox",
-    "Coroutine", "YieldInstruction", "AsyncOperation", "WaitForSeconds",
-    "WaitForSecondsRealtime", "WaitForFixedUpdate", "WaitForEndOfFrame",
-    "WaitUntil", "WaitWhile", "Scene", "SceneManager", "LoadSceneMode",
-    # enums referenced bare
-    "KeyCode", "ForceMode", "ForceMode2D", "Space", "RigidbodyConstraints",
-    "RigidbodyInterpolation", "CollisionDetectionMode", "CursorLockMode",
-    "TextAnchor", "TextAlignment", "FontStyle", "HorizontalWrapMode",
-    "RenderMode", "ScaleMode", "ShadowCastingMode", "LightType", "LightShadows",
-    "AudioRolloffMode", "AudioClipLoadType", "WrapMode", "PrimitiveType",
-    "SendMessageOptions", "HideFlags", "LogType", "RuntimePlatform",
-    "SystemLanguage", "DeviceType", "ScreenOrientation", "FilterMode",
-    "TextureWrapMode", "TextureFormat", "RenderTextureFormat", "PlayMode",
-    "QueryTriggerInteraction", "AnimatorCullingMode", "AnimatorUpdateMode",
-    "AvatarTarget", "AvatarIKGoal", "ParticleSystemStopBehavior",
-    # UI / TMP / Input System / misc packages
-    "Text", "Image", "RawImage", "Button", "Toggle", "Slider", "Scrollbar",
-    "ScrollRect", "Dropdown", "InputField", "Selectable", "Graphic", "Outline",
-    "Shadow", "ContentSizeFitter", "LayoutElement", "HorizontalLayoutGroup",
-    "VerticalLayoutGroup", "GridLayoutGroup", "AspectRatioFitter", "Mask",
-    "TMP_Text", "TMP_InputField", "TMP_Dropdown", "TMP_FontAsset",
-    "TextMeshPro", "TextMeshProUGUI", "UIDocument", "VisualElement",
-    "InputSystem", "InputAction", "InputActionAsset", "InputActionMap",
-    "InputActionReference", "Keyboard", "Mouse", "Gamepad", "Touchscreen",
-    "UnityEvent", "UnityAction", "PlayableDirector", "VideoPlayer",
-    "SpriteAtlas", "Tilemap", "TileBase", "Volume", "VolumeProfile",
-})
 
 _CS_KEYWORDS = frozenset({
     "abstract", "as", "base", "break", "case", "catch", "checked", "class",
@@ -5305,67 +4869,6 @@ def template_field_types(template_dir: str, variant: str = "",
     return seen
 
 
-# CS0200 — authored code assigns directly to a template-declared GET-ONLY,
-# expression-bodied property (`GearDown = true;`) instead of its backing
-# field. The property's own expression body names that field with complete
-# ground truth. Confirmed live, PlayerController.cs(554,555):
-# ControllerMultiMode.cs.j2 declares
-#     public bool  GearDown => _gearDown;
-# and the model, needing to SET gear-down state from an authored method,
-# assigned the read-only property itself. `find_unbound_identifiers` does not
-# catch this — `GearDown` genuinely IS a known, bound name; the defect is
-# that it isn't an assignable one, a check that pass never performs.
-_READONLY_PROPERTY_RE = re.compile(
-    r"^\s*(?:public|private|protected|internal)\s+[A-Za-z_][\w<>,\[\].?]*\s+"
-    r"(?P<name>[A-Za-z_]\w*)\s*=>\s*(?P<backing>[A-Za-z_]\w*)\s*;\s*$",
-    re.MULTILINE)
-# Bare (non-dotted — same-instance, implicit `this.`) simple assignment to a
-# name. Deliberately excludes `==`/`+=`/etc. and a dotted receiver: rewriting
-# `other.GearDown = x` would presume `_gearDown` is accessible off `other`,
-# which a private backing field never is.
-_ASSIGN_TO_NAME_RE = re.compile(
-    r"(?<!\.)\b(?P<name>[A-Za-z_]\w*)\b(?P<sp1>[ \t]*)=(?!=)(?P<sp2>[ \t]*)"
-    r"(?P<rhs>[^;=\s][^;]*;)")
-
-
-@lru_cache(maxsize=64)
-def template_readonly_property_backing(template_dir: str, variant: str = "",
-                                       facts: "tuple[tuple[str, str], ...]" = ()
-                                       ) -> "dict[str, str]":
-    """`{PropertyName: backing_field_name}` for every get-only, expression-
-    bodied property (`public T Name => _field;`) the template declares."""
-    out: dict[str, str] = {}
-    for line in _template_text(template_dir, variant, facts).splitlines():
-        m = _READONLY_PROPERTY_RE.match(line)
-        if m:
-            out[m.group("name")] = m.group("backing")
-    return out
-
-
-def _repair_readonly_property_assign(text: str, *, backing: "dict[str, str]") -> str:
-    """Rewrite `<Prop> = v;` -> `<backing> = v;` for a known get-only property."""
-    if not text or not backing:
-        return text
-    mask = _code_mask(text)
-    changed = False
-
-    def repl(m: "re.Match") -> str:
-        nonlocal changed
-        if not mask[m.start()]:
-            return m.group(0)
-        field = backing.get(m.group("name"))
-        if field is None:
-            return m.group(0)
-        changed = True
-        return f"{field}{m.group('sp1')}={m.group('sp2')}{m.group('rhs')}"
-
-    new = _ASSIGN_TO_NAME_RE.sub(repl, text)
-    if changed:
-        console.print("  [magenta]FIX[/]  rewrote assignment to a get-only "
-                      "template property as its backing field (CS0200)")
-    return new
-
-
 # The rewrite above only fires for a TRIVIAL passthrough body (`Name =>
 # _field;`) — it has nowhere to route an assignment when the body is
 # anything else, and silently left the assignment untouched rather than
@@ -5681,164 +5184,6 @@ def _neutralize_flagged_lines(text: str, bad: "dict[int, set[str]]", *,
     return "\n".join(out), flagged
 
 
-# CS0103 — the author declared `_grid` and then wrote `grid`.
-#
-# Like lint_undeclared_catch_exception_var above, this is a fully MECHANICAL
-# fix rather than a neutralize-the-line fallback, and it is safe for the same
-# reason: the name being rewritten provably does not bind (it is in `unbound`),
-# so no code that compiles today can change meaning.
-#
-# It matters more than the compile error it clears. The alternative repairs are
-# both wrong on CONTENT: neutralizing the statement deletes behaviour the author
-# meant to write, and DECLARING a second `grid` field leaves two references to
-# the same collaborator where only one is ever wired in the scene — the script
-# compiles and then silently does nothing at runtime. Rebinding to the field
-# the author already declared is the only repair that keeps the intent.
-#
-# Hit live on Gridfall's InputHandler: `[SerializeField] private GridLogic
-# _grid` declared, `if (_grid == null) return;` guarding, then
-# `grid.SetScore(grid.GetScore() + 1);` — three CS0103s in one file.
-_ALIAS_SKIP_RE = re.compile(
-    r'"(?:\\.|[^"\\])*"'        # string literal
-    r"|'(?:\\.|[^'\\])*'"       # char literal
-    r"|//[^\n]*"                  # line comment
-    r"|/\*.*?\*/",                # block comment
-    re.DOTALL,
-)
-
-
-def lint_underscore_alias_references(text: str, *, unbound: "set[str]",
-                                     declared: "set[str] | frozenset[str]"
-                                     ) -> "tuple[str, set[str]]":
-    """Rewrite an unbound `name` to `_name` when `_name` IS a declared member.
-
-    Returns `(text, rebound_names)`. Only names present in `unbound` are ever
-    touched, so a genuine local variable called `grid` is left alone. String
-    and comment regions are skipped so prose is never rewritten.
-    """
-    targets = {n for n in unbound if n and f"_{n}" in declared and n not in declared}
-    if not text or not targets:
-        return text, set()
-
-    pattern = re.compile(r"(?<![\w.])(" + "|".join(sorted(map(re.escape, targets),
-                                                         key=len, reverse=True))
-                         + r")\b")
-    rebound: set[str] = set()
-
-    def _fix_code(chunk: str) -> str:
-        def _sub(m: "re.Match") -> str:
-            rebound.add(m.group(1))
-            return "_" + m.group(1)
-        return pattern.sub(_sub, chunk)
-
-    out: list[str] = []
-    pos = 0
-    for m in _ALIAS_SKIP_RE.finditer(text):
-        out.append(_fix_code(text[pos:m.start()]))
-        out.append(m.group(0))          # strings/comments pass through verbatim
-        pos = m.end()
-    out.append(_fix_code(text[pos:]))
-    return "".join(out), rebound
-
-
-def lint_unbound_identifiers(text: str, *, known: "set[str] | frozenset[str]",
-                             arities: "dict[str, tuple[int, int]] | None" = None,
-                             params: "dict[str, tuple[str, ...]] | None" = None,
-                             signature: str = "",
-                             field_types: "dict[str, str] | None" = None
-                             ) -> "tuple[str, set[str]]":
-    """Neutralize statements referencing an identifier that cannot bind.
-
-    Returns `(text, flagged_names)`. Same three-way strategy as every other
-    `lint_*` pass here: comment out a complete self-terminating statement,
-    swap an `if`/`while` condition for `false` when the statement spans lines,
-    and leave a line alone entirely when neither is safe — with the two
-    structure-preserving cases above, because a repair that trades CS0103 for a
-    parse error has not repaired anything.
-    """
-    bad = find_unbound_identifiers(text, known=known, arities=arities,
-                                   params=params, signature=signature,
-                                   field_types=field_types)
-    if not bad:
-        return text, set()
-    text, loop_names = _comment_unbound_loop_blocks(text, bad)
-    after, names = _neutralize_flagged_lines(text, bad)
-    # The block rewrite already converted every affected line to a comment, so
-    # the line-level neutralizer rightly finds nothing left to change.  Preserve
-    # the removed names anyway: bind_authored_code uses them both for its audit
-    # and to decide whether to write this rewritten fragment back to the schema.
-    return after, names | loop_names
-
-
-_LOOP_HEADER_RE = re.compile(r"^[ \t]*(?:for|foreach|while)\s*\(")
-
-
-def _comment_unbound_loop_blocks(
-        text: str, bad: "dict[int, set[str]]"
-        ) -> "tuple[str, set[str]]":
-    """Comment a complete braced loop whose header has an unbound reference.
-
-    A loop header cannot be line-commented: its body would remain live and lose
-    the loop variable.  Replacing it with ``if (false)`` is no better because
-    C# still type-checks unreachable code.  For an authored braced loop we can
-    instead comment each line through its matching brace, preserving the
-    surrounding method's syntax while abstaining from guessed behavior.
-    """
-    if not text or not bad:
-        return text, set()
-    lines = text.splitlines()
-    mask = _code_mask(text)
-    line_offsets: list[int] = []
-    offset = 0
-    for line in lines:
-        line_offsets.append(offset)
-        offset += len(line) + 1
-
-    covered: set[int] = set()
-    removed: set[str] = set()
-    for line_index in sorted(bad):
-        if line_index in covered or line_index >= len(lines):
-            continue
-        if not _LOOP_HEADER_RE.match(lines[line_index]):
-            continue
-
-        open_index = -1
-        header_start = line_offsets[line_index]
-        for idx in range(header_start, header_start + len(lines[line_index])):
-            if mask[idx] and text[idx] == "{":
-                open_index = idx
-                break
-        if open_index < 0:
-            for probe in range(line_index + 1, len(lines)):
-                stripped = lines[probe].strip()
-                if not stripped:
-                    continue
-                if stripped.startswith("{"):
-                    open_index = line_offsets[probe] + lines[probe].index("{")
-                break
-        if open_index < 0:
-            continue
-        close_index = _find_matching_brace_generic(text, open_index, "{", "}", mask)
-        if close_index < 0:
-            continue
-        end_line = text.count("\n", 0, close_index)
-        names = ", ".join(sorted(bad[line_index]))
-        removed |= bad[line_index]
-        for nested_index in range(line_index + 1, end_line + 1):
-            removed |= bad.get(nested_index, set())
-        for current in range(line_index, min(end_line + 1, len(lines))):
-            indent = lines[current][:len(lines[current]) - len(lines[current].lstrip())]
-            if current == line_index:
-                lines[current] = (
-                    f"{indent}// AUDIT: removed loop containing unbindable reference(s) "
-                    f"{names} -- {lines[current].strip()}"
-                )
-            elif lines[current].strip():
-                lines[current] = f"{indent}// {lines[current].lstrip()}"
-            covered.add(current)
-    return "\n".join(lines), removed
-
-
 # ── Template-field type misuse (CS1061 / CS1503) ─────────────────────────────
 # The unbound-identifier pass above proves an identifier BINDS; it never asks
 # what binding to it actually means. `_music.PickClip(...)` binds — `_music`
@@ -6145,627 +5490,13 @@ def lint_field_type_misuse(text: str, *, field_types: "dict[str, str]",
     return _neutralize_flagged_lines(text, bad, reason="type-incompatible use(s)")
 
 
-# CS0200/CS1612 — assignment (direct, compound, or through a value-type
-# sub-member like `.y`) into a Unity component property that is get-only.
-# Confirmed live, DropZone's PlayerController.cs(238,281,283):
-#
-#     _cc.velocity = vel;
-#     _cc.velocity.y -= _gravityScale * Time.fixedDeltaTime;
-#     _cc.velocity += drag * Time.fixedDeltaTime;
-#
-# — three shapes of the same API confusion in one file (two in `update_extra`,
-# one in an `extra_methods` body). `CharacterController.velocity` is
-# `{ get; }` only — the controller computes it internally from its own
-# collision-aware `.Move()` calls — unlike `Rigidbody.velocity`, which
-# genuinely is settable and which the model reliably conflates it with
-# whenever it wants to cap speed or apply drag.
-#
-# `unity_api_surface.py` (extracted from the installed Editor's XML docs)
-# proves a member EXISTS on a type, not whether it has a setter, so it cannot
-# tell these apart from `lint_invalid_member_uses` above — this is a second,
-# narrower question with no data source but a human reading the real API, the
-# same discipline `_UNITY_FIELD_TYPE_SURFACE` already follows: small,
-# hand-verified, grown only as a new type is actually confirmed live rather
-# than guessed at. No safe rewrite exists either way: the model's real intent
-# (a speed cap, a drag force) has no ground-truth replacement expression here
-# — the correct fix is `_cc.Move(...)` with a DISPLACEMENT the model never
-# computed, not a velocity write — so, like every other invented-member case
-# in this module, this is judged for neutralization rather than guessed at.
-_UNITY_READONLY_PROPERTIES: "dict[str, frozenset[str]]" = {
-    "charactercontroller": frozenset({"velocity", "isGrounded", "collisionFlags"}),
-}
-_READONLY_PROPERTY_ASSIGN_RE = re.compile(
-    r"(?<![\w.])(?P<recv>[A-Za-z_]\w*)\.(?P<member>[A-Za-z_]\w*)"
-    r"(?:\.[A-Za-z_]\w*)?"
-    r"[ \t]*(?:\+=|-=|\*=|/=|(?<![=!<>])=(?!=))")
-
-
-def find_readonly_property_assign_misuse(text: str, *, field_types: "dict[str, str]"
-                                         ) -> "dict[int, set[str]]":
-    """`{line_index: {"recv.member", ...}}` for an assignment into a Unity
-    component property known to be get-only, reached directly, compounded, or
-    through a value-type sub-member (`.velocity.y -= ...`). `field_types` is
-    the same `template_field_types()` ground truth `find_field_type_misuse`
-    uses — a name the fragment declares itself is never the template's field
-    at all, but shadowing does not apply here the way it does there: this
-    checks a FIXED external API surface (`_UNITY_READONLY_PROPERTIES`), not
-    the template's own members, so there is nothing for a local re-declare of
-    `recv` to legitimately shadow.
-    """
-    if not text or not field_types:
-        return {}
-    mask = _code_mask(text)
-    bad: "dict[int, set[str]]" = {}
-    for m in _READONLY_PROPERTY_ASSIGN_RE.finditer(text):
-        if not mask[m.start("recv")]:
-            continue
-        recv, member = m.group("recv"), m.group("member")
-        ftype = field_types.get(recv)
-        if ftype is None:
-            continue
-        readonly = _UNITY_READONLY_PROPERTIES.get(ftype.lower())
-        if readonly is None or member not in readonly:
-            continue
-        line = text.count("\n", 0, m.start("recv"))
-        bad.setdefault(line, set()).add(f"{recv}.{member}")
-    return bad
-
-
-def lint_readonly_property_assign_misuse(text: str, *, field_types: "dict[str, str]"
-                                         ) -> "tuple[str, set[str]]":
-    """Neutralize an assignment into a known get-only Unity component
-    property. Same three-way repair as every other `lint_*` pass here."""
-    bad = find_readonly_property_assign_misuse(text, field_types=field_types)
-    if not bad:
-        return text, set()
-    return _neutralize_flagged_lines(
-        text, bad, reason="assignment(s) to a get-only Unity property")
-
-
-# ── Invented members on real Unity types (CS0117 / CS1061) ───────────────────
-#
-# The pass above proves a field is not used as the wrong KIND of thing; this
-# one asks the next question a compiler asks: does the member actually exist on
-# that type? Live in one build:
-#
-#     CS0117  'Material' does not contain a definition for 'mainTextureMode'
-#     CS1061  'Touchscreen' does not contain a definition for ...
-#
-# The GTA backend has had this check since its own corpus study
-# (`lint_member_references` against `lookups/gta_api_surface.json`); Unity had
-# no equivalent because nothing supplied the surface. `src/unity_api_surface.py`
-# now does, extracted from the installed Editor's own XML documentation.
-#
-# Unlike the GTA checker, which must INFER a variable's type from declaration
-# patterns, this one is keyed off types the schema already DECLARES — the same
-# `field_types` map `find_field_type_misuse` above consumes. A field whose type
-# is unknown, ambiguous, or too thinly documented to judge is skipped outright:
-# the pass abstains rather than guesses, so a missing surface changes nothing.
-_MEMBER_ACCESS_TAIL = r"\s*\.\s*([A-Za-z_]\w*)"
-
-
-def find_invalid_member_uses(text: str, *, field_types: "dict[str, str]",
-                             surface: "dict | None") -> "dict[int, set[str]]":
-    """`{line_index: {"Type.member", ...}}` for members that do not exist on
-    the declared type of the field they are reached through.
-
-    `surface=None` (never built) or an unknown/ambiguous type is a no-op.
-    """
-    if not text or not field_types or not surface:
-        return {}
-    from ..unity_api_surface import members_for, resolve_type
-
-    bad: "dict[int, set[str]]" = {}
-    for fname, declared in field_types.items():
-        if not fname or not declared:
-            continue
-        fqn = resolve_type(str(declared), surface)
-        if not fqn:
-            continue                       # unknown or ambiguous type — no opinion
-        valid = members_for(fqn, surface)
-        if valid is None:
-            continue                       # extraction too thin to judge against
-        pattern = re.compile(r"(?<![\w.])" + re.escape(fname) + _MEMBER_ACCESS_TAIL)
-        for m in pattern.finditer(text):
-            member = m.group(1)
-            if member in valid:
-                continue
-            line = text.count("\n", 0, m.start(1))
-            bad.setdefault(line, set()).add(f"{fqn.rsplit('.', 1)[-1]}.{member}")
-    return bad
-
-
-def lint_invalid_member_uses(text: str, *, field_types: "dict[str, str]",
-                             surface: "dict | None"
-                             ) -> "tuple[str, set[str]]":
-    """Neutralize statements reaching for a member that does not exist on the
-    field's declared type. Same three-way repair as every other `lint_*` pass
-    here — never guesses a replacement member, because the right one is not
-    recoverable from a wrong one."""
-    bad = find_invalid_member_uses(text, field_types=field_types, surface=surface)
-    if not bad:
-        return text, set()
-    return _neutralize_flagged_lines(
-        text, bad, reason="member(s) that do not exist on the declared type")
-
-
-# CS1503/CS0019 — a field the template declares NON-vector (a `string` in the
-# confirmed case) used where a Vector3 belongs: an argument to one of
-# Vector3's static methods, or an operand of `+`/`-` with another Vector3.
-# Confirmed live, DropZone's WorldInteractable.cs(65):
-#
-#     float dist = Vector3.Distance(transform.position, playerTag);
-#     transform.position += (playerTag - transform.position).normalized * ...;
-#
-# `playerTag` is `Interactable.cs.j2`'s own `[SerializeField] private string
-# playerTag` (used correctly elsewhere with `CompareTag`) — the model needed
-# a reference to the player's TRANSFORM to pull the pickup toward it and
-# reused the wrong existing field instead of declaring a new one. There is no
-# safe rewrite: no field holding a player Transform exists anywhere in this
-# fragment or the template, so — like `CharacterController.velocity` above —
-# this is judged for neutralization rather than guessed at.
-_VECTOR3_STATIC_METHODS = frozenset({
-    "Distance", "Angle", "SignedAngle", "Dot", "Cross", "Project",
-    "ProjectOnPlane", "Reflect", "Lerp", "LerpUnclamped", "Slerp",
-    "SlerpUnclamped", "MoveTowards", "RotateTowards", "Min", "Max",
-    "ClampMagnitude", "Scale",
-})
-_VECTOR3_STATIC_CALL_RE = re.compile(
-    r"\bVector3\.(?P<method>[A-Za-z_]\w*)\s*\(")
-_BARE_PLUSMINUS_RE = re.compile(
-    r"(?<![\w.])(?P<lhs>[A-Za-z_]\w*)[ \t]*(?P<op>[+-])[ \t]*"
-    r"(?P<rhs>[A-Za-z_]\w*)(?![\w.(])")
-# A field is not "Vector3" itself here (only NON-vector types are judged
-# against a Vector3-arithmetic context) — anything the struct-numeric-
-# conversion check above already owns is excluded so the two never overlap.
-_NON_VECTOR3_JUDGED_TYPES = _NUMERIC_BOOL_TYPES | {"string"}
-
-
-def find_field_vector3_context_misuse(text: str, *, field_types: "dict[str, str]"
-                                      ) -> "dict[int, set[str]]":
-    """`{line_index: {"fieldName", ...}}` for a field known NOT to be a
-    Vector3 used where the surrounding code demands one: a positional
-    argument to a Vector3 static method, or a bare operand of `+`/`-` beside
-    another bare identifier. `field_types` is the same `template_field_types()`
-    ground truth `find_field_type_misuse` uses."""
-    if not text or not field_types:
-        return {}
-    mask = _code_mask(text)
-    bad: "dict[int, set[str]]" = {}
-
-    def flag(pos: int, name: str) -> None:
-        bad.setdefault(text.count("\n", 0, pos), set()).add(name)
-
-    for m in _VECTOR3_STATIC_CALL_RE.finditer(text):
-        if not mask[m.start()] or m.group("method") not in _VECTOR3_STATIC_METHODS:
-            continue
-        close = _find_matching_close_paren(text, m.end())
-        if close is None:
-            continue
-        args_start = m.end()
-        for arg in _split_top_level_args(text[args_start:close]):
-            a = arg.strip()
-            ftype = field_types.get(a)
-            if ftype is not None and ftype.lower() in _NON_VECTOR3_JUDGED_TYPES:
-                flag(args_start, a)
-
-    for m in _BARE_PLUSMINUS_RE.finditer(text):
-        if not mask[m.start("lhs")]:
-            continue
-        lhs, rhs = m.group("lhs"), m.group("rhs")
-        for name in (lhs, rhs):
-            ftype = field_types.get(name)
-            if ftype is not None and ftype.lower() in _NON_VECTOR3_JUDGED_TYPES:
-                flag(m.start("lhs"), name)
-    return bad
-
-
-def lint_field_vector3_context_misuse(text: str, *, field_types: "dict[str, str]"
-                                      ) -> "tuple[str, set[str]]":
-    """Neutralize a non-Vector3 field used in a Vector3-arithmetic context.
-    Same three-way repair as every other `lint_*` pass here."""
-    bad = find_field_vector3_context_misuse(text, field_types=field_types)
-    if not bad:
-        return text, set()
-    return _neutralize_flagged_lines(
-        text, bad, reason="non-Vector3 field used in Vector3 arithmetic")
-
-
 def _body_is_live(body: str) -> bool:
     """True if a method body still has a statement (not only AUDIT comments)."""
     return any(ln.strip() and not ln.lstrip().startswith("//")
                for ln in (body or "").splitlines())
 
 
-# ── Tier 2: BUILD what the author reached for ────────────────────────────────
-# An identifier the author uses but never declares is not an error. It is the
-# author telling us the class needs a piece of state. Deleting the statement
-# deletes the mechanic; declaring the field keeps it.
-#
-# Live on the TowerControl run, this exact shape cost the game its two most
-# visible systems:
-#
-#   neutralized 2 unbindable reference(s): conflictActive, radarSweepColor
-#   dropped 2 authored method(s) left with no live statement:
-#       GetRadarSweepColor, SetConflictAlert
-#
-# The methods did not fail. They were emptied by the removal of two lines that
-# assigned two fields nobody had declared — the conflict alert and the radar
-# sweep, in a game whose whole pressure mechanic is the conflict alert.
-#
-# The type is inferred ONLY from an unambiguous assignment in the same fragment.
-# No guess, no default: an identifier whose type cannot be read off a literal is
-# left alone for the existing pass to handle, because a field of the wrong type
-# fails louder and later than one that was never declared.
-_ASSIGN_LITERAL_RES: tuple[tuple[str, str], ...] = (
-    (r'=\s*(?:true|false)\s*[;,)]',                     "bool"),
-    (r'=\s*"[^"]*"\s*[;,)]',                            "string"),
-    (r"=\s*'[^']'\s*[;,)]",                             "char"),
-    (r'=\s*-?\d+\.\d*f\s*[;,)]',                        "float"),
-    (r'=\s*-?\d+f\s*[;,)]',                             "float"),
-    (r'=\s*-?\d+\.\d+\s*[;,)]',                         "float"),
-    (r'=\s*-?\d+\s*[;,)]',                              "int"),
-    (r'=\s*new\s+Color\s*\(',                           "Color"),
-    (r'=\s*new\s+Vector3\s*\(',                         "Vector3"),
-    (r'=\s*new\s+Vector2\s*\(',                         "Vector2"),
-    (r'=\s*Color\.\w+\s*[;,)]',                         "Color"),
-    (r'=\s*Vector3\.\w+\s*[;,)]',                       "Vector3"),
-    (r'=\s*Vector2\.\w+\s*[;,)]',                       "Vector2"),
-    (r'=\s*Quaternion\.\w+\s*[;,)]',                    "Quaternion"),
-    (r'=\s*Time\.(?:time|deltaTime|fixedDeltaTime)\b',  "float"),
-    (r'=\s*new\s+List<([^>]+)>\s*\(',                   "List<{0}>"),
-)
-# `if (x)` / `while (x)` / `!x` / `x &&` read as a bool even with no assignment.
-_BOOL_USE_RE_TMPL = (r'(?:if|while)\s*\(\s*!?\s*{n}\s*[)&|]'
-                     r'|!\s*{n}\b'
-                     r'|\b{n}\s*(?:&&|\|\|)')
-
-
-# Types a ternary or a return can name on both sides. Restricted to the value
-# types whose static members are unambiguous — `Color.yellow : Color.green` is
-# a Color and nothing else. A wrong type is worse than no declaration, so this
-# never guesses from a single branch.
-_INFERABLE_TYPES = ("Color", "Vector3", "Vector2", "Quaternion")
-
-
-def _infer_field_type(name: str, blob: str, *,
-                      return_types: "dict[str, str] | None" = None) -> Optional[str]:
-    """The type `name` must have, read off how it is used — or None."""
-    esc = re.escape(name)
-    for pattern, ctype in _ASSIGN_LITERAL_RES:
-        m = re.search(rf'\b{esc}\s*{pattern}', blob)
-        if m:
-            return ctype.format(*m.groups()) if "{0}" in ctype else ctype
-
-    # `x = cond ? Color.yellow : Color.green;` — both arms name the same type.
-    # This is the shape TowerControl's radar sweep used, and matching only bare
-    # literals missed it, so the sweep was deleted along with its two methods.
-    for t in _INFERABLE_TYPES:
-        if re.search(rf'\b{esc}\s*=\s*[^;]*\?\s*{t}\.\w+\s*:\s*{t}\.\w+', blob):
-            return t
-
-    # `return x;` inside a method whose return type is known.
-    if return_types and name in return_types:
-        return return_types[name]
-
-    if re.search(_BOOL_USE_RE_TMPL.format(n=esc), blob):
-        return "bool"
-    return None
-
-
-def _returned_identifier_types(schema) -> "dict[str, str]":
-    """`{identifier: type}` for bare `return <ident>;` in a typed method.
-
-    The strongest inference available and the cheapest: a method declared
-    `public Color GetRadarSweepColor()` that ends `return radarSweepColor;`
-    has told us exactly what that field is.
-    """
-    out: "dict[str, str]" = {}
-    for m in (getattr(schema, "extra_methods", None) or []):
-        sig = str(getattr(m, "signature", "") or "")
-        rt = _RETURN_TYPE_RE.match(sig)
-        if not rt:
-            continue
-        ctype = rt.group("type")
-        if ctype in _VOID_RETURNS:
-            continue
-        for ident in re.findall(r'\breturn\s+([A-Za-z_]\w*)\s*;',
-                                str(getattr(m, "body", "") or "")):
-            out.setdefault(ident, ctype)
-    return out
-
-
-_DEFAULT_FOR_TYPE = {
-    "bool": "false", "int": "0", "float": "0f", "string": '""',
-    "char": "' '", "Color": "Color.white", "Vector3": "Vector3.zero",
-    "Vector2": "Vector2.zero", "Quaternion": "Quaternion.identity",
-}
-
-
-def build_missing_fields(schema, unbound: "set[str]", blob: str) -> list[str]:
-    """Declare the fields the author used but never declared. Mutates `schema`.
-
-    Returns one message per field built. Only ever ADDS — an identifier whose
-    type cannot be inferred is left in `unbound` for the caller to handle as
-    before, so this can never make a build worse than it was.
-    """
-    fields = getattr(schema, "extra_fields", None)
-    if fields is None:
-        return []
-    existing = {str(getattr(f, "name", "")) for f in fields}
-    returns = _returned_identifier_types(schema)
-    built: list[str] = []
-    for name in sorted(unbound):
-        # Only plain identifiers: a call (`Foo()`), a member access or an
-        # arity complaint is not a field, and the diagnostics carry parentheses.
-        if not re.fullmatch(r"[A-Za-z_]\w*", name) or name in existing:
-            continue
-        ctype = _infer_field_type(name, blob, return_types=returns)
-        if ctype is None:
-            continue
-        try:
-            fields.append(CodeField(name=name, type=ctype,
-                                    default=_DEFAULT_FOR_TYPE.get(ctype, "")))
-        except Exception:                    # noqa: BLE001 — never block a build
-            continue
-        existing.add(name)
-        built.append(f"{ctype} {name}")
-    return built
-
-
-# Return types that need no `return` statement.
-_VOID_RETURNS: frozenset[str] = frozenset({"void", "IEnumerator", "async"})
-# `<modifiers> <ReturnType> Name(` — the return type is the token before the
-# method name. Generic returns (`List<T>`) are matched whole.
-_RETURN_TYPE_RE = re.compile(
-    r'^\s*(?:(?:public|private|protected|internal|static|virtual|override|'
-    r'sealed|async|new|partial|extern|unsafe)\s+)*'
-    r'(?P<type>[A-Za-z_][A-Za-z0-9_.]*(?:<[^>()]*>)?(?:\[\])?)\s+'
-    r'[A-Za-z_][A-Za-z0-9_]*\s*\(')
-
-
-def _returns_a_value(signature: str) -> bool:
-    """Does this method signature promise a value back?"""
-    m = _RETURN_TYPE_RE.match(signature or "")
-    return m is not None and m.group("type") not in _VOID_RETURNS
-
-
-def _ends_in_return(body: str) -> bool:
-    """Is the last LIVE statement a return/throw — i.e. does the body already
-    guarantee a value on the way out?
-
-    Deliberately shallow. Proper reachability analysis is a compiler's job;
-    what this has to catch is the one shape the neutralizer creates, where the
-    trailing statements were commented out and what is left simply runs off the
-    end of the method.
-    """
-    live = [ln.strip() for ln in (body or "").splitlines()
-            if ln.strip() and not ln.lstrip().startswith("//")]
-    if not live:
-        return False
-    last = live[-1].rstrip("}").strip() or (live[-2].strip() if len(live) > 1 else "")
-    return last.startswith("return") or last.startswith("throw")
-
-
-def _ensure_returns(method):
-    """Give a neutralized non-void method a return, or None if it needs none.
-
-    CS0161. The binding pass comments out every statement carrying a reference
-    that cannot bind, and a method whose ONLY unconditional `return` was one of
-    them still passes `_body_is_live` on its surviving guard clause — so it is
-    kept, and it no longer returns anything. Hit live on the TowerControl run,
-    SaveSystem.cs(71,18):
-
-        private bool ValidateJson(string content)
-        {
-            if (string.IsNullOrEmpty(content)) return false;
-            // AUDIT: removed unbindable reference(s) System -- ...
-            // AUDIT: removed unbindable reference(s) JsonDocument -- ...
-            // AUDIT: removed unbindable reference(s) jsonDoc -- return jsonDoc...
-        }
-
-    `default` is the honest value to append: the real answer was in the
-    statements above it, the AUDIT comments say so in place, and for the
-    validators and predicates this fires on it is also the conservative one.
-    Dropping the method instead would discard the guard clause that survived
-    AND orphan the call sites — the loop handles orphans, but throwing away
-    working code to avoid writing one line is the worse trade.
-    """
-    sig = getattr(method, "signature", "") or ""
-    body = getattr(method, "body", "") or ""
-    if not _returns_a_value(sig) or _ends_in_return(body):
-        return None
-    patched = body.rstrip() + (
-        "\n        // AUDIT: neutralized statements left no return — "
-        "default so the method compiles\n        return default;")
-    return (method.model_copy(update={"body": patched})
-            if hasattr(method, "model_copy") else None)
-
-
-# A neutralized statement can orphan the NEXT one: commenting out
-# `float lateralSpeed = rb.velocity.x;` leaves `lateralSpeed` undeclared for the
-# line below it (live, PlayerController.cs), and dropping a method whose body
-# went empty orphans its call sites. So the pass runs to a fixpoint, with the
-# scope recomputed each round. Bounded — a round that changes nothing stops it,
-# and the ceiling only exists so a pathological fragment cannot spin.
-_MAX_BIND_ROUNDS = 8
-
-
-def bind_authored_code(schema, template_dir) -> list[str]:
-    """Neutralize every authored statement that cannot bind against its own
-    micro's class. Mutates `schema` in place; returns fixer-log messages."""
-    tdir = str(template_dir)
-    if not template_members(tdir, str(getattr(schema, "variant", "") or "")):
-        return []                          # no parseable template — abstain
-    # A template's sibling types are NAMED after the schema — saveload declares
-    # `class {{ s.name }}Data`, which neutralises to the placeholder `_J_Data`
-    # and matches nothing an authored fragment could write. Expanding it back
-    # with the schema's own name is what makes `new SaveSystemData()` bind.
-    own = str(getattr(schema, "name", "") or "")
-    # The variant AND the schema's other enums decide which branches of the
-    # template actually render, and therefore which of its members this file
-    # will really have. Reading the variant alone let `spawnPoints` — declared
-    # only under `{% if s.spawn_shape == "spawn_points" %}` — count as in scope
-    # for a `point` spawner, and the authored methods indexing it shipped.
-    var = str(getattr(schema, "variant", "") or "")
-    facts = render_facts(schema)
-    types = {t.replace(_JINJA_PLACEHOLDER, own) if own else t
-             for t in template_types(tdir, var, facts)}
-    base = (set(template_scope_members(tdir, var, facts)) | types
-            | _MONO_INHERITED | _KNOWN_SYMBOLS)
-    base.discard(_JINJA_PLACEHOLDER)
-    arities = template_method_arities(tdir, var, facts)
-    params  = template_method_params(tdir, var, facts)
-    field_types = template_field_types(tdir, var, facts)
-    readonly_backing = template_readonly_property_backing(tdir, var, facts)
-    readonly_names = template_readonly_property_names(tdir, var, facts)
-    void_methods = template_void_methods(tdir, var, facts)
-    # Invented members on real engine types (CS0117/CS1061) — the one
-    # question none of the passes above ask. None when the surface has
-    # never been built, which every consumer treats as no opinion.
-    from ..unity_api_surface import default_api_surface
-    api_surface = default_api_surface()
-    # `find_unbound_identifiers`'s argument-TYPE check (its own `field_types`
-    # param) additionally needs the SCHEMA'S OWN authored fields — a field the
-    # LLM itself declared (`extra_fields`) is USED, never declared, inside the
-    # one fragment being scanned, so `_declared_types` alone never sees it
-    # either. Kept separate from `field_types` above (which `lint_field_type_
-    # misuse` uses unchanged) so this stays scoped to argument checking only.
-    # `template_field_types` is `@lru_cache`d — copy before extending it.
-    arg_field_types = dict(field_types)
-    for f in (getattr(schema, "extra_fields", None) or []):
-        fname = str(getattr(f, "name", "") or "")
-        ftype = _field_type_norm(str(getattr(f, "type", "") or ""))
-        if fname and ftype:
-            arg_field_types.setdefault(fname, ftype)
-    flagged: set[str] = set()
-    dropped: list[str] = []
-    returned: list[str] = []
-    built: list[str] = []
-
-    for _ in range(_MAX_BIND_ROUNDS):
-        methods = [m for m in (getattr(schema, "extra_methods", None) or [])]
-        known = set(base)
-        for attr in ("extra_fields", "data_fields"):
-            for f in (getattr(schema, attr, None) or []):
-                known.add(str(getattr(f, "name", "") or ""))
-        for m in methods:
-            known.add(_method_name(getattr(m, "signature", "")))
-        # An authored method shadows the template's arity — its own signature is
-        # what a call to it must match, and this pass does not re-derive that.
-        live_arities = {k: v for k, v in arities.items()
-                        if k not in {_method_name(m.signature) for m in methods}}
-
-        # TIER 2 FIRST — build before you cut. Anything the author used but
-        # never declared gets DECLARED, so the statements using it stay live
-        # and the mechanic survives. Only then does the neutralizer run, on
-        # whatever genuinely cannot be resolved.
-        blob = _authored_blob(schema)
-        wanted: set[str] = set()
-        for _line, names in find_unbound_identifiers(
-                blob, known=known, arities=live_arities, params=params,
-                field_types=arg_field_types).items():
-            wanted |= names
-        made = build_missing_fields(schema, wanted, blob)
-        if made:
-            built.extend(made)
-            known |= {m.split()[-1] for m in made}
-
-        changed = bool(made)
-
-        for key in ("awake_extra", "update_extra", "fixed_update_extra"):
-            before = getattr(schema, key, "") or ""
-            if not before:
-                continue
-            fixed_ro = _repair_readonly_property_assign(before, backing=readonly_backing)
-            fixed_ro, names3 = lint_readonly_property_misuse(
-                fixed_ro, readonly_names=readonly_names)
-            after, names = lint_unbound_identifiers(fixed_ro, known=known,
-                                                    arities=live_arities,
-                                                    params=params,
-                                                    field_types=arg_field_types)
-            after, names2 = lint_field_type_misuse(after, field_types=field_types)
-            after, names4 = lint_invalid_member_uses(
-                after, field_types=field_types, surface=api_surface)
-            after, names5 = lint_readonly_property_assign_misuse(
-                after, field_types=field_types)
-            after, names6 = lint_void_method_negated(after, void_methods=void_methods)
-            after, names8 = lint_void_method_assigned(after, void_methods=void_methods)
-            after, names7 = lint_field_vector3_context_misuse(
-                after, field_types=field_types)
-            names = names | names2 | names3 | names4 | names5 | names6 | names7 | names8
-            if names or fixed_ro != before:
-                setattr(schema, key, after)
-                flagged |= names
-                changed = True
-
-        surviving: list = []
-        for m in methods:
-            body = getattr(m, "body", "") or ""
-            sig = getattr(m, "signature", "") or ""
-            fixed_ro = _repair_readonly_property_assign(body, backing=readonly_backing)
-            fixed_ro, names3 = lint_readonly_property_misuse(
-                fixed_ro, readonly_names=readonly_names, signature=sig)
-            after, names = lint_unbound_identifiers(
-                fixed_ro, known=known | _signature_param_names(sig),
-                arities=live_arities, params=params, signature=sig,
-                field_types=arg_field_types)
-            after, names2 = lint_field_type_misuse(after, field_types=field_types,
-                                                   signature=sig)
-            after, names4 = lint_invalid_member_uses(
-                after, field_types=field_types, surface=api_surface)
-            after, names5 = lint_readonly_property_assign_misuse(
-                after, field_types=field_types)
-            after, names6 = lint_void_method_negated(after, void_methods=void_methods)
-            after, names8 = lint_void_method_assigned(after, void_methods=void_methods)
-            after, names7 = lint_field_vector3_context_misuse(
-                after, field_types=field_types)
-            names = names | names2 | names3 | names4 | names5 | names6 | names7 | names8
-            if names or fixed_ro != body:
-                flagged |= names
-                changed = True
-                m = m.model_copy(update={"body": after}) if hasattr(m, "model_copy") else m
-            if _body_is_live(getattr(m, "body", "")):
-                # A body that survived can still have lost the only `return`
-                # its non-void signature promised (CS0161).
-                repaired = _ensure_returns(m)
-                if repaired is not None:
-                    m = repaired
-                    returned.append(_method_name(getattr(m, "signature", "")))
-                    changed = True
-                surviving.append(m)
-            else:
-                name = _method_name(getattr(m, "signature", ""))
-                dropped.append(name or "<unnamed>")
-                changed = True
-        # Unconditionally, not only when one was dropped: a neutralized body is
-        # a model_copy, so skipping the write-back would silently discard the
-        # repair on every method that survived it.
-        if getattr(schema, "extra_methods", None) is not None:
-            schema.extra_methods = surviving
-        if not changed:
-            break
-
-    msgs: list[str] = []
-    if flagged:
-        msgs.append(f"neutralized {len(flagged)} unbindable/type-incompatible "
-                    f"reference(s) in authored C# (CS0103/CS1061/CS7036/CS1503): "
-                    f"{', '.join(sorted(flagged))}")
-    if dropped:
-        msgs.append(f"dropped {len(dropped)} authored method(s) left with no "
-                    f"live statement: {', '.join(sorted(set(dropped)))}")
-    if built:
-        msgs.append(f"BUILT {len(built)} field(s) the author used but did not "
-                    f"declare, instead of deleting the statements that use "
-                    f"them: {', '.join(sorted(set(built)))}")
-    if returned:
-        msgs.append(f"appended a default return to {len(returned)} authored "
-                    f"method(s) whose only return was neutralized (CS0161): "
-                    f"{', '.join(sorted(set(returned)))}")
-    return msgs
-
-
-def harden_against_template(schema, template_dir, *, engine: str = "unity") -> list[str]:
+def harden_against_template(schema, template_dir) -> list[str]:
     """Reconcile an authored schema against what its own template emits.
 
     The last gate before render, and the only one that can see both sides. Runs
@@ -6775,32 +5506,15 @@ def harden_against_template(schema, template_dir, *, engine: str = "unity") -> l
     `lint_extensible`, and a generator added later is covered without being
     asked to remember.
 
-    Drops what would not compile and says which, then heals the usings the
-    authored content needs. Never raises: a micro missing one authored member
-    still builds, and a duplicate definition takes the whole assembly down.
+    Drops an authored member the template ALREADY declares (CS0102/CS0111 — a
+    duplicate definition takes the whole assembly down), then heals the usings
+    the authored content needs. Never raises.
 
-    `engine` gates the binding pass (`bind_authored_code`), whose symbol
-    universe — inherited MonoBehaviour members, the UnityEngine allowlist — is
-    Unity's. A GTA/SHVDN micro derives from `Script`, not `MonoBehaviour`, so
-    judging its identifiers against Unity's scope would accuse `Tick` and
-    `Interval` of not existing. It abstains there rather than guessing; the GTA
-    path keeps its own `lint_hash_references`/`lint_member_references` passes.
-
-    `_KNOWN_SYMBOLS` deliberately excludes "GameContext" and every composed
-    sibling class name (PlayerHealth, PauseMenu, ...): this pass only ever
-    sees ONE micro's own template, never the composed project around it, so it
-    has no ground truth for what `GameContext.Instance.Get<T>()` may legally
-    resolve to here. That is not a gap to close — `enrich_subsystems`
-    (src/unity_micro_code.py, the Step 3.5 prompt for hud/menu/saveload/etc.)
-    never tells a micro-generator kind that GameContext exists; that guidance
-    (`GAMECONTEXT_SCHEMA_GUIDANCE` in src/unity_prompts.py, and the sibling
-    lookup table built by `_script_contract`) is shown only to `type: custom`
-    scripts via `enrich_scripts`. So a micro-generator's authored code should
-    never legitimately contain a GameContext call, and this pass is correct to
-    strip one on sight. If a future prompt change ever offers GameContext to
-    micro-generator kinds too, this set — and the composed-project context
-    `harden()` would need threaded in to validate the call instead of just
-    admitting it — must grow to match.
+    It does not judge whether authored statements BIND. That question belongs
+    to the selected-source Roslyn contract compiled against the real Unity
+    reference profile (src/unity_authored_check.py) and to the Editor compile
+    gate; R0 retired the Python name-binder that used to comment statements out
+    against a hand-maintained MonoBehaviour member list.
     """
     reserved = {n.lower() for n in template_members(str(template_dir))}
     msgs: list[str] = []
@@ -6840,12 +5554,6 @@ def harden_against_template(schema, template_dir, *, engine: str = "unity") -> l
             schema.extra_methods = kept_m
             msgs.append(f"dropped {len(dropped_m)} authored method(s) the template "
                         f"already defines (CS0102/CS0111): {', '.join(dropped_m)}")
-
-    # LAST, and after the drops above on purpose: a field this function just
-    # removed as a duplicate (CS0102) leaves its every reference unbindable, and
-    # only a pass that runs afterwards can see that.
-    if engine == "unity":
-        msgs += bind_authored_code(schema, template_dir)
 
     msgs += heal_missing_usings(schema, template_usings=template_usings(str(template_dir)))
     return msgs

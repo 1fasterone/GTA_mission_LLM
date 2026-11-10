@@ -32,11 +32,10 @@ jobs:
       - name: Extract rendered component contracts and prove mutation gate
         env:
           REQUIRE_COMPONENT_API: "1"
-        run: pytest -q tests/test_unity_component_api.py tests/test_unity_component_check.py
+        run: pytest -q tests/test_unity_component_api.py tests/test_unity_component_check.py tests/test_unity_authored_check.py
       - name: Exercise generated C# binding guards
         run: >-
           pytest -q
           tests/test_csharp_syntax_gate.py
-          tests/test_unity_api_surface.py
           tests/test_outputs_smoke.py
           tests/test_authored_code_binding.py

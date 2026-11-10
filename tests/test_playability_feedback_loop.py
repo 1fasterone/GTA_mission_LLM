@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from src.unity_compose import MicroComposer, subsystems_for
+from tests.conftest import bound_composer
 from src.unity_playability import evaluate
 from src.unity_playability_repair import apply_remedies, repair_and_regrade
 from src.unity_schema import (EntitySpec, MissionObjective, MissionSpec,
@@ -58,7 +59,7 @@ def _compose(schema, tmp_path) -> tuple[str, dict]:
                           missions=schema.missions, entities=schema.entities,
                           scripts=schema.scripts)
     assets = Path(tmp_path) / "Assets"
-    comp = MicroComposer("Proof", project_config={"audio": {"backend": "dsp"}})
+    comp = bound_composer("Proof", subs, project_config={"audio": {"backend": "dsp"}})
     comp.compose(subs, assets)
     wiring = (assets / "Micros" / "wiring" / "Scripts"
               / "GameWiring.cs").read_text(encoding="utf-8")

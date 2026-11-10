@@ -212,7 +212,7 @@ class RulesPipeline(UnityMicroPipeline):
         # `BindObjectives()` (matching the template's own private method)
         # shipped as a duplicate, because nothing here ever checks authored
         # members against what GameRules.cs.j2 itself already defines.
-        msgs += harden_against_template(schema, self.template_root, engine=self.engine)
+        msgs += harden_against_template(schema, self.template_root)
         return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

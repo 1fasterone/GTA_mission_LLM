@@ -2064,24 +2064,6 @@ def test_null_conditional_READ_is_left_alone():
     assert lint_code_fragment(src, what="update_extra").strip() == src
 
 
-def test_neutralized_non_void_method_keeps_a_return():
-    """The live TowerControl SaveSystem.cs(71,18) CS0161. The binding pass
-    commented out the only unconditional `return`; the surviving guard clause
-    kept the method alive, so it was neither dropped nor able to compile."""
-    schema = _FakeSchema(extra_methods=[
-        CodeMethod(signature="private bool ValidateJson(string content)",
-                   body=('if (string.IsNullOrEmpty(content)) return false;\n'
-                         'return JsonDocument.Parse(content).Ok;')),
-    ])
-    msgs = harden_against_template(schema, _MICRO_TEMPLATES / "saveload")
-    assert len(schema.extra_methods) == 1, "the guard clause should survive"
-    body = schema.extra_methods[0].body
-    live = [ln for ln in body.splitlines() if not ln.lstrip().startswith("//")]
-    assert not any("JsonDocument" in ln for ln in live), "unbindable ref survived"
-    assert body.rstrip().endswith("return default;"), body
-    assert any("default return" in m for m in msgs), msgs
-
-
 def test_void_method_is_not_given_a_return():
     schema = _FakeSchema(extra_methods=[
         CodeMethod(signature="private void Apply()",
@@ -2138,37 +2120,6 @@ def test_every_registered_micro_reconciles_against_a_real_template():
 
 # ── Tier 2: build what the author reached for, instead of cutting it ─────────
 
-def test_undeclared_fields_are_built_not_deleted():
-    """The exact TowerControl loss. `conflictActive` and `radarSweepColor` were
-    fields the model used but never declared; both were neutralized, which
-    emptied SetConflictAlert and GetRadarSweepColor, which were then dropped —
-    taking the game's conflict alert and radar sweep with them."""
-    schema = _FakeSchema(extra_methods=[
-        CodeMethod(signature="public void SetConflictAlert(bool on)",
-                   body="conflictActive = on;\n"
-                        "radarSweepColor = on ? Color.yellow : Color.green;"),
-        CodeMethod(signature="public Color GetRadarSweepColor()",
-                   body="if (conflictActive) return Color.yellow;\n"
-                        "return radarSweepColor;"),
-    ])
-    msgs = harden_against_template(schema, _MICRO_TEMPLATES / "camera")
-
-    built = {(f.type, f.name) for f in schema.extra_fields}
-    assert ("bool", "conflictActive") in built, built
-    assert ("Color", "radarSweepColor") in built, built
-
-    assert len(schema.extra_methods) == 2, "both methods must survive"
-    bodies = "\n".join(m.body for m in schema.extra_methods)
-    assert "AUDIT" not in bodies, "nothing should have been cut:\n" + bodies
-    assert any("BUILT" in m for m in msgs), msgs
-
-
-def test_return_type_infers_the_field_type():
-    schema = _FakeSchema(extra_methods=[
-        CodeMethod(signature="public Vector3 GetAnchor()", body="return _anchor;")])
-    harden_against_template(schema, _MICRO_TEMPLATES / "camera")
-    assert ("Vector3", "_anchor") in {(f.type, f.name) for f in schema.extra_fields}
-
 
 def test_uninferable_identifier_is_left_to_the_old_path():
     """A field of the WRONG type fails louder and later than one that was never
@@ -2196,17 +2147,6 @@ def test_a_system_random_instance_is_left_alone():
     wrong repair, which is why only UnityEngine-only MEMBERS are matched."""
     out = lint_code_fragment("var rng = new Random(42);", what="x")
     assert "UnityEngine.Random" not in out
-
-
-def test_input_system_device_types_pull_their_namespace():
-    """Live (Chromabreak): a model writes `Mouse.current.delta` for mouse-look
-    whatever input_backend the variant declares, and the legacy-backend
-    controller template imports nothing for it — eight CS0103 in one file."""
-    from src.micro.code_fields import required_usings_for
-    assert "UnityEngine.InputSystem" in required_usings_for(
-        "Vector2 d = Mouse.current.delta.ReadValue();")
-    assert "UnityEngine.InputSystem" in required_usings_for(
-        "if (Keyboard.current.spaceKey.wasPressedThisFrame) Jump();")
 
 
 # ── CS1001/CS1003: a list of literals in a SCALAR field's initializer ─────────

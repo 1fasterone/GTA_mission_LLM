@@ -12,17 +12,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 
-from src.unity_compose import ComposedUnit, MicroComposer, Subsystem, subsystems_for
+from src.unity_compose import MicroComposer, Subsystem, subsystems_for
 from src.unity_micro_code import (
     CODE_KEYS,
     code_keys_for,
     enrich_subsystems,
     merge_authored_code,
-    sanitize_subsystem_composed_calls,
     sync_microgens_from_subsystems,
-    _signature_type_names,
 )
 from src.unity_schema import MicrogensSpec
 
@@ -298,149 +295,6 @@ def test_sync_then_fallback_round_trips_enrichment():
     assert reconstructed.options["extra_methods"] == original.options["extra_methods"]
 
 
-# ── composed-sibling-class member validation — sanitize_subsystem_composed_calls
-# The same check schema.scripts (`type: custom`) already gets from
-# _sanitize_composed_component_calls (src/unity_generator.py), extended to
-# schema.microgens: a subsystem's authored extras are written by an LLM call
-# that never sees another subsystem's real generated source, yet can still
-# reach one via GameContext.Instance.Get<T>() exactly like a custom script
-# can — nothing validated that path before this.
-
-def _trigger_sub(**opts) -> Subsystem:
-    return Subsystem(kind="trigger", target="world", name="ExitTrigger",
-                     options=dict(opts))
-
-
-def _health_unit() -> ComposedUnit:
-    # PlayerHealth is a real _COMPOSED_CLASS_API entry (Health.cs.j2's public
-    # surface): CurrentHealth/MaxHealth/TakeDamage/Heal/OnHealthChanged/
-    # OnDamaged/OnHealed/OnDeath. Die() is real but PRIVATE — only reachable
-    # indirectly via TakeDamage — so it is not in the verified set.
-    return ComposedUnit(kind="health", variant="simple", class_name="PlayerHealth",
-                        guid="g", target="player")
-
-
-def test_composed_call_to_invented_member_is_stripped():
-    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
-    msgs = sanitize_subsystem_composed_calls([sub], [_health_unit()])
-    assert any("trigger" in m for m in msgs)
-    assert "Die" not in sub.options["update_extra"]
-
-
-def test_composed_call_to_real_member_survives():
-    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>()?.TakeDamage(5f);")
-    msgs = sanitize_subsystem_composed_calls([sub], [_health_unit()])
-    assert msgs == []
-    assert "TakeDamage" in sub.options["update_extra"]
-
-
-def test_composed_call_checked_inside_extra_methods_dict_shape():
-    """Subsystem.options stores extra_methods as plain JSON dicts (see
-    _apply/_validate), never CodeMethod objects — unlike the schema.scripts
-    path this mirrors, so the sanitizer must handle dict shape directly."""
-    sub = _trigger_sub(extra_methods=[
-        {"signature": "private void OnEnter()",
-         "body": "GameContext.Instance.Get<PlayerHealth>().Die();"},
-    ])
-    sanitize_subsystem_composed_calls([sub], [_health_unit()])
-    assert "Die" not in sub.options["extra_methods"][0]["body"]
-
-
-def test_composed_call_sanitizer_noop_without_composed_units():
-    sub = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
-    assert sanitize_subsystem_composed_calls([sub], None) == []
-    assert sanitize_subsystem_composed_calls([sub], []) == []
-    assert "Die" in sub.options["update_extra"]       # untouched
-
-
-def test_composed_call_sanitization_reaches_the_rendered_cs(tmp_path):
-    """End-to-end, wired the same order unity_pipeline.py uses: composer.plan()
-    (which is what names the class PlayerHealth) BEFORE emit() — the stripped
-    call must never reach the .cs file the trigger micro actually writes."""
-    health = Subsystem(kind="health", target="player", name="PlayerHealth")
-    trigger = _trigger_sub(update_extra="GameContext.Instance.Get<PlayerHealth>().Die();")
-    subs = [health, trigger]
-    composer = MicroComposer("ProbeProj", project_config={"audio": {"backend": "dsp"}})
-    units = composer.plan(subs)
-    sanitize_subsystem_composed_calls(subs, units)
-    src = _emit(tmp_path, subs)["Micros/trigger/Scripts/ExitTrigger.cs"]
-    assert "Die()" not in src
-
-
-# ── invented-type construction — sanitize_subsystem_invented_constructors ─────
-# Live bug: Graphics.Blit(source, dest, new ShaderPass(profile), 0) — ShaderPass
-# is not a real Unity/URP type, invisible to every existing check because it
-# never touches a declared field (that's _sanitize_stub_type_usage's job).
-
-def test_invented_constructor_call_is_stripped():
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(
-        update_extra="Graphics.Blit(source, dest, new ShaderPass(profile), 0);")
-    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert any("trigger" in m for m in msgs)
-    assert "ShaderPass" not in sub.options["update_extra"]
-
-
-def test_real_unity_constructor_survives():
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(update_extra="var v = new Vector3(1f, 2f, 3f);")
-    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert msgs == []
-    assert "new Vector3" in sub.options["update_extra"]
-
-
-def test_composed_class_constructor_survives():
-    # A subsystem constructing a POCO whose type name happens to match a real
-    # composed sibling class must not be flagged — it already resolves.
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(update_extra="var h = new PlayerHealth();")
-    msgs = sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert msgs == []
-    assert "new PlayerHealth" in sub.options["update_extra"]
-
-
-def test_invented_constructor_checked_inside_extra_methods_dict_shape():
-    from src.unity_micro_code import sanitize_subsystem_invented_constructors
-    sub = _trigger_sub(extra_methods=[
-        {"signature": "private void OnEnter()",
-         "body": "Graphics.Blit(source, dest, new ShaderPass(profile), 0);"},
-    ])
-    sanitize_subsystem_invented_constructors([sub], [_health_unit()])
-    assert "ShaderPass" not in sub.options["extra_methods"][0]["body"]
-
-
-# ── GetComponent-family arity — sanitize_subsystem_builtin_call_arity ─────────
-# Live shape: TeaBreakObjectives called GetComponent<T>() with an argument
-# count that overload doesn't have — CS1501, invisible to every other check
-# since GetComponent is always exempted as a legitimate name.
-
-def test_get_component_wrong_arity_is_stripped():
-    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
-    sub = _trigger_sub(
-        update_extra="var rb = GetComponent<Rigidbody>(gameObject, true);")
-    msgs = sanitize_subsystem_builtin_call_arity([sub])
-    assert any("trigger" in m for m in msgs)
-    assert "GetComponent" not in sub.options["update_extra"]
-
-
-def test_get_component_valid_arity_survives():
-    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
-    sub = _trigger_sub(update_extra="var rb = GetComponent<Rigidbody>();")
-    msgs = sanitize_subsystem_builtin_call_arity([sub])
-    assert msgs == []
-    assert "GetComponent<Rigidbody>()" in sub.options["update_extra"]
-
-
-def test_get_component_wrong_arity_checked_inside_extra_methods_dict_shape():
-    from src.unity_micro_code import sanitize_subsystem_builtin_call_arity
-    sub = _trigger_sub(extra_methods=[
-        {"signature": "private void OnEnter()",
-         "body": "var rb = GetComponent<Rigidbody>(gameObject, true);"},
-    ])
-    sanitize_subsystem_builtin_call_arity([sub])
-    assert "GetComponent" not in sub.options["extra_methods"][0]["body"]
-
-
 # ── the wiring invariant ──────────────────────────────────────────────────────
 
 def test_enrichment_cannot_move_a_guid_class_name_or_file_id():
@@ -491,20 +345,6 @@ _INVENTED_IN_SIGNATURE = {
          "body": "_rubberBandMultiplier -= dt;"},
     ],
 }
-
-
-@pytest.mark.parametrize("signature, expected", [
-    ("private void Ok(Vector3 p, float t)",                    {"void", "Vector3", "float"}),
-    ("public bool IsAlive()",                                  {"bool"}),
-    ("private IEnumerator Wait(float s)",                      {"IEnumerator", "float"}),
-    ("public void Bar(ref Vector3 v, out bool hit)",           {"void", "Vector3", "bool"}),
-    ("private void Rubber(List<EnemyController> r, float p)",  {"void", "EnemyController", "float"}),
-    # A generic's own comma must not split the parameter — the type that
-    # matters is on the far side of it.
-    ("public void Map(Dictionary<string, EnemyController> b)", {"void", "EnemyController"}),
-])
-def test_signature_type_extraction(signature, expected):
-    assert _signature_type_names(signature) == expected
 
 
 def test_method_with_an_unresolvable_parameter_type_is_retained():
@@ -587,37 +427,6 @@ def test_contract_names_only_the_projects_own_tags():
     assert "FileIcon, Folder" in c and "THROWS" in c
 
 
-def test_bad_bind_is_reported_before_anything_is_cut():
-    from src.unity_micro_code import _would_not_bind
-    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
-                         "name": "MissionObjectives", "options": {}})()
-    cuts = _would_not_bind(sub, {"extra_methods": [
-        {"signature": "private void Check()", "body": "OnObjectiveComplete();"}]})
-    assert any("needs 1..1" in c for c in cuts), cuts
-
-
-def test_clean_payload_triggers_no_retry():
-    from src.unity_micro_code import _would_not_bind
-    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
-                         "name": "MissionObjectives", "options": {}})()
-    assert _would_not_bind(sub, {"extra_methods": [
-        {"signature": "private void Check()",
-         "body": 'OnObjectiveComplete("obj_1");'}]}) == []
-
-
-def test_would_not_bind_never_mutates_the_payload():
-    """The check runs on a throwaway; the real payload must reach _apply intact
-    so a retry can improve on it rather than on an already-gutted body."""
-    from src.unity_micro_code import _would_not_bind
-    sub = type("S", (), {"kind": "objectives", "variant": "tracker",
-                         "name": "MissionObjectives", "options": {}})()
-    payload = {"extra_methods": [
-        {"signature": "private void Check()", "body": "OnObjectiveComplete();"}]}
-    before = payload["extra_methods"][0]["body"]
-    _would_not_bind(sub, payload)
-    assert payload["extra_methods"][0]["body"] == before
-
-
 # ── _brief_job_for / _script_user_prompt ─────────────────────────────────────
 #
 # Regression cover (Gridfall/GridLogic): a brief states its SCRIPTS section near
@@ -693,3 +502,55 @@ def test_script_user_prompt_falls_back_to_schema_description_when_unbriefed():
         concept="c", user_prompt="a one-line vibe prompt",
         keys=(), contract="")
     assert "its job:     schema paraphrase" in out
+
+
+# ── R0: Step 3.5 corrections come from Roslyn, not a Python binder ───────────
+
+class _OneShotChecker:
+    """Compiler wording for the first proposal only (stands in for
+    AuthoredSourceChecker; the real one is exercised in
+    tests/test_unity_authored_check.py)."""
+
+    def __init__(self):
+        self.seen: list[dict] = []
+
+    def subsystem(self, _sub, payload):
+        from src.unity_authored_check import AuthoredFindings
+        self.seen.append(dict(payload))
+        findings = AuthoredFindings()
+        if len(self.seen) == 1:
+            findings.introduced = [{"code": "CS1501", "message":
+                                    "No overload for method 'GetComponent' takes 3 arguments",
+                                    "callsite": {"line_text": "  GetComponent<Rigidbody>(1, 2, 3);"}}]
+        return findings
+
+
+def test_compiler_findings_drive_the_correction_round():
+    sub = _controller_sub()
+    checker = _OneShotChecker()
+    llm = FakeLLM({"controller": _SWIM_CODE})
+    msgs = enrich_subsystems([sub], llm=llm, concept="diving", checker=checker)
+    assert llm.calls == ["controller", "controller"]
+    assert any("re-authored after 1" in m for m in msgs)
+    # The proposal is judged, never mutated, by the checker.
+    assert checker.seen[0]["update_extra"] == _SWIM_CODE["update_extra"]
+
+
+def test_a_clean_compiler_verdict_triggers_no_retry():
+    class _Clean:
+        def subsystem(self, *_a):
+            from src.unity_authored_check import AuthoredFindings
+            return AuthoredFindings()
+
+    llm = FakeLLM({"controller": _SWIM_CODE})
+    enrich_subsystems([_controller_sub()], llm=llm, concept="diving", checker=_Clean())
+    assert llm.calls == ["controller"]
+
+
+def test_no_checker_is_recorded_and_the_proposal_is_kept():
+    sub = _controller_sub()
+    llm = FakeLLM({"controller": _SWIM_CODE})
+    msgs = enrich_subsystems([sub], llm=llm, concept="diving")
+    assert llm.calls == ["controller"]
+    assert any("no compiler correction check" in m for m in msgs)
+    assert sub.options["update_extra"] == _SWIM_CODE["update_extra"]

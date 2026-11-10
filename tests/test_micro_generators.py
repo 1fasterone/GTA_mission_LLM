@@ -1419,28 +1419,6 @@ def test_inventory_fixer_grid_syncs_slot_count(dummy_config):
     assert s.slot_count == 18
 
 
-def test_inventory_harden_comments_unbound_braced_pickup_loop(dummy_config):
-    """A bad foreach header must remove its whole body, not leave it live."""
-    p = InventoryPipeline(dummy_config)
-    s = InventorySchema(
-        name="Inv",
-        variant="slot_based",
-        update_extra=(
-            "foreach (var itemDef in _ammoPool.ToArray())\n"
-            "{\n"
-            "    for (int i = 0; i < Slots.Count; i++) Add(itemDef, 1);\n"
-            "}"
-        ),
-    )
-    s = p.default_fix(s, "slot_based")
-    msgs = p.harden(s)
-    assert "foreach" in s.update_extra
-    assert "AUDIT: removed loop containing unbindable reference(s)" in s.update_extra
-    assert all(line.lstrip().startswith("//") or not line.strip()
-               for line in s.update_extra.splitlines())
-    assert any("_ammoPool" in msg for msg in msgs)
-
-
 @pytest.mark.parametrize("variant", InventoryPipeline.variants)
 def test_inventory_renders_every_variant(tmp_path, dummy_config, variant):
     p = InventoryPipeline(dummy_config)
@@ -1727,28 +1705,6 @@ def test_menu_fixer_injects_default_items(dummy_config):
     assert s.items, "fixer should inject default menu items"
 
 
-def test_menu_void_method_negation_neutralized_end_to_end(dummy_config):
-    """Live regression, DropZone's PauseMenu.cs(151): an LLM-authored
-    extra_method treated the template's own void `SetPaused(bool)` helper as
-    if it returned a bool (`_isPaused = !SetPaused(true);`, CS0023). Only
-    `harden()` (bind_authored_code) catches this, not `default_fix` alone."""
-    from src.micro.code_fields import CodeField, CodeMethod
-    p = MenuPipeline(dummy_config)
-    s = p.default_fix(MenuSchema(
-        name="PauseMenu", variant="pause_menu",
-        extra_fields=[CodeField(name="_isPaused", type="bool", default="false")],
-        extra_methods=[CodeMethod(signature="private void OnPauseStateChanged()",
-                                  body="_isPaused = !SetPaused(true);")],
-    ), "pause_menu")
-    p.harden(s)
-    assert s.extra_methods == [], "no live statement left -- the method is dropped"
-
-    env = p.jinja()
-    out = env.get_template("Menu.cs.j2").render(s=s, variant="pause_menu")
-    assert "!SetPaused(" not in out
-    assert out.count("{") == out.count("}")
-
-
 def test_menu_root_reference_stripped_on_ugui_backend(dummy_config):
     # Menu.cs.j2 declares `_root` only under backend == "UIToolkit" — same
     # mutually-exclusive-branches shape as HUD.cs.j2. A uGUI-backend reference
@@ -1837,33 +1793,6 @@ def test_interactable_2d_uses_collider2d_api(tmp_path, dummy_config):
     assert "OnTriggerEnter2D(Collider2D other)" in cs
     assert "RequireComponent(typeof(Collider))" not in cs
     assert "OnTriggerEnter(Collider other)" not in cs
-
-
-def test_interactable_playertag_vector3_misuse_neutralized_end_to_end(tmp_path, dummy_config):
-    """Live regression, DropZone's WorldInteractable.cs(65): an LLM-authored
-    update_extra used the template's own `string playerTag` field (correct
-    elsewhere with CompareTag) as if it were the player's Transform, passing
-    it to Vector3.Distance and subtracting it from a position (CS1503/CS0019).
-    Only `harden()` (bind_authored_code) catches this, not `default_fix`
-    alone."""
-    p = InteractablePipeline(dummy_config)
-    s = p.default_fix(InteractableSchema(
-        name="TestIt", variant="pickup",
-        update_extra=(
-            "if (_inRange && !_used) { "
-            "float dist = Vector3.Distance(transform.position, playerTag); "
-            "if (dist < radius) { transform.position += "
-            "(playerTag - transform.position).normalized * Time.deltaTime * 1f; } }"
-        ),
-    ), "pickup")
-    p.harden(s)
-    p.write_files(s, "pickup", tmp_path)
-    cs = (tmp_path / "Scripts" / "TestIt.cs").read_text(encoding="utf-8")
-    for line in cs.splitlines():
-        if "Vector3.Distance(transform.position, playerTag)" in line:
-            assert line.strip().startswith("//"), f"unneutralized line: {line!r}"
-    assert "public class TestIt" in cs
-    assert cs.count("{") == cs.count("}")
 
 
 def test_interactable_3d_still_uses_collider_api(tmp_path, dummy_config):
@@ -2437,86 +2366,7 @@ def test_hud_never_emits_a_headerless_field_block(
 
 # ── CS0103: `_grid` declared, `grid` written ─────────────────────────────────
 
-class TestUnderscoreAliasRebinding:
-    """Live regression (Gridfall/InputHandler): the author declared
-    `[SerializeField] private GridLogic _grid`, guarded with
-    `if (_grid == null) return;`, then called `grid.SetScore(...)` — three
-    CS0103s in one file. Rebinding to the declared field is the only repair
-    that keeps the behaviour: neutralizing deletes it, and declaring a second
-    `grid` field ships a collaborator nothing ever wires.
-    """
-
-    def _fix(self, body, unbound, declared):
-        from src.micro.code_fields import lint_underscore_alias_references
-        return lint_underscore_alias_references(
-            body, unbound=unbound, declared=declared)
-
-    def test_rebinds_to_the_declared_field(self):
-        out, rebound = self._fix(
-            "grid.SetScore(grid.GetScore() + 1);", {"grid"}, {"_grid"})
-        assert out == "_grid.SetScore(_grid.GetScore() + 1);"
-        assert rebound == {"grid"}
-
-    def test_leaves_a_longer_identifier_alone(self):
-        out, rebound = self._fix("int n = gridSize;", {"grid"}, {"_grid"})
-        assert out == "int n = gridSize;"
-        assert not rebound
-
-    def test_leaves_strings_and_comments_alone(self):
-        src = 'var s = "grid";  // grid\n'
-        out, rebound = self._fix(src, {"grid"}, {"_grid"})
-        assert out == src
-        assert not rebound
-
-    def test_leaves_a_bound_local_alone(self):
-        # Not in `unbound`, so it compiles today and must not be touched.
-        src = "var grid = New(); grid.Go();"
-        assert self._fix(src, set(), {"_grid"})[0] == src
-
-    def test_does_not_double_underscore_a_member_access(self):
-        src = "other._grid.Ping();"
-        assert self._fix(src, {"grid"}, {"_grid"})[0] == src
-
-
 # ── Authored bodies that need an import, or contradict their own field type ──
-
-class TestAuthoredBodyRepairs:
-    """Both hit live in one Gridfall build of GridLogic."""
-
-    def test_array_use_requires_system(self):
-        from src.micro.code_fields import required_usings_for
-        # lint_usings only ever FILTERED what the model asked for, so a body
-        # calling Array.Fill shipped without `using System;` -> CS0103.
-        assert required_usings_for("Array.Fill(grid[0], -1);") == ["System"]
-
-    def test_generic_collection_requires_its_namespace(self):
-        from src.micro.code_fields import required_usings_for
-        assert required_usings_for("var p = new List<int>();") == [
-            "System.Collections.Generic"]
-
-    def test_random_is_left_alone_because_it_is_ambiguous(self):
-        from src.micro.code_fields import required_usings_for
-        # UnityEngine.Random and System.Random are both real — importing
-        # System here would trade CS0103 for CS0104.
-        assert required_usings_for("Random.Range(0, 3);") == []
-
-    def test_jagged_rank_follows_the_authors_own_declaration(self):
-        from src.micro.code_fields import jagged_rank_corrections
-        body = "int[][] grid = _grid; grid[y][x] = -1;"
-        assert jagged_rank_corrections([("_grid", "int[][][]")], body) == {
-            "_grid": "int[][]"}
-
-    def test_jagged_rank_abstains_without_an_explicit_declaration(self):
-        from src.micro.code_fields import jagged_rank_corrections
-        # Indexing depth alone is a guess; a wrong guess ships a wrong program.
-        assert jagged_rank_corrections([("_grid", "int[][][]")],
-                                       "_grid[y][x] = 1;") == {}
-
-    def test_jagged_rank_abstains_on_conflicting_declarations(self):
-        from src.micro.code_fields import jagged_rank_corrections
-        assert jagged_rank_corrections(
-            [("_grid", "int[][][]")], "int[][] a = _grid; int[] b = _grid;") == {}
-
 
 class TestBracketLiteralDefaults:
     """`private Vector2 _targetRect = [0.5, 0.5];` — Python/JS list syntax in a
@@ -2679,150 +2529,6 @@ class TestStrayQuoteGlueOnMethodBodies:
         assert self._f(text) == text
 
 
-class TestReadonlyPropertyAssignMisuse:
-    """`_cc.velocity = vel;` / `_cc.velocity.y -= ...;` / `_cc.velocity += ...;`
-    — `CharacterController.velocity` is `{ get; }` only (Unity computes it
-    from the controller's own collision-aware `.Move()` calls), unlike
-    `Rigidbody.velocity`, which genuinely is settable and which the model
-    reliably conflates it with. Live regression, DropZone's
-    PlayerController.cs(238,281,283) — three shapes of the same mistake in
-    one file.
-    """
-
-    _DEFAULT_TYPES = {"_cc": "CharacterController"}
-
-    def _f(self, text, field_types=_DEFAULT_TYPES):
-        from src.micro.code_fields import lint_readonly_property_assign_misuse
-        return lint_readonly_property_assign_misuse(text, field_types=field_types)
-
-    def test_direct_assignment_is_neutralized(self):
-        out, names = self._f("_cc.velocity = vel;")
-        assert out.strip().startswith("//")
-        assert "AUDIT" in out
-        assert names == {"_cc.velocity"}
-
-    def test_compound_assignment_is_neutralized(self):
-        out, names = self._f("_cc.velocity += drag * Time.fixedDeltaTime;")
-        assert out.strip().startswith("//")
-        assert names == {"_cc.velocity"}
-
-    def test_submember_mutation_is_neutralized(self):
-        out, names = self._f("_cc.velocity.y -= _gravityScale * Time.fixedDeltaTime;")
-        assert out.strip().startswith("//")
-        assert names == {"_cc.velocity"}
-
-    def test_a_read_is_left_alone(self):
-        text = "Vector3 vel = _cc.velocity;\nfloat speed = vel.magnitude;"
-        out, names = self._f(text)
-        assert out == text
-        assert names == set()
-
-    def test_unrelated_field_type_is_left_alone(self):
-        # Rigidbody.velocity genuinely IS settable — this check must not
-        # overreach to every field named _cc regardless of declared type.
-        out, names = self._f("_rb.velocity = vel;", field_types={"_rb": "Rigidbody"})
-        assert out == "_rb.velocity = vel;"
-        assert names == set()
-
-    def test_unknown_field_is_left_alone(self):
-        out, names = self._f("_cc.velocity = vel;", field_types={})
-        assert out == "_cc.velocity = vel;"
-        assert names == set()
-
-
-class TestVoidMethodNegated:
-    """`_isPaused = !SetPaused(true);` — `SetPaused(bool)` (a template-native
-    helper) just sets `Time.timeScale` and returns nothing; the model treats
-    it as if it answered a yes/no question (CS0023). Live regression,
-    DropZone's PauseMenu.cs(151).
-    """
-
-    def _f(self, text, void_methods=frozenset({"SetPaused"})):
-        from src.micro.code_fields import lint_void_method_negated
-        return lint_void_method_negated(text, void_methods=void_methods)
-
-    def test_negated_void_call_is_neutralized(self):
-        out, names = self._f("_isPaused = !SetPaused(true);")
-        assert out.strip().startswith("//")
-        assert names == {"!SetPaused(...)"}
-
-    def test_void_call_assigned_as_a_value_is_neutralized(self):
-        from src.micro.code_fields import lint_void_method_assigned
-
-        out, names = lint_void_method_assigned(
-            "if (_resumeButton != null) _resumeButton.interactable = SetPaused(true);",
-            void_methods=frozenset({"SetPaused"}),
-        )
-        assert out.strip().startswith("//")
-        assert names == {"SetPaused(...)"}
-
-    def test_unrelated_negation_is_left_alone(self):
-        text = "if (!_isPaused) Show();"
-        out, names = self._f(text)
-        assert out == text
-        assert names == set()
-
-    def test_negating_a_non_void_method_is_left_alone(self):
-        # CanPickup() genuinely returns bool -- negating it is correct C#.
-        out, names = self._f("if (!CanPickup()) return;",
-                             void_methods=frozenset({"SetPaused"}))
-        assert out == "if (!CanPickup()) return;"
-        assert names == set()
-
-    def test_no_void_methods_known_is_a_noop(self):
-        text = "_isPaused = !SetPaused(true);"
-        out, names = self._f(text, void_methods=frozenset())
-        assert out == text
-        assert names == set()
-
-
-class TestFieldVector3ContextMisuse:
-    """`Vector3.Distance(transform.position, playerTag)` /
-    `(playerTag - transform.position)` — `playerTag` is the template's own
-    `[SerializeField] private string playerTag` (used correctly elsewhere
-    with `CompareTag`); the model needed a player Transform reference to pull
-    a pickup toward it and reused the wrong existing field instead of
-    declaring a new one. Live regression, DropZone's
-    WorldInteractable.cs(65).
-    """
-
-    def _f(self, text, field_types=None):
-        from src.micro.code_fields import lint_field_vector3_context_misuse
-        types = {"playerTag": "string"} if field_types is None else field_types
-        return lint_field_vector3_context_misuse(text, field_types=types)
-
-    def test_string_field_as_distance_argument_is_neutralized(self):
-        out, names = self._f(
-            "float dist = Vector3.Distance(transform.position, playerTag);")
-        assert out.strip().startswith("//")
-        assert names == {"playerTag"}
-
-    def test_string_field_in_bare_subtraction_is_neutralized(self):
-        out, names = self._f("Vector3 dir = (playerTag - somePos).normalized;")
-        assert out.strip().startswith("//")
-        assert "playerTag" in names
-
-    def test_legit_comparetag_use_is_untouched(self):
-        text = "if (!other.CompareTag(playerTag)) return;"
-        out, names = self._f(text)
-        assert out == text
-        assert names == set()
-
-    def test_vector3_typed_field_is_never_flagged(self):
-        # Only NON-Vector3 field types are judged here at all.
-        out, names = self._f(
-            "float dist = Vector3.Distance(transform.position, _target);",
-            field_types={"_target": "vector3"})
-        assert "// AUDIT" not in out
-        assert names == set()
-
-    def test_unknown_identifier_is_left_alone(self):
-        text = "float dist = Vector3.Distance(a, b);"
-        out, names = self._f(text, field_types={})
-        assert out == text
-        assert names == set()
-
-
 class TestDoubleQuotedStringExpressionDefaults:
     """`_savePath = "Application.dataPath + "/SaveData.json""` — CS1003. The
     model wrapped an already-valid expression (which legitimately embeds its
@@ -2850,30 +2556,6 @@ class TestDoubleQuotedStringExpressionDefaults:
 
     def test_unterminated_literal_is_dropped(self):
         assert self._s("string", '"') is None
-
-
-class TestMisqualifiedTypes:
-    """`UnityEngine.Touchscreen` — CS0234. Touch types read like core engine
-    types but live in UnityEngine.InputSystem. Live on BlockWell's TouchInput,
-    which had already imported the right namespace and over-qualified anyway.
-    """
-
-    def _f(self, ty):
-        from src.micro.code_fields import correct_qualified_type
-        return correct_qualified_type(ty)
-
-    def test_touchscreen_is_requalified(self):
-        assert self._f("UnityEngine.Touchscreen") == (
-            "Touchscreen", "UnityEngine.InputSystem")
-
-    def test_already_correct_is_untouched(self):
-        assert self._f("UnityEngine.InputSystem.Touchscreen")[1] == ""
-
-    def test_a_real_unityengine_type_is_untouched(self):
-        assert self._f("UnityEngine.Transform") == ("UnityEngine.Transform", "")
-
-    def test_an_unknown_qualified_type_is_left_alone(self):
-        assert self._f("MyNs.Thing") == ("MyNs.Thing", "")
 
 
 class TestRunawayBodyCapLeavesParseableCode:

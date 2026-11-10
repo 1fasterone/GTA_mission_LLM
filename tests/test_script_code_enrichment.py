@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from src.unity_micro_code import (enrich_scripts, _script_contract,
-                                  _script_has_code, _script_would_not_bind)
+                                  _script_has_code)
 from src.unity_schema import CodeField, CodeMethod, UnityScript
 
 
@@ -144,8 +144,7 @@ def test_a_script_with_no_fields_is_told_to_declare_them():
 
 def test_only_a_siblings_PUBLIC_methods_are_offered():
     """A sibling's extra_fields always render `[SerializeField] private`, so
-    reaching one is CS0122 — which is exactly what the generator's
-    _sanitize_project_service_calls strips after the fact."""
+    reaching one is CS0122; only its public methods are offered."""
     scripts = _codebranchsim()
     scripts[1].extra_methods = [
         CodeMethod(signature="public void Commit()", body="_commitCount++;"),
@@ -182,11 +181,8 @@ def test_composed_micros_offer_only_their_verified_public_api():
 
 
 def test_a_composed_kind_with_no_verified_api_stays_unmentioned():
-    """VFX has no _COMPOSED_CLASS_API entry — no ground truth to show, so
-    (same restraint _composed_member_ok applies at judge time) it is left
-    out rather than guessed at. (LightingDirector used to be this example —
-    it moved once LightingDirector got a verified entry; see
-    _COMPOSED_CLASS_API's own docstring for why that was a live gap.)"""
+    """With no extracted selected-source contract there is no ground truth
+    to show, so a composed kind is left out rather than guessed at."""
     from src.unity_compose import Subsystem
     subsystems = [Subsystem(kind="vfx", target="world", name="VFX")]
     contract = _script_contract(_codebranchsim()[0], [], subsystems)
@@ -224,25 +220,30 @@ def test_enrich_scripts_passes_subsystems_into_the_contract():
 
 # ── Binding feedback, the same loop the micros get ───────────────────────────
 
-def test_an_undeclared_name_is_reported_back_to_the_author():
-    script = _codebranchsim()[1]
-    cuts = _script_would_not_bind(
-        script, {"update_extra": "_undeclaredThing += Time.deltaTime;"})
-    assert "_undeclaredThing" in cuts
 
+class _FakeChecker:
+    """Stands in for AuthoredSourceChecker: Roslyn wording for the FIRST
+    proposal, clean for every later one. Records what it was asked to judge."""
 
-def test_a_field_the_payload_itself_declares_binds():
-    script = _codebranchsim()[1]
-    payload = {"extra_fields": [{"name": "_timer", "type": "float", "default": "0f"}],
-               "update_extra": "_timer += Time.deltaTime;"}
-    assert not _script_would_not_bind(script, payload)
+    def __init__(self, first=("CS0103: The name '_ghost' does not exist in the current context",)):
+        from src.unity_authored_check import AuthoredFindings
+        self._findings = AuthoredFindings
+        self.first = list(first)
+        self.seen: list[dict] = []
 
+    def _judge(self, payload):
+        self.seen.append(dict(payload))
+        findings = self._findings()
+        if len(self.seen) == 1:
+            findings.introduced = [{"code": c.split(":")[0], "message": c.split(": ", 1)[1]}
+                                   for c in self.first]
+        return findings
 
-def test_a_method_binds_against_its_own_parameters():
-    script = _codebranchsim()[0]
-    payload = {"extra_methods": [{"signature": "public void Add(GameObject node)",
-                                  "body": "_fileNodes.Add(node);"}]}
-    assert not _script_would_not_bind(script, payload)
+    def script(self, _script, payload):
+        return self._judge(payload)
+
+    def subsystem(self, _sub, payload):
+        return self._judge(payload)
 
 
 def test_the_author_gets_a_correction_round():
@@ -261,10 +262,38 @@ def test_the_author_gets_a_correction_round():
 
     scripts = [_codebranchsim()[1]]
     llm = _Fixes()
-    msgs = enrich_scripts(scripts, llm=llm, concept="x")
+    checker = _FakeChecker()
+    msgs = enrich_scripts(scripts, llm=llm, concept="x", checker=checker)
     assert any("re-authored after" in m for m in msgs)
     assert {f.name for f in scripts[0].extra_fields} >= {"_ghost"}
+    # The model is shown the COMPILER's words, not a Python name list.
     assert "DOES NOT COMPILE" in llm.prompts[1]
+    assert "CS0103: The name '_ghost' does not exist" in llm.prompts[1]
+    assert checker.seen[0] == {"update_extra": "_ghost += 1;"}
+
+
+def test_no_checker_means_no_correction_round_and_says_so():
+    """R0: there is no Python fallback judge. Without the Roslyn checker the
+    first proposal is kept unjudged and the absence is recorded."""
+    llm = _StubLLM(payload={"update_extra": "_ghost += 1;"})
+    scripts = [_codebranchsim()[1]]
+    msgs = enrich_scripts(scripts, llm=llm, concept="x")
+    assert len(llm.prompts) == 1
+    assert any("no compiler correction check" in m for m in msgs)
+    assert scripts[0].update_extra == "_ghost += 1;"
+
+
+def test_a_failing_checker_is_loud_and_keeps_the_proposal():
+    class _Broken:
+        def script(self, *_a):
+            raise RuntimeError("roslyn down")
+
+    llm = _StubLLM(payload={"update_extra": "transform.Rotate(0f, 1f, 0f);"})
+    scripts = [_codebranchsim()[1]]
+    msgs = enrich_scripts(scripts, llm=llm, concept="x", checker=_Broken())
+    assert any("compiler correction check unavailable" in m and "roslyn down" in m
+               for m in msgs)
+    assert scripts[0].update_extra == "transform.Rotate(0f, 1f, 0f);"
 
 
 # ── Failure is loud, never silent ────────────────────────────────────────────
@@ -349,3 +378,5 @@ def test_the_schema_prompt_shows_a_filled_custom_script():
     assert script["extra_fields"] and script["extra_methods"]
     assert "NOTHING ELSE RENDERS" in script["update_extra"]
     assert script["awake_extra"].strip()
+
+

@@ -70,8 +70,6 @@ from src.micro.camera import CameraRigPipeline, CameraRigSchema
 from src.micro.code_fields import (
     CodeExtensibleSchema, CodeField, CodeMethod, lint_extensible,
 )
-from src.micro.controller import ControllerMode, ControllerPipeline, ControllerSchema
-from src.micro.npc_dialog import NpcDialogPipeline, NpcDialogSchema
 
 
 def _has_live_call(methods: list, needle: str) -> bool:
@@ -100,43 +98,8 @@ def _cfg() -> dict:
 # OTHER controller variant, because the template-member scanner read every
 # .cs.j2 in the folder regardless of which one the variant actually renders.
 
-def test_pointer_only_method_not_in_scope_for_multi_mode_controller():
-    pipe = ControllerPipeline(_cfg())
-    schema = ControllerSchema(
-        name="PlayerController", variant="multi_mode",
-        modes=[ControllerMode(kind="on_foot"), ControllerMode(kind="flying")],
-        extra_fields=[CodeField(name="_stealthAudioSource", type="AudioSource", default="null")],
-        extra_methods=[CodeMethod(
-            signature="private void OnStealthTakedown()",
-            body="ApplyHighlight(_stealthAudioSource.gameObject);")],
-    )
-    fixed = pipe.default_fix(schema, "multi_mode")
-    msgs = pipe.harden(fixed)
-    assert any("ApplyHighlight" in m for m in msgs)
-    # The method's only statement was the neutralized call, so it is dropped
-    # entirely rather than shipped as an empty shell — either way, no LIVE
-    # (non-commented) ApplyHighlight(...) call survives anywhere.
-    assert not _has_live_call(fixed.extra_methods, "ApplyHighlight(")
-
 
 # ── 2. Assignment to a get-only template property (CS0200) ─────────────────
-
-def test_assignment_to_readonly_controller_property_rewritten_to_backing_field():
-    pipe = ControllerPipeline(_cfg())
-    schema = ControllerSchema(
-        name="PlayerController", variant="multi_mode",
-        modes=[ControllerMode(kind="on_foot"), ControllerMode(kind="flying")],
-        extra_methods=[CodeMethod(
-            signature="private void TryLandOnPad()",
-            body="GearDown = true;\nFlapsDown = true;")],
-    )
-    fixed = pipe.default_fix(schema, "multi_mode")
-    pipe.harden(fixed)   # _repair_readonly_property_assign runs inside harden(), not default_fix()
-    body = fixed.extra_methods[0].body
-    assert "_gearDown = true;" in body
-    assert "_flapsDown = true;" in body
-    assert "GearDown = true" not in body
-    assert "FlapsDown = true" not in body
 
 
 # ── 3. Vector tuple-literal default (CS0029) ────────────────────────────────
@@ -192,20 +155,6 @@ def test_string_field_not_passed_to_clip_call_stays_a_string():
 # which a plain substring search over raw text mistook for a genuine
 # injection site — folding DialogTrigger's `_player` field into scope for
 # DialogPlayer's authored code, a completely different class.
-
-def test_dialogtrigger_player_field_not_in_scope_for_dialogplayer():
-    pipe = NpcDialogPipeline(_cfg())
-    schema = NpcDialogSchema(
-        name="Engineer", variant="quest_giver",
-        extra_methods=[CodeMethod(
-            signature="private void OnEngineerApproach(float radius)",
-            body='if (_player != null && _player.CompareTag("Player")) { }')],
-    )
-    fixed = pipe.default_fix(schema, "quest_giver")
-    msgs = pipe.harden(fixed)
-    assert any("_player" in m for m in msgs)
-    body = fixed.extra_methods[0].body if fixed.extra_methods else ""
-    assert "_player.CompareTag" not in body
 
 
 # ── 6. Member call on an `object`-typed field (CS1061) ──────────────────────

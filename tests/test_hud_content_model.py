@@ -20,8 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from src.micro.hud import HUDPipeline, HUDSchema, HudWidget, hud_setters
-from src.unity_compose import MicroComposer, subsystems_for
+from src.micro.hud import HUDPipeline, HUDSchema, HudWidget
+from tests.conftest import bound_composer
+from src.unity_compose import MicroComposer, Subsystem, subsystems_for
 from src.unity_schema import EntitySpec, MissionObjective, MissionSpec
 
 
@@ -45,7 +46,7 @@ def dummy_config():
 def _project(tmp_path, project="HudProof", **kw) -> Path:
     subs = subsystems_for(kw.pop("game_type", "3D"), kw.pop("features", []), **kw)
     assets = Path(tmp_path) / "Assets"
-    MicroComposer(project, project_config={"audio": {"backend": "dsp"}}).compose(
+    bound_composer(project, subs, project_config={"audio": {"backend": "dsp"}}).compose(
         subs, assets)
     return assets
 
@@ -172,14 +173,24 @@ def test_ugui_variant_field_reference_stripped_on_uitoolkit_backend():
     assert "bar.value" not in s.update_extra.split("// AUDIT:")[0]
 
 
-def test_hud_setters_reports_the_whole_class_surface():
-    s = _fixed(HUDSchema(variant="racing_hud",
-                         widgets=[HudWidget(id="Objective", kind="objective")]),
-               "racing_hud")
-    setters = hud_setters("racing_hud", s.widgets)
-    assert "SetSpeed" in setters        # variant baseline
-    assert "SetObjective" in setters    # widget
-    assert "SetHealth" not in setters   # racing_hud shows no HP of its own
+def test_hud_setters_come_from_the_selected_contract():
+    """R0: setter availability is what Roslyn found on the rendered class,
+    not a copied per-variant table."""
+    subs = [Subsystem(kind="hud", variant="racing_hud", target="ui", name="GameHud",
+                      options={"widgets": [{"id": "Objective", "kind": "objective"}]})]
+    composer = bound_composer("SetterProof", subs)
+    hud = next(u for u in composer.plan(subs) if u.kind == "hud")
+    assert "SetSpeed" in hud.setters        # variant baseline
+    assert "SetObjective" in hud.setters    # widget
+    assert "SetHealth" not in hud.setters   # racing_hud shows no HP of its own
+
+
+def test_without_a_contract_hud_seams_abstain_loudly(capsys):
+    from src.unity_compose import MicroComposer
+    subs = [Subsystem(kind="hud", variant="racing_hud", target="ui", name="GameHud")]
+    hud = next(u for u in MicroComposer("NoContract").plan(subs) if u.kind == "hud")
+    assert hud.setters == []
+    assert "bind_component_contract" in capsys.readouterr().out
 
 
 # ── The composer only adds widgets something can publish into ─────────────────

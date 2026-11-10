@@ -4,7 +4,7 @@
       "consumers": [
         "src/capability_resolver.py:225",
         "src/capability_resolver.py:267",
-        "src/unity_generator.py:3394"
+        "src/unity_generator.py:2476"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -12,7 +12,7 @@
     {
       "consumers": [
         "src/capability_resolver.py:267",
-        "src/unity_generator.py:3394"
+        "src/unity_generator.py:2476"
       ],
       "producer": "MicrogensSpec.atoms",
       "source": "src/unity_schema.py:1000"
@@ -20,7 +20,7 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:3394"
+        "src/unity_generator.py:2476"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:29",
       "producer": "EntitySpec.atoms and behavior map",
@@ -29,7 +29,7 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:3394"
+        "src/unity_generator.py:2476"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
@@ -68,16 +68,16 @@
         "WireTriggerToSave"
       ],
       "producer": "Unity wiring atom calls",
-      "source": "src/unity_compose.py:646"
+      "source": "src/unity_compose.py:684"
     },
     {
       "consumers": [
-        "src/unity_compose.py:289",
-        "src/unity_compose.py:518",
+        "src/unity_compose.py:326",
+        "src/unity_compose.py:556",
         "templates/unity/scene.unity.j2:1323"
       ],
       "producer": "Unity composed subsystem descriptors",
-      "source": "src/unity_compose.py:36"
+      "source": "src/unity_compose.py:37"
     }
   ],
   "evidence_level": "structural_source_only",
@@ -131,7 +131,7 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/unity_generator.py:3394",
+        "src/unity_generator.py:2476",
         "templates/unity/GameSequencer.cs.j2:12"
       ],
       "provider": "src/atoms/backends/unity.py:292",
@@ -175,13 +175,13 @@
         "GameWiring"
       ],
       "provenance": [
-        "src/unity_compose.py:392",
+        "src/unity_compose.py:429",
         "templates/unity/compose/GameWiring.cs.j2:40",
         "templates/unity/scene.unity.j2:1334"
       ],
       "provider": "src/atoms/backends/unity.py:747",
       "runtime_acceptance": "unverified",
-      "selection": "src/unity_compose.py:844",
+      "selection": "src/unity_compose.py:882",
       "template_owner_preserved": null
     },
     {
@@ -198,8 +198,8 @@
       ],
       "provenance": [
         "src/micro/unity_base.py:75",
-        "src/unity_compose.py:518",
-        "src/unity_compose.py:541"
+        "src/unity_compose.py:556",
+        "src/unity_compose.py:579"
       ],
       "provider": "src/micro/unity_base.py:75",
       "runtime_acceptance": "unverified",
@@ -220,12 +220,12 @@
       ],
       "provenance": [
         "src/micro/__init__.py:78",
-        "src/unity_compose.py:392",
+        "src/unity_compose.py:429",
         "templates/unity/scene.unity.j2:1381"
       ],
-      "provider": "src/micro/controller.py:995",
+      "provider": "src/micro/controller.py:989",
       "runtime_acceptance": "unverified",
-      "selection": "src/unity_compose.py:289",
+      "selection": "src/unity_compose.py:326",
       "template_owner_preserved": "ControllerPipeline"
     },
     {

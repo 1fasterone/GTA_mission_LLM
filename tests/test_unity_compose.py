@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from src.unity_compose import MicroComposer, Subsystem
+from tests.conftest import bound_composer
 
 
 def _compose(tmp_path, project="ProofProj", **sub_kw):
@@ -243,7 +244,8 @@ def test_covered_script_types_keep_unique_glue():
 
 def test_gamewiring_connects_health_to_hud(tmp_path):
     # Default mapper includes health (target player) + hud health_bar → the seam wires.
-    units = MicroComposer("HSeam").emit(subsystems_for("3D", []), Path(tmp_path) / "Assets")
+    subs = subsystems_for("3D", [])
+    units = bound_composer("HSeam", subs).emit(subs, Path(tmp_path) / "Assets")
     gw = (Path(tmp_path) / "Assets" / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
     assert "OnHealthChanged += " in gw and "SetHealth" in gw   # seam 1 wired; var names are class_name.lower()
     assert {"health", "hud"} <= {u.kind for u in units}
@@ -1304,7 +1306,7 @@ def test_wiring_dependency_matching_named_seam_is_not_duplicated(tmp_path):
         WiringDependency(source="health", target="hud", type="references"),
     ])
     assets = Path(tmp_path) / "Assets"
-    MicroComposer("WiringNamed").compose(subs, assets, wiring=wm)
+    bound_composer("WiringNamed", subs).compose(subs, assets, wiring=wm)
     gw = (assets / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
     assert "wiring: health --references--> hud" not in gw
     assert gw.count("SEAM 1: Health") == 1   # the named seam, unaffected — no duplicate

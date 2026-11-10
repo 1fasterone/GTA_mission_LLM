@@ -777,17 +777,11 @@ class ControllerPipeline(UnityMicroPipeline):
 
         # The LLM sometimes authors extra_*/extra_methods code that calls a
         # fighting ability's own method/fields (TryThrow(), _throwCooldown, ...)
-        # without also adding that ability to `abilities`. The base harden()'s
-        # binding check (bind_authored_code, template_field_types) does a
-        # STATIC scan of Controller.cs.j2's source text — it finds
-        # `_throwCooldown` declared somewhere under the "throw" ability's own
-        # {% if %} block and treats it as a permanently known symbol, so it
-        # never flags the reference as unbound even when THIS schema's
-        # abilities list would never actually render that declaration.
+        # without also adding that ability to `abilities`, so THIS schema's
+        # abilities list never renders the declarations the code relies on.
         # Confirmed live, StreetBeat2D: TryThrowObject() called
         # TryThrow()/_carriedObject/_throwCooldown with "throw" absent from
-        # abilities — 4 x CS0103. Same "build, don't delete" philosophy as
-        # build_missing_fields (code_fields.py): the LLM's own code is
+        # abilities — 4 x CS0103. "Build, don't delete": the LLM's own code is
         # evidence of real intent, so add the missing ability rather than
         # neutralizing every reference to it.
         _fighting_ability_signals: dict[str, tuple[str, ...]] = {

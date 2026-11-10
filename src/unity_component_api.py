@@ -168,6 +168,35 @@ _AUTHORING_CHANNELS = frozenset({
 })
 
 
+def _render_one(composer: Any, index: int, original: Any, *, include_authored: bool,
+                temporary: Path, options_update: Mapping[str, Any] | None = None
+                ) -> tuple[dict[str, str], dict]:
+    """Render one selected subsystem at its manifest ordinal."""
+    sub = original.model_copy(deep=True)
+    if not include_authored:
+        for channel in _AUTHORING_CHANNELS:
+            sub.options.pop(channel, None)
+    if options_update:
+        sub.options.update(deepcopy(dict(options_update)))
+    from .micro import REGISTRY
+    pipeline_cls = REGISTRY.get(sub.kind)
+    prepare = getattr(pipeline_cls, "api_baseline_options", None)
+    if not include_authored and prepare is not None:
+        sub.options = prepare(sub.options)
+    pipeline, schema, variant, class_name, _guid = composer._resolve(sub)
+    out = temporary / str(index)
+    pipeline.write_api_sources(schema, variant, out)
+    sources = {
+        f"{index:03d}-{sub.kind}/{path.relative_to(out).as_posix()}":
+            path.read_bytes().decode("utf-8")
+        for path in sorted(out.rglob("*.cs"))
+    }
+    selection = {"kind": sub.kind, "variant": variant, "class_name": class_name,
+                 "name": sub.name, "target": sub.target,
+                 "schema_hash": digest(schema.model_dump(mode="json"))}
+    return sources, selection
+
+
 def _render_sources(composer: Any, subsystems: Sequence[Any], *,
                     include_authored: bool) -> tuple[dict[str, str], list[dict]]:
     """Render selected C# with or without Step 3.5 authored channels."""
@@ -176,29 +205,33 @@ def _render_sources(composer: Any, subsystems: Sequence[Any], *,
     production_paths: set[str] = set()
     with tempfile.TemporaryDirectory(prefix="component-api-render-") as temporary:
         for index, original in enumerate(subsystems):
-            sub = original.model_copy(deep=True)
-            if not include_authored:
-                for channel in _AUTHORING_CHANNELS:
-                    sub.options.pop(channel, None)
-            from .micro import REGISTRY
-            pipeline_cls = REGISTRY.get(sub.kind)
-            prepare = getattr(pipeline_cls, "api_baseline_options", None)
-            if not include_authored and prepare is not None:
-                sub.options = prepare(sub.options)
-            pipeline, schema, variant, class_name, _guid = composer._resolve(sub)
-            out = Path(temporary) / str(index)
-            pipeline.write_api_sources(schema, variant, out)
-            for path in sorted(out.rglob("*.cs")):
-                production = f"{sub.kind}/{path.relative_to(out).as_posix()}"
-                logical = f"{index:03d}-{sub.kind}/{path.relative_to(out).as_posix()}"
-                sources[logical] = path.read_bytes().decode("utf-8")
+            rendered, selection = _render_one(composer, index, original,
+                                              include_authored=include_authored,
+                                              temporary=Path(temporary))
+            for logical, source in rendered.items():
+                production = f"{original.kind}/{logical.split('/', 1)[1]}"
+                sources[logical] = source
                 if production in production_paths:
                     raise ComponentApiError(f"selected writers collide at Micros/{production}", sources)
                 production_paths.add(production)
-            selections.append({"kind": sub.kind, "variant": variant, "class_name": class_name,
-                               "name": sub.name, "target": sub.target,
-                               "schema_hash": digest(schema.model_dump(mode="json"))})
+            selections.append(selection)
     return sources, selections
+
+
+def render_candidate_subsystem(composer: Any, subsystems: Sequence[Any], index: int,
+                               payload: Mapping[str, Any]) -> dict[str, str]:
+    """Render ONE subsystem with a proposed Step 3.5 payload merged in.
+
+    Logical paths match `render_baseline` for the same ordinal, so the result
+    overlays the selected baseline file-for-file.  Nothing is written back to
+    the subsystem: the proposal is judged, never applied, here.
+    """
+    with tempfile.TemporaryDirectory(prefix="component-api-candidate-") as temporary:
+        rendered, _selection = _render_one(composer, index, subsystems[index],
+                                           include_authored=True,
+                                           temporary=Path(temporary),
+                                           options_update=payload)
+    return rendered
 
 
 def render_baseline(composer: Any, subsystems: Sequence[Any]) -> tuple[dict[str, str], list[dict]]:
@@ -227,13 +260,15 @@ def extract_components(composer: Any, subsystems: Sequence[Any], *, output_dir: 
 
 
 def check_authored_components(composer: Any, subsystems: Sequence[Any], *,
+                              references: Sequence[Path] = (),
                               output_dir: Path | None = None):
     """Diagnose rendered Step-3.5 source against one selected baseline.
 
-    This never sanitizes, drops, or approves authored code.  It is deliberately
-    an SDK-only diagnostic: missing Unity references remain in the report for
-    the later Editor compile gate rather than being hidden as a successful
-    fallback.
+    This never sanitizes, drops, or approves authored code.  `references` is
+    the real Unity reference profile (`unity_reference_profile`); with none,
+    the check is SDK-only and every Unity name stays an error in the report
+    for the later Editor compile gate rather than being hidden as a
+    successful fallback.
     """
     from .unity_component_check import check_candidate
 
@@ -251,4 +286,4 @@ def check_authored_components(composer: Any, subsystems: Sequence[Any], *,
         path: source for path, source in authored.items()
         if baseline.sources.get(path) != source
     }
-    return check_candidate(baseline, candidates, output_dir=output_dir)
+    return check_candidate(baseline, candidates, references=references, output_dir=output_dir)

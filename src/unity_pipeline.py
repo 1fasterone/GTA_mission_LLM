@@ -467,48 +467,19 @@ _OBJECTIVE_KIND_TAGS: dict[str, str] = {
 }
 
 
-def _check_consistency(schema: UnitySchema, *,
-                       reconcile_scenes: bool = True) -> tuple[UnitySchema, list[str]]:
-    """
-    Ensure script types and features are coherent.
-    Returns (fixed_schema, list_of_fix_messages).
+def inject_boilerplate_scripts(schema: UnitySchema) -> list[str]:
+    """Add the required boilerplate scripts a project is missing, in place.
+
+    Step 5's `_check_consistency` calls this; so does the custom-script
+    compiler check (`unity_authored_check`), on a deep copy at Step 3.5,
+    because a Step 3.5 proposal is compiled before Step 5 has run and must
+    still bind `GameManager.Instance` the way the shipped project will.
+    Idempotent: each script is added only when its type is absent.
     """
     fixes: list[str] = []
 
-    # Helper re-derived each call so injections made above are visible below.
     def _stypes() -> set[str]:
         return {s.type for s in schema.scripts}
-
-    # Load-bearing tags for objective content. EntitySpawner only attaches a
-    # collider to a group that carries a tag (templates/unity/EntitySpawner.cs.j2)
-    # and the composed micros acquire their targets with FindGameObjectWithTag,
-    # so an untagged collectible cannot be picked up and an untagged enemy cannot
-    # be seen, hit or chased — it is scenery with a hostile name. The rescue path
-    # in unity_concept_entities already tags the entities it restores from the
-    # brief; entities the fill wrote ITSELF had nothing doing the same for them,
-    # which is why a skydiving build shipped four uncollectable altitude gates
-    # and an enemy script with nothing tagged Enemy to drive.
-    #
-    # `kind` is the ground truth here — a deterministic lookup, not a guess —
-    # and the generator copies every entity tag into TagManager, so the tag it
-    # assigns always exists at runtime.
-    for _e in schema.entities:
-        _canon = _OBJECTIVE_KIND_TAGS.get((_e.kind or "").lower())
-        if _canon and (not _e.tag or _e.tag == "Untagged"):
-            _e.tag = _canon
-            fixes.append(f"Untagged {_e.kind} {_e.name!r} -> tag={_canon} "
-                         "(no tag = no collider, so it cannot be "
-                         "collected/hit)")
-
-    # VR requires Input System for XR controller input
-    if schema.game_type == "VR" and "input_system" not in schema.features:
-        schema.features.append("input_system")
-        fixes.append("VR game: added input_system feature")
-
-    # NavMesh has no 2D pathfinding support in Unity
-    if schema.game_type in ("2D", "2d_topdown") and "navmesh" in schema.features:
-        schema.features.remove("navmesh")
-        fixes.append("2D game: removed navmesh (not applicable to flat 2D)")
 
     if "game_manager" not in _stypes():
         schema.scripts.insert(0, UnityScript(
@@ -552,12 +523,6 @@ def _check_consistency(schema: UnitySchema, *,
         ))
         fixes.append("Enemy/Collectible script requires HealthSystem — injected health script")
 
-    if "cinemachine" in schema.features:
-        existing_ids = {p.package_id for p in schema.packages}
-        if "com.unity.cinemachine" not in existing_ids:
-            schema.packages.append(UnityPackage(description="cinemachine"))
-            fixes.append("Cinemachine feature: added cinemachine package entry for resolver")
-
     if schema.story_beats and "dialogue_manager" not in _stypes():
         schema.scripts.append(UnityScript(
             name        = "DialogueManager",
@@ -584,6 +549,59 @@ def _check_consistency(schema: UnitySchema, *,
                            "palette manager — creates and caches materials from palette hex colors",
         ))
         fixes.append("Injected MaterialPalette (3D project)")
+    return fixes
+
+
+def _check_consistency(schema: UnitySchema, *,
+                       reconcile_scenes: bool = True) -> tuple[UnitySchema, list[str]]:
+    """
+    Ensure script types and features are coherent.
+    Returns (fixed_schema, list_of_fix_messages).
+    """
+    fixes: list[str] = []
+
+    # Helper re-derived each call so injections made above are visible below.
+    def _stypes() -> set[str]:
+        return {s.type for s in schema.scripts}
+
+    # Load-bearing tags for objective content. EntitySpawner only attaches a
+    # collider to a group that carries a tag (templates/unity/EntitySpawner.cs.j2)
+    # and the composed micros acquire their targets with FindGameObjectWithTag,
+    # so an untagged collectible cannot be picked up and an untagged enemy cannot
+    # be seen, hit or chased — it is scenery with a hostile name. The rescue path
+    # in unity_concept_entities already tags the entities it restores from the
+    # brief; entities the fill wrote ITSELF had nothing doing the same for them,
+    # which is why a skydiving build shipped four uncollectable altitude gates
+    # and an enemy script with nothing tagged Enemy to drive.
+    #
+    # `kind` is the ground truth here — a deterministic lookup, not a guess —
+    # and the generator copies every entity tag into TagManager, so the tag it
+    # assigns always exists at runtime.
+    for _e in schema.entities:
+        _canon = _OBJECTIVE_KIND_TAGS.get((_e.kind or "").lower())
+        if _canon and (not _e.tag or _e.tag == "Untagged"):
+            _e.tag = _canon
+            fixes.append(f"Untagged {_e.kind} {_e.name!r} -> tag={_canon} "
+                         "(no tag = no collider, so it cannot be "
+                         "collected/hit)")
+
+    # VR requires Input System for XR controller input
+    if schema.game_type == "VR" and "input_system" not in schema.features:
+        schema.features.append("input_system")
+        fixes.append("VR game: added input_system feature")
+
+    # NavMesh has no 2D pathfinding support in Unity
+    if schema.game_type in ("2D", "2d_topdown") and "navmesh" in schema.features:
+        schema.features.remove("navmesh")
+        fixes.append("2D game: removed navmesh (not applicable to flat 2D)")
+
+    fixes.extend(inject_boilerplate_scripts(schema))
+
+    if "cinemachine" in schema.features:
+        existing_ids = {p.package_id for p in schema.packages}
+        if "com.unity.cinemachine" not in existing_ids:
+            schema.packages.append(UnityPackage(description="cinemachine"))
+            fixes.append("Cinemachine feature: added cinemachine package entry for resolver")
 
     # Inject ProBuilder package when the deterministic greybox editor is present
     if _stypes() & GREYBOX_SCRIPT_TYPES:
@@ -1291,6 +1309,28 @@ class UnityPipeline:
                            f"({type(exc).__name__}: {exc}) — authored C# enrichment "
                            "is blocked; deterministic baseline bodies remain")
 
+        # The ONLY Step 3.5 correction judge: Roslyn against the real Unity
+        # reference profile. No profile, no correction round — recorded loudly,
+        # never replaced by a Python name list.
+        authored_checker = None
+        if micro_code and (component_api is not None or schema.scripts):
+            from .unity_authored_check import AuthoredSourceChecker, resolve_references
+            _refs, _profile = resolve_references(self.config)
+            record["reference_profile"] = _profile
+            if not _refs:
+                self._warn(f"Step 3.5 compiler corrections unavailable: {_profile['error']}")
+            elif component_api is None:
+                self._warn("Step 3.5 compiler corrections unavailable: no selected "
+                           "component contract (no composed micros) — custom-script "
+                           "proposals are not corrected before the Editor gate")
+            else:
+                from .unity_compose import MicroComposer
+                authored_checker = AuthoredSourceChecker(
+                    composer=MicroComposer(schema.project_name, template_dir=self.template_dir,
+                                           project_config=self.config),
+                    subsystems=subsystems, component_api=component_api,
+                    references=_refs, schema=schema, template_dir=self.template_dir)
+
         # `type: custom` script bodies. Its template is a bare shell, so with
         # no author it ships a class of fields with no behaviour. `subsystems`
         # lets the contract name the composed-micro classes reachable via
@@ -1299,7 +1339,8 @@ class UnityPipeline:
             from .unity_micro_code import enrich_scripts
             for msg in enrich_scripts(schema.scripts, llm=self.llm,
                                       concept=concept, user_prompt=user_prompt,
-                                      subsystems=subsystems, component_api=component_api):
+                                      subsystems=subsystems, component_api=component_api,
+                                      checker=authored_checker):
                 self._fix(msg)
 
         # Composed-micro bodies. Only the extras vocabulary is writable
@@ -1315,7 +1356,8 @@ class UnityPipeline:
             for msg in enrich_subsystems(subsystems, llm=self.llm,
                                          concept=concept,
                                          user_prompt=user_prompt, tags=_tags,
-                                         component_api=component_api):
+                                         component_api=component_api,
+                                         checker=authored_checker):
                 self._fix(msg)
             for msg in sync_microgens_from_subsystems(subsystems, schema.microgens):
                 self._fix(msg)
@@ -2496,40 +2538,19 @@ class UnityPipeline:
             # schema.microgens[].input would disagree with what actually got
             # rendered, and a later no-LLM `unity-validate --compose` recompile
             # would reintroduce the very calls this pass strips.
-            composed_units = composer.plan(subsystems)
             # Step 5 is allowed to change selected variants and structural
             # options.  Re-extract the fragment-free selected declarations
-            # after that work rather than trusting the Step-3.5 snapshot.
-            # The record is compatible sidecar evidence: generation and replay
-            # still derive their selection solely from meta.compose_selection.
-            try:
-                from .unity_component_api import (check_authored_components,
-                                                  extract_components)
-                final_component_api = extract_components(composer, subsystems)
-                authored_check = check_authored_components(composer, subsystems)
-                schema.meta["component_api_final"] = {
-                    "format": final_component_api.document["format"],
-                    "fingerprint": final_component_api.fingerprint,
-                    "selection": final_component_api.document["selection"],
-                    "status": "verified",
-                    "authored_source_check": {
-                        "accepted": authored_check.accepted,
-                        "diagnostics": authored_check.errors,
-                        "scope": "SDK binding; Unity Editor execution unverified",
-                    },
-                }
-                if authored_check.errors:
-                    self._warn("final authored component source has "
-                               f"{len(authored_check.errors)} SDK diagnostic(s); "
-                               "source is preserved for the Unity Editor gate")
-            except Exception as exc:  # noqa: BLE001 - record an unavailable required gate
-                schema.meta["component_api_final"] = {
-                    "status": "unavailable",
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-                self._warn("final selected component contract unavailable "
-                           f"({type(exc).__name__}: {exc}); this build is not "
-                           "component-API accepted")
+            # after that work rather than trusting the Step-3.5 snapshot, and
+            # bind them to the composer BEFORE plan(): HUD seams read setter
+            # availability from this contract. The record is compatible
+            # sidecar evidence: generation and replay still derive their
+            # selection solely from meta.compose_selection.
+            from .unity_authored_check import final_component_record
+            record, warnings = final_component_record(composer, subsystems, self.config, schema)
+            schema.meta["component_api_final"] = record
+            for warning in warnings:
+                self._warn(warning)
+            composed_units = composer.plan(subsystems)
             # See sync_microgens_from_subsystems' own docstring: this is what lets
             # a later no-LLM `unity-validate --compose` recover this run's
             # enrich_subsystems output instead of regressing to baseline bodies.

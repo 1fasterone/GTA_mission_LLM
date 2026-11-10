@@ -488,7 +488,7 @@ class BoardPipeline(UnityMicroPipeline):
         # This override REPLACES MicroPipeline.harden's own body, the only thing
         # that normally calls harden_against_template — see rules.py's harden()
         # for the live GameRules.cs CS0111 this same gap caused elsewhere.
-        msgs += harden_against_template(schema, self.template_root, engine=self.engine)
+        msgs += harden_against_template(schema, self.template_root)
         return msgs
 
     def write_files(self, schema, variant, out_dir: Path) -> int:

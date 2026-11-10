@@ -364,3 +364,22 @@ def _no_live_package_cache(monkeypatch):
     monkeypatch.setattr("src.unity_package_cache._http_get", _refuse)
     monkeypatch.setenv("UPM_CACHE_ROOT", str(Path(tempfile.gettempdir()) /
                                              "pytest-upm-cache-must-not-be-used"))
+
+
+def bound_composer(project: str, subsystems, **kwargs):
+    """A MicroComposer with its selected Roslyn contract bound (R0).
+
+    HUD seams read setter availability from the contract, so a test that
+    asserts a HUD seam wires needs the real pinned SDK. Skips without it,
+    and fails when REQUIRE_COMPONENT_API=1 (CI promises the SDK).
+    """
+    import os
+    import shutil
+    from src.unity_compose import MicroComposer
+    if shutil.which("dotnet") is None:
+        if os.environ.get("REQUIRE_COMPONENT_API") == "1":
+            pytest.fail("required pinned SDK unavailable")
+        pytest.skip("HUD seams need the selected component contract (pinned SDK)")
+    composer = MicroComposer(project, **kwargs)
+    composer.bind_component_contract(subsystems)
+    return composer

@@ -6,35 +6,20 @@ kinds, per-project ids), ten variants x two backends, and three wiring seams
 (SEAM 1/9/10) that publish into it from elsewhere in the composed project. It
 was also the direct subject of the backend-mismatched-field bug (`_root`
 referenced under a uGUI backend — see micro/hud.py's `neutralize_unavailable_
-names` call) and sits behind three of the composed-sibling-call sanitizers
-(arity, invented constructors, GetComponent-family arity) that a unit test can
-only ever poke one at a time.
+names` call) and the composed-sibling-call poison shapes (arity, invented
+constructors, GetComponent-family arity) that a unit test can only ever poke
+one at a time.
 
 This drives HUD through the REAL composed pipeline — `subsystems_for` (the
 same function a live `--compose` run uses to build the project's subsystem
-list), the same `sanitize_subsystem_*` passes `unity_pipeline.py` runs before
-composer.emit(), then a real `MicroComposer.emit()` producing an actual
-`GameHud.cs` on disk — with every sanitizer's poison pill present at once,
-plus widget-count/collision stress beyond anything a single unit test
-exercises, and confirms none of the poison reaches the rendered file while
-legitimate content survives untouched.
+list), then a real `MicroComposer.emit()` producing an actual `GameHud.cs` on
+disk — with every former sanitizer's poison pill present at once, plus
+widget-count/collision stress beyond anything a single unit test exercises.
 
-A finding this test run surfaced along the way, worth recording here since it
-shapes what "legitimate content" means below: `harden_against_template`
-(code_fields.py, run on EVERY micro-generator schema via `UnityMicroPipeline.
-harden()`) derives its known-identifier set purely from parsing that
-generator's OWN template — `GameContext` is not in `_KNOWN_SYMBOLS` and no
-composed-sibling class name ever is, so it neutralizes ANY
-`GameContext.Instance.Get<T>()` reference authored into a micro-generator's
-own extra_* fields wholesale, correct or not. That is a much blunter net than
-this project's `_COMPOSED_CLASS_API`-based checks, and it means a composed
-cross-subsystem call never survives inside microgen content regardless of
-whether it is valid — only inside a `type: custom` script (which never goes
-through `harden_against_template` at all) does a VALID one actually survive.
-This test's "legitimate content" therefore uses only what a micro-generator's
-own extra_* fields can realistically say about themselves (self-declared
-fields, `Time.deltaTime`, a zero-arg `GetComponent<T>()`) — a composed-sibling
-call belongs in the "must never survive" set on every path checked here.
+R0 contract: Step 3.5 code is authoring evidence. Every poison line must
+REACH the rendered file intact, where the selected-source Roslyn check
+against the real Unity reference profile and the Editor compile gate report
+it (src/unity_authored_check.py). No Python pass may erase it first.
 
 Offline and deterministic — no LLM, no Unity. The optional final check shells
 out to the real Roslyn syntax gate (see csharp_syntax_gate.py) when a .NET SDK
@@ -58,22 +43,17 @@ _POISON = {
     # `_root` is UI-Toolkit-only; live under a uGUI backend it's CS0103.
     "root_ref": "if (_root != null) _root.style.opacity = 1f;",
     # invented constructor, never touches a declared field
-    # (_sanitize_invented_constructor_calls / sanitize_subsystem_invented_constructors)
     "invented_ctor": "Graphics.Blit(source, dest, new ShaderPass(profile), 0);",
     # real member, wrong arity, on a composed sibling
-    # (_COMPOSED_METHOD_ARITY / sanitize_subsystem_composed_calls)
     "arity_mismatch": "GameContext.Instance.Get<PauseMenu>()?.Activate();",
-    # invented member on a composed sibling that IS in _COMPOSED_CLASS_API
-    # (the LightingDirector coverage gap)
+    # invented member on a composed sibling (the LightingDirector shape)
     "invented_member": "GameContext.Instance.Get<LightingDirector>()?.SetTimeOfDay(0.5f);",
-    # GetComponent-family call, wrong arity (_MB_METHOD_ARITY)
+    # GetComponent-family call, wrong arity (CS1501)
     "getcomponent_arity": "var rb = GetComponent<Rigidbody>(gameObject, true);",
 }
 # Content a micro-generator's own extra_* fields can legitimately say about
 # THEMSELVES — self-declared fields, well-known Unity statics, a valid
-# zero-arg GetComponent<T>() — never a composed-sibling reference (see the
-# module docstring: harden_against_template strips those wholesale,
-# correct or not, so that shape belongs in _POISON on every path, not here).
+# zero-arg GetComponent<T>().
 _LEGIT_FIELDS = [{"name": "_flashTimer", "type": "float", "default": "0f"}]
 _LEGIT = {
     "decay": "_flashTimer -= Time.deltaTime;",

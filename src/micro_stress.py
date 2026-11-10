@@ -1,31 +1,19 @@
 """
 Depth-stress every Unity micro-generator, one kind at a time, through the REAL
-composed pipeline: a single-subsystem project, `MicroComposer.plan()`, the
-same `sanitize_subsystem_*` passes `unity_pipeline.py` runs before
-`composer.emit()`, then a real `emit()` producing actual `.cs` files on disk —
-mirroring `tests/test_hud_e2e_stress.py`'s harness generalized across the
-whole registry instead of hand-tuned for one kind.
+composed pipeline: a single-subsystem project, `MicroComposer.plan()`, then a
+real `emit()` producing actual `.cs` files on disk.
 
-Every kind gets the SAME adversarial payload (sized to probe every sanitizer
-layer this project has — see `_POISON`), across EVERY variant it declares and
-both backends where its schema supports one ("depth" = structural coverage,
-not just one lucky config), plus a handful of `extra_fields` colliding with
-that kind's own `_RESERVED_FIELD_NAMES` to stress the per-kind collision-drop
-logic. `run_all`/`run_one` return a report; nothing here prints on its own —
-callers (the `micro-stress-test` CLI command, or a pytest parametrization)
-decide how to surface it.
+Every kind gets the SAME adversarial payload (`_POISON`) across EVERY variant
+it declares and both backends where its schema supports one, plus a handful of
+`extra_fields` colliding with that kind's own `_RESERVED_FIELD_NAMES` to stress
+the per-kind collision-drop logic.
 
-A note on what this can and cannot prove, learned building the HUD version of
-this harness: `harden_against_template` (code_fields.py), which every kind
-gets automatically, does not know `GameContext` or any composed-sibling class
-name — it neutralizes ANY `GameContext.Instance.Get<T>()` reference from a
-micro-generator's own content wholesale, correct or not. So the composed-
-sibling poison lines here mostly re-confirm that blunter net rather than
-uniquely proving this project's arity-aware sanitizers fired — the lines that
-DO isolate those (an invented constructor whose every token otherwise
-resolves, a GetComponent call with a real overload's argument count) are the
-ones this harness leans on for that claim. See test_hud_e2e_stress.py's
-module docstring for the full story.
+What a finding means (R0). Compose treats Step 3.5 code as authoring evidence:
+it is rendered exactly as written and judged by the selected-source Roslyn
+contract against the real Unity reference profile and by the Editor compile
+gate (src/unity_authored_check.py). No Python pass may silently delete an
+authored statement. So every poison line must SURVIVE into the emitted source;
+a finding is a poison line that went missing — an eraser crept back in.
 
 Offline and deterministic — no LLM, no Unity. The optional syntax-gate pass
 shells out to the real Roslyn parser when a .NET SDK is available and no-ops
@@ -50,25 +38,18 @@ _PROJECT_CONFIG = {"audio": {"backend": "dsp"}}
 # just no content poison (there is nowhere to put it).
 _NO_SCHEMA = {"model"}
 
-# One poison line per mechanism this project has a name for, all aimed at
-# whichever kind is under test. Keys double as the finding label.
+# One defect per shape a retired eraser used to delete; keys double as the
+# finding label. Each must reach the emitted source intact.
 _POISON: dict[str, str] = {
-    # Invented constructor whose OTHER tokens are all well-known (gameObject,
-    # a Camera field) — isolates _sanitize_invented_constructor_calls /
-    # sanitize_subsystem_invented_constructors specifically: harden_against_
-    # template's unbound-identifier scan has nothing else to flag here.
+    # Invented constructor; every other token is a real Unity name.
     "invented_ctor_isolated": "Graphics.Blit(gameObject.GetComponent<Camera>().targetTexture, null, new ShaderPass(gameObject), 0);",
-    # Same defect, but every OTHER token is ALSO unknown — the shape that hit
-    # live (see unity_generator.py's docstring), kept as a regression pin.
+    # Same defect, every other token also unknown — the shape that hit live.
     "invented_ctor_live_shape": "Graphics.Blit(source, dest, new ShaderPass(profile), 0);",
-    # Real member, wrong arity, on a composed sibling — defense-in-depth with
-    # harden_against_template's wholesale GameContext strip (see module doc).
+    # Composed-sibling calls: a real member at the wrong arity, and an
+    # invented member.
     "composed_arity_mismatch": "GameContext.Instance.Get<PauseMenu>()?.Activate();",
     "composed_invented_member": "GameContext.Instance.Get<LightingDirector>()?.SetTimeOfDay(0.5f);",
-    # GetComponent-family call, wrong arity — isolates _MB_METHOD_ARITY /
-    # sanitize_subsystem_builtin_call_arity: every token here (GetComponent,
-    # gameObject, Rigidbody, true) is individually well-known, so harden_
-    # against_template's unbound-identifier scan finds nothing wrong at all.
+    # GetComponent-family call at an arity no overload has (CS1501).
     "getcomponent_arity": "var rb = GetComponent<Rigidbody>(gameObject, true);",
 }
 # UI-Toolkit-only field, poisoned only when the kind under test declares a
@@ -130,8 +111,8 @@ def _reserved_field_poison(kind: str) -> list[dict]:
 
 
 def run_one(kind: str, *, variant: str, backend: str | None) -> list[Finding]:
-    """Stress one (kind, variant, backend) combination; return live poison
-    that survived, if any."""
+    """Stress one (kind, variant, backend) combination; return every authored
+    poison line that did NOT reach the emitted source."""
     keys = code_keys_for(kind)
     poison_lines = dict(_POISON)
     options: dict = {}
@@ -167,18 +148,8 @@ def run_one(kind: str, *, variant: str, backend: str | None) -> list[Finding]:
                         and f.suffix in (".cs", ".uxml", ".uss"))
 
     live = _live_code(src)
-    findings = []
-    for poison_key, line in poison_lines.items():
-        if poison_key == "backend_mismatch":
-            # Must be gone from LIVE code specifically — it legitimately
-            # survives, unaudited, when this kind's schema has no `backend`
-            # field at all (never authored in the first place, not "caught").
-            if line in live:
-                findings.append(Finding(kind, variant, backend or "-", poison_key))
-            continue
-        if line in live:
-            findings.append(Finding(kind, variant, backend or "-", poison_key))
-    return findings
+    return [Finding(kind, variant, backend or "-", poison_key)
+            for poison_key, line in poison_lines.items() if line not in live]
 
 
 def run_kind(kind: str) -> KindResult:

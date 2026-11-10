@@ -18,6 +18,7 @@ from copy import deepcopy
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 from rich.console import Console
@@ -55,8 +56,8 @@ class ComposedUnit(BaseModel):
                                                             # call a setter that provably
                                                             # exists on the class.
     setters:    list[str]  = Field(default_factory=list)  # hud kind only: EVERY public
-                                                            # setter the class declares
-                                                            # (variant baseline + widgets).
+                                                            # method the selected Roslyn
+                                                            # contract found on the class.
                                                             # SEAM 1/9/10 gate on this
                                                             # instead of the variant name.
     states:     list[str]  = Field(default_factory=list)  # statemachine kind only: the
@@ -285,6 +286,42 @@ class MicroComposer:
                 elif isinstance(v, dict) and isinstance(base_cfg.get(k), dict):
                     base_cfg[k] = {**base_cfg[k], **v}
         self._cfg = base_cfg
+        # The selected-source Roslyn contract (unity_component_api.ComponentApi)
+        # for THIS subsystem selection. HUD setter availability is read from it:
+        # the methods the rendered class really declares, not a copied table.
+        # None means "not extracted": HUD seams then abstain loudly. Assign it
+        # with `bind_component_contract` before plan()/emit().
+        self.component_api: Any = None
+        self._warned_no_contract = False
+
+    def bind_component_contract(self, subsystems: list[Subsystem]):
+        """Extract the selected contract for `subsystems` and keep it.
+
+        Raises ComponentApiUnavailable/ComponentApiError when the pinned SDK
+        cannot extract: a caller that needs HUD seams must not pretend it has
+        one. Returns the contract.
+        """
+        from .unity_component_api import extract_components
+        self.component_api = extract_components(self, subsystems)
+        return self.component_api
+
+    def _contract_public_methods(self, class_name: str) -> list[str]:
+        """Public method names Roslyn found on the rendered `class_name`."""
+        if self.component_api is None:
+            if not self._warned_no_contract:
+                console.print("  [yellow]WARN[/] [hud.setters] no selected component "
+                              "contract bound — HUD seams abstain. Remedy: call "
+                              "MicroComposer.bind_component_contract(subsystems) "
+                              "before plan()/emit().")
+                self._warned_no_contract = True
+            return []
+        try:
+            members = self.component_api.type(class_name).get("members", [])
+        except ValueError as exc:
+            console.print(f"  [yellow]WARN[/] [hud.setters] {exc} — HUD seams abstain")
+            return []
+        return sorted({str(m.get("name")) for m in members
+                       if m.get("kind") == "method" and m.get("accessibility") == "public"})
 
     def _resolve(self, sub: Subsystem):
         """Build the micro pipeline + fixed schema + class name + GUID for a
@@ -402,13 +439,14 @@ class MicroComposer:
                       "optional": o.optional, "target_ref": o.target_ref}
                      for o in schema.objectives] if sub.kind == "objectives" else [])
             # Read back AFTER default_fix, so a widget the HUD's collision lint
-            # dropped is never wired to a setter the class does not declare.
+            # dropped is never wired. Setters come from the selected contract:
+            # what Roslyn found on the rendered class, so a seam can never call
+            # a method the class does not declare (CS1061).
             widgets, setters = [], []
             if sub.kind == "hud":
-                from .micro.hud import hud_setters
                 widgets = [{"id": w.id, "kind": w.kind, "setter": w.setter}
                            for w in schema.widgets]
-                setters = sorted(hud_setters(variant, schema.widgets))
+                setters = self._contract_public_methods(class_name)
             # Also read back AFTER default_fix, so SEAM 4 sees the SANITISED
             # enum members rather than whatever the model originally wrote.
             states = ([st.name for st in schema.states]
