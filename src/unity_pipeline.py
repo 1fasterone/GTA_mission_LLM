@@ -467,48 +467,19 @@ _OBJECTIVE_KIND_TAGS: dict[str, str] = {
 }
 
 
-def _check_consistency(schema: UnitySchema, *,
-                       reconcile_scenes: bool = True) -> tuple[UnitySchema, list[str]]:
-    """
-    Ensure script types and features are coherent.
-    Returns (fixed_schema, list_of_fix_messages).
+def inject_boilerplate_scripts(schema: UnitySchema) -> list[str]:
+    """Add the required boilerplate scripts a project is missing, in place.
+
+    Step 5's `_check_consistency` calls this; so does the custom-script
+    compiler check (`unity_authored_check`), on a deep copy at Step 3.5,
+    because a Step 3.5 proposal is compiled before Step 5 has run and must
+    still bind `GameManager.Instance` the way the shipped project will.
+    Idempotent: each script is added only when its type is absent.
     """
     fixes: list[str] = []
 
-    # Helper re-derived each call so injections made above are visible below.
     def _stypes() -> set[str]:
         return {s.type for s in schema.scripts}
-
-    # Load-bearing tags for objective content. EntitySpawner only attaches a
-    # collider to a group that carries a tag (templates/unity/EntitySpawner.cs.j2)
-    # and the composed micros acquire their targets with FindGameObjectWithTag,
-    # so an untagged collectible cannot be picked up and an untagged enemy cannot
-    # be seen, hit or chased — it is scenery with a hostile name. The rescue path
-    # in unity_concept_entities already tags the entities it restores from the
-    # brief; entities the fill wrote ITSELF had nothing doing the same for them,
-    # which is why a skydiving build shipped four uncollectable altitude gates
-    # and an enemy script with nothing tagged Enemy to drive.
-    #
-    # `kind` is the ground truth here — a deterministic lookup, not a guess —
-    # and the generator copies every entity tag into TagManager, so the tag it
-    # assigns always exists at runtime.
-    for _e in schema.entities:
-        _canon = _OBJECTIVE_KIND_TAGS.get((_e.kind or "").lower())
-        if _canon and (not _e.tag or _e.tag == "Untagged"):
-            _e.tag = _canon
-            fixes.append(f"Untagged {_e.kind} {_e.name!r} -> tag={_canon} "
-                         "(no tag = no collider, so it cannot be "
-                         "collected/hit)")
-
-    # VR requires Input System for XR controller input
-    if schema.game_type == "VR" and "input_system" not in schema.features:
-        schema.features.append("input_system")
-        fixes.append("VR game: added input_system feature")
-
-    # NavMesh has no 2D pathfinding support in Unity
-    if schema.game_type in ("2D", "2d_topdown") and "navmesh" in schema.features:
-        schema.features.remove("navmesh")
-        fixes.append("2D game: removed navmesh (not applicable to flat 2D)")
 
     if "game_manager" not in _stypes():
         schema.scripts.insert(0, UnityScript(
@@ -552,12 +523,6 @@ def _check_consistency(schema: UnitySchema, *,
         ))
         fixes.append("Enemy/Collectible script requires HealthSystem — injected health script")
 
-    if "cinemachine" in schema.features:
-        existing_ids = {p.package_id for p in schema.packages}
-        if "com.unity.cinemachine" not in existing_ids:
-            schema.packages.append(UnityPackage(description="cinemachine"))
-            fixes.append("Cinemachine feature: added cinemachine package entry for resolver")
-
     if schema.story_beats and "dialogue_manager" not in _stypes():
         schema.scripts.append(UnityScript(
             name        = "DialogueManager",
@@ -584,6 +549,59 @@ def _check_consistency(schema: UnitySchema, *,
                            "palette manager — creates and caches materials from palette hex colors",
         ))
         fixes.append("Injected MaterialPalette (3D project)")
+    return fixes
+
+
+def _check_consistency(schema: UnitySchema, *,
+                       reconcile_scenes: bool = True) -> tuple[UnitySchema, list[str]]:
+    """
+    Ensure script types and features are coherent.
+    Returns (fixed_schema, list_of_fix_messages).
+    """
+    fixes: list[str] = []
+
+    # Helper re-derived each call so injections made above are visible below.
+    def _stypes() -> set[str]:
+        return {s.type for s in schema.scripts}
+
+    # Load-bearing tags for objective content. EntitySpawner only attaches a
+    # collider to a group that carries a tag (templates/unity/EntitySpawner.cs.j2)
+    # and the composed micros acquire their targets with FindGameObjectWithTag,
+    # so an untagged collectible cannot be picked up and an untagged enemy cannot
+    # be seen, hit or chased — it is scenery with a hostile name. The rescue path
+    # in unity_concept_entities already tags the entities it restores from the
+    # brief; entities the fill wrote ITSELF had nothing doing the same for them,
+    # which is why a skydiving build shipped four uncollectable altitude gates
+    # and an enemy script with nothing tagged Enemy to drive.
+    #
+    # `kind` is the ground truth here — a deterministic lookup, not a guess —
+    # and the generator copies every entity tag into TagManager, so the tag it
+    # assigns always exists at runtime.
+    for _e in schema.entities:
+        _canon = _OBJECTIVE_KIND_TAGS.get((_e.kind or "").lower())
+        if _canon and (not _e.tag or _e.tag == "Untagged"):
+            _e.tag = _canon
+            fixes.append(f"Untagged {_e.kind} {_e.name!r} -> tag={_canon} "
+                         "(no tag = no collider, so it cannot be "
+                         "collected/hit)")
+
+    # VR requires Input System for XR controller input
+    if schema.game_type == "VR" and "input_system" not in schema.features:
+        schema.features.append("input_system")
+        fixes.append("VR game: added input_system feature")
+
+    # NavMesh has no 2D pathfinding support in Unity
+    if schema.game_type in ("2D", "2d_topdown") and "navmesh" in schema.features:
+        schema.features.remove("navmesh")
+        fixes.append("2D game: removed navmesh (not applicable to flat 2D)")
+
+    fixes.extend(inject_boilerplate_scripts(schema))
+
+    if "cinemachine" in schema.features:
+        existing_ids = {p.package_id for p in schema.packages}
+        if "com.unity.cinemachine" not in existing_ids:
+            schema.packages.append(UnityPackage(description="cinemachine"))
+            fixes.append("Cinemachine feature: added cinemachine package entry for resolver")
 
     # Inject ProBuilder package when the deterministic greybox editor is present
     if _stypes() & GREYBOX_SCRIPT_TYPES:

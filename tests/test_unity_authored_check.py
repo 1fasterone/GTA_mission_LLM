@@ -200,7 +200,9 @@ def test_real_compiler_judges_a_custom_script_in_project_context():
                          scripts=[script], packages=[])
     checker = AuthoredSourceChecker(composer=composer, subsystems=subs, component_api=api,
                                     references=refs, schema=schema)
-    bad = checker.script(script, {"update_extra": "_score += 1;"})
+    # A genuinely undeclared call. (`_score += 1;` would NOT do: Step 6's
+    # _auto_declare_undeclared_scalars declares `_score`, so it ships clean.)
+    bad = checker.script(script, {"update_extra": "Launch(3);"})
     assert [d["code"] for d in bad.introduced] == ["CS0103"]
     good = checker.script(script, {
         "extra_fields": [{"name": "_score", "type": "int", "default": "0"}],
@@ -235,3 +237,210 @@ def test_final_record_reports_script_defects_with_source_preserved():
     assert record["reference_profile"]["status"] == "resolved"
     assert any("custom script source" in w for w in warnings)
     assert script.update_extra == body
+
+
+# ── Step 6 parity: the check compiles exactly what generate() writes ──────────
+# Review of #292: the checker used to rebuild Step 6's script rendering by
+# hand and diverged five ways (lint only, a generator per script, a short
+# known-type set, payload lists replacing Step 3's, and no non-custom scripts
+# or GameContext companions). It now calls the generator's own helpers.
+
+def _parity_project():
+    from src.unity_compose import MicroComposer, drop_owned_scripts, subsystems_for
+    from src.unity_pipeline import inject_boilerplate_scripts
+    from src.unity_schema import CodeField, CodeMethod, UnitySchema, UnityScript
+    scripts = [
+        # Two scripts naming one invented type: one stub project-wide.
+        UnityScript(name="Backpack", type="custom", description="d",
+                    extra_fields=[CodeField(name="contract", type="BountyContract"),
+                                  # Declared by the audio micro's template.
+                                  CodeField(name="cue", type="AudioCue")]),
+        UnityScript(name="Shop", type="custom", description="d",
+                    extra_fields=[CodeField(name="offer", type="BountyContract")],
+                    update_extra="_score += 1;"),
+        # Step 6 retypes this field to Coroutine.
+        UnityScript(name="Spawner", type="custom", description="d",
+                    extra_usings=["System.Collections"],
+                    extra_fields=[CodeField(name="spawnRoutine", type="IEnumerator")],
+                    awake_extra="spawnRoutine = StartCoroutine(SpawnLoop());",
+                    extra_methods=[CodeMethod(signature="private IEnumerator SpawnLoop()",
+                                              body="yield return null;")]),
+    ]
+    schema = UnitySchema(project_name="ShipParity", game_type="3D", platform="PC",
+                         render_pipeline="builtin", scenes=["Main"],
+                         features=["inventory", "audio"], scripts=scripts)
+    subs = subsystems_for("3D", ["inventory", "audio"])
+    composer = MicroComposer("ShipParity")
+    units = composer.plan(subs)
+    # What Step 5 does before Step 6 sees the schema.
+    inject_boilerplate_scripts(schema)
+    schema.scripts = drop_owned_scripts(schema.scripts, units)
+    return schema, subs, composer, units
+
+
+def test_checker_renders_assets_scripts_byte_identical_to_step6():
+    from src.unity_generator import UnityProjectGenerator
+    schema, subs, composer, units = _parity_project()
+    before = schema.model_dump()
+    # Rendering needs no compiler: component_api is only read by check_candidate.
+    checker = AuthoredSourceChecker(composer=composer, subsystems=subs,
+                                    component_api=None, references=(), schema=schema)
+    mine = checker._project_sources(schema)
+    assert schema.model_dump() == before          # judged on a copy, never mutated
+
+    shipped = UnityProjectGenerator().generate(schema.model_copy(deep=True), {},
+                                               composed_units=units)
+    prefix = "ShipParity/Assets/Scripts/"
+    theirs = {path[len(prefix):]: source for path, source in shipped.items()
+              if path.startswith(prefix) and path.endswith(".cs")}
+    rendered = {path[len("scripts/"):]: source for path, source in mine.items()
+                if path.startswith("scripts/")}
+    assert set(rendered) == {f"{s.name}.cs" for s in schema.scripts}
+    for name, source in rendered.items():
+        assert theirs[name] == source, name
+
+    assert {"context/GameContext.cs", "context/StatModifier.cs"} <= set(mine)
+    assert "GameManager.cs" in rendered               # Step 5 boilerplate
+    stubs = "".join(rendered.values())
+    assert stubs.count("public class BountyContract") == 1
+    assert "public class AudioCue" not in stubs
+    assert "Coroutine spawnRoutine" in rendered["Spawner.cs"]
+
+
+def test_step3_5_check_sees_step5_boilerplate_before_step5_runs():
+    """At Step 3.5 the schema has no GameManager yet; Step 5 always adds one,
+    so the check must compile against it. Idempotent once Step 5 has run."""
+    from src.unity_compose import MicroComposer, Subsystem
+    from src.unity_pipeline import inject_boilerplate_scripts
+    from src.unity_schema import UnitySchema, UnityScript
+    schema = UnitySchema(project_name="Early", game_type="3D", platform="PC",
+                         render_pipeline="builtin", scenes=["Main"],
+                         scripts=[UnityScript(name="Keeper", type="custom", description="d")])
+    subs = [Subsystem(kind="health", variant="simple", target="player", name="PlayerHealth")]
+    checker = AuthoredSourceChecker(composer=MicroComposer("Early"), subsystems=subs,
+                                    component_api=None, references=(), schema=schema)
+    assert "scripts/GameManager.cs" in checker._project_sources(schema)
+    assert [s.type for s in schema.scripts] == ["custom"]
+    first = inject_boilerplate_scripts(schema)
+    assert first and inject_boilerplate_scripts(schema) == []
+
+
+def test_script_templates_read_only_the_shared_render_context():
+    """Drift guard: Step 6 renders Assets/Scripts with script_render_context
+    alone, so a template reading any other key fails in both paths."""
+    from jinja2 import Environment, FileSystemLoader, meta
+    from src.unity_generator import _LEGACY_SCRIPT_TEMPLATES, script_render_context
+    from src.unity_schema import UnitySchema
+    env = Environment(loader=FileSystemLoader("templates/unity"))
+    per_script = {"script", "atom_body", "stub_classes", "needs_rigidbody",
+                  "needs_player_rigidbody"}
+    allowed = set(script_render_context(UnitySchema(
+        project_name="Ctx", game_type="3D", platform="PC",
+        render_pipeline="builtin", scenes=["Main"]), None)) | per_script
+    templates = [f"scripts/{name}" for name in _LEGACY_SCRIPT_TEMPLATES.values()]
+    for template in [*templates, "scripts/IClimbingState.cs.j2"]:
+        source = env.loader.get_source(env, template)[0]
+        assert meta.find_undeclared_variables(env.parse(source)) <= allowed, template
+
+
+def _config():
+    local = Path("config.yaml")
+    return yaml.safe_load((local if local.is_file() else Path("config.example.yaml"))
+                          .read_text(encoding="utf-8"))
+
+
+def _ship_subsystems():
+    from src.unity_compose import Subsystem
+    return [Subsystem(kind="health", variant="simple", target="player", name="PlayerHealth"),
+            Subsystem(kind="inventory", variant="slot_based", target="player",
+                      name="PlayerInventory"),
+            Subsystem(kind="audio", variant="categorical_mixer", target="systems",
+                      name="AudioDirector")]
+
+
+def _ship_schema(script_list):
+    from src.unity_schema import UnitySchema
+    return UnitySchema(project_name="ShipCheck", game_type="3D", platform="PC",
+                       render_pipeline="builtin", scenes=["Main"], scripts=list(script_list))
+
+
+def _checker_for(script_list, refs):
+    from src.unity_component_api import extract_components
+    from src.unity_compose import MicroComposer
+    subs, schema = _ship_subsystems(), _ship_schema(script_list)
+    composer = MicroComposer("ShipCheck")
+    return AuthoredSourceChecker(composer=composer, subsystems=subs,
+                                 component_api=extract_components(composer, subs),
+                                 references=refs, schema=schema)
+
+
+def test_real_compiler_binds_game_manager_before_step5_injects_it():
+    from src.unity_schema import UnityScript
+    refs = _references()
+    script = UnityScript(name="ScoreKeeper", type="custom", description="d")
+    checker = _checker_for([script], refs)
+    findings = checker.script(script, {
+        "update_extra": "if (GameManager.Instance != null) GameManager.Instance.AddScore(1);"})
+    assert findings.introduced == [], findings.introduced
+
+
+def test_real_compiler_judges_a_proposal_on_top_of_step3_fields():
+    """Payload lists APPEND, as _apply_script lands them; they never replace."""
+    from src.unity_schema import CodeField, UnityScript
+    refs = _references()
+    script = UnityScript(name="Diver", type="custom", description="d",
+                         extra_fields=[CodeField(name="oxygen", type="float", default="100f")])
+    checker = _checker_for([script], refs)
+    findings = checker.script(script, {
+        "update_extra": "oxygen -= drainRate * Time.deltaTime;",
+        "extra_fields": [{"name": "drainRate", "type": "float", "default": "1f"}]})
+    assert findings.introduced == [], findings.introduced
+    assert [f.name for f in script.extra_fields] == ["oxygen"]     # judged, not applied
+    assert script.update_extra == ""
+
+
+def test_real_compiler_judges_the_step6_normalized_source():
+    from src.unity_schema import UnityScript
+    refs = _references()
+    script = UnityScript(name="Spawner", type="custom", description="d")
+    checker = _checker_for([script], refs)
+    findings = checker.script(script, {
+        "extra_usings": ["System.Collections"],
+        "extra_fields": [{"name": "spawnRoutine", "type": "IEnumerator"}],
+        "awake_extra": "spawnRoutine = StartCoroutine(SpawnLoop());",
+        "extra_methods": [{"signature": "private IEnumerator SpawnLoop()",
+                           "body": "yield return null;"}]})
+    assert findings.introduced == [], findings.introduced
+
+
+def test_real_compiler_knows_types_micro_templates_declare():
+    from src.unity_schema import UnityScript
+    refs = _references()
+    script = UnityScript(name="Jukebox", type="custom", description="d")
+    checker = _checker_for([script], refs)
+    findings = checker.script(script, {
+        "extra_fields": [{"name": "cue", "type": "AudioCue"}],
+        "update_extra": "if (cue != null) Debug.Log(cue.name);"})
+    assert findings.introduced == [], findings.introduced
+
+
+def test_final_record_accepts_a_project_that_compiles():
+    """GameContext's GameManager/StatModifier references and two scripts
+    sharing an invented type all compile in the shipped project, so the
+    final record must accept it."""
+    from src.unity_authored_check import final_component_record
+    from src.unity_compose import MicroComposer
+    from src.unity_schema import CodeField, UnityScript
+    _references()
+    backpack = UnityScript(name="Backpack", type="custom", description="d",
+                           extra_fields=[CodeField(name="contract", type="BountyContract")])
+    shop = UnityScript(name="Shop", type="custom", description="d",
+                       extra_fields=[CodeField(name="offer", type="BountyContract")],
+                       update_extra="if (GameManager.Instance != null) "
+                                    "GameManager.Instance.AddScore(1);")
+    record, warnings = final_component_record(MicroComposer("ShipCheck"),
+                                              _ship_subsystems(), _config(),
+                                              _ship_schema([backpack, shop]))
+    check = record["script_source_check"]
+    assert check["accepted"] is True, check["diagnostics"]
+    assert not any("custom script source" in w for w in warnings)

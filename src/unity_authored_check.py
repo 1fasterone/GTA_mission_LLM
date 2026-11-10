@@ -100,9 +100,23 @@ class AuthoredSourceChecker:
 
     `component_api` is the fragment-free selected baseline the pipeline
     already extracted.  Custom scripts are judged in a compilation that also
-    holds that baseline, the rendered GameContext locator, and every sibling
-    script in its CURRENT state, so a call into a composed micro or a sibling
-    binds exactly as it will in the generated project.
+    holds that baseline, every file the GameContext emitter writes, and every
+    Assets/Scripts file Step 6 will write for the project in its CURRENT
+    state.  Those script files are not reconstructed here: they come from the
+    generator's own `prepare_scripts` / `stub_known_types` /
+    `script_render_context` / `render_project_scripts`, applied to a deep copy
+    after the same `inject_boilerplate_scripts` and `drop_owned_scripts` Step 5
+    applies, so a call into a
+    composed micro, GameManager or a sibling binds exactly as it will in the
+    generated project.  A script proposal is landed on that copy by
+    `unity_micro_code._apply_script`, the function that applies it for real.
+
+    Not in the compilation: the generator's own runtime files that are not
+    schema scripts (SceneSetup, SceneAudio, ModelSwap, the atmosphere and
+    vehicle helpers, EntitySpawner) and the MeshBuilder `generate()` appends
+    when an entity resolves to a procedural model — those need asset
+    resolution. A custom script that names one of them is left to the Editor
+    gate.
     """
 
     def __init__(self, *, composer: Any, subsystems: Sequence[Any],
@@ -117,7 +131,8 @@ class AuthoredSourceChecker:
         if getattr(composer, "component_api", None) is None:
             composer.component_api = component_api
         self._baseline_check: CandidateCheck | None = None
-        self._context_source: str | None = None
+        self._units: list[Any] | None = None
+        self._context: dict[bool, dict[str, str]] = {}
 
     # ── composed micros ────────────────────────────────────────────────────
     def _subsystem_baseline(self) -> CandidateCheck:
@@ -136,69 +151,99 @@ class AuthoredSourceChecker:
         return introduced_findings(self._subsystem_baseline(), check, sorted(candidates))
 
     # ── custom scripts ─────────────────────────────────────────────────────
-    def _gamecontext(self) -> str:
-        if self._context_source is None:
-            units = self.composer.plan(self.subsystems)
-            has_game_manager = any(getattr(s, "type", "") == "game_manager"
-                                   for s in getattr(self.schema, "scripts", []) or [])
+    def _plan(self) -> list[Any]:
+        if self._units is None:
+            self._units = self.composer.plan(self.subsystems)
+        return self._units
+
+    def _context_sources(self, has_game_manager: bool) -> dict[str, str]:
+        """Every .cs file the GameContext emitter writes (GameContext.cs plus
+        companions such as StatModifier.cs that it references)."""
+        if has_game_manager not in self._context:
             with tempfile.TemporaryDirectory(prefix="authored-check-context-") as tmp:
                 root = Path(tmp)
-                self.composer._emit_context(units, root, has_game_manager, None)
-                self._context_source = (root / "context" / "Scripts" / "GameContext.cs"
-                                        ).read_text(encoding="utf-8")
-        return self._context_source
+                self.composer._emit_context(self._plan(), root, has_game_manager, None)
+                scripts = root / "context" / "Scripts"
+                self._context[has_game_manager] = {
+                    f"context/{path.name}": path.read_text(encoding="utf-8")
+                    for path in sorted(scripts.glob("*.cs"))}
+        return self._context[has_game_manager]
 
-    def _render_script(self, script: Any) -> str:
-        """Render exactly what Step 6 will: the same lint, then the template."""
-        from .micro.code_fields import lint_extensible
-        from .unity_generator import UnityProjectGenerator
-        script = script.model_copy(deep=True)
-        lint_extensible(script, reserved_fields=set(), template_usings={"UnityEngine"},
-                        hoist_field_inits=True)
-        generator = UnityProjectGenerator(self.template_dir)
-        known = frozenset(getattr(s, "name", "") for s in self.schema.scripts) | frozenset(
-            row.get("class_name", "") for row in self.component_api.document.get("selection", []))
-        content, _path = generator._generate_script(
-            self.schema, script,
-            {"render_pipeline": getattr(self.schema, "render_pipeline", "URP"),
-             "climbing_contract": False},
-            known)
-        return content
+    def _shipped_scripts(self, schema: Any) -> Any:
+        """A deep copy of `schema` holding only the scripts Step 6 will ship:
+        Step 5's boilerplate injection (idempotent, so a no-op once Step 5 has
+        run) and then the same `drop_owned_scripts` compose applies."""
+        from .unity_compose import drop_owned_scripts
+        from .unity_pipeline import inject_boilerplate_scripts
+        project = schema.model_copy(deep=True)
+        inject_boilerplate_scripts(project)
+        project.scripts = drop_owned_scripts(project.scripts, self._plan())
+        return project
 
-    def _script_sources(self, override: Any = None) -> dict[str, str]:
-        sources: dict[str, str] = {"scripts/GameContext.cs": self._gamecontext()}
-        for script in self.schema.scripts:
-            if getattr(script, "type", "") != "custom":
-                continue
-            current = override if override is not None and override.name == script.name else script
-            sources[f"scripts/{script.name}.cs"] = self._render_script(current)
+    def _project_sources(self, schema: Any) -> dict[str, str]:
+        """Assets/Scripts and the context files exactly as Step 6 writes them
+        for `schema`, keyed by logical path. `schema` is never mutated."""
+        from .unity_generator import (UnityProjectGenerator, prepare_scripts,
+                                      script_render_context, stub_known_types)
+        units = self._plan()
+        project = self._shipped_scripts(schema)
+        known = stub_known_types(project, units)
+        prepare_scripts(project)
+        rendered = UnityProjectGenerator(self.template_dir).render_project_scripts(
+            project, script_render_context(project, units), known)
+        has_game_manager = any(getattr(s, "type", "") == "game_manager"
+                               for s in project.scripts)
+        sources = dict(self._context_sources(has_game_manager))
+        sources.update({f"scripts/{Path(path).name}": source
+                        for path, source in rendered.items()})
         return sources
+
+    def shipped_custom_paths(self) -> list[str]:
+        """Logical paths of the custom scripts Step 6 will ship."""
+        if self.schema is None:
+            return []
+        project = self._shipped_scripts(self.schema)
+        return sorted(f"scripts/{s.name}.cs" for s in project.scripts
+                      if getattr(s, "type", "") == "custom")
 
     def script(self, script: Any, payload: Mapping[str, Any]) -> AuthoredFindings:
         """Findings for one custom script with `payload` applied to a copy."""
+        from .unity_micro_code import _apply_script
         if self.schema is None:
             raise ValueError("[authored-check] script checks need the project schema")
+        scripts = list(self.schema.scripts)
+        index = next((i for i, item in enumerate(scripts) if item is script),
+                     next((i for i, item in enumerate(scripts)
+                           if getattr(item, "name", None) == script.name), None))
+        if index is None:
+            raise ValueError(f"[authored-check] script {script.name!r} is not in "
+                             "the project schema")
         # Script sources are NEW logical paths overlaid on the selected micro
         # baseline, so both compilations see the same composed classes.
-        base_check = check_candidate(self.component_api, self._script_sources(),
+        base_check = check_candidate(self.component_api,
+                                     self._project_sources(self.schema),
                                      references=self.references)
-        proposed = type(script).model_validate({**script.model_dump(), **{
-            key: value for key, value in payload.items() if key in type(script).model_fields}})
-        check = check_candidate(self.component_api, self._script_sources(proposed),
+        trial = self.schema.model_copy(deep=True)
+        _apply_script(trial.scripts[index], dict(payload), report=_silent)
+        check = check_candidate(self.component_api, self._project_sources(trial),
                                 references=self.references)
         return introduced_findings(base_check, check, [f"scripts/{script.name}.cs"])
 
     def project_scripts(self, authored_micro_sources: Mapping[str, str]) -> CandidateCheck:
-        """Compile every custom script as it will ship, beside the AUTHORED
-        micros, so a script calling an authored public method binds exactly as
-        in the generated project. The structured diagnostics that replaced the
-        generator's collaborator erasers."""
+        """Compile every Assets/Scripts file as it will ship, beside the
+        AUTHORED micros, so a script calling an authored public method binds
+        exactly as in the generated project. The structured diagnostics that
+        replaced the generator's collaborator erasers."""
         if self.schema is None:
             raise ValueError("[authored-check] script checks need the project schema")
         overlay = {path: source for path, source in authored_micro_sources.items()
                    if self.component_api.sources.get(path) != source}
-        overlay.update(self._script_sources())
+        overlay.update(self._project_sources(self.schema))
         return check_candidate(self.component_api, overlay, references=self.references)
+
+
+def _silent(_message: str) -> None:
+    """`_apply_script` report sink for a proposal that is judged, not applied."""
 
 
 def resolve_references(config: Mapping[str, Any] | None) -> tuple[tuple[Path, ...], dict]:
@@ -271,8 +316,12 @@ def final_component_record(composer: Any, subsystems: Sequence[Any],
                                             component_api=final_component_api,
                                             references=references, schema=schema)
             script_check = checker.project_scripts(authored_micros)
+            # Only the custom scripts' OWN files: template-rendered scripts and
+            # the context files are in the compilation so references bind, but
+            # their diagnostics are not authored-source findings.
+            custom_paths = set(checker.shipped_custom_paths())
             errors = [d for d in script_check.errors
-                      if str(d.get("path", "")).startswith("scripts/")]
+                      if str(d.get("path", "")) in custom_paths]
             record["script_source_check"] = {
                 "accepted": not errors, "diagnostics": errors, "scope": scope}
             if errors:

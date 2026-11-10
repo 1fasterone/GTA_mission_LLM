@@ -4,7 +4,7 @@
       "consumers": [
         "src/capability_resolver.py:225",
         "src/capability_resolver.py:267",
-        "src/unity_generator.py:2352"
+        "src/unity_generator.py:2476"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -12,7 +12,7 @@
     {
       "consumers": [
         "src/capability_resolver.py:267",
-        "src/unity_generator.py:2352"
+        "src/unity_generator.py:2476"
       ],
       "producer": "MicrogensSpec.atoms",
       "source": "src/unity_schema.py:1000"
@@ -20,7 +20,7 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2352"
+        "src/unity_generator.py:2476"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:29",
       "producer": "EntitySpec.atoms and behavior map",
@@ -29,7 +29,7 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2352"
+        "src/unity_generator.py:2476"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
@@ -131,7 +131,7 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/unity_generator.py:2352",
+        "src/unity_generator.py:2476",
         "templates/unity/GameSequencer.cs.j2:12"
       ],
       "provider": "src/atoms/backends/unity.py:292",

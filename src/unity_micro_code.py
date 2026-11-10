@@ -57,7 +57,7 @@ bodies gain prompt-specific content.
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from pydantic import ValidationError
 from rich.console import Console
@@ -848,8 +848,16 @@ def _method_structural_errors(payload: dict) -> list[str]:
     return errors[:6]
 
 
-def _apply_script(script, payload: dict) -> bool:
+def _apply_script(script, payload: dict, *,
+                  report: Callable[[str], None] = print) -> bool:
     """Assign the surviving payload onto the script.
+
+    This is the ONE definition of how a script proposal lands: body keys
+    replace, `extra_fields`/`extra_methods`/`extra_usings` append the entries
+    not already there. The custom-script compiler check applies a proposal
+    through this same function to a deep copy before compiling it, passing a
+    silent `report` so a judged-but-not-yet-applied repair is not logged as if
+    it had shipped.
 
     Pydantic validates on assignment, but that only checks field SHAPE (is
     `body` a string?) — not C# validity. An `extra_methods` body is additionally
@@ -905,13 +913,13 @@ def _apply_script(script, payload: dict) -> bool:
                 fixed = sanitize_default(candidate.type, candidate.default)
                 if fixed != candidate.default:
                     if fixed is None:
-                        print(f"  FIX  dropped uncompilable initializer "
-                              f"{candidate.default!r} on `{candidate.type} "
-                              f"{candidate.name}` (custom script)")
+                        report(f"  FIX  dropped uncompilable initializer "
+                               f"{candidate.default!r} on `{candidate.type} "
+                               f"{candidate.name}` (custom script)")
                     else:
-                        print(f"  FIX  repaired initializer on `{candidate.type} "
-                              f"{candidate.name}`: {candidate.default!r} -> "
-                              f"{fixed!r} (custom script)")
+                        report(f"  FIX  repaired initializer on `{candidate.type} "
+                               f"{candidate.name}`: {candidate.default!r} -> "
+                               f"{fixed!r} (custom script)")
                     candidate.default = fixed or ""
             built.append(candidate)
         if not built:

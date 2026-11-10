@@ -1905,9 +1905,10 @@ _HUD_PANELSETTINGS_META = (
 def normalize_custom_script(s: UnityScript, scripts: "list[UnityScript]") -> None:
     """The deterministic pre-render passes every `type: custom` script gets.
 
-    Shared by Step 6 (`UnityProjectGenerator.generate`) and the Step 3.5
-    correction oracle (`unity_authored_check`), so a proposal is judged as
-    exactly the source that will ship. Mutates `s` in place.
+    Reached only through `prepare_scripts`, which Step 6
+    (`UnityProjectGenerator.generate`) and the custom-script compiler check
+    (`unity_authored_check`) both call, so a proposal is judged as exactly the
+    source that will ship. Mutates `s` in place.
     """
     # hoist_field_inits: CustomBehaviour.cs.j2 renders awake_extra
     # (and emits an Awake() whenever it is non-empty), so an
@@ -1951,6 +1952,93 @@ def normalize_custom_script(s: UnityScript, scripts: "list[UnityScript]") -> Non
     _reject_unbalanced_custom_bodies(s)
 
 
+def prepare_scripts(schema: UnitySchema) -> None:
+    """Step 6's pre-render pass over `schema.scripts`, in place.
+
+    One of four pieces (with `stub_known_types`, `script_render_context` and
+    `UnityProjectGenerator.render_project_scripts`) that `generate()` and the
+    custom-script compiler check (`unity_authored_check`) share, so the check
+    compiles exactly the Assets/Scripts source Step 6 writes. The check runs
+    this on a deep copy; Step 6 runs it on the schema it ships.
+    """
+    for s in schema.scripts:
+        if s.type == "custom":
+            normalize_custom_script(s, schema.scripts)
+            # A custom script can only attach to the Player if one exists.
+            if s.attach_to == "player" and not any(
+                    x.type == "player" for x in schema.scripts):
+                s.attach_to = "systems"
+
+
+def stub_known_types(schema: UnitySchema,
+                     composed_units: "list | None") -> frozenset[str]:
+    """Every type name this project already declares.
+
+    The stub emitter in `_generate_script` invents a `[System.Serializable]`
+    class for a field or signature type it does not recognise. Naming a type
+    the project already declares would be a second definition (CS0101), so
+    this set has to cover every declaration source:
+
+    - every script name, custom or not: a custom script's field can name
+      ANOTHER custom script as its type (live: MuseumMetaProgression.cs got
+      its own empty `class GossipHub {}` beside the real GossipHub.cs);
+    - every composed unit's own class;
+    - every AUXILIARY type a composed micro's template declares. The board
+      micro's GameBoard.cs declares `Piece`, `Zone`, `CommandSpec`; a custom
+      script with a `Piece` field got its own stub beside the real one
+      (live in PuzzleWell, twice in one build).
+
+    Declaration ownership only; it is not a guessed member API.
+    """
+    names: set[str] = {s.name for s in schema.scripts}
+    names |= {u.class_name for u in (composed_units or [])}
+    for unit in composed_units or []:
+        try:
+            from .unity_micro_code import _template_dir_for
+            from .micro.code_fields import template_types
+            template_dir = _template_dir_for(unit)
+            if template_dir is not None:
+                names |= set(template_types(str(template_dir)))
+        except Exception:              # noqa: BLE001 — never block codegen
+            continue
+    return frozenset(names)
+
+
+def _palette_rgb_for(palette: Any) -> dict[str, Any]:
+    return {
+        "primary":    _unity_color(palette.primary),
+        "secondary":  _unity_color(palette.secondary),
+        "accent":     _unity_color(palette.accent),
+        "background": _unity_color(palette.background),
+        "trim":       _unity_color(palette.trim),
+    }
+
+
+def script_render_context(schema: UnitySchema,
+                          composed_units: "list | None") -> dict[str, Any]:
+    """The context every Assets/Scripts template renders with.
+
+    `generate()` builds its wider `base_ctx` on top of this and renders the
+    scripts with THIS dict, so the custom-script check renders them with the
+    same values. A script template that starts reading a key this dict does
+    not carry fails loudly in both paths (StrictUndefined); add the key here.
+    """
+    palette = schema.color_palette  # always non-None after model_validator
+    assert palette is not None
+    return {
+        "project_name":      schema.project_name,
+        "game_type":         schema.game_type,
+        "platform":          schema.platform,
+        "render_pipeline":   schema.render_pipeline,
+        "visual_style":      schema.visual_style,
+        "color_palette":     palette,
+        "palette_rgb":       _palette_rgb_for(palette),
+        "features":          schema.features,
+        "story_beats":       schema.story_beats,
+        "climbing_contract": _is_climbing_contract(schema, composed_units),
+    }
+
+
 class UnityProjectGenerator:
     def __init__(self, template_dir: str = "templates/unity"):
         tpl_path = Path(template_dir)
@@ -1980,6 +2068,42 @@ class UnityProjectGenerator:
         # 6.5 artifact must use this exact table rather than re-discovering it.
         self.last_measured_footprints: dict[str, float] = {}
         self.last_projectile_presentation: dict[str, Any] = {}
+        # Invented types already stubbed in this project; reset per project by
+        # render_project_scripts.
+        self._stubbed_types: set[str] = set()
+
+    def render_project_scripts(self, schema: UnitySchema, ctx: dict,
+                               known_types: frozenset[str]) -> dict[str, str]:
+        """Every Assets/Scripts file Step 6 writes, path -> source, in order.
+
+        `ctx` is `script_render_context(...)`, `known_types` is
+        `stub_known_types(...)`, and `schema` has already been through
+        `prepare_scripts`. `generate()` writes the result; the custom-script
+        compiler check (`unity_authored_check`) compiles it, so both see one
+        rendering of one project.
+        """
+        # A type stubbed for ONE custom script must not be stubbed again for
+        # the next: two scripts naming the same invented type emitted two
+        # definitions of it (CS0101). _generate_script runs once per script, so
+        # the accumulator has to outlive a single call — and must not outlive
+        # the project.
+        self._stubbed_types = set()
+        pn = schema.project_name
+        rendered: dict[str, str] = {}
+        # The interface is emitted only for the deterministic climbing
+        # contract. The composed controller implements it and the generated
+        # stamina/interaction systems consume it without coupling those
+        # systems to a Pipeline-LLM-authored class name.
+        if ctx["climbing_contract"]:
+            rendered[f"{pn}/Assets/Scripts/IClimbingState.cs"] = self._render(
+                "scripts/IClimbingState.cs.j2", ctx)
+        for script in schema.scripts:
+            script_content, script_path = self._generate_script(
+                schema, script, ctx, known_types)
+            if "/_skip_" in script_path:
+                continue  # greybox generator handled separately as Editor script
+            rendered[script_path] = script_content
+        return rendered
 
     # ── model resolution (single source of truth) ──────────────────────────────
 
@@ -2389,53 +2513,13 @@ class UnityProjectGenerator:
                 _log.info("[greybox] %s", message)
 
         # ── Custom-script lint pass ───────────────────────────────────────────
-        # LLM-authored C# fragments are defensively cleaned before any render
-        # (same battle-tested pass the micro generators run in default_fix).
-        # Done here — not in the pipeline — so unity-validate and the webui get
-        # it too. CustomBehaviour.cs.j2 emits no fields of its own, so the only
-        # reserved name is nothing; usings dedupe against the template's.
-        # Stub-avoidance has to know every type this project emits.  This is
-        # declaration ownership only; it is not a guessed member API.
-        _opaque_types: frozenset[str] = frozenset(
-            {s.name for s in schema.scripts if s.type != "custom"}
-            | {u.class_name for u in (composed_units or [])})
-        # Stub-avoidance needs a WIDER set than _opaque_types: a custom script's
-        # field can legitimately name ANOTHER custom script as its type (e.g.
-        # MuseumMetaProgression referencing GossipHub) -- that name already
-        # resolves to a real class this same loop generates, so stubbing it too
-        # is CS0101 (duplicate definition), not a missing type. _opaque_types
-        # excludes "custom" scripts on purpose for the OTHER two call sites
-        # below (their public surface is validated via the richer _custom_api
-        # instead), but _collect_custom_type_stubs has no such richer path --
-        # it only ever asks "is this name already real," so it needs every
-        # script name, custom or not. Confirmed live: MuseumMetaProgression.cs
-        # got its own empty `class GossipHub {}` stub alongside the real
-        # GossipHub.cs script — CS0101, "already contains a definition".
-        # Also every AUXILIARY class a composed micro's template declares. A
-        # micro emits more than its own class: the board micro's GameBoard.cs
-        # declares `Piece`, `Zone`, `CommandSpec`. Those were invisible here —
-        # `composed_units` carries each unit's own `class_name` and nothing
-        # else — so a custom script with a `Piece` field got its own empty stub
-        # beside the real one: CS0101. Live in PuzzleWell, twice in one build.
-        _micro_types: set[str] = set()
-        for _u in (composed_units or []):
-            try:
-                from .unity_micro_code import _template_dir_for
-                from .micro.code_fields import template_types
-                _tdir = _template_dir_for(_u)
-                if _tdir is not None:
-                    _micro_types |= set(template_types(str(_tdir)))
-            except Exception:              # noqa: BLE001 — never block codegen
-                continue
-        _stub_known_types: frozenset[str] = _opaque_types | frozenset(
-            s.name for s in schema.scripts) | frozenset(_micro_types)
-        for s in schema.scripts:
-            if s.type == "custom":
-                normalize_custom_script(s, schema.scripts)
-                # A custom script can only attach to the Player if one exists.
-                if s.attach_to == "player" and not any(
-                        x.type == "player" for x in schema.scripts):
-                    s.attach_to = "systems"
+        # LLM-authored C# fragments get the deterministic structural passes
+        # before any render. Done here — not in the pipeline — so unity-validate
+        # and the webui get them too. The custom-script compiler check
+        # (unity_authored_check) calls the same three helpers on a copy, so it
+        # compiles exactly what this method writes.
+        _stub_known_types = stub_known_types(schema, composed_units)
+        prepare_scripts(schema)
 
         # ── Entity behavior reconciliation ────────────────────────────────────
         # `behavior` must name a class that actually exists or AddComponent
@@ -2671,13 +2755,8 @@ class UnityProjectGenerator:
         lighting  = _LIGHTING_BY_STYLE.get(schema.visual_style,
                                            _LIGHTING_BY_STYLE["stylized"])
         bg        = _unity_color(palette.background)
-        _palette_rgb = {
-            "primary":    _unity_color(palette.primary),
-            "secondary":  _unity_color(palette.secondary),
-            "accent":     _unity_color(palette.accent),
-            "background": bg,
-            "trim":       _unity_color(palette.trim),
-        }
+        script_ctx = script_render_context(schema, composed_units)
+        _palette_rgb = script_ctx["palette_rgb"]
 
         # ── Environment mood (time of day / fog) ──────────────────────────────
         # "day" (or no environment block) keeps the historical style lighting
@@ -2712,7 +2791,9 @@ class UnityProjectGenerator:
         }
 
         base_ctx = {
-            "project_name":      pn,
+            # Every key the Assets/Scripts templates read, from the one
+            # builder the custom-script compiler check also uses.
+            **script_ctx,
             "display_title":     _to_display_title(pn),
             "company_name":      schema.company_name,
             "description":       schema.description,
@@ -2725,14 +2806,8 @@ class UnityProjectGenerator:
                 and getattr(u, "target", "") == "npc"
                 and bool(getattr(u, "dialog", {}).get("entity_name"))
                 for u in (composed_units or [])),
-            "game_type":         schema.game_type,
-            "platform":          schema.platform,
-            "render_pipeline":   schema.render_pipeline,
             "unity_version":     schema.unity_version,
             "color_space":       schema.color_space,
-            "visual_style":      schema.visual_style,
-            "color_palette":     palette,
-            "palette_rgb": _palette_rgb,
             **_ambient_ctx(_palette_rgb, _lighting_variant_for(schema, composed_units)),
             "mat_guids":         mat_guids,
             "lighting":          lighting,
@@ -2742,9 +2817,7 @@ class UnityProjectGenerator:
             "sun_intensity":     sun_intensity,
             "fog_enabled":       fog_enabled,
             "fog_color":         fog_color,
-            "features":          schema.features,
             "scenes":            schema.scenes,
-            "story_beats":       schema.story_beats,
             "audio_tracks":      schema.audio_tracks,
             "procedural_meshes": schema.procedural_meshes,
             "entities":          schema.entities,
@@ -2768,7 +2841,6 @@ class UnityProjectGenerator:
             "kenney_assets":     kenney_assets,
             "materials":         schema.materials,
             "shaders":           schema.shaders,
-            "climbing_contract": _is_climbing_contract(schema, composed_units),
             "greybox_enabled":   greybox_ir is not None,
             "greybox_ir":        greybox_ir.model_dump(mode="json") if greybox_ir else None,
             "greybox_seed":      greybox_ir.seed if greybox_ir else 0,
@@ -2951,30 +3023,11 @@ class UnityProjectGenerator:
             _make_guid(f"{pn}/Assets/Scenes"), folder=True
         )
 
-        # A type stubbed for ONE custom script must not be stubbed again for
-        # the next: two scripts naming the same invented type emitted two
-        # definitions of it (CS0101). _generate_script runs once per script, so
-        # the accumulator has to outlive a single call.
-        self._stubbed_types: set[str] = set()
-
-        # The interface is emitted only for the deterministic climbing
-        # contract. The composed controller implements it and the generated
-        # stamina/interaction systems consume it without coupling those
-        # systems to a Pipeline-LLM-authored class name.
-        if base_ctx["climbing_contract"]:
-            climb_state_path = f"{pn}/Assets/Scripts/IClimbingState.cs"
-            files[climb_state_path] = self._render(
-                "scripts/IClimbingState.cs.j2", base_ctx)
-            files[f"{climb_state_path}.meta"] = _meta_file(
-                _make_guid(f"{pn}/Scripts/IClimbingState"))
-        for script in schema.scripts:
-            script_content, script_path = self._generate_script(
-                schema, script, base_ctx, _stub_known_types)
-            if "/_skip_" in script_path:
-                continue  # greybox generator handled separately as Editor script
+        for script_path, script_content in self.render_project_scripts(
+                schema, script_ctx, _stub_known_types).items():
             files[script_path]           = script_content
             files[f"{script_path}.meta"] = _meta_file(
-                _make_guid(f"{pn}/Scripts/{script.name}")
+                _make_guid(f"{pn}/Scripts/{Path(script_path).stem}")
             )
         files[f"{pn}/Assets/Scripts.meta"] = _default_meta(
             _make_guid(f"{pn}/Assets/Scripts"), folder=True
@@ -3744,9 +3797,7 @@ class UnityProjectGenerator:
                 getattr(script, "extra_methods", None) or [])]
             candidates = list(script.extra_fields or []) + sig_types
             if candidates:
-                stubbed = getattr(self, "_stubbed_types", None)
-                if stubbed is None:
-                    stubbed = self._stubbed_types = set()
+                stubbed = self._stubbed_types
                 names = _stub_type_names(
                     candidates, known_types | frozenset(stubbed))
                 if names:
