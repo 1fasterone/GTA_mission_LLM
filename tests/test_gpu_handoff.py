@@ -221,3 +221,24 @@ def test_freeze_boundary_leaves_client_unreleased_when_model_stays():
         pipe._evict_llm_for_gpu_stages()
     # End-of-run unload in UnityPipeline.run() still gets its own try.
     assert client.released is False
+
+
+def test_comfyui_backend_retries_eviction_after_a_failed_attempt():
+    """Review on #293: a failed eviction must not settle the hand-off, or the
+    rest of the batch runs beside a still-resident model."""
+    from src.sprites.comfyui_backend import ComfyUIBackend
+
+    stuck = gpu_handoff.EvictionResult(attempted=True, listed=True,
+                                       still_resident=["qwen3.5-9b"])
+    done = gpu_handoff.EvictionResult(attempted=True, listed=True,
+                                      evicted=["qwen3.5-9b"])
+    backend = ComfyUIBackend(CFG)
+    with patch("src.gpu_handoff.evict_lm_studio_models",
+               side_effect=[stuck, done]) as evict, \
+         patch.object(backend, "available", return_value=True), \
+         patch.object(backend, "_post_json", return_value={"prompt_id": "p"}), \
+         patch.object(backend, "_poll_history", return_value=None):
+        backend._run_graph({})
+        backend._run_graph({})
+        backend._run_graph({})
+    assert evict.call_count == 2

@@ -145,16 +145,18 @@ class ComfyUIBackend:
         with qwen3.5-9b still loaded. The pipeline already evicts at the
         Step 3.5 freeze boundary; this guard covers what that cannot see — a
         `--no-llm` run, a model loaded by hand in LM Studio, or a caller
-        outside unity-create. Once per backend instance: the first graph
-        loads the checkpoint, later graphs reuse it."""
+        outside unity-create. Settled once eviction is confirmed (or not
+        applicable); a failed attempt leaves it open so the next graph
+        retries instead of running the rest of the batch beside a resident
+        model."""
         if self._gpu_handed_off:
             return
-        self._gpu_handed_off = True
         from ..gpu_handoff import evict_lm_studio_models
 
         result = evict_lm_studio_models(self._config)
         if result.attempted and (result.evicted or not result.ok):
             print(f"[sprites/comfyui] {result.summary()}")
+        self._gpu_handed_off = result.ok
 
     def _post_json(self, path: str, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")
