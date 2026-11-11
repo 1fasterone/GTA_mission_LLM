@@ -231,6 +231,10 @@ class LMStudioClient:
         # Do not evict a model when this client was only constructed for an
         # offline/no-LLM path.  A positive count proves this run used it.
         self.chat_calls = 0
+        # Set by the pipeline once src/gpu_handoff.py has evicted every
+        # resident LM Studio model at the freeze boundary; a later chat()
+        # (the next run, JIT-reloading the model) clears it again.
+        self.released = False
 
     def unload(self) -> bool:
         """Eject the LM Studio model used by this run, best effort.
@@ -242,6 +246,8 @@ class LMStudioClient:
         """
         if self.backend != "lm_studio" or self.chat_calls == 0:
             return False
+        if self.released:
+            return True
 
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         native_root = self.base_url
@@ -479,6 +485,7 @@ class LMStudioClient:
                          is unchanged.
         """
         self.chat_calls += 1
+        self.released = False
         payload = self._build_payload(system, user, temperature, thinking, seed,
                                       max_tokens, json_mode=json_mode,
                                       json_schema=json_schema, images=images)

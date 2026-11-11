@@ -97,6 +97,9 @@ class ComfyUIBackend:
         self.ref_denoise   = float(cfg.get("ref_denoise", 0.72))
         self.checkpoint    = _CHECKPOINT
         self._warned: set[str] = set()
+        # Full config, for the LM Studio hand-off below (lm_studio section).
+        self._config       = config or {}
+        self._gpu_handed_off = False
 
     def _warn_once(self, key: str, msg: str) -> None:
         if key not in self._warned:
@@ -135,6 +138,23 @@ class ComfyUIBackend:
         except (urllib.error.URLError, OSError) as exc:
             self._warn_once("free_failed", f"POST /free failed ({type(exc).__name__}: {exc})")
             return False
+
+    def _hand_off_gpu(self) -> None:
+        """Evict every resident LM Studio model before ComfyUI loads its
+        checkpoint. Confirmed live (2026-11-10): the sprite batch started
+        with qwen3.5-9b still loaded. The pipeline already evicts at the
+        Step 3.5 freeze boundary; this guard covers what that cannot see — a
+        `--no-llm` run, a model loaded by hand in LM Studio, or a caller
+        outside unity-create. Once per backend instance: the first graph
+        loads the checkpoint, later graphs reuse it."""
+        if self._gpu_handed_off:
+            return
+        self._gpu_handed_off = True
+        from ..gpu_handoff import evict_lm_studio_models
+
+        result = evict_lm_studio_models(self._config)
+        if result.attempted and (result.evicted or not result.ok):
+            print(f"[sprites/comfyui] {result.summary()}")
 
     def _post_json(self, path: str, payload: dict) -> dict:
         data = json.dumps(payload).encode("utf-8")
@@ -212,6 +232,7 @@ class ComfyUIBackend:
             self._warn_once("unreachable", f"ComfyUI not reachable at {self.base_url}")
             return None
 
+        self._hand_off_gpu()
         client_id = str(uuid.uuid4())
         try:
             resp = self._post_json("/prompt", {"prompt": graph, "client_id": client_id})

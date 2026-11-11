@@ -1542,6 +1542,26 @@ class UnityPipeline:
                         f"({type(exc).__name__}: {exc})"
                     )
 
+    def _evict_llm_for_gpu_stages(self) -> None:
+        """Free LM Studio's VRAM once the model can no longer be called.
+
+        Past the freeze boundary the Pipeline LLM is dead weight on the GPU,
+        and Step 6 starts ComfyUI sprites and Stable Audio 3. Lifecycle only
+        (no sampling), so it cannot affect compiler output.
+        """
+        from .gpu_handoff import evict_lm_studio_models
+
+        result = evict_lm_studio_models(self.config)
+        if not result.attempted:
+            return
+        if result.ok:
+            self._ok(result.summary())
+            inner = thaw(self.llm)
+            if inner is not None and hasattr(inner, "released"):
+                inner.released = True
+        else:
+            self._warn(result.summary() + " — GPU stages may run out of VRAM")
+
     def _run_impl(self, user_prompt: str,
             theme:       str | None = None,
             mashup_with: str | None = None,
@@ -2124,6 +2144,7 @@ class UnityPipeline:
         )
         self.llm = freeze(self.llm)
         self._ok("Freeze boundary crossed — Steps 4-7 run without the LLM")
+        self._evict_llm_for_gpu_stages()
 
         # STEP 4 — resolve packages (single-execution stage). First collect
         # requirements; resolution runs once after all

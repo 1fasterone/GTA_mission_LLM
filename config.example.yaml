@@ -32,6 +32,10 @@ lm_studio:
   # of that separate question. Leave unset to read structured_output above
   # unchanged.
   # structured_output_mode: json_schema
+  # Unload EVERY resident LM Studio model at the Step 3.5 freeze boundary and
+  # again before ComfyUI's first graph, so image/audio generation gets the
+  # VRAM (src/gpu_handoff.py). Lifecycle only — never samples the model.
+  evict_before_gpu_stages: true
 
 ollama:                            # used when lm_studio.backend == "ollama"
   base_url: http://localhost:11434/v1

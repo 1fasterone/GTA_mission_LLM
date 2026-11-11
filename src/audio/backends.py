@@ -119,54 +119,16 @@ _ADAPTERS = {"none": _NoneAdapter, "dsp": DspAdapter, "local": LocalAdapter}
 # ── LM Studio VRAM management ────────────────────────────────────────────────
 
 def unload_lm_studio(config: dict) -> bool:
-    """Unload all active LM Studio models to free VRAM for Stable Audio 3.
+    """Unload every resident LM Studio model to free VRAM for Stable Audio 3.
 
-    Strategy (tried in order, first success wins):
-      1. `lms unload <model_id>` CLI — the supported unload mechanism in LM Studio.
-      2. REST GET /api/v0/models to discover what's loaded (used to build CLI args).
-
-    Returns True on success or when nothing is loaded; False on failure (non-fatal).
-    Graceful on Ollama (no lms CLI) and on network / subprocess errors.
+    Delegates to src/gpu_handoff.py, the one eviction path shared with the
+    freeze boundary and the ComfyUI sprite backend. Returns True when nothing
+    is known to remain resident (including a non-LM-Studio backend); False on
+    failure (non-fatal).
     """
-    import subprocess
+    from ..gpu_handoff import evict_lm_studio_models
 
-    lm_cfg = (config or {}).get("lm_studio", {})
-    v1_base = str(lm_cfg.get("base_url", "http://localhost:1234/v1")).rstrip("/")
-    mgmt = v1_base.replace("/v1", "").rstrip("/") + "/api/v0"
-
-    # Discover which models are loaded via the REST list endpoint.
-    loaded_ids: list[str] = []
-    try:
-        import httpx
-        with httpx.Client(timeout=10.0) as client:
-            r = client.get(f"{mgmt}/models")
-            if r.status_code == 200:
-                for m in r.json().get("data", []):
-                    if m.get("state") == "loaded":
-                        mid = m.get("id") or m.get("identifier") or ""
-                        if mid:
-                            loaded_ids.append(mid)
-    except Exception:  # noqa: BLE001 — Ollama / network unavailable
-        pass
-
-    if not loaded_ids:
-        return True  # nothing to unload
-
-    # Unload each model via the LM Studio CLI (`lms unload <model_key>`).
-    all_ok = True
-    for mid in loaded_ids:
-        try:
-            result = subprocess.run(
-                ["lms", "unload", mid],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode != 0:
-                all_ok = False
-        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-            # lms CLI not on PATH or timed out — non-fatal
-            all_ok = False
-
-    return all_ok
+    return evict_lm_studio_models(config).ok
 
 
 # ── caching wrapper ───────────────────────────────────────────────────────────
