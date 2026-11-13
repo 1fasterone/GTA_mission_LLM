@@ -105,10 +105,14 @@ def _animation_atoms(a: AnimationCapability) -> list[AtomInvocation]:
 # InitDialogSystem, BarkOnSight, EnableNavMesh, SetAIBehavior, EnableParticles
 # and EnablePostProcessing. None was a registered atom and none had a lowerer,
 # so each reached GameSequencer as a `// TODO` comment that read like scene
-# setup but did nothing. Their capabilities still activate their micros
-# (capabilities_to_active_microgens). The params below have NO executable
-# consumer; they are named loudly by resolve_capabilities, never emitted as
-# placeholder atoms and never given invented public atom vocabulary.
+# setup but did nothing. Nothing else consumes the dialog, ai and vfx
+# capabilities either: micro selection (unity_compose.subsystems_for) reads
+# capabilities.controller alone, and capabilities_to_active_microgens only
+# names kinds, so declaring them selects no dialogue, statemachine or trigger
+# micro. Wiring them into selection would change generated projects and is not
+# done here. resolve_capabilities names each declared one, and the params
+# below, as unconsumed; they are never emitted as placeholder atoms and never
+# given invented public atom vocabulary.
 
 def _unlowered_dialog(d: DialogCapability) -> list[str]:
     params = []
@@ -140,6 +144,11 @@ _UNLOWERED_PARAM_READERS: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
     ("ai",     _unlowered_ai),
     ("vfx",    _unlowered_vfx),
 )
+
+
+def unconsumed_capabilities(caps: ProjectCapabilities) -> list[str]:
+    """Declared capabilities that neither micro selection nor a lowerer reads."""
+    return [name for name, _ in _UNLOWERED_PARAM_READERS if getattr(caps, name)]
 
 
 def unlowered_capability_params(caps: ProjectCapabilities) -> list[str]:
@@ -228,7 +237,13 @@ def capabilities_to_atoms(
 
 
 def capabilities_to_active_microgens(caps: ProjectCapabilities) -> list[str]:
-    """Return the microgen kinds that should be activated for these capabilities."""
+    """Name the micro kind each declared capability corresponds to.
+
+    Descriptive only: micro selection (unity_compose.subsystems_for) reads
+    capabilities.controller alone and never this list, so dialog/ai/vfx here
+    select no dialogue, statemachine or trigger micro (see
+    unconsumed_capabilities).
+    """
     kinds: list[str] = []
     if caps.controller: kinds.append("controller")
     if caps.physics:    kinds.append("physics")
@@ -263,13 +278,17 @@ def resolve_capabilities(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
     if cap_atoms:
         # Prepend: capability atoms fire first (engine init order)
         schema.atoms = cap_atoms + list(schema.atoms)
-        # capabilities_to_active_microgens still reports controller/physics —
-        # they ARE activated, just by subsystems_for, not by an atom fold.
-        kinds = [k for k in capabilities_to_active_microgens(schema.capabilities)
-                 if k not in SUBSYSTEM_OWNED_CAPABILITIES]
+        # Name only the capabilities that actually contributed an atom; a
+        # declared capability with no builder output contributed nothing.
+        contributed = [
+            name for name, builder in _CAP_ATOM_BUILDERS
+            if name not in SUBSYSTEM_OWNED_CAPABILITIES
+            and getattr(schema.capabilities, name)
+            and builder(getattr(schema.capabilities, name))
+        ]
         msgs.append(
             f"Capabilities resolved: {len(cap_atoms)} scene-init atoms injected "
-            f"({', '.join(kinds)})"
+            f"({', '.join(contributed)})"
         )
 
     owned = sorted(name for name in SUBSYSTEM_OWNED_CAPABILITIES
@@ -281,12 +300,15 @@ def resolve_capabilities(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
             f"Start() sequence cannot drive it"
         )
 
-    unlowered = unlowered_capability_params(schema.capabilities)
-    if unlowered:
+    unconsumed = unconsumed_capabilities(schema.capabilities)
+    if unconsumed:
+        unlowered = unlowered_capability_params(schema.capabilities)
         msgs.append(
-            "Capabilities: no executable lowerer consumes "
-            f"{', '.join(unlowered)} — recorded, not emitted as placeholder "
-            "atoms (docs/ATOM_BACKEND_SUPPORT.md, R1)"
+            f"Capabilities: {'/'.join(unconsumed)} declared but nothing consumes "
+            "them — micro selection does not read them (no dialogue, statemachine "
+            "or trigger micro is added) and no executable lowerer consumes "
+            f"{', '.join(unlowered) if unlowered else 'their params'} — recorded, "
+            "not emitted as placeholder atoms (docs/ATOM_BACKEND_SUPPORT.md, R1)"
         )
 
     return schema, msgs

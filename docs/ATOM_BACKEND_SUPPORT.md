@@ -105,11 +105,15 @@ built by `capability_resolver` and folded into `schema.atoms`. None was
 registered or had a lowerer, so each reached GameSequencer as a `// TODO`
 comment that read like scene setup but did nothing. Registering them would have
 invented public vocabulary with no executable meaning, so they were retired.
-Their capabilities still activate the dialogue, statemachine and trigger micros.
-Params no lowerer consumes (`dialog.system`, `dialog.bark_on_sight`,
-`ai.pathfinding`, `ai.behavior`, `ai.detection_range`, `vfx.particles`,
-`vfx.post_processing`) are named in a Step 5 fix message rather than emitted as
-placeholders. A saved schema that already holds one of these names still lowers
+Nothing else consumes the `dialog`, `ai` and `vfx` capabilities either: micro
+selection (`unity_compose.subsystems_for`) reads `capabilities.controller` alone,
+so declaring them adds no dialogue, statemachine or trigger micro, and
+`capabilities_to_active_microgens` is descriptive only. Wiring them into
+selection would change generated projects and is left to a later slice. Each
+declared one, with the params no lowerer consumes (`dialog.system`,
+`dialog.bark_on_sight`, `ai.pathfinding`, `ai.behavior`, `ai.detection_range`,
+`vfx.particles`, `vfx.post_processing`), is named in a Step 5 fix message rather
+than emitted as placeholders. A saved schema that already holds one of these names still lowers
 to the same `// TODO` comment on replay; schemas are never rewritten.
 
 ## Ownership and reachability

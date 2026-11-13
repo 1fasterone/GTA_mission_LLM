@@ -2,8 +2,8 @@
   "descriptor_producers": [
     {
       "consumers": [
-        "src/capability_resolver.py:245",
-        "src/capability_resolver.py:295",
+        "src/capability_resolver.py:260",
+        "src/capability_resolver.py:317",
         "src/unity_generator.py:2476"
       ],
       "producer": "UnitySchema.atoms",
@@ -11,7 +11,7 @@
     },
     {
       "consumers": [
-        "src/capability_resolver.py:295",
+        "src/capability_resolver.py:317",
         "src/unity_generator.py:2476"
       ],
       "producer": "MicrogensSpec.atoms",

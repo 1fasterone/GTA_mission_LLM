@@ -189,3 +189,28 @@ def test_ai_only_capability_no_longer_emits_a_todo_sequencer():
     assert schema.atoms == []
     files = UnityProjectGenerator(template_dir="templates/unity").generate(schema, {})
     assert not [p for p in files if "GameSequencer" in p]
+
+
+def test_dialog_ai_vfx_are_reported_unconsumed_not_claimed_active():
+    """Review of #298: these capabilities select no micro. Selection reads
+    capabilities.controller alone, so the report must not imply otherwise."""
+    declared = caps(dialog={"system": "simple"}, ai={"behavior": "patrol"},
+                    vfx={"particles": False})
+
+    def selected(capabilities):
+        return [(s.kind, s.variant) for s in subsystems_for("3D", [], capabilities=capabilities)]
+
+    # Declaring them changes nothing about what gets composed.
+    assert selected(declared) == selected(None)
+    _, msgs = resolve_capabilities(schema_with(declared))
+    [message] = [m for m in msgs if "nothing consumes" in m]
+    assert message.startswith("Capabilities: dialog/ai/vfx declared but nothing consumes")
+    assert "no dialogue, statemachine or trigger micro is added" in message
+
+
+def test_scene_init_message_names_only_contributing_capabilities():
+    _, msgs = resolve_capabilities(schema_with(caps(**FULL)))
+    [message] = [m for m in msgs if "scene-init atoms injected" in m]
+    assert message.endswith("(hud, input, model, animation)")
+    for silent in ("dialogue", "statemachine", "trigger", "dialog", "ai", "vfx"):
+        assert silent not in message.split("(", 1)[1]
