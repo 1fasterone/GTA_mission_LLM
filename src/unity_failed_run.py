@@ -384,6 +384,22 @@ def _source_lineage() -> dict[str, Any]:
                 "reason": f"{type(exc).__name__}: {exc}"}
 
 
+# Run options that change what ``unity-validate`` regenerates. A replay that
+# drops one does not reproduce the failed run (e.g. without ``--compose`` the
+# replay leaves Assets/Micros/** untouched).
+_REPLAY_FLAGS: tuple[tuple[str, str], ...] = (
+    ("compose", "--compose"),
+    ("blender_models", "--blender-models"),
+)
+
+
+def replay_command_for(schema_path: Path, options: dict[str, Any]) -> str:
+    """``unity-validate`` command reproducing the run's recorded build mode."""
+    parts = ["python", "main.py", "unity-validate", str(schema_path)]
+    parts.extend(flag for option, flag in _REPLAY_FLAGS if options.get(option) is True)
+    return " ".join(parts)
+
+
 def build_failed_run_report(
     diagnostics: RunDiagnostics,
     exc: BaseException,
@@ -409,8 +425,8 @@ def build_failed_run_report(
     project_name = getattr(schema, "project_name", None) if schema is not None else None
     available = schema_path is not None
     replay = None
-    if available and diagnostics.frozen:
-        replay = f"python main.py unity-validate {schema_path}"
+    if schema_path is not None and diagnostics.frozen:
+        replay = replay_command_for(schema_path, diagnostics.options)
     prompt_bytes = diagnostics.user_prompt.encode("utf-8")
     return FailedRunReport(
         created_utc=_iso_utc(now or datetime.now(timezone.utc)),

@@ -226,7 +226,9 @@ def test_two_failed_fills_leave_a_schema_fill_report(pipeline_config, tmp_path):
     assert [a["raw_response"] for a in report["fill_attempts"]] == [
         "no json", "still no json"]
     assert all(a["error_type"] == "ValueError" for a in report["fill_attempts"])
-    assert report["authorship"]["schema_source"] == "schema_llm"
+    # No candidate was accepted, so no schema has an author yet.
+    assert report["authorship"]["schema_source"] is None
+    assert report["authorship"]["note"] == "No schema existed when the run failed."
     assert report["authorship"]["concept_source"] == "llm"
     assert report["concept"] == _CONCEPT
     assert report["llm_boundary"]["frozen_at_failure"] is False
@@ -251,6 +253,7 @@ def test_generation_failure_after_freeze_keeps_the_filled_schema(
     assert report["phase"]["last_checkpoint"] == "Pre-Generation"
     assert report["phase"]["failed_phase"] == "Steps 6-7 (generation + playability)"
     assert report["fill_attempts"][0]["error"] is None
+    assert report["authorship"]["schema_source"] == "schema_llm"
     assert report["schema_artifact"]["project_name"] == "Gigantinut"
     assert report["replay_command"].startswith("python main.py unity-validate ")
     assert report["intent_ledger"]["format"] == "intent-ledger/v1"
@@ -299,3 +302,27 @@ def test_run_log_manifest_links_the_report(tmp_path):
     manifest_path = next((tmp_path / "unity" / "_run_logs").glob("*.json"))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["failed_run_report"] == "C:\\u\\unity\\_failed_runs\\r.json"
+
+
+def test_replay_command_carries_the_recorded_build_mode(tmp_path):
+    diagnostics = RunDiagnostics(
+        user_prompt="a brief",
+        options={"compose": True, "blender_models": True, "seed": 7},
+    )
+    diagnostics.checkpoint("Pre-Generation", _schema_fixture())
+    diagnostics.frozen = True
+
+    path = write_failed_run_report(diagnostics, RuntimeError("boom"), tmp_path,
+                                   now=_NOW, source_lineage=_LINEAGE)
+
+    report = json.loads(path.read_text(encoding="utf-8"))
+    schema_path = report["schema_artifact"]["path"]
+    assert report["replay_command"] == (
+        f"python main.py unity-validate {schema_path} --compose --blender-models")
+
+
+def test_replay_command_omits_flags_the_run_did_not_use():
+    from src.unity_failed_run import replay_command_for
+
+    assert replay_command_for(Path("s.json"), {"compose": False}) == (
+        "python main.py unity-validate s.json")

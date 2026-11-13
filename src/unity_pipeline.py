@@ -2037,7 +2037,6 @@ class UnityPipeline:
             _json_schema = response_format_schema()["json_schema"] if _mode == "json_schema" else None
             clamp_msgs: list[str] = []
             last_err: Exception | None = None
-            diagnostics.schema_source = "schema_llm"
             for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
                 schema_raw = None
                 user_msg = schema_user
@@ -2079,6 +2078,7 @@ class UnityPipeline:
                     schema = candidate
                     diagnostics.record_fill_attempt(attempt + 1, schema_raw, None)
                     diagnostics.schema = schema
+                    diagnostics.schema_source = "schema_llm"
                     break
                 except (ValueError, ValidationError) as exc:
                     last_err = exc
