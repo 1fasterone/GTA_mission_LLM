@@ -68,12 +68,12 @@
         "WireTriggerToSave"
       ],
       "producer": "Unity wiring atom calls",
-      "source": "src/unity_compose.py:684"
+      "source": "src/unity_compose.py:695"
     },
     {
       "consumers": [
         "src/unity_compose.py:326",
-        "src/unity_compose.py:556",
+        "src/unity_compose.py:567",
         "templates/unity/scene.unity.j2:1323"
       ],
       "producer": "Unity composed subsystem descriptors",
@@ -175,13 +175,13 @@
         "GameWiring"
       ],
       "provenance": [
-        "src/unity_compose.py:429",
+        "src/unity_compose.py:440",
         "templates/unity/compose/GameWiring.cs.j2:40",
         "templates/unity/scene.unity.j2:1334"
       ],
       "provider": "src/atoms/backends/unity.py:747",
       "runtime_acceptance": "unverified",
-      "selection": "src/unity_compose.py:882",
+      "selection": "src/unity_compose.py:893",
       "template_owner_preserved": null
     },
     {
@@ -198,8 +198,8 @@
       ],
       "provenance": [
         "src/micro/unity_base.py:75",
-        "src/unity_compose.py:556",
-        "src/unity_compose.py:579"
+        "src/unity_compose.py:567",
+        "src/unity_compose.py:590"
       ],
       "provider": "src/micro/unity_base.py:75",
       "runtime_acceptance": "unverified",
@@ -220,7 +220,7 @@
       ],
       "provenance": [
         "src/micro/__init__.py:78",
-        "src/unity_compose.py:429",
+        "src/unity_compose.py:440",
         "templates/unity/scene.unity.j2:1381"
       ],
       "provider": "src/micro/controller.py:989",

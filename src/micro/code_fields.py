@@ -3562,6 +3562,42 @@ def sanitize_default(type_str: str, default: Optional[str]) -> Optional[str]:
     return mant + exp + sfx
 
 
+def repair_restored_initializers(fields: list) -> tuple[list, list[str]]:
+    """Re-apply ONLY `sanitize_default` to authored fields restored verbatim.
+
+    The compose path (unity_compose.MicroComposer._resolve) restores authored
+    channels after `default_fix` so collaborator judgements cannot erase source
+    before Roslyn sees it. That restore also discarded the one repair with
+    proven ground truth: an initializer that cannot parse as `= <default>;`
+    (`Color _tintColor = #FFD700`, live 2026-11-10 -> CS1040 + CS1002).
+
+    Narrower than `lint_fields` by design: no reserved/duplicate drop, no type
+    retyping, no CS0236 hoist. Only the `default` text changes; name, type and
+    every other authored channel ship exactly as authored. Returns the new
+    list (originals are not mutated) and one message per changed initializer.
+    """
+    out: list = []
+    msgs: list[str] = []
+    for f in fields:
+        default = getattr(f, "default", None)
+        ftype = getattr(f, "type", None)
+        if default is None or not ftype:
+            out.append(f)
+            continue
+        fixed = sanitize_default(ftype, default)
+        if fixed == default:
+            out.append(f)
+            continue
+        if fixed is None:
+            msgs.append(f"dropped uncompilable initializer {default!r} on "
+                        f"`{ftype} {f.name}` (restored authored field)")
+        else:
+            msgs.append(f"repaired initializer on `{ftype} {f.name}`: "
+                        f"{default!r} -> {fixed!r} (restored authored field)")
+        out.append(f.model_copy(update={"default": fixed}))
+    return out, msgs
+
+
 def lint_fields(fields: list[CodeField], *, reserved: set[str],
                 hoist_into: Optional[list[str]] = None) -> list[CodeField]:
     """Drop fields whose name collides with template-emitted names or duplicates,

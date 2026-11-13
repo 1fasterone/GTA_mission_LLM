@@ -412,7 +412,18 @@ class MicroComposer:
         # passes: add missing namespaces, and reject only impossible extension
         # defaults/collisions with a recorded abstention.  Neither pass removes
         # an authored body or invents a replacement API surface.
-        from .micro.code_fields import apply_extensions_safe_block, heal_missing_usings
+        from .micro.code_fields import (
+            apply_extensions_safe_block, heal_missing_usings,
+            repair_restored_initializers,
+        )
+        # The restore above put authored extra_fields back verbatim, which
+        # also undid default_fix's initializer repair (`= #FFD700;` shipped,
+        # live 2026-11-10). Re-apply that one syntax repair; nothing else.
+        if hasattr(schema, "extra_fields"):
+            schema.extra_fields, init_msgs = repair_restored_initializers(
+                list(schema.extra_fields))
+            for msg in init_msgs:
+                console.print(f"  [magenta]FIX[/]  {msg}")
         template_usings = set(getattr(pipeline, "_TEMPLATE_USINGS", ()))
         for msg in heal_missing_usings(schema, template_usings=template_usings):
             console.print(f"  [magenta]FIX[/]  {msg}")
