@@ -116,6 +116,9 @@ least two reuse cycles.
 Exit gate: one input produces one visible launch, one ammunition decrement,
 and one impact opportunity.
 
+Status: done, ported onto the R3 firing provider (`IFiringProvider.TryFire`).
+See [PROJECTILE_SLICE4_ACCEPTANCE.md](PROJECTILE_SLICE4_ACCEPTANCE.md).
+
 ### Slice 5 - Thrown-object animation adapter
 
 - Borrow the rock before wind-up with physics and collision disabled.

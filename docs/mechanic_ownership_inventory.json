@@ -111,7 +111,7 @@
       "source": "src/micro/rules.py:137"
     },
     {
-      "attachment": "templates/unity/micro/controller/Controller.cs.j2:1517",
+      "attachment": "templates/unity/micro/controller/Controller.cs.j2:1562",
       "mechanic": "projectile",
       "migrated": false,
       "owner": "ControllerPipeline controller/projectile templates",
@@ -255,10 +255,10 @@
         "src/atoms/controller.py:201",
         "src/micro/controller.py:1041",
         "src/micro/controller.py:162",
-        "templates/unity/micro/controller/Controller.cs.j2:1066",
-        "templates/unity/micro/controller/Controller.cs.j2:1478",
-        "templates/unity/micro/controller/Controller.cs.j2:1483",
-        "templates/unity/micro/controller/Controller.cs.j2:28",
+        "templates/unity/micro/controller/Controller.cs.j2:1108",
+        "templates/unity/micro/controller/Controller.cs.j2:1520",
+        "templates/unity/micro/controller/Controller.cs.j2:1525",
+        "templates/unity/micro/controller/Controller.cs.j2:30",
         "templates/unity/micro/controller/FiringProvider.cs.j2:29",
         "templates/unity/micro/controller/FiringProvider.cs.j2:42",
         "templates/unity/micro/controller/FiringProvider.cs.j2:43",

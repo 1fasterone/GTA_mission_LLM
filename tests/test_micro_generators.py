@@ -301,9 +301,9 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     assert "if (!LaunchProjectile()) return false;" in controller
     assert "_currentAmmo--;" in controller
     assert "projectile.Configure(" in controller
-    assert "weaponDamage[_weaponIndex], gameObject," in controller
+    assert "weaponDamage[weaponIndex], gameObject," in controller
     assert "ResolveProjectileSpawnPosition(muzzle, launchDirection)" in controller
-    assert "projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);" in controller
+    assert "projectile.Launch(launchDirection * projectileSpeed[weaponIndex]);" in controller
     assert 'var prefab = new GameObject("Projectile3DPrefab_" + weaponIndex);' in controller
     assert "var physicsShape = prefab.AddComponent<SphereCollider>();" in controller
     assert "BuildProjectileVisual(prefab.transform);" in controller

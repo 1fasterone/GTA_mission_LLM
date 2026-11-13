@@ -92,9 +92,11 @@ public sealed class ProjectileController : MonoBehaviour
 
         if (_body != null)
         {
+            // Leave kinematic first: velocity on a kinematic body is
+            // unsupported and logs a warning on every shot.
+            _body.isKinematic = false;
             _body.linearVelocity = Vector3.zero;
             _body.angularVelocity = Vector3.zero;
-            _body.isKinematic = false;
             _body.useGravity = useGravity;
             _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
         }
@@ -122,7 +124,8 @@ public sealed class ProjectileController : MonoBehaviour
         EnsureRuntimeState();
         ResetVisualState(true);
         _preparedForCheckout = true;
-        if (_body != null)
+        // A parked round is kinematic and already at rest (ResetForPool).
+        if (_body != null && !_body.isKinematic)
         {
             _body.linearVelocity = Vector3.zero;
             _body.angularVelocity = Vector3.zero;
@@ -142,8 +145,11 @@ public sealed class ProjectileController : MonoBehaviour
 
         if (_body != null)
         {
-            _body.linearVelocity = Vector3.zero;
-            _body.angularVelocity = Vector3.zero;
+            if (!_body.isKinematic)
+            {
+                _body.linearVelocity = Vector3.zero;
+                _body.angularVelocity = Vector3.zero;
+            }
             _body.useGravity = false;
             _body.isKinematic = true;
             _body.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;

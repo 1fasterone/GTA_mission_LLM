@@ -2641,6 +2641,12 @@ def subsystems_for(
             ctrl_opts.setdefault("meta", {})["projectile_presentation"] = deepcopy(
                 projectile_contract["presentation"]
             )
+        # Slice 4: how an accepted shot is presented (Animator release event,
+        # generated flash/recoil). Only fast rounds carry it.
+        if isinstance(projectile_contract.get("firearm_presentation"), dict):
+            ctrl_opts.setdefault("meta", {})["firearm_presentation"] = deepcopy(
+                projectile_contract["firearm_presentation"]
+            )
 
     # Animator variant from locomotion
     anim_variant = {

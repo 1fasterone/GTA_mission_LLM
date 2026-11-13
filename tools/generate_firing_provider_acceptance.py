@@ -15,6 +15,7 @@ import argparse
 import re
 import sys
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -23,7 +24,8 @@ if str(REPOSITORY_ROOT) not in sys.path:
 
 from src import firing_provider  # noqa: E402
 from src.atoms.base import AtomInvocation  # noqa: E402
-from src.unity_compose import MicroComposer, Subsystem  # noqa: E402
+from src.intent.projectile import physical_projectile_contract_for  # noqa: E402
+from src.unity_compose import MicroComposer, Subsystem, subsystems_for  # noqa: E402
 from src.unity_generator import UnityProjectGenerator  # noqa: E402
 from src.unity_schema import UnitySchema  # noqa: E402
 
@@ -58,8 +60,25 @@ BALLISTIC = Subsystem(kind="controller", variant="first_person", target="player"
                       })
 INPUT = Subsystem(kind="input", variant="keyboard_mouse", target="systems",
                   name="InputReader")
+# The Slice 4 firearm adapter, selected exactly as a fresh run selects it: the
+# brief's closed fast_round contract handed through subsystems_for.
+RIFLE_BRIEF = "An automatic rifle firing visible physical bullets."
 
 _INTERFACE = re.compile(r"^public interface IInputReader\s*\{.*?^\}", re.S | re.M)
+
+
+def _firearm_subsystem() -> Subsystem:
+    contract = physical_projectile_contract_for("3D", RIFLE_BRIEF)
+    if contract is None or "firearm_presentation" not in contract:
+        raise RuntimeError("the rifle brief selected no firearm presentation contract")
+    controller = next(sub for sub in subsystems_for("3D", [], projectile_contract=contract)
+                      if sub.kind == "controller")
+    options = deepcopy(controller.options)
+    # The one declared accommodation: this project carries no Input System
+    # package, so the controller reads the legacy input backend.
+    options["input_backend"] = "legacy"
+    return Subsystem(kind="controller", variant=controller.variant, target="player",
+                     name="FirearmShooter", options=options)
 
 
 def _compose(subsystem: Subsystem, staging: Path) -> tuple[dict[str, str], list]:
@@ -75,7 +94,7 @@ def emit(project_path: Path) -> dict[str, str]:
     shared: dict[str, str] = {}
     controller_units = []
     with tempfile.TemporaryDirectory(prefix="firing-provider-") as temp_dir:
-        for index, subsystem in enumerate((HITSCAN, BALLISTIC)):
+        for index, subsystem in enumerate((HITSCAN, BALLISTIC, _firearm_subsystem())):
             sources, units = _compose(subsystem, Path(temp_dir) / f"c{index}" / "Assets")
             controller_units.extend(unit for unit in units if unit.kind == "controller")
             for name, source in sources.items():
