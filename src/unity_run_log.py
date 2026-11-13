@@ -32,6 +32,7 @@ _STEP_RE = re.compile(r"^\s*STEP\s+(\d+)\s+--\s+(.+?)\s*$", re.MULTILINE)
 _COMPILER_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 _PROJECT_RE = re.compile(r"Project written to:\s*(.+?)\s*$", re.MULTILINE)
 _PLAYABILITY_RE = re.compile(r"^\s*PLAYABILITY\s+.+$", re.MULTILINE)
+_FAILED_RUN_RE = re.compile(r"^Failed-run diagnostics:\s*(.+?)\s*$", re.MULTILINE)
 
 _VALUE_OPTIONS = frozenset({
     "--config", "-c", "--file", "-f", "--theme", "--mashup", "--seed",
@@ -270,6 +271,7 @@ class UnityCreateRunRecorder:
             "last_step": None,
             "project_path": None,
             "playability_summary": None,
+            "failed_run_report": None,
             "exit_code": None,
             "failure": None,
         }
@@ -381,6 +383,7 @@ class UnityCreateRunRecorder:
         steps = _STEP_RE.findall(text)
         projects = _PROJECT_RE.findall(text)
         playability = _PLAYABILITY_RE.findall(text)
+        failed_runs = _FAILED_RUN_RE.findall(text)
         return {
             "last_step": (
                 {"number": int(steps[-1][0]), "name": steps[-1][1].strip()}
@@ -388,6 +391,7 @@ class UnityCreateRunRecorder:
             ),
             "project_path": projects[-1].strip() if projects else None,
             "playability_summary": playability[-1].strip() if playability else None,
+            "failed_run_report": failed_runs[-1].strip() if failed_runs else None,
         }
 
     def _write_manifest(self) -> bool:

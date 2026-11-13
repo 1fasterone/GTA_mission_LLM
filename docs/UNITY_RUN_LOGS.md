@@ -29,6 +29,8 @@ The manifest also records:
 - whether `--compose` and `--no-llm` were used;
 - the last observed `STEP` line;
 - the generated project path and playability summary when emitted;
+- the `unity-failed-run/v1` report path (`failed_run_report`) when the
+  pipeline failed — see docs/FAILED_RUN_DIAGNOSTICS.md;
 - start/end timestamps, duration, and exit code.
 
 These are operational provenance artifacts. They are never placed in the
