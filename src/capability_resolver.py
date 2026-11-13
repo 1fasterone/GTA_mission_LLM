@@ -101,32 +101,55 @@ def _animation_atoms(a: AnimationCapability) -> list[AtomInvocation]:
     return atoms
 
 
-def _dialog_atoms(d: DialogCapability) -> list[AtomInvocation]:
-    atoms: list[AtomInvocation] = []
+# R1 retired six names these capabilities used to fold into schema.atoms:
+# InitDialogSystem, BarkOnSight, EnableNavMesh, SetAIBehavior, EnableParticles
+# and EnablePostProcessing. None was a registered atom and none had a lowerer,
+# so each reached GameSequencer as a `// TODO` comment that read like scene
+# setup but did nothing. Their capabilities still activate their micros
+# (capabilities_to_active_microgens). The params below have NO executable
+# consumer; they are named loudly by resolve_capabilities, never emitted as
+# placeholder atoms and never given invented public atom vocabulary.
+
+def _unlowered_dialog(d: DialogCapability) -> list[str]:
+    params = []
     if d.system != "simple":
-        atoms.append(AtomInvocation(atom="InitDialogSystem", args={"system": d.system}))
+        params.append(f"dialog.system={d.system}")
     if d.bark_on_sight:
-        atoms.append(AtomInvocation(atom="BarkOnSight", args={"enabled": True}))
-    return atoms
+        params.append("dialog.bark_on_sight")
+    return params
 
 
-def _ai_atoms(a: AICapability) -> list[AtomInvocation]:
-    atoms: list[AtomInvocation] = []
+def _unlowered_ai(a: AICapability) -> list[str]:
+    params = [f"ai.behavior={a.behavior}", f"ai.detection_range={a.detection_range:g}"]
     if a.pathfinding:
-        atoms.append(AtomInvocation(atom="EnableNavMesh", args={"enabled": True}))
-    atoms.append(AtomInvocation(atom="SetAIBehavior", args={
-        "behavior": a.behavior, "detection_range": a.detection_range,
-    }))
-    return atoms
+        params.insert(0, "ai.pathfinding")
+    return params
 
 
-def _vfx_atoms(v: VfxCapability) -> list[AtomInvocation]:
-    atoms: list[AtomInvocation] = []
+def _unlowered_vfx(v: VfxCapability) -> list[str]:
+    params = []
     if v.particles:
-        atoms.append(AtomInvocation(atom="EnableParticles", args={"enabled": True}))
+        params.append("vfx.particles")
     if v.post_processing:
-        atoms.append(AtomInvocation(atom="EnablePostProcessing", args={"enabled": True}))
-    return atoms
+        params.append("vfx.post_processing")
+    return params
+
+
+_UNLOWERED_PARAM_READERS: tuple[tuple[str, Callable[[Any], list[str]]], ...] = (
+    ("dialog", _unlowered_dialog),
+    ("ai",     _unlowered_ai),
+    ("vfx",    _unlowered_vfx),
+)
+
+
+def unlowered_capability_params(caps: ProjectCapabilities) -> list[str]:
+    """Declared capability params that no atom lowerer or micro consumes."""
+    params: list[str] = []
+    for name, reader in _UNLOWERED_PARAM_READERS:
+        sub = getattr(caps, name)
+        if sub:
+            params.extend(reader(sub))
+    return params
 
 
 def _model_atoms(m: ModelCapability) -> list[AtomInvocation]:
@@ -158,9 +181,6 @@ _CAP_ATOM_BUILDERS: tuple[tuple[str, Callable[[Any], list[AtomInvocation]]], ...
     ("input",      _input_atoms),
     ("model",      _model_atoms),
     ("animation",  _animation_atoms),
-    ("dialog",     _dialog_atoms),
-    ("ai",         _ai_atoms),
-    ("vfx",        _vfx_atoms),
 )
 
 # Capabilities whose atoms must NOT be folded into schema.atoms.
@@ -259,6 +279,14 @@ def resolve_capabilities(schema: UnitySchema) -> tuple[UnitySchema, list[str]]:
             f"Capabilities: {'/'.join(owned)} left out of schema.atoms — the "
             f"composed subsystems own that behaviour continuously; a one-shot "
             f"Start() sequence cannot drive it"
+        )
+
+    unlowered = unlowered_capability_params(schema.capabilities)
+    if unlowered:
+        msgs.append(
+            "Capabilities: no executable lowerer consumes "
+            f"{', '.join(unlowered)} — recorded, not emitted as placeholder "
+            "atoms (docs/ATOM_BACKEND_SUPPORT.md, R1)"
         )
 
     return schema, msgs

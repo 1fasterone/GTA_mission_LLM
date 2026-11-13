@@ -101,12 +101,19 @@ def test_literal_duplicate_registration_detected_before_dict_overwrite():
     assert duplicate_dict_keys(source) == ["duplicate dictionary key 'Move' at line 1"]
 
 
-def test_legacy_alias_behavior_is_recorded_without_silent_repair(inventory):
-    assert len(inventory["identity_conflicts"]) == 4
+def test_every_token_has_exactly_one_owner(inventory):
+    """R1 closed the four legacy collisions with one owner per token."""
+    assert inventory["identity_conflicts"] == []
     assert get_atom("fire").name == "Shoot"
-    assert get_atom("pause").name == "Wait"
-    assert get_atom("Pause").name == "Pause"
-    assert get_atom("roll_evade").name == "Dash"
+    assert get_atom("pause").name == "Pause"
+    assert get_atom("PAUSE").name == "Pause"
+    assert get_atom("wait").name == "Wait"
+    assert get_atom("roll_evade").name == "Dodge"
+    assert get_atom("dash").name == "Dash"
+    assert get_atom("thrust").name == "Throttle"
+    assert get_atom("push").name == "ApplyForce"
+    assert get_atom("kick").name == "SecondaryAttack"
+    assert get_atom("knockback").name == "ApplyImpulse"
 
 
 def test_unverified_gameplay_owner_claim_is_rejected(inventory):
@@ -178,8 +185,66 @@ def test_check_rejects_stale_derived_inventory(monkeypatch, tmp_path):
 
 def test_capability_unknowns_are_visible_and_new_unknowns_fail(inventory):
     unknown = {row["atom"] for row in inventory["references"] if row["resolution"] == "unregistered"}
-    assert unknown == set(_baseline()["unregistered_references"])
-    assert "InitDialogSystem" in unknown
+    assert unknown == set(_baseline()["unregistered_references"]) == set()
+    assert "InitDialogSystem" not in unknown
     changed = copy.deepcopy(inventory)
     changed["references"].append({"atom": "InventedAction", "resolution": "unregistered", "sources": []})
     assert "unreviewed unregistered atom reference: InventedAction" in validate_inventory(changed, _baseline())
+
+
+# ── R1: S0 vocabulary decisions ──────────────────────────────────────────────
+
+def test_no_s0_followup_debt_remains():
+    baseline = _baseline()
+    open_entries = [
+        key for section in ("identity_conflicts", "internal_handlers",
+                            "unregistered_references", "missing_lowerers")
+        for key, entry in baseline[section].items()
+        if str(entry.get("next_slice", "")).startswith("S0-followup")
+    ]
+    assert open_entries == []
+
+
+def test_a_vocabulary_collision_fails_at_import_not_first_registered_wins():
+    from src.atoms import _build_alias_index
+
+    one = AtomDef(name="One", category="logic", description="fixture", aliases=["shared"])
+    two = AtomDef(name="Two", category="logic", description="fixture", aliases=["SHARED"])
+    with pytest.raises(RuntimeError, match="'SHARED' is claimed by both One and Two"):
+        _build_alias_index([one, two])
+    named = AtomDef(name="Shared", category="logic", description="fixture")
+    with pytest.raises(RuntimeError, match="claimed by both One and Shared"):
+        _build_alias_index([one, named])
+
+
+def test_dialog_helpers_are_registered_unity_atoms(inventory):
+    from src.atoms.dialog import DIALOG_ATOMS
+
+    names = {atom.name for atom in DIALOG_ATOMS}
+    assert names == {"SayLine", "PlayDialogAudio", "Gesture", "LookAt", "EndDialog"}
+    rows = {row["atom"]: row for row in inventory["atoms"] if row["backend"] == "unity"}
+    for name in names:
+        assert get_atom(name).engines == ["unity"]
+        assert get_atom(name).category == "dialog"
+        assert rows[name]["classification"] == "executable"
+    # `look_at` stays the camera's; the NPC head-look keeps its own words.
+    assert get_atom("look_at").name == "CameraLookAt"
+    assert get_atom("head_look").name == "LookAt"
+    assert not [row for row in inventory["atoms"] if row["classification"] == "internal"]
+
+
+def test_dialog_registration_leaves_the_step3_vocabulary_unchanged():
+    from src.unity_prompts import _SEQUENCE_ATOM_CATEGORIES, atom_vocabulary
+
+    assert "dialog" not in _SEQUENCE_ATOM_CATEGORIES
+    vocabulary = atom_vocabulary()
+    assert "SayLine(" not in vocabulary
+    assert "EndDialog(" not in vocabulary
+
+
+def test_escort_seam_is_a_registered_wiring_atom():
+    atom = get_atom("WireTriggerToEscortObjective")
+    assert atom is not None
+    assert atom.category == "wiring"
+    assert atom.engines == ["unity"]
+    assert {p.name for p in atom.params if p.required} == {"objective_id", "entity_go_name"}

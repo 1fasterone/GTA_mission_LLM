@@ -1,4 +1,23 @@
 {
+  "unity:EndDialog": {
+    "return_to_idle": true
+  },
+  "unity:Gesture": {
+    "type": "nod",
+    "duration": 1.0
+  },
+  "unity:LookAt": {
+    "target": "Player",
+    "duration": 0.0,
+    "weight": 0.8
+  },
+  "unity:PlayDialogAudio": {
+    "path": "Audio/Dialog/greet"
+  },
+  "unity:SayLine": {
+    "line_id": "greet",
+    "blocking": true
+  },
   "unity:WireBoardToObjectives": {
     "match_key": "audit_piece",
     "objective_id": "audit_place"
@@ -15,6 +34,10 @@
   },
   "unity:WireSpawnerToObjectives": {
     "objective_id": "audit_eliminate"
+  },
+  "unity:WireTriggerToEscortObjective": {
+    "objective_id": "audit_escort",
+    "entity_go_name": "AuditNpc_0"
   },
   "unity:WireTriggerToObjectives": {
     "objective_id": "audit_reach"

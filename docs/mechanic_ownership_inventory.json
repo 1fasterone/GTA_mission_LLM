@@ -2,8 +2,8 @@
   "descriptor_producers": [
     {
       "consumers": [
-        "src/capability_resolver.py:225",
-        "src/capability_resolver.py:267",
+        "src/capability_resolver.py:245",
+        "src/capability_resolver.py:295",
         "src/unity_generator.py:2476"
       ],
       "producer": "UnitySchema.atoms",
@@ -11,7 +11,7 @@
     },
     {
       "consumers": [
-        "src/capability_resolver.py:267",
+        "src/capability_resolver.py:295",
         "src/unity_generator.py:2476"
       ],
       "producer": "MicrogensSpec.atoms",
@@ -239,7 +239,7 @@
       "next_slice": "S5",
       "owner_candidates": [],
       "provenance": [
-        "lookups/atoms/support_baseline.json:132",
+        "lookups/atoms/support_baseline.json:90",
         "src/atoms/controller.py:196"
       ],
       "provider": null,
