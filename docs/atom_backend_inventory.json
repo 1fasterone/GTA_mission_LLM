@@ -4002,18 +4002,28 @@
     ],
     "unity": [
       {
+        "binding": "meta.atom_bindings route 'atoms'",
         "caller": "src/unity_generator.py:UnityProjectGenerator.generate",
-        "host": "GameManager",
+        "host": "_GameSequencer (each gameplay scene)",
         "input": "schema.atoms",
-        "phase": "Start coroutine, once",
+        "phase": "Start coroutine, once per gameplay-scene load",
         "template": "templates/unity/GameSequencer.cs.j2"
       },
       {
+        "binding": "meta.atom_bindings route 'entities[<name>].atoms'",
         "caller": "src/unity_generator.py:UnityProjectGenerator.generate",
         "host": "EntitySpawner.AddComponent",
         "input": "entity.atoms",
         "phase": "Start coroutine, may restart",
         "template": "templates/unity/EntityBehavior.cs.j2"
+      },
+      {
+        "binding": "meta.atom_bindings route 'scripts[<name>].atoms'",
+        "caller": "src/unity_generator.py:UnityProjectGenerator._generate_script",
+        "host": "UnityScript.attach_to scene object",
+        "input": "custom script.atoms",
+        "phase": "Start coroutine, once",
+        "template": "templates/unity/scripts/CustomBehaviour.cs.j2"
       },
       {
         "caller": "src/unity_compose.py:MicroComposer._emit_wiring",
@@ -4031,8 +4041,8 @@
   "micros": [
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "ai",
       "mapped_atoms": [
@@ -4058,8 +4068,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "animator",
       "mapped_atoms": [
@@ -4080,8 +4090,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "audio",
       "mapped_atoms": [
@@ -4101,8 +4111,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "behavior_tree",
       "mapped_atoms": [],
@@ -4116,8 +4126,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "bike",
       "mapped_atoms": [],
@@ -4131,8 +4141,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "board",
       "mapped_atoms": [],
@@ -4148,8 +4158,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "suppressed by camera override",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "camera",
       "mapped_atoms": [
@@ -4176,8 +4186,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "controller",
       "mapped_atoms": [
@@ -4212,8 +4222,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "dialogue",
       "mapped_atoms": [
@@ -4234,8 +4244,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "health",
       "mapped_atoms": [
@@ -4257,8 +4267,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "hud",
       "mapped_atoms": [
@@ -4285,8 +4295,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "input",
       "mapped_atoms": [
@@ -4309,8 +4319,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "interactable",
       "mapped_atoms": [
@@ -4333,8 +4343,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "inventory",
       "mapped_atoms": [
@@ -4355,8 +4365,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "lighting",
       "mapped_atoms": [
@@ -4376,8 +4386,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "menu",
       "mapped_atoms": [
@@ -4398,8 +4408,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "model",
       "mapped_atoms": [
@@ -4422,8 +4432,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "npc_dialog",
       "mapped_atoms": [
@@ -4447,8 +4457,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "objectives",
       "mapped_atoms": [],
@@ -4462,8 +4472,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "physics",
       "mapped_atoms": [
@@ -4488,8 +4498,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "platform",
       "mapped_atoms": [],
@@ -4506,8 +4516,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "rules",
       "mapped_atoms": [],
@@ -4522,8 +4532,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "saveload",
       "mapped_atoms": [
@@ -4544,8 +4554,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "shader",
       "mapped_atoms": [
@@ -4565,8 +4575,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "spawner",
       "mapped_atoms": [
@@ -4587,8 +4597,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "sprite_animator",
       "mapped_atoms": [],
@@ -4605,8 +4615,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "statemachine",
       "mapped_atoms": [
@@ -4626,8 +4636,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "transition",
       "mapped_atoms": [
@@ -4649,8 +4659,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "trigger",
       "mapped_atoms": [
@@ -4671,8 +4681,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "standalone _after_write",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "vfx",
       "mapped_atoms": [
@@ -4692,8 +4702,8 @@
     },
     {
       "backend": "unity",
-      "companion_attachment": "unverified",
-      "companion_emission": "none",
+      "companion_attachment": "not applicable",
+      "companion_emission": "retired (R2)",
       "composed_companion": "not emitted by MicroComposer.write_files",
       "kind": "waypoint",
       "mapped_atoms": [],
@@ -4799,20 +4809,20 @@
       ]
     }
   ],
-  "reference_limit": "static Python atom invocations/dicts/direct emitters; dynamic bindings unverified",
+  "reference_limit": "static Python atom invocations/dicts/direct emitters only; atom names in schema data are validated per build by src/atom_bindings.py into meta.atom_bindings",
   "references": [
     {
       "atom": "ApplyForce",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:174"
+        "src/atoms/behavior_map.py:175"
       ]
     },
     {
       "atom": "BindAction",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:178",
+        "src/atoms/behavior_map.py:179",
         "src/capability_resolver.py:88"
       ]
     },
@@ -4828,7 +4838,7 @@
       "resolution": "registered",
       "sources": [
         "src/atoms/behavior_map.py:104",
-        "src/atoms/behavior_map.py:131"
+        "src/atoms/behavior_map.py:132"
       ]
     },
     {
@@ -4858,7 +4868,7 @@
       "atom": "EndDialog",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:205"
+        "src/atoms/behavior_map.py:206"
       ]
     },
     {
@@ -4873,14 +4883,14 @@
       "atom": "Gesture",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:204"
+        "src/atoms/behavior_map.py:205"
       ]
     },
     {
       "atom": "Jump",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:127",
+        "src/atoms/behavior_map.py:128",
         "src/capability_resolver.py:46"
       ]
     },
@@ -4888,8 +4898,8 @@
       "atom": "LightFlash",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:210",
-        "src/atoms/behavior_map.py:215",
+        "src/atoms/behavior_map.py:211",
+        "src/atoms/behavior_map.py:216",
         "src/atoms/behavior_map.py:68",
         "src/atoms/behavior_map.py:80"
       ]
@@ -4898,7 +4908,7 @@
       "atom": "Look",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:124",
+        "src/atoms/behavior_map.py:125",
         "src/capability_resolver.py:34"
       ]
     },
@@ -4906,21 +4916,21 @@
       "atom": "LookAt",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:202"
+        "src/atoms/behavior_map.py:203"
       ]
     },
     {
       "atom": "MapInputToEvent",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:179"
+        "src/atoms/behavior_map.py:180"
       ]
     },
     {
       "atom": "Move",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:125",
+        "src/atoms/behavior_map.py:126",
         "src/capability_resolver.py:38"
       ]
     },
@@ -4949,15 +4959,15 @@
       "atom": "PlayMusic",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:135"
+        "src/atoms/behavior_map.py:136"
       ]
     },
     {
       "atom": "PlaySFX",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:236",
-        "src/atoms/behavior_map.py:248",
+        "src/atoms/behavior_map.py:237",
+        "src/atoms/behavior_map.py:249",
         "src/atoms/behavior_map.py:67",
         "src/atoms/behavior_map.py:73",
         "src/atoms/behavior_map.py:79"
@@ -4976,7 +4986,7 @@
       "atom": "SayLine",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:203"
+        "src/atoms/behavior_map.py:204"
       ]
     },
     {
@@ -4991,7 +5001,7 @@
       "resolution": "registered",
       "sources": [
         "src/atoms/behavior_map.py:101",
-        "src/atoms/behavior_map.py:159",
+        "src/atoms/behavior_map.py:160",
         "src/atoms/behavior_map.py:89",
         "src/atoms/behavior_map.py:91",
         "src/atoms/behavior_map.py:94",
@@ -5003,9 +5013,9 @@
       "atom": "SetAnimationState",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:184",
-        "src/atoms/behavior_map.py:197",
+        "src/atoms/behavior_map.py:185",
         "src/atoms/behavior_map.py:198",
+        "src/atoms/behavior_map.py:199",
         "src/capability_resolver.py:175",
         "src/capability_resolver.py:98"
       ]
@@ -5014,15 +5024,15 @@
       "atom": "SetFlag",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:163",
-        "src/atoms/behavior_map.py:242"
+        "src/atoms/behavior_map.py:164",
+        "src/atoms/behavior_map.py:243"
       ]
     },
     {
       "atom": "SetGravity",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:173",
+        "src/atoms/behavior_map.py:174",
         "src/capability_resolver.py:56"
       ]
     },
@@ -5044,14 +5054,14 @@
       "atom": "SetMaterial",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:220"
+        "src/atoms/behavior_map.py:221"
       ]
     },
     {
       "atom": "SetModel",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:183",
+        "src/atoms/behavior_map.py:184",
         "src/capability_resolver.py:166"
       ]
     },
@@ -5059,7 +5069,7 @@
       "atom": "ShowHUD",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:167",
+        "src/atoms/behavior_map.py:168",
         "src/capability_resolver.py:67"
       ]
     },
@@ -5067,22 +5077,22 @@
       "atom": "SpawnEntity",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:139",
-        "src/atoms/behavior_map.py:234"
+        "src/atoms/behavior_map.py:140",
+        "src/atoms/behavior_map.py:235"
       ]
     },
     {
       "atom": "SpawnParticle",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:209"
+        "src/atoms/behavior_map.py:210"
       ]
     },
     {
       "atom": "Sprint",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:126",
+        "src/atoms/behavior_map.py:127",
         "src/capability_resolver.py:42"
       ]
     },
@@ -5105,11 +5115,11 @@
       "atom": "TriggerEvent",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:151",
-        "src/atoms/behavior_map.py:155",
-        "src/atoms/behavior_map.py:188",
-        "src/atoms/behavior_map.py:193",
-        "src/atoms/behavior_map.py:243",
+        "src/atoms/behavior_map.py:152",
+        "src/atoms/behavior_map.py:156",
+        "src/atoms/behavior_map.py:189",
+        "src/atoms/behavior_map.py:194",
+        "src/atoms/behavior_map.py:244",
         "src/atoms/behavior_map.py:69",
         "src/atoms/behavior_map.py:74"
       ]
@@ -5125,7 +5135,7 @@
       "atom": "UpdateHealth",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:168",
+        "src/atoms/behavior_map.py:169",
         "src/capability_resolver.py:70"
       ]
     },
@@ -5133,7 +5143,7 @@
       "atom": "UpdateObjective",
       "resolution": "registered",
       "sources": [
-        "src/atoms/behavior_map.py:169",
+        "src/atoms/behavior_map.py:170",
         "src/capability_resolver.py:78"
       ]
     },
@@ -5142,8 +5152,8 @@
       "resolution": "registered",
       "sources": [
         "src/atoms/behavior_map.py:100",
-        "src/atoms/behavior_map.py:189",
-        "src/atoms/behavior_map.py:244",
+        "src/atoms/behavior_map.py:190",
+        "src/atoms/behavior_map.py:245",
         "src/atoms/behavior_map.py:32",
         "src/atoms/behavior_map.py:34",
         "src/atoms/behavior_map.py:40",

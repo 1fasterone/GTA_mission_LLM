@@ -816,6 +816,13 @@ def unity_validate(
                              project_config=cfg,
                              locked_asset_bindings=_collection_bindings or None,
                              spatial_fusion=spatial_fusion)
+    # Saved-schema replay of meta.atom_bindings (src/atom_bindings.py): an
+    # identical record is confirmed; drift or an unreadable version is loud.
+    from rich.markup import escape as _escape_markup
+    for msg in gen.last_atom_binding_report.notes:
+        console.print(f"[green]OK[/]  {_escape_markup(msg)}")
+    for msg in gen.last_atom_binding_report.warnings:
+        console.print(f"[yellow]WARN[/]  {_escape_markup(msg)}")
 
     if spatial_fusion is not None and spatial_replay_world is not None:
         (root / f"{schema.project_name}.spatial-fusion.json").write_text(

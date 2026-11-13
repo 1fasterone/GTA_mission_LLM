@@ -1,4 +1,4 @@
-# Atom/backend support and mechanic ownership audits (S0-S3)
+# Atom/backend support, mechanic ownership and typed bindings (S0-S4)
 
 The S0 support audit was integrated with main `c83646b240fb4222ac112777fee1761d656acca1`
 after the #282 squash merge. S2 later made selected rendered C# source authoritative
@@ -116,11 +116,52 @@ declared one, with the params no lowerer consumes (`dialog.system`,
 than emitted as placeholders. A saved schema that already holds one of these names still lowers
 to the same `// TODO` comment on replay; schemas are never rewritten.
 
+## Typed atom bindings (R2, S4)
+
+`src/atom_bindings.py` derives, for every atom-carrying schema field, the route
+that starts it, and persists the record in `schema.meta["atom_bindings"]`
+(`version: 1`, `backend: "unity"`):
+
+| Route source | Host class | Host | Phase | Trigger |
+| --- | --- | --- | --- | --- |
+| `atoms` | `GameSequencer` | `_GameSequencer`, every gameplay scene | `start_coroutine_once` | `scene_load` |
+| `entities[<name>].atoms` | `<Name>Behavior` | `EntitySpawner.AddComponent`, scenes hosting the group | `start_coroutine_loop` unless the sequence despawns | `entity_spawn` |
+| `scripts[<name>].atoms` | the custom script | its `attach_to` scene object | `start_coroutine_once` | `scene_load` |
+
+Each atom in a route carries its provider: the Unity lowerer it reaches
+(`src/atoms/backends/unity.py:_wait`), or a status saying why there is none.
+
+- **Per-build reference validation.** Atom names in schema data are dynamic
+  references the static audit cannot see. Unity dispatches on the raw name, so
+  an alias (`delay`), an unregistered name, a descriptive atom with no lowerer
+  or an atom excluded from Unity lowers to a `// TODO` comment. Each one is
+  named as a warning (`alias`, `unregistered`, `descriptive`, `unsupported`);
+  nothing is rewritten.
+- **One source of truth.** `UnityProjectGenerator.generate` derives the record
+  after entity-behavior reconciliation, script preparation and model resolution,
+  then places hosts from it. The scene's `_GameSequencer` and the emitted
+  `GameSequencer.cs` cannot disagree with what is recorded. A route with no host
+  scene (a menu-only build) emits no sequencer and records why.
+- **Entity behavior.** An entity's atoms render only into `<Name>Behavior`, so
+  reconciliation sets `entity.behavior` to that class. A blank or foreign name
+  used to leave the class emitted but never added at spawn.
+- **Versioned replay.** Pipeline, `unity-validate` and `unity_eval.replay` all go
+  through `generate()`. A saved record that matches is confirmed. One that drifts
+  is reported route by route. One this compiler cannot read (another version, an
+  unknown key) is announced. The schema's atom lists are canonical, so the record
+  is re-stamped in each case and never trusted silently. Replaying a saved schema
+  twice reproduces an equal record both times (`tests/test_atom_bindings.py`).
+
+Scope limit: the record covers the three schema-data routes above. Wiring atoms
+are compiler-selected, not schema data, and stay in `GameWiring`. No gameplay
+moves onto a new phase here; S5/S6 add their own bindings before migrating.
+
 ## Ownership and reachability
 
-- Schema-level atoms lower into `GameSequencer.Start`, but S3 found no generated
-  scene or prefab component attachment for `GameSequencer`; emission is therefore
-  `connected_but_not_attached`, not an invoked runtime claim.
+- Schema-level atoms lower into `GameSequencer.Start`, hosted by every gameplay
+  scene's `_GameSequencer` object since R2 (`connected_and_owned`). The host is
+  scene-local on purpose: `GameManager` is `DontDestroyOnLoad` and destroys a
+  later scene's duplicate, which would take a sequencer on it down too.
 - The representative behavior-map entity route resolves a behavior class, renders
   `EntityBehavior`, attaches through `EntitySpawner`, and may restart its coroutine.
   S3 does not generalize that proof to a raw `EntitySpec.atoms` value whose behavior
@@ -129,10 +170,11 @@ to the same `// TODO` comment on replay; schemas are never rewritten.
 - Unity wiring atoms are explicitly called by MicroComposer to emit subscriptions,
   Update bridges and event handlers into GameWiring. These are the existing
   executable composition seams, not a universal lifecycle binding system.
-- Unity standalone `_after_write` can emit default atom companion scripts.
-  CameraRig suppresses this hook to retain sole camera ownership. Composed
-  generation calls `write_files` directly and does not invoke that hook.
-  A written Unity companion is not proof of attachment.
+- Unity standalone `<Kind>DefaultBehavior` companions are retired (R2). No scene
+  ever attached one, and the controller companion's looping Look/Move/Sprint/Jump
+  would have fought the template-owned controller. `UnityMicroPipeline._after_write`
+  makes no call, and the ownership audit proves that for every Unity micro.
+  `MICROGEN_ATOM_MAP` remains descriptive data.
 - GTA5 standalone companions run from a Script.Tick guard, optionally entering
   a yielding loop. This does not prove inclusion in the minigame skeleton.
 - The inventory enumerates every registered Unity/GTA micro and all its variants.
@@ -151,7 +193,7 @@ slice. It is a ratchet, not a second public API or implementation table.
 | S0 vocabulary/alias review | Done in R1: one owner per token, dialog/escort helpers registered, six capability placeholders retired |
 | S1–S2 | Extract selected rendered C# APIs with Roslyn and remove copied API tables |
 | S3 | Structural representative closure implemented; preserve explicit unattached/missing-provider abstentions in `mechanic_ownership_inventory.json` |
-| S4 | Persist typed host/phase/trigger/provider bindings with versioned replay |
+| S4 | Done in R2: typed route bindings in `meta.atom_bindings` with versioned replay; GameSequencer attached; Unity companions retired; dynamic atom references checked per build |
 | S5 | Share one firing provider between input and Shoot; prove ammo/cooldown and failure behavior |
 | S6 | Migrate controller behaviors one at a time, with per-variant advancing tests |
 | S7–S8 | Migrate legal board operations and rules progression through one owner |

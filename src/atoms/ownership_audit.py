@@ -11,6 +11,7 @@ import argparse
 import ast
 import inspect
 import json
+import textwrap
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -26,11 +27,13 @@ CONNECTED_AND_OWNED = "connected_and_owned"
 CONNECTED_BUT_NOT_ATTACHED = "connected_but_not_attached"
 AMBIGUOUS_OWNER = "ambiguous_owner"
 MISSING_PROVIDER = "missing_provider"
+RETIRED = "retired"
 CONNECTION_STATES = frozenset({
     CONNECTED_AND_OWNED,
     CONNECTED_BUT_NOT_ATTACHED,
     AMBIGUOUS_OWNER,
     MISSING_PROVIDER,
+    RETIRED,
 })
 
 
@@ -141,18 +144,56 @@ def _path_from_ref(reference: str) -> Path:
     return ROOT / reference.rsplit(":", 1)[0]
 
 
+def _call_free(function: Any) -> bool:
+    """True when a function body (docstring aside) makes no call at all."""
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    definition = tree.body[0]
+    if not isinstance(definition, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        raise OwnershipEvidenceError(f"cannot read the body of {function!r}")
+    return not any(isinstance(node, ast.Call)
+                   for statement in definition.body
+                   for node in ast.walk(statement))
+
+
+def _unity_companion_emitters() -> list[str]:
+    """Source of every Unity micro hook that still emits a companion script.
+
+    R2 retired the standalone ``<Kind>DefaultBehavior`` companions. Retirement
+    is proven per registered Unity micro, not assumed: any ``_after_write``
+    (the base or a subclass override) that makes a call is a live emitter.
+    """
+    from ..micro import REGISTRY
+
+    emitters = set()
+    for pipeline in REGISTRY.values():
+        # ModelPipeline is an asset pipeline with no post-write hook at all.
+        hook = getattr(pipeline, "_after_write", None)
+        if hook is not None and not _call_free(hook):
+            emitters.add(_source_ref(hook))
+    return sorted(emitters)
+
+
 def classify_connection(
     *,
     provider: str | None,
     owner_candidates: Iterable[str],
     lifecycle_seam: str | None,
+    retired_by: str | None = None,
 ) -> str:
     """Classify one route from explicit structural evidence.
 
     A present provider with no candidate owner is not silently converted into a
-    missing-provider result: the route is unknown and the audit must stop.
+    missing-provider result: the route is unknown and the audit must stop. A
+    retired route names the source that refuses it and may keep no provider.
     """
     candidates = tuple(sorted(set(owner_candidates)))
+    if retired_by is not None:
+        if provider is not None or candidates:
+            raise OwnershipEvidenceError(
+                f"route retired by {retired_by} still has provider={provider!r} "
+                f"and candidates={list(candidates)}"
+            )
+        return RETIRED
     if provider is None:
         return MISSING_PROVIDER
     if not candidates:
@@ -180,14 +221,21 @@ def _connection(
     provenance: Iterable[str],
     next_slice: str | None = None,
     template_owner_preserved: str | None = None,
+    retired_by: str | None = None,
+    retirement_reason: str | None = None,
 ) -> dict[str, Any]:
     candidates = sorted(set(owner_candidates))
     classification = classify_connection(
         provider=provider,
         owner_candidates=candidates,
         lifecycle_seam=lifecycle_seam,
+        retired_by=retired_by,
     )
-    if classification == CONNECTED_AND_OWNED:
+    if classification == RETIRED:
+        diagnostic = (
+            f"retired by {retired_by}: {retirement_reason or '<no reason recorded>'}"
+        )
+    elif classification == CONNECTED_AND_OWNED:
         diagnostic = (
             f"connected and owned by {candidates[0]} through {lifecycle_seam}"
         )
@@ -219,20 +267,23 @@ def _connection(
         "diagnostic": diagnostic,
         "next_slice": next_slice,
         "template_owner_preserved": template_owner_preserved,
+        "retired_by": retired_by,
         "provenance": sorted(set(provenance)),
         "runtime_acceptance": "unverified",
     }
 
 
 def _descriptor_producers() -> list[dict[str, Any]]:
+    from ..atom_bindings import derive_atom_bindings
     from ..capability_resolver import resolve_capabilities, resolve_microgens
     from ..micro.gta5_base import GTA5MicroPipeline
-    from ..micro.unity_base import UnityMicroPipeline
     from ..unity_compose import MicroComposer, Subsystem
     from ..unity_generator import UnityProjectGenerator
     from ..unity_resolver import UnityResolver
+    from .support_audit import _micro_inventory
 
     wiring_calls = _literal_call_refs("src/unity_compose.py", "unity_atom_snippet")
+    bindings = _source_ref(derive_atom_bindings)
     return [
         {
             "producer": "UnitySchema.atoms",
@@ -241,6 +292,7 @@ def _descriptor_producers() -> list[dict[str, Any]]:
                 _source_ref(resolve_capabilities),
                 _source_ref(resolve_microgens),
                 _source_ref(UnityProjectGenerator.generate),
+                bindings,
             ],
         },
         {
@@ -252,17 +304,20 @@ def _descriptor_producers() -> list[dict[str, Any]]:
             "producer": "EntitySpec.atoms and behavior map",
             "source": _class_field_ref("src/unity_schema.py", "EntitySpec", "atoms"),
             "descriptor_source": _assignment_ref("src/atoms/behavior_map.py", "_BEHAVIOR_MAP"),
-            "consumers": [_source_ref(UnityResolver.expand_behaviors), _source_ref(UnityProjectGenerator.generate)],
+            "consumers": [_source_ref(UnityResolver.expand_behaviors),
+                          _source_ref(UnityProjectGenerator.generate), bindings],
         },
         {
             "producer": "UnityScript.atoms",
             "source": _class_field_ref("src/unity_schema.py", "UnityScript", "atoms"),
-            "consumers": [_source_ref(UnityResolver.expand_behaviors), _source_ref(UnityProjectGenerator.generate)],
+            "consumers": [_source_ref(UnityResolver.expand_behaviors),
+                          _source_ref(UnityProjectGenerator.generate), bindings],
         },
         {
+            # Descriptive only since R2: no Unity hook emits these sequences.
             "producer": "Unity micro default atom descriptors",
             "source": _assignment_ref("src/atoms/behavior_map.py", "MICROGEN_ATOM_MAP"),
-            "consumers": [_source_ref(UnityMicroPipeline._after_write)],
+            "consumers": [_source_ref(_micro_inventory)],
         },
         {
             "producer": "GTA5 micro default atom descriptors",
@@ -288,6 +343,7 @@ def _descriptor_producers() -> list[dict[str, Any]]:
 
 
 def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]]:
+    from ..atom_bindings import derive_atom_bindings, stamp_atom_bindings
     from ..micro import REGISTRY
     from ..micro.controller import ControllerPipeline
     from ..micro.unity_base import UnityMicroPipeline
@@ -306,6 +362,7 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
         "templates/unity/scene.unity.j2",
         "controller_default_behavior_guid",
     )
+    companion_emitters = _unity_companion_emitters()
     controller_atoms = {entry["atom"] for entry in MICROGEN_ATOM_MAP["controller"]}
     if "Move" not in controller_atoms:
         raise OwnershipEvidenceError("controller default descriptor no longer contains Move")
@@ -323,11 +380,14 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
             selection=_class_field_ref("src/unity_schema.py", "UnitySchema", "atoms"),
             provider=wait_provider,
             owner_candidates=["GameSequencer"],
-            generated_host="GameSequencer",
+            generated_host="_GameSequencer",
             lifecycle_seam=sequencer_attachment,
             missing_seam=None if sequencer_attachment else "scene or prefab component attachment",
             provenance=[
                 _source_ref(UnityProjectGenerator.generate),
+                _source_ref(derive_atom_bindings),
+                _source_ref(stamp_atom_bindings),
+                _token_ref("templates/unity/scene.unity.j2", "m_Name: _GameSequencer"),
                 _token_ref("templates/unity/GameSequencer.cs.j2", "private IEnumerator Start()"),
             ],
         ),
@@ -368,14 +428,15 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
             descriptor="unity:MICROGEN_ATOM_MAP:controller:Move",
             mode="standalone_companion",
             selection=_assignment_ref("src/atoms/behavior_map.py", "MICROGEN_ATOM_MAP"),
-            provider=_source_ref(UnityMicroPipeline._after_write),
-            owner_candidates=["ControllerDefaultBehavior"],
-            generated_host="ControllerDefaultBehavior",
-            lifecycle_seam=companion_attachment,
+            # Retired in R2 unless some Unity micro hook emits a companion again;
+            # then the route reopens with that hook as its provider.
+            provider=companion_emitters[0] if companion_emitters else None,
+            owner_candidates=["ControllerDefaultBehavior"] if companion_emitters else [],
+            generated_host="ControllerDefaultBehavior" if companion_emitters else None,
+            lifecycle_seam=companion_attachment if companion_emitters else None,
             missing_seam=(
-                None
-                if companion_attachment
-                else "generated scene component or runtime AddComponent"
+                "generated scene component or runtime AddComponent"
+                if companion_emitters and not companion_attachment else None
             ),
             provenance=[
                 _source_ref(UnityMicroPipeline._after_write),
@@ -383,6 +444,12 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
                 _token_ref("src/unity_compose.py", "pipeline.write_files(schema, variant, kind_dir)"),
             ],
             template_owner_preserved="ControllerPipeline",
+            retired_by=None if companion_emitters else _source_ref(UnityMicroPipeline._after_write),
+            retirement_reason=(
+                "no Unity micro writes a <Kind>DefaultBehavior companion; no scene ever "
+                "attached one, and the controller companion's looping Look/Move/Sprint/"
+                "Jump would fight the template-owned controller it sat beside"
+            ),
         ),
         _connection(
             descriptor="unity:Subsystem:controller",
@@ -468,8 +535,10 @@ def build_report() -> dict[str, Any]:
         "protected_template_owners": _protected_template_owners(),
         "summary": summary,
         "scope_limit": (
-            "Representative S3 structural closure only; no typed S4 binding persistence, "
-            "runtime migration, compilation claim, or advancing runtime acceptance."
+            "Representative structural closure. Per-build typed atom-route bindings are "
+            "persisted in schema.meta.atom_bindings by src/atom_bindings.py (R2/S4); this "
+            "report makes no runtime migration, compilation claim, or advancing runtime "
+            "acceptance."
         ),
     }
 
@@ -526,6 +595,19 @@ def validate_report(report: dict[str, Any]) -> list[str]:
                 errors.append(f"{descriptor}: unattached route needs one emitted owner candidate")
             if row.get("lifecycle_seam") or not row.get("missing_seam"):
                 errors.append(f"{descriptor}: emission cannot claim attachment without a seam")
+            # R2 ratchet: an emitted route must be attached or retired.
+            errors.append(
+                f"{descriptor}: emitted but unattached; attach it to a generated host "
+                "or retire it (R2)"
+            )
+        elif state == RETIRED:
+            if row.get("provider") is not None or candidates:
+                errors.append(f"{descriptor}: retired route still names a provider or owner")
+            if row.get("lifecycle_seam") or row.get("generated_host"):
+                errors.append(f"{descriptor}: retired route cannot claim a host or seam")
+            retired_by = row.get("retired_by")
+            if not retired_by or not _path_from_ref(retired_by).is_file():
+                errors.append(f"{descriptor}: retired route needs retired_by source evidence")
         elif state == AMBIGUOUS_OWNER:
             if not row.get("provider") or len(candidates) < 2:
                 errors.append(f"{descriptor}: ambiguous route must name multiple owner candidates")

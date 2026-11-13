@@ -254,10 +254,15 @@ def replay(schema: UnitySchema, *,
     # playability, not fail on a local asset library it did not ship with.
     schema = resolver.resolve_schema(schema)
     deps = resolver.build_manifest_deps(schema, inject_mcp_bridge=False)
-    files = UnityProjectGenerator(template_dir=templates).generate(
+    generator = UnityProjectGenerator(template_dir=templates)
+    files = generator.generate(
         schema, deps, lookups_dir=lookups, strict_assets=False,
         sketchfab_cfg={"enabled": False, "auto_fetch": False,
                        "vision_select": False})
+    # The atom-route record generate() stamped, and what replaying a saved
+    # one found (src/atom_bindings.py).
+    report = generator.last_atom_binding_report
+    log += report.notes + report.warnings
     return schema, files, log
 
 

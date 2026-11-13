@@ -5,6 +5,7 @@ import copy
 import json
 import subprocess
 import sys
+from collections import Counter
 
 import pytest
 
@@ -14,9 +15,12 @@ from src.atoms.ownership_audit import (
     CONNECTED_BUT_NOT_ATTACHED,
     MISSING_PROVIDER,
     REPORT,
+    RETIRED,
     ROOT,
     OwnershipEvidenceError,
     _has_hosted_script_binding,
+    _source_ref,
+    _unity_companion_emitters,
     build_report,
     classify_connection,
     validate_report,
@@ -59,12 +63,15 @@ def test_emission_alone_does_not_establish_attachment(report):
         owner_candidates=["GeneratedCompanion"],
         lifecycle_seam=None,
     ) == CONNECTED_BUT_NOT_ATTACHED
-    sequencer = _representative(report, "unity:UnitySchema.atoms:Wait")
-    companion = _representative(report, "unity:MICROGEN_ATOM_MAP:controller:Move")
-    assert sequencer["classification"] == CONNECTED_BUT_NOT_ATTACHED
-    assert companion["classification"] == CONNECTED_BUT_NOT_ATTACHED
-    assert sequencer["missing_seam"]
-    assert companion["missing_seam"]
+    # R2 attached the sequencer; losing that seam must fail, not downgrade quietly.
+    changed = copy.deepcopy(report)
+    sequencer = _representative(changed, "unity:UnitySchema.atoms:Wait")
+    sequencer["classification"] = CONNECTED_BUT_NOT_ATTACHED
+    sequencer["lifecycle_seam"] = None
+    sequencer["missing_seam"] = "scene or prefab component attachment"
+    changed["summary"] = dict(sorted(Counter(
+        row["classification"] for row in changed["representative_connections"]).items()))
+    assert any("emitted but unattached" in error for error in validate_report(changed))
 
 
 def test_attachment_requires_a_hosted_specific_guid_binding():
@@ -164,3 +171,58 @@ def test_cli_replay_is_byte_identical_and_read_only():
     second = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=True)
     assert first.stdout == second.stdout
     assert REPORT.read_bytes() == before
+
+
+# ── R2 (S4): every representative route attached or retired ──────────────────
+
+def test_r2_leaves_no_route_emitted_but_unattached(report):
+    assert CONNECTED_BUT_NOT_ATTACHED not in report["summary"]
+    sequencer = _representative(report, "unity:UnitySchema.atoms:Wait")
+    assert sequencer["classification"] == CONNECTED_AND_OWNED
+    assert sequencer["generated_host"] == "_GameSequencer"
+    assert sequencer["lifecycle_seam"].startswith("templates/unity/scene.unity.j2:")
+    assert any(ref.startswith("src/atom_bindings.py:") for ref in sequencer["provenance"])
+
+
+def test_unity_companions_are_retired_with_source_evidence(report):
+    from src.micro.unity_base import UnityMicroPipeline
+
+    companion = _representative(report, "unity:MICROGEN_ATOM_MAP:controller:Move")
+    assert companion["classification"] == RETIRED
+    assert companion["provider"] is None and companion["owner_candidates"] == []
+    assert companion["retired_by"] == _source_ref(UnityMicroPipeline._after_write)
+    assert companion["diagnostic"].startswith("retired by ")
+    assert _unity_companion_emitters() == []
+
+
+def test_retired_unity_hook_writes_nothing(tmp_path):
+    from src.micro.unity_base import UnityMicroPipeline
+
+    UnityMicroPipeline._after_write(None, None, "default", tmp_path, "Proof")  # type: ignore[arg-type]
+    assert list(tmp_path.iterdir()) == []
+
+
+def _emitting_hook(self, schema, variant, out_dir, name):
+    (out_dir / "ControllerDefaultBehavior.cs").write_text("// companion", encoding="utf-8")
+
+
+def test_a_hook_that_emits_again_reopens_the_route_and_fails(monkeypatch):
+    from src.micro.unity_base import UnityMicroPipeline
+
+    monkeypatch.setattr(UnityMicroPipeline, "_after_write", _emitting_hook)
+    reopened = build_report()
+    companion = _representative(reopened, "unity:MICROGEN_ATOM_MAP:controller:Move")
+    assert companion["classification"] == CONNECTED_BUT_NOT_ATTACHED
+    assert companion["provider"] == _source_ref(_emitting_hook)
+    assert any("emitted but unattached" in error for error in validate_report(reopened))
+
+
+def test_a_retired_route_cannot_keep_a_provider(report):
+    with pytest.raises(OwnershipEvidenceError, match="retired by"):
+        classify_connection(provider="src/provider.py:1", owner_candidates=[],
+                            lifecycle_seam=None, retired_by="src/retirer.py:1")
+    changed = copy.deepcopy(report)
+    companion = _representative(changed, "unity:MICROGEN_ATOM_MAP:controller:Move")
+    companion["retired_by"] = "src/no_such_retirer.py:1"
+    assert any("retired route needs retired_by source evidence" in error
+               for error in validate_report(changed))

@@ -1,7 +1,9 @@
-# Mechanic descriptor ownership audit (S3)
+# Mechanic descriptor ownership audit (S3, R2)
 
 S3 validates structural connection and ownership. It does not migrate gameplay,
-add public atom vocabulary, persist S4 bindings, or claim compile/runtime proof.
+add public atom vocabulary, or claim compile/runtime proof. R2 (S4) attached or
+retired the two unattached routes, and persists per-build typed atom-route
+bindings (see "Typed atom bindings" in `ATOM_BACKEND_SUPPORT.md`).
 
 Run from the repository root:
 
@@ -25,24 +27,31 @@ and template-owned mechanics.
 | `connected_but_not_attached` | Source is emitted or lowerable, but generated attachment to a host/lifecycle is not proven. |
 | `ambiguous_owner` | More than one candidate owner exists; the audit abstains and names every candidate plus the missing seam. |
 | `missing_provider` | No declared provider exists; the existing debt entry supplies the later migration slice. |
+| `retired` | The route was removed on purpose. No provider emits it, and `retired_by` names the source that proves it (R2). |
 
 Unknown routes are errors, not defaults. A provider with no owner candidate raises
 an `OwnershipEvidenceError`; a changed or incomplete report fails validation.
+Since R2, `connected_but_not_attached` also fails validation: an emitted route
+must be attached to a generated host or retired.
 
 ## Representative result
 
-- `UnitySchema.atoms` lowers into `GameSequencer.cs`, but no generated scene or
-  prefab attaches `GameSequencer`; this is `connected_but_not_attached`.
+- `UnitySchema.atoms` lowers into `GameSequencer.cs`, which every gameplay scene
+  hosts on its own `_GameSequencer` object (R2). The generator places that host
+  from the typed binding it persists in `schema.meta.atom_bindings`
+  (`src/atom_bindings.py`); this route is `connected_and_owned`.
 - Behavior-map entity atoms resolve a behavior class, render `EntityBehavior`,
   attach through `EntitySpawner.AddComponent`, and enter its `Start` coroutine;
   this route is `connected_and_owned`.
 - `WireInputToController` is selected by `MicroComposer`, lowered into
   `GameWiring`, attached on `_Systems`, and invoked from `Awake`; this route is
   `connected_and_owned`.
-- `MICROGEN_ATOM_MAP["controller"]` can emit
-  `ControllerDefaultBehavior.cs` through standalone `_after_write`, but composed
-  generation calls `write_files` directly and no generated scene attaches that
-  companion; this is `connected_but_not_attached`.
+- `MICROGEN_ATOM_MAP["controller"]` used to emit `ControllerDefaultBehavior.cs`
+  through standalone `_after_write`, which no generated scene ever attached. R2
+  retired every Unity companion: `UnityMicroPipeline._after_write` makes no
+  call, and the audit checks that structurally for every registered Unity micro.
+  A hook that writes a companion again reopens the route and fails. This route
+  is `retired`; `MICROGEN_ATOM_MAP` stays descriptive data.
 - The composed controller descriptor still resolves through `REGISTRY` to
   `ControllerPipeline`, renders selected template source, and attaches to the
   generated Player host; template ownership remains unchanged.

@@ -130,9 +130,10 @@ def test_controller_variants_and_pointer_remain_template_owned(inventory):
     assert controller["variants"] == sorted(ControllerPipeline.variants)
     assert "pointer" in controller["variants"]
     assert controller["ownership"] == "template_owned"
-    camera = next(micro for micro in inventory["micros"]
-                  if micro["backend"] == "unity" and micro["kind"] == "camera")
-    assert camera["companion_emission"] == "suppressed by camera override"
+    # R2 retired every Unity companion (camera's was already suppressed).
+    unity = [micro for micro in inventory["micros"] if micro["backend"] == "unity"]
+    assert {micro["companion_emission"] for micro in unity} == {"retired (R2)"}
+    assert controller["companion_emission"] == "retired (R2)"
 
 
 def test_policy_disagreement_fails(tmp_path):

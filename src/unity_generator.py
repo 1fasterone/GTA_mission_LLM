@@ -15,6 +15,8 @@ from typing import Any
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
+from .atom_bindings import (AtomBindings, BindingReport, derive_atom_bindings,
+                            stamp_atom_bindings)
 from .unity_schema import (ProceduralMesh, UnitySchema, UnityScript,
                            is_embodied)
 from .unity_asset_resolver import resolve_assets
@@ -2068,6 +2070,10 @@ class UnityProjectGenerator:
         # 6.5 artifact must use this exact table rather than re-discovering it.
         self.last_measured_footprints: dict[str, float] = {}
         self.last_projectile_presentation: dict[str, Any] = {}
+        # The typed atom routes the last generate() placed (R2) and what
+        # stamping them into schema.meta found. Callers print the report.
+        self.last_atom_bindings: AtomBindings = AtomBindings(routes=[])
+        self.last_atom_binding_report: BindingReport = BindingReport()
         # Invented types already stubbed in this project; reset per project by
         # render_project_scripts.
         self._stubbed_types: set[str] = set()
@@ -2495,6 +2501,8 @@ class UnityProjectGenerator:
         referenced by its deterministic .cs.meta GUID.
         """
         self.last_projectile_presentation = {}
+        self.last_atom_bindings = AtomBindings(routes=[])
+        self.last_atom_binding_report = BindingReport()
         if is_geometry_only_greybox(schema):
             return self._generate_greybox_only_files(schema, manifest_deps)
 
@@ -2535,9 +2543,18 @@ class UnityProjectGenerator:
                     ai_fallback = u.class_name
             # Atom-driven entities get a generated <Name>Behavior class — add those
             # class names to `known` so the reconciliation below does not clear them.
+            # That class is the ONLY thing the entity's atoms render into, so it
+            # is the entity's behavior: a blank or foreign name left the class
+            # emitted but never added at spawn, and the atoms never ran (R2,
+            # src/atom_bindings.py reports the route).
             for e in schema.entities:
                 if e.atoms:
-                    known.add(entity_behavior_class_name(e.name))
+                    cls = entity_behavior_class_name(e.name)
+                    known.add(cls)
+                    if e.behavior != cls:
+                        _log.info("[atom bindings] %s.behavior %r -> %s (its atoms "
+                                  "render only into %s)", e.name, e.behavior, cls, cls)
+                        e.behavior = cls
             for e in schema.entities:
                 if e.behavior and e.behavior not in known:
                     e.behavior = ai_fallback if e.kind == "enemy" else ""
@@ -2957,6 +2974,19 @@ class UnityProjectGenerator:
             files, schema, pn, _palette_rgb, composed_units)
         _postprocess_profile_guid = self._emit_postprocess_volume(files, schema, pn)
 
+        # ── Atom-route bindings (R2) ──────────────────────────────────────────
+        # Derived here, after entity-behavior reconciliation, script
+        # preparation and model resolution have decided which class each atom
+        # list reaches, and BEFORE any host is placed: the scenes below and the
+        # GameSequencer emission read the same record that gets persisted, so
+        # what is attached and what is recorded cannot disagree.
+        self.last_atom_bindings = derive_atom_bindings(schema, entity_model_paths)
+        self.last_atom_binding_report = stamp_atom_bindings(schema, self.last_atom_bindings)
+        for _msg in self.last_atom_binding_report.warnings:
+            _log.warning("[atom bindings] %s", _msg)
+        _sequencer_route = self.last_atom_bindings.route("atoms")
+        _sequencer_hosted = _sequencer_route is not None and _sequencer_route.attached
+
         scene_ctx = {
             **base_ctx,
             "camera_position":  _cam["position"],
@@ -2967,6 +2997,13 @@ class UnityProjectGenerator:
             "composed_units":   composed_units or [],
             "custom_scripts":   custom_scripts,
             "entity_spawner_guid": _make_guid(f"{pn}/Scripts/EntitySpawner"),
+            # schema.atoms' host: a _GameSequencer object in each scene its
+            # binding names (every gameplay scene). None = no route to host.
+            "game_sequencer_guid": (_make_guid(f"{pn}/Scripts/GameSequencer")
+                                    if _sequencer_hosted else None),
+            "game_sequencer_scenes": (list(_sequencer_route.scenes)
+                                      if _sequencer_route is not None and _sequencer_hosted
+                                      else []),
             # Model Pack v1 — drive mode keeps the car visual, so no player
             # swap; a merged player-vehicle group (racing start grid) swaps
             # in the kart regardless of locomotion, and a merged walking
@@ -3192,9 +3229,12 @@ class UnityProjectGenerator:
                 files[f"{eb_path}.meta"] = _meta_file(_make_guid(f"{pn}/Scripts/{cls}"))
 
         # ── Global atom sequencer (schema.atoms) ──────────────────────────────
-        # Schema-level atoms (intro fade, music start, etc.) fire once on Start
-        # via a GameSequencer MonoBehaviour on the GameManager object.
-        if getattr(schema, "atoms", None):
+        # Schema-level atoms (intro fade, music start, etc.) fire once per
+        # gameplay-scene load from a GameSequencer on the scene's own
+        # _GameSequencer object (scene.unity.j2), placed from the binding above.
+        # A route with no host scene emits nothing: a sequencer no scene
+        # attaches is code that reads like it runs but never does.
+        if _sequencer_hosted:
             from .atoms.backends.unity import unity_coroutine_body as _ucb
             gs_path = f"{pn}/Assets/Scripts/GameSequencer.cs"
             files[gs_path]           = self._render("GameSequencer.cs.j2", {
