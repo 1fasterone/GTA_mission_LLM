@@ -1334,3 +1334,29 @@ def test_no_wiring_map_leaves_gamewiring_unchanged(tmp_path):
     gw2 = (a2 / "Micros" / "wiring" / "Scripts" / "GameWiring.cs").read_text(encoding="utf-8")
     assert gw1 == gw2
     assert "schema.wiring" not in gw1   # no custom-seam markers when wiring is absent
+
+
+@pytest.mark.parametrize("kind,variant", [
+    ("lighting", "flat_2d"),
+    ("hud", ""),
+    ("transition", ""),
+])
+def test_compose_keeps_initializer_repairs_on_restored_authored_fields(kind, variant, tmp_path):
+    """Regression (2026-11-10 cuphead_style_brawler): lint_fields repaired
+    `Color _tintColor = #FFD700` and logged it, but _resolve then restored the
+    raw authored extra_fields, so `= #FFD700;` shipped (CS1040 + CS1002) in
+    LightingDirector.cs, GameHud.cs and SceneTransition.cs."""
+    sub = Subsystem(kind=kind, variant=variant, name=f"Hex{kind.title()}", options={
+        "extra_fields": [
+            {"name": "_tintColor", "type": "Color", "default": "#FFD700"},
+            {"name": "_helper", "type": "UnprovidedHelper"},
+        ],
+    })
+    pipeline, schema, resolved_variant, _, _ = MicroComposer("HexRestore")._resolve(sub)
+    out = Path(tmp_path) / kind
+    pipeline.write_files(schema, resolved_variant, out)
+    source = "\n".join(p.read_text(encoding="utf-8") for p in out.rglob("*.cs"))
+    assert "#FFD700" not in source
+    assert "_tintColor = new Color(1f, 0.8431f, 0f, 1f);" in source
+    # Source preservation (S2) still holds for everything else authored.
+    assert "UnprovidedHelper _helper" in source
