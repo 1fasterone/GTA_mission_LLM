@@ -345,3 +345,23 @@ def test_contract_only_shoot_atom_compiles_against_real_unity():
         "Assets/Scripts/GameSequencer.cs": files["BindProof/Assets/Scripts/GameSequencer.cs"],
     })
     assert check.accepted, check.errors
+
+
+def test_a_shooting_controller_off_the_player_is_not_the_implementer():
+    """Review of #300: FirePlayer() only looks at the Player object."""
+    off_player = ComposedUnit(kind="controller", variant="first_person",
+                              class_name="Shooter",
+                              guid=_make_guid("BindProof/Micros/controller/Shooter"),
+                              target="systems", abilities=["shoot"])
+    assert contract_implementers_for([off_player]) == {}
+
+    generator, files = _generate(_schema(atoms=[_shoot()]), [off_player])
+    binding = _shoot_binding(generator)
+    assert binding.runtime_provider is not None
+    assert binding.runtime_provider.implementer is None
+    assert any("no composed class implements IFiringProvider" in warning
+               and "on the player target" in warning
+               for warning in generator.last_atom_binding_report.warnings)
+    # The off-Player controller's micro already emits FiringProvider.cs; a
+    # contract-only copy beside it would be a duplicate type (CS0101).
+    assert CONTRACT_PATH not in files

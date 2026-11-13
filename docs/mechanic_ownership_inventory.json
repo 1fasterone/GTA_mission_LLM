@@ -4,8 +4,8 @@
       "consumers": [
         "src/capability_resolver.py:260",
         "src/capability_resolver.py:317",
-        "src/unity_generator.py:2483",
-        "src/atom_bindings.py:272"
+        "src/unity_generator.py:2484",
+        "src/atom_bindings.py:295"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -13,7 +13,7 @@
     {
       "consumers": [
         "src/capability_resolver.py:317",
-        "src/unity_generator.py:2483"
+        "src/unity_generator.py:2484"
       ],
       "producer": "MicrogensSpec.atoms",
       "source": "src/unity_schema.py:1000"
@@ -21,8 +21,8 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2483",
-        "src/atom_bindings.py:272"
+        "src/unity_generator.py:2484",
+        "src/atom_bindings.py:295"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:29",
       "producer": "EntitySpec.atoms and behavior map",
@@ -31,8 +31,8 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2483",
-        "src/atom_bindings.py:272"
+        "src/unity_generator.py:2484",
+        "src/atom_bindings.py:295"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
@@ -134,9 +134,9 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/atom_bindings.py:272",
-        "src/atom_bindings.py:418",
-        "src/unity_generator.py:2483",
+        "src/atom_bindings.py:295",
+        "src/atom_bindings.py:441",
+        "src/unity_generator.py:2484",
         "templates/unity/GameSequencer.cs.j2:12",
         "templates/unity/scene.unity.j2:1282"
       ],
@@ -251,6 +251,7 @@
       ],
       "provenance": [
         "src/atom_bindings.py:127",
+        "src/atom_bindings.py:280",
         "src/atoms/controller.py:201",
         "src/micro/controller.py:1041",
         "src/micro/controller.py:162",
@@ -262,6 +263,7 @@
         "templates/unity/micro/controller/FiringProvider.cs.j2:42",
         "templates/unity/micro/controller/FiringProvider.cs.j2:43",
         "templates/unity/micro/controller/FiringProvider.cs.j2:47",
+        "templates/unity/scene.unity.j2:1378",
         "templates/unity/scene.unity.j2:430"
       ],
       "provider": "src/atoms/backends/unity.py:416",

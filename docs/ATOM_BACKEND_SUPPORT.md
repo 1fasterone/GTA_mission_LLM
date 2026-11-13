@@ -187,7 +187,7 @@ flowchart LR
 | Implementer | `Controller.cs.j2` with the `shoot` ability (`provides_firing`) | `TryFire()` refuses in a fixed order (Reloading, EmptyMagazine, CoolingDown) and is the only caller of `TryShoot()`; only `TryShoot()` spends ammo or restarts cadence, and only after a round launched |
 | Fire input | `Update`: `if (fireDown) TryFire();` | The input no longer carries its own copy of the gate |
 | Lowerer | `src/atoms/backends/unity.py:_shoot` | Emits only `FiringProviders.FirePlayer()`; `NoProvider` is a logged error with its remedy, any other refusal a logged warning naming its `FireResult` |
-| Typed binding | `AtomBinding.runtime_provider` (`src/atom_bindings.py`) | Records `{contract, host, implementer}` from the lowered C#. With no implementer the build warns, and `generate()` emits the contract alone in `Assets/Scripts` so the atom compiles and refuses at runtime |
+| Typed binding | `AtomBinding.runtime_provider` (`src/atom_bindings.py`) | Records `{contract, host, implementer}` from the lowered C#. The implementer must sit where the resolver looks: only a shooting controller on the `player` target (`firing_provider.HOST_TARGET`, the units `scene.unity.j2` puts on the Player) counts. With no implementer the build warns. When no composed micro emitted the contract either (`firing_contract_emitted`), `generate()` emits it alone in `Assets/Scripts`, so the atom compiles and refuses at runtime without a duplicate type |
 
 Decisions:
 

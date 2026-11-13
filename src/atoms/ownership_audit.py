@@ -236,6 +236,11 @@ def _firing_seam() -> tuple[str | None, str | None, list[str]]:
         (_CONTROLLER_TEMPLATE, "return TryShoot() ? FireResult.Fired : FireResult.NoProjectile;"),
         ("src/micro/controller.py", "env.get_template(firing_provider.TEMPLATE)"),
         ("templates/unity/scene.unity.j2", f"m_TagString: {firing_provider.HOST}"),
+        # The implementer must sit where the resolver looks: the scene puts
+        # exactly the player-target units on the Player-tagged object.
+        ("templates/unity/scene.unity.j2",
+         f'selectattr("target", "equalto", "{firing_provider.HOST_TARGET}")'),
+        ("src/atom_bindings.py", "== firing_provider.HOST_TARGET"),
     ]:
         reference = _optional_token_ref(relative, token)
         if reference is None:

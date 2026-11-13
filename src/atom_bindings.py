@@ -250,23 +250,46 @@ def _entity_scenes(schema: UnitySchema, entity_name: str) -> list[str]:
     return hosted
 
 
-def contract_implementers_for(composed_units: Optional[list] = None) -> dict[str, str]:
-    """The composed class that implements each runtime contract (R3, S5).
+def _firing_controllers(composed_units: Optional[list]) -> list:
+    """Composed controllers whose rendered class implements IFiringProvider.
 
-    Read from the composed units after ``default_fix`` (``ComposedUnit.abilities``
-    is the survived list), through the same predicate the controller micro
-    emits the contract with, so the record and the emitted files agree. The
-    compose graph places at most one player controller per project.
+    Read after ``default_fix`` (``ComposedUnit.abilities`` is the survived
+    list), through the same predicate the controller micro emits the contract
+    with, so the record and the emitted files agree.
     """
     from .micro.controller import provides_firing
 
+    return [unit for unit in composed_units or []
+            if getattr(unit, "kind", "") == "controller"
+            and provides_firing(list(getattr(unit, "abilities", []) or []),
+                                str(getattr(unit, "variant", "")))]
+
+
+def contract_implementers_for(composed_units: Optional[list] = None) -> dict[str, str]:
+    """The composed class that implements each runtime contract on its host (R3, S5).
+
+    A class implements the contract for the lowered C# only where that C#
+    looks: ``FiringProviders.FirePlayer()`` resolves the object tagged Player,
+    which hosts exactly the units on the ``player`` target. A shooting
+    controller on another target is not the implementer, so the build warns
+    instead of recording a provider ``Shoot`` can never reach. The compose
+    graph places at most one player controller per project.
+    """
     implementers: dict[str, str] = {}
-    for unit in composed_units or []:
-        if (getattr(unit, "kind", "") == "controller"
-                and provides_firing(list(getattr(unit, "abilities", []) or []),
-                                    str(getattr(unit, "variant", "")))):
+    for unit in _firing_controllers(composed_units):
+        if getattr(unit, "target", "") == firing_provider.HOST_TARGET:
             implementers.setdefault(firing_provider.CONTRACT, unit.class_name)
     return implementers
+
+
+def firing_contract_emitted(composed_units: Optional[list] = None) -> bool:
+    """True when a composed controller micro already emits FiringProvider.cs.
+
+    Independent of the target: the micro writes the contract beside any
+    implementing class, so a second, contract-only copy would be a duplicate
+    type (CS0101) even when that class sits off the Player.
+    """
+    return bool(_firing_controllers(composed_units))
 
 
 def derive_atom_bindings(

@@ -22,6 +22,10 @@ from __future__ import annotations
 CONTRACT = "IFiringProvider"
 # The scene object the lowered C# resolves the provider on (its tag).
 HOST = "Player"
+# The composed-unit target scene.unity.j2 attaches to that object
+# (`player_units`). A shooting controller on any other target implements the
+# contract where FirePlayer() never looks, so it is not the implementer.
+HOST_TARGET = "player"
 # The one call the Shoot lowerer emits; FiringProvider.cs declares it.
 RESOLVER_CALL = "FiringProviders.FirePlayer()"
 # The template, relative to the controller micro's own template folder.
@@ -30,5 +34,5 @@ TEMPLATE = "FiringProvider.cs.j2"
 PROJECT_TEMPLATE = "micro/controller/FiringProvider.cs.j2"
 SCRIPT = "FiringProvider.cs"
 # Named when a lowered atom needs the contract and nothing implements it.
-REMEDY = ("compose a controller whose variant renders Controller.cs.j2 with the "
-          "shoot ability")
+REMEDY = ("compose a controller on the player target whose variant renders "
+          "Controller.cs.j2 with the shoot ability")

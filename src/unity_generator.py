@@ -17,7 +17,8 @@ from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
 from . import firing_provider
 from .atom_bindings import (AtomBindings, BindingReport, contract_implementers_for,
-                            derive_atom_bindings, stamp_atom_bindings)
+                            derive_atom_bindings, firing_contract_emitted,
+                            stamp_atom_bindings)
 from .unity_schema import (ProceduralMesh, UnitySchema, UnityScript,
                            is_embodied)
 from .unity_asset_resolver import resolve_assets
@@ -2988,14 +2989,17 @@ class UnityProjectGenerator:
             _log.warning("[atom bindings] %s", _msg)
         # A lowered atom that resolves the firing contract (Shoot, R3) must
         # compile even where no composed controller implements it. The
-        # controller micro emits the contract beside its implementer; with no
-        # implementer, emit the same contract alone, so the atom compiles and
-        # refuses at runtime with FireResult.NoProvider (warned above).
-        if any(binding.runtime_provider is not None
-               and binding.runtime_provider.contract == firing_provider.CONTRACT
-               and binding.runtime_provider.implementer is None
-               for route in self.last_atom_bindings.routes
-               for binding in route.atoms):
+        # controller micro emits the contract beside any implementing class;
+        # only when no micro emitted it, emit the same contract alone, so the
+        # atom compiles and refuses at runtime with FireResult.NoProvider
+        # (warned above). A shooting controller off the Player still emitted
+        # it, and a second copy would be a duplicate type (CS0101).
+        if not firing_contract_emitted(composed_units) and any(
+                binding.runtime_provider is not None
+                and binding.runtime_provider.contract == firing_provider.CONTRACT
+                and binding.runtime_provider.implementer is None
+                for route in self.last_atom_bindings.routes
+                for binding in route.atoms):
             _fp_path = f"{pn}/Assets/Scripts/{firing_provider.SCRIPT}"
             files[_fp_path] = self._render(firing_provider.PROJECT_TEMPLATE,
                                            {"emitter": "Unity Project Pipeline"})
