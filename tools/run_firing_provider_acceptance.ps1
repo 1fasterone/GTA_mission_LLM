@@ -3,9 +3,11 @@
 # Creates a clean Unity project, installs the Unity Test Framework, emits the
 # acceptance sources from canonical Python/templates
 # (tools/generate_firing_provider_acceptance.py), compiles them, then runs the
-# Play Mode tests in tests/unity_firing_provider/. Three proof markers must
-# appear: FIRING_PROVIDER_SHARED_GATE_PASS, FIRING_PROVIDER_POOL_PASS and
-# FIRING_PROVIDER_NO_PROVIDER_PASS.
+# Play Mode tests in tests/unity_firing_provider/. Six proof markers must
+# appear: the R3 provider's FIRING_PROVIDER_SHARED_GATE_PASS,
+# FIRING_PROVIDER_POOL_PASS and FIRING_PROVIDER_NO_PROVIDER_PASS, and the
+# Slice 4 firearm adapter's FIREARM_FALLBACK_PASS, FIREARM_ANIM_EVENT_PASS and
+# FIREARM_INCOMPATIBLE_PASS.
 #
 #   pwsh -File tools/run_firing_provider_acceptance.ps1 [-Editor <Unity.exe>]
 #
@@ -86,7 +88,8 @@ Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\FiringProvi
     -Destination $runtimeDir -Force
 $playTestDir = Join-Path $projectPath "Assets\Tests\PlayMode"
 New-Item -ItemType Directory -Path $playTestDir -Force | Out-Null
-foreach ($file in @("FiringProvider.PlayModeTests.asmdef", "FiringProviderPlayModeTests.cs")) {
+foreach ($file in @("FiringProvider.PlayModeTests.asmdef", "FiringProviderPlayModeTests.cs",
+                   "FirearmAdapterPlayModeTests.cs")) {
     Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\$file") `
         -Destination $playTestDir -Force
 }
@@ -99,19 +102,20 @@ if ($compileErrors) { throw "Generated project contains C# errors. Log=$compileL
 
 $playExit = Invoke-UnityEditor -EditorPath $Editor -Arguments @(
     "-batchmode", "-nographics", "-runTests", "-projectPath", $projectPath,
-    "-testPlatform", "PlayMode", "-testFilter", "FiringProviderPlayModeTests",
+    "-testPlatform", "PlayMode", "-testFilter", "FiringProviderPlayModeTests;FirearmAdapterPlayModeTests",
     "-testResults", $testResults, "-logFile", $playLog)
 if (-not (Test-Path -LiteralPath $testResults)) {
     throw "Unity produced no Play Mode results. Exit=$playExit Log=$playLog"
 }
 [xml]$results = Get-Content -Raw -LiteralPath $testResults
 $run = $results."test-run"
-if ($playExit -ne 0 -or [int]$run.failed -ne 0 -or [int]$run.passed -lt 3) {
+if ($playExit -ne 0 -or [int]$run.failed -ne 0 -or [int]$run.passed -lt 6) {
     throw ("Firing-provider Play Mode tests failed. Exit=$playExit Passed=$($run.passed) " +
         "Failed=$($run.failed) Log=$playLog Results=$testResults")
 }
 $markers = @("FIRING_PROVIDER_SHARED_GATE_PASS", "FIRING_PROVIDER_POOL_PASS",
-             "FIRING_PROVIDER_NO_PROVIDER_PASS")
+             "FIRING_PROVIDER_NO_PROVIDER_PASS", "FIREARM_FALLBACK_PASS",
+             "FIREARM_ANIM_EVENT_PASS", "FIREARM_INCOMPATIBLE_PASS")
 $proof = @(Select-String -Path $testResults -Pattern ($markers -join "|") |
     ForEach-Object { $_.Line.Trim() })
 foreach ($marker in $markers) {

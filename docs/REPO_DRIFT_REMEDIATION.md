@@ -80,13 +80,12 @@ Open decisions:
 - ~~R1 collision policy~~ — decided: one owner per token, enforced at import
   by `src/atoms/__init__._build_alias_index`. See `ATOM_BACKEND_SUPPORT.md`,
   "R1 vocabulary decisions".
-- `codex/projectile-slice4-firearm-adapter` (2 commits on `e72d920`) — decided:
-  port it onto the firing provider as its own PR, after R3 merges. Its Slice 3
-  commit is superseded by #267, which shipped `projectile_presentation` rather
-  than per-weapon `projectile_visuals`, so only the firearm adapter (`293ee12`:
-  Animator trigger, `OnFirearmRelease` release queue, generated muzzle flash
-  and recoil) is ported. Its "reservation is the one authoritative acceptance
-  point" sits inside `TryShoot()`, past `TryFire()`.
+- ~~`codex/projectile-slice4-firearm-adapter`~~ — ported onto the firing
+  provider in its own PR (`codex/r3-firearm-adapter-port`, after #300). Its
+  Slice 3 commit was superseded by #267, so only the firearm adapter
+  (`293ee12`) was ported. Its reservation sits inside `TryShoot()`, past
+  `TryFire()`, so the adapter changes how an accepted shot is presented, never
+  whether it is accepted. See `docs/PROJECTILE_SLICE4_ACCEPTANCE.md`.
 
 ### R0 progress
 
@@ -197,9 +196,9 @@ Evidence (local, this branch):
   pool-exhausted refusals, and the logged no-provider error.
 
 Not covered: hardware fire input in Play Mode (batchmode cannot drive it; the
-`Update -> TryFire` call is proven structurally), and the firearm presentation
-adapter from `codex/projectile-slice4-firearm-adapter`, which is ported in its
-own PR (see open decisions).
+`Update -> TryFire` call is proven structurally). The firearm presentation
+adapter from `codex/projectile-slice4-firearm-adapter` was ported afterwards
+in its own PR (see open decisions).
 
 ## Trace answer
 

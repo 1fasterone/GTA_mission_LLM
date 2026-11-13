@@ -55,7 +55,8 @@ def test_resolved_3d_physical_intent_stamps_fast_round_and_weapon_entity():
     )
 
     contract = schema.meta[PHYSICAL_PROJECTILE_META_KEY]
-    assert contract["version"] == "slice3-3d-v3"
+    assert contract["version"] == "slice4-3d-v4"
+    assert contract["firearm_presentation"]["adapter"] == "firearm_animation"
     assert contract["delivery"] == "projectile_3d"
     assert contract["motion_profile"] == "fast_round"
     assert contract["emission_profile"] == "muzzle"
@@ -248,7 +249,9 @@ def test_slice0_locks_generated_projectile_runtime_invariants(tmp_path):
 
     assert "ResolveProjectileSpawnPosition(muzzle, launchDirection)" in controller
     assert "projectile.Configure(" in controller
-    assert "projectile.Launch(launchDirection * projectileSpeed[_weaponIndex]);" in controller
+    # Each launch carries the weapon it was fired with (a reserved firearm
+    # round can release after a weapon switch).
+    assert "projectile.Launch(launchDirection * projectileSpeed[weaponIndex]);" in controller
     assert "CollisionDetectionMode.ContinuousSpeculative" in controller
 
     assert "Physics.SphereCastNonAlloc(" in projectile

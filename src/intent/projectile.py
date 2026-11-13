@@ -80,6 +80,17 @@ _PROJECTILE_PROFILES: dict[str, dict[str, Any]] = {
             "model_hint": "rifle weapon",
             "scale": 0.45,
         },
+        # Slice 4 firearm presentation, closed and compiler-owned. It shapes
+        # only how an accepted shot is presented and when its reserved round
+        # is released; TryFire() still decides whether a shot is accepted.
+        "firearm_presentation": {
+            "adapter": "firearm_animation",
+            "release_event": "OnFirearmRelease",
+            "trigger_candidates": ["Fire", "Attack", "Shoot"],
+            "fallback": "generated_recoil_flash",
+            "release_timeout": 0.12,
+            "recoil_distance": 0.06,
+        },
     },
     "thrown_object": {
         "motion_profile": "thrown_object",
