@@ -27,6 +27,7 @@ from pathlib import Path
 from .comfyui_backend import ComfyUIBackend
 from .openrouter_backend import OpenRouterBackend
 from .matte import remove_background_to_png, solid_placeholder_png
+from .poses import has_pose, render_pose_png
 
 # Backends that already return alpha-matted PNGs (native transparent-background
 # support) — matting them again would be redundant work, not a correctness
@@ -84,6 +85,15 @@ def generate_sprite_bank(cues: list[SpriteCue], resources_dir: Path, config: dic
     generations was not enough — a character's costume/colors visibly drifted
     between actions. Chaining off one real reference image holds identity far
     better than seed-sharing alone.
+
+    Pose: when the backend can condition on a pose (`supports_pose()`, e.g.
+    ComfyUI with an OpenPose ControlNet), every frame gets its own
+    deterministic skeleton from src/sprites/poses.py and the whole entity
+    shares ONE seed — identity rides on seed + reference, pose rides on the
+    skeleton. The reference-only chain kept the reference's stance in every
+    frame and used seed+frame_index, so frame N of every action looked alike
+    (confirmed live, 2026-11-10). Without pose support the old chain still
+    runs, and the manifest says so (`pose_conditioned: false` + a warning).
     """
     backend = _make_backend(config)
     natively_transparent = backend.name in _NATIVELY_TRANSPARENT_BACKENDS
@@ -95,8 +105,19 @@ def generate_sprite_bank(cues: list[SpriteCue], resources_dir: Path, config: dic
     placeholders = 0
 
     by_entity: dict[str, list[SpriteCue]] = {}
+    frames_per: dict[tuple[str, str], int] = {}
     for cue in cues:
         by_entity.setdefault(cue.entity_id, []).append(cue)
+        key = (cue.entity_id, cue.action)
+        frames_per[key] = max(frames_per.get(key, 0), cue.frame_index + 1)
+
+    probe = getattr(backend, "supports_pose", None)
+    pose_conditioned = bool(cues) and callable(probe) and bool(probe())
+    if cues and not pose_conditioned:
+        warnings.append(
+            f"pose ControlNet unavailable on {backend.name} — frames are chained "
+            f"off one reference image and will share its stance; see "
+            f"sprites.pose_controlnet")
 
     for entity_id, entity_cues in by_entity.items():
         entity_seed = _seed_for(entity_id, seed)
@@ -106,9 +127,20 @@ def generate_sprite_bank(cues: list[SpriteCue], resources_dir: Path, config: dic
             out_dir = sprites_dir / cue.entity_id / cue.action
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / f"frame_{cue.frame_index:02d}.png"
-            frame_seed = entity_seed + cue.frame_index
+            posed = pose_conditioned and has_pose(cue.action)
+            frame_seed = entity_seed if posed else entity_seed + cue.frame_index
 
-            if reference_raw is None:
+            if posed:
+                pose_png = render_pose_png(
+                    cue.action, cue.frame_index,
+                    frames_per[(cue.entity_id, cue.action)], cue.width, cue.height)
+                raw = backend.generate_posed(
+                    cue.prompt, seed=frame_seed, pose_png_bytes=pose_png,
+                    width=cue.width, height=cue.height,
+                    reference_png_bytes=reference_raw)
+                if raw is not None and reference_raw is None:
+                    reference_raw = raw
+            elif reference_raw is None:
                 raw = backend.generate(cue.prompt, seed=frame_seed,
                                         width=cue.width, height=cue.height)
                 if raw is not None:
@@ -150,7 +182,8 @@ def generate_sprite_bank(cues: list[SpriteCue], resources_dir: Path, config: dic
     return {
         "seed":         seed,
         "backend":      backend.name,
-        "checkpoint":   backend.checkpoint,
+        "checkpoint":   getattr(backend, "checkpoint", None),
+        "pose_conditioned": pose_conditioned,
         "frame_count":  len(cues),
         "generated":    generated,
         "placeholders": placeholders,
