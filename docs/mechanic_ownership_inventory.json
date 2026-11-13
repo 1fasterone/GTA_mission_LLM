@@ -5,7 +5,7 @@
         "src/capability_resolver.py:260",
         "src/capability_resolver.py:317",
         "src/unity_generator.py:2482",
-        "src/atom_bindings.py:154"
+        "src/atom_bindings.py:198"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -22,7 +22,7 @@
       "consumers": [
         "src/unity_resolver.py:307",
         "src/unity_generator.py:2482",
-        "src/atom_bindings.py:154"
+        "src/atom_bindings.py:198"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:29",
       "producer": "EntitySpec.atoms and behavior map",
@@ -32,7 +32,7 @@
       "consumers": [
         "src/unity_resolver.py:307",
         "src/unity_generator.py:2482",
-        "src/atom_bindings.py:154"
+        "src/atom_bindings.py:198"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
@@ -134,8 +134,8 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/atom_bindings.py:154",
-        "src/atom_bindings.py:273",
+        "src/atom_bindings.py:198",
+        "src/atom_bindings.py:324",
         "src/unity_generator.py:2482",
         "templates/unity/GameSequencer.cs.j2:12",
         "templates/unity/scene.unity.j2:1282"

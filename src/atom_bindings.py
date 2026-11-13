@@ -23,10 +23,11 @@ comment. The record names each one rather than letting it read like code.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Literal, Mapping, Optional
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .atoms import ATOM_REGISTRY, get_atom
 from .atoms.base import AtomInvocation
@@ -60,6 +61,41 @@ _STATUS_WHY: dict[str, str] = {
     "unregistered": "is not a registered atom",
 }
 
+# Hosts the scene template builds with nothing but a Transform and the class
+# that lowers the route, so an atom that depends on its host provably reaches
+# no gameplay object there. Custom-script hosts are not listed: another script
+# on the same object may legitimately carry the component an atom reads.
+EMPTY_HOSTS: frozenset[str] = frozenset({GAME_SEQUENCER_HOST})
+
+# Host dependence is read from the C# the atom actually lowers to, with the
+# same args generation passes, never from a hand-kept table.
+_STRING_LITERAL = re.compile(r'@?"(?:\\.|[^"\\])*"')
+_LINE_COMMENT = re.compile(r"//[^\n]*")
+# `"<target>" == "Player" ? gameObject : GameObject.Find(...)` reaches the host
+# only when the bound target literally equals the compared name.
+_HOST_TERNARY = re.compile(r'"((?:\\.|[^"\\])*)" == "((?:\\.|[^"\\])*)" \? gameObject : ')
+# A component the snippet adds itself is not one the host must already carry.
+_SELF_PROVISIONED = re.compile(
+    r"(?:GetComponent<(\w+)>\(\) \?\? )?gameObject\.AddComponent<\w+>\(\)")
+_HOST_MEMBER = re.compile(
+    r"(?<![\w.?])(transform|gameObject|GetComponents?(?:InChildren|InParent)?|"
+    r"SendMessage(?:Upwards)?|BroadcastMessage)\b")
+
+
+def host_members(code: str) -> list[str]:
+    """The host members a lowered snippet depends on (empty: host-independent).
+
+    ``transform`` and ``gameObject`` are the host itself; a bare
+    ``GetComponent*`` needs a component already on it; a bare ``SendMessage``
+    needs a receiver on it. Members reached through another object
+    (``_ft.transform``, ``Camera.main?.GetComponent``) are not the host's.
+    """
+    code = _HOST_TERNARY.sub(
+        lambda match: "gameObject " if match.group(1) == match.group(2) else "", code)
+    code = _SELF_PROVISIONED.sub("", code)
+    code = _LINE_COMMENT.sub("", _STRING_LITERAL.sub('""', code))
+    return sorted(set(_HOST_MEMBER.findall(code)))
+
 
 class AtomBinding(BaseModel):
     """One atom invocation and the lowerer it reaches."""
@@ -71,6 +107,12 @@ class AtomBinding(BaseModel):
     status: AtomStatus
     provider: Optional[str] = None
     canonical: Optional[str] = None
+    # Lowered atoms only: the host members its emitted C# depends on.
+    host_members: list[str] = Field(default_factory=list)
+
+    @property
+    def host_dependent(self) -> bool:
+        return bool(self.host_members)
 
 
 class AtomRoute(BaseModel):
@@ -124,8 +166,10 @@ def bind_atom(index: int, invocation: AtomInvocation) -> AtomBinding:
     name = invocation.atom
     handler = _SNIPPETS.get(name)
     if handler is not None:
+        # The exact call unity_atom_snippet makes during generation.
+        code = handler(dict(invocation.args or {}))
         return AtomBinding(index=index, atom=name, status="lowered",
-                           provider=_provider(handler))
+                           provider=_provider(handler), host_members=host_members(code))
     definition = ATOM_REGISTRY.get(name)
     if definition is not None:
         status: AtomStatus = "descriptive" if "unity" in definition.engines else "unsupported"
@@ -236,6 +280,13 @@ def _route_messages(record: AtomBindings) -> list[str]:
             messages.append(f"atom bindings: {route.source} does not run — {route.finding}")
         for binding in route.atoms:
             if binding.status == "lowered":
+                if binding.host_dependent and route.host in EMPTY_HOSTS:
+                    messages.append(
+                        f"atom bindings: {route.source}[{binding.index}] {binding.atom!r} "
+                        f"acts on its own host ({', '.join(binding.host_members)}), but "
+                        f"{route.host} is an empty scene object (a Transform and "
+                        f"{route.host_class}), so it changes no gameplay object; author "
+                        "it in the target entity's atoms instead")
                 continue
             why = _STATUS_WHY[binding.status]
             if binding.canonical:

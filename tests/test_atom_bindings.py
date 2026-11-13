@@ -197,3 +197,53 @@ def test_derivation_is_deterministic():
     assert derive_atom_bindings(schema) == derive_atom_bindings(schema)
     assert (derive_atom_bindings(schema).model_dump_json()
             == derive_atom_bindings(schema).model_dump_json())
+
+
+# ── review of #299: host-relative atoms on the empty sequencer host ──────────
+
+def test_host_dependence_is_read_from_the_lowered_code():
+    def members(atom: str, **args) -> list[str]:
+        return bind_atom(0, AtomInvocation(atom=atom, args=args)).host_members
+
+    assert members("Teleport", x=1.0) == ["transform"]
+    assert members("MoveTo", x=1.0) == ["transform"]
+    assert members("SetModel") == ["GetComponent"]
+    assert members("TriggerEvent", event="OnGo") == ["SendMessage"]
+    # Scene lookups, self-provisioned components and plain state are not the host's.
+    assert members("ScreenFade") == []
+    assert members("PlayMusic") == []
+    assert members("PlaySFX", sound="hit") == []
+    assert members("SetFlag", flag="f") == []
+    # `"<entity>" == "Player" ? gameObject : GameObject.Find(...)` is the host
+    # only when the bound entity literally is "Player".
+    assert members("SetHealth", entity="Player", value=5.0) == ["gameObject"]
+    assert members("SetHealth", entity="Boss", value=5.0) == []
+    assert bind_atom(0, AtomInvocation(atom="InventedThing")).host_members == []
+
+
+def test_host_relative_atoms_on_the_empty_sequencer_host_are_diagnosed():
+    schema = _schema(atoms=[AtomInvocation(atom="Teleport", args={"x": 3.0}),
+                            AtomInvocation(atom="ScreenFade", args={"alpha": 0.0})])
+    generator, _ = _generate(schema)
+    route = generator.last_atom_bindings.route("atoms")
+    assert route is not None and route.attached
+    assert route.atoms[0].host_dependent and not route.atoms[1].host_dependent
+    warnings = generator.last_atom_binding_report.warnings
+    [teleport] = [w for w in warnings if "atoms[0] 'Teleport'" in w]
+    assert "acts on its own host (transform)" in teleport
+    assert "_GameSequencer is an empty scene object" in teleport
+    assert not any("'ScreenFade'" in w for w in warnings)
+
+
+def test_host_relative_atoms_on_real_hosts_are_not_flagged():
+    crate = EntitySpec(name="Crate", kind="prop", count=1,
+                       atoms=[AtomInvocation(atom="Rotate", args={"y": 90.0})])
+    script = UnityScript(name="Spin", type="custom", description="spin",
+                         attach_to="systems",
+                         atoms=[AtomInvocation(atom="Teleport", args={"x": 1.0})])
+    generator, _ = _generate(_schema(entities=[crate], scripts=[script]))
+    for source in ("entities[Crate].atoms", "scripts[Spin].atoms"):
+        route = generator.last_atom_bindings.route(source)
+        assert route is not None and route.atoms[0].host_dependent
+    assert not any("empty scene object" in w
+                   for w in generator.last_atom_binding_report.warnings)

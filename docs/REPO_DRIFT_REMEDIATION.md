@@ -152,7 +152,7 @@ atom bindings (`tests/test_atom_bindings.py`).
 | Versioned replay | A matching saved record is confirmed; drift is named route by route; an unreadable version is announced. The record is re-stamped from the canonical schema each time, never trusted silently. Pipeline, `unity-validate` and `unity_eval.replay` print the report. |
 | GameSequencer | Attached: each gameplay scene hosts a scene-local `_GameSequencer` (not `GameManager`, whose `DontDestroyOnLoad` duplicate-destroy would kill it). No host scene means no sequencer is emitted. |
 | ControllerDefaultBehavior | Retired with every Unity companion. The audit proves the hook is call-free for each Unity micro; re-emitting fails as `connected_but_not_attached`, which validation now rejects. |
-| Dynamic references | Each schema atom name is checked per build: `lowered`, `alias`, `descriptive`, `unsupported` or `unregistered`. Non-lowered names are warned as `// TODO` emitters, never rewritten. |
+| Dynamic references | Each schema atom name is checked per build: `lowered`, `alias`, `descriptive`, `unsupported` or `unregistered`. Non-lowered names are warned as `// TODO` emitters, never rewritten. Lowered atoms record the host members their C# depends on; a host-relative atom on the empty `_GameSequencer` host is warned (review of #299). |
 | Entity behavior | Atom-driven entities get `behavior = <Name>Behavior`, the only class their atoms render into; a blank or foreign name had left them unattached. |
 
 Scope limit: compiler-selected wiring atoms stay in `GameWiring`; no gameplay

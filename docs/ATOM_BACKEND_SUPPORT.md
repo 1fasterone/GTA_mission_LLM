@@ -137,6 +137,14 @@ Each atom in a route carries its provider: the Unity lowerer it reaches
   or an atom excluded from Unity lowers to a `// TODO` comment. Each one is
   named as a warning (`alias`, `unregistered`, `descriptive`, `unsupported`);
   nothing is rewritten.
+- **Host-relative atoms.** Each lowered atom records the host members its
+  emitted C# depends on (`host_members`), read from the exact snippet generation
+  emits: the host's `transform`, a bare `GetComponent*` it does not add itself,
+  or a bare `SendMessage`. `_GameSequencer` carries only a Transform and the
+  sequencer, so a host-relative atom there (`Teleport`, `MoveTo`, `SetModel`)
+  provably changes no gameplay object and is warned, naming the remedy (author
+  it in the target entity's atoms). Entity and custom-script hosts can carry
+  what such an atom needs, so they record the evidence without a warning.
 - **One source of truth.** `UnityProjectGenerator.generate` derives the record
   after entity-behavior reconciliation, script preparation and model resolution,
   then places hosts from it. The scene's `_GameSequencer` and the emitted
