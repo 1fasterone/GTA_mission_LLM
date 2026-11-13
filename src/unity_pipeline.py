@@ -2776,6 +2776,10 @@ class UnityPipeline:
                     subsystems,
                     self.generator.last_projectile_presentation):
                 self._fix(msg)
+            from .micro.sprite_animator import clear_stale_sprite_resources
+            if clear_stale_sprite_resources(project_root / "Assets"):
+                self._fix("removed Micros/sprite_animator/Resources left by an "
+                          "earlier run that stopped before the sprite overlay")
             composer.emit(subsystems, project_root / "Assets",
                           has_game_manager=has_game_manager, wiring=schema.wiring,
                           objective_scenes=_objective_scene_map(

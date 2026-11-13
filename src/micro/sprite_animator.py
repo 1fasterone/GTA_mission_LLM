@@ -22,6 +22,56 @@ from .code_fields import (
 )
 
 
+def merge_sprite_manifest(path: Path, manifest: dict) -> dict:
+    """Write `manifest` to `path`, merging with one already there.
+
+    Every sprite_animator subsystem in a compose writes into the same
+    Micros/sprite_animator/Resources folder, so a plain write let the enemy's
+    manifest replace the player's (live, 2026-11-10). Entities merge by name
+    (a later write for the same entity wins), counts sum, warnings append,
+    and `pose_conditioned` holds only if every batch was. Stale manifests
+    from a crashed earlier run are removed before compose writes
+    (MicroComposer._clear_generated_resources), so everything merged here
+    belongs to this run.
+    """
+    merged = dict(manifest)
+    if path.exists():
+        try:
+            prior = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prior = None
+        if isinstance(prior, dict):
+            merged["entities"] = {**(prior.get("entities") or {}),
+                                  **(manifest.get("entities") or {})}
+            for key in ("frame_count", "generated", "placeholders"):
+                merged[key] = int(prior.get(key) or 0) + int(manifest.get(key) or 0)
+            merged["warnings"] = [*(prior.get("warnings") or []),
+                                  *(manifest.get("warnings") or [])]
+            merged["pose_conditioned"] = (bool(prior.get("pose_conditioned"))
+                                          and bool(manifest.get("pose_conditioned")))
+    path.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    return merged
+
+
+def clear_stale_sprite_resources(assets_root: Path) -> bool:
+    """Remove Micros/sprite_animator/Resources before a compose writes.
+
+    sprite_animator.write_files is that folder's only author and runs for
+    every sprite subsystem of the compose about to start, and the pipeline's
+    overlay step deletes it after copying frames out. So anything already
+    there is from a run that died in between — run 1 of 2026-11-10 died at
+    the syntax gate and left 15 EnemyGroup placeholders that run 2 still
+    carried. Returns True when something was removed.
+    """
+    import shutil
+
+    target = Path(assets_root) / "Micros" / "sprite_animator" / "Resources"
+    if not target.exists():
+        return False
+    shutil.rmtree(target, ignore_errors=True)
+    return not target.exists()
+
+
 SpriteRole = Literal["player", "enemy", "npc", "prop"]
 VARIANTS = list(SpriteRole.__args__)   # type: ignore[attr-defined]
 
@@ -213,8 +263,7 @@ class SpriteAnimatorPipeline(UnityMicroPipeline):
         else:
             self._ok(f"{manifest['generated']}/{manifest['frame_count']} frames generated")
 
-        (resources_dir / "sprite_manifest.json").write_text(
-            json.dumps(manifest, indent=2), encoding="utf-8")
+        merge_sprite_manifest(resources_dir / "sprite_manifest.json", manifest)
 
         self.write_api_sources(schema, variant, out_dir)
         (out_dir / "README.md").write_text(

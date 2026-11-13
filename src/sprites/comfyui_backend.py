@@ -27,6 +27,14 @@ Two generation modes:
                             despite sharing a seed and the same character_desc
                             text. See src/sprites/content.py for the
                             reference-then-chain orchestration.
+  generate_posed()       — pose-conditioned: a ControlNet OpenPose map
+                            (src/sprites/poses.py) fixes the pose, and the
+                            optional reference image (img2img at a high
+                            denoise) carries identity. The reference-only
+                            chain above kept the REFERENCE'S stance in every
+                            frame — confirmed live (2026-11-10): 24 player
+                            frames across 8 actions, one pose. Used whenever
+                            supports_pose() finds the ControlNet on the server.
 """
 
 from __future__ import annotations
@@ -50,6 +58,9 @@ from typing import Optional
 # is 512 — see content.py's own comment. Never replace this with a keyword
 # search over the checkpoint library — see module docstring.
 _CHECKPOINT = "dreamshaper_8.safetensors"
+
+# Stock ControlNet 1.1 OpenPose for SD1.5 — matches _CHECKPOINT's family.
+_POSE_CONTROLNET_DEFAULT = "control_v11p_sd15_openpose.pth"
 
 _NEGATIVE_DEFAULT = (
     "photorealistic, photo, 3d render, realistic skin, gore, blood, nsfw, nude, "
@@ -96,6 +107,18 @@ class ComfyUIBackend:
         # were nearly identical stances) — 0.72 is the next checkpoint tried.
         self.ref_denoise   = float(cfg.get("ref_denoise", 0.72))
         self.checkpoint    = _CHECKPOINT
+        # Pose ControlNet, named by FILE (basename). ComfyUI lists models in
+        # subfolders with the OS separator (SD1.5\control_...pth on Windows),
+        # so supports_pose() resolves the server's exact name.
+        self.pose_controlnet = str(cfg.get("pose_controlnet",
+                                           _POSE_CONTROLNET_DEFAULT))
+        self.pose_strength   = float(cfg.get("pose_strength", 1.0))
+        # img2img strength when a reference carries identity under a pose:
+        # high enough that the skeleton, not the reference's silhouette,
+        # decides the stance; low enough to keep the reference's palette.
+        self.pose_ref_denoise = float(cfg.get("pose_ref_denoise", 0.9))
+        self._pose_name: Optional[str] = None
+        self._pose_checked = False
         self._warned: set[str] = set()
         # Full config, for the LM Studio hand-off below (lm_studio section).
         self._config       = config or {}
@@ -199,6 +222,71 @@ class ComfyUIBackend:
             negative=negative or _NEGATIVE_DEFAULT, seed=seed,
             ref_filename=ref["name"], denoise=denoise if denoise is not None else self.ref_denoise,
             steps=self.steps, cfg=self.cfg_scale,
+        )
+        return self._run_graph(graph)
+
+    def supports_pose(self) -> bool:
+        """True when the server lists the configured pose ControlNet.
+
+        Probed once per backend via /object_info/ControlNetLoader, which is
+        also the list /prompt validates `control_net_name` against. A miss is
+        reported by name so the remedy (install the model, or set
+        sprites.pose_controlnet) is explicit; the caller falls back to the
+        reference chain and records that in the sprite manifest."""
+        if self._pose_checked:
+            return self._pose_name is not None
+        if not self.available():
+            return False                     # unreachable: re-probe next time
+        self._pose_checked = True
+        try:
+            info = self._get_json("/object_info/ControlNetLoader")
+            names = (info.get("ControlNetLoader", {}).get("input", {})
+                     .get("required", {}).get("control_net_name", [[]])[0])
+        except (urllib.error.URLError, OSError, ValueError, AttributeError,
+                IndexError, TypeError) as exc:
+            self._warn_once("pose_probe",
+                            f"ControlNet probe failed ({type(exc).__name__}: {exc})")
+            return False
+        want = _basename(self.pose_controlnet)
+        for name in names or []:
+            if _basename(str(name)) == want:
+                self._pose_name = str(name)
+                return True
+        self._warn_once("pose_missing",
+                        f"pose ControlNet {self.pose_controlnet!r} not on this ComfyUI "
+                        f"server — put it under models/controlnet or set "
+                        f"sprites.pose_controlnet")
+        return False
+
+    def generate_posed(self, prompt: str, *, seed: int, pose_png_bytes: bytes,
+                       width: int = 512, height: int = 512,
+                       reference_png_bytes: Optional[bytes] = None,
+                       negative: str = "") -> Optional[bytes]:
+        """One frame whose pose comes from `pose_png_bytes` (an OpenPose map).
+        With `reference_png_bytes`, starts from that image at
+        `pose_ref_denoise` so identity carries over; without, pure txt2img.
+        Returns raw PNG bytes, or None on any failure."""
+        if not self.supports_pose() or self._pose_name is None:
+            return None
+        # One fixed name, overwritten per frame (same as the reference):
+        # each graph completes before the next upload, and LoadImage re-reads
+        # a changed file. Keeps ComfyUI's input folder from growing per frame.
+        pose = self._upload_image(pose_png_bytes, filename="sprite_pose.png")
+        if pose is None:
+            return None
+        ref_name: Optional[str] = None
+        if reference_png_bytes is not None:
+            ref = self._upload_image(reference_png_bytes)
+            if ref is None:
+                return None
+            ref_name = ref["name"]
+        graph = _build_posed_workflow(
+            checkpoint=self.checkpoint, prompt=self._full_prompt(prompt),
+            negative=negative or _NEGATIVE_DEFAULT, seed=seed,
+            width=width, height=height, steps=self.steps, cfg=self.cfg_scale,
+            controlnet=self._pose_name, pose_filename=pose["name"],
+            strength=self.pose_strength, ref_filename=ref_name,
+            denoise=self.pose_ref_denoise if ref_name else 1.0,
         )
         return self._run_graph(graph)
 
@@ -366,3 +454,54 @@ def _build_img2img_workflow(*, checkpoint: str, prompt: str, negative: str, seed
         "11": {"class_type": "LoadImage",
                "inputs": {"image": ref_filename}},
     }
+
+
+def _basename(name: str) -> str:
+    """`SD1.5\\x.pth` / `SD1.5/x.pth` / `x.pth` -> `x.pth` (case-folded)."""
+    return name.replace("\\", "/").rsplit("/", 1)[-1].lower()
+
+
+def _build_posed_workflow(*, checkpoint: str, prompt: str, negative: str, seed: int,
+                          width: int, height: int, steps: int, cfg: float,
+                          controlnet: str, pose_filename: str, strength: float,
+                          ref_filename: Optional[str] = None,
+                          denoise: float = 1.0) -> dict:
+    """Pose-conditioned graph: both text conditionings pass through
+    ControlNetApplyAdvanced(ControlNetLoader, LoadImage(pose)) before the
+    KSampler. The latent is EmptyLatentImage (txt2img) or, with a reference,
+    VAEEncode(LoadImage(ref)) at `denoise`. Core ComfyUI nodes only: the pose
+    map is already an OpenPose render, so no preprocessor node is needed."""
+    graph: dict = {
+        "3": {"class_type": "KSampler", "inputs": {
+            "seed": max(0, seed), "steps": steps, "cfg": cfg,
+            "sampler_name": "dpmpp_2m", "scheduler": "karras",
+            "denoise": denoise if ref_filename else 1.0,
+            "model": ["4", 0], "positive": ["14", 0], "negative": ["14", 1],
+            "latent_image": ["10", 0] if ref_filename else ["5", 0]}},
+        "4": {"class_type": "CheckpointLoaderSimple",
+              "inputs": {"ckpt_name": checkpoint}},
+        "6": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": prompt, "clip": ["4", 1]}},
+        "7": {"class_type": "CLIPTextEncode",
+              "inputs": {"text": negative, "clip": ["4", 1]}},
+        "8": {"class_type": "VAEDecode",
+              "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"filename_prefix": "sprite_posed", "images": ["8", 0]}},
+        "12": {"class_type": "ControlNetLoader",
+               "inputs": {"control_net_name": controlnet}},
+        "13": {"class_type": "LoadImage",
+               "inputs": {"image": pose_filename}},
+        "14": {"class_type": "ControlNetApplyAdvanced", "inputs": {
+            "positive": ["6", 0], "negative": ["7", 0],
+            "control_net": ["12", 0], "image": ["13", 0],
+            "strength": strength, "start_percent": 0.0, "end_percent": 1.0}},
+    }
+    if ref_filename:
+        graph["10"] = {"class_type": "VAEEncode",
+                       "inputs": {"pixels": ["11", 0], "vae": ["4", 2]}}
+        graph["11"] = {"class_type": "LoadImage", "inputs": {"image": ref_filename}}
+    else:
+        graph["5"] = {"class_type": "EmptyLatentImage",
+                      "inputs": {"width": width, "height": height, "batch_size": 1}}
+    return graph
