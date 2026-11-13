@@ -2780,6 +2780,18 @@ class UnityPipeline:
                 pass
             raise
 
+        # Typed atom routes generate() placed and persisted in
+        # meta.atom_bindings (R2): every unhosted route and every atom name
+        # that lowers to a `// TODO` is named here, never silently shipped.
+        # Escaped: route paths carry author-chosen names in brackets
+        # (`entities[crate].atoms`) that Rich would otherwise read as markup.
+        from rich.markup import escape as _escape_markup
+        _binding_report = self.generator.last_atom_binding_report
+        for msg in _binding_report.notes:
+            self._ok(_escape_markup(msg))
+        for msg in _binding_report.warnings:
+            self._warn(_escape_markup(msg))
+
         _persist_collection_bindings(schema)
 
         # Warm Unity's global package cache so first open resolves locally

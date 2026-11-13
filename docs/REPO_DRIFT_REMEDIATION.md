@@ -35,7 +35,8 @@ Reviewed on main `1d75000`.
 | S3 ownership closure | Done | #289; 3 `connected_and_owned`, 2 `connected_but_not_attached`, 1 `missing_provider` |
 | Phase 3 schema authority | Done | #290 |
 | Untouched-brief preflight | Done | #291 |
-| S4-S8 | Not started | 24 baseline entries name S6, 1 names S5 |
+| S4 typed bindings | Done (R2) | `meta.atom_bindings` v1 (`src/atom_bindings.py`); ownership audit: 4 `connected_and_owned`, 1 `retired`, 1 `missing_provider`, 0 `connected_but_not_attached` |
+| S5-S8 | Not started | 24 baseline entries name S6, 1 names S5 |
 
 ## Remaining plan
 
@@ -138,6 +139,24 @@ Exit criterion status: no copied project API table remains; framework
 semantics come from real assemblies. ruff, mypy, full pytest and both audits
 pass locally. The real Unity Editor compile gate (`pytest -m unity_compile`,
 `unity-validation.yml`) must still be run on this branch before merge.
+
+### R2 progress
+
+Exit criterion met: the ownership audit reports zero
+`connected_but_not_attached`, and a saved schema replayed twice reproduces its
+atom bindings (`tests/test_atom_bindings.py`).
+
+| Item | Change |
+| --- | --- |
+| Typed bindings | `src/atom_bindings.py` derives host class, host, phase, trigger, scenes and per-atom provider for `atoms`, `entities[*].atoms` and `scripts[*].atoms`, and persists `meta.atom_bindings` (`version: 1`). `generate()` derives the record, then places hosts from it. |
+| Versioned replay | A matching saved record is confirmed; drift is named route by route; an unreadable version is announced. The record is re-stamped from the canonical schema each time, never trusted silently. Pipeline, `unity-validate` and `unity_eval.replay` print the report. |
+| GameSequencer | Attached: each gameplay scene hosts a scene-local `_GameSequencer` (not `GameManager`, whose `DontDestroyOnLoad` duplicate-destroy would kill it). No host scene means no sequencer is emitted. |
+| ControllerDefaultBehavior | Retired with every Unity companion. The audit proves the hook is call-free for each Unity micro; re-emitting fails as `connected_but_not_attached`, which validation now rejects. |
+| Dynamic references | Each schema atom name is checked per build: `lowered`, `alias`, `descriptive`, `unsupported` or `unregistered`. Non-lowered names are warned as `// TODO` emitters, never rewritten. Lowered atoms record the host members their C# depends on; a host-relative atom on the empty `_GameSequencer` host is warned (review of #299). |
+| Entity behavior | Atom-driven entities get `behavior = <Name>Behavior`, the only class their atoms render into; a blank or foreign name had left them unattached. |
+
+Scope limit: compiler-selected wiring atoms stay in `GameWiring`; no gameplay
+changes phase. Runtime acceptance stays **unverified**.
 
 ## Trace answer
 

@@ -15,11 +15,8 @@ from copy import deepcopy
 from pathlib import Path
 
 from pydantic import BaseModel
-from rich.console import Console
 
 from ..micro_pipeline import MicroPipeline
-
-_console = Console()
 
 
 _UNITY_CONCEPT_SYSTEM = (
@@ -73,47 +70,17 @@ class UnityMicroPipeline(MicroPipeline):
         return self.write_files(schema, variant, out_dir)
 
     def _after_write(self, schema: BaseModel, variant: str, out_dir: Path, name: str) -> None:
-        """Inject atom-driven behavior stubs after the micro's main files are written.
+        """Retired in R2: Unity micros write no ``<Kind>DefaultBehavior`` companion.
 
-        Calls microgen_atoms(self.kind) to get the canonical atom sequence for this
-        micro kind, then emits a <Kind>DefaultBehavior.cs coroutine stub alongside
-        the generated micro files. Kinds with no mapped atom sequence are skipped;
-        CameraRig overrides this hook to suppress conflicting companion behavior.
-        Writing a companion does not prove attachment or ownership of gameplay.
+        This hook used to emit one per mapped kind from MICROGEN_ATOM_MAP. No
+        generated scene or prefab ever attached it (a standalone micro folder
+        has no scene; composed builds call ``write_files`` directly), so each
+        one was code that read like behavior and never ran. Attaching it would
+        have been worse: the controller companion loops Look/Move(forward)/
+        Sprint/Jump, fighting the template-owned controller it sits beside.
+        MICROGEN_ATOM_MAP stays descriptive data; a micro's runtime owner is its
+        own template. ``ownership_audit`` reads this body: a hook that writes
+        a companion again reopens the route as ``connected_but_not_attached``,
+        which fails the audit.
         """
-        from ..atoms.behavior_map import microgen_atoms, behavior_loops
-        from ..atoms.backends.unity import unity_coroutine_body
-
-        atoms = microgen_atoms(self.kind)
-        if not atoms:
-            return
-
-        atom_dicts = [inv.model_dump() for inv in atoms]
-        atom_body  = unity_coroutine_body(atom_dicts)
-        loops      = behavior_loops(atoms)
-
-        kind_pascal = "".join(p.capitalize() for p in self.kind.split("_"))
-        class_name  = f"{kind_pascal}DefaultBehavior"
-
-        indent = "        "  # 8 spaces inside the method body
-        indented_body = atom_body.replace("\n", f"\n{indent}")
-        loop_line = f"\n{indent}StartCoroutine(RunDefaultBehavior());" if loops else ""
-
-        cs = (
-            f"// Auto-generated — DO NOT EDIT\n"
-            f"// Default atom-driven behavior stubs for the '{self.kind}' micro-generator.\n"
-            f"using System.Collections;\n"
-            f"using UnityEngine;\n\n"
-            f"public class {class_name} : MonoBehaviour\n"
-            f"{{\n"
-            f"    private void Start() => StartCoroutine(RunDefaultBehavior());\n\n"
-            f"    public IEnumerator RunDefaultBehavior()\n"
-            f"    {{\n"
-            f"        {indented_body}{loop_line}\n"
-            f"        yield return null;\n"
-            f"    }}\n"
-            f"}}\n"
-        )
-        out_path = out_dir / f"{class_name}.cs"
-        out_path.write_text(cs, encoding="utf-8")
-        _console.print(f"  [cyan]ATM[/]  atom stubs ({len(atoms)} atoms) -> {out_path.name}")
+        return None

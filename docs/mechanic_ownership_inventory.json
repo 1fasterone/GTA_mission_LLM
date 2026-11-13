@@ -4,7 +4,8 @@
       "consumers": [
         "src/capability_resolver.py:260",
         "src/capability_resolver.py:317",
-        "src/unity_generator.py:2476"
+        "src/unity_generator.py:2482",
+        "src/atom_bindings.py:198"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -12,7 +13,7 @@
     {
       "consumers": [
         "src/capability_resolver.py:317",
-        "src/unity_generator.py:2476"
+        "src/unity_generator.py:2482"
       ],
       "producer": "MicrogensSpec.atoms",
       "source": "src/unity_schema.py:1000"
@@ -20,7 +21,8 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2476"
+        "src/unity_generator.py:2482",
+        "src/atom_bindings.py:198"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:29",
       "producer": "EntitySpec.atoms and behavior map",
@@ -29,24 +31,25 @@
     {
       "consumers": [
         "src/unity_resolver.py:307",
-        "src/unity_generator.py:2476"
+        "src/unity_generator.py:2482",
+        "src/atom_bindings.py:198"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
     },
     {
       "consumers": [
-        "src/micro/unity_base.py:75"
+        "src/atoms/support_audit.py:147"
       ],
       "producer": "Unity micro default atom descriptors",
-      "source": "src/atoms/behavior_map.py:121"
+      "source": "src/atoms/behavior_map.py:122"
     },
     {
       "consumers": [
         "src/micro/gta5_base.py:60"
       ],
       "producer": "GTA5 micro default atom descriptors",
-      "source": "src/atoms/behavior_map.py:231"
+      "source": "src/atoms/behavior_map.py:232"
     },
     {
       "consumers": [
@@ -74,7 +77,7 @@
       "consumers": [
         "src/unity_compose.py:326",
         "src/unity_compose.py:567",
-        "templates/unity/scene.unity.j2:1323"
+        "templates/unity/scene.unity.j2:1373"
       ],
       "producer": "Unity composed subsystem descriptors",
       "source": "src/unity_compose.py:37"
@@ -119,22 +122,26 @@
   ],
   "representative_connections": [
     {
-      "classification": "connected_but_not_attached",
+      "classification": "connected_and_owned",
       "descriptor": "unity:UnitySchema.atoms:Wait",
-      "diagnostic": "provider emits GameSequencer, but no generated attachment is proven; missing seam: scene or prefab component attachment",
-      "generated_host": "GameSequencer",
-      "lifecycle_seam": null,
-      "missing_seam": "scene or prefab component attachment",
+      "diagnostic": "connected and owned by GameSequencer through templates/unity/scene.unity.j2:1312",
+      "generated_host": "_GameSequencer",
+      "lifecycle_seam": "templates/unity/scene.unity.j2:1312",
+      "missing_seam": null,
       "mode": "schema_level_atom",
       "next_slice": null,
       "owner_candidates": [
         "GameSequencer"
       ],
       "provenance": [
-        "src/unity_generator.py:2476",
-        "templates/unity/GameSequencer.cs.j2:12"
+        "src/atom_bindings.py:198",
+        "src/atom_bindings.py:324",
+        "src/unity_generator.py:2482",
+        "templates/unity/GameSequencer.cs.j2:12",
+        "templates/unity/scene.unity.j2:1282"
       ],
       "provider": "src/atoms/backends/unity.py:292",
+      "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_schema.py:1301",
       "template_owner_preserved": null
@@ -158,6 +165,7 @@
         "templates/unity/EntitySpawner.cs.j2:495"
       ],
       "provider": "src/atoms/backends/unity.py:42",
+      "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_resolver.py:307",
       "template_owner_preserved": null
@@ -177,33 +185,33 @@
       "provenance": [
         "src/unity_compose.py:440",
         "templates/unity/compose/GameWiring.cs.j2:40",
-        "templates/unity/scene.unity.j2:1334"
+        "templates/unity/scene.unity.j2:1384"
       ],
       "provider": "src/atoms/backends/unity.py:747",
+      "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_compose.py:893",
       "template_owner_preserved": null
     },
     {
-      "classification": "connected_but_not_attached",
+      "classification": "retired",
       "descriptor": "unity:MICROGEN_ATOM_MAP:controller:Move",
-      "diagnostic": "provider emits ControllerDefaultBehavior, but no generated attachment is proven; missing seam: generated scene component or runtime AddComponent",
-      "generated_host": "ControllerDefaultBehavior",
+      "diagnostic": "retired by src/micro/unity_base.py:72: no Unity micro writes a <Kind>DefaultBehavior companion; no scene ever attached one, and the controller companion's looping Look/Move/Sprint/Jump would fight the template-owned controller it sat beside",
+      "generated_host": null,
       "lifecycle_seam": null,
-      "missing_seam": "generated scene component or runtime AddComponent",
+      "missing_seam": null,
       "mode": "standalone_companion",
       "next_slice": null,
-      "owner_candidates": [
-        "ControllerDefaultBehavior"
-      ],
+      "owner_candidates": [],
       "provenance": [
-        "src/micro/unity_base.py:75",
+        "src/micro/unity_base.py:72",
         "src/unity_compose.py:567",
         "src/unity_compose.py:590"
       ],
-      "provider": "src/micro/unity_base.py:75",
+      "provider": null,
+      "retired_by": "src/micro/unity_base.py:72",
       "runtime_acceptance": "unverified",
-      "selection": "src/atoms/behavior_map.py:121",
+      "selection": "src/atoms/behavior_map.py:122",
       "template_owner_preserved": "ControllerPipeline"
     },
     {
@@ -221,9 +229,10 @@
       "provenance": [
         "src/micro/__init__.py:78",
         "src/unity_compose.py:440",
-        "templates/unity/scene.unity.j2:1381"
+        "templates/unity/scene.unity.j2:1431"
       ],
       "provider": "src/micro/controller.py:989",
+      "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_compose.py:326",
       "template_owner_preserved": "ControllerPipeline"
@@ -243,16 +252,17 @@
         "src/atoms/controller.py:196"
       ],
       "provider": null,
+      "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/atoms/controller.py:19",
       "template_owner_preserved": "controller/projectile templates"
     }
   ],
   "runtime_acceptance": "unverified",
-  "scope_limit": "Representative S3 structural closure only; no typed S4 binding persistence, runtime migration, compilation claim, or advancing runtime acceptance.",
+  "scope_limit": "Representative structural closure. Per-build typed atom-route bindings are persisted in schema.meta.atom_bindings by src/atom_bindings.py (R2/S4); this report makes no runtime migration, compilation claim, or advancing runtime acceptance.",
   "summary": {
-    "connected_and_owned": 3,
-    "connected_but_not_attached": 2,
-    "missing_provider": 1
+    "connected_and_owned": 4,
+    "missing_provider": 1,
+    "retired": 1
   }
 }

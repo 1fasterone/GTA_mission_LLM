@@ -116,7 +116,8 @@ _KEYWORD_ORDER = [
 
 # ── Microgen → atom composition map ───────────────────────────────────────────
 # Descriptive defaults; these sequences do not own primary micro gameplay.
-# Used for RAG corpus + future composite microgen assembly (Phase 3+).
+# Since R2 no Unity hook emits them (the <Kind>DefaultBehavior companions were
+# never attached and are retired); the support audit inventories them.
 
 MICROGEN_ATOM_MAP: dict[str, list[dict]] = {
     # ── Controller: look → move → sprint → jump ───────────────────────────────

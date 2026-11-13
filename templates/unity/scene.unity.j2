@@ -1263,6 +1263,56 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
 {% endif %}
+{% if game_sequencer_guid and scene_name in game_sequencer_scenes %}
+{# ── schema.atoms host (R2, src/atom_bindings.py) ────────────────────────────
+   Its own scene-local object rather than GameManager: GameManager is
+   DontDestroyOnLoad and destroys a later scene's duplicate, which would take a
+   sequencer riding on it down before its Start coroutine ran. #}
+--- !u!1 &940000001
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 940000002}
+  - component: {fileID: 940000003}
+  m_Layer: 0
+  m_Name: _GameSequencer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &940000002
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 940000001}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &940000003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 940000001}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: {{ game_sequencer_guid }}, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+{% endif %}
 {% if custom_scripts and "menu" not in scene_name | lower %}
 {# ── Custom (prompt-authored) scripts, hosted per attach_to ──────────────────
    camera → Main Camera (705507993); game_manager → GameManager (705507980);

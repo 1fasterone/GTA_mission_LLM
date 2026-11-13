@@ -558,18 +558,6 @@ class CameraRigPipeline(UnityMicroPipeline):
         "Isometric": (-10.0, 10.0, -10.0),
     }
 
-    def _after_write(self, schema, variant: str, out_dir: Path, name: str) -> None:
-        """Keep CameraRig the sole runtime owner of camera pose and targeting.
-
-        UnityMicroPipeline normally emits an atom-derived ``CameraDefaultBehavior``
-        companion. Its generic ``LookAt(Player)`` conflicts with contract-owned
-        fixed-angle 2D cameras and eye-mounted first-person cameras, and can
-        overwrite the deliberately resolved primary target. Camera motion is
-        already implemented by CameraRig's deterministic LateUpdate, so no
-        separate behavior component is valid for this micro.
-        """
-        return
-
     def _record_contract_repairs(self, schema, variant: str, repairs: list[str]) -> None:
         """Persist and report deterministic corrections to variant semantics."""
         if not repairs:

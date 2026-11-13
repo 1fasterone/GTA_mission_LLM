@@ -27,16 +27,24 @@ EMISSION_CASES = ROOT / "tests/fixtures/atom_support_emission_cases.json"
 BACKENDS = {"gta5": gta5, "unity": unity}
 
 # These describe existing call paths, NOT allowed execution phases for new
-# operations. S4 must add a real host/phase binding before migrating gameplay.
+# operations. R2 (S4) persists each build's typed host/phase/trigger/provider
+# route for the schema-data paths in meta.atom_bindings (src/atom_bindings.py);
+# migrating gameplay onto a new phase still needs its own binding first.
 CALL_PATHS = {
     "unity": [
         {"caller": "src/unity_generator.py:UnityProjectGenerator.generate",
          "template": "templates/unity/GameSequencer.cs.j2",
-         "host": "GameManager", "phase": "Start coroutine, once", "input": "schema.atoms"},
+         "host": "_GameSequencer (each gameplay scene)",
+         "phase": "Start coroutine, once per gameplay-scene load", "input": "schema.atoms",
+         "binding": "meta.atom_bindings route 'atoms'"},
         {"caller": "src/unity_generator.py:UnityProjectGenerator.generate",
          "template": "templates/unity/EntityBehavior.cs.j2",
          "host": "EntitySpawner.AddComponent", "phase": "Start coroutine, may restart",
-         "input": "entity.atoms"},
+         "input": "entity.atoms", "binding": "meta.atom_bindings route 'entities[<name>].atoms'"},
+        {"caller": "src/unity_generator.py:UnityProjectGenerator._generate_script",
+         "template": "templates/unity/scripts/CustomBehaviour.cs.j2",
+         "host": "UnityScript.attach_to scene object", "phase": "Start coroutine, once",
+         "input": "custom script.atoms", "binding": "meta.atom_bindings route 'scripts[<name>].atoms'"},
         {"caller": "src/unity_compose.py:MicroComposer._emit_wiring",
          "template": "templates/unity/compose/GameWiring.cs.j2",
          "host": "GameWiring", "phase": "Awake subscriptions, Update bridges and event callbacks",
@@ -151,9 +159,10 @@ def _micro_inventory() -> list[dict[str, Any]]:
                 "ownership": "asset_pipeline" if kind == "model" else "template_owned",
                 "mapped_atoms": [item["atom"] for item in mapping.get(kind, [])],
                 "mapping_status": "descriptive; companion emission does not transfer ownership",
-                "companion_emission": ("suppressed by camera override" if kind == "camera" else
+                # R2 retired every Unity companion: none was ever attached.
+                "companion_emission": ("retired (R2)" if backend == "unity" else
                                        "standalone _after_write" if kind in mapping else "none"),
-                "companion_attachment": "unverified" if backend == "unity" else "standalone Script",
+                "companion_attachment": "not applicable" if backend == "unity" else "standalone Script",
                 "composed_companion": "not emitted by MicroComposer.write_files" if backend == "unity"
                                       else "not evidence of minigame inclusion",
                 "runtime_acceptance": "unverified",
@@ -222,7 +231,9 @@ def build_inventory() -> dict[str, Any]:
             "runtime_acceptance": "unverified", "summary": summary, "atoms": rows,
             "call_paths": CALL_PATHS, "micros": _micro_inventory(), "errors": sorted(errors),
             "identity_conflicts": identity_errors(ALL_ATOMS), "references": _reference_inventory(),
-            "reference_limit": "static Python atom invocations/dicts/direct emitters; dynamic bindings unverified"}
+            "reference_limit": ("static Python atom invocations/dicts/direct emitters only; "
+                                "atom names in schema data are validated per build by "
+                                "src/atom_bindings.py into meta.atom_bindings")}
 
 
 def validate_inventory(inventory: dict[str, Any], baseline: dict[str, Any]) -> list[str]:
