@@ -249,7 +249,9 @@ def test_shoot_controller_emits_dimension_neutral_projectile_foundation(
                          abilities=["shoot"])
     s = p.default_fix(s, variant)
 
-    assert p.write_files(s, variant, tmp_path) == 3
+    # Controller, ProjectileController, FiringProvider (R3) and README.
+    assert p.write_files(s, variant, tmp_path) == 4
+    assert (tmp_path / "Scripts" / "FiringProvider.cs").is_file()
     projectile = (tmp_path / "Scripts" / "ProjectileController.cs").read_text(
         encoding="utf-8")
     assert "public sealed class ProjectileController" in projectile
@@ -288,14 +290,15 @@ def test_3d_projectile_delivery_emits_explicit_pooled_launch_path(tmp_path, dumm
     )
     s = p.default_fix(s, "first_person")
 
-    assert p.write_files(s, "first_person", tmp_path) == 4
+    assert p.write_files(s, "first_person", tmp_path) == 5
     controller = (tmp_path / "Scripts" / "BallisticShooter.cs").read_text(encoding="utf-8")
     pool = (tmp_path / "Scripts" / "ProjectilePool.cs").read_text(encoding="utf-8")
     projectile = (tmp_path / "Scripts" / "ProjectileController.cs").read_text(encoding="utf-8")
 
     assert 'new string[] { "projectile_3d" }' in controller
     assert "if (weaponDelivery[_weaponIndex] == \"projectile_3d\")" in controller
-    assert "if (!LaunchProjectile()) return;" in controller
+    # A round that cannot launch reaches TryFire as NoProjectile (R3).
+    assert "if (!LaunchProjectile()) return false;" in controller
     assert "_currentAmmo--;" in controller
     assert "projectile.Configure(" in controller
     assert "weaponDamage[_weaponIndex], gameObject," in controller

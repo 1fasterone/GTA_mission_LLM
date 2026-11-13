@@ -15,7 +15,9 @@ from typing import Any
 
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, StrictUndefined
 
-from .atom_bindings import (AtomBindings, BindingReport, derive_atom_bindings,
+from . import firing_provider
+from .atom_bindings import (AtomBindings, BindingReport, contract_implementers_for,
+                            derive_atom_bindings, firing_contract_emitted,
                             stamp_atom_bindings)
 from .unity_schema import (ProceduralMesh, UnitySchema, UnityScript,
                            is_embodied)
@@ -2980,10 +2982,29 @@ class UnityProjectGenerator:
         # list reaches, and BEFORE any host is placed: the scenes below and the
         # GameSequencer emission read the same record that gets persisted, so
         # what is attached and what is recorded cannot disagree.
-        self.last_atom_bindings = derive_atom_bindings(schema, entity_model_paths)
+        self.last_atom_bindings = derive_atom_bindings(
+            schema, entity_model_paths, contract_implementers_for(composed_units))
         self.last_atom_binding_report = stamp_atom_bindings(schema, self.last_atom_bindings)
         for _msg in self.last_atom_binding_report.warnings:
             _log.warning("[atom bindings] %s", _msg)
+        # A lowered atom that resolves the firing contract (Shoot, R3) must
+        # compile even where no composed controller implements it. The
+        # controller micro emits the contract beside any implementing class;
+        # only when no micro emitted it, emit the same contract alone, so the
+        # atom compiles and refuses at runtime with FireResult.NoProvider
+        # (warned above). A shooting controller off the Player still emitted
+        # it, and a second copy would be a duplicate type (CS0101).
+        if not firing_contract_emitted(composed_units) and any(
+                binding.runtime_provider is not None
+                and binding.runtime_provider.contract == firing_provider.CONTRACT
+                and binding.runtime_provider.implementer is None
+                for route in self.last_atom_bindings.routes
+                for binding in route.atoms):
+            _fp_path = f"{pn}/Assets/Scripts/{firing_provider.SCRIPT}"
+            files[_fp_path] = self._render(firing_provider.PROJECT_TEMPLATE,
+                                           {"emitter": "Unity Project Pipeline"})
+            files[f"{_fp_path}.meta"] = _meta_file(
+                _make_guid(f"{pn}/Scripts/{Path(firing_provider.SCRIPT).stem}"))
         _sequencer_route = self.last_atom_bindings.route("atoms")
         _sequencer_hosted = _sequencer_route is not None and _sequencer_route.attached
 

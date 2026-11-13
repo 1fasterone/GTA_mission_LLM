@@ -103,12 +103,19 @@ def test_entity_and_wiring_routes_have_real_hosts(report):
     assert wiring["generated_host"] == "_Systems"
 
 
-def test_missing_provider_preserves_existing_debt_slice(report):
+def test_shoot_is_owned_by_the_one_firing_provider(report):
+    """R3 (S5) closed Shoot's missing provider; it shares the input's gate."""
+    from src.atoms.backends import unity
+
     shoot = _representative(report, "unity:AtomDef:Shoot")
-    assert shoot["classification"] == MISSING_PROVIDER
-    assert shoot["provider"] is None
-    assert shoot["next_slice"] == "S5"
-    assert shoot["template_owner_preserved"] == "controller/projectile templates"
+    assert shoot["classification"] == CONNECTED_AND_OWNED
+    assert shoot["mode"] == "shared_firing_provider"
+    assert shoot["provider"] == _source_ref(unity._SNIPPETS["Shoot"])
+    assert shoot["owner_candidates"] == ["ControllerPipeline"]
+    assert shoot["generated_host"] == "Player"
+    assert "IFiringProvider.TryFire" in shoot["lifecycle_seam"]
+    assert shoot["next_slice"] is None
+    assert shoot["template_owner_preserved"] == "ControllerPipeline"
 
 
 def test_ambiguous_owner_names_candidates_and_missing_seam():
@@ -226,3 +233,51 @@ def test_a_retired_route_cannot_keep_a_provider(report):
     companion["retired_by"] = "src/no_such_retirer.py:1"
     assert any("retired route needs retired_by source evidence" in error
                for error in validate_report(changed))
+
+
+# ── R3 (S5): Shoot and fire input share one firing provider ──────────────────
+
+def test_r3_leaves_no_route_without_a_provider(report):
+    assert MISSING_PROVIDER not in report["summary"]
+    changed = copy.deepcopy(report)
+    shoot = _representative(changed, "unity:AtomDef:Shoot")
+    shoot.update(classification=MISSING_PROVIDER, provider=None, owner_candidates=[],
+                 generated_host=None, lifecycle_seam=None, next_slice="S5")
+    changed["summary"] = dict(sorted(Counter(
+        row["classification"] for row in changed["representative_connections"]).items()))
+    assert any("no provider; supply a lowerer and its runtime owner (R3)" in error
+               for error in validate_report(changed))
+
+
+def test_a_shoot_lowerer_that_bypasses_the_provider_loses_its_seam(monkeypatch):
+    from src.atoms.backends import unity
+
+    monkeypatch.setitem(unity._SNIPPETS, "Shoot", lambda _args: "GetComponent<Gun>().Fire();")
+    reopened = build_report()
+    shoot = _representative(reopened, "unity:AtomDef:Shoot")
+    assert shoot["classification"] == CONNECTED_BUT_NOT_ATTACHED
+    assert "does not call FiringProviders.FirePlayer()" in shoot["missing_seam"]
+    assert any("emitted but unattached" in error for error in validate_report(reopened))
+
+
+def test_a_second_firing_implementer_is_ambiguous_not_picked(monkeypatch):
+    from src.atoms import ownership_audit
+
+    monkeypatch.setattr(ownership_audit, "_firing_owner_candidates", lambda: {
+        "templates/unity/micro/controller/Controller.cs.j2:28": "ControllerPipeline",
+        "templates/unity/micro/turret/Turret.cs.j2:9": "TurretPipeline",
+    })
+    shoot = _representative(build_report(), "unity:AtomDef:Shoot")
+    assert shoot["classification"] == AMBIGUOUS_OWNER
+    assert shoot["owner_candidates"] == ["ControllerPipeline", "TurretPipeline"]
+
+
+def test_firing_owners_are_read_from_class_declarations_only():
+    from src.atoms.ownership_audit import _IMPLEMENTS_FIRING, _firing_owner_candidates
+
+    assert list(_firing_owner_candidates().values()) == ["ControllerPipeline"]
+    assert _IMPLEMENTS_FIRING.search(
+        'public class {{ s.name }} : MonoBehaviour{% if x %}, IFiringProvider{% endif %}')
+    assert _IMPLEMENTS_FIRING.search("public sealed class Turret : MonoBehaviour, IFiringProvider")
+    assert not _IMPLEMENTS_FIRING.search("public interface IFiringProvider")
+    assert not _IMPLEMENTS_FIRING.search("// A shooting controller implements IFiringProvider")

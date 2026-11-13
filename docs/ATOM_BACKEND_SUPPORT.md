@@ -1,4 +1,4 @@
-# Atom/backend support, mechanic ownership and typed bindings (S0-S4)
+# Atom/backend support, mechanic ownership and typed bindings (S0-S5)
 
 The S0 support audit was integrated with main `c83646b240fb4222ac112777fee1761d656acca1`
 after the #282 squash merge. S2 later made selected rendered C# source authoritative
@@ -57,13 +57,14 @@ They are never presented as real Pipeline LLM output or actual scene bindings.
 
 | Backend | Executable lowerers | Descriptive gaps | Unsupported definitions | Dispatch-only helpers |
 | --- | ---: | ---: | ---: | ---: |
-| Unity | 71 | 25 | 0 | 0 |
+| Unity | 72 | 24 | 0 | 0 |
 | GTA5 | 26 | 0 | 70 | 0 |
 
 The Unity gaps are AimDownSights, Ascend, Block, Boost, Brake, CycleWeapon,
 Dash, Descend, Dodge, Grab, Interact, MeleeAttack, Nitro, OpenInventory, OpenMap,
-Pause, Pitch, PrimaryAttack, Reload, RollPlane, SecondaryAttack, Shoot,
-Throttle, ThrowGrenade and UseItem. `fire` remains an alias of canonical `Shoot`.
+Pause, Pitch, PrimaryAttack, Reload, RollPlane, SecondaryAttack, Throttle,
+ThrowGrenade and UseItem, all baselined for S6. `fire` remains an alias of
+canonical `Shoot`, which R3 lowered (see "Shared firing provider" below).
 
 ## R1 vocabulary decisions (S0 follow-up closed)
 
@@ -164,6 +165,65 @@ Scope limit: the record covers the three schema-data routes above. Wiring atoms
 are compiler-selected, not schema data, and stay in `GameWiring`. No gameplay
 moves onto a new phase here; S5/S6 add their own bindings before migrating.
 
+## Shared firing provider (R3, S5)
+
+`Shoot` and the controller's fire input now reach one gate, so ammunition,
+fire-rate cadence and reload state have exactly one owner.
+
+```mermaid
+flowchart LR
+  input[Controller.Update fire input] --> gate
+  atom[Shoot atom in any route host] --> resolve[FiringProviders.FirePlayer]
+  resolve --> gate[IFiringProvider.TryFire on the Player]
+  gate -->|Reloading / EmptyMagazine / CoolingDown| refuse[FireResult, nothing spent]
+  gate --> shot[TryShoot: hit-scan or pooled round]
+  shot -->|pool empty| none[NoProjectile, nothing spent]
+  shot --> fired[Fired: one round, cadence restarts]
+```
+
+| Piece | Where | What it guarantees |
+| --- | --- | --- |
+| Contract | `templates/unity/micro/controller/FiringProvider.cs.j2`, names in `src/firing_provider.py` | `FireResult`, `IFiringProvider`, `FiringProviders.FirePlayer()` (resolves the provider on the object tagged Player) |
+| Implementer | `Controller.cs.j2` with the `shoot` ability (`provides_firing`) | `TryFire()` refuses in a fixed order (Reloading, EmptyMagazine, CoolingDown) and is the only caller of `TryShoot()`; only `TryShoot()` spends ammo or restarts cadence, and only after a round launched |
+| Fire input | `Update`: `if (fireDown) TryFire();` | The input no longer carries its own copy of the gate |
+| Lowerer | `src/atoms/backends/unity.py:_shoot` | Emits only `FiringProviders.FirePlayer()`; `NoProvider` is a logged error with its remedy, any other refusal a logged warning naming its `FireResult` |
+| Typed binding | `AtomBinding.runtime_provider` (`src/atom_bindings.py`) | Records `{contract, host, implementer}` from the lowered C#. The implementer must sit where the resolver looks: only a shooting controller on the `player` target (`firing_provider.HOST_TARGET`, the units `scene.unity.j2` puts on the Player) counts. With no implementer the build warns. When no composed micro emitted the contract either (`firing_contract_emitted`), `generate()` emits it alone in `Assets/Scripts`, so the atom compiles and refuses at runtime without a duplicate type |
+
+Decisions:
+
+- **Shoot takes no parameters.** Its former `fire_rate`, `magazine` and
+  `shoot_range` duplicated the weapon loadout (`ControllerSchema.weapons`).
+  With one provider they could only be ignored or become a second owner, so
+  they were retired. A saved schema that still passes them is named per build
+  (`AtomBinding.ignored_args`: the atom "declares no parameters, so arg(s) …
+  change nothing"); its args are never rewritten.
+- **The first shot is never cooling down.** `_lastFireTime` starts at negative
+  infinity. It used to start at 0, which refused every shot for one `fire_rate`
+  after scene load, including a `GameSequencer` Shoot at its 0.1 s start delay.
+- **One emitter at a time.** The controller micro writes `FiringProvider.cs`
+  beside its implementer. `generate()` writes its contract-only copy only when
+  a lowered atom needs the contract and `contract_implementers_for` finds no
+  implementer. Both read `provides_firing`, so a project never carries two
+  copies (CS0101).
+- **Record format.** `runtime_provider` and `ignored_args` are additive
+  optional fields of `atom-bindings` v1. An R2 record without them replays
+  identically; one that lowered `Shoot` as descriptive drifts once and is
+  re-stamped.
+
+Evidence: `tests/test_firing_provider.py` (template gate, lowerer, binding,
+both generator paths, replay, and a Roslyn compile of the emitted controller,
+contract and lowered `Shoot` against the real Unity reference assemblies), the
+ownership audit's `shared_firing_provider` route, and the Play Mode acceptance
+(`tools/run_firing_provider_acceptance.ps1`, tests in
+`tests/unity_firing_provider/`). The Play Mode test drives the provider
+directly and through the generated `GameSequencer`. The fire input's call into
+the gate is proven structurally: batchmode cannot drive hardware input.
+
+Scope limit: the controller and projectile templates stay the runtime owners
+(`protected_template_owners`). R3 shares their gate; it does not migrate them
+(S6). Only the Player fires through the provider: entity `Shoot` atoms fire the
+Player's weapon, because no other composed class implements the contract.
+
 ## Ownership and reachability
 
 - Schema-level atoms lower into `GameSequencer.Start`, hosted by every gameplay
@@ -188,7 +248,9 @@ moves onto a new phase here; S5/S6 add their own bindings before migrating.
 - The inventory enumerates every registered Unity/GTA micro and all its variants.
   Controller (including pointer/multi_mode), board, rules and projectile gameplay
   remain template-owned. ModelPipeline is an asset pipeline, not a gameplay
-  provider. No movement, firing, physics or avatar ownership changes here.
+  provider. R3 adds no owner: `Shoot` reaches the controller's own firing gate
+  (`shared_firing_provider`), and movement, physics and avatar ownership are
+  unchanged.
 
 ## Migration queue and compatibility
 
@@ -202,7 +264,7 @@ slice. It is a ratchet, not a second public API or implementation table.
 | S1–S2 | Extract selected rendered C# APIs with Roslyn and remove copied API tables |
 | S3 | Structural representative closure implemented; preserve explicit unattached/missing-provider abstentions in `mechanic_ownership_inventory.json` |
 | S4 | Done in R2: typed route bindings in `meta.atom_bindings` with versioned replay; GameSequencer attached; Unity companions retired; dynamic atom references checked per build |
-| S5 | Share one firing provider between input and Shoot; prove ammo/cooldown and failure behavior |
+| S5 | Done in R3: `Shoot` lowered through `IFiringProvider.TryFire`, the gate the fire input calls; ammo, cooldown, reload, pool and no-provider refusals tested |
 | S6 | Migrate controller behaviors one at a time, with per-variant advancing tests |
 | S7–S8 | Migrate legal board operations and rules progression through one owner |
 

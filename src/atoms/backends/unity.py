@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from ... import firing_provider
+
 
 def _v3(args: dict, x: str = "x", y: str = "y", z: str = "z") -> str:
     xv = _f(args.get(x, 0.0))
@@ -408,6 +410,22 @@ def _look(args: dict) -> str:
         f"var _lyaw   = transform.eulerAngles.y + {yaw} * {sens};\n"
         f"var _lpitch = Mathf.Clamp(transform.eulerAngles.x - {pitch} * {sens}, -89f, 89f);\n"
         f"transform.rotation = Quaternion.Euler(_lpitch, _lyaw, 0f);"
+    )
+
+
+def _shoot(args: dict) -> str:
+    # R3 (S5): Shoot owns no weapon state. It asks the Player's one firing
+    # provider (IFiringProvider.TryFire, src/firing_provider.py), the same
+    # gate the controller's fire input calls, so the weapon loadout's ammo,
+    # fire_rate and reload state stay authoritative. A refusal changes no
+    # state and is reported by its FireResult, never swallowed.
+    return (
+        f"var _shot = {firing_provider.RESOLVER_CALL};\n"
+        "if (_shot == FireResult.NoProvider)\n"
+        "    Debug.LogError(\"[atom.Shoot] no IFiringProvider on the Player: "
+        "compose a controller with the shoot ability\");\n"
+        "else if (_shot != FireResult.Fired)\n"
+        "    Debug.LogWarning(\"[atom.Shoot] the firing provider refused the shot: \" + _shot);"
     )
 
 
@@ -1101,6 +1119,7 @@ _SNIPPETS: dict[str, Any] = {
     "Sprint":             _sprint,
     "Crouch":             _crouch,
     "Look":               _look,
+    "Shoot":              _shoot,
     # hud
     "ShowHUD":            _show_hud,
     "HideHUD":            _hide_hud,

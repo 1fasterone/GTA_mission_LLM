@@ -87,10 +87,6 @@
       "next_slice": "S6",
       "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
     },
-    "unity:Shoot": {
-      "next_slice": "S5",
-      "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."
-    },
     "unity:Throttle": {
       "next_slice": "S6",
       "reason": "Unity is advertised by AtomDef, but no snippet lowerer exists. Controller templates are a separate path."

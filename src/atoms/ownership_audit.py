@@ -11,11 +11,13 @@ import argparse
 import ast
 import inspect
 import json
+import re
 import textwrap
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from .. import firing_provider
 from .backends import unity
 from .behavior_map import MICROGEN_ATOM_MAP, expand_behavior
 from .support_audit import BASELINE
@@ -171,6 +173,98 @@ def _unity_companion_emitters() -> list[str]:
         if hook is not None and not _call_free(hook):
             emitters.add(_source_ref(hook))
     return sorted(emitters)
+
+
+_FIRING_TEMPLATE = "templates/unity/micro/controller/" + firing_provider.TEMPLATE
+_CONTROLLER_TEMPLATE = "templates/unity/micro/controller/Controller.cs.j2"
+# A C# class declaration (not a comment or the interface itself) whose base
+# list names the firing contract.
+_IMPLEMENTS_FIRING = re.compile(
+    r"^\s*(?:public\s+|internal\s+)?(?:(?:sealed|abstract|partial)\s+)*class\s+\S.*?:"
+    r".*\b" + re.escape(firing_provider.CONTRACT) + r"\b")
+
+
+def _firing_owner_candidates() -> dict[str, str]:
+    """The owner of every template class that implements IFiringProvider.
+
+    A micro template's owner is the registered pipeline that renders it; any
+    other template is its own owner. Two implementers would be two candidate
+    owners, which the classification reports as ambiguous rather than picking.
+    """
+    from ..micro import REGISTRY
+
+    templates_root = ROOT / "templates/unity"
+    owners: dict[str, str] = {}
+    for path in sorted(templates_root.rglob("*.j2")):
+        relative = path.relative_to(ROOT).as_posix()
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if not _IMPLEMENTS_FIRING.search(line):
+                continue
+            parts = path.relative_to(templates_root).parts
+            pipeline = REGISTRY.get(parts[1]) if len(parts) > 2 and parts[0] == "micro" else None
+            owners[f"{relative}:{number}"] = pipeline.__name__ if pipeline else relative
+    return owners
+
+
+def _optional_token_ref(relative: str, token: str) -> str | None:
+    try:
+        return _token_ref(relative, token)
+    except OwnershipEvidenceError:
+        return None
+
+
+def _firing_seam() -> tuple[str | None, str | None, list[str]]:
+    """Prove Shoot and fire input reach the one TryFire gate (R3, S5).
+
+    Returns ``(lifecycle_seam, missing_seam, provenance)``. Each proof is read
+    from live source: the lowered Shoot C#, the contract template, the
+    controller template and the micro that emits the contract. Any gap leaves
+    the route without a seam, which validation rejects.
+    """
+    gaps: list[str] = []
+    provenance: list[str] = []
+    handler = unity._SNIPPETS.get("Shoot")
+    if handler is None or firing_provider.RESOLVER_CALL not in handler({}):
+        gaps.append(f"the Shoot lowerer does not call {firing_provider.RESOLVER_CALL}")
+    for relative, token in [
+        (_FIRING_TEMPLATE, "FireResult TryFire();"),
+        (_FIRING_TEMPLATE, "public static FireResult FirePlayer()"),
+        (_FIRING_TEMPLATE, f'GameObject.FindWithTag("{firing_provider.HOST}")'),
+        (_FIRING_TEMPLATE, f"GetComponent<{firing_provider.CONTRACT}>()"),
+        (_CONTROLLER_TEMPLATE, "public FireResult TryFire()"),
+        (_CONTROLLER_TEMPLATE, "if (fireDown) TryFire();"),
+        (_CONTROLLER_TEMPLATE, "return TryShoot() ? FireResult.Fired : FireResult.NoProjectile;"),
+        ("src/micro/controller.py", "env.get_template(firing_provider.TEMPLATE)"),
+        ("templates/unity/scene.unity.j2", f"m_TagString: {firing_provider.HOST}"),
+        # The implementer must sit where the resolver looks: the scene puts
+        # exactly the player-target units on the Player-tagged object.
+        ("templates/unity/scene.unity.j2",
+         f'selectattr("target", "equalto", "{firing_provider.HOST_TARGET}")'),
+        ("src/atom_bindings.py", "== firing_provider.HOST_TARGET"),
+    ]:
+        reference = _optional_token_ref(relative, token)
+        if reference is None:
+            gaps.append(f"{relative} lacks {token!r}")
+        else:
+            provenance.append(reference)
+    # The gate is shared only if nothing else reaches the shot past it.
+    shot_calls = [
+        line for line in (ROOT / _CONTROLLER_TEMPLATE).read_text(encoding="utf-8").splitlines()
+        if "TryShoot()" in line and not line.lstrip().startswith("//")
+        and "bool TryShoot()" not in line
+    ]
+    if len(shot_calls) != 1:
+        gaps.append(f"{_CONTROLLER_TEMPLATE} reaches TryShoot() from {len(shot_calls)} "
+                    "call sites; only TryFire() may")
+    if gaps:
+        return None, "; ".join(gaps), provenance
+    return (
+        f"atom route coroutine -> {firing_provider.RESOLVER_CALL} -> "
+        f"{firing_provider.HOST} {firing_provider.CONTRACT}.TryFire, "
+        "the gate Update fire input also calls",
+        None,
+        provenance,
+    )
 
 
 def classify_connection(
@@ -343,9 +437,9 @@ def _descriptor_producers() -> list[dict[str, Any]]:
 
 
 def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]]:
-    from ..atom_bindings import derive_atom_bindings, stamp_atom_bindings
+    from ..atom_bindings import derive_atom_bindings, runtime_provider, stamp_atom_bindings
     from ..micro import REGISTRY
-    from ..micro.controller import ControllerPipeline
+    from ..micro.controller import ControllerPipeline, provides_firing
     from ..micro.unity_base import UnityMicroPipeline
     from ..unity_compose import MicroComposer
     from ..unity_generator import UnityProjectGenerator
@@ -372,6 +466,8 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
     if REGISTRY.get("controller") is not ControllerPipeline:
         raise OwnershipEvidenceError("controller registry no longer selects ControllerPipeline")
     shoot_debt = baseline["missing_lowerers"].get("unity:Shoot", {})
+    firing_owners = _firing_owner_candidates()
+    firing_seam, firing_gap, firing_provenance = _firing_seam()
 
     return [
         _connection(
@@ -468,23 +564,27 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
             template_owner_preserved="ControllerPipeline",
         ),
         _connection(
+            # R3 (S5): Shoot and the fire input share one firing provider.
             descriptor="unity:AtomDef:Shoot",
-            mode="missing_provider",
+            mode="shared_firing_provider",
             selection=_assignment_ref("src/atoms/controller.py", "CONTROLLER_ATOMS"),
             provider=(
                 _source_ref(unity._SNIPPETS["Shoot"])
                 if "Shoot" in unity._SNIPPETS else None
             ),
-            owner_candidates=[],
-            generated_host=None,
-            lifecycle_seam=None,
-            missing_seam="Unity atom lowerer and typed runtime binding",
+            owner_candidates=sorted(set(firing_owners.values())),
+            generated_host=firing_provider.HOST if firing_seam else None,
+            lifecycle_seam=firing_seam,
+            missing_seam=firing_gap,
             provenance=[
                 _token_ref("src/atoms/controller.py", 'name="Shoot"'),
-                _token_ref("lookups/atoms/support_baseline.json", '"unity:Shoot"'),
+                _source_ref(runtime_provider),
+                _source_ref(provides_firing),
+                *firing_owners,
+                *firing_provenance,
             ],
             next_slice=shoot_debt.get("next_slice"),
-            template_owner_preserved="controller/projectile templates",
+            template_owner_preserved="ControllerPipeline",
         ),
     ]
 
@@ -621,6 +721,9 @@ def validate_report(report: dict[str, Any]) -> list[str]:
                 errors.append(f"{descriptor}: missing-provider route unexpectedly has a provider")
             if not row.get("next_slice"):
                 errors.append(f"{descriptor}: missing provider needs a later migration slice")
+            # R3 ratchet: every representative route has a provider.
+            errors.append(
+                f"{descriptor}: no provider; supply a lowerer and its runtime owner (R3)")
         if not row.get("diagnostic"):
             errors.append(f"{descriptor}: missing deterministic diagnostic")
 

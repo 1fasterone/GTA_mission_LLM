@@ -192,19 +192,21 @@ CONTROLLER_ATOMS: list[AtomDef] = [
 
     # ── SHOOTING ──────────────────────────────────────────────────────────────
 
+    # R3 (S5): Shoot fires through the Player's one firing provider
+    # (IFiringProvider.TryFire, src/firing_provider.py), the gate the fire
+    # input also calls. The weapon loadout (ControllerSchema.weapons) owns
+    # fire_rate, magazine_size and shoot_range, so the atom takes no params:
+    # a copy here could only be ignored or become a second owner.
     AtomDef(
         name="Shoot",
         category="controller",
-        description="Fire the current weapon via raycast or projectile (Mouse0 / RT).",
+        description=("Fire the Player's current weapon once through its firing provider "
+                     "(the same gate as Mouse0 / RT); a refusal names its reason."),
         duration="instant",
-        side_effects=["audio", "vfx", "damage"],
+        side_effects=["audio", "vfx", "damage", "ammo"],
         aliases=["shoot", "fire", "fire_weapon", "primary_fire"],
         engines=["unity"],
-        params=[
-            AtomParam(name="fire_rate",   type="float", default=0.15, description="Seconds between shots"),
-            AtomParam(name="magazine",    type="int",   default=30,   description="Ammo per magazine"),
-            AtomParam(name="shoot_range", type="float", default=100.0, description="Raycast range in world units"),
-        ],
+        params=[],
     ),
     AtomDef(
         name="AimDownSights",

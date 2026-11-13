@@ -36,7 +36,8 @@ Reviewed on main `1d75000`.
 | Phase 3 schema authority | Done | #290 |
 | Untouched-brief preflight | Done | #291 |
 | S4 typed bindings | Done (R2) | `meta.atom_bindings` v1 (`src/atom_bindings.py`); ownership audit: 4 `connected_and_owned`, 1 `retired`, 1 `missing_provider`, 0 `connected_but_not_attached` |
-| S5-S8 | Not started | 24 baseline entries name S6, 1 names S5 |
+| S5 shared firing provider | Done (R3) | `Shoot` lowered through `IFiringProvider.TryFire`; ownership audit: 5 `connected_and_owned`, 1 `retired`, 0 `missing_provider`; support audit: Unity 72 executable / 24 descriptive; Play Mode acceptance passed (see R3) |
+| S6-S8 | Not started | 24 baseline entries name S6; board and rules remain `protected_template_owners` |
 
 ## Remaining plan
 
@@ -79,6 +80,13 @@ Open decisions:
 - ~~R1 collision policy~~ — decided: one owner per token, enforced at import
   by `src/atoms/__init__._build_alias_index`. See `ATOM_BACKEND_SUPPORT.md`,
   "R1 vocabulary decisions".
+- `codex/projectile-slice4-firearm-adapter` (2 commits on `e72d920`) — decided:
+  port it onto the firing provider as its own PR, after R3 merges. Its Slice 3
+  commit is superseded by #267, which shipped `projectile_presentation` rather
+  than per-weapon `projectile_visuals`, so only the firearm adapter (`293ee12`:
+  Animator trigger, `OnFirearmRelease` release queue, generated muzzle flash
+  and recoil) is ported. Its "reservation is the one authoritative acceptance
+  point" sits inside `TryShoot()`, past `TryFire()`.
 
 ### R0 progress
 
@@ -157,6 +165,41 @@ atom bindings (`tests/test_atom_bindings.py`).
 
 Scope limit: compiler-selected wiring atoms stay in `GameWiring`; no gameplay
 changes phase. Runtime acceptance stays **unverified**.
+
+### R3 progress
+
+Branch `codex/r3-s5-firing-provider`. Exit criterion met: zero
+`missing_provider` (now a validation error), `unity:Shoot` left the baseline,
+and an advancing Editor Play Mode test passes.
+
+| Item | Change |
+| --- | --- |
+| One gate | `Controller.cs.j2` implements `IFiringProvider` with the `shoot` ability. `TryFire()` refuses Reloading, then EmptyMagazine, then CoolingDown, and is the only caller of `TryShoot()`. That now returns false when no round launched, which `TryFire()` reports as `NoProjectile` with nothing spent. `Update`'s fire input is `if (fireDown) TryFire();`. |
+| Contract | `FiringProvider.cs.j2` (`FireResult`, `IFiringProvider`, `FiringProviders.FirePlayer()`), emitted by the controller micro beside its implementer. Shared names live in `src/firing_provider.py`. |
+| Lowerer | `_shoot` emits only `FiringProviders.FirePlayer()`. `NoProvider` is a logged error naming the remedy; any other refusal is a logged warning naming its `FireResult`. Host-independent, so `_GameSequencer` may host it. |
+| Typed binding | `AtomBinding.runtime_provider` `{contract, host, implementer}` is read from the lowered C#, with the implementer taken from the composed controller on the `player` target (`contract_implementers_for`, `provides_firing`). A shooting controller elsewhere is not the implementer (review of #300). No implementer: a build warning; if no micro emitted the contract either, a contract-only `Assets/Scripts/FiringProvider.cs` so the atom compiles and refuses at runtime. |
+| Vocabulary | `Shoot` takes no parameters; `fire_rate` / `magazine` / `shoot_range` duplicated the weapon loadout. Args still passed are named per build (`ignored_args`), never rewritten. |
+| Cadence fix | `_lastFireTime` starts at negative infinity, so the first shot is never "cooling down" (it used to refuse every shot for one `fire_rate` after load). |
+| Ownership audit | `unity:AtomDef:Shoot` is `shared_firing_provider` / `connected_and_owned` by `ControllerPipeline`, proven link by link from source. A bypassing lowerer loses the seam; a second implementer is ambiguous. |
+
+Evidence (local, this branch):
+
+- `tests/test_firing_provider.py`: 19 tests. Two compile the emitted
+  controller, contract and lowered `Shoot` with Roslyn against the real Unity
+  6000.1.4f1 reference assemblies; Input System types in the input micro stay
+  unverified, per R0.
+- `tools/run_firing_provider_acceptance.ps1`: a clean Unity 6000.1.4f1 project
+  compiled the emitted sources with 0 C# errors, and three Play Mode tests
+  passed (`FIRING_PROVIDER_SHARED_GATE_PASS`, `FIRING_PROVIDER_POOL_PASS`,
+  `FIRING_PROVIDER_NO_PROVIDER_PASS`). They drive the provider directly and
+  through the generated `GameSequencer`. They cover ammo and cadence shared
+  between the atom and the provider, the empty-magazine, reload and
+  pool-exhausted refusals, and the logged no-provider error.
+
+Not covered: hardware fire input in Play Mode (batchmode cannot drive it; the
+`Update -> TryFire` call is proven structurally), and the firearm presentation
+adapter from `codex/projectile-slice4-firearm-adapter`, which is ported in its
+own PR (see open decisions).
 
 ## Trace answer
 

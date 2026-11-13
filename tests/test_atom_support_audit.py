@@ -67,9 +67,9 @@ def test_new_unregistered_handler_cannot_hide(monkeypatch):
 
 
 def test_closed_gap_must_ratchet_the_debt(monkeypatch):
-    # Synthetic mutation, not a Shoot implementation or accepted new vocabulary.
-    monkeypatch.setitem(unity._SNIPPETS, "Shoot", lambda _: "AuditOnly();")
-    assert "stale missing_lowerers baseline (ratchet/update required): unity:Shoot" in validate_inventory(
+    # Synthetic mutation, not a Reload implementation or accepted new vocabulary.
+    monkeypatch.setitem(unity._SNIPPETS, "Reload", lambda _: "AuditOnly();")
+    assert "stale missing_lowerers baseline (ratchet/update required): unity:Reload" in validate_inventory(
         build_inventory(), _baseline())
 
 

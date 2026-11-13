@@ -97,7 +97,9 @@ Registration and an `engines`
 entry describe vocabulary and intended scope; they do not prove an executable
 backend or runtime behavior. The target is executable atom-founded composition.
 Current controller, board, rules and projectile gameplay remains template-owned.
-`fire` aliases canonical `Shoot`; Unity currently has no `Shoot` snippet lowerer.
+`fire` aliases canonical `Shoot`. Since R3 the Unity `Shoot` lowerer fires
+through the one firing provider (`IFiringProvider.TryFire`) that the
+controller's fire input also calls; the controller template owns weapon state.
 
 The support authority is `python -m src.atoms.support_audit --check`, with derived
 `docs/atom_backend_inventory.json` and reviewed legacy debt in

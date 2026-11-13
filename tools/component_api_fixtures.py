@@ -22,7 +22,11 @@ def selections():
             'transitions':[{'from_state':'Inactive','to_state':'Active','condition':'true'}]})],
         'SpriteSourceOnly': [Subsystem(kind='sprite_animator',variant='player',name='SpriteDriver')],
     }
-    for label,variant,options in [('OrdinaryController','third_person',{}),('PointerController','pointer',{}),('MultiController','multi_mode',{'modes':[{'kind':'on_foot'},{'kind':'vehicle_car'}]})]:
+    # R3 (S5): the shooting controllers render the IFiringProvider contract and its
+    # TryFire gate, once per delivery path, so the Editor gate compiles both.
+    for label,variant,options in [('OrdinaryController','third_person',{}),('PointerController','pointer',{}),('MultiController','multi_mode',{'modes':[{'kind':'on_foot'},{'kind':'vehicle_car'}]}),
+                                  ('ShootingController','first_person',{'abilities':['shoot']}),
+                                  ('BallisticController','first_person',{'abilities':['shoot'],'weapons':[{'name':'Launcher','delivery':'projectile_3d'}]})]:
         matrix[label]=[Subsystem(kind='controller',variant=variant,name='FixturePilot',options={'input_backend':'legacy',**options}),Subsystem(kind='input',variant='keyboard_mouse',name='FixtureInput')]
     return matrix
 
