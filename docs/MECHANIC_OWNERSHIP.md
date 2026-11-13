@@ -1,4 +1,4 @@
-# Mechanic descriptor ownership audit (S3, R2)
+# Mechanic descriptor ownership audit (S3, R2, R3)
 
 S3 validates structural connection and ownership. It does not migrate gameplay,
 add public atom vocabulary, or claim compile/runtime proof. R2 (S4) attached or
@@ -32,7 +32,8 @@ and template-owned mechanics.
 Unknown routes are errors, not defaults. A provider with no owner candidate raises
 an `OwnershipEvidenceError`; a changed or incomplete report fails validation.
 Since R2, `connected_but_not_attached` also fails validation: an emitted route
-must be attached to a generated host or retired.
+must be attached to a generated host or retired. Since R3, `missing_provider`
+fails validation too: every representative route has a provider.
 
 ## Representative result
 
@@ -55,9 +56,16 @@ must be attached to a generated host or retired.
 - The composed controller descriptor still resolves through `REGISTRY` to
   `ControllerPipeline`, renders selected template source, and attaches to the
   generated Player host; template ownership remains unchanged.
-- Unity `Shoot` still has no atom lowerer and remains `missing_provider`, with S5
-  as its reviewed migration slice. The controller/projectile templates remain the
-  runtime owners until that later slice supplies independent evidence.
+- Unity `Shoot` lowers to `FiringProviders.FirePlayer()`, which calls
+  `IFiringProvider.TryFire` on the Player: the same gate the controller's
+  `Update` fire input calls (R3, S5). The audit proves each link from source
+  (the lowered C#, the contract template, the controller's single `TryShoot()`
+  call site, the micro that emits the contract, the Player tag) and reads the
+  owner from the template class that implements the contract. Its mode is
+  `shared_firing_provider` and the route is `connected_and_owned` by
+  `ControllerPipeline`. A lowerer that bypasses the provider loses its seam and
+  fails validation. A second implementer makes the owner ambiguous rather than
+  picked. The controller/projectile templates remain the runtime owners.
 
 ## Authority boundary
 

@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from .. import firing_provider
 from ..micro_pipeline import to_pascal
 from .unity_base import UnityMicroPipeline
 from .code_fields import (
@@ -142,6 +143,31 @@ ProjectileDelivery = Literal["hitscan", "projectile_3d"]
 ProjectilePoolGrowth = Literal["fixed", "grow_by_one"]
 
 _ALL_ABILITIES: set[str] = set(Ability.__args__)  # type: ignore[attr-defined]
+
+def controller_template(variant: str) -> str:
+    """The template ControllerPipeline renders the controller class from.
+
+    The pointer variant has its own template: Controller.cs.j2 is a movement
+    rig branching on which KIND of body it drives, and a game with no body
+    belongs in none of those branches. multi_mode is the same reasoning in the
+    other direction (MORE than one body kind on one class).
+    """
+    if variant == "pointer":
+        return "PointerController.cs.j2"
+    if variant == "multi_mode":
+        return "ControllerMultiMode.cs.j2"
+    return "Controller.cs.j2"
+
+
+def provides_firing(abilities: "list[str]", variant: str) -> bool:
+    """True when the rendered controller class implements IFiringProvider.
+
+    The one firing provider (R3, S5, src/firing_provider.py): Controller.cs.j2
+    renders the shooting section, gated on the "shoot" ability, and implements
+    the contract there; the Shoot atom fires through it. The other templates
+    render no firing code, so a "shoot" ability there provides nothing.
+    """
+    return "shoot" in abilities and controller_template(variant) == "Controller.cs.j2"
 
 
 def _clamp_ability_list(v: object) -> list[str]:
@@ -991,15 +1017,7 @@ class ControllerPipeline(UnityMicroPipeline):
         scripts_dir = out_dir / "Scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
-        # The pointer variant has its own template: Controller.cs.j2 is a
-        # movement rig branching on which KIND of body it drives, and a game
-        # with no body belongs in none of those branches. multi_mode is the
-        # same reasoning in the other direction — MORE than one body kind on
-        # the same class — so it also gets its own template rather than a
-        # second full branch bolted onto Controller.cs.j2.
-        tpl = ("PointerController.cs.j2" if variant == "pointer"
-               else "ControllerMultiMode.cs.j2" if variant == "multi_mode"
-               else "Controller.cs.j2")
+        tpl = controller_template(variant)
         (scripts_dir / f"{schema.name}.cs").write_text(
             env.get_template(tpl).render(s=schema, variant=variant),
             encoding="utf-8",
@@ -1011,6 +1029,17 @@ class ControllerPipeline(UnityMicroPipeline):
             input_dir.mkdir(parents=True, exist_ok=True)
             (input_dir / f"{schema.name}.inputactions").write_text(
                 env.get_template("InputActions.inputactions.j2").render(s=schema, variant=variant),
+                encoding="utf-8",
+            )
+            count += 1
+
+        if provides_firing(schema.abilities, variant):
+            # The contract the class implements and the Shoot atom fires
+            # through. The generator emits a contract-only copy instead when
+            # a Shoot atom is lowered and no composed controller provides it.
+            (scripts_dir / firing_provider.SCRIPT).write_text(
+                env.get_template(firing_provider.TEMPLATE).render(
+                    emitter="Unity Micro Pipeline"),
                 encoding="utf-8",
             )
             count += 1

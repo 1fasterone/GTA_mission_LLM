@@ -25,7 +25,7 @@ using {{ u }};
 {% endfor %}
 
 /// <summary>{{ s.description }}</summary>
-public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}, IVehicleState{% endif %}{% if variant == "climbing" %}, IClimbingState{% endif %}
+public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}, IVehicleState{% endif %}{% if variant == "climbing" %}, IClimbingState{% endif %}{% if "shoot" in s.abilities %}, IFiringProvider{% endif %}
 {
     public System.Func<string, float> ReadStat;
     // ═══ MOVEMENT ════════════════════════════════════════════════════════════
@@ -356,7 +356,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
     private bool  _isDodging;
 {% endif %}
 {% if "shoot" in s.abilities %}
-    private float _lastFireTime;
+    // No shot has fired yet, so the first TryFire() is never "cooling down".
+    private float _lastFireTime = float.NegativeInfinity;
     private int   _currentAmmo;
     private int   _reserveAmmo;
     private bool  _isReloading;
@@ -1061,8 +1062,8 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
                     adsTransitionTime);
         }
 {% endif %}
-        if (fireDown && !_isReloading && _currentAmmo > 0 && Time.time >= _lastFireTime + weaponFireRate[_weaponIndex])
-            TryShoot();
+        // Fire input asks the same gate the Shoot atom does (IFiringProvider).
+        if (fireDown) TryFire();
         if (reloadDown && !_isReloading && _currentAmmo < weaponMagazineSize[_weaponIndex])
             StartCoroutine(ReloadRoutine());
 {% endif %}
@@ -1471,15 +1472,28 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 
     // ═══ SHOOTING METHODS ════════════════════════════════════════════════════
 {% if "shoot" in s.abilities %}
-    private void TryShoot()
+    /// <summary>The one firing gate (IFiringProvider). Fire input and the
+    /// Shoot atom both call it; nothing else advances ammunition or cadence.
+    /// A refused shot changes no state and names its reason.</summary>
+    public FireResult TryFire()
+    {
+        if (_isReloading) return FireResult.Reloading;
+        if (_currentAmmo <= 0) return FireResult.EmptyMagazine;
+        if (Time.time < _lastFireTime + weaponFireRate[_weaponIndex]) return FireResult.CoolingDown;
+        return TryShoot() ? FireResult.Fired : FireResult.NoProjectile;
+    }
+
+    /// <summary>Fires one round past the gate. False when no round could
+    /// launch, in which case no ammunition or cadence was consumed.</summary>
+    private bool TryShoot()
     {
 {% if has_physical_projectiles %}        if (weaponDelivery[_weaponIndex] == "projectile_3d")
         {
-            if (!LaunchProjectile()) return;
+            if (!LaunchProjectile()) return false;
             _lastFireTime = Time.time;
             _currentAmmo--;
             if (muzzleFlash != null) muzzleFlash.Play();
-            return;
+            return true;
         }
 {% endif %}        _lastFireTime = Time.time;
         _currentAmmo--;
@@ -1489,6 +1503,7 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
             : new Ray(transform.position, transform.forward);
         if (Physics.Raycast(ray, out RaycastHit hit, weaponRange[_weaponIndex]))
             hit.collider.SendMessage("TakeDamage", weaponDamage[_weaponIndex], SendMessageOptions.DontRequireReceiver);
+        return true;
     }
 {% if has_physical_projectiles %}    private void InitializeProjectilePools()
     {

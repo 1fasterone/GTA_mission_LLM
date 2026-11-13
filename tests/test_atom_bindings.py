@@ -52,7 +52,8 @@ def test_each_dynamic_reference_names_the_lowerer_it_reaches(monkeypatch):
     alias = bind_atom(1, AtomInvocation(atom="delay"))
     assert (alias.status, alias.canonical, alias.provider) == ("alias", "Wait", None)
 
-    assert bind_atom(2, AtomInvocation(atom="Shoot")).status == "descriptive"
+    # Shoot gained a lowerer in R3; Reload is still registered with none.
+    assert bind_atom(2, AtomInvocation(atom="Reload")).status == "descriptive"
     assert bind_atom(3, AtomInvocation(atom="InventedThing")).status == "unregistered"
 
     monkeypatch.setitem(ATOM_REGISTRY, "GtaOnlyFixture", AtomDef(

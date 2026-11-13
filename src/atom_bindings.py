@@ -29,6 +29,7 @@ from typing import Literal, Mapping, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from . import firing_provider
 from .atoms import ATOM_REGISTRY, get_atom
 from .atoms.base import AtomInvocation
 from .atoms.behavior_map import behavior_loops
@@ -97,6 +98,43 @@ def host_members(code: str) -> list[str]:
     return sorted(set(_HOST_MEMBER.findall(code)))
 
 
+class RuntimeProvider(BaseModel):
+    """A scene contract a lowered atom's C# resolves at runtime (R3, S5).
+
+    ``implementer`` is the composed class that implements ``contract`` in this
+    build. None means nothing does: the atom still compiles, against the
+    contract alone, and refuses at runtime with a named reason.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract: str
+    host: str
+    implementer: Optional[str] = None
+
+
+# Each contract a lowered snippet can resolve, keyed by the one call that
+# resolves it. Read from the exact C# generation emits, like host_members.
+_RUNTIME_CONTRACTS: dict[str, tuple[str, str]] = {
+    firing_provider.RESOLVER_CALL: (firing_provider.CONTRACT, firing_provider.HOST),
+}
+# What makes a build implement each contract, named when none does.
+_CONTRACT_REMEDY: dict[str, str] = {
+    firing_provider.CONTRACT: firing_provider.REMEDY,
+}
+
+
+def runtime_provider(code: str,
+                     implementers: Mapping[str, str]) -> Optional[RuntimeProvider]:
+    """The runtime contract a lowered snippet resolves, or None."""
+    stripped = _LINE_COMMENT.sub("", _STRING_LITERAL.sub('""', code))
+    for call, (contract, host) in _RUNTIME_CONTRACTS.items():
+        if call in stripped:
+            return RuntimeProvider(contract=contract, host=host,
+                                   implementer=implementers.get(contract))
+    return None
+
+
 class AtomBinding(BaseModel):
     """One atom invocation and the lowerer it reaches."""
 
@@ -109,6 +147,11 @@ class AtomBinding(BaseModel):
     canonical: Optional[str] = None
     # Lowered atoms only: the host members its emitted C# depends on.
     host_members: list[str] = Field(default_factory=list)
+    # Lowered atoms only (R3): the scene contract its C# resolves at runtime.
+    runtime_provider: Optional[RuntimeProvider] = None
+    # Lowered atoms only (R3): args an atom that declares no parameters was
+    # given. Its lowerer reads none of them, so they change nothing.
+    ignored_args: list[str] = Field(default_factory=list)
 
     @property
     def host_dependent(self) -> bool:
@@ -159,18 +202,28 @@ def _provider(handler: object) -> str:
     return f"{path}:{name}"
 
 
-def bind_atom(index: int, invocation: AtomInvocation) -> AtomBinding:
-    """Validate one dynamic atom reference against the registry and lowerers."""
+def bind_atom(index: int, invocation: AtomInvocation,
+              implementers: Optional[Mapping[str, str]] = None) -> AtomBinding:
+    """Validate one dynamic atom reference against the registry and lowerers.
+
+    ``implementers`` maps a runtime contract to the composed class that
+    implements it in this build (``{"IFiringProvider": "PlayerController"}``).
+    """
     from .atoms.backends.unity import _SNIPPETS
 
     name = invocation.atom
     handler = _SNIPPETS.get(name)
-    if handler is not None:
-        # The exact call unity_atom_snippet makes during generation.
-        code = handler(dict(invocation.args or {}))
-        return AtomBinding(index=index, atom=name, status="lowered",
-                           provider=_provider(handler), host_members=host_members(code))
     definition = ATOM_REGISTRY.get(name)
+    if handler is not None:
+        args = dict(invocation.args or {})
+        # The exact call unity_atom_snippet makes during generation.
+        code = handler(dict(args))
+        ignored = (sorted(args) if definition is not None and not definition.params
+                   else [])
+        return AtomBinding(index=index, atom=name, status="lowered",
+                           provider=_provider(handler), host_members=host_members(code),
+                           runtime_provider=runtime_provider(code, implementers or {}),
+                           ignored_args=ignored)
     if definition is not None:
         status: AtomStatus = "descriptive" if "unity" in definition.engines else "unsupported"
         return AtomBinding(index=index, atom=name, status=status)
@@ -180,8 +233,10 @@ def bind_atom(index: int, invocation: AtomInvocation) -> AtomBinding:
     return AtomBinding(index=index, atom=name, status="unregistered")
 
 
-def _bind_all(atoms: list[AtomInvocation]) -> list[AtomBinding]:
-    return [bind_atom(index, invocation) for index, invocation in enumerate(atoms)]
+def _bind_all(atoms: list[AtomInvocation],
+              implementers: Mapping[str, str]) -> list[AtomBinding]:
+    return [bind_atom(index, invocation, implementers)
+            for index, invocation in enumerate(atoms)]
 
 
 def _entity_scenes(schema: UnitySchema, entity_name: str) -> list[str]:
@@ -195,18 +250,43 @@ def _entity_scenes(schema: UnitySchema, entity_name: str) -> list[str]:
     return hosted
 
 
+def contract_implementers_for(composed_units: Optional[list] = None) -> dict[str, str]:
+    """The composed class that implements each runtime contract (R3, S5).
+
+    Read from the composed units after ``default_fix`` (``ComposedUnit.abilities``
+    is the survived list), through the same predicate the controller micro
+    emits the contract with, so the record and the emitted files agree. The
+    compose graph places at most one player controller per project.
+    """
+    from .micro.controller import provides_firing
+
+    implementers: dict[str, str] = {}
+    for unit in composed_units or []:
+        if (getattr(unit, "kind", "") == "controller"
+                and provides_firing(list(getattr(unit, "abilities", []) or []),
+                                    str(getattr(unit, "variant", "")))):
+            implementers.setdefault(firing_provider.CONTRACT, unit.class_name)
+    return implementers
+
+
 def derive_atom_bindings(
     schema: UnitySchema,
     entity_model_paths: Optional[Mapping[str, str]] = None,
+    contract_implementers: Optional[Mapping[str, str]] = None,
 ) -> AtomBindings:
     """Derive every Unity atom route from the schema state Step 6 renders.
 
     Call it after the generator's entity-behavior reconciliation and script
     preparation, because both decide which class a route reaches. Pure and
     deterministic: the same schema yields an equal record every time.
+
+    ``contract_implementers`` names, per runtime contract, the composed class
+    that implements it (``contract_implementers_for``); a contract absent from
+    it has no implementer in this build.
     """
     from .unity_generator import entity_behavior_class_name
 
+    implementers = dict(contract_implementers or {})
     model_paths = entity_model_paths or {}
     scenes = gameplay_scenes(schema)
     routes: list[AtomRoute] = []
@@ -219,7 +299,7 @@ def derive_atom_bindings(
             phase="start_coroutine_once",
             trigger="scene_load",
             scenes=scenes,
-            atoms=_bind_all(schema.atoms),
+            atoms=_bind_all(schema.atoms, implementers),
             finding=None if scenes else (
                 "no gameplay scene to host GameSequencer (every scene is a menu); "
                 "schema.atoms is not emitted"),
@@ -246,7 +326,7 @@ def derive_atom_bindings(
             phase="start_coroutine_loop" if behavior_loops(entity.atoms) else "start_coroutine_once",
             trigger="entity_spawn",
             scenes=[] if finding else hosted,
-            atoms=_bind_all(entity.atoms),
+            atoms=_bind_all(entity.atoms, implementers),
             finding=finding,
         ))
 
@@ -266,7 +346,7 @@ def derive_atom_bindings(
             phase="start_coroutine_once",
             trigger="scene_load",
             scenes=[] if finding else scenes,
-            atoms=_bind_all(script.atoms),
+            atoms=_bind_all(script.atoms, implementers),
             finding=finding,
         ))
 
@@ -287,6 +367,20 @@ def _route_messages(record: AtomBindings) -> list[str]:
                         f"{route.host} is an empty scene object (a Transform and "
                         f"{route.host_class}), so it changes no gameplay object; author "
                         "it in the target entity's atoms instead")
+                provider = binding.runtime_provider
+                if provider is not None and provider.implementer is None:
+                    messages.append(
+                        f"atom bindings: {route.source}[{binding.index}] {binding.atom!r} "
+                        f"resolves {provider.contract} on the {provider.host} at runtime, "
+                        f"but no composed class implements {provider.contract} in this "
+                        "build; it compiles against the contract alone and refuses every "
+                        f"call at runtime (a logged error); {_CONTRACT_REMEDY[provider.contract]}")
+                if binding.ignored_args:
+                    messages.append(
+                        f"atom bindings: {route.source}[{binding.index}] {binding.atom!r} "
+                        "declares no parameters, so arg(s) "
+                        f"{', '.join(binding.ignored_args)} change nothing in the "
+                        "emitted C#")
                 continue
             why = _STATUS_WHY[binding.status]
             if binding.canonical:
