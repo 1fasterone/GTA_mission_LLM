@@ -307,4 +307,30 @@ WIRING_ATOMS: list[AtomDef] = [
             AtomParam(name="saveload_var", type="string", default="_saveload"),
         ],
     ),
+    AtomDef(
+        name="WireTriggerToEscortObjective",
+        category="wiring",
+        description=(
+            "SEAM 8b: subscribe to the TriggerZone's OnActivated and report an "
+            "`escort` objective only when the escorted entity's own spawned "
+            "instance is within `tolerance` of the trigger — the player arriving "
+            "alone proves nothing about the NPC. Emits a comment, never a guess, "
+            "when no escort objective was paired with a followed entity."
+        ),
+        engines=["unity"],
+        duration="instant",
+        side_effects=["escort_objective_advances_on_escorted_arrival"],
+        params=[
+            AtomParam(name="trigger_var",    type="string", default="_trigger"),
+            AtomParam(name="objectives_var", type="string", default="_objectives"),
+            AtomParam(name="delegate_var",   type="string", default="_onEscortObjective"),
+            AtomParam(name="objective_id",   type="string", required=True,
+                      description="The escort objective's id"),
+            AtomParam(name="entity_go_name", type="string", required=True,
+                      description="Spawned GameObject name of the escorted entity "
+                                  "(\"<entity.name>_0\")"),
+            AtomParam(name="tolerance",      type="float",  default=6.0,
+                      description="Max escorted-entity distance from the trigger"),
+        ],
+    ),
 ]

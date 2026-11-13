@@ -9,7 +9,7 @@ LOGIC_ATOMS: list[AtomDef] = [
         description="Pause execution for a fixed number of seconds.",
         duration="duration_param",
         side_effects=[],
-        aliases=["wait", "pause", "delay", "sleep", "hold"],
+        aliases=["wait", "delay", "sleep", "hold"],
         params=[
             AtomParam(name="seconds", type="float", default=1.0, required=True,
                       description="How many seconds to wait"),

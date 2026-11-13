@@ -49,7 +49,7 @@ and the mutation tests in `tests/test_atom_support_audit.py`.
 
 `runtime_acceptance` is **unverified** throughout. This is a structural and
 emission audit, not semantic compilation or Unity/GTA runtime acceptance. The
-six bound emission cases under `tests/fixtures/` are engineer-authored synthetic
+twelve bound emission cases under `tests/fixtures/` are engineer-authored synthetic
 fixtures for guarded seams. All other public lowerers use AtomDef defaults.
 They are never presented as real Pipeline LLM output or actual scene bindings.
 
@@ -57,35 +57,64 @@ They are never presented as real Pipeline LLM output or actual scene bindings.
 
 | Backend | Executable lowerers | Descriptive gaps | Unsupported definitions | Dispatch-only helpers |
 | --- | ---: | ---: | ---: | ---: |
-| Unity | 65 | 25 | 0 | 6 |
-| GTA5 | 26 | 0 | 64 | 0 |
+| Unity | 71 | 25 | 0 | 0 |
+| GTA5 | 26 | 0 | 70 | 0 |
 
 The Unity gaps are AimDownSights, Ascend, Block, Boost, Brake, CycleWeapon,
 Dash, Descend, Dodge, Grab, Interact, MeleeAttack, Nitro, OpenInventory, OpenMap,
 Pause, Pitch, PrimaryAttack, Reload, RollPlane, SecondaryAttack, Shoot,
 Throttle, ThrowGrenade and UseItem. `fire` remains an alias of canonical `Shoot`.
 
-The capability resolver also constructs six unregistered names with no lowerers:
-BarkOnSight, EnableNavMesh, EnableParticles, EnablePostProcessing,
-InitDialogSystem and SetAIBehavior. Their static source locations and those of
-all discoverable atom invocations are in the inventory. They are separately
-baselined as unregistered reference debt; they are not counted as public atoms.
-Dynamic references still require per-build validation in S4.
+## R1 vocabulary decisions (S0 follow-up closed)
 
-The dispatch-only helpers are EndDialog, Gesture, LookAt, PlayDialogAudio,
-SayLine and WireTriggerToEscortObjective. The escort helper is directly called
-by MicroComposer. The dialog helpers have no public AtomDef; four appear in the
-descriptive npc_dialog map. Public registration or removal needs an explicit
-vocabulary compatibility decision. They are not automatically exposed.
+R1 closed all 16 `S0-followup-*` baseline entries. No entry was closed by
+re-labelling: each one either got a single owner, a registration backed by a
+real lowerer, or retirement.
 
-Four identity collisions are recorded without silently changing precedence:
+**Identity policy: one owner per token.** A token is an atom's canonical name or
+alias, compared case-insensitively. `src/atoms/__init__.py` builds the lookup
+index with `_build_alias_index`, which raises at import when two atoms claim one
+token. First-registered-wins, which made a lookup depend on module order, is
+gone. The audit still reports any collision as an unreviewed identity conflict.
 
-| Token | Competing definitions | Current lookup behavior |
-| --- | --- | --- |
-| pause / Pause | Wait, Pause | lowercase alias resolves Wait; exact canonical Pause resolves Pause |
-| roll_evade | Dash, Dodge | first registered alias wins: Dash |
-| thrust | Throttle, ApplyForce | first registered alias wins: Throttle |
-| kick | SecondaryAttack, ApplyImpulse | first registered alias wins: SecondaryAttack |
+| Token | Owner | Dropped from | Why | Lookup change |
+| --- | --- | --- | --- | --- |
+| pause | Pause | Wait | Canonical name outranks an alias; matches the controller `pause` ability and the `Pause` input action | `pause` was Wait, now Pause |
+| roll_evade | Dodge | Dash | Evade family (`dodge`, `evade`, `sidestep`); Dash keeps `dash`, `quick_step` | was Dash, now Dodge |
+| thrust | Throttle | ApplyForce | The controller's Thrust section is throttle-driven; ApplyForce keeps `push`, `add_force` | none |
+| kick | SecondaryAttack | ApplyImpulse | The fighting variant defines kick as secondary_attack; ApplyImpulse keeps `impulse`, `knockback` | none |
+| look_at | CameraLookAt | LookAt (dialog) | Already the camera's; the NPC head-look keeps `npc_look_at`, `head_look` | none |
+
+Unity code generation dispatches on the raw atom name (`_SNIPPETS.get`), never
+through aliases, so no generated C# changes. Alias lookups feed
+`atom_snippet()`, the mechanics playtest's category label and the CLI only.
+
+**Dispatch-only helpers: registered.** SayLine, PlayDialogAudio, Gesture, LookAt
+and EndDialog already had `AtomDef`s (`src/atoms/dialog.py`) and real Unity
+lowerers, but were never added to `ALL_ATOMS`. They are now registered as
+`engines=["unity"]` in a new `dialog` category. `dialog` is not in
+`_SEQUENCE_ATOM_CATEGORIES`, so the Step 3 prompt vocabulary is unchanged; their
+callers remain the npc_dialog micro and its companion sequence.
+WireTriggerToEscortObjective joins its registered `wiring` siblings with the
+same parameters `MicroComposer` already passes. No new token was invented: each
+name existed with a lowerer before R1.
+
+**Unregistered capability names: retired.** InitDialogSystem, BarkOnSight,
+EnableNavMesh, SetAIBehavior, EnableParticles and EnablePostProcessing were
+built by `capability_resolver` and folded into `schema.atoms`. None was
+registered or had a lowerer, so each reached GameSequencer as a `// TODO`
+comment that read like scene setup but did nothing. Registering them would have
+invented public vocabulary with no executable meaning, so they were retired.
+Nothing else consumes the `dialog`, `ai` and `vfx` capabilities either: micro
+selection (`unity_compose.subsystems_for`) reads `capabilities.controller` alone,
+so declaring them adds no dialogue, statemachine or trigger micro, and
+`capabilities_to_active_microgens` is descriptive only. Wiring them into
+selection would change generated projects and is left to a later slice. Each
+declared one, with the params no lowerer consumes (`dialog.system`,
+`dialog.bark_on_sight`, `ai.pathfinding`, `ai.behavior`, `ai.detection_range`,
+`vfx.particles`, `vfx.post_processing`), is named in a Step 5 fix message rather
+than emitted as placeholders. A saved schema that already holds one of these names still lowers
+to the same `// TODO` comment on replay; schemas are never rewritten.
 
 ## Ownership and reachability
 
@@ -119,7 +148,7 @@ slice. It is a ratchet, not a second public API or implementation table.
 
 | Follow-up | Required change before claiming completion |
 | --- | --- |
-| S0 vocabulary/alias review | Decide compatible resolution for four collisions and five legacy dialog helpers |
+| S0 vocabulary/alias review | Done in R1: one owner per token, dialog/escort helpers registered, six capability placeholders retired |
 | S1–S2 | Extract selected rendered C# APIs with Roslyn and remove copied API tables |
 | S3 | Structural representative closure implemented; preserve explicit unattached/missing-provider abstentions in `mechanic_ownership_inventory.json` |
 | S4 | Persist typed host/phase/trigger/provider bindings with versioned replay |

@@ -29,7 +29,7 @@ Reviewed on main `1d75000`.
 | Slice | State | Evidence |
 | --- | --- | --- |
 | S0 atom/backend support audit | Done | #283; `support_audit --check` passes (Unity 65 executable / 25 descriptive / 6 internal) |
-| S0 vocabulary/alias review | Open | 16 baseline entries tagged `S0-followup-*` in `lookups/atoms/support_baseline.json` |
+| S0 vocabulary/alias review | Done (R1) | All 16 `S0-followup-*` entries closed; one owner per token, dialog/escort helpers registered, six capability placeholders retired (Unity 71 executable / 25 descriptive / 0 internal) |
 | S1 Roslyn API extraction | Done | #284, #285 |
 | S2 consumer cutover | Done; R0 closeout complete | `c239ac8`; R0 removed the surviving tables, binder and erasers (see R0) |
 | S3 ownership closure | Done | #289; 3 `connected_and_owned`, 2 `connected_but_not_attached`, 1 `missing_provider` |
@@ -75,8 +75,9 @@ Open decisions:
   resolver claims under the Phase 3 authority model, or archive it.
 - ~~Framework member tables in R0~~ — decided: real Unity reference
   assemblies (`component_api.unity_editor`), both tables deleted. See R0.
-- R1 collision policy: canonical meaning per token, or document the current
-  first-registered-wins behavior.
+- ~~R1 collision policy~~ — decided: one owner per token, enforced at import
+  by `src/atoms/__init__._build_alias_index`. See `ATOM_BACKEND_SUPPORT.md`,
+  "R1 vocabulary decisions".
 
 ### R0 progress
 

@@ -26,6 +26,14 @@ CONTROLLER_ATOMS = {"Look", "Move", "Sprint", "Jump", "Crouch"}
 PHYSICS_ATOMS    = {"SetGravity", "ToggleCollision"}
 
 
+# R1 retired these: unregistered names with no lowerer, which reached
+# GameSequencer only as `// TODO` comments.
+RETIRED_CAPABILITY_ATOMS = frozenset({
+    "InitDialogSystem", "BarkOnSight", "EnableNavMesh", "SetAIBehavior",
+    "EnableParticles", "EnablePostProcessing",
+})
+
+
 def caps(**kw) -> ProjectCapabilities:
     return ProjectCapabilities.model_validate(kw)
 
@@ -83,8 +91,8 @@ class TestSubsystemOwnedCapabilitiesAreNotFolded:
     def test_scene_init_capabilities_are_still_folded(self):
         schema, msgs = resolve_capabilities(schema_with(caps(**FULL)))
         names = {a.atom for a in schema.atoms}
-        assert {"ShowHUD", "BindAction", "SetModel", "EnableNavMesh",
-                "SetAIBehavior", "EnableParticles"} <= names
+        assert {"ShowHUD", "BindAction", "SetModel"} <= names
+        assert not names & RETIRED_CAPABILITY_ATOMS
         assert any("scene-init atoms injected" in m for m in msgs)
 
     def test_explicit_empty_exclude_still_returns_the_full_mapping(self):
@@ -151,3 +159,58 @@ def test_no_collision_setting_can_toggle_collision_at_start(collision):
         caps(physics={"gravity": False, "collision": collision})))
     assert not [a for a in schema.atoms if a.atom == "ToggleCollision"]
     assert not [a for a in schema.atoms if a.atom == "SetGravity"]
+
+
+# ── R1: retired placeholder capability atoms ──────────────────────────────────
+
+def test_no_capability_folds_a_placeholder_atom():
+    every = caps(**FULL)
+    every.dialog.bark_on_sight = True
+    every.vfx.post_processing = True
+    names = {a.atom for a in capabilities_to_atoms(every, exclude=frozenset())}
+    assert not names & RETIRED_CAPABILITY_ATOMS
+
+
+def test_unconsumed_capability_params_are_named_loudly():
+    _, msgs = resolve_capabilities(schema_with(caps(
+        dialog={"system": "voiced", "bark_on_sight": True},
+        ai={"pathfinding": True, "behavior": "chase", "detection_range": 25.0},
+        vfx={"particles": True, "post_processing": True},
+    )))
+    [message] = [m for m in msgs if "no executable lowerer" in m]
+    for param in ("dialog.system=voiced", "dialog.bark_on_sight", "ai.pathfinding",
+                  "ai.behavior=chase", "ai.detection_range=25",
+                  "vfx.particles", "vfx.post_processing"):
+        assert param in message
+
+
+def test_ai_only_capability_no_longer_emits_a_todo_sequencer():
+    schema, _ = resolve_capabilities(schema_with(caps(ai={"behavior": "patrol"})))
+    assert schema.atoms == []
+    files = UnityProjectGenerator(template_dir="templates/unity").generate(schema, {})
+    assert not [p for p in files if "GameSequencer" in p]
+
+
+def test_dialog_ai_vfx_are_reported_unconsumed_not_claimed_active():
+    """Review of #298: these capabilities select no micro. Selection reads
+    capabilities.controller alone, so the report must not imply otherwise."""
+    declared = caps(dialog={"system": "simple"}, ai={"behavior": "patrol"},
+                    vfx={"particles": False})
+
+    def selected(capabilities):
+        return [(s.kind, s.variant) for s in subsystems_for("3D", [], capabilities=capabilities)]
+
+    # Declaring them changes nothing about what gets composed.
+    assert selected(declared) == selected(None)
+    _, msgs = resolve_capabilities(schema_with(declared))
+    [message] = [m for m in msgs if "nothing consumes" in m]
+    assert message.startswith("Capabilities: dialog/ai/vfx declared but nothing consumes")
+    assert "no dialogue, statemachine or trigger micro is added" in message
+
+
+def test_scene_init_message_names_only_contributing_capabilities():
+    _, msgs = resolve_capabilities(schema_with(caps(**FULL)))
+    [message] = [m for m in msgs if "scene-init atoms injected" in m]
+    assert message.endswith("(hud, input, model, animation)")
+    for silent in ("dialogue", "statemachine", "trigger", "dialog", "ai", "vfx"):
+        assert silent not in message.split("(", 1)[1]

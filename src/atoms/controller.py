@@ -140,7 +140,7 @@ CONTROLLER_ATOMS: list[AtomDef] = [
         description="Quick directional dash with brief invincibility (Q or double-tap dir).",
         duration="duration_param",
         side_effects=["position", "velocity"],
-        aliases=["dash", "roll_evade", "quick_step"],
+        aliases=["dash", "quick_step"],
         engines=["unity"],
         params=[
             AtomParam(name="force",    type="float", default=15.0, description="Impulse force in dash direction"),

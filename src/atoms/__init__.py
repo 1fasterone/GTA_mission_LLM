@@ -29,6 +29,7 @@ from .input      import INPUT_ATOMS
 from .model      import MODEL_ATOMS
 from .wiring     import WIRING_ATOMS          # Unity-only seam primitives
 from .terrain    import TERRAIN_ATOMS         # Unity-only terrain primitives
+from .dialog     import DIALOG_ATOMS          # Unity-only NPC dialog beats
 
 ALL_ATOMS: list[AtomDef] = (
     MOVEMENT_ATOMS
@@ -45,22 +46,44 @@ ALL_ATOMS: list[AtomDef] = (
     + MODEL_ATOMS
     + WIRING_ATOMS
     + TERRAIN_ATOMS
+    + DIALOG_ATOMS
 )
 
 # Primary lookup by canonical name ("MoveTo")
 ATOM_REGISTRY: dict[str, AtomDef] = {a.name: a for a in ALL_ATOMS}
 
-# Alias index — any alias also resolves to the canonical AtomDef
-_ALIAS_INDEX: dict[str, AtomDef] = {}
-for _atom in ALL_ATOMS:
-    for _alias in _atom.aliases:
-        _ALIAS_INDEX.setdefault(_alias.lower(), _atom)
+def _build_alias_index(atoms: list[AtomDef]) -> dict[str, AtomDef]:
+    """Case-insensitive token -> owner, one owner per token (R1).
+
+    A token is an atom's canonical name or one of its aliases. Two atoms
+    claiming one token is a vocabulary error raised at import, never a silent
+    first-registered-wins: a lookup that depends on list order changes meaning
+    whenever a module is reordered.
+    """
+    owners: dict[str, AtomDef] = {}
+    for atom in atoms:
+        for token in (atom.name, *atom.aliases):
+            key = token.lower()
+            holder = owners.get(key)
+            if holder is not None and holder.name != atom.name:
+                raise RuntimeError(
+                    f"atom vocabulary collision: {token!r} is claimed by both "
+                    f"{holder.name} and {atom.name}; give the token one owner "
+                    f"(docs/ATOM_BACKEND_SUPPORT.md, identity policy)"
+                )
+            owners[key] = atom
+    return owners
+
+
+# Alias index — any alias (or canonical name, any case) resolves to its owner
+_ALIAS_INDEX: dict[str, AtomDef] = _build_alias_index(ALL_ATOMS)
 
 CATEGORIES: list[str] = [
     "movement", "animation", "camera", "audio", "fx", "logic", "entity",
     "controller", "hud", "physics", "input", "model",
     "wiring",   # Unity-only seam atoms — domain-isolated from GTA5
     "terrain",  # Unity-only terrain atoms — domain-isolated from GTA5
+    "dialog",   # Unity-only NPC dialog beats (npc_dialog micro companion)
 ]
 
 

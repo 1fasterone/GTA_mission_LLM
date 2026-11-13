@@ -14,7 +14,7 @@ PHYSICS_ATOMS: list[AtomDef] = [
         description="Add a continuous world-space force to the entity's Rigidbody (ForceMode.Force).",
         duration="instant",
         side_effects=["velocity", "acceleration"],
-        aliases=["apply_force", "add_force", "push", "thrust"],
+        aliases=["apply_force", "add_force", "push"],
         engines=["unity"],
         params=[
             AtomParam(name="x", type="float", default=0.0, description="Force X component (world space)"),
@@ -28,7 +28,7 @@ PHYSICS_ATOMS: list[AtomDef] = [
         description="Add an instant impulse to the entity's Rigidbody (ForceMode.Impulse).",
         duration="instant",
         side_effects=["velocity"],
-        aliases=["apply_impulse", "impulse", "kick", "knockback"],
+        aliases=["apply_impulse", "impulse", "knockback"],
         engines=["unity"],
         params=[
             AtomParam(name="x", type="float", default=0.0, description="Impulse X component (world space)"),

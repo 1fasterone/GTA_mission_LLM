@@ -1,4 +1,10 @@
-"""NPC dialog atoms — SayLine, PlayDialogAudio, Gesture, LookAt."""
+"""NPC dialog atoms — SayLine, PlayDialogAudio, Gesture, LookAt, EndDialog.
+
+Unity-only: each has a real Unity lowerer and none has a GTA5 one. Registered
+in R1 (docs/ATOM_BACKEND_SUPPORT.md). The ``dialog`` category is NOT part of
+the Step 3 sequence vocabulary (unity_prompts._SEQUENCE_ATOM_CATEGORIES); the
+npc_dialog micro and its companion sequence are their callers.
+"""
 
 from .base import AtomDef, AtomParam
 
@@ -6,6 +12,7 @@ DIALOG_ATOMS: list[AtomDef] = [
     AtomDef(
         name="SayLine",
         category="dialog",
+        engines=["unity"],
         description="Play an NPC speech line by line_id, firing an OnLine event with speaker + text.",
         duration="duration_param",
         side_effects=["audio", "dialog_state"],
@@ -19,6 +26,7 @@ DIALOG_ATOMS: list[AtomDef] = [
     AtomDef(
         name="PlayDialogAudio",
         category="dialog",
+        engines=["unity"],
         description="Play a pre-generated dialog WAV clip by Resources-relative path.",
         duration="instant",
         side_effects=["audio"],
@@ -32,6 +40,7 @@ DIALOG_ATOMS: list[AtomDef] = [
     AtomDef(
         name="Gesture",
         category="dialog",
+        engines=["unity"],
         description="Trigger a gesture animation on the NPC while talking.",
         duration="duration_param",
         side_effects=["animation"],
@@ -45,10 +54,11 @@ DIALOG_ATOMS: list[AtomDef] = [
     AtomDef(
         name="LookAt",
         category="dialog",
+        engines=["unity"],
         description="Rotate the NPC's head to look at a target during dialog.",
         duration="duration_param",
         side_effects=["animation"],
-        aliases=["look_at", "npc_look_at", "head_look"],
+        aliases=["npc_look_at", "head_look"],
         params=[
             AtomParam(name="target",   type="entity_ref", required=True,  description="Target name (Player, Camera, or object name)"),
             AtomParam(name="duration", type="float",      default=2.0,    description="How long to maintain look-at (0 = until next atom)"),
@@ -58,6 +68,7 @@ DIALOG_ATOMS: list[AtomDef] = [
     AtomDef(
         name="EndDialog",
         category="dialog",
+        engines=["unity"],
         description="Fire OnDialogEnd event and release NPC back to idle state.",
         duration="instant",
         side_effects=["dialog_state"],
