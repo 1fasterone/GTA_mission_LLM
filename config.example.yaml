@@ -170,6 +170,12 @@ acceptance:
   # if the preflight or final measured-footprint sidecar has hard findings.
   require_spatial_validation: true
 
+# Failed-run diagnostics (unity-failed-run/v1, docs/FAILED_RUN_DIAGNOSTICS.md):
+# a failing Unity run writes <unity_output_dir>/_failed_runs/<stem>.json plus
+# the live schema at failure. Review provenance only; never read by Steps 4-7.
+diagnostics:
+  failed_runs: true
+
 assets:
   # FAIL-FAST doctrine (no generic defaults): every scene entity must resolve
   # to a REAL model — an explicit kind in the default pack

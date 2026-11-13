@@ -87,6 +87,12 @@ SITES: tuple[DigestSite, ...] = (
     DigestSite("src/unity_run_log.py", "_read_raw_input", 2, "keep",
                "contract: exact SHA-256 records the raw prompt bytes in the "
                "unity-create-run-log/v2 manifest and names its artifact pair"),
+    DigestSite("src/unity_failed_run.py", "build_failed_run_report", 1, "keep",
+               "contract: exact SHA-256 records the raw prompt bytes in the "
+               "unity-failed-run/v1 report, matching the run-log manifest"),
+    DigestSite("src/unity_failed_run.py", "write_failed_run_report", 2, "keep",
+               "contract: exact SHA-256 names the failed-run artifact pair by "
+               "prompt bytes and verifies the saved schema bytes"),
 
     # ── output seeds ──────────────────────────────────────────────────────────
     DigestSite("src/audio/content.py", "_seed_for", 1, "keep",

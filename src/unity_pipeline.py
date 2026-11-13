@@ -85,6 +85,7 @@ from .unity_spatial_pipeline import (
     prepare_spatial_layout,
 )
 from .unity_build_provenance import write_build_provenance
+from .unity_failed_run import RunDiagnostics, write_failed_run_report
 from .mechanics import default_mechanic_registry
 from .unity_pipeline_stages import (
     BindAssetsStage,
@@ -98,6 +99,25 @@ from .unity_pipeline_stages import (
 )
 
 console = Console()
+
+
+def _diagnostic_options(args: tuple, kwargs: dict) -> dict:
+    """JSON-safe view of one run's call options for failed-run diagnostics."""
+    def _safe(value):
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, (list, tuple)):
+            return [_safe(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): _safe(item) for key, item in value.items()}
+        return f"<{type(value).__name__}>"
+
+    options = {key: _safe(value) for key, value in sorted(kwargs.items())}
+    if args:
+        options["_positional"] = [_safe(value) for value in args]
+    return options
 
 
 def _normalization_failure_summary(issues: list[dict]) -> str:
@@ -1093,10 +1113,17 @@ class UnityPipeline:
     # ── console helpers ───────────────────────────────────────────────────────
 
     def _step(self, n: int | str, title: str) -> None:
+        diagnostics = getattr(self, "run_diagnostics", None)
+        if diagnostics is not None:
+            diagnostics.step(n, title)
         console.print(f"\n[bold cyan]STEP {n}[/] -- {title}")
 
     def _ok(self, msg: str)   -> None: console.print(f"  [green]OK[/]   {msg}")
-    def _warn(self, msg: str) -> None: console.print(f"  [yellow]WARN[/] {msg}")
+    def _warn(self, msg: str) -> None:
+        diagnostics = getattr(self, "run_diagnostics", None)
+        if diagnostics is not None:
+            diagnostics.warn(msg)
+        console.print(f"  [yellow]WARN[/] {msg}")
     def _fix(self, msg: str)  -> None: console.print(f"  [magenta]FIX[/]  {msg}")
 
     def _run_geometry_only_greybox(self, schema: UnitySchema,
@@ -1527,8 +1554,16 @@ class UnityPipeline:
         token arrives.  Keep lifecycle cleanup outside deterministic Steps
         4-7 so it cannot affect compiler output or add a post-schema call.
         """
+        self.run_diagnostics = RunDiagnostics(
+            user_prompt=str(user_prompt or ""),
+            options=_diagnostic_options(args, kwargs),
+            llm_enabled=not bool(kwargs.get("no_llm", False)),
+        )
         try:
             return self._run_impl(user_prompt, *args, **kwargs)
+        except BaseException as exc:
+            self._write_failed_run(exc)
+            raise
         finally:
             # Hand the next run a live client: the freeze is per run.
             self.llm = thaw(self.llm)
@@ -1541,6 +1576,26 @@ class UnityPipeline:
                         f"LLM cleanup failed after pipeline run "
                         f"({type(exc).__name__}: {exc})"
                     )
+
+    def _write_failed_run(self, exc: BaseException) -> None:
+        """Persist ``unity-failed-run/v1`` diagnostics; never mask ``exc``."""
+        diagnostics = getattr(self, "run_diagnostics", None)
+        if diagnostics is None:
+            return
+        if not bool((self.config.get("diagnostics", {}) or {}).get(
+                "failed_runs", True)):
+            return
+        try:
+            report = write_failed_run_report(diagnostics, exc, self.output_dir)
+        except Exception as write_exc:  # noqa: BLE001 - observation only
+            console.print(
+                "  FAILED-RUN DIAGNOSTICS ERROR: could not write the report "
+                f"under {self.output_dir}: {type(write_exc).__name__}: {write_exc}",
+                markup=False, soft_wrap=True,
+            )
+            return
+        console.print(f"Failed-run diagnostics: {report}",
+                      markup=False, soft_wrap=True)
 
     def _evict_llm_for_gpu_stages(self) -> None:
         """Free LM Studio's VRAM once the model can no longer be called.
@@ -1585,6 +1640,9 @@ class UnityPipeline:
             greybox_plus: bool = False) -> Path:
         locked_asset_bindings: dict[str, dict] | None = None
         stage_registry = StageExecutionRegistry()
+        diagnostics = getattr(self, "run_diagnostics", None) or RunDiagnostics(
+            user_prompt=str(user_prompt or ""), llm_enabled=not no_llm)
+        diagnostics.stage_registry = stage_registry
         prompt_truncation = None
         greybox_request_text = "\n".join(
             part for part in (user_prompt, visual_context or "",
@@ -1739,6 +1797,8 @@ class UnityPipeline:
             ExtractIntentStage.name,
             lambda: ExtractIntentStage().run(user_prompt),
         )
+        diagnostics.intent_ledger = intent_ledger
+        diagnostics.checkpoint("Pre-Step3")
         intent_ledger.snapshot_state("Pre-Step3", {
             "claims": len(intent_ledger.claims),
             "exclusions": [
@@ -1849,6 +1909,9 @@ class UnityPipeline:
             self._step(2, "Deterministic brief parse (--no-llm — Steps 2-3 offline)")
             from .unity_briefparse import parse_brief
             schema, parse_msgs = parse_brief(user_prompt)
+            diagnostics.schema = schema
+            diagnostics.schema_source = "schema_deterministic"
+            diagnostics.concept_source = "none"
             for msg in parse_msgs:
                 self._fix(msg)
             self._step(3, "Schema filled from the brief (no model contacted)")
@@ -1861,6 +1924,8 @@ class UnityPipeline:
             if precomputed_mode:
                 self._step(2, "Precomputed Concept accepted (Concept LLM skipped)")
                 concept = str(precomputed_concept).strip()
+                diagnostics.concept = concept
+                diagnostics.concept_source = "precomputed"
                 self._ok(f"{len(concept)} chars of validated Slice-2 Concept reused")
             else:
                 self._step(2, "LLM generates project concept")
@@ -1907,6 +1972,8 @@ class UnityPipeline:
                     thinking    = not no_think,
                     images      = concept_images,
                 )
+                diagnostics.concept = concept
+                diagnostics.concept_source = "llm"
                 self._ok(f"{len(concept)} chars of project concept generated")
                 if self.show_prompts:
                     console.print(concept)
@@ -1971,6 +2038,7 @@ class UnityPipeline:
             clamp_msgs: list[str] = []
             last_err: Exception | None = None
             for attempt in range(self.SCHEMA_FILL_ATTEMPTS):
+                schema_raw = None
                 user_msg = schema_user
                 if attempt > 0:
                     user_msg += _SCHEMA_FILL_RETRY_REMINDER
@@ -2008,9 +2076,13 @@ class UnityPipeline:
                                 f"{_normalization_failure_summary(_issues)}"
                             )
                     schema = candidate
+                    diagnostics.record_fill_attempt(attempt + 1, schema_raw, None)
+                    diagnostics.schema = schema
+                    diagnostics.schema_source = "schema_llm"
                     break
                 except (ValueError, ValidationError) as exc:
                     last_err = exc
+                    diagnostics.record_fill_attempt(attempt + 1, schema_raw, exc)
                     if attempt + 1 < self.SCHEMA_FILL_ATTEMPTS:
                         # The exception TYPE alone says nothing actionable —
                         # a truncated JSON, an empty response and a field-level
@@ -2023,6 +2095,7 @@ class UnityPipeline:
                                    f"{str(exc).splitlines()[0][:200]}); "
                                    f"retrying colder")
             if schema is None:
+                diagnostics.fill_failed = True
                 raise RuntimeError(
                     f"schema fill failed after {self.SCHEMA_FILL_ATTEMPTS} "
                     f"attempts: {last_err}"
@@ -2080,6 +2153,7 @@ class UnityPipeline:
         # to choose canonical game type, locomotion, exclusions and projectile
         # delivery. Classifiers and validators cannot write schema directly.
         intent_ledger.snapshot("Post-Step3", schema)
+        diagnostics.checkpoint("Post-Step3", schema)
         _intent_resolution = stage_registry.run(
             ResolveIntentStage.name,
             lambda: ResolveIntentStage().run(
@@ -2096,6 +2170,7 @@ class UnityPipeline:
         for msg in _intent_messages:
             self._fix(msg)
         intent_ledger.snapshot("Post-Resolution", schema)
+        diagnostics.checkpoint("Post-Resolution", schema)
 
         schema.meta["mechanic_registry"] = default_mechanic_registry().manifest(schema)
         execution_report = dict(schema.meta.get("execution_report") or {})
@@ -2143,6 +2218,7 @@ class UnityPipeline:
             visual_context_mode=visual_context_mode,
         )
         self.llm = freeze(self.llm)
+        diagnostics.frozen = True
         self._ok("Freeze boundary crossed — Steps 4-7 run without the LLM")
         self._evict_llm_for_gpu_stages()
 
@@ -2378,6 +2454,7 @@ class UnityPipeline:
         for msg in _scene_fixes:
             self._fix(msg)
         intent_ledger.snapshot("Post-Reconciliation", schema)
+        diagnostics.checkpoint("Post-Reconciliation", schema)
 
         # Step 5c — playability pre-flight. Step 7 grades the finished project,
         # which is too late to change it: a build the evaluator knows cannot be
@@ -2624,6 +2701,7 @@ class UnityPipeline:
         if ComposeStage.name not in stage_registry.executed:
             stage_registry.run(ComposeStage.name, lambda: False)
         intent_ledger.snapshot("Post-Compose", schema)
+        diagnostics.checkpoint("Post-Compose", schema)
         schema.meta["intent_ledger"] = intent_ledger.to_dict()
         _asset_cfg = self.config.get("assets", {}) or {}
         _sketchfab_cfg = dict(self.config.get("sketchfab", {}) or {})
@@ -2660,6 +2738,7 @@ class UnityPipeline:
             )
         from .csharp_syntax_gate import CSharpSyntaxError
         intent_ledger.snapshot("Pre-Generation", schema)
+        diagnostics.checkpoint("Pre-Generation", schema)
         schema.meta["intent_ledger"] = intent_ledger.to_dict()
 
         def _generate_project():
