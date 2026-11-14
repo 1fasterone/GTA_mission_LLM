@@ -34,6 +34,8 @@ import logging
 import re
 from typing import Any, Optional
 
+from .llm_budgets import VISION_PICK_TOKENS, capped_chat
+
 log = logging.getLogger(__name__)
 
 
@@ -139,7 +141,10 @@ def select_best_candidate(entity_name: str, entity_kind: str, description: str,
         return None
 
     try:
-        reply = llm.chat(
+        reply = capped_chat(
+            llm,
+            purpose=f"Sketchfab vision pick for {entity_name}",
+            max_tokens=VISION_PICK_TOKENS,
             system=_SYSTEM,
             user=_USER_TMPL.format(
                 name=entity_name, kind=entity_kind or "prop",
@@ -154,6 +159,8 @@ def select_best_candidate(entity_name: str, entity_kind: str, description: str,
         # a server that rejects image_url content, a timeout on a slower
         # vision pass — all land here; degrade to "no opinion", not a crash.
         log.debug("sketchfab vision select(%r) LLM call failed: %s", entity_name, exc)
+        return None
+    if reply is None:
         return None
 
     payload = _extract_json(reply)
