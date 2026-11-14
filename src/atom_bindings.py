@@ -345,7 +345,7 @@ def derive_atom_bindings(
             source=f"entities[{entity.name}].atoms",
             host_class=host_class,
             host=None if finding else ENTITY_SPAWNER_HOST,
-            # EntityBehavior.cs.j2 restarts Run() unless the sequence despawns.
+            # EntityBehavior.cs.j2 loops Run() in place unless the sequence despawns.
             phase="start_coroutine_loop" if behavior_loops(entity.atoms) else "start_coroutine_once",
             trigger="entity_spawn",
             scenes=[] if finding else hosted,

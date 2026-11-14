@@ -231,7 +231,8 @@ Player's weapon, because no other composed class implements the contract.
   scene-local on purpose: `GameManager` is `DontDestroyOnLoad` and destroys a
   later scene's duplicate, which would take a sequencer on it down too.
 - The representative behavior-map entity route resolves a behavior class, renders
-  `EntityBehavior`, attaches through `EntitySpawner`, and may restart its coroutine.
+  `EntityBehavior`, attaches through `EntitySpawner`, and loops its coroutine in
+  place, yielding at least one frame per pass, unless the sequence ends in `Despawn`.
   S3 does not generalize that proof to a raw `EntitySpec.atoms` value whose behavior
   class was not deterministically selected. Custom-script atoms remain a separate
   generator path and do not replace micro gameplay.
