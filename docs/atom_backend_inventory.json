@@ -4014,7 +4014,7 @@
         "caller": "src/unity_generator.py:UnityProjectGenerator.generate",
         "host": "EntitySpawner.AddComponent",
         "input": "entity.atoms",
-        "phase": "Start coroutine, may restart",
+        "phase": "Start coroutine, loops in place (one frame per pass)",
         "template": "templates/unity/EntityBehavior.cs.j2"
       },
       {

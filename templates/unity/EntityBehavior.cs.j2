@@ -10,11 +10,19 @@ public class {{ class_name }} : MonoBehaviour
 
     private IEnumerator Run()
     {
-        {{ atom_body | indent(8) }}
 {% if loop_behavior %}
-        // Behavior loops — restart coroutine
-        StartCoroutine(Run());
-{% endif %}
+        // Behavior loops in place: one coroutine for the entity's lifetime.
+        // Every pass ends on a frame yield, so a sequence of instant atoms
+        // (or ones that yield only conditionally) cannot re-enter itself
+        // within a single frame.
+        while (true)
+        {
+            {{ atom_body | indent(12) }}
+            yield return null;
+        }
+{% else %}
+        {{ atom_body | indent(8) }}
         yield return null;
+{% endif %}
     }
 }

@@ -39,7 +39,7 @@ CALL_PATHS = {
          "binding": "meta.atom_bindings route 'atoms'"},
         {"caller": "src/unity_generator.py:UnityProjectGenerator.generate",
          "template": "templates/unity/EntityBehavior.cs.j2",
-         "host": "EntitySpawner.AddComponent", "phase": "Start coroutine, may restart",
+         "host": "EntitySpawner.AddComponent", "phase": "Start coroutine, loops in place (one frame per pass)",
          "input": "entity.atoms", "binding": "meta.atom_bindings route 'entities[<name>].atoms'"},
         {"caller": "src/unity_generator.py:UnityProjectGenerator._generate_script",
          "template": "templates/unity/scripts/CustomBehaviour.cs.j2",
