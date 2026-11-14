@@ -72,7 +72,9 @@ from .unity_playability_artifact import evaluate_project
 from .unity_playability_repair import repair_and_regrade
 from .unity_pathnorm      import normalize_paths
 from .unity_objective_targets import resolve_objective_targets
-from .unity_scene_membership import (MENU_SCENE_WORDS, assign_scene_membership,
+from .unity_scene_membership import (MENU_SCENE_WORDS, TIER_VISUAL_COVERAGE,
+                                     assign_scene_membership,
+                                     refresh_scene_membership,
                                      scene_membership_warnings)
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
@@ -2437,12 +2439,13 @@ class UnityPipeline:
         # can add an entity, scene or mission mapping. Its membership pass
         # (src/unity_scene_membership.py) runs here, before the scene graph
         # and the final compute_layout inside prepare_spatial_layout below.
-        # An entity it could not place is named loudly, never placed by guess.
+        # An entity it could not place is recorded as an abstention and never
+        # placed by guess. The abstentions are warned once the visual
+        # coverage repair below has run, so the warnings describe the final
+        # membership.
         schema, _scene_fixes = _reconcile_scene_specs(schema)
         for msg in _scene_fixes:
             self._fix(msg)
-        for msg in scene_membership_warnings(schema):
-            self._warn(msg)
         intent_ledger.snapshot("Post-Reconciliation", schema)
         diagnostics.checkpoint("Post-Reconciliation", schema)
 
@@ -2476,6 +2479,19 @@ class UnityPipeline:
                 or visual_context_mode):
             for msg in ensure_visual_scene_coverage(schema):
                 self._fix(msg)
+            # The coverage repair may give a scene to an entity the membership
+            # pass abstained on. Clear that abstention, and record this pass
+            # as its evidence, so the record and the warnings below match the
+            # schema the graph and Step 7 see.
+            for msg in refresh_scene_membership(
+                    schema, tier=TIER_VISUAL_COVERAGE,
+                    evidence="visual scene coverage (the closed image IR "
+                             "requires the whole visible cast)"):
+                self._fix(msg)
+        # Loud, by name: every entity still in no scene after every Step 5
+        # pass that can give it one.
+        for msg in scene_membership_warnings(schema):
+            self._warn(msg)
 
         validation_messages = stage_registry.run(
             ValidateSchemaStage.name,

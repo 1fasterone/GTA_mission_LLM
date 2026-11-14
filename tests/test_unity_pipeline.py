@@ -1581,3 +1581,63 @@ def test_neon_run11_a_crowd_is_never_the_player():
     assert graph["omitted_entities"] == ["CombatPlatforms"]
     assert any("final_showdown/obj_1 targets 'CombatPlatforms'" in w
                for w in graph["warnings"])
+
+
+# ── A later pass that places an abstained entity clears its abstention ────────
+# Review on #303: a visual-context run calls ensure_visual_scene_coverage
+# AFTER the membership pass. An entity it places must not stay recorded as
+# abstained (a stale WARN and meta row saying it spawns nowhere) while the
+# graph and Step 7 see it in a scene.
+
+def test_visual_coverage_clears_the_abstentions_it_resolves():
+    from src.scene_graph import build_scene_graph
+    from src.unity_scene_membership import (TIER_VISUAL_COVERAGE,
+                                            refresh_scene_membership,
+                                            scene_membership_warnings)
+    from src.unity_schema import SceneSpec
+    from src.unity_spatial_roles import derive_spatial_roles
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(scene_specs=[
+        SceneSpec(name="Docks", entities=["Cranes"]),
+        SceneSpec(name="Tower", entities=["Drone"]),
+        SceneSpec(name="MainMenu", entities=[]),
+    ])
+    schema, _ = _reconcile_scene_specs(schema)
+    record = schema.meta["scene_membership"]
+    assert {r["entity"] for r in record["abstentions"]} == {"Skiff", "Ledger"}
+
+    ensure_visual_scene_coverage(schema)
+    fixes = refresh_scene_membership(schema, tier=TIER_VISUAL_COVERAGE,
+                                     evidence="visual scene coverage")
+
+    record = schema.meta["scene_membership"]
+    assert record["abstentions"] == []
+    assert scene_membership_warnings(schema) == []
+    assert {(r["entity"], r["scene"]) for r in record["placements"]
+            if r["tier"] == TIER_VISUAL_COVERAGE} == {("Skiff", "Docks"),
+                                                      ("Ledger", "Docks")}
+    assert len(fixes) == 2
+    assert all("is no longer abstained" in f for f in fixes)
+    graph = build_scene_graph(schema, derive_spatial_roles(schema))
+    assert graph["omitted_entities"] == []
+
+
+def test_refresh_keeps_every_abstention_nothing_resolved():
+    from src.unity_scene_membership import refresh_scene_membership
+
+    schema, _ = _neon_step5("03")
+    before = json.loads(json.dumps(schema.meta["scene_membership"]))
+    assert refresh_scene_membership(schema, tier="visual_coverage",
+                                    evidence="visual scene coverage") == []
+    assert schema.meta["scene_membership"] == before
+
+
+def test_pipeline_warns_abstentions_only_after_visual_coverage():
+    src = (Path(__file__).resolve().parents[1] / "src" / "unity_pipeline.py"
+           ).read_text(encoding="utf-8")
+    coverage = src.index("ensure_visual_scene_coverage(schema)")
+    refresh = src.index("refresh_scene_membership(", coverage)
+    warn = src.index("scene_membership_warnings(schema)")
+    assert coverage < refresh < warn
+    assert src.count("scene_membership_warnings(schema)") == 1

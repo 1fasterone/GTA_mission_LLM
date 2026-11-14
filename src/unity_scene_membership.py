@@ -55,6 +55,10 @@ SCENE_MEMBERSHIP_FORMAT = "unity-scene-membership/v1"
 TIER_PLAYER = "player"
 TIER_ESSENTIAL_KIND = "essential_kind"
 TIER_MISSION_TARGET = "mission_target"
+# A later Step 5 pass with its own evidence: a visual-context run's closed
+# image IR says the whole visible cast belongs in the image-led scene
+# (unity_visual_bindings.ensure_visual_scene_coverage).
+TIER_VISUAL_COVERAGE = "visual_coverage"
 
 # Scene-name fragments that mark a non-gameplay screen. One reading for every
 # Step 5 pass that asks "is this a gameplay scene": the mission-scene
@@ -274,6 +278,47 @@ def scene_membership_warnings(schema: Any) -> list[str]:
     return [abstention_message(row) for row in _abstention_rows(schema)]
 
 
+def refresh_scene_membership(schema: Any, *, tier: str, evidence: str) -> list[str]:
+    """Clear abstentions that a pass after :func:`assign_scene_membership`
+    resolved, and record that pass as the placement's evidence.
+
+    A visual-context run calls ``ensure_visual_scene_coverage`` after the
+    membership pass. An entity it places would otherwise stay recorded as
+    abstained: a WARN line and a meta row saying it spawns nowhere, while the
+    final schema, the scene graph and Step 7 all see it in a scene. Only
+    entities that now have a scene are touched. The rest stay abstained, by
+    name. Returns one fix message per cleared abstention.
+    """
+    meta = schema.meta if isinstance(schema.meta, dict) else None
+    record = meta.get(SCENE_MEMBERSHIP_META_KEY) if meta is not None else None
+    if not isinstance(record, dict):
+        return []
+    rows = [row for row in (record.get("abstentions") or []) if isinstance(row, dict)]
+    if not rows:
+        return []
+    scenes = set(getattr(schema, "scenes", None) or [])
+    placements = [dict(row) for row in (record.get("placements") or [])
+                  if isinstance(row, dict)]
+    still: list[dict[str, Any]] = []
+    fixes: list[str] = []
+    for row in rows:
+        name = str(row.get("entity") or "")
+        if not name or not hosting_scenes(schema, name):
+            still.append(row)
+            continue
+        listed = [spec.name for spec in (schema.scene_specs or [])
+                  if spec.name in scenes and name in (spec.entities or [])]
+        for scene in listed:
+            placements.append({"entity": name, "scene": scene,
+                               "tier": tier, "evidence": evidence})
+        fixes.append(f"[scene.membership] {name!r} is no longer abstained: "
+                     f"{evidence} placed it in "
+                     f"{listed or 'a scene that hosts every group'}")
+    record["abstentions"] = still
+    record["placements"] = placements
+    return fixes
+
+
 def abstained_entity_names(schema: Any) -> set[str]:
     """Entity names the last membership pass recorded as abstained.
 
@@ -397,6 +442,7 @@ __all__ = [
     "TIER_ESSENTIAL_KIND",
     "TIER_MISSION_TARGET",
     "TIER_PLAYER",
+    "TIER_VISUAL_COVERAGE",
     "abstained_entity_names",
     "abstention_message",
     "assign_scene_membership",
