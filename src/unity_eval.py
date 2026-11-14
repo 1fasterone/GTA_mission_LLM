@@ -49,6 +49,7 @@ from .unity_playability import PlayabilityReport, _CHECK_SEVERITY, ERROR
 from .unity_playability_artifact import evaluate_project
 from .unity_racetrack import compose_racetrack, is_racing_degenerate
 from .unity_resolver import UnityResolver
+from .unity_scene_membership import scene_membership_warnings
 from .unity_schema import UnitySchema
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -248,6 +249,7 @@ def replay(schema: UnitySchema, *,
     log += normalize_paths(schema)
     schema, scene_msgs = _reconcile_scene_specs(schema)
     log += scene_msgs
+    log += scene_membership_warnings(schema)
     log += compute_layout(schema)
 
     # Step 6 — resolve once, then generate. strict_assets stays off: an eval must grade
