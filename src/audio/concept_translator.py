@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import re
 
+from ..llm_budgets import AUDIO_PROMPTS, capped_chat
+
 
 _SYSTEM = """\
 You are a professional game audio designer specialising in Stable Audio 3 generation prompts.
@@ -69,7 +71,10 @@ def translate_concept(concept_text: str, cues: list, llm, seed: int = 0) -> int:
         return 0
 
     try:
-        raw = llm.chat(
+        raw = capped_chat(
+            llm,
+            purpose="audio cue prompts",
+            max_tokens=AUDIO_PROMPTS.tokens(len(cues)),
             system=_SYSTEM,
             user=_USER_TMPL.format(
                 concept=concept_text.strip(),
@@ -80,6 +85,8 @@ def translate_concept(concept_text: str, cues: list, llm, seed: int = 0) -> int:
             seed=seed or None,
         )
     except Exception:  # noqa: BLE001
+        return 0
+    if raw is None:
         return 0
 
     try:
