@@ -243,6 +243,13 @@ ENTITIES — the actual objects in the scene, built from primitives so the conce
      {{"name":"Rivals","kind":"enemy","count":6,"shape":"capsule","placement":"line","color_role":"accent","tag":"Enemy","model_hint":"rival race car","sketchfab_query":"low poly race car"}},
      {{"name":"Stands","kind":"building","count":8,"shape":"cube","placement":"ring","color_role":"secondary","scale":3,"model_hint":"grandstand structure","sketchfab_query":"wooden grandstand"}},
      {{"name":"Crowd","kind":"crowd","count":40,"shape":"sphere","placement":"grid","color_role":"trim","scale":0.6,"model_hint":"spectator character","sketchfab_query":"spectator character"}}]
+  SCENE MEMBERSHIP — when the entities are done, check every one against
+  scene_specs. Every entity name MUST appear in at least one scene_spec's
+  "entities" list (a scene_spec that omits "entities" hosts every group). The
+  player's own entity, the one tagged "Player" whatever its kind (a vehicle the
+  player rides counts), MUST be listed in EVERY gameplay scene. An entity you
+  thought of after writing scene_specs still needs a scene: add its name to
+  the "entities" list of each scene it belongs in.
 
 PROJECT CONCEPT:
 {concept}

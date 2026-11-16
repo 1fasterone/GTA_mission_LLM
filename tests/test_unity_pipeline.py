@@ -1269,3 +1269,375 @@ def test_compose_selection_is_persisted_before_generation(
     saved = UnitySchema.model_validate_json(
         (project / "PixelPlatformer.schema.json").read_text(encoding="utf-8"))
     assert saved.meta[SELECTION_KEY]["stage"] == "step5"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scene membership (src/unity_scene_membership.py), from the neon_fugitive E2E
+# batch: 3 of the 4 runs that reached Step 5 died in the scene graph on an
+# entity that no scene_spec listed. One of them was the player's own vehicle.
+#
+# The two fixtures are real failed-run captures (tests/fixtures/README.md).
+# Their Step 3 content is the Pipeline LLM's fill. The helper replays the
+# pipeline's own Step 5 order: _infer_mission_scenes -> meta["mission_scenes"]
+# -> _reconcile_scene_specs, which runs the membership pass.
+# ══════════════════════════════════════════════════════════════════════════════
+
+_NEON_FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _neon_step5(run: str) -> tuple[UnitySchema, list[str]]:
+    path = _NEON_FIXTURES / f"neon_fugitive_run{run}_failed_llm.schema.json"
+    schema = UnitySchema.model_validate(json.loads(path.read_text(encoding="utf-8")))
+    resolved, _ = _infer_mission_scenes(schema)
+    schema.meta["mission_scenes"] = resolved
+    return _reconcile_scene_specs(schema)
+
+
+def _graph_spawns(graph: dict) -> dict[str, list[str]]:
+    """entity name -> scene names, read back from the graph's spawns edges."""
+    names = {node["id"]: node["name"] for node in graph["nodes"]}
+    out: dict[str, list[str]] = {}
+    for edge in graph["edges"]:
+        if edge["rel"] == "spawns":
+            out.setdefault(names[edge["dst"]], []).append(names[edge["src"]])
+    return out
+
+
+def test_neon_run03_player_vehicle_joins_every_gameplay_scene():
+    from src.unity_scene_membership import hosting_scenes
+
+    schema, fixes = _neon_step5("03")
+    gameplay = [s for s in schema.scenes if s != "MainMenu"]
+    assert len(gameplay) == 7
+    assert hosting_scenes(schema, "PlayerHoverbike") == gameplay
+    # The menu declared itself empty. It stays empty.
+    assert next(s for s in schema.scene_specs if s.name == "MainMenu").entities == []
+    rows = [r for r in schema.meta["scene_membership"]["placements"]
+            if r["entity"] == "PlayerHoverbike"]
+    assert [r["scene"] for r in rows] == gameplay
+    assert {r["tier"] for r in rows} == {"player"}
+    assert all("pick_player_entity" in r["evidence"] for r in rows)
+    assert any("PlayerHoverbike" in f and "restored player" in f for f in fixes)
+
+
+def test_neon_run03_entities_without_evidence_abstain_by_name():
+    from src.unity_scene_membership import hosting_scenes, scene_membership_warnings
+
+    schema, _ = _neon_step5("03")
+    rows = {r["entity"]: r for r in schema.meta["scene_membership"]["abstentions"]}
+    assert set(rows) == {"PlatformRings", "EnergyGenerators"}
+    for name, row in rows.items():
+        # Never silently added to every scene, or to any scene.
+        assert hosting_scenes(schema, name) == []
+        assert any("no mission objective names it" in m for m in row["missing"])
+        assert any("the player is 'PlayerHoverbike'" in m for m in row["missing"])
+        assert "scene_specs[].entities" in row["remedy"]
+    warnings = scene_membership_warnings(schema)
+    assert len(warnings) == 2
+    assert all(w.startswith("[scene.membership] ABSTAINED for ") for w in warnings)
+    assert any("'PlatformRings'" in w for w in warnings)
+    assert any("'EnergyGenerators'" in w for w in warnings)
+
+
+def test_neon_run03_scene_named_targets_resolve_every_mission():
+    schema, _ = _neon_step5("03")
+    assert schema.meta["mission_scenes"] == {
+        "mission_first_bounty": ["DistrictMarket"],      # tier 3: target_ref
+        "mission_data_heist": ["CorporateTower"],        # tier 1: title
+        "mission_final_showdown": ["RooftopSkyway"],     # tier 3: target_ref
+    }
+
+
+def test_neon_run02_every_entity_gets_an_evidenced_scene_and_the_graph_builds():
+    from src.scene_graph import build_scene_graph
+    from src.unity_scene_membership import hosting_scenes
+    from src.unity_spatial_roles import derive_spatial_roles
+
+    schema, _ = _neon_step5("02")
+    assert schema.meta["mission_scenes"] == {
+        "mission_first_bounty": ["DistrictMarket"],
+        "mission_corporate_heist": ["CorporateTower"],
+    }
+    gameplay = [s for s in schema.scenes if s != "MainMenu"]
+    # No entity carries a player tag. characters[0] is the player, and its
+    # model_ref names Hoverbike, as the Step 3 prompt asks it to.
+    assert hosting_scenes(schema, "Hoverbike") == gameplay
+    assert hosting_scenes(schema, "PickupIdentityFile") == ["DistrictMarket",
+                                                            "CorporateTower"]
+    record = schema.meta["scene_membership"]
+    assert record["abstentions"] == []
+    evidence = {(r["entity"], r["tier"], r["evidence"]) for r in record["placements"]}
+    assert ("Hoverbike", "player",
+            "player avatar (characters[0] role='player' model_ref='Hoverbike')") in evidence
+    assert {r["tier"] for r in record["placements"]
+            if r["entity"] == "PickupIdentityFile"} == {"mission_target"}
+
+    graph = build_scene_graph(schema, derive_spatial_roles(schema))
+    # hosting_scenes is the graph's own reading of membership.
+    spawns = _graph_spawns(graph)
+    for entity in schema.entities:
+        assert spawns[entity.name] == hosting_scenes(schema, entity.name)
+
+
+def test_membership_replay_is_idempotent_and_keeps_its_audit_trail():
+    schema, _ = _neon_step5("03")
+    first = json.loads(json.dumps(schema.meta["scene_membership"]))
+    lists = {s.name: list(s.entities or []) for s in schema.scene_specs}
+    schema, fixes = _reconcile_scene_specs(schema)
+    assert not any("restored" in f for f in fixes)
+    assert {s.name: list(s.entities or []) for s in schema.scene_specs} == lists
+    # unity-validate replays a saved schema whose placements already
+    # happened. The record of why they happened survives the replay.
+    assert schema.meta["scene_membership"] == first
+
+
+def _membership_schema(**overrides) -> UnitySchema:
+    from src.unity_schema import EntitySpec, SceneSpec
+    defaults = dict(
+        project_name="MembershipFixture", company_name="TestCo", game_type="3D",
+        platform="PC", render_pipeline="URP", unity_version="6000.0",
+        color_space="Linear", description="test", features=[], packages=[],
+        scenes=["MainMenu", "Docks", "Tower"],
+        entities=[
+            EntitySpec(name="Skiff", kind="vehicle", tag="Vehicle", count=1),
+            EntitySpec(name="Cranes", kind="structure", count=3),
+            EntitySpec(name="Ledger", kind="pickup", tag="Collectible", count=2),
+            EntitySpec(name="Drone", kind="enemy", tag="Enemy", count=2),
+        ],
+        scene_specs=[
+            SceneSpec(name="MainMenu", entities=[]),
+            SceneSpec(name="Docks", entities=["Cranes"]),
+            SceneSpec(name="Tower", entities=["Drone"]),
+        ],
+    )
+    defaults.update(overrides)
+    return UnitySchema(**defaults)
+
+
+def _membership_mission(mission_id, title, objectives):
+    from src.unity_schema import MissionObjective, MissionSpec
+    return MissionSpec(id=mission_id, title=title, objectives=[
+        MissionObjective(id=oid, description=desc, type=typ, target_ref=ref)
+        for oid, desc, typ, ref in objectives
+    ])
+
+
+def test_scene_named_target_is_the_lowest_mission_scene_tier():
+    mission = _membership_mission("m1", "First Contract", [
+        ("o1", "Enter the docks.", "reach", "Docks"),
+        ("o2", "Grab the ledger.", "collect", "Ledger"),
+    ])
+    schema = _membership_schema(missions=[mission])
+    resolved, unresolved = _infer_mission_scenes(schema)
+    assert resolved == {"m1": ["Docks"]}
+    assert unresolved == []
+
+    # Tier 1 still wins: the title names Tower, so the scene-named target is
+    # never consulted and the existing mapping is unchanged.
+    titled = _membership_mission("m2", "Tower Raid", [
+        ("o1", "Enter the docks.", "reach", "Docks"),
+    ])
+    resolved, _ = _infer_mission_scenes(_membership_schema(missions=[titled]))
+    assert resolved == {"m2": ["Tower"]}
+
+
+def test_two_scene_named_targets_abstain_rather_than_pick():
+    mission = _membership_mission("m1", "Long Haul", [
+        ("o1", "Leave the docks.", "reach", "Docks"),
+        ("o2", "Arrive at the tower.", "reach", "Tower"),
+    ])
+    resolved, unresolved = _infer_mission_scenes(_membership_schema(missions=[mission]))
+    assert resolved == {}
+    assert unresolved == ["m1"]
+
+
+def test_a_target_that_names_an_entity_is_never_read_as_a_scene():
+    from src.unity_schema import EntitySpec
+    mission = _membership_mission("m1", "Sweep", [
+        ("o1", "Reach the docks.", "reach", "Docks"),
+    ])
+    schema = _membership_schema(missions=[mission])
+    schema.entities.append(EntitySpec(name="Docks", kind="structure", count=1))
+    resolved, unresolved = _infer_mission_scenes(schema)
+    assert resolved == {}
+    assert unresolved == ["m1"]
+
+
+def test_mission_target_placement_names_the_mission_and_dedupes():
+    # Two objectives of one mission target the same entity. It joins the
+    # mission's scene once, not twice.
+    mission = _membership_mission("m1", "First Contract", [
+        ("o1", "Enter the docks.", "reach", "Docks"),
+        ("o2", "Grab one ledger.", "collect", "Ledger"),
+        ("o3", "Grab the other ledger.", "collect", "Ledger"),
+    ])
+    schema = _membership_schema(missions=[mission])
+    resolved, _ = _infer_mission_scenes(schema)
+    schema.meta["mission_scenes"] = resolved
+    schema, _ = _reconcile_scene_specs(schema)
+    docks = next(s for s in schema.scene_specs if s.name == "Docks")
+    assert docks.entities.count("Ledger") == 1
+    row = next(r for r in schema.meta["scene_membership"]["placements"]
+               if r["entity"] == "Ledger")
+    assert row["scene"] == "Docks"
+    assert row["tier"] == "mission_target"
+    assert "'First Contract' (m1)" in row["evidence"]
+
+
+def test_a_hostile_or_ambiguous_player_character_names_no_player():
+    from src.unity_schema import CharacterSpec
+    from src.unity_scene_membership import resolve_player_entity
+
+    hostile = _membership_schema(characters=[
+        CharacterSpec(id="rogue", name="Rogue", role="player", model_ref="Drone"),
+    ])
+    entity, why = resolve_player_entity(hostile)
+    assert entity is None
+    assert "names 'Drone', but it is hostile" in why
+
+    ambiguous = _membership_schema(characters=[
+        CharacterSpec(id="a", name="Rider A", role="player", model_ref="Skiff"),
+        CharacterSpec(id="b", name="Rider B", role="player", model_ref="Rider"),
+    ])
+    from src.unity_schema import EntitySpec
+    ambiguous.entities.append(EntitySpec(name="Rider", kind="character", count=1))
+    entity, why = resolve_player_entity(ambiguous)
+    assert entity is None
+    assert why == "player characters name different entities: Rider, Skiff"
+
+    single = _membership_schema(characters=[
+        CharacterSpec(id="rider", name="Rider", role="player", model_ref="skiff"),
+    ])
+    entity, why = resolve_player_entity(single)
+    assert entity.name == "Skiff"
+    assert why == "characters[0] role='player' model_ref='skiff'"
+
+
+def test_no_player_signal_means_no_player_placement():
+    from src.unity_scene_membership import hosting_scenes
+
+    schema, _ = _reconcile_scene_specs(_membership_schema())
+    # Skiff has no player signal at all, so no tier may place it.
+    assert hosting_scenes(schema, "Skiff") == []
+    # The enemy kind still joins every gameplay scene, but never the menu.
+    assert hosting_scenes(schema, "Drone") == ["Docks", "Tower"]
+    abstained = {r["entity"] for r in schema.meta["scene_membership"]["abstentions"]}
+    assert abstained == {"Skiff", "Ledger"}
+
+
+# ── Option B: abstained entities no longer discard the schema at Step 5 ───────
+# The graph leaves out only recorded abstentions, so the run reaches Step 7
+# with the project written, and Step 7's entity_scene_coverage ERROR still
+# fails the build honestly.
+
+def test_neon_run03_passes_the_step5_spatial_handoff():
+    from src.unity_spatial_pipeline import prepare_spatial_layout
+
+    schema, _ = _neon_step5("03")
+    bundle = prepare_spatial_layout(schema, reset_generated_layout=True)
+    graph = bundle["scene_graph"]
+    assert graph["omitted_entities"] == ["PlatformRings", "EnergyGenerators"]
+    for name in graph["omitted_entities"]:
+        assert sum(f"'{name}' is omitted" in w for w in graph["warnings"]) == 1
+    gameplay = [s for s in schema.scenes if s != "MainMenu"]
+    assert _graph_spawns(graph)["PlayerHoverbike"] == gameplay
+
+
+def test_neon_run03_step7_still_fails_on_the_omitted_entities():
+    from src.unity_playability import ERROR, evaluate, gate
+
+    schema, _ = _neon_step5("03")
+    report = evaluate(schema)
+    coverage = [f for f in report.findings if f.check == "entity_scene_coverage"]
+    assert len(coverage) == 1
+    assert coverage[0].severity == ERROR
+    assert "PlatformRings" in coverage[0].summary
+    assert "EnergyGenerators" in coverage[0].summary
+    assert report.checks["entity_scene_coverage"] is False
+    assert gate(report) is not None
+
+
+def test_neon_run11_a_crowd_is_never_the_player():
+    from src.scene_graph import build_scene_graph
+    from src.unity_scene_membership import hosting_scenes
+    from src.unity_spatial_roles import derive_spatial_roles
+
+    schema, _ = _neon_step5("11")
+    # characters[0] (role='player') has model_ref='Crowd': 40 NPCs. Read
+    # naively, the whole crowd would have joined every scene as "the player".
+    assert hosting_scenes(schema, "Crowd") == ["Main", "DistrictMarket"]
+    record = schema.meta["scene_membership"]
+    assert not [r for r in record["placements"] if r["tier"] == "player"]
+
+    rows = {r["entity"]: r for r in record["abstentions"]}
+    assert set(rows) == {"CombatPlatforms"}
+    missing = rows["CombatPlatforms"]["missing"]
+    assert any("model_ref='Crowd' names 'Crowd', but kind='crowd' can never "
+               "be the player" in m for m in missing)
+    assert any("mission 'Showdown' (final_showdown) targets it, but no scene "
+               "was inferred" in m for m in missing)
+
+    graph = build_scene_graph(schema, derive_spatial_roles(schema))
+    assert graph["omitted_entities"] == ["CombatPlatforms"]
+    assert any("final_showdown/obj_1 targets 'CombatPlatforms'" in w
+               for w in graph["warnings"])
+
+
+# ── A later pass that places an abstained entity clears its abstention ────────
+# Review on #303: a visual-context run calls ensure_visual_scene_coverage
+# AFTER the membership pass. An entity it places must not stay recorded as
+# abstained (a stale WARN and meta row saying it spawns nowhere) while the
+# graph and Step 7 see it in a scene.
+
+def test_visual_coverage_clears_the_abstentions_it_resolves():
+    from src.scene_graph import build_scene_graph
+    from src.unity_scene_membership import (TIER_VISUAL_COVERAGE,
+                                            refresh_scene_membership,
+                                            scene_membership_warnings)
+    from src.unity_schema import SceneSpec
+    from src.unity_spatial_roles import derive_spatial_roles
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(scene_specs=[
+        SceneSpec(name="Docks", entities=["Cranes"]),
+        SceneSpec(name="Tower", entities=["Drone"]),
+        SceneSpec(name="MainMenu", entities=[]),
+    ])
+    schema, _ = _reconcile_scene_specs(schema)
+    record = schema.meta["scene_membership"]
+    assert {r["entity"] for r in record["abstentions"]} == {"Skiff", "Ledger"}
+
+    ensure_visual_scene_coverage(schema)
+    fixes = refresh_scene_membership(schema, tier=TIER_VISUAL_COVERAGE,
+                                     evidence="visual scene coverage")
+
+    record = schema.meta["scene_membership"]
+    assert record["abstentions"] == []
+    assert scene_membership_warnings(schema) == []
+    assert {(r["entity"], r["scene"]) for r in record["placements"]
+            if r["tier"] == TIER_VISUAL_COVERAGE} == {("Skiff", "Docks"),
+                                                      ("Ledger", "Docks")}
+    assert len(fixes) == 2
+    assert all("is no longer abstained" in f for f in fixes)
+    graph = build_scene_graph(schema, derive_spatial_roles(schema))
+    assert graph["omitted_entities"] == []
+
+
+def test_refresh_keeps_every_abstention_nothing_resolved():
+    from src.unity_scene_membership import refresh_scene_membership
+
+    schema, _ = _neon_step5("03")
+    before = json.loads(json.dumps(schema.meta["scene_membership"]))
+    assert refresh_scene_membership(schema, tier="visual_coverage",
+                                    evidence="visual scene coverage") == []
+    assert schema.meta["scene_membership"] == before
+
+
+def test_pipeline_warns_abstentions_only_after_visual_coverage():
+    src = (Path(__file__).resolve().parents[1] / "src" / "unity_pipeline.py"
+           ).read_text(encoding="utf-8")
+    coverage = src.index("ensure_visual_scene_coverage(schema)")
+    refresh = src.index("refresh_scene_membership(", coverage)
+    warn = src.index("scene_membership_warnings(schema)")
+    assert coverage < refresh < warn
+    assert src.count("scene_membership_warnings(schema)") == 1

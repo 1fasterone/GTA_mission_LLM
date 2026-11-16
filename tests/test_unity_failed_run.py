@@ -326,3 +326,43 @@ def test_replay_command_omits_flags_the_run_did_not_use():
 
     assert replay_command_for(Path("s.json"), {"compose": False}) == (
         "python main.py unity-validate s.json")
+
+
+# ── neon_fugitive E2E: the scene graph and layout refusals are classified ──────
+
+def test_a_scene_graph_refusal_is_classified_with_a_membership_remedy():
+    """Live neon_fugitive runs 02 and 03 died in the scene graph on an entity
+    that no scene listed, and the report said ``unclassified``. The real
+    exception class is used here, so a rename breaks this test."""
+    from src.scene_graph import SceneGraphError
+
+    exc = SceneGraphError(
+        "[graph.strict] entity 'PlayerHoverbike' is excluded from every "
+        "declared scene; add it to a SceneSpec or remove it from entities")
+    category, matched, remedy = classify_failure(exc)
+    assert (category, matched) == ("scene_graph", "SceneGraphError")
+    assert "did not record it as an abstention" in remedy
+    assert "schema.meta.scene_membership" in remedy
+    assert "unity-validate" in remedy
+
+
+def test_a_layout_strict_refusal_is_a_spatial_layout_failure():
+    from src.unity_layout_archetype import LayoutStrictError
+
+    exc = LayoutStrictError("[layout.strict] no primitive covers (descent, water)")
+    category, matched, remedy = classify_failure(exc)
+    assert (category, matched) == ("spatial_layout", "LayoutStrictError")
+    assert "LAYOUT_ARCHETYPES" in remedy
+
+
+def test_a_wrapped_scene_graph_refusal_keeps_its_category():
+    from src.scene_graph import SceneGraphError
+
+    try:
+        try:
+            raise SceneGraphError("[graph.strict] entity 'X' is excluded")
+        except SceneGraphError as inner:
+            raise RuntimeError("spatial sidecar preparation failed") from inner
+    except RuntimeError as exc:
+        category, matched, _ = classify_failure(exc)
+    assert (category, matched) == ("scene_graph", "SceneGraphError")
