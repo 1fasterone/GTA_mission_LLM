@@ -28,7 +28,7 @@ VerticalCorridor VerticalSurface BoundedVolume ArenaPlane  UISurface  [layout.st
 | --- | --- | --- |
 | `motion_axis` | `static` / `vertical` / `volumetric` / `planar` / `path` | **`locomotion='none'` first**, then rail wording, descent vocabulary, **unambiguous climbing nouns or climbable entities**, entity altitude data, free-medium locomotion |
 | `direction` | `ascent` / `descent` (vertical only) | `locomotion='climb'` → then strong vocabulary → then entity tags (`Holdable` → ascent, exit platform → descent) |
-| `medium` | `screen` / `air` / `water` / `ground` | **`locomotion='none'` first**, then `locomotion`, then air/water vocabulary |
+| `medium` | `screen` / `air` / `water` / `ground` | **`locomotion='none'` first**, then `locomotion` (`fly`/`swim`), then strong air/water or hover/float vocabulary **scoped to the player and the whole play space** (see below); setting vocabulary alone never lifts a surface locomotion |
 | `goal_topology` | `reach_point` / `survive_area` / `hit_target` / `traverse` | `MissionObjective.type` first, then goal vocabulary |
 
 `goal_topology` is provenance only — the archetype is `(motion_axis, medium)`.
@@ -48,10 +48,17 @@ game as a drop is, and holding climbing evidence to a higher standard is what
 produced a flat arena for the living-wall brief. Any one of:
 
 - one unambiguous **descent** term (`freefall`, `skydive`, `parachute`,
-  `wingsuit`, `altimeter`, …);
+  `wingsuit`, `altimeter`, …) in prose about the player or the whole play
+  space (see *Evidence scope* below);
 - one unambiguous **climbing** term (`handhold`, `belay`, `piton`, `rock face`,
-  `free solo`, …), or a group authored as something you grab (`Holdable` tag,
-  `handhold`/`ledge`/`grip` kind) — structure, so stronger still;
+  `free solo`, …), scoped the same way;
+- a **cast** of groups authored as something you grab (`Holdable` tag,
+  `handhold`/`ledge`/`grip`/`platform` kind), but only when player-scoped
+  prose also says the player climbs (a verb is enough here) and `locomotion`
+  is not an explicit `drive`. The cast is object evidence. `is_climbable_entity`
+  stays generous for its other job, picking the holds once the game is known
+  to be a wall (#176's "rib platforms"). That generosity is exactly what let
+  one boss-arena `Platform` turn a driving city into a wall, live;
 - two weaker descent verbs in a scene already established as air/water;
 - entity y-data above 50 m.
 
@@ -68,6 +75,44 @@ medium of air or water **and** no descent evidence. Descent is checked first,
 so a skydiver — also `locomotion: fly` — still gets a corridor. The medium gate
 matters: a *walking* game merely described in sky words is not volumetric, and
 floating it in a box would be the same wrong-primitive failure.
+
+### Evidence scope
+
+Every prose tier of `medium` and `motion_axis` (rails, descent, climbing,
+hover/float, and the medium's strong air/water words) has two guards, all
+learned from live hard-failures. The **words** are tiered: setting
+vocabulary (`sky`, `ocean`, `abyss`, `atmosphere`) never overrides a surface
+`locomotion`. Only terms that place the player's body (`skydiving`,
+`freefall`, `scuba`, `underwater`, `submerged`) can, and so can saying the
+player hovers or floats. The **prose** is scoped as well (`_evidence_scope`):
+those terms count only where the text is about the player or the whole play
+space.
+
+| scope | sources | counts |
+| --- | --- | --- |
+| body | project name and description, world biome/weather, the player entity, `role='player'` characters, scripts typed or attached `player` | outright |
+| parts | play scenes (`gameplay_scenes`, menus excluded), missions, story beats | only when a strict majority of that family carries the vocabulary |
+| things | every other entity, mesh, audio cue, script and character; menu scenes | never |
+
+**Locomotion** adds the last guard. `normalise_locomotion` maps every word
+the enum has no alias for (hover, float, glide, climb) to `walk`, so `walk`
+may be a fallback and gap-filling evidence may override it. `drive` is only
+ever reached through drive/car/vehicle/racing, a positive declaration. So
+hover/float prose and a climbing cast never override it. A hoverbike that
+"hovers", or a vehicle controller with "drift mechanics", is still a vehicle
+on a surface.
+
+Live, eight neon_fugitive runs (`locomotion='drive'`, one brief) produced
+five different primitives. One district's "submerged structures" gave
+`planar+water` and an abstain. "floating" trash and "drift mechanics" gave a
+BoundedVolume. A boss-arena `Platform` gave a VerticalSurface. All eight now
+select ArenaPlane. Four of them (runs 01, 03, 05 and 11) are regression
+fixtures (`tests/fixtures/neon_fugitive_*`). The skydiving schema whose `locomotion`
+was left at `walk` still says `skydiving` in its description and its player
+entity, so it keeps its corridor. The living wall says "cliff face" in its
+description, so it keeps its wall. The air/water tie-break reads the same
+scope first. A `why` that stayed on the ground names every scoped-out hit, so
+such a run can be diagnosed from its provenance line.
 
 ## Height evidence — one rule for every primitive
 
@@ -252,9 +297,13 @@ Any other pair raises `LayoutStrictError` (`[layout.strict]`, a `ValueError`)
 naming the unmatched axes, the evidence behind each one, and a concrete fix.
 It is never caught and never falls back to a ground plane. Adding BoundedVolume
 did not soften this, and neither did adding UISurface: `planar+air` /
-`planar+water` (a walker in a world merely *described* as sky or sea),
-`vertical+ground` (shafts) and every `path` pairing still abstain. Shaft and
-spline primitives do not exist yet.
+`planar+water`, `vertical+ground` (shafts) and every `path` pairing still
+abstain. Shaft and spline primitives do not exist yet. `planar+air` /
+`planar+water` is no longer a walker in a world merely *described* as sky or
+sea: that walker gets the ground. It is a genuine conflict, where `locomotion`
+says a surface while the player's own text or the project description names
+the medium outright and nothing says the player moves through it freely. The
+fix names both readings.
 
 UISurface in particular widened nothing. `static` is returned by exactly one
 branch and `screen` by exactly one branch, both reading the same declaration,
