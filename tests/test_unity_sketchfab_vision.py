@@ -14,8 +14,9 @@ class _FakeLLM:
         self.calls = []
 
     def chat(self, system, user, images=None, temperature=None,
-             thinking=True, seed=None):
-        self.calls.append({"system": system, "user": user, "images": images})
+             thinking=True, seed=None, max_tokens=None):
+        self.calls.append({"system": system, "user": user, "images": images,
+                           "max_tokens": max_tokens})
         return self._response
 
 
