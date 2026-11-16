@@ -7,6 +7,11 @@ coordinates.  Scene membership, mission objectives, route adjacency and
 declared wiring are represented in one graph dialect so the later hybrid
 layout stages do not have to reconcile parallel adjacency/anchor artifacts.
 
+An entity in no scene is a hard failure, except when the Step 5 membership
+pass (``src/unity_scene_membership.py``) recorded it as an abstention by
+name. Such an entity is left out of the graph, named in a warning and in
+``omitted_entities``, and never placed in a scene by guess.
+
 The graph deliberately keeps the existing flat ``UnitySchema`` untouched.
 ``write_scene_graph`` freezes the graph and a hash-linked manifest for the
 standalone CLI; a later consumer can attach the same graph to the pipeline
@@ -23,6 +28,7 @@ from typing import Any, Iterable, Mapping, Optional
 from .ident import HashRef, chash
 from .ident.tags import NODE, SCENE
 from .unity_layout_archetype import spatial_relationship_of
+from .unity_scene_membership import abstained_entity_names
 from .unity_schema import UnitySchema
 from .unity_spatial_roles import (
     ROLE_AIRBORNE_HAZARD,
@@ -319,7 +325,9 @@ def _mission_scene_names(
     target_scenes: Optional[set[str]] = None
     for objective in mission.objectives or []:
         target = _target_lookup(schema).get(_casefold(objective.target_ref))
-        if not target:
+        # A target in no scene (an entity the membership pass abstained on)
+        # says nothing about where the mission runs.
+        if not target or not active_by_entity.get(target):
             continue
         scenes = set(active_by_entity.get(target) or [])
         target_scenes = scenes if target_scenes is None else target_scenes & scenes
@@ -583,13 +591,35 @@ def build_scene_graph(
         entity.name: _scene_membership(schema, scene_names, entity.name)
         for entity in schema.entities
     }
+    # An entity in no scene is left out of the graph ONLY when the Step 5
+    # membership pass recorded it as an abstention by name: the schema holds
+    # no evidence for its scene, and that pass refused to guess one. Raising
+    # here would discard an otherwise valid schema over one unplaceable
+    # group. It spawns nowhere, each one is named in a warning, and Step 7's
+    # entity_scene_coverage ERROR still fails the build with the project
+    # written. Any other orphan is unexplained and stays a hard failure.
+    abstained = abstained_entity_names(schema)
+    omitted = [
+        entity.name for entity in schema.entities
+        if not active_by_entity[entity.name] and entity.name in abstained
+    ]
+    omitted_set = set(omitted)
     entity_keys: dict[str, str] = {}
     for index, entity in enumerate(schema.entities):
         active = active_by_entity[entity.name]
+        if not active and entity.name in omitted_set:
+            warnings.append(
+                f"[graph.strict] entity {entity.name!r} is omitted from the "
+                "graph and spawns in no scene: Step 5 scene membership "
+                "abstained on it (schema.meta.scene_membership.abstentions) and "
+                "no scene was placed by guess"
+            )
+            continue
         if not active:
             raise SceneGraphError(
                 f"[graph.strict] entity {entity.name!r} is excluded from every "
                 "declared scene; add it to a SceneSpec or remove it from entities"
+                " (Step 5 scene membership recorded no abstention for it)"
             )
         key = f"entity:{entity.name}"
         entity_keys[entity.name] = key
@@ -679,7 +709,13 @@ def build_scene_graph(
             target_entity_name = _target_lookup(schema).get(
                 _casefold(objective.target_ref)
             )
-            if target_entity_name is not None:
+            if target_entity_name in omitted_set:
+                warnings.append(
+                    f"[graph.strict] objective {mission_id}/{objective_id} "
+                    f"targets {target_entity_name!r}, which spawns in no scene "
+                    "(scene membership abstained); no target edge was invented"
+                )
+            elif target_entity_name is not None:
                 builder.add_edge(
                     objective_key, f"entity:{target_entity_name}", RELATION_TARGETS,
                     required=not bool(objective.optional),
@@ -717,7 +753,12 @@ def build_scene_graph(
                 source="schema.wiring",
             )
 
-    _spatial_relations(schema, builder, roles, table)
+    _spatial_relations(
+        schema,
+        builder,
+        {name: row for name, row in roles.items() if name not in omitted_set},
+        table,
+    )
     graph_hash = chash(SCENE, {"nodes": builder.nodes, "edges": builder.edges})
     graph = {
         "format": SCENE_GRAPH_FORMAT,
@@ -744,6 +785,9 @@ def build_scene_graph(
         "edges": builder.edges,
         "relation_view": _relation_view(builder.edges),
         "graph_hash": graph_hash,
+        # Declared entities with no node: in no scene, explained by a Step 5
+        # scene-membership abstention. Never an unexplained orphan.
+        "omitted_entities": omitted,
         "warnings": warnings,
         "abstention_count": sum("abstain" in warning for warning in warnings),
     }

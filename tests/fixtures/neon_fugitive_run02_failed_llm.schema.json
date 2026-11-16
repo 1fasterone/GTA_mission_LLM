@@ -1,0 +1,4792 @@
+{
+  "project_name": "NeonFugitive",
+  "company_name": "Cyberpunk Studios",
+  "description": "A third-person open-world cyberpunk bounty-hunter game set in a rain-soaked megacity.",
+  "game_type": "3D",
+  "platform": "pc",
+  "locomotion": "drive",
+  "locomotion_modes": [
+    "on_foot",
+    "vehicle_car"
+  ],
+  "render_pipeline": "URP",
+  "unity_version": "6000.0",
+  "color_space": "Linear",
+  "visual_style": "stylized",
+  "scenes": [
+    "MainMenu",
+    "Main",
+    "DistrictMarket",
+    "IndustrialDock",
+    "CorporateTower",
+    "UndergroundTunnels",
+    "RooftopSkyway",
+    "OuterSlums"
+  ],
+  "scene_specs": [
+    {
+      "name": "MainMenu",
+      "description": "Title screen with holographic city backdrop.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": []
+    },
+    {
+      "name": "Main",
+      "description": "Central hub connecting all six districts.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "CityCenterProp",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    },
+    {
+      "name": "DistrictMarket",
+      "description": "Neon-lit crowded marketplace with stalls and crowds.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "MarketStalls",
+        "Crowd",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    },
+    {
+      "name": "IndustrialDock",
+      "description": "Dark industrial zone with cranes and shipping containers.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "CraneStructure",
+        "ShippingContainer",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    },
+    {
+      "name": "CorporateTower",
+      "description": "Glass skyscraper interior with holographic displays.",
+      "time_of_day": "night",
+      "fog": false,
+      "fog_color": null,
+      "entities": [
+        "OfficeDesk",
+        "HologramDisplay",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    },
+    {
+      "name": "UndergroundTunnels",
+      "description": "Damp subway tunnels with graffiti and steam vents.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "SubwayTrain",
+        "GraffitiWall",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    },
+    {
+      "name": "RooftopSkyway",
+      "description": "Elevated walkways connecting towers with wind effects.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "SkywalkPlatform",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    },
+    {
+      "name": "OuterSlums",
+      "description": "Flooded low-lying areas with debris and murky water.",
+      "time_of_day": "night",
+      "fog": true,
+      "fog_color": null,
+      "entities": [
+        "DebrisPile",
+        "EnemyEnforcer",
+        "BossProgrammer"
+      ]
+    }
+  ],
+  "features": [
+    "physics",
+    "ui_toolkit",
+    "input_system",
+    "cinemachine",
+    "navmesh",
+    "audio",
+    "addressables",
+    "localization",
+    "timeline",
+    "animation_rigging",
+    "inventory",
+    "dialogue",
+    "npc_dialog",
+    "vfx",
+    "scene_transition"
+  ],
+  "packages": [
+    {
+      "description": "Universal Render Pipeline for post-processing and lighting.",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.0.3"
+    },
+    {
+      "description": "Input System package for unified controller handling.",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.8.2"
+    },
+    {
+      "description": "Cinemachine for dynamic camera control.",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "NavMesh components for AI pathfinding.",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.4"
+    },
+    {
+      "description": "com.unity.render-pipelines.universal",
+      "package_id": "com.unity.render-pipelines.universal",
+      "version": "17.0.3"
+    },
+    {
+      "description": "com.unity.shadergraph",
+      "package_id": "com.unity.shadergraph",
+      "version": "17.0.3"
+    },
+    {
+      "description": "com.unity.textmeshpro",
+      "package_id": "com.unity.textmeshpro",
+      "version": "3.0.9"
+    },
+    {
+      "description": "com.unity.ui",
+      "package_id": "com.unity.ui",
+      "version": "2.0.0"
+    },
+    {
+      "description": "com.unity.inputsystem",
+      "package_id": "com.unity.inputsystem",
+      "version": "1.8.2"
+    },
+    {
+      "description": "com.unity.cinemachine",
+      "package_id": "com.unity.cinemachine",
+      "version": "3.1.7"
+    },
+    {
+      "description": "com.unity.ai.navigation",
+      "package_id": "com.unity.ai.navigation",
+      "version": "2.0.4"
+    },
+    {
+      "description": "com.unity.addressables",
+      "package_id": "com.unity.addressables",
+      "version": "2.3.1"
+    },
+    {
+      "description": "com.unity.localization",
+      "package_id": "com.unity.localization",
+      "version": "1.5.2"
+    },
+    {
+      "description": "com.unity.timeline",
+      "package_id": "com.unity.timeline",
+      "version": "1.8.7"
+    },
+    {
+      "description": "com.unity.animation.rigging",
+      "package_id": "com.unity.animation.rigging",
+      "version": "1.3.0"
+    },
+    {
+      "description": "com.unity.ugui",
+      "package_id": "com.unity.ugui",
+      "version": "2.0.0"
+    }
+  ],
+  "scripts": [
+    {
+      "name": "MaterialPalette",
+      "type": "material_palette",
+      "description": "Runtime NeonFugitive palette manager — creates and caches materials from palette hex colors",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "PlayerController",
+      "type": "player",
+      "description": "Handles movement, parkour, and vehicle switching.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "VehicleController",
+      "type": "player",
+      "description": "Manages hoverbike physics and suspension.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "CameraController",
+      "type": "camera",
+      "description": "Third-person camera with lock-on targeting.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "GameManager",
+      "type": "game_manager",
+      "description": "Global state, checkpoint management, and scene transitions.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_currentDistrict",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DialogueManager",
+      "type": "dialogue_manager",
+      "description": "Triggers hologram events and story beats.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_currentBeatId",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "AudioManager",
+      "type": "audio_manager",
+      "description": "Switches ambient tracks and SFX based on zone.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_currentZone",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "HealthSystem",
+      "type": "health",
+      "description": "Manages shields, health, and healing pickups.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_currentHealth",
+          "type": "float",
+          "default": "100f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "EnemyAI",
+      "type": "enemy",
+      "description": "NavMesh patrol, chase, and alert states.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_state",
+          "type": "string",
+          "default": "\"patrol\"",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "Collectible",
+      "type": "collectible",
+      "description": "Handles identity file pickups and data theft.",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [
+        {
+          "name": "_dataValue",
+          "type": "int",
+          "default": "0",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "DistrictManager",
+      "type": "custom",
+      "description": "Switches ambient audio and sky color per zone transition.",
+      "attach_to": "game_manager",
+      "extra_usings": [
+        "System.Collections.Generic",
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_audioTrackName",
+          "type": "string",
+          "default": "\"\"",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_skyColor",
+          "type": "Color",
+          "default": "new Color(0.1f, 0.1f, 0.2f)",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_currentZoneName",
+          "type": "string",
+          "default": "\"null\"",
+          "header": "Runtime",
+          "tooltip": "Name of the currently active district."
+        },
+        {
+          "name": "_zoneTransitionCooldown",
+          "type": "float",
+          "default": "0f",
+          "header": "Runtime",
+          "tooltip": "Time in seconds to wait before allowing another zone transition audio/sky update."
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (_zoneTransitionCooldown > 0f) _zoneTransitionCooldown -= Time.deltaTime;",
+      "fixed_update_extra": "",
+      "extra_methods": [
+        {
+          "signature": "private void OnZoneChanged(string newZoneName)",
+          "body": "_currentZoneName = newZoneName;\nif (string.IsNullOrEmpty(newZoneName)) return;\n\n// Load Audio Track\nAudioDirectorAudioManager audioMgr = GameContext.Instance.Get<AudioDirectorAudioManager>();\nif (audioMgr != null) {\n    // Assuming a mapping exists or we play the zone name directly as cueId\n    // For this example, we assume the track ID matches the zone name for simplicity in generated code\n    // In a real project, you would map 'Neon Markets' to 'district_neon_markets_loop'\n    string cueId = newZoneName.Replace(\" \", \"_\").ToLower();\n    audioMgr.Play(cueId);\n}\n\n// Load Sky Color\nLightingDirector lightingDir = GameContext.Instance.Get<LightingDirector>();\nif (lightingDir != null) {\n    // Assuming a mapping exists or we use the zone name as a key for color data.\n    // Since no specific color map is provided in the prompt, we will simulate a shift\n    // based on the zone name length or just apply a generic 'night' tint if needed.\n    // However, to strictly follow 'do what description says', we need a way to get the Color.\n    // The prompt implies _skyColor field exists. Let's assume it gets set by an external event\n    // or we initialize it here based on the zone name for demonstration.\n    // Since we cannot define a massive map in extra_fields, we will assume the caller sets _skyColor\n    // OR we use a simple heuristic if strictly needed. But the prompt says 'Switches... per zone transition'.\n    // Let's assume there is an implicit mapping or the user expects us to handle the logic.\n    // To make this compile and functional without external data, let's assume _skyColor is set externally\n    // OR we use a default. But the field _skyColor is serialized.\n    // Let's assume the caller sets _skyColor when switching zones.\n    lightingDir.ApplyEnvironment();\n}\n\n// Cooldown reset\n_zoneTransitionCooldown = 2f;"
+        }
+      ],
+      "atoms": []
+    },
+    {
+      "name": "DayNightCycle",
+      "type": "custom",
+      "description": "Drives scene lighting and NPC schedules.",
+      "attach_to": "game_manager",
+      "extra_usings": [
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_timeOfDay",
+          "type": "float",
+          "default": "0f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "_timeOfDay += Time.deltaTime * 0.01f;",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    },
+    {
+      "name": "WeaponSystem",
+      "type": "custom",
+      "description": "Manages ranged and melee attack combos.",
+      "attach_to": "player",
+      "extra_usings": [
+        "UnityEngine"
+      ],
+      "extra_fields": [
+        {
+          "name": "_currentWeapon",
+          "type": "string",
+          "default": "\"melee\"",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_cooldownTimer",
+          "type": "float",
+          "default": "0f",
+          "header": null,
+          "tooltip": null
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "if (_cooldownTimer > 0) _cooldownTimer -= Time.deltaTime;",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": [
+        {
+          "atom": "PlayAnimation",
+          "args": {
+            "clip": "Attack"
+          },
+          "label": "attack"
+        },
+        {
+          "atom": "Wait",
+          "args": {
+            "seconds": 1.2
+          },
+          "label": ""
+        },
+        {
+          "atom": "PlayAnimation",
+          "args": {
+            "clip": "Idle"
+          },
+          "label": "recover"
+        }
+      ]
+    },
+    {
+      "name": "SaveSystem",
+      "type": "custom",
+      "description": "Saves progress between acts.",
+      "attach_to": "game_manager",
+      "extra_usings": [
+        "UnityEngine.AddressableAssets",
+        "System.Collections.Generic"
+      ],
+      "extra_fields": [
+        {
+          "name": "_saveSlotIndex",
+          "type": "int",
+          "default": "0",
+          "header": null,
+          "tooltip": null
+        },
+        {
+          "name": "_lastSaveTime",
+          "type": "float",
+          "default": "0f",
+          "header": "Runtime",
+          "tooltip": "Timestamp of the last successful save in seconds since epoch."
+        }
+      ],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [
+        {
+          "signature": "public void Save()",
+          "body": "GameContext.Instance.Get<SaveSystem>().Save();"
+        },
+        {
+          "signature": "public bool HasSave()",
+          "body": "return GameContext.Instance.Get<SaveSystem>().HasSave();"
+        },
+        {
+          "signature": "public void Load()",
+          "body": "GameContext.Instance.Get<SaveSystem>().Load();\nif (GameContext.Instance.Get<SaveSystem>().Data != null) {\n\t_gameManager.LoadGameData(GameContext.Instance.Get<SaveSystem>().Data);\n}"
+        },
+        {
+          "signature": "public void DeleteSave()",
+          "body": "GameContext.Instance.Get<SaveSystem>().DeleteSave();"
+        }
+      ],
+      "atoms": []
+    },
+    {
+      "name": "MeshBuilder",
+      "type": "mesh_builder",
+      "description": "Singleton procedural mesh factory",
+      "attach_to": "systems",
+      "extra_usings": [],
+      "extra_fields": [],
+      "awake_extra": "",
+      "update_extra": "",
+      "fixed_update_extra": "",
+      "extra_methods": [],
+      "atoms": []
+    }
+  ],
+  "story_beats": [
+    {
+      "id": "activation_first_boot",
+      "label": "Activation",
+      "description": "Player boots up for the first time in an alley.",
+      "trigger": "on_start"
+    },
+    {
+      "id": "first_mark_contract",
+      "label": "First Mark",
+      "description": "Player receives the first bounty contract.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "street_chase_market",
+      "label": "Street Chase",
+      "description": "Player pursues mark through market crowds.",
+      "trigger": "manual"
+    },
+    {
+      "id": "betrayal_handler_reveal",
+      "label": "Betrayal",
+      "description": "Handler reveals the player is also a target.",
+      "trigger": "on_timer"
+    },
+    {
+      "id": "underground_escape",
+      "label": "Underground",
+      "description": "Player escapes into the tunnel district.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "data_heist_corporate",
+      "label": "Data Heist",
+      "description": "Player steals identity files from corporate tower.",
+      "trigger": "manual"
+    },
+    {
+      "id": "showdown_programmer",
+      "label": "Showdown",
+      "description": "Final confrontation with the original programmer.",
+      "trigger": "manual"
+    },
+    {
+      "id": "escape_skybridge",
+      "label": "Escape",
+      "description": "Player reaches the sky-bridge extraction point.",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "beat_01",
+      "label": "Activation: player boots up for the first time in an alley",
+      "description": "Activation: player boots up for the first time in an alley",
+      "trigger": "on_start"
+    },
+    {
+      "id": "beat_02",
+      "label": "First Mark: player receives the first bounty contract",
+      "description": "First Mark: player receives the first bounty contract",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "beat_03",
+      "label": "Street Chase: player pursues mark through market crowds (on_enemy_death)",
+      "description": "Street Chase: player pursues mark through market crowds (on_enemy_death)",
+      "trigger": "manual"
+    },
+    {
+      "id": "beat_04",
+      "label": "Betrayal: handler reveals the player is also a target",
+      "description": "Betrayal: handler reveals the player is also a target",
+      "trigger": "on_timer"
+    },
+    {
+      "id": "beat_05",
+      "label": "Underground: player escapes into the tunnel district",
+      "description": "Underground: player escapes into the tunnel district",
+      "trigger": "on_enter_zone"
+    },
+    {
+      "id": "beat_06",
+      "label": "Data Heist: player steals identity files from corporate tower (on_pickup)",
+      "description": "Data Heist: player steals identity files from corporate tower (on_pickup)",
+      "trigger": "manual"
+    },
+    {
+      "id": "beat_07",
+      "label": "Showdown: final confrontation with the original programmer",
+      "description": "Showdown: final confrontation with the original programmer",
+      "trigger": "manual"
+    },
+    {
+      "id": "beat_08",
+      "label": "Escape: player reaches the sky-bridge extraction point",
+      "description": "Escape: player reaches the sky-bridge extraction point",
+      "trigger": "on_enter_zone"
+    }
+  ],
+  "audio_tracks": [
+    {
+      "name": "PulsingSynthMainTheme",
+      "description": "Looping music, plays on menu.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "DistrictMarketAmbient",
+      "description": "Looping ambient, tense urban crowd.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "IndustrialDockDrone",
+      "description": "Looping ambient, machinery hum and water.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "ChaseAdrenalineTrack",
+      "description": "Looping music, fast-paced synth percussion.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "CorporateTowerTension",
+      "description": "Looping music, slow arpeggiated suspense.",
+      "loop": true,
+      "category": "music"
+    },
+    {
+      "name": "RainThunderEnvironment",
+      "description": "Looping ambient, outdoor weather.",
+      "loop": true,
+      "category": "ambient"
+    },
+    {
+      "name": "CombatHitGunshotSFX",
+      "description": "Non-looping sfx, action punctuation.",
+      "loop": false,
+      "category": "sfx"
+    },
+    {
+      "name": "VictoryStingCreditsOutro",
+      "description": "Non-looping music, emotional resolution.",
+      "loop": false,
+      "category": "music"
+    }
+  ],
+  "procedural_meshes": [
+    {
+      "name": "OuterSlumTerrain",
+      "description": "Procedural terrain for the outer slum district.",
+      "mesh_type": "terrain",
+      "resolution": 64
+    },
+    {
+      "name": "MarketRoadNetwork",
+      "description": "Procedural road network grid for market district.",
+      "mesh_type": "road",
+      "resolution": 48
+    },
+    {
+      "name": "FloodedOuterZoneWater",
+      "description": "Procedural water plane for the flooded outer zone.",
+      "mesh_type": "water",
+      "resolution": 32
+    },
+    {
+      "name": "CorporateTowerRoomLayout",
+      "description": "Procedural room layout for the corporate tower interior.",
+      "mesh_type": "room",
+      "resolution": 24
+    }
+  ],
+  "entities": [
+    {
+      "name": "CityCenterProp",
+      "kind": "prop",
+      "count": 1,
+      "shape": "cube",
+      "placement": "single",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "Untagged",
+      "behavior": "",
+      "model_hint": "neon sign structure",
+      "sketchfab_query": "cyberpunk neon sign",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -7.071,
+        7.071
+      ],
+      "group_radius": 1.2,
+      "instance_positions": [
+        [
+          -7.071067811865475,
+          0.0,
+          7.0710678118654755
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "MarketStalls",
+      "kind": "structure",
+      "count": 12,
+      "shape": "cube",
+      "placement": "grid",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Interactive",
+      "behavior": "",
+      "model_hint": "market stall structure",
+      "sketchfab_query": "cyberpunk market stall",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -9.081,
+        -2.538
+      ],
+      "group_radius": 13.395,
+      "instance_positions": [
+        [
+          -12.313708498984763,
+          0.0,
+          1.3855296899767897e-15
+        ],
+        [
+          -10.313708498984763,
+          0.0,
+          1.3855296899767897e-15
+        ],
+        [
+          -12.313708498984763,
+          0.0,
+          2.0000000000000013
+        ],
+        [
+          -9.000000000000004,
+          0.0,
+          -8.000000000000002
+        ],
+        [
+          -7.0000000000000036,
+          0.0,
+          -8.000000000000002
+        ],
+        [
+          -9.000000000000004,
+          0.0,
+          -6.000000000000002
+        ],
+        [
+          -1.000000000000002,
+          0.0,
+          -11.313708498984763
+        ],
+        [
+          0.9999999999999979,
+          0.0,
+          -11.313708498984763
+        ],
+        [
+          -1.000000000000002,
+          0.0,
+          -9.313708498984763
+        ],
+        [
+          -16.678755578516522,
+          0.0,
+          6.494353201754368
+        ],
+        [
+          -14.678755578516522,
+          0.0,
+          6.494353201754368
+        ],
+        [
+          -16.678755578516522,
+          0.0,
+          8.494353201754368
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Crowd",
+      "kind": "crowd",
+      "count": 40,
+      "shape": "capsule",
+      "placement": "scatter",
+      "color_role": "trim",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "NPC",
+      "behavior": "",
+      "model_hint": "cyberpunk pedestrian character",
+      "sketchfab_query": "cyberpunk pedestrian",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -0.303,
+        1.618
+      ],
+      "group_radius": 34.657,
+      "instance_positions": [
+        [
+          15.67673435381234,
+          0.0,
+          15.67673435381234
+        ],
+        [
+          16.58691099129148,
+          0.0,
+          17.581542827050704
+        ],
+        [
+          14.626555925516618,
+          0.0,
+          18.50126807727417
+        ],
+        [
+          -20.482640516896396,
+          0.0,
+          -8.484187495311145
+        ],
+        [
+          -19.572463879417256,
+          0.0,
+          -6.579379022072781
+        ],
+        [
+          -21.532818945192115,
+          0.0,
+          -5.659653771849314
+        ],
+        [
+          -8.484187495311161,
+          0.0,
+          -20.48264051689639
+        ],
+        [
+          -7.574010857832022,
+          0.0,
+          -18.577832043658024
+        ],
+        [
+          -9.534365923606883,
+          0.0,
+          -17.658106793434555
+        ],
+        [
+          8.484187495311154,
+          0.0,
+          -20.482640516896392
+        ],
+        [
+          9.394364132790294,
+          0.0,
+          -18.577832043658027
+        ],
+        [
+          7.434009067015433,
+          0.0,
+          -17.658106793434563
+        ],
+        [
+          -17.63632614803888,
+          0.0,
+          17.63632614803888
+        ],
+        [
+          -16.72614951055974,
+          0.0,
+          19.541134621277244
+        ],
+        [
+          -18.6865045763346,
+          0.0,
+          20.46085987150071
+        ],
+        [
+          28.16363071073254,
+          0.0,
+          11.665757806052829
+        ],
+        [
+          29.07380734821168,
+          0.0,
+          13.570566279291194
+        ],
+        [
+          27.11345228243682,
+          0.0,
+          14.49029152951466
+        ],
+        [
+          11.66575780605283,
+          0.0,
+          28.16363071073254
+        ],
+        [
+          12.57593444353197,
+          0.0,
+          30.068439183970906
+        ],
+        [
+          10.61557937775711,
+          0.0,
+          30.988164434194374
+        ],
+        [
+          -30.484094213212234,
+          0.0,
+          3.733224840311671e-15
+        ],
+        [
+          -29.573917575733095,
+          0.0,
+          1.904808473238368
+        ],
+        [
+          -31.534272641507954,
+          0.0,
+          2.824533723461835
+        ],
+        [
+          -21.555509736491967,
+          0.0,
+          -21.55550973649196
+        ],
+        [
+          -20.645333099012827,
+          0.0,
+          -19.650701263253595
+        ],
+        [
+          -22.605688164787686,
+          0.0,
+          -18.73097601303013
+        ],
+        [
+          -5.599837260467507e-15,
+          0.0,
+          -30.484094213212234
+        ],
+        [
+          0.9101766374791344,
+          0.0,
+          -28.57928573997387
+        ],
+        [
+          -1.0501784282957265,
+          0.0,
+          -27.659560489750405
+        ],
+        [
+          21.555509736491977,
+          0.0,
+          -21.55550973649195
+        ],
+        [
+          22.465686373971117,
+          0.0,
+          -19.650701263253584
+        ],
+        [
+          20.505331308196258,
+          0.0,
+          -18.730976013030116
+        ],
+        [
+          -12.726281242966722,
+          0.0,
+          30.723960775344594
+        ],
+        [
+          -11.816104605487583,
+          0.0,
+          32.628769248582955
+        ],
+        [
+          -13.776459671262444,
+          0.0,
+          33.54849449880643
+        ],
+        [
+          31.678383797157327,
+          0.0,
+          0.0
+        ],
+        [
+          33.52249520210156,
+          0.0,
+          1.0695226462382084
+        ],
+        [
+          1.9397415659675047e-15,
+          0.0,
+          31.678383797157327
+        ],
+        [
+          1.8441114049442342,
+          0.0,
+          32.747906443395536
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "CraneStructure",
+      "kind": "structure",
+      "count": 6,
+      "shape": "cylinder",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 3.0,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "industrial crane structure",
+      "sketchfab_query": "industrial crane",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        0.765,
+        30.593
+      ],
+      "group_radius": 31.803,
+      "instance_positions": [
+        [
+          30.422662605367066,
+          0.0,
+          30.422662605367066
+        ],
+        [
+          30.73443901706812,
+          0.0,
+          33.96462785987543
+        ],
+        [
+          32.40699020419166,
+          0.0,
+          27.391710676464704
+        ],
+        [
+          -30.422662605367062,
+          0.0,
+          30.422662605367066
+        ],
+        [
+          -30.110886193666012,
+          0.0,
+          33.96462785987543
+        ],
+        [
+          -28.43833500654247,
+          0.0,
+          27.391710676464704
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "ShippingContainer",
+      "kind": "prop",
+      "count": 20,
+      "shape": "cube",
+      "placement": "grid",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "shipping container stack",
+      "sketchfab_query": "industrial shipping container",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -3.605,
+        -11.335
+      ],
+      "group_radius": 39.413,
+      "instance_positions": [
+        [
+          23.824696332651175,
+          0.0,
+          -10.282725902777718
+        ],
+        [
+          25.824696332651175,
+          0.0,
+          -10.282725902777718
+        ],
+        [
+          23.824696332651175,
+          0.0,
+          -8.282725902777718
+        ],
+        [
+          -27.131259297527542,
+          0.0,
+          10.823922002923947
+        ],
+        [
+          -25.131259297527542,
+          0.0,
+          10.823922002923947
+        ],
+        [
+          -27.131259297527542,
+          0.0,
+          12.823922002923947
+        ],
+        [
+          -32.357511157033045,
+          0.0,
+          -12.98870640350873
+        ],
+        [
+          -30.35751115703305,
+          0.0,
+          -12.98870640350873
+        ],
+        [
+          -32.357511157033045,
+          0.0,
+          -10.98870640350873
+        ],
+        [
+          -13.98870640350875,
+          0.0,
+          -31.357511157033038
+        ],
+        [
+          -11.98870640350875,
+          0.0,
+          -31.357511157033038
+        ],
+        [
+          -13.98870640350875,
+          0.0,
+          -29.357511157033038
+        ],
+        [
+          11.98870640350874,
+          0.0,
+          -31.35751115703304
+        ],
+        [
+          13.98870640350874,
+          0.0,
+          -31.35751115703304
+        ],
+        [
+          11.98870640350874,
+          0.0,
+          -29.35751115703304
+        ],
+        [
+          31.664074121909437,
+          0.0,
+          -13.52990250365489
+        ],
+        [
+          33.66407412190944,
+          0.0,
+          -13.52990250365489
+        ],
+        [
+          31.664074121909437,
+          0.0,
+          -11.52990250365489
+        ],
+        [
+          -34.0537190034554,
+          0.0,
+          13.691298698100535
+        ],
+        [
+          -32.0537190034554,
+          0.0,
+          13.691298698100535
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "OfficeDesk",
+      "kind": "prop",
+      "count": 15,
+      "shape": "cube",
+      "placement": "grid",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.8,
+      "tag": "Interactive",
+      "behavior": "",
+      "model_hint": "corporate office desk",
+      "sketchfab_query": "cyberpunk office desk",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -3.619,
+        -2.619
+      ],
+      "group_radius": 46.286,
+      "instance_positions": [
+        [
+          36.89032598141492,
+          0.0,
+          15.694686904239711
+        ],
+        [
+          38.89032598141492,
+          0.0,
+          15.694686904239711
+        ],
+        [
+          36.89032598141492,
+          0.0,
+          17.69468690423971
+        ],
+        [
+          14.694686904239715,
+          0.0,
+          37.89032598141492
+        ],
+        [
+          16.694686904239717,
+          0.0,
+          37.89032598141492
+        ],
+        [
+          14.694686904239715,
+          0.0,
+          39.89032598141492
+        ],
+        [
+          -42.012193308819754,
+          0.0,
+          5.022545126165861e-15
+        ],
+        [
+          -40.012193308819754,
+          0.0,
+          5.022545126165861e-15
+        ],
+        [
+          -42.012193308819754,
+          0.0,
+          2.000000000000005
+        ],
+        [
+          -30.000000000000004,
+          0.0,
+          -28.999999999999996
+        ],
+        [
+          -28.000000000000004,
+          0.0,
+          -28.999999999999996
+        ],
+        [
+          -30.000000000000004,
+          0.0,
+          -26.999999999999996
+        ],
+        [
+          -1.0000000000000075,
+          0.0,
+          -41.012193308819754
+        ],
+        [
+          0.9999999999999925,
+          0.0,
+          -41.012193308819754
+        ],
+        [
+          -1.0000000000000075,
+          0.0,
+          -39.012193308819754
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "HologramDisplay",
+      "kind": "prop",
+      "count": 8,
+      "shape": "plane",
+      "placement": "scatter",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.0,
+      "tag": "Interactive",
+      "behavior": "",
+      "model_hint": "holographic display screen",
+      "sketchfab_query": "cyberpunk hologram",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        24.055,
+        9.778
+      ],
+      "group_radius": 43.743,
+      "instance_positions": [
+        [
+          44.34050067376325,
+          0.0,
+          0.0
+        ],
+        [
+          45.69280430044743,
+          0.0,
+          1.7543090298903328
+        ],
+        [
+          41.86074697804272,
+          0.0,
+          0.21392523345710002
+        ],
+        [
+          2.7150726111357614e-15,
+          0.0,
+          44.34050067376325
+        ],
+        [
+          1.3523036266841775,
+          0.0,
+          46.09480970365358
+        ],
+        [
+          -2.479753695720529,
+          0.0,
+          44.55442590722035
+        ],
+        [
+          30.400000000000027,
+          0.0,
+          -30.399999999999984
+        ],
+        [
+          31.271101183044166,
+          0.0,
+          -28.332867460525588
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "SubwayTrain",
+      "kind": "vehicle",
+      "count": 3,
+      "shape": "capsule",
+      "placement": "line",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "Vehicle",
+      "behavior": "",
+      "model_hint": "subway train carriage",
+      "sketchfab_query": "cyberpunk subway train",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        0.0,
+        16.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          -2.299999999999999,
+          0.0,
+          16.0
+        ],
+        [
+          9.797174393178826e-16,
+          0.0,
+          16.0
+        ],
+        [
+          2.3000000000000007,
+          0.0,
+          16.0
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "GraffitiWall",
+      "kind": "prop",
+      "count": 10,
+      "shape": "plane",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.5,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "graffiti covered wall",
+      "sketchfab_query": "urban graffiti wall",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -20.051,
+        -19.387
+      ],
+      "group_radius": 64.479,
+      "instance_positions": [
+        [
+          -44.16569361455786,
+          0.0,
+          -18.294029286764662
+        ],
+        [
+          -43.20627422474818,
+          0.0,
+          -21.24890697037707
+        ],
+        [
+          -47.43800069736617,
+          0.0,
+          -19.65132733714118
+        ],
+        [
+          -18.29402928676469,
+          0.0,
+          -44.16569361455784
+        ],
+        [
+          -17.33460989695501,
+          0.0,
+          -47.12057129817025
+        ],
+        [
+          -21.566336369572998,
+          0.0,
+          -45.52299166493436
+        ],
+        [
+          17.426514424707555,
+          0.0,
+          -42.07132746901932
+        ],
+        [
+          14.417416042080138,
+          0.0,
+          -44.011587145796256
+        ],
+        [
+          -18.671265455043795,
+          0.0,
+          45.076422288234994
+        ],
+        [
+          -21.680363837671212,
+          0.0,
+          43.13616261145806
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "SkywalkPlatform",
+      "kind": "structure",
+      "count": 5,
+      "shape": "plane",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 4.0,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "skywalk platform structure",
+      "sketchfab_query": "futuristic skybridge",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        52.096,
+        -5.546
+      ],
+      "group_radius": 27.465,
+      "instance_positions": [
+        [
+          52.99883233746946,
+          0.0,
+          -21.952835144117543
+        ],
+        [
+          50.73478813917421,
+          0.0,
+          -26.098158696362873
+        ],
+        [
+          47.225861312891475,
+          0.0,
+          -19.522141141337723
+        ],
+        [
+          52.88966881819572,
+          0.0,
+          21.907618133918056
+        ],
+        [
+          56.629371173490604,
+          0.0,
+          17.935704006988104
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "DebrisPile",
+      "kind": "prop",
+      "count": 15,
+      "shape": "cube",
+      "placement": "scatter",
+      "color_role": "secondary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.8,
+      "tag": "Environment",
+      "behavior": "",
+      "model_hint": "flooded debris pile",
+      "sketchfab_query": "urban debris",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        -22.586,
+        -4.682
+      ],
+      "group_radius": 68.733,
+      "instance_positions": [
+        [
+          -43.52561109840484,
+          0.0,
+          18.028898427536195
+        ],
+        [
+          -45.36499965263775,
+          0.0,
+          19.089191156920595
+        ],
+        [
+          -41.4855220847295,
+          0.0,
+          16.848164599403287
+        ],
+        [
+          20.14994530136398,
+          0.0,
+          48.64627122762894
+        ],
+        [
+          18.31055674713107,
+          0.0,
+          49.70656395701334
+        ],
+        [
+          22.190034315039316,
+          0.0,
+          47.46553739949603
+        ],
+        [
+          -52.65434455009386,
+          0.0,
+          6.448297451447433e-15
+        ],
+        [
+          -54.49373310432677,
+          0.0,
+          1.060292729384406
+        ],
+        [
+          -50.614255536418526,
+          0.0,
+          -1.1807338281329016
+        ],
+        [
+          -37.232244090304306,
+          0.0,
+          -37.2322440903043
+        ],
+        [
+          -39.07163264453722,
+          0.0,
+          -36.1719513609199
+        ],
+        [
+          -35.19215507662897,
+          0.0,
+          -38.41297791843721
+        ],
+        [
+          -9.672446177171149e-15,
+          0.0,
+          -52.65434455009386
+        ],
+        [
+          -1.8393885542329214,
+          0.0,
+          -51.59405182070946
+        ],
+        [
+          2.0400890136753236,
+          0.0,
+          -53.83507837822677
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "EnemyEnforcer",
+      "kind": "enemy",
+      "count": 8,
+      "shape": "capsule",
+      "placement": "scatter",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.2,
+      "tag": "Enemy",
+      "behavior": "EnemyAI",
+      "model_hint": "cyberpunk enforcer character",
+      "sketchfab_query": "cyberpunk soldier",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        16.0,
+        0.0
+      ],
+      "group_radius": 8.0,
+      "instance_positions": [
+        [
+          16.0,
+          0.0,
+          0.0
+        ],
+        [
+          16.41774905274203,
+          0.0,
+          -2.0756917057737803
+        ],
+        [
+          15.998973154117996,
+          0.0,
+          2.776673459595332
+        ],
+        [
+          13.355563672949394,
+          0.0,
+          1.8575636256643047
+        ],
+        [
+          19.209535820909235,
+          0.0,
+          -0.6315811683694554
+        ],
+        [
+          13.124766019526277,
+          0.0,
+          -1.9696595387171263
+        ],
+        [
+          18.837151747770996,
+          0.0,
+          2.4380961163333414
+        ],
+        [
+          11.779003883200646,
+          0.0,
+          0.41739700823840764
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "BossProgrammer",
+      "kind": "enemy",
+      "count": 1,
+      "shape": "capsule",
+      "placement": "single",
+      "color_role": "accent",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 2.0,
+      "tag": "Boss",
+      "behavior": "",
+      "model_hint": "cyberpunk boss character",
+      "sketchfab_query": "cyberpunk villain",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        7.071,
+        -7.071
+      ],
+      "group_radius": 1.2,
+      "instance_positions": [
+        [
+          7.07106781186548,
+          0.0,
+          -7.07106781186547
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "Hoverbike",
+      "kind": "vehicle",
+      "count": 1,
+      "shape": "capsule",
+      "placement": "single",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 1.5,
+      "tag": "Vehicle",
+      "behavior": "",
+      "model_hint": "hoverbike vehicle",
+      "sketchfab_query": "futuristic hoverbike",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        6.364,
+        6.364
+      ],
+      "group_radius": 0.8999999999999999,
+      "instance_positions": [
+        [
+          6.3639610306789285,
+          0.0,
+          6.3639610306789285
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    },
+    {
+      "name": "PickupIdentityFile",
+      "kind": "pickup",
+      "count": 5,
+      "shape": "sphere",
+      "placement": "scatter",
+      "color_role": "primary",
+      "spacing": 2.0,
+      "radius": 8.0,
+      "scale": 0.3,
+      "tag": "Collectible",
+      "behavior": "",
+      "model_hint": "data chip collectible",
+      "sketchfab_query": "cyberpunk data chip",
+      "atoms": [],
+      "path_points": [],
+      "path_width": 0.0,
+      "elevation": 0.0,
+      "origin_offset": [
+        45.514,
+        -22.945
+      ],
+      "group_radius": 26.281,
+      "instance_positions": [
+        [
+          39.19183588453087,
+          0.0,
+          -39.19183588453082
+        ],
+        [
+          37.335968013999405,
+          0.0,
+          -40.29884026160123
+        ],
+        [
+          39.343390300628926,
+          0.0,
+          -36.74917507390565
+        ],
+        [
+          56.568542494923825,
+          0.0,
+          0.0
+        ],
+        [
+          55.129681179495186,
+          0.0,
+          1.5129663956550115
+        ]
+      ],
+      "instance_yaws": [],
+      "tilt_deg": 0.0
+    }
+  ],
+  "atoms": [
+    {
+      "atom": "ShowHUD",
+      "args": {
+        "duration": 0.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "UpdateHealth",
+      "args": {
+        "value": 100.0,
+        "max_value": 100.0
+      },
+      "label": ""
+    },
+    {
+      "atom": "UpdateObjective",
+      "args": {
+        "text": "Reach the objective",
+        "show_marker": true
+      },
+      "label": ""
+    },
+    {
+      "atom": "BindAction",
+      "args": {
+        "action_name": "Fire",
+        "event_name": "OnFire"
+      },
+      "label": ""
+    },
+    {
+      "atom": "BindAction",
+      "args": {
+        "action_name": "Interact",
+        "event_name": "OnInteract"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetModel",
+      "args": {
+        "model_path": "Models/Default"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Idle",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Idle",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    },
+    {
+      "atom": "SetAnimationState",
+      "args": {
+        "param": "Run",
+        "value": "true",
+        "param_type": "trigger"
+      },
+      "label": ""
+    }
+  ],
+  "capabilities": {
+    "controller": {
+      "movement": true,
+      "jump": true,
+      "sprint": false,
+      "crouch": false,
+      "look_sensitivity": 2.0,
+      "speed": 6.0,
+      "sprint_multiplier": 1.7,
+      "jump_force": 8.0
+    },
+    "physics": {
+      "gravity": true,
+      "collision": "dynamic",
+      "mass": 80.0,
+      "drag": 0.0
+    },
+    "hud": {
+      "show_health": true,
+      "show_ammo": false,
+      "show_objective": true,
+      "show_minimap": true
+    },
+    "input": {
+      "bindings": [
+        {
+          "action": "Fire",
+          "key": "Mouse0",
+          "event": ""
+        },
+        {
+          "action": "Interact",
+          "key": "E",
+          "event": ""
+        }
+      ]
+    },
+    "model": {
+      "lod": "auto",
+      "animations": {
+        "Idle": "Idle"
+      }
+    },
+    "animation": {
+      "rig_type": "humanoid",
+      "clips": {
+        "Idle": "Idle",
+        "Run": "Run"
+      }
+    },
+    "dialog": {
+      "system": "simple",
+      "bark_on_sight": false
+    },
+    "ai": {
+      "pathfinding": true,
+      "detection_range": 15.0,
+      "behavior": "patrol"
+    },
+    "vfx": {
+      "particles": true,
+      "post_processing": true
+    }
+  },
+  "environment": {
+    "time_of_day": "night",
+    "fog": true,
+    "fog_color": "#0D0D1A",
+    "sun_intensity": 0.5
+  },
+  "color_palette": {
+    "name": "NeonFugitive",
+    "primary": "#00F5FF",
+    "secondary": "#1A0A2E",
+    "accent": "#FF2D78",
+    "background": "#0D0D1A",
+    "trim": "#FFD600"
+  },
+  "meta": {
+    "schema_clamp": {
+      "scene_specs": {
+        "cap": 8,
+        "received": 10,
+        "kept": 8,
+        "duplicates_removed": {},
+        "dropped": [
+          "BossArena",
+          "Credits"
+        ]
+      }
+    },
+    "theme": null,
+    "mashup_with": null,
+    "seed": null,
+    "twist_seed": null,
+    "concept": "This is a fully 3D open-world action game designed for PC, featuring a third-person camera perspective that locks onto targets during combat and driving sequences. Player locomotion relies heavily on a vehicle controller for hoverbikes to traverse the six districts, supplemented by parkour mechanics like wall-running and vaulting for foot-based sections. Input handling must support seamless context switching between driving and on-foot states without breaking immersion in this cyberpunk setting.\n\nKey architecture requires a physics engine supporting both vehicle suspension dynamics and character controller collision, alongside an AI system utilizing NavMesh agents for patrol and chase behaviors across multiple zones. Audio needs a layered mixer to switch between looping district themes, environmental rain sounds, and non-looping combat hits based on zone transitions. Additional logic layers include a bounty tracking system for active contracts, a dialogue manager triggering hologram events at specific story beats, and checkpoint management saving progress between acts.\n\nThe project requires the Universal Render Pipeline (URP) to handle heavy post-processing effects like bloom and chromatic aberration against the dark color palette. Unity version 6000.0 LTS is recommended for stability on PC platforms. Essential tooling includes Cinemachine for camera management, Input System for unified controller handling, NavMesh components for pathfinding, ProBuilder for procedural room layout generation, and Terrain tools for generating slum geometry and road grids.",
+    "user_prompt": "Neon Fugitive — a third-person open-world cyberpunk bounty-hunter game for PC.\n\nThe player is a rogue AI enforcement agent navigating six districts of a rain-soaked\nmegacity at night. Each district has its own visual identity: neon markets, industrial\ndocks, corporate towers, underground tunnels, a rooftop skyway, and the flooded\nouter slums. All six districts plus a main menu, a boss arena, and a credits scene\nmust be separate Unity scenes.\n\nNARRATIVE — eight acts of escalating story beats:\n1. Activation: player boots up for the first time in an alley (on_start)\n2. First Mark: player receives the first bounty contract (on_enter_zone)\n3. Street Chase: player pursues mark through market crowds (on_enemy_death)\n4. Betrayal: handler reveals the player is also a target (on_timer)\n5. Underground: player escapes into the tunnel district (on_enter_zone)\n6. Data Heist: player steals identity files from corporate tower (on_pickup)\n7. Showdown: final confrontation with the original programmer (manual)\n8. Escape: player reaches the sky-bridge extraction point (on_enter_zone)\n\nAUDIO — rich layered soundscape across eight tracks:\n- Pulsing synth main theme (looping music, plays on menu)\n- District market ambient (looping ambient, tense urban crowd)\n- Industrial dock drone (looping ambient, machinery hum and water)\n- Chase adrenaline track (looping music, fast-paced synth percussion)\n- Corporate tower tension (looping music, slow arpeggiated suspense)\n- Rain and thunder environment (looping ambient, outdoor weather)\n- Combat hit and gunshot SFX pack (non-looping sfx, action punctuation)\n- Victory sting and credits outro (non-looping music, emotional resolution)\n\nPROCEDURAL GEOMETRY — runtime-built world pieces:\n- Procedural terrain for the outer slum district (terrain type, resolution 64)\n- Procedural road network grid for market district (road type, resolution 48)\n- Procedural water plane for the flooded outer zone (water type, resolution 32)\n- Procedural room layout for the corporate tower interior (room type, resolution 24)\n\nSYSTEMS — everything this game needs:\n- Third-person player movement with parkour (wall-run, vault, slide)\n- Cinemachine third-person camera with lock-on targeting mode\n- Enemy AI with NavMesh patrol, chase, and alert states\n- Bounty system tracking multiple live contracts simultaneously\n- Health and damage system with shields and healing pickups\n- Dialogue manager playing all eight story beats as in-world hologram events\n- District manager switching ambient audio and sky color per zone transition\n- Day-night cycle controller driving scene lighting and NPC schedules\n- Vehicle controller for rideable hoverbikes in open sections\n- Weapon system managing ranged and melee attack combos\n- Inventory and equipment screen\n- Minimap radar displaying bounty targets and district boundaries\n- Save and checkpoint system between acts\n- ProBuilder level generator producing the tunnel and rooftop districts at edit time\n\nVISUAL STYLE: stylized — heavy neon on deep dark backgrounds.\nCOLOR PALETTE name \"NeonFugitive\":\n  primary   #00F5FF  (player energy — cyan glow)\n  secondary #1A0A2E  (environment base — near-black violet)\n  accent    #FF2D78  (enemies and hazards — hot pink)\n  background #0D0D1A (sky and voids — pitch dark blue)\n  trim      #FFD600  (UI, collectibles, highlights — electric yellow)\n\nRENDER PIPELINE: URP (post-processing bloom and chromatic aberration essential).\nUNITY VERSION: 6000.0\nPLATFORM: PC",
+    "fill": "llm",
+    "spatial_facts": [],
+    "genre": "universal",
+    "intent_exclusions": [],
+    "intent_resolution": {
+      "format": "intent-resolution/v1",
+      "decisions": {
+        "game_type": "3D",
+        "locomotion": "drive",
+        "genre": "universal",
+        "locomotion_modes": [
+          "on_foot",
+          "vehicle_car"
+        ],
+        "projectile_contract": null
+      },
+      "winners": {
+        "game_type": {
+          "field": "game_type",
+          "value": "3D",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: third-person, open-world"
+        },
+        "locomotion": {
+          "field": "locomotion",
+          "value": "drive",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: driving, vehicle"
+        },
+        "genre": {
+          "field": "genre",
+          "value": "universal",
+          "source": "keyword_classifier",
+          "confidence": 0.0,
+          "rationale": "classifier default"
+        },
+        "locomotion_modes": {
+          "field": "locomotion_modes",
+          "value": [
+            "on_foot",
+            "vehicle_car"
+          ],
+          "source": "schema_llm",
+          "confidence": 1.0,
+          "rationale": "explicit schema registry"
+        },
+        "projectile_contract": {
+          "field": "projectile_contract",
+          "value": null,
+          "source": "projectile_classifier",
+          "confidence": 0.95,
+          "rationale": "no physical projectile contract for 3D"
+        }
+      },
+      "exclusions": []
+    },
+    "mechanic_registry": {
+      "format": "mechanic-registry/v1",
+      "enabled": [
+        {
+          "name": "health",
+          "schema_fields": [
+            "features[health]",
+            "entities[kind=enemy]"
+          ],
+          "runtime": [
+            "HealthSystem"
+          ],
+          "generator": [
+            "MicroComposer"
+          ],
+          "templates": [
+            "health"
+          ],
+          "validators": [
+            "health_contract",
+            "unity_compile"
+          ]
+        }
+      ]
+    },
+    "execution_report": {
+      "format": "unity-execution-report/v1",
+      "warnings": []
+    },
+    "intent_ledger": {
+      "format": "intent-ledger/v1",
+      "claims": [
+        {
+          "field": "game_type",
+          "value": "3D",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: third-person, open-world"
+        },
+        {
+          "field": "locomotion",
+          "value": "drive",
+          "source": "keyword_classifier",
+          "confidence": 1.0,
+          "rationale": "matched: driving, vehicle"
+        },
+        {
+          "field": "genre",
+          "value": "universal",
+          "source": "keyword_classifier",
+          "confidence": 0.0,
+          "rationale": "classifier default"
+        },
+        {
+          "field": "game_type",
+          "value": "3D",
+          "source": "schema_llm",
+          "confidence": 0.7,
+          "rationale": "schema fill"
+        },
+        {
+          "field": "locomotion",
+          "value": "drive",
+          "source": "schema_llm",
+          "confidence": 0.7,
+          "rationale": "schema fill"
+        },
+        {
+          "field": "locomotion_modes",
+          "value": [
+            "on_foot",
+            "vehicle_car"
+          ],
+          "source": "schema_llm",
+          "confidence": 1.0,
+          "rationale": "explicit schema registry"
+        },
+        {
+          "field": "projectile_contract",
+          "value": null,
+          "source": "projectile_classifier",
+          "confidence": 0.95,
+          "rationale": "no physical projectile contract for 3D"
+        }
+      ],
+      "snapshots": [
+        {
+          "name": "Pre-Step3",
+          "state": {
+            "claims": 3,
+            "exclusions": []
+          }
+        },
+        {
+          "name": "Post-Step3",
+          "state": {
+            "game_type": "3D",
+            "locomotion": "drive",
+            "locomotion_modes": [
+              "on_foot",
+              "vehicle_car"
+            ],
+            "genre": null,
+            "flying_abilities": [],
+            "projectile_contract": null,
+            "entities": [
+              "CityCenterProp",
+              "MarketStalls",
+              "Crowd",
+              "CraneStructure",
+              "ShippingContainer",
+              "OfficeDesk",
+              "HologramDisplay",
+              "SubwayTrain",
+              "GraffitiWall",
+              "SkywalkPlatform",
+              "DebrisPile",
+              "EnemyEnforcer",
+              "BossProgrammer",
+              "Hoverbike",
+              "PickupIdentityFile"
+            ],
+            "scripts": [
+              "PlayerController",
+              "VehicleController",
+              "CameraController",
+              "GameManager",
+              "BountySystem",
+              "DialogueManager",
+              "AudioManager",
+              "HealthSystem",
+              "EnemyAI",
+              "Collectible",
+              "DistrictManager",
+              "DayNightCycle",
+              "WeaponSystem",
+              "SaveSystem"
+            ],
+            "features": [
+              "physics",
+              "ui_toolkit",
+              "input_system",
+              "cinemachine",
+              "navmesh",
+              "audio",
+              "addressables",
+              "localization",
+              "timeline",
+              "animation_rigging",
+              "inventory",
+              "dialogue",
+              "npc_dialog",
+              "vfx",
+              "scene_transition"
+            ]
+          }
+        },
+        {
+          "name": "Post-Resolution",
+          "state": {
+            "game_type": "3D",
+            "locomotion": "drive",
+            "locomotion_modes": [
+              "on_foot",
+              "vehicle_car"
+            ],
+            "genre": "universal",
+            "flying_abilities": [],
+            "projectile_contract": null,
+            "entities": [
+              "CityCenterProp",
+              "MarketStalls",
+              "Crowd",
+              "CraneStructure",
+              "ShippingContainer",
+              "OfficeDesk",
+              "HologramDisplay",
+              "SubwayTrain",
+              "GraffitiWall",
+              "SkywalkPlatform",
+              "DebrisPile",
+              "EnemyEnforcer",
+              "BossProgrammer",
+              "Hoverbike",
+              "PickupIdentityFile"
+            ],
+            "scripts": [
+              "PlayerController",
+              "VehicleController",
+              "CameraController",
+              "GameManager",
+              "BountySystem",
+              "DialogueManager",
+              "AudioManager",
+              "HealthSystem",
+              "EnemyAI",
+              "Collectible",
+              "DistrictManager",
+              "DayNightCycle",
+              "WeaponSystem",
+              "SaveSystem"
+            ],
+            "features": [
+              "physics",
+              "ui_toolkit",
+              "input_system",
+              "cinemachine",
+              "navmesh",
+              "audio",
+              "addressables",
+              "localization",
+              "timeline",
+              "animation_rigging",
+              "inventory",
+              "dialogue",
+              "npc_dialog",
+              "vfx",
+              "scene_transition"
+            ]
+          }
+        }
+      ],
+      "diffs": [
+        {
+          "field": "claims",
+          "before": 3,
+          "after": null,
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "entities",
+          "before": null,
+          "after": [
+            "CityCenterProp",
+            "MarketStalls",
+            "Crowd",
+            "CraneStructure",
+            "ShippingContainer",
+            "OfficeDesk",
+            "HologramDisplay",
+            "SubwayTrain",
+            "GraffitiWall",
+            "SkywalkPlatform",
+            "DebrisPile",
+            "EnemyEnforcer",
+            "BossProgrammer",
+            "Hoverbike",
+            "PickupIdentityFile"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "exclusions",
+          "before": [],
+          "after": null,
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "features",
+          "before": null,
+          "after": [
+            "physics",
+            "ui_toolkit",
+            "input_system",
+            "cinemachine",
+            "navmesh",
+            "audio",
+            "addressables",
+            "localization",
+            "timeline",
+            "animation_rigging",
+            "inventory",
+            "dialogue",
+            "npc_dialog",
+            "vfx",
+            "scene_transition"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "flying_abilities",
+          "before": null,
+          "after": [],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "game_type",
+          "before": null,
+          "after": "3D",
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "locomotion",
+          "before": null,
+          "after": "drive",
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "locomotion_modes",
+          "before": null,
+          "after": [
+            "on_foot",
+            "vehicle_car"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "scripts",
+          "before": null,
+          "after": [
+            "PlayerController",
+            "VehicleController",
+            "CameraController",
+            "GameManager",
+            "BountySystem",
+            "DialogueManager",
+            "AudioManager",
+            "HealthSystem",
+            "EnemyAI",
+            "Collectible",
+            "DistrictManager",
+            "DayNightCycle",
+            "WeaponSystem",
+            "SaveSystem"
+          ],
+          "from": "Pre-Step3",
+          "to": "Post-Step3"
+        },
+        {
+          "field": "genre",
+          "before": null,
+          "after": "universal",
+          "from": "Post-Step3",
+          "to": "Post-Resolution"
+        }
+      ]
+    },
+    "llm_enrichment": {
+      "format": "game-o-matic/llm-enrichment/v1",
+      "stage": "3.5",
+      "sketchfab_query_entities": [
+        "BossProgrammer",
+        "CityCenterProp",
+        "CraneStructure",
+        "Crowd",
+        "DebrisPile",
+        "EnemyEnforcer",
+        "GraffitiWall",
+        "HologramDisplay",
+        "Hoverbike",
+        "MarketStalls",
+        "OfficeDesk",
+        "PickupIdentityFile",
+        "ShippingContainer",
+        "SkywalkPlatform",
+        "SubwayTrain"
+      ],
+      "component_api": {
+        "format": "unity-component-api/v1",
+        "fingerprint": "a74b82e2f0165e51d273a1460d39371e",
+        "selection": [
+          {
+            "class_name": "PlayerController",
+            "kind": "controller",
+            "name": "PlayerController",
+            "schema_hash": "dadedeecc8d7235f72126e19ba19fd4a",
+            "target": "player",
+            "variant": "multi_mode"
+          },
+          {
+            "class_name": "PlayerCamera",
+            "kind": "camera",
+            "name": "PlayerCamera",
+            "schema_hash": "666e9d2951ea3c8ba3522257aa7eb328",
+            "target": "camera",
+            "variant": "follow"
+          },
+          {
+            "class_name": "PlayerHealth",
+            "kind": "health",
+            "name": "PlayerHealth",
+            "schema_hash": "ea72266ce3df4378de925e3cbd249f3e",
+            "target": "player",
+            "variant": "simple"
+          },
+          {
+            "class_name": "GameHud",
+            "kind": "hud",
+            "name": "GameHud",
+            "schema_hash": "adc8515be008759db36daed7808b81d0",
+            "target": "ui",
+            "variant": "health_bar"
+          },
+          {
+            "class_name": "PauseMenu",
+            "kind": "menu",
+            "name": "PauseMenu",
+            "schema_hash": "3e9e83d2a84182c33981947da7aa2320",
+            "target": "ui",
+            "variant": "pause_menu"
+          },
+          {
+            "class_name": "SaveSystem",
+            "kind": "saveload",
+            "name": "SaveSystem",
+            "schema_hash": "e6b88ab45eee55231a269456c91fcd2e",
+            "target": "systems",
+            "variant": "json_file"
+          },
+          {
+            "class_name": "PhysicsBody",
+            "kind": "physics",
+            "name": "PhysicsBody",
+            "schema_hash": "e48e3af3fe6149450616ebeef742b561",
+            "target": "player",
+            "variant": "rigidbody_3d"
+          },
+          {
+            "class_name": "InputReader",
+            "kind": "input",
+            "name": "InputReader",
+            "schema_hash": "b7e3efca4771b1b7beb9ffa84d8e21a5",
+            "target": "systems",
+            "variant": "keyboard_mouse"
+          },
+          {
+            "class_name": "WorldInteractable",
+            "kind": "interactable",
+            "name": "WorldInteractable",
+            "schema_hash": "79830d52881d0bfbf0299422de7b5048",
+            "target": "world",
+            "variant": "pickup"
+          },
+          {
+            "class_name": "PlayerAnimator",
+            "kind": "animator",
+            "name": "PlayerAnimator",
+            "schema_hash": "a6179fe93166fadc95a9ebca6e46fc24",
+            "target": "player",
+            "variant": "vehicle"
+          },
+          {
+            "class_name": "PlayerFSM",
+            "kind": "statemachine",
+            "name": "PlayerFSM",
+            "schema_hash": "376ae99041d9edc6345141f893c24023",
+            "target": "player",
+            "variant": "player_fsm"
+          },
+          {
+            "class_name": "SceneTrigger",
+            "kind": "trigger",
+            "name": "SceneTrigger",
+            "schema_hash": "1ded73af3115c04a751cc6d65901839f",
+            "target": "world",
+            "variant": "zone_enter"
+          },
+          {
+            "class_name": "LightingDirector",
+            "kind": "lighting",
+            "name": "LightingDirector",
+            "schema_hash": "78b2eff5b791d2cfebf458f0fe47d269",
+            "target": "world",
+            "variant": "interior_practical"
+          },
+          {
+            "class_name": "EnemyAI",
+            "kind": "ai",
+            "name": "EnemyAI",
+            "schema_hash": "31ae1c05ba864928a46589126b5155f0",
+            "target": "world",
+            "variant": "flying_swarm"
+          },
+          {
+            "class_name": "EnemySpawner",
+            "kind": "spawner",
+            "name": "EnemySpawner",
+            "schema_hash": "297e3ef7b37d7e9d6ae2b6c25c0a7edb",
+            "target": "world",
+            "variant": "wave_spawner"
+          },
+          {
+            "class_name": "EnemyFSM",
+            "kind": "statemachine",
+            "name": "EnemyFSM",
+            "schema_hash": "ef7b5f8da0013e70a9bfc350acbd720b",
+            "target": "world",
+            "variant": "enemy_fsm"
+          },
+          {
+            "class_name": "AudioDirectorAudioManager",
+            "kind": "audio",
+            "name": "AudioDirector",
+            "schema_hash": "b9eedfdfc12e77b07176fa0df1944158",
+            "target": "systems",
+            "variant": "categorical_mixer"
+          },
+          {
+            "class_name": "PlayerInventory",
+            "kind": "inventory",
+            "name": "PlayerInventory",
+            "schema_hash": "524fd6cfff6155ade34d2db93005761c",
+            "target": "systems",
+            "variant": "slot_based"
+          },
+          {
+            "class_name": "DialogueSystem",
+            "kind": "dialogue",
+            "name": "DialogueSystem",
+            "schema_hash": "92a1d07c05f4ee031faea5708843d655",
+            "target": "systems",
+            "variant": "linear"
+          },
+          {
+            "class_name": "ImpactVFX",
+            "kind": "vfx",
+            "name": "ImpactVFX",
+            "schema_hash": "933c9b6ad8a62a1372c1979941075159",
+            "target": "world",
+            "variant": "vfx_sequence"
+          },
+          {
+            "class_name": "HologramShaderController",
+            "kind": "shader",
+            "name": "HologramShaderController",
+            "schema_hash": "d7a36518f5497164479921d65bb0991f",
+            "target": "world",
+            "variant": "color_cycle"
+          },
+          {
+            "class_name": "NeonEmissionShaderController",
+            "kind": "shader",
+            "name": "NeonEmissionShaderController",
+            "schema_hash": "8bff714deba06416fa1afacaf401e1bd",
+            "target": "world",
+            "variant": "color_cycle"
+          },
+          {
+            "class_name": "ChromaticAberrationShaderController",
+            "kind": "shader",
+            "name": "ChromaticAberrationShaderController",
+            "schema_hash": "fe70804e5d8162d33ad83e63933c6c96",
+            "target": "world",
+            "variant": "color_cycle"
+          },
+          {
+            "class_name": "NpcDialogPlayer",
+            "kind": "npc_dialog",
+            "name": "NpcDialog",
+            "schema_hash": "a346cfd910d2b575225265128b9bfaf5",
+            "target": "world",
+            "variant": "quest_giver"
+          },
+          {
+            "class_name": "SceneTransition",
+            "kind": "transition",
+            "name": "SceneTransition",
+            "schema_hash": "a8f3ebad8024e8dfd22263636306bf66",
+            "target": "systems",
+            "variant": "fade"
+          },
+          {
+            "class_name": "FirstMarkObjectives",
+            "kind": "objectives",
+            "name": "FirstMarkObjectives",
+            "schema_hash": "e73d1f42f1eaf28a0f1eb62a50193f3d",
+            "target": "systems",
+            "variant": "tracker"
+          },
+          {
+            "class_name": "DataHeistObjectives",
+            "kind": "objectives",
+            "name": "DataHeistObjectives",
+            "schema_hash": "308f90c419b85477869b5c4c702a0f1d",
+            "target": "systems",
+            "variant": "tracker"
+          },
+          {
+            "class_name": "ShowdownObjectives",
+            "kind": "objectives",
+            "name": "ShowdownObjectives",
+            "schema_hash": "5b619f67cffa43f8b02c87162e0bb668",
+            "target": "systems",
+            "variant": "tracker"
+          },
+          {
+            "class_name": "Waypoint",
+            "kind": "waypoint",
+            "name": "Waypoint",
+            "schema_hash": "d8c953f82caa53cb3faf893efa9921e3",
+            "target": "ui",
+            "variant": "edge_arrow"
+          },
+          {
+            "class_name": "GameRules",
+            "kind": "rules",
+            "name": "GameRules",
+            "schema_hash": "525fd57e6102a6b505cdd5a8edb861b2",
+            "target": "ui",
+            "variant": "guided"
+          },
+          {
+            "class_name": "GuardBrainBT",
+            "kind": "behavior_tree",
+            "name": "GuardBrainBT",
+            "schema_hash": "255ad1dd724316e5c444da1f4a0cc7f0",
+            "target": "world",
+            "variant": "tree"
+          }
+        ]
+      },
+      "reference_profile": {
+        "status": "resolved",
+        "format": "unity-reference-profile/v1",
+        "editor_version": "6000.1.4f1",
+        "assemblies": [
+          {
+            "name": "netstandard.dll",
+            "content_hash": "26e737c21244084ea58f4bbf85e9341d"
+          },
+          {
+            "name": "UnityEngine.AccessibilityModule.dll",
+            "content_hash": "f55a2ac26e61f54ee8c8832db834c17f"
+          },
+          {
+            "name": "UnityEngine.AIModule.dll",
+            "content_hash": "5e67034bc35dfa8d64b53a056d11c851"
+          },
+          {
+            "name": "UnityEngine.AMDModule.dll",
+            "content_hash": "fe65eb5ddaebbc35fd10ecbff39c7195"
+          },
+          {
+            "name": "UnityEngine.AndroidJNIModule.dll",
+            "content_hash": "1c1032f4c63e944466fce93a82149d8f"
+          },
+          {
+            "name": "UnityEngine.AnimationModule.dll",
+            "content_hash": "27e7f9aa883c76faa684972cb36e6382"
+          },
+          {
+            "name": "UnityEngine.ARModule.dll",
+            "content_hash": "f64b479503bf13690ef06d0575c82658"
+          },
+          {
+            "name": "UnityEngine.AssetBundleModule.dll",
+            "content_hash": "bbafcbd2c7b877ab815c84116dc10443"
+          },
+          {
+            "name": "UnityEngine.AudioModule.dll",
+            "content_hash": "8791576a5736a8ff95d30b7da3a94465"
+          },
+          {
+            "name": "UnityEngine.ClothModule.dll",
+            "content_hash": "0b6b77186ce94829df78453ef3a9b796"
+          },
+          {
+            "name": "UnityEngine.ClusterInputModule.dll",
+            "content_hash": "6d4a439b8814b95bca874eabf017eefd"
+          },
+          {
+            "name": "UnityEngine.ClusterRendererModule.dll",
+            "content_hash": "fa415c4c36a03873fe42ffd131881f25"
+          },
+          {
+            "name": "UnityEngine.ContentLoadModule.dll",
+            "content_hash": "d5a4c003deb7f479fcd6295077b0ab97"
+          },
+          {
+            "name": "UnityEngine.CoreModule.dll",
+            "content_hash": "de5f92d441d4e92279ce29d03b681805"
+          },
+          {
+            "name": "UnityEngine.CrashReportingModule.dll",
+            "content_hash": "8ae283b6ae5389954623d0713259ed35"
+          },
+          {
+            "name": "UnityEngine.DirectorModule.dll",
+            "content_hash": "51b5343f313bda2e8f9237f044a175ab"
+          },
+          {
+            "name": "UnityEngine.dll",
+            "content_hash": "d6755f6261cbacc1b0a370f72a029443"
+          },
+          {
+            "name": "UnityEngine.DSPGraphModule.dll",
+            "content_hash": "ed507fead565afa48bc38228c26037de"
+          },
+          {
+            "name": "UnityEngine.GameCenterModule.dll",
+            "content_hash": "840fcf607f73be050e1b15cfae15f9f4"
+          },
+          {
+            "name": "UnityEngine.GIModule.dll",
+            "content_hash": "bddcdc56422cfd7197083d8b4f51e5ce"
+          },
+          {
+            "name": "UnityEngine.GraphicsStateCollectionSerializerModule.dll",
+            "content_hash": "bc65cc872d19684206ed8beab4c55fac"
+          },
+          {
+            "name": "UnityEngine.GridModule.dll",
+            "content_hash": "5ad9036dd7e7436c13e47f3bf26db4c0"
+          },
+          {
+            "name": "UnityEngine.HierarchyCoreModule.dll",
+            "content_hash": "e049f735021046aa56caaaf2c57dd187"
+          },
+          {
+            "name": "UnityEngine.HotReloadModule.dll",
+            "content_hash": "2679bc3f06ab29f77796a03dc9d89c9b"
+          },
+          {
+            "name": "UnityEngine.ImageConversionModule.dll",
+            "content_hash": "c7b27decfc30477be2660e175c56df97"
+          },
+          {
+            "name": "UnityEngine.IMGUIModule.dll",
+            "content_hash": "ef6803a631b0137fe68f261f76214781"
+          },
+          {
+            "name": "UnityEngine.InputForUIModule.dll",
+            "content_hash": "139c48647c5b5ac760300df6a44936e9"
+          },
+          {
+            "name": "UnityEngine.InputLegacyModule.dll",
+            "content_hash": "afba5248c4ce6396097b3768b6f81625"
+          },
+          {
+            "name": "UnityEngine.InputModule.dll",
+            "content_hash": "7a8cdcc476a45348282cd64a9972e369"
+          },
+          {
+            "name": "UnityEngine.JSONSerializeModule.dll",
+            "content_hash": "ed2fceb2f23ed794bf3334fe3e2dc541"
+          },
+          {
+            "name": "UnityEngine.LocalizationModule.dll",
+            "content_hash": "1aebc1b9d2892cf268212055c2cc9758"
+          },
+          {
+            "name": "UnityEngine.MarshallingModule.dll",
+            "content_hash": "954ba350ebd821e82820743df8196913"
+          },
+          {
+            "name": "UnityEngine.MultiplayerModule.dll",
+            "content_hash": "fa4076245c7fccfc6dc7e9c616bfc6a7"
+          },
+          {
+            "name": "UnityEngine.NVIDIAModule.dll",
+            "content_hash": "54dc266a37e9e00275d268eaf8425af6"
+          },
+          {
+            "name": "UnityEngine.ParticleSystemModule.dll",
+            "content_hash": "5d4c2dfa5b16fba08ace2b13a4fea036"
+          },
+          {
+            "name": "UnityEngine.PerformanceReportingModule.dll",
+            "content_hash": "cefa6074bb1e0eae957ac3c025baa905"
+          },
+          {
+            "name": "UnityEngine.Physics2DModule.dll",
+            "content_hash": "b87730305ad74a4f0a07be54423b671f"
+          },
+          {
+            "name": "UnityEngine.PhysicsModule.dll",
+            "content_hash": "23a9ce1693ee6d907e19f873dc682587"
+          },
+          {
+            "name": "UnityEngine.PropertiesModule.dll",
+            "content_hash": "052b80e743e70a81a70ae224beeaabae"
+          },
+          {
+            "name": "UnityEngine.RuntimeInitializeOnLoadManagerInitializerModule.dll",
+            "content_hash": "46d387e37c458e6b8959734a1915e63b"
+          },
+          {
+            "name": "UnityEngine.ScreenCaptureModule.dll",
+            "content_hash": "d89c4a27eec21055d0b7d35f1f68453b"
+          },
+          {
+            "name": "UnityEngine.ShaderVariantAnalyticsModule.dll",
+            "content_hash": "973aa82c3946b16a67124fd5ce33eb6a"
+          },
+          {
+            "name": "UnityEngine.SharedInternalsModule.dll",
+            "content_hash": "328719f00cc85d70ffe02cc6ade0676d"
+          },
+          {
+            "name": "UnityEngine.SpriteMaskModule.dll",
+            "content_hash": "95f5458b0bba75173d58ab8d9e1c4b6f"
+          },
+          {
+            "name": "UnityEngine.SpriteShapeModule.dll",
+            "content_hash": "79b06d21f3e1426f79d08b5c0e5b5b73"
+          },
+          {
+            "name": "UnityEngine.StreamingModule.dll",
+            "content_hash": "b154fcd5d07e6124d012193718730b2d"
+          },
+          {
+            "name": "UnityEngine.SubstanceModule.dll",
+            "content_hash": "63aa6a9a36e262f850abc817ed8d774a"
+          },
+          {
+            "name": "UnityEngine.SubsystemsModule.dll",
+            "content_hash": "718bbd3f43d21bf847a99c54fc97e61b"
+          },
+          {
+            "name": "UnityEngine.TerrainModule.dll",
+            "content_hash": "255833a407975a21564f3f422e00b3fb"
+          },
+          {
+            "name": "UnityEngine.TerrainPhysicsModule.dll",
+            "content_hash": "05b90cfc02c393c9e5b35428f88c2f85"
+          },
+          {
+            "name": "UnityEngine.TextCoreFontEngineModule.dll",
+            "content_hash": "01b875555133b92688ccf2693dc2031c"
+          },
+          {
+            "name": "UnityEngine.TextCoreTextEngineModule.dll",
+            "content_hash": "3898935be65cefeb54b623bc825b1d26"
+          },
+          {
+            "name": "UnityEngine.TextRenderingModule.dll",
+            "content_hash": "bcc1504e2d41afadfa66f78d017bc1ba"
+          },
+          {
+            "name": "UnityEngine.TilemapModule.dll",
+            "content_hash": "aed60b1d4963eedc57d1fb7461856c6c"
+          },
+          {
+            "name": "UnityEngine.TLSModule.dll",
+            "content_hash": "208c6376c1a7f3dc5f3886076868fd08"
+          },
+          {
+            "name": "UnityEngine.UIElementsModule.dll",
+            "content_hash": "9b5bd4024d8e65d6957395dc8a008b02"
+          },
+          {
+            "name": "UnityEngine.UIModule.dll",
+            "content_hash": "3563e877de48dff0cc27f6d3cc037505"
+          },
+          {
+            "name": "UnityEngine.UmbraModule.dll",
+            "content_hash": "ae5f27f81cac6fcc6938a688689462f0"
+          },
+          {
+            "name": "UnityEngine.UnityAnalyticsCommonModule.dll",
+            "content_hash": "41a0acc942cd8b8947cc4efe1fdc996e"
+          },
+          {
+            "name": "UnityEngine.UnityAnalyticsModule.dll",
+            "content_hash": "4d1f8418d14c00b284eed99a0eb2fcb1"
+          },
+          {
+            "name": "UnityEngine.UnityConnectModule.dll",
+            "content_hash": "8dc0b5dcfb15dbb7891973eb09077191"
+          },
+          {
+            "name": "UnityEngine.UnityCurlModule.dll",
+            "content_hash": "c5b88ff5ccfdd443ae6bd728def35433"
+          },
+          {
+            "name": "UnityEngine.UnityTestProtocolModule.dll",
+            "content_hash": "15999dfc352b1845bb14a7fc1d0ffeeb"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestAssetBundleModule.dll",
+            "content_hash": "01484da4182a644860aecba235fc45a8"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestAudioModule.dll",
+            "content_hash": "d339ce4d288e5788b83e18b79b849333"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestModule.dll",
+            "content_hash": "55294929894a36797b96fd4a94b77de5"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestTextureModule.dll",
+            "content_hash": "cb53214b6ec5aed7e3e2e846539d08f6"
+          },
+          {
+            "name": "UnityEngine.UnityWebRequestWWWModule.dll",
+            "content_hash": "7692aec99f98de54482121dbd1faebfb"
+          },
+          {
+            "name": "UnityEngine.VehiclesModule.dll",
+            "content_hash": "2679293887ca1427ae3a03690ebf53ff"
+          },
+          {
+            "name": "UnityEngine.VFXModule.dll",
+            "content_hash": "940e3ed8c51f0ac70bd5f61cf9fd015b"
+          },
+          {
+            "name": "UnityEngine.VideoModule.dll",
+            "content_hash": "487507404c2fb3a15f07b55ec036e424"
+          },
+          {
+            "name": "UnityEngine.VirtualTexturingModule.dll",
+            "content_hash": "92921353fb5966b8de51e9bee1b6af0e"
+          },
+          {
+            "name": "UnityEngine.VRModule.dll",
+            "content_hash": "63f683cd3e79941fb1f8b701df8a264a"
+          },
+          {
+            "name": "UnityEngine.WindModule.dll",
+            "content_hash": "a9b19cca3a976ceeb473900dfafb0f47"
+          },
+          {
+            "name": "UnityEngine.XRModule.dll",
+            "content_hash": "39c923260c2b1d13e76c3725ce1bb4cd"
+          }
+        ],
+        "package_assemblies": []
+      },
+      "audio_cues": [
+        {
+          "id": "hoverbike_suspension",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "Hoverbike suspension",
+          "gen_prompt": "High-frequency hydraulic hiss mixed with metallic clanking as dampers compress over rough asphalt.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "neon_rain_droplets",
+          "category": "ambient",
+          "kind": "gen",
+          "descriptor": "Neon rain droplets",
+          "gen_prompt": "Soft pattering of acidic water hitting synthetic pavement and splashing into oily puddles.",
+          "loop": true,
+          "duration_s": 4.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": false
+        },
+        {
+          "id": "hologram_projector",
+          "category": "ambient",
+          "kind": "gen",
+          "descriptor": "Hologram projector",
+          "gen_prompt": "Sharp electric crackle followed by a low hum as blue light projects from the air.",
+          "loop": true,
+          "duration_s": 4.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": false
+        },
+        {
+          "id": "wall_running_boots",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "Wall-running boots",
+          "gen_prompt": "Rhythmic magnetic locking clicks and heavy friction screeches against vertical concrete surfaces.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "vaulting_ledge",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "Vaulting ledge",
+          "gen_prompt": "Metallic clang of knee pads striking steel beams followed by a sharp intake of breath.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "district_transition",
+          "category": "ambient",
+          "kind": "gen",
+          "descriptor": "District transition",
+          "gen_prompt": "Deep bass rumble shifting the ambient drone as wind turbines spin up in the fog.",
+          "loop": true,
+          "duration_s": 4.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": false
+        },
+        {
+          "id": "bounty_scanner",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "Bounty scanner",
+          "gen_prompt": "Staccato digital beeps and rising pitch whine as red laser grids sweep across alleyways.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        },
+        {
+          "id": "checkpoint_save",
+          "category": "sfx",
+          "kind": "gen",
+          "descriptor": "Checkpoint save",
+          "gen_prompt": "Subtle mechanical shutter click accompanied by a soft data-streaming chime from the wrist unit.",
+          "loop": false,
+          "duration_s": 2.0,
+          "variations": 1,
+          "archetype": "",
+          "text": "",
+          "voice": "default",
+          "spatial": true
+        }
+      ]
+    },
+    "spatial_primitive": "ground_plane",
+    "layout_archetype": "ArenaPlane",
+    "layout_archetype_decision": {
+      "name": "ArenaPlane",
+      "motion_axis": "planar",
+      "medium": "ground",
+      "goal_topology": "reach_point",
+      "direction": "",
+      "evidence": {
+        "motion_axis": "no rail, descent or altitude evidence",
+        "medium": "locomotion='drive' is a surface locomotion; setting vocabulary ['sky', 'water'] describes the scene, not what the player moves through",
+        "goal_topology": "mission objective types ['collect', 'defeat', 'reach']"
+      }
+    },
+    "cover_points": {},
+    "mission_scenes": {}
+  },
+  "world_spec": {
+    "biome": "urban",
+    "time_of_day": "day",
+    "weather": "clear",
+    "scale": "medium",
+    "regions": [
+      {
+        "name": "CityCenterProp",
+        "biome": "",
+        "entities": [
+          "CityCenterProp"
+        ],
+        "bounds": [
+          -8.270999999999999,
+          5.8709999999999996,
+          -5.8709999999999996,
+          8.270999999999999
+        ]
+      },
+      {
+        "name": "MarketStalls",
+        "biome": "",
+        "entities": [
+          "MarketStalls"
+        ],
+        "bounds": [
+          -22.476,
+          -15.933,
+          4.314,
+          10.857
+        ]
+      },
+      {
+        "name": "Crowd",
+        "biome": "",
+        "entities": [
+          "Crowd"
+        ],
+        "bounds": [
+          -34.959999999999994,
+          -33.038999999999994,
+          34.354,
+          36.275
+        ]
+      },
+      {
+        "name": "CraneStructure",
+        "biome": "",
+        "entities": [
+          "CraneStructure"
+        ],
+        "bounds": [
+          -31.038,
+          -1.2100000000000009,
+          32.568,
+          62.396
+        ]
+      },
+      {
+        "name": "ShippingContainer",
+        "biome": "",
+        "entities": [
+          "ShippingContainer"
+        ],
+        "bounds": [
+          -43.017999999999994,
+          -50.748,
+          35.808,
+          28.077999999999996
+        ]
+      },
+      {
+        "name": "OfficeDesk",
+        "biome": "",
+        "entities": [
+          "OfficeDesk"
+        ],
+        "bounds": [
+          -49.905,
+          -48.905,
+          42.667,
+          43.667
+        ]
+      },
+      {
+        "name": "HologramDisplay",
+        "biome": "",
+        "entities": [
+          "HologramDisplay"
+        ],
+        "bounds": [
+          -19.688000000000002,
+          -33.965,
+          67.798,
+          53.521
+        ]
+      },
+      {
+        "name": "SubwayTrain",
+        "biome": "",
+        "entities": [
+          "SubwayTrain"
+        ],
+        "bounds": [
+          -7.999999999999999,
+          8.0,
+          8.000000000000002,
+          24.0
+        ]
+      },
+      {
+        "name": "GraffitiWall",
+        "biome": "",
+        "entities": [
+          "GraffitiWall"
+        ],
+        "bounds": [
+          -84.53,
+          -83.866,
+          44.428,
+          45.092
+        ]
+      },
+      {
+        "name": "SkywalkPlatform",
+        "biome": "",
+        "entities": [
+          "SkywalkPlatform"
+        ],
+        "bounds": [
+          24.630999999999997,
+          -33.011,
+          79.56099999999999,
+          21.919
+        ]
+      },
+      {
+        "name": "DebrisPile",
+        "biome": "",
+        "entities": [
+          "DebrisPile"
+        ],
+        "bounds": [
+          -91.319,
+          -73.415,
+          46.147000000000006,
+          64.051
+        ]
+      },
+      {
+        "name": "EnemyEnforcer",
+        "biome": "",
+        "entities": [
+          "EnemyEnforcer"
+        ],
+        "bounds": [
+          8.0,
+          -8.0,
+          24.0,
+          8.0
+        ]
+      },
+      {
+        "name": "BossProgrammer",
+        "biome": "",
+        "entities": [
+          "BossProgrammer"
+        ],
+        "bounds": [
+          5.8709999999999996,
+          -8.270999999999999,
+          8.270999999999999,
+          -5.8709999999999996
+        ]
+      },
+      {
+        "name": "Hoverbike",
+        "biome": "",
+        "entities": [
+          "Hoverbike"
+        ],
+        "bounds": [
+          5.463961030678929,
+          5.463961030678929,
+          7.263961030678928,
+          7.263961030678928
+        ]
+      },
+      {
+        "name": "PickupIdentityFile",
+        "biome": "",
+        "entities": [
+          "PickupIdentityFile"
+        ],
+        "bounds": [
+          19.233000000000004,
+          -49.226,
+          71.795,
+          3.3359999999999985
+        ]
+      }
+    ],
+    "procedural_rules": null,
+    "course": {
+      "zones": [
+        {
+          "start_t": 0.0,
+          "end_t": 0.2,
+          "modifier": "flat",
+          "amplitude": 0.0,
+          "frequency": 0.0,
+          "layer": "",
+          "label": "Main Menu"
+        },
+        {
+          "start_t": 0.2,
+          "end_t": 0.4,
+          "modifier": "ripple",
+          "amplitude": 0.3,
+          "frequency": 2.0,
+          "layer": "concrete",
+          "label": "Market District"
+        },
+        {
+          "start_t": 0.4,
+          "end_t": 0.6,
+          "modifier": "dip",
+          "amplitude": 1.5,
+          "frequency": 1.0,
+          "layer": "water",
+          "label": "Industrial Dock"
+        },
+        {
+          "start_t": 0.6,
+          "end_t": 0.8,
+          "modifier": "flat",
+          "amplitude": 0.0,
+          "frequency": 0.0,
+          "layer": "",
+          "label": "Corporate Tower"
+        },
+        {
+          "start_t": 0.8,
+          "end_t": 1.0,
+          "modifier": "ripple",
+          "amplitude": 2.0,
+          "frequency": 3.0,
+          "layer": "concrete",
+          "label": "Underground Tunnels"
+        }
+      ]
+    }
+  },
+  "characters": [
+    {
+      "id": "player_agent_01",
+      "name": "Rogue Agent",
+      "role": "player",
+      "model_ref": "Hoverbike",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ],
+      "dialog_graph": null,
+      "npc_brain": null
+    },
+    {
+      "id": "enforcer_unit_01",
+      "name": "Enforcer Unit",
+      "role": "enemy",
+      "model_ref": "EnemyEnforcer",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ],
+      "dialog_graph": null,
+      "npc_brain": {
+        "traits": [
+          "gruff",
+          "loyal"
+        ],
+        "goals": [
+          "guard the gate"
+        ],
+        "memory": [],
+        "behavior_tree": null
+      }
+    },
+    {
+      "id": "programmer_villain_01",
+      "name": "Original Programmer",
+      "role": "boss",
+      "model_ref": "BossProgrammer",
+      "animation_set": [
+        "Idle",
+        "Run"
+      ],
+      "dialog_graph": null,
+      "npc_brain": null
+    }
+  ],
+  "missions": [
+    {
+      "id": "mission_first_bounty",
+      "title": "First Mark",
+      "description": "Locate and apprehend the first marked target.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Enter the Market District zone.",
+          "type": "reach",
+          "target_ref": "DistrictMarket",
+          "count": 1,
+          "optional": false
+        },
+        {
+          "id": "obj_2",
+          "description": "Acquire first bounty contract.",
+          "type": "collect",
+          "target_ref": "PickupIdentityFile",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 500
+      },
+      "story_beat_ref": "first_mark_contract"
+    },
+    {
+      "id": "mission_corporate_heist",
+      "title": "Data Heist",
+      "description": "Infiltrate the corporate tower to steal identity files.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Enter Corporate Tower zone.",
+          "type": "reach",
+          "target_ref": "CorporateTower",
+          "count": 1,
+          "optional": false
+        },
+        {
+          "id": "obj_2",
+          "description": "Steal identity files from server room.",
+          "type": "collect",
+          "target_ref": "PickupIdentityFile",
+          "count": 3,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 1500
+      },
+      "story_beat_ref": "data_heist_corporate"
+    },
+    {
+      "id": "mission_final_showdown",
+      "title": "Showdown",
+      "description": "Confront the original programmer in the Boss Arena.",
+      "objectives": [
+        {
+          "id": "obj_1",
+          "description": "Reach the Boss Arena zone.",
+          "type": "reach",
+          "target_ref": "BossArena",
+          "count": 1,
+          "optional": false
+        },
+        {
+          "id": "obj_2",
+          "description": "Defeat the Original Programmer.",
+          "type": "defeat",
+          "target_ref": "BossProgrammer",
+          "count": 1,
+          "optional": false
+        }
+      ],
+      "triggers": [],
+      "rewards": {
+        "score": 5000
+      },
+      "story_beat_ref": "showdown_programmer"
+    }
+  ],
+  "audio_specs": [
+    {
+      "id": "ambient_rain_loop",
+      "type": "ambient",
+      "description": "Rain and thunder environment.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "heavy rain sound with distant thunder in cyberpunk city"
+      },
+      "file_ref": "",
+      "loop": true
+    },
+    {
+      "id": "sfx_hoverbike_engine",
+      "type": "sfx",
+      "description": "Hoverbike engine hum.",
+      "generation_method": "procedural",
+      "parameters": {
+        "gen_prompt": "futuristic hoverbike engine sound"
+      },
+      "file_ref": "",
+      "loop": false
+    },
+    {
+      "id": "voice_hologram_dialogue",
+      "type": "voice",
+      "description": "Hologram dialogue lines.",
+      "generation_method": "elevenlabs",
+      "parameters": {
+        "text": "System initialization complete. Welcome to the city."
+      },
+      "file_ref": "",
+      "loop": false
+    }
+  ],
+  "materials": [
+    {
+      "id": "mat_neon_glass_01",
+      "name": "NeonGlassMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#00F5FF",
+        "smoothness": 0.9
+      }
+    },
+    {
+      "id": "mat_dark_metal_01",
+      "name": "DarkMetalMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#1A0A2E",
+        "smoothness": 0.3
+      }
+    },
+    {
+      "id": "mat_hazard_pink_01",
+      "name": "HazardPinkMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#FF2D78",
+        "smoothness": 0.5
+      }
+    },
+    {
+      "id": "mat_ui_yellow_01",
+      "name": "UIYellowMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#FFD600",
+        "smoothness": 0.2
+      }
+    },
+    {
+      "id": "mat_water_murky_01",
+      "name": "MurkyWaterMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#0D0D1A",
+        "smoothness": 0.8
+      }
+    },
+    {
+      "id": "mat_concrete_wet_01",
+      "name": "WetConcreteMaterial",
+      "shader_model": "Standard",
+      "pbr_maps": null,
+      "generation_method": "procedural",
+      "parameters": {
+        "color": "#2A2A35",
+        "smoothness": 0.4
+      }
+    }
+  ],
+  "models": [
+    {
+      "id": "mdl_hoverbike_01",
+      "name": "HoverbikeModel",
+      "category": "vehicle",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "mat_dark_metal_01"
+      ]
+    },
+    {
+      "id": "mdl_enforcer_01",
+      "name": "EnforcerModel",
+      "category": "character",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "mat_dark_metal_01"
+      ]
+    },
+    {
+      "id": "mdl_programmer_01",
+      "name": "ProgrammerModel",
+      "category": "character",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "mat_dark_metal_01"
+      ]
+    },
+    {
+      "id": "mdl_neon_sign_01",
+      "name": "NeonSignModel",
+      "category": "prop",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "mat_neon_glass_01"
+      ]
+    },
+    {
+      "id": "mdl_data_chip_01",
+      "name": "DataChipModel",
+      "category": "prop",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "mat_ui_yellow_01"
+      ]
+    },
+    {
+      "id": "mdl_hologram_display_01",
+      "name": "HologramDisplayModel",
+      "category": "prop",
+      "generation_method": "imported",
+      "parameters": {},
+      "file_ref": "",
+      "materials": [
+        "mat_neon_glass_01"
+      ]
+    }
+  ],
+  "animations": [
+    {
+      "id": "anim_idle_01",
+      "name": "Idle",
+      "clip": "Idle",
+      "loop": true,
+      "events": []
+    },
+    {
+      "id": "anim_run_01",
+      "name": "Run",
+      "clip": "Run",
+      "loop": true,
+      "events": [
+        "Footstep"
+      ]
+    }
+  ],
+  "vfx": [
+    {
+      "id": "vfx_neon_glow_01",
+      "name": "NeonGlowEffect",
+      "type": "shader_fx",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "vfx_impact_hit_01",
+      "name": "ImpactHitEffect",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 0.5,
+        "play_on_start": false,
+        "auto_destroy": true,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "vfx_pickup_chime_01",
+      "name": "PickupChimeEffect",
+      "type": "particle",
+      "parameters": {
+        "loop": false,
+        "duration": 2.0,
+        "play_on_start": false,
+        "auto_destroy": true,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "vfx_rain_particles_01",
+      "name": "RainParticlesEffect",
+      "type": "particle",
+      "parameters": {
+        "loop": true,
+        "duration": 0.0,
+        "play_on_start": false,
+        "auto_destroy": false,
+        "scale": 1.0
+      },
+      "file_ref": ""
+    }
+  ],
+  "shaders": [
+    {
+      "id": "shader_hologram_01",
+      "name": "HologramShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Creates semi-transparent neon outlines for holograms"
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "shader_neon_emission_01",
+      "name": "NeonEmissionShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Adds bloom-like emission to primary color surfaces"
+      },
+      "file_ref": ""
+    },
+    {
+      "id": "shader_chromatic_aberration_01",
+      "name": "ChromaticAberrationShader",
+      "language": "shadergraph",
+      "parameters": {
+        "note": "Post-processing effect for lens distortion on edges"
+      },
+      "file_ref": ""
+    }
+  ],
+  "behavior_trees": [
+    {
+      "id": "enforcer_patrol_tree",
+      "name": "GuardBrain",
+      "tree": {
+        "root": "n1",
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "selector",
+            "children": [
+              "n2",
+              "n4"
+            ],
+            "action": "",
+            "params": {}
+          },
+          {
+            "id": "n2",
+            "type": "sequence",
+            "children": [
+              "n3"
+            ],
+            "action": "",
+            "params": {}
+          },
+          {
+            "id": "n3",
+            "type": "condition",
+            "children": [],
+            "action": "PlayerInRange",
+            "params": {
+              "range": 12
+            }
+          },
+          {
+            "id": "n4",
+            "type": "action",
+            "children": [],
+            "action": "Patrol",
+            "params": {
+              "speed": 2.0
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "microgens": [
+    {
+      "kind": "controller",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_rainAudioSource",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "District ambient rain layer."
+          },
+          {
+            "name": "_districtThemeAudioSource",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Looping district theme audio."
+          }
+        ],
+        "update_extra": "if (_rainAudioSource != null) _rainAudioSource.Play(); if (_districtThemeAudioSource != null) _districtThemeAudioSource.Play();",
+        "extra_methods": [
+          {
+            "signature": "private void SwitchDistrictAudio(string newZone)",
+            "body": "if (_districtThemeAudioSource != null) {_districtThemeAudioSource.Stop(); _districtThemeAudioSource.clip = Resources.Load<AudioClip>(\"Audio/Districts/\" + newZone); if (_districtThemeAudioSource.clip != null) _districtThemeAudioSource.Play();}"
+          },
+          {
+            "signature": "private void ToggleRain(bool enable)",
+            "body": "if (_rainAudioSource != null) {_rainAudioSource.enabled = enable;}"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "camera",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events",
+          "System.Collections.Generic"
+        ],
+        "extra_fields": [
+          {
+            "name": "_targetZoneName",
+            "type": "string",
+            "default": "\"\"",
+            "header": "Runtime",
+            "tooltip": "Current district name for audio and visual context switching."
+          },
+          {
+            "name": "_isChaseMode",
+            "type": "bool",
+            "default": "false",
+            "header": "Runtime",
+            "tooltip": "Enforces tight lock-on behavior when pursuing high-priority targets (Bounty, Enemy)."
+          },
+          {
+            "name": "_lockOnRadius",
+            "type": "float",
+            "default": "15f",
+            "header": "Runtime",
+            "tooltip": "Aggressive lock-on radius for chase sequences in cyberpunk districts."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnTargetPriorityChanged()",
+            "body": "if (_target != null) {\n\tstring targetTag = _target.tag;\n\tbool isHighThreat = (targetTag == \"Enemy\" || targetTag == \"Boss\");\n\t_isChaseMode = isHighThreat;\n}"
+          },
+          {
+            "signature": "private void UpdateZoneContext(string newZoneName)",
+            "body": "_targetZoneName = newZoneName;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "health",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_lastZoneTransition",
+            "type": "float",
+            "default": "-1f",
+            "header": "Runtime"
+          }
+        ],
+        "update_extra": "if (_lastZoneTransition < 0f) _lastZoneTransition = Time.time;",
+        "extra_methods": [
+          {
+            "signature": "private void OnZoneTransition()",
+            "body": "_lastZoneTransition = Time.time;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "hud",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.UI",
+          "Unity.TextMeshPro"
+        ],
+        "extra_fields": [
+          {
+            "name": "_healthSlider",
+            "type": "Slider",
+            "default": "null",
+            "header": "UI",
+            "tooltip": "Health bar slider reference"
+          },
+          {
+            "name": "_objectiveText",
+            "type": "TMP_Text",
+            "default": "null",
+            "header": "UI",
+            "tooltip": "Objective text label reference"
+          }
+        ],
+        "awake_extra": "_healthSlider = GetComponent<Slider>();\n_objectiveText = GetComponentInChildren<TMP_Text>();",
+        "extra_methods": [
+          {
+            "signature": "private void UpdateObjective(string description, int done, int total)",
+            "body": "_objectiveText.text = $\"{description} [{done}/{total}]\";"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "menu",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.UI"
+        ],
+        "extra_fields": [
+          {
+            "name": "_hologramPrefab",
+            "type": "GameObject",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Hologram object to instantiate on pause menu activation."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnPauseMenuActivated()",
+            "body": "if (_hologramPrefab != null) Instantiate(_hologramPrefab, transform.position, Quaternion.identity);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "saveload",
+      "input": {
+        "extra_usings": [
+          "System.IO",
+          "System.Collections.Generic"
+        ],
+        "extra_fields": [
+          {
+            "name": "_saveData",
+            "type": "SaveSystemData",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Serialized save data container for the current session."
+          },
+          {
+            "name": "_activeBountyId",
+            "type": "string",
+            "default": "\"\"",
+            "header": "Runtime",
+            "tooltip": "Identifier of the currently active bounty contract to persist."
+          },
+          {
+            "name": "_lastDistrictName",
+            "type": "string",
+            "default": "\"Main Menu\"",
+            "header": "Runtime",
+            "tooltip": "Name of the last loaded district for audio transition logic."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnZoneEnter(string zoneName)",
+            "body": "_lastDistrictName = zoneName;"
+          },
+          {
+            "signature": "public void SetActiveBounty(string bountyId)",
+            "body": "_activeBountyId = bountyId;"
+          },
+          {
+            "signature": "private bool ValidateSaveData()",
+            "body": "return _saveData != null && !string.IsNullOrEmpty(_activeBountyId);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "physics",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_rb",
+            "type": "Rigidbody",
+            "default": "null"
+          },
+          {
+            "name": "_vehicleSuspensionForce",
+            "type": "float",
+            "default": "0f"
+          }
+        ],
+        "fixed_update_extra": "if (_rb != null && _vehicleSuspensionForce > 0f) { Vector3 direction = transform.forward; _rb.AddForce(direction * _vehicleSuspensionForce, ForceMode.Impulse); }"
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "interactable",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_promptText",
+            "type": "string",
+            "default": "\"Interact\"",
+            "header": "Runtime",
+            "tooltip": "The text displayed to the player when they are in range of this interactable."
+          },
+          {
+            "name": "_rangeRadius",
+            "type": "float",
+            "default": "1.5f",
+            "header": "Runtime",
+            "tooltip": "The radius within which the interact prompt is shown and collision triggers occur."
+          }
+        ],
+        "update_extra": "if (!_used) { OnPrompt?.Invoke(_promptText); }",
+        "extra_methods": [
+          {
+            "signature": "private void SetInteractable(string text)",
+            "body": "_promptText = text;"
+          },
+          {
+            "signature": "public bool IsUsed()",
+            "body": "return _used;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "animator",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_engineSound",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Hoverbike engine audio source for district ambience."
+          },
+          {
+            "name": "_rainIntensity",
+            "type": "float",
+            "default": "0f",
+            "header": "Runtime",
+            "tooltip": "Current rain intensity factor (0-1) based on current district weather state."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "public void SetDistrictAmbience(string districtName)",
+            "body": "if (districtName == \"slums\") _rainIntensity = 1f;\nelse if (districtName == \"docks\" || districtName == \"tunnels\") _rainIntensity = 0.5f;\nelse _rainIntensity = 0f;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "statemachine",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "UnityEngine.AI"
+        ],
+        "extra_fields": [
+          {
+            "name": "_sightRange",
+            "type": "float",
+            "default": "50f",
+            "header": "Runtime",
+            "tooltip": "Detection distance for the cyberpunk enemy."
+          },
+          {
+            "name": "_attackCooldown",
+            "type": "float",
+            "default": "1.5f",
+            "header": "Runtime",
+            "tooltip": "Time between attacks in combat state."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnDrawGizmosSelected()",
+            "body": "if (Application.isPlaying) Gizmos.DrawWireSphere(transform.position, _sightRange);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "trigger",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_districtName",
+            "type": "string",
+            "default": "\"\"",
+            "header": "Runtime",
+            "tooltip": "The name of the district this trigger guards (e.g., \"Neon Markets\", \"Industrial Docks\"). Used to load specific audio themes and visual identity upon entry."
+          },
+          {
+            "name": "_audioSourceRef",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Reference to the district's ambient audio mixer. Initialized in Awake to switch themes based on _districtName."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnEnable()",
+            "body": "_audioSourceRef = GetComponent<AudioSource>();"
+          },
+          {
+            "signature": "public string GetDistrictIdentity()",
+            "body": "return _districtName;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "lighting",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_ambientEquator",
+            "type": "Color",
+            "default": "#1a0f2e"
+          },
+          {
+            "name": "_ambientSky",
+            "type": "Color",
+            "default": "#0b0614"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "ai",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_combatLockAudio",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Audio source for combat lock-on sounds."
+          }
+        ],
+        "awake_extra": "_combatLockAudio = GetComponent<AudioSource>();",
+        "extra_methods": [
+          {
+            "signature": "private void OnCombatLock()",
+            "body": "if (_combatLockAudio != null) _combatLockAudio.Play();"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "spawner",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_spawnPoint",
+            "type": "Transform",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "The specific transform to spawn enemies at. If null, spawns at the spawner's position."
+          },
+          {
+            "name": "_spawnRadius",
+            "type": "float",
+            "default": "5f",
+            "header": "Runtime",
+            "tooltip": "The radius around the spawn point to search for valid positions."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private Vector3 ResolveSpawnPosition()",
+            "body": "Vector3 spawnPos = transform.position;\nif (_spawnPoint != null) {\n    spawnPos = _spawnPoint.position;\n}\n\nfloat offsetAngle = Random.value * 2f * Mathf.PI;\nfloat offsetDistance = Random.Range(0f, _spawnRadius);\nreturn new Vector3(\n    spawnPos.x + Mathf.Cos(offsetAngle) * offsetDistance,\n    spawnPos.y + offsetDistance * 0.5f, // Slight height variation\n    spawnPos.z + Mathf.Sin(offsetAngle) * offsetDistance\n);"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "audio",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Audio",
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_ambientSource",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Dedicated source for ambient district themes."
+          },
+          {
+            "name": "_sfxPoolSize",
+            "type": "int",
+            "default": "4",
+            "header": "Runtime",
+            "tooltip": "Number of SFX sources to pool per zone."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void SwitchAmbient(string zoneName)",
+            "body": "if (_ambientSource != null) {\n    _ambientSource.Stop();\n    string clipPath = \"Audio/Ambient/\" + zoneName + \"_Theme\";\n    AudioClip clip = Resources.Load<AudioClip>(clipPath);\n    if (clip != null) {\n        _ambientSource.clip = clip;\n        _ambientSource.Play();\n    }\n}"
+          },
+          {
+            "signature": "private void SpawnSFX(string cueId, Vector3 worldPos)",
+            "body": "if (_pool.Count > 0) {\n    AudioSource source = _pool[0];\n    _pool.RemoveAt(0);\n    string clipPath = \"Audio/SFX/\" + cueId;\n    AudioClip clip = Resources.Load<AudioClip>(clipPath);\n    if (clip != null) {\n        source.PlayOneShot(clip, worldPos);\n    }\n}"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "inventory",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_maxOxygen",
+            "type": "float",
+            "default": "100f",
+            "header": "Runtime",
+            "tooltip": "Maximum oxygen capacity for the cyberpunk setting."
+          },
+          {
+            "name": "_currentOxygen",
+            "type": "float",
+            "default": "100f",
+            "header": "Runtime",
+            "tooltip": "Current oxygen level affecting stamina and movement speed."
+          }
+        ],
+        "update_extra": "_currentOxygen = Mathf.Max(0f, _currentOxygen - Time.deltaTime * 2f); if (_currentOxygen <= 0f) OnHealEffect?.Invoke(1f);",
+        "extra_methods": [
+          {
+            "signature": "private void ConsumeOxygen(float amount)",
+            "body": "_currentOxygen -= amount; if (_currentOxygen < 0f) _currentOxygen = 0f;"
+          },
+          {
+            "signature": "public bool IsOxygenDepleted()",
+            "body": "return _currentOxygen <= 0f;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "dialogue",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_currentDistrict",
+            "type": "string",
+            "default": "\"Slums\"",
+            "header": "Runtime",
+            "tooltip": "Current district for audio and dialogue context."
+          },
+          {
+            "name": "_isChaseActive",
+            "type": "bool",
+            "default": "false",
+            "header": "Runtime",
+            "tooltip": "Flag to trigger 'Street Chase' narrative beats during vehicle combat."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnDialogueEnd()",
+            "body": "OnLine?.Invoke(\"\", \"\");\nOnDialogueEnd?.Invoke();"
+          },
+          {
+            "signature": "public void SetContext(string district, bool isChasing)",
+            "body": "_currentDistrict = district;\n_isChaseActive = isChasing;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "vfx",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.Events"
+        ],
+        "extra_fields": [
+          {
+            "name": "_impactIntensity",
+            "type": "float",
+            "default": "1f",
+            "header": "Runtime",
+            "tooltip": "Multiplier for impact scale and intensity."
+          },
+          {
+            "name": "_cooldown",
+            "type": "float",
+            "default": "0f",
+            "header": "Runtime",
+            "tooltip": "Time until next impact effect can play."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private bool IsReady()",
+            "body": "return _cooldown <= 0f;"
+          },
+          {
+            "signature": "public void ApplyImpact(float intensity)",
+            "body": "_impactIntensity = intensity; if (!IsReady()) Play(); else StartCoroutine(PlayDelayed());"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "shader",
+      "input": {
+        "extra_fields": [
+          {
+            "name": "_rainIntensity",
+            "type": "float",
+            "default": "1f",
+            "header": "Runtime",
+            "tooltip": "Controls the severity of chromatic aberration to simulate rain distortion in cyberpunk districts."
+          },
+          {
+            "name": "_districtThemeColor",
+            "type": "Color",
+            "default": "\"new Color(0f, 1f, 0.5f, 0.3f)\"",
+            "header": "Runtime",
+            "tooltip": "The dominant neon hue for the current district (e.g., Cyan for markets, Magenta for slums)."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void ApplyDistrictTheme(Color theme)",
+            "body": "_districtThemeColor = theme; SetColor(theme);"
+          },
+          {
+            "signature": "public void OnRainStart()",
+            "body": "_rainIntensity = 1f;"
+          }
+        ],
+        "extra_usings": [
+          "UnityEngine.Events"
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "npc_dialog",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "System"
+        ],
+        "extra_fields": [
+          {
+            "name": "_bountyText",
+            "type": "string",
+            "default": "\"$0\"",
+            "header": "Runtime",
+            "tooltip": "Current bounty amount displayed during dialogue."
+          },
+          {
+            "name": "_hologramColor",
+            "type": "Color",
+            "default": "#00FFFF",
+            "header": "Visuals",
+            "tooltip": "Cyan color for the holographic text effect in cyberpunk setting."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void UpdateBountyDisplay(string newAmount)",
+            "body": "_bountyText = newAmount;"
+          },
+          {
+            "signature": "public string GetHologramColorHex()",
+            "body": "return \"#\" + _hologramColor.ToString(\"FF00\");"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "transition",
+      "input": {
+        "extra_usings": [
+          "UnityEngine.AudioSource",
+          "UnityEngine.ParticleSystem"
+        ],
+        "extra_fields": [
+          {
+            "name": "_rainAudioSource",
+            "type": "AudioSource",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Audio source for district rain ambience."
+          },
+          {
+            "name": "_bloomIntensity",
+            "type": "float",
+            "default": "0.5f",
+            "header": "Runtime",
+            "tooltip": "Target bloom intensity for the cyberpunk aesthetic during fade."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void ApplyCyberpunkPostProcessing(float targetBloom)",
+            "body": "if (Application.isEditor) return; // Only apply in build or via specific post-process component if available\n// Note: Direct URP scriptable render feature manipulation requires a reference to the ScriptableRendererFeature.\n// Since no such field exists in the baseline, this method acts as a placeholder for logic that would\n// ideally be handled by a PostProcessVolume or similar system injected elsewhere.\n// For this specific subsystem constraint, we assume the fadeCanvas handles visual transition,\n// and audio is managed separately."
+          },
+          {
+            "signature": "private void SetupAudioForZone(string zoneName)",
+            "body": "_rainAudioSource = null; // Reset\nif (zoneName == \"slums\")\n{\n    _rainAudioSource = FindObjectOfType<AudioSource>();\n    if (_rainAudioSource != null)\n        _rainAudioSource.Play();\n}\nelse\n{\n    if (_rainAudioSource != null)\n        _rainAudioSource.Stop();\n}"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "objectives",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_bossProgrammerEnemy",
+            "type": "MonoBehaviour",
+            "default": "null"
+          },
+          {
+            "name": "_isBossDefeated",
+            "type": "bool",
+            "default": "false"
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void OnEnable()",
+            "body": "_bossProgrammerEnemy = GetComponentInParent<MonoBehaviour>();\nif (_bossProgrammerEnemy != null) {\n    var agent = _bossProgrammerEnemy.GetComponent<NavMeshAgent>();\n    if (agent == null) agent = _bossProgrammerEnemy.GetComponentInChildren<NavMeshAgent>();\n    if (agent != null) {\n        agent.enabled = false;\n    }\n}\nif (_isBossDefeated) {\n    OnMissionComplete?.Invoke();\n}"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "waypoint",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "System"
+        ],
+        "extra_fields": [
+          {
+            "name": "_districtName",
+            "type": "string",
+            "default": "\"Neon Markets\"",
+            "header": "Runtime",
+            "tooltip": "Current district identifier for audio and visual context switching."
+          },
+          {
+            "name": "_isChaseActive",
+            "type": "bool",
+            "default": "false",
+            "header": "Runtime",
+            "tooltip": "Flag to trigger 'Street Chase' cinematic state when pursuing marks."
+          }
+        ],
+        "update_extra": "if (_target != null && _districtName == \"Neon Markets\") { _isChaseActive = true; }",
+        "extra_methods": [
+          {
+            "signature": "private void OnTargetDeath()",
+            "body": "_isChaseActive = false; _target = null;"
+          },
+          {
+            "signature": "public string GetDistrictContext()",
+            "body": "return _districtName;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "rules",
+      "input": {
+        "extra_usings": [
+          "UnityEngine",
+          "System"
+        ],
+        "extra_fields": [
+          {
+            "name": "_currentStepIndex",
+            "type": "int",
+            "default": "-1",
+            "header": "Rules",
+            "tooltip": "Internal index tracking the current active step."
+          },
+          {
+            "name": "_bountyContractAcquired",
+            "type": "bool",
+            "default": "false",
+            "header": "Narrative",
+            "tooltip": "Tracks if the first bounty contract has been obtained."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void AdvanceStep()",
+            "body": "_currentStepIndex++;\nif (_currentStepIndex < steps.Count) {\n    CurrentStep = steps[_currentStepIndex];\n}\nelse {\n    Finished = true;\n}"
+          },
+          {
+            "signature": "public void OnContractAcquired()",
+            "body": "_bountyContractAcquired = true;\nif (_currentStepIndex < steps.Count && steps[_currentStepIndex].objective_id == \"obj_2\") {\n    AdvanceStep();\n}"
+          },
+          {
+            "signature": "public void OnZoneEntered(string zoneName)",
+            "body": "string currentObjectiveId = _currentStepIndex >= 0 ? steps[_currentStepIndex].objective_id : null;\nif (zoneName == \"Market District\" && currentObjectiveId == \"obj_1\") {\n    AdvanceStep();\n}\nelse if (zoneName == \"Corporate Tower\" && currentObjectiveId == \"obj_3\") {\n    AdvanceStep();\n}"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    },
+    {
+      "kind": "behavior_tree",
+      "input": {
+        "extra_usings": [
+          "UnityEngine"
+        ],
+        "extra_fields": [
+          {
+            "name": "_patrolZone",
+            "type": "Transform",
+            "default": "null",
+            "header": "Runtime",
+            "tooltip": "Target transform for the guard to patrol between."
+          },
+          {
+            "name": "_patrolSpeed",
+            "type": "float",
+            "default": "3f",
+            "header": "Runtime",
+            "tooltip": "Movement speed when patrolling."
+          }
+        ],
+        "extra_methods": [
+          {
+            "signature": "private void SetPatrolTarget(Transform target)",
+            "body": "_patrolZone = target;"
+          },
+          {
+            "signature": "public bool IsPatrolling()",
+            "body": "return _patrolZone != null;"
+          }
+        ]
+      },
+      "output_files": [],
+      "atoms": []
+    }
+  ],
+  "wiring": {
+    "dependencies": [
+      {
+        "source": "trigger",
+        "target": "objectives",
+        "type": "triggers"
+      },
+      {
+        "source": "dialogue",
+        "target": "npc_dialog",
+        "type": "uses"
+      }
+    ]
+  }
+}

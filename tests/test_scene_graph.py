@@ -173,3 +173,73 @@ def test_graph_module_contains_no_pipeline_llm_client() -> None:
     source = Path("src/scene_graph.py").read_text(encoding="utf-8")
     assert "make_chat_client" not in source
     assert "llm.chat" not in source
+
+
+# ── Orphans: a recorded membership abstention is omitted, anything else fails ──
+# neon_fugitive E2E: an entity the Step 5 membership pass could find no scene
+# for used to abort the whole run here. Now the graph leaves out ONLY the
+# entities that pass recorded as abstained, naming each one. An orphan nobody
+# explained is still a hard failure.
+
+def _with_orphan() -> UnitySchema:
+    schema = _schema()
+    schema.entities.append(EntitySpec(name="Debris", kind="prop", count=4))
+    return schema
+
+
+def test_an_unexplained_orphan_still_fails_the_graph() -> None:
+    with pytest.raises(SceneGraphError,
+                       match="'Debris' is excluded from every declared scene.*"
+                             "recorded no abstention"):
+        build_scene_graph(_with_orphan())
+
+
+def test_a_recorded_abstention_is_omitted_and_named_once() -> None:
+    from src.unity_scene_membership import assign_scene_membership
+
+    schema = _with_orphan()
+    assign_scene_membership(schema)
+    assert [row["entity"] for row in schema.meta["scene_membership"]["abstentions"]] == ["Debris"]
+
+    graph = build_scene_graph(schema)
+
+    assert graph["omitted_entities"] == ["Debris"]
+    assert not any(node["name"] == "Debris" for node in graph["nodes"])
+    named = [w for w in graph["warnings"] if "'Debris'" in w]
+    assert len(named) == 1
+    assert "spawns in no scene" in named[0]
+    assert graph["abstention_count"] >= 1
+    assert graph["authority"]["entities_invented_here"] is False
+
+
+def test_an_abstention_that_no_longer_holds_is_not_omitted() -> None:
+    # A later pass (visual scene coverage) gave the entity a scene after the
+    # membership pass abstained. The entity is in the graph like any other.
+    from src.unity_scene_membership import assign_scene_membership
+
+    schema = _with_orphan()
+    assign_scene_membership(schema)
+    schema.scene_specs[0].entities.append("Debris")
+
+    graph = build_scene_graph(schema)
+
+    assert graph["omitted_entities"] == []
+    assert any(node["name"] == "Debris" for node in graph["nodes"])
+
+
+def test_an_objective_on_an_omitted_entity_invents_no_target_edge() -> None:
+    from src.unity_scene_membership import assign_scene_membership
+
+    schema = _with_orphan()
+    schema.missions.append(MissionSpec(id="salvage", title="Salvage", objectives=[
+        MissionObjective(id="grab", description="Grab the debris.",
+                         type="collect", target_ref="Debris"),
+    ]))
+    assign_scene_membership(schema)   # "salvage" has no inferred scene
+    assert "Debris" in {row["entity"] for row in schema.meta["scene_membership"]["abstentions"]}
+
+    graph = build_scene_graph(schema)
+
+    names = {node["id"]: node["name"] for node in graph["nodes"]}
+    assert all(names[edge["dst"]] != "Debris" for edge in _edges(graph, RELATION_TARGETS))
+    assert any("salvage/grab targets 'Debris'" in w for w in graph["warnings"])

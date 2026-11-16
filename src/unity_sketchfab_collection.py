@@ -34,6 +34,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
+from .llm_budgets import MODEL_BRIEFS, capped_chat
 from .unity_asset_catalog import tokenize
 
 _VALID_CATEGORIES = ("vehicle", "character", "prop", "environment",
@@ -92,7 +93,10 @@ def extract_model_briefs(concept: str, llm: Any, *, count: int = 12,
     if not concept or llm is None:
         return "", []
     try:
-        raw = llm.chat(
+        raw = capped_chat(
+            llm,
+            purpose="Sketchfab model briefs",
+            max_tokens=MODEL_BRIEFS.tokens(count),
             system=_SYSTEM.format(count=count),
             user=_USER_TMPL.format(concept=concept.strip(), count=count),
             temperature=0.4,
@@ -100,6 +104,8 @@ def extract_model_briefs(concept: str, llm: Any, *, count: int = 12,
             seed=seed or None,
         )
     except Exception:  # noqa: BLE001
+        return "", []
+    if raw is None:
         return "", []
     try:
         raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)

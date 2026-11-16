@@ -72,6 +72,10 @@ from .unity_playability_artifact import evaluate_project
 from .unity_playability_repair import repair_and_regrade
 from .unity_pathnorm      import normalize_paths
 from .unity_objective_targets import resolve_objective_targets
+from .unity_scene_membership import (MENU_SCENE_WORDS, TIER_VISUAL_COVERAGE,
+                                     assign_scene_membership,
+                                     refresh_scene_membership,
+                                     scene_membership_warnings)
 from .unity_escort_follow import resolve_escort_follow
 from .unity_spatial_facts import attach_spatial_facts, extract_spatial_facts
 from .unity_reference_image import ReferenceImageError, encode_reference_image
@@ -703,10 +707,10 @@ _MOOD_FOG = ("storm", "thunder", "fog", "mist", "cloud", "haze", "smoke",
              "blizzard", "sandstorm")
 
 
-# Scene-name fragments that mark a non-gameplay screen. Used to keep the
-# player/weapon/enemy restore below out of menus and end screens.
-_MENU_SCENE_WORDS = ("menu", "title", "splash", "credits", "options",
-                     "settings", "lobby", "gameover", "game_over", "pause")
+# Scene-name fragments that mark a non-gameplay screen. One definition, owned
+# by the membership pass (src/unity_scene_membership.py), so the mission-scene
+# inference below and the player/weapon/enemy restore read the same list.
+_MENU_SCENE_WORDS = MENU_SCENE_WORDS
 
 _MATCH_TOKEN_RE = re.compile(r"[A-Z][a-z0-9]*|[a-z0-9]+")
 _MATCH_STOPWORDS = frozenset({"the", "a", "an", "of", "in", "on", "at", "to", "and"})
@@ -752,8 +756,20 @@ def _infer_mission_scenes(schema: UnitySchema) -> tuple[dict[str, list[str]], li
          Ascent" shares no words with "HallTwo", but its `obj_reach_gate_2`
          target `WallClingPoint` is already correctly scoped to HallTwo).
          Accepted only when exactly one scene has the strict maximum.
+      3. Scene-named target — only when tiers 1 and 2 resolved nothing (no
+         match, or a tie). An objective's `target_ref` is exactly the name of
+         a declared gameplay scene (case-insensitive) and names no entity or
+         character, so it is not the entity reference the field normally
+         carries. Live on
+         neon_fugitive: "First Mark" shares no word with any scene, and every
+         gameplay scene lists its rival group, so tier 2 ties seven ways. Its
+         first objective, "Enter the Market District zone", has
+         `target_ref='DistrictMarket'`, and that scene exists. Accepted only
+         when every such target in the mission names the same one scene. A
+         mission whose objectives name two scenes spans both, and that
+         abstains.
 
-    A mission that matches neither tier is returned in `unresolved` and
+    A mission that matches no tier is returned in `unresolved` and
     forced into no scene — its objectives keep today's global, ungated SEAM 8
     behavior and its targets are not restored into any scene's subset. That
     is a pure abstention, not a regression: unresolved missions behave
@@ -762,6 +778,14 @@ def _infer_mission_scenes(schema: UnitySchema) -> tuple[dict[str, list[str]], li
     gameplay_scenes = [s for s in schema.scenes
                        if s and not any(w in s.lower() for w in _MENU_SCENE_WORDS)]
     scene_tokens = {s: _match_tokens(s) for s in gameplay_scenes}
+    scene_by_key = {s.strip().casefold(): s for s in gameplay_scenes}
+    # A target_ref that names an entity or a character is the reference the
+    # field is for. It is never read as a scene, even when a scene shares the
+    # name.
+    reference_keys = {(e.name or "").strip().casefold() for e in schema.entities}
+    for c in schema.characters or []:
+        reference_keys.update({(c.id or "").strip().casefold(),
+                               (c.name or "").strip().casefold()})
 
     resolved: dict[str, list[str]] = {}
     unresolved: list[str] = []
@@ -794,6 +818,16 @@ def _infer_mission_scenes(schema: UnitySchema) -> tuple[dict[str, list[str]], li
                 if len(winners) == 1:
                     resolved[mission.id] = winners
                     continue
+
+        named_scenes: list[str] = []
+        for o in mission.objectives:
+            key = (o.target_ref or "").strip().casefold()
+            scene = scene_by_key.get(key) if key not in reference_keys else None
+            if scene is not None and scene not in named_scenes:
+                named_scenes.append(scene)
+        if len(named_scenes) == 1:
+            resolved[mission.id] = named_scenes
+            continue
 
         unresolved.append(mission.id)
     return resolved, unresolved
@@ -911,60 +945,6 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
                     fixes.append(f"Scene '{spec.name}': every named group was "
                                  f"unknown — hosting all groups instead of an "
                                  f"empty scene")
-            # A GAMEPLAY scene must host the player, the player's weapon and the
-            # enemies. This subset is LLM-authored and routinely drops them: on
-            # VoidArena "Main" listed the player but not the gun (so nothing
-            # could mount a weapon), and on the next roll it listed neither the
-            # player nor the Blaster while keeping three prop groups.
-            #
-            # A scene counts as gameplay when it names ANY group and is not an
-            # explicitly empty one (menus author `entities: []`). Deliberately
-            # NOT gated on the player being listed — that was the earlier
-            # version of this rule and it silently no-opped for exactly the
-            # scenes that needed it most. Matched on kind, not name, so it
-            # survives whatever the LLM calls the groups.
-            _essential = [e.name for e in schema.entities
-                          if (e.kind or "").lower() in ("player", "weapon", "enemy")]
-            # ...but a MENU is not a gameplay scene. Gating purely on "names any
-            # group" pulled the player and every enemy into a main menu that had
-            # only authored a UI overlay group — 76 Cromulons spawning behind the
-            # title screen. Menus are matched by name because that is the only
-            # signal a scene spec carries about its purpose.
-            _is_menu = any(w in (spec.name or "").lower() for w in _MENU_SCENE_WORDS)
-            if spec.entities and _essential and not _is_menu:
-                missing = [n for n in _essential if n not in spec.entities]
-                if missing:
-                    spec.entities = list(spec.entities) + missing
-                    fixes.append(f"Scene '{spec.name}': restored player/weapon/"
-                                 f"enemy group(s) {missing} — a gameplay scene "
-                                 f"cannot omit them")
-            # A mission's objective targets must be reachable in the scene
-            # that mission is actually FOR, or the objective can never be
-            # completed no matter how SEAM 8 (unity_compose.py) wires it —
-            # confirmed live: HallOne's own entity subset omitted GearGate
-            # and SaveCogShrine, the exact two entities Hall One Clearance's
-            # objectives target, so even a correctly-wired mission had
-            # nothing to interact with. `mission_scenes` is populated by
-            # `_infer_mission_scenes` (best-effort, may be empty/absent —
-            # this restoration is a no-op for any mission it could not
-            # resolve, same abstain-rather-than-guess rule as everywhere
-            # else in this function).
-            _mission_scenes = (schema.meta.get("mission_scenes") or {}) \
-                if isinstance(schema.meta, dict) else {}
-            if spec.entities and _mission_scenes:
-                for mission in schema.missions:
-                    if spec.name not in (_mission_scenes.get(mission.id) or ()):
-                        continue
-                    targets = [o.target_ref for o in mission.objectives
-                              if o.target_ref and o.target_ref in entity_names]
-                    missing_targets = [n for n in targets if n not in spec.entities]
-                    if missing_targets:
-                        spec.entities = list(spec.entities) + missing_targets
-                        fixes.append(
-                            f"Scene '{spec.name}': restored objective target "
-                            f"entity group(s) {missing_targets} for mission "
-                            f"'{mission.title}' — an objective's target must "
-                            f"be reachable where its mission runs")
         desc = (spec.description or "").lower()
         if desc and not spec.time_of_day:
             for words, tod in _MOOD_TOD:
@@ -981,6 +961,13 @@ def _reconcile_scene_specs(schema: UnitySchema) -> tuple[UnitySchema, list[str]]
         fixes.append("Dropped scene_specs not matching schema.scenes: "
                      + ", ".join(dropped_scenes))
     schema.scene_specs = kept
+    # Membership repair runs once the specs are structurally clean. It
+    # restores the player (by its signal, whatever its kind), the
+    # player/weapon/enemy kinds and every mission's objective targets, and
+    # records each placement with its evidence. An entity it cannot place
+    # gets a named abstention in schema.meta["scene_membership"], which the
+    # caller surfaces as a warning (src/unity_scene_membership.py).
+    fixes.extend(assign_scene_membership(schema))
     return schema, fixes
 
 
@@ -2449,7 +2436,13 @@ class UnityPipeline:
                 + " — their objectives keep today's global (ungated) SEAM 8 "
                   "binding and their targets are not restored into any scene")
         # One reconciliation owns all scene subset repair after every pass that
-        # can add an entity, scene or mission mapping.
+        # can add an entity, scene or mission mapping. Its membership pass
+        # (src/unity_scene_membership.py) runs here, before the scene graph
+        # and the final compute_layout inside prepare_spatial_layout below.
+        # An entity it could not place is recorded as an abstention and never
+        # placed by guess. The abstentions are warned once the visual
+        # coverage repair below has run, so the warnings describe the final
+        # membership.
         schema, _scene_fixes = _reconcile_scene_specs(schema)
         for msg in _scene_fixes:
             self._fix(msg)
@@ -2472,15 +2465,39 @@ class UnityPipeline:
         # reasoning boundary and will feed the closed board into the spatial
         # sidecars, even though it does not use the stricter Slice-4 asset
         # compile plan.  Its Step-3 scene subset must therefore receive the
-        # same deterministic coverage repair as visual-compile mode.  Without
-        # this, a model-authored decorative/hazard entity can remain excluded
-        # from every SceneSpec and the graph correctly aborts later with an
-        # orphaned entity.  Keep the repair scoped to visual-context runs so
-        # ordinary text-only projects retain their authored scene subsets.
+        # same deterministic coverage repair as visual-compile mode: the closed
+        # image IR is the evidence that the whole visible cast belongs in the
+        # image-led scene. Text-only projects have no such evidence, so they
+        # keep their authored scene subsets. There, an entity the membership
+        # pass (_reconcile_scene_specs, above) could not place is an
+        # abstention it recorded by name. The scene graph leaves it out with a
+        # warning and does not abort, so the entity spawns nowhere, and Step 7's
+        # entity_scene_coverage ERROR fails the build with the project
+        # written. An orphan with no recorded abstention still aborts the
+        # graph.
         if (visual_asset_bindings is not None or visual_compile
                 or visual_context_mode):
-            for msg in ensure_visual_scene_coverage(schema):
+            # The coverage target is the first non-menu scene that does not
+            # declare itself empty. A menu never receives the cast. With no
+            # such scene, the pass abstains by name, loudly.
+            coverage = ensure_visual_scene_coverage(schema)
+            for msg in coverage.fixes:
                 self._fix(msg)
+            for msg in coverage.warnings:
+                self._warn(msg)
+            # The coverage repair may give a scene to an entity the membership
+            # pass abstained on. Clear that abstention, and record this pass
+            # as its evidence, so the record and the warnings below match the
+            # schema the graph and Step 7 see.
+            for msg in refresh_scene_membership(
+                    schema, tier=TIER_VISUAL_COVERAGE,
+                    evidence="visual scene coverage (the closed image IR "
+                             "requires the whole visible cast)"):
+                self._fix(msg)
+        # Loud, by name: every entity still in no scene after every Step 5
+        # pass that can give it one.
+        for msg in scene_membership_warnings(schema):
+            self._warn(msg)
 
         validation_messages = stage_registry.run(
             ValidateSchemaStage.name,

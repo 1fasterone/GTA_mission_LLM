@@ -167,6 +167,19 @@ _CATEGORY_RULES: tuple[tuple[str, str, str], ...] = (
     ("SpatialRealizationError", "spatial_layout",
      "Spatial realization abstained. Read the named remedy in the message "
      "(docs/SPATIAL_LAYOUT_PLAN.md)."),
+    ("LayoutStrictError", "spatial_layout",
+     "Layout archetype selection abstained: no Stage-1 primitive covers the "
+     "schema's (motion_axis, medium). Read the [layout.strict] remedy and "
+     "supply the missing axis or medium (docs/LAYOUT_ARCHETYPES.md)."),
+    ("SceneGraphError", "scene_graph",
+     "The Slice 6.4 scene graph refused the schema. An entity in no declared "
+     "scene reaches this error only when the Step 5 membership pass did not "
+     "record it as an abstention: the entities it records are omitted with a "
+     "warning instead (src/unity_scene_membership.py). Usually a pass that "
+     "ran after _reconcile_scene_specs added the entity. Compare "
+     "schema.meta.scene_membership in the saved schema, give the entity a "
+     "scene in scene_specs[].entities or remove it, then replay with "
+     "unity-validate."),
     ("SceneInputError", "authored_scene",
      "The Scene Compiler layout could not be read or bound. Check the layout "
      "file and its model paths (docs/SCENE_COMPILER.md)."),

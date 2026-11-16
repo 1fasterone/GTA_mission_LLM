@@ -62,6 +62,7 @@ from typing import Any, Callable, Iterable, Sequence
 from pydantic import ValidationError
 from rich.console import Console
 
+from .llm_budgets import MICRO_CODE_TOKENS, capped_chat
 from .micro import REGISTRY
 from pathlib import Path
 
@@ -491,12 +492,14 @@ Return ONE JSON object containing only these keys: {", ".join(keys)}
 
 # Per-call completion ceiling for a micro-code request. The answer is a small
 # JSON of C# fragments — a few fields and methods — so a few thousand tokens is
-# generous. It must NOT inherit the client-wide budget (config sets 50000 for
-# the schema step): a model that runs away then generates until the 2600s client
-# timeout instead of until a cap, and this loop retries `attempts` times, so one
-# bad subsystem costs three full timeouts. Measured live on
-# qwopus3.5-9b-coder-exp: 1h54m burned on a single subsystem, silently.
-_MAX_TOKENS = 6000
+# generous. It must NOT inherit the client-wide budget (config sets it for the
+# schema step): a model that runs away then generates until the client timeout
+# instead of until a cap, and this loop retries `attempts` times, so one bad
+# subsystem costs three full timeouts. Measured live on qwopus3.5-9b-coder-exp:
+# 1h54m burned on a single subsystem, silently. Every Step 3.5 cap now lives in
+# src/llm_budgets.py; a reply cut off at the cap is a failed attempt, never a
+# truncated JSON for extract_json to repair.
+_MAX_TOKENS = MICRO_CODE_TOKENS
 
 # Live progress channel. `msgs` is only printed AFTER this function returns, so
 # a per-attempt failure appended there stays invisible for exactly as long as
@@ -550,15 +553,19 @@ def enrich_subsystems(subsystems: Sequence[Any], *, llm, concept: str,
         correction = ""
         for attempt in range(attempts):
             try:
-                raw = llm.chat(
+                raw = capped_chat(
+                    llm,
+                    purpose=f"micro-code {sub.kind}",
+                    max_tokens=_MAX_TOKENS,
                     system=_SYSTEM,
                     user=_user_prompt_for(sub, concept=concept,
                                           user_prompt=user_prompt, keys=keys,
                                           contract=contract) + correction,
                     temperature=temperature if attempt == 0 else min(temperature, 0.15),
                     thinking=False,
-                    max_tokens=_MAX_TOKENS,
                 )
+                if raw is None:
+                    continue
                 candidate = _filter_keys(sub.kind, llm.extract_json(raw))
                 if not candidate:
                     continue
@@ -980,7 +987,10 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
         correction = ""
         for attempt in range(attempts):
             try:
-                raw = llm.chat(
+                raw = capped_chat(
+                    llm,
+                    purpose=f"custom script {script.name}",
+                    max_tokens=_MAX_TOKENS,
                     system=_SCRIPT_SYSTEM,
                     user=_script_user_prompt(script, concept=concept,
                                              user_prompt=user_prompt,
@@ -988,8 +998,9 @@ def enrich_scripts(scripts: Sequence[Any], *, llm, concept: str,
                                              contract=contract) + correction,
                     temperature=temperature if attempt == 0 else min(temperature, 0.15),
                     thinking=False,
-                    max_tokens=_MAX_TOKENS,
                 )
+                if raw is None:
+                    continue
                 candidate = {k: v for k, v in (llm.extract_json(raw) or {}).items()
                              if k in CODE_KEYS and v not in (None, "", [], {})}
                 if not candidate:
