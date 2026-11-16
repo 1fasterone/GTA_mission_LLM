@@ -106,8 +106,8 @@ Live, eight neon_fugitive runs (`locomotion='drive'`, one brief) produced
 five different primitives. One district's "submerged structures" gave
 `planar+water` and an abstain. "floating" trash and "drift mechanics" gave a
 BoundedVolume. A boss-arena `Platform` gave a VerticalSurface. All eight now
-select ArenaPlane, and three of them are regression fixtures
-(`tests/fixtures/neon_fugitive_*`). The skydiving schema whose `locomotion`
+select ArenaPlane. Four of them (runs 01, 03, 05 and 11) are regression
+fixtures (`tests/fixtures/neon_fugitive_*`). The skydiving schema whose `locomotion`
 was left at `walk` still says `skydiving` in its description and its player
 entity, so it keeps its corridor. The living wall says "cliff face" in its
 description, so it keeps its wall. The air/water tie-break reads the same

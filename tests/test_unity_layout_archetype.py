@@ -1626,8 +1626,16 @@ def _neon_platform_schema() -> UnitySchema:
 def _neon_drift_schema() -> UnitySchema:
     """Live E2E run 03 of the same brief: `locomotion='drive'`, and the
     player-attached VehicleController's "drift mechanics" — a car drifting —
-    read as free-medium prose and floated the city in a BoundedVolume."""
-    return _pre_layout(_load("neon_fugitive_vehicle_drift_llm.schema.json"))
+    read as free-medium prose and floated the city in a BoundedVolume. The
+    capture is shared with the scene-membership tests (#303)."""
+    return _pre_layout(_load("neon_fugitive_run03_failed_llm.schema.json"))
+
+
+def _neon_combat_platforms_schema() -> UnitySchema:
+    """Live E2E run 11 of the same brief: `locomotion='drive'`, and a
+    `CombatPlatforms` group (kind='platform') made the city a VerticalSurface.
+    The capture is shared with the scene-membership tests (#303)."""
+    return _pre_layout(_load("neon_fugitive_run11_failed_llm.schema.json"))
 
 
 class TestPlayerScopedMotionEvidence:
@@ -1676,7 +1684,8 @@ class TestPlayerScopedMotionEvidence:
         assert "drift" in script.description.lower()
 
     def test_live_captures_lay_out_on_the_ground_plane(self):
-        for schema in (_neon_platform_schema(), _neon_drift_schema()):
+        for schema in (_neon_platform_schema(), _neon_drift_schema(),
+                       _neon_combat_platforms_schema()):
             msgs = compute_layout(schema)
             assert msgs[0].startswith("Layout archetype ArenaPlane selected"), msgs[0]
 
@@ -1777,3 +1786,15 @@ class TestPlayerScopedMotionEvidence:
         arch = select_archetype(s)
         assert (arch.name, arch.motion_axis) == ("ArenaPlane", "planar"), \
             arch.evidence
+
+    def test_live_combat_platforms_selects_arena_plane(self):
+        """Run 11: the second live VerticalSurface from a `platform` kind,
+        this time a whole `CombatPlatforms` group rather than one arena."""
+        s = _neon_combat_platforms_schema()
+        assert s.locomotion == "drive"
+        assert _entity(s, "CombatPlatforms").kind == "platform"
+        arch = select_archetype(s)
+        assert (arch.name, arch.motion_axis, arch.medium) == (
+            "ArenaPlane", "planar", "ground"), arch.evidence
+        why = arch.evidence["motion_axis"]
+        assert "climbable entities ['CombatPlatforms'] not counted" in why, why
