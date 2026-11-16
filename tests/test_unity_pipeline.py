@@ -1641,3 +1641,198 @@ def test_pipeline_warns_abstentions_only_after_visual_coverage():
     warn = src.index("scene_membership_warnings(schema)")
     assert coverage < refresh < warn
     assert src.count("scene_membership_warnings(schema)") == 1
+
+
+# ── Visual scene coverage targets the first GAMEPLAY scene, never a menu ──────
+# ensure_visual_scene_coverage took scene_specs[0] blindly. On every
+# neon_fugitive run that is MainMenu with entities: [], so a visual-context
+# run put the whole cast, player and enemies included, behind the title. The
+# image-led scene is now the first scene in schema.scenes order that is not a
+# menu and does not declare itself empty. With none, the pass abstains by
+# name and changes nothing.
+
+def test_visual_coverage_never_fills_a_menu_first_scene():
+    from src.unity_scene_membership import hosting_scenes
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema, _ = _neon_step5("03")
+    assert schema.scenes[0] == "MainMenu"
+    assert schema.scene_specs[0].name == "MainMenu"
+
+    result = ensure_visual_scene_coverage(schema)
+
+    menu = next(s for s in schema.scene_specs if s.name == "MainMenu")
+    assert menu.entities == []
+    assert result.scene == "Main"
+    assert result.warnings == []
+    assert len(result.fixes) == 1
+    assert "'Main'" in result.fixes[0]
+    assert "'MainMenu' is a menu" in result.fixes[0]
+    main = next(s for s in schema.scene_specs if s.name == "Main")
+    assert set(main.entities) == {e.name for e in schema.entities}
+    for entity in schema.entities:
+        assert "MainMenu" not in hosting_scenes(schema, entity.name)
+
+
+def test_visual_coverage_skips_a_menu_that_lists_groups():
+    # A menu is never a gameplay scene, even when its list is not empty.
+    from src.unity_schema import SceneSpec
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(scene_specs=[
+        SceneSpec(name="MainMenu", entities=["Ledger"]),
+        SceneSpec(name="Docks", entities=["Cranes"]),
+        SceneSpec(name="Tower", entities=["Drone"]),
+    ])
+
+    result = ensure_visual_scene_coverage(schema)
+
+    specs = {s.name: s.entities for s in schema.scene_specs}
+    assert result.scene == "Docks"
+    assert specs["MainMenu"] == ["Ledger"]
+    assert specs["Docks"] == ["Cranes", "Skiff", "Ledger", "Drone"]
+    assert specs["Tower"] == ["Drone"]
+
+
+def test_visual_coverage_follows_scenes_order_and_skips_declared_empty():
+    # schema.scenes is the order, not scene_specs. A gameplay scene that
+    # lists nothing declared itself empty, and stays empty.
+    from src.unity_schema import SceneSpec
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(
+        scenes=["MainMenu", "Vault", "Docks", "Tower"],
+        scene_specs=[
+            SceneSpec(name="Tower", entities=["Drone"]),
+            SceneSpec(name="MainMenu", entities=[]),
+            SceneSpec(name="Vault", entities=[]),
+            SceneSpec(name="Docks", entities=["Cranes"]),
+        ],
+    )
+
+    result = ensure_visual_scene_coverage(schema)
+
+    specs = {s.name: s.entities for s in schema.scene_specs}
+    assert result.scene == "Docks"
+    assert specs["Vault"] == []
+    assert specs["MainMenu"] == []
+    assert specs["Tower"] == ["Drone"]
+    assert specs["Docks"] == ["Cranes", "Skiff", "Ledger", "Drone"]
+    assert "'Vault' declared itself empty" in result.fixes[0]
+
+
+@pytest.mark.parametrize("specs", [
+    [],
+    [{"name": "Docks", "entities": None}],
+])
+def test_visual_coverage_adds_nothing_to_a_scene_that_hosts_every_group(specs):
+    # No spec, or entities=None, already hosts the whole cast. The old code
+    # wrote a spec for scenes[0] (often the menu) or a made-up "Main".
+    from src.unity_schema import SceneSpec
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(
+        scene_specs=[SceneSpec(**spec) for spec in specs])
+    before = [s.model_dump() for s in schema.scene_specs]
+
+    result = ensure_visual_scene_coverage(schema)
+
+    assert result.scene == "Docks"
+    assert result.fixes == [] and result.warnings == []
+    assert [s.model_dump() for s in schema.scene_specs] == before
+
+
+def test_visual_coverage_abstains_by_name_without_a_gameplay_scene():
+    from src.unity_scene_membership import (TIER_VISUAL_COVERAGE,
+                                            refresh_scene_membership)
+    from src.unity_schema import SceneSpec
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(
+        scenes=["MainMenu", "Vault"],
+        scene_specs=[SceneSpec(name="MainMenu", entities=[]),
+                     SceneSpec(name="Vault", entities=[])],
+    )
+    schema, _ = _reconcile_scene_specs(schema)
+    abstained = {r["entity"] for r in schema.meta["scene_membership"]["abstentions"]}
+    assert abstained == {"Skiff", "Cranes", "Ledger", "Drone"}
+    before = [s.model_dump() for s in schema.scene_specs]
+
+    result = ensure_visual_scene_coverage(schema)
+
+    assert result.scene is None
+    assert result.fixes == []
+    assert len(result.warnings) == 1
+    warning = result.warnings[0]
+    assert warning.startswith("[visual.coverage] ABSTAINED")
+    assert "'MainMenu' is a menu" in warning
+    assert "'Vault' declared itself empty" in warning
+    for name in ("Skiff", "Cranes", "Ledger", "Drone"):
+        assert name in warning
+    assert "stay scene-membership abstentions" in warning
+    assert [s.model_dump() for s in schema.scene_specs] == before
+    # Nothing got a scene, so the refresh clears nothing.
+    assert refresh_scene_membership(schema, tier=TIER_VISUAL_COVERAGE,
+                                    evidence="visual scene coverage") == []
+    assert {r["entity"] for r in schema.meta["scene_membership"]["abstentions"]} \
+        == abstained
+
+
+def test_visual_coverage_abstains_when_only_menus_are_declared():
+    # A menu with no spec hosts every group, so nothing is in no scene, but
+    # there is still no gameplay scene for the image's cast.
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema = _membership_schema(scenes=["MainMenu"], scene_specs=[])
+
+    result = ensure_visual_scene_coverage(schema)
+
+    assert result.scene is None
+    assert result.fixes == []
+    assert len(result.warnings) == 1
+    assert "'MainMenu' is a menu" in result.warnings[0]
+    assert "stay scene-membership abstentions" not in result.warnings[0]
+    assert schema.scene_specs == []
+
+
+def test_visual_coverage_refresh_records_the_real_gameplay_scene():
+    from src.scene_graph import build_scene_graph
+    from src.unity_scene_membership import (TIER_VISUAL_COVERAGE,
+                                            refresh_scene_membership,
+                                            scene_membership_warnings)
+    from src.unity_spatial_roles import derive_spatial_roles
+    from src.unity_visual_bindings import ensure_visual_scene_coverage
+
+    schema, _ = _neon_step5("03")
+    record = schema.meta["scene_membership"]
+    assert [r["entity"] for r in record["abstentions"]] == ["PlatformRings",
+                                                            "EnergyGenerators"]
+
+    result = ensure_visual_scene_coverage(schema)
+    fixes = refresh_scene_membership(schema, tier=TIER_VISUAL_COVERAGE,
+                                     evidence="visual scene coverage")
+
+    record = schema.meta["scene_membership"]
+    assert result.scene == "Main"
+    assert record["abstentions"] == []
+    assert scene_membership_warnings(schema) == []
+    visual = [(r["entity"], r["scene"]) for r in record["placements"]
+              if r["tier"] == TIER_VISUAL_COVERAGE]
+    assert visual == [("PlatformRings", "Main"), ("EnergyGenerators", "Main")]
+    assert all(r["scene"] != "MainMenu" for r in record["placements"])
+    assert len(fixes) == 2
+    assert all("['Main']" in f for f in fixes)
+    graph = build_scene_graph(schema, derive_spatial_roles(schema))
+    assert graph["omitted_entities"] == []
+    assert "MainMenu" not in {s for scenes in _graph_spawns(graph).values()
+                              for s in scenes}
+
+
+def test_pipeline_surfaces_visual_coverage_abstention_as_warning():
+    src = (Path(__file__).resolve().parents[1] / "src" / "unity_pipeline.py"
+           ).read_text(encoding="utf-8")
+    start = src.index("coverage = ensure_visual_scene_coverage(schema)")
+    block = src[start:src.index("refresh_scene_membership(", start)]
+    assert "for msg in coverage.fixes:" in block
+    assert "for msg in coverage.warnings:" in block
+    assert "self._warn(msg)" in block

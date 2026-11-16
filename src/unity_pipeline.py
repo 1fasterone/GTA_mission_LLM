@@ -2477,8 +2477,14 @@ class UnityPipeline:
         # graph.
         if (visual_asset_bindings is not None or visual_compile
                 or visual_context_mode):
-            for msg in ensure_visual_scene_coverage(schema):
+            # The coverage target is the first non-menu scene that does not
+            # declare itself empty. A menu never receives the cast. With no
+            # such scene, the pass abstains by name, loudly.
+            coverage = ensure_visual_scene_coverage(schema)
+            for msg in coverage.fixes:
                 self._fix(msg)
+            for msg in coverage.warnings:
+                self._warn(msg)
             # The coverage repair may give a scene to an entity the membership
             # pass abstained on. Clear that abstention, and record this pass
             # as its evidence, so the record and the warnings below match the
