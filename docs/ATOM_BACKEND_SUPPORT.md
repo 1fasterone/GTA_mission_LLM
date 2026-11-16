@@ -57,14 +57,15 @@ They are never presented as real Pipeline LLM output or actual scene bindings.
 
 | Backend | Executable lowerers | Descriptive gaps | Unsupported definitions | Dispatch-only helpers |
 | --- | ---: | ---: | ---: | ---: |
-| Unity | 72 | 24 | 0 | 0 |
+| Unity | 73 | 23 | 0 | 0 |
 | GTA5 | 26 | 0 | 70 | 0 |
 
 The Unity gaps are AimDownSights, Ascend, Block, Boost, Brake, CycleWeapon,
 Dash, Descend, Dodge, Grab, Interact, MeleeAttack, Nitro, OpenInventory, OpenMap,
-Pause, Pitch, PrimaryAttack, Reload, RollPlane, SecondaryAttack, Throttle,
-ThrowGrenade and UseItem, all baselined for S6. `fire` remains an alias of
-canonical `Shoot`, which R3 lowered (see "Shared firing provider" below).
+Pause, Pitch, PrimaryAttack, RollPlane, SecondaryAttack, Throttle, ThrowGrenade
+and UseItem, all baselined for S6. `fire` remains an alias of canonical `Shoot`,
+which R3 lowered (see "Shared firing provider" below). R4 lowered `Reload`, the
+first S6 behavior (see "Shared reload gate" below).
 
 ## R1 vocabulary decisions (S0 follow-up closed)
 
@@ -224,6 +225,75 @@ Scope limit: the controller and projectile templates stay the runtime owners
 (S6). Only the Player fires through the provider: entity `Shoot` atoms fire the
 Player's weapon, because no other composed class implements the contract.
 
+## Shared reload gate (R4, S6)
+
+`Reload` is the first S6 behavior. It and the controller's reload input (R)
+now reach one gate on the same provider, so reload state keeps one owner.
+
+```mermaid
+flowchart LR
+  input[Controller.Update reload input] --> gate
+  atom[Reload atom in any route host] --> resolve[FiringProviders.ReloadPlayer]
+  resolve --> gate[IFiringProvider.TryReload on the Player]
+  gate -->|AlreadyReloading / MagazineFull / NoReserveAmmo| refuse[ReloadResult, nothing moved]
+  gate --> routine[ReloadRoutine: after the weapon's reload_time, reserve -> magazine]
+  routine --> fire[TryFire refuses Reloading until it ends]
+```
+
+| Piece | Where | What it guarantees |
+| --- | --- | --- |
+| Contract | `FiringProvider.cs.j2`; `firing_provider.ATOM_CALLS` / `ATOM_GATES` | `ReloadResult`, `IFiringProvider.TryReload()`, `FiringProviders.ReloadPlayer()` on the same Player resolver as `FirePlayer()` |
+| Implementer | `Controller.cs.j2` with the `shoot` ability | `TryReload()` refuses in a fixed order (AlreadyReloading, MagazineFull, NoReserveAmmo) and is the only caller of `ReloadRoutine()`; only the routine moves rounds |
+| Reload input | `Update`: `if (reloadDown) TryReload();` | The input no longer inlines its own checks |
+| Lowerer | `src/atoms/backends/unity.py:_reload` | Emits only `FiringProviders.ReloadPlayer()`; `NoProvider` is a logged error with its remedy, any other refusal a logged warning naming its `ReloadResult` |
+| Typed binding | `AtomBinding.runtime_provider` | The same `{contract, host, implementer}` record and no-implementer warning as `Shoot` (`_RUNTIME_CONTRACTS` is built from `ATOM_CALLS`) |
+| Ownership audit | `unity:AtomDef:Reload`, `shared_firing_provider` | Built by the same `_firing_connection` helper as `Shoot`. The seam requires the routine to be reached from exactly one call site, inside `TryReload()` |
+
+Per-variant coverage. Twelve variants implement the provider: first_person,
+third_person, top_down, 2d_platformer, 2d_topdown, 2d_fighting,
+platformer_2_5d, flying, swimming, climbing, aircraft and fighting. Each is
+rendered and checked structurally, compiled with Roslyn against the real Unity
+reference assemblies with the lowered `Reload` and `Shoot`, and run in Play
+Mode. Five do not implement it: the three vehicles prune `shoot`, and pointer
+and multi_mode render other templates. For those, the tests prove there is no
+gate, a build warning, and a contract-only copy, so the atom compiles and
+refuses at runtime.
+
+Decisions:
+
+- **Reload takes no parameters.** Its former `reload_time` duplicated the
+  weapon loadout's, exactly as `Shoot`'s params did. A saved schema that still
+  passes it is named per build (`ignored_args`), never rewritten. `duration` is
+  `instant`: the call returns at once and the provider owns the timing.
+- **A reload with no reserve is refused.** The old input check started a
+  reload whenever the magazine was not full. With an empty reserve that
+  blocked firing for a full `reload_time` and refilled nothing. `TryReload()`
+  now returns `NoReserveAmmo` and changes nothing.
+- **The `reload` ability token renders nothing of its own**, as before R4:
+  reload is part of the `shoot` section (a test pins identical output).
+- **Incidental compile fix.** The per-variant Roslyn gate found that 2d_platformer
+  and 2d_fighting read `jumpForce` without the jump ability that declares it
+  (CS0103 on `main`). The 2D jump line is now gated like the field.
+
+Evidence: `tests/test_reload_provider.py` (variant split, per-variant gate,
+lowerer, binding, generation with and without an implementer, an entity route,
+replay, the ownership seam and its mutations, per-variant Roslyn compiles), and
+the Play Mode acceptance. `ReloadProviderPlayModeTests` runs every firing
+variant through the lowered atom, hosted by the generated `ArmoryBehavior`
+(`entities[Armory].atoms` = `[Reload, Despawn]`), and through the provider's
+own gate.
+
+Found, not fixed here: `EntityBehavior.cs.j2` restarts every entity atom
+sequence that does not end in `Despawn`, and it restarts before yielding. A
+sequence of only instant atoms (`[Reload]`, `[Shoot]`, `[PlaySound]`, …)
+therefore recurses synchronously without bound inside one frame. The first
+acceptance run hit exactly this. The acceptance host ends in `Despawn` so it
+runs once; the template defect needs its own fix.
+
+Scope limit: the controller stays template-owned (`protected_template_owners`)
+until every S6 behavior is covered. R4 shares one more gate; the other 23
+baselined controller atoms are still descriptive.
+
 ## Ownership and reachability
 
 - Schema-level atoms lower into `GameSequencer.Start`, hosted by every gameplay
@@ -249,9 +319,9 @@ Player's weapon, because no other composed class implements the contract.
 - The inventory enumerates every registered Unity/GTA micro and all its variants.
   Controller (including pointer/multi_mode), board, rules and projectile gameplay
   remain template-owned. ModelPipeline is an asset pipeline, not a gameplay
-  provider. R3 adds no owner: `Shoot` reaches the controller's own firing gate
-  (`shared_firing_provider`), and movement, physics and avatar ownership are
-  unchanged.
+  provider. R3 and R4 add no owner: `Shoot` and `Reload` reach the controller's
+  own firing-provider gates (`shared_firing_provider`), and movement, physics
+  and avatar ownership are unchanged.
 
 ## Migration queue and compatibility
 
@@ -266,7 +336,7 @@ slice. It is a ratchet, not a second public API or implementation table.
 | S3 | Structural representative closure implemented; preserve explicit unattached/missing-provider abstentions in `mechanic_ownership_inventory.json` |
 | S4 | Done in R2: typed route bindings in `meta.atom_bindings` with versioned replay; GameSequencer attached; Unity companions retired; dynamic atom references checked per build |
 | S5 | Done in R3: `Shoot` lowered through `IFiringProvider.TryFire`, the gate the fire input calls; ammo, cooldown, reload, pool and no-provider refusals tested |
-| S6 | Migrate controller behaviors one at a time, with per-variant advancing tests |
+| S6 | In progress (R4): `Reload` lowered through `IFiringProvider.TryReload` in every firing variant; 23 controller atoms remain, one behavior per PR, with per-variant advancing tests |
 | S7–S8 | Migrate legal board operations and rules progression through one owner |
 
 The audit does not alter schemas, atom names, aliases, emitted C#, GUIDs or scene

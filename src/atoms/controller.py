@@ -221,17 +221,21 @@ CONTROLLER_ATOMS: list[AtomDef] = [
             AtomParam(name="speed_multiplier", type="float", default=0.55, description="Move speed scale while aiming"),
         ],
     ),
+    # R4 (S6): Reload starts a reload through the same firing provider
+    # (IFiringProvider.TryReload, src/firing_provider.py) the R key calls.
+    # The weapon loadout owns reload_time and magazine_size, so the atom
+    # takes no params, for the same reason Shoot takes none. The call returns
+    # at once; the provider moves the rounds after the weapon's reload_time.
     AtomDef(
         name="Reload",
         category="controller",
-        description="Refill the weapon magazine after a timed delay (R).",
-        duration="duration_param",
+        description=("Start reloading the Player's current weapon through its firing "
+                     "provider (the same gate as R); a refusal names its reason."),
+        duration="instant",
         side_effects=["ammo"],
         aliases=["reload", "refill", "reload_weapon"],
         engines=["unity"],
-        params=[
-            AtomParam(name="reload_time", type="float", default=2.0, description="Seconds to complete reload"),
-        ],
+        params=[],
     ),
     AtomDef(
         name="CycleWeapon",

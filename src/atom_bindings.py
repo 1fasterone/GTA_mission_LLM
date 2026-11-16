@@ -116,7 +116,8 @@ class RuntimeProvider(BaseModel):
 # Each contract a lowered snippet can resolve, keyed by the one call that
 # resolves it. Read from the exact C# generation emits, like host_members.
 _RUNTIME_CONTRACTS: dict[str, tuple[str, str]] = {
-    firing_provider.RESOLVER_CALL: (firing_provider.CONTRACT, firing_provider.HOST),
+    call: (firing_provider.CONTRACT, firing_provider.HOST)
+    for call in firing_provider.ATOM_CALLS.values()
 }
 # What makes a build implement each contract, named when none does.
 _CONTRACT_REMEDY: dict[str, str] = {
@@ -269,11 +270,12 @@ def contract_implementers_for(composed_units: Optional[list] = None) -> dict[str
     """The composed class that implements each runtime contract on its host (R3, S5).
 
     A class implements the contract for the lowered C# only where that C#
-    looks: ``FiringProviders.FirePlayer()`` resolves the object tagged Player,
-    which hosts exactly the units on the ``player`` target. A shooting
-    controller on another target is not the implementer, so the build warns
-    instead of recording a provider ``Shoot`` can never reach. The compose
-    graph places at most one player controller per project.
+    looks: ``FiringProviders.FirePlayer()`` and ``ReloadPlayer()`` resolve the
+    object tagged Player, which hosts exactly the units on the ``player``
+    target. A shooting controller on another target is not the implementer, so
+    the build warns instead of recording a provider ``Shoot`` or ``Reload`` can
+    never reach. The compose graph places at most one player controller per
+    project.
     """
     implementers: dict[str, str] = {}
     for unit in _firing_controllers(composed_units):

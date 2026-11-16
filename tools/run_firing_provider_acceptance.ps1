@@ -1,13 +1,14 @@
-# R3 (S5) firing-provider acceptance in a real Unity Editor.
+# Firing-provider acceptance (R3 S5, R4 S6) in a real Unity Editor.
 #
 # Creates a clean Unity project, installs the Unity Test Framework, emits the
 # acceptance sources from canonical Python/templates
 # (tools/generate_firing_provider_acceptance.py), compiles them, then runs the
-# Play Mode tests in tests/unity_firing_provider/. Six proof markers must
+# Play Mode tests in tests/unity_firing_provider/. These proof markers must
 # appear: the R3 provider's FIRING_PROVIDER_SHARED_GATE_PASS,
-# FIRING_PROVIDER_POOL_PASS and FIRING_PROVIDER_NO_PROVIDER_PASS, and the
-# Slice 4 firearm adapter's FIREARM_FALLBACK_PASS, FIREARM_ANIM_EVENT_PASS and
-# FIREARM_INCOMPATIBLE_PASS.
+# FIRING_PROVIDER_POOL_PASS and FIRING_PROVIDER_NO_PROVIDER_PASS; the Slice 4
+# firearm adapter's FIREARM_FALLBACK_PASS, FIREARM_ANIM_EVENT_PASS and
+# FIREARM_INCOMPATIBLE_PASS; and R4's RELOAD_PROVIDER_NO_PROVIDER_PASS plus one
+# RELOAD_PROVIDER_VARIANT_PASS for every reload shooter the generator names.
 #
 #   pwsh -File tools/run_firing_provider_acceptance.ps1 [-Editor <Unity.exe>]
 #
@@ -78,10 +79,15 @@ if ($packageExit -ne 0) { throw "Unity Test Framework installation failed. Exit=
 
 Push-Location $repo
 try {
-    & $python tools/generate_firing_provider_acceptance.py $projectPath
+    $emission = @(& $python tools/generate_firing_provider_acceptance.py $projectPath)
     if ($LASTEXITCODE -ne 0) { throw "Deterministic firing-provider emission failed." }
 }
 finally { Pop-Location }
+$reloadLine = $emission | Where-Object { $_ -like "reload_shooters=*" } | Select-Object -Last 1
+if (-not $reloadLine) { throw "The emission named no reload shooters." }
+$reloadShooters = @($reloadLine.Substring("reload_shooters=".Length).Split(",") |
+    Where-Object { $_ })
+if ($reloadShooters.Count -eq 0) { throw "The emission named no reload shooters." }
 
 $runtimeDir = Join-Path $projectPath "Assets\FiringProviderAcceptance"
 Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\FiringProvider.Runtime.asmdef") `
@@ -89,7 +95,7 @@ Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\FiringProvi
 $playTestDir = Join-Path $projectPath "Assets\Tests\PlayMode"
 New-Item -ItemType Directory -Path $playTestDir -Force | Out-Null
 foreach ($file in @("FiringProvider.PlayModeTests.asmdef", "FiringProviderPlayModeTests.cs",
-                   "FirearmAdapterPlayModeTests.cs")) {
+                   "FirearmAdapterPlayModeTests.cs", "ReloadProviderPlayModeTests.cs")) {
     Copy-Item -LiteralPath (Join-Path $repo "tests\unity_firing_provider\$file") `
         -Destination $playTestDir -Force
 }
@@ -102,25 +108,35 @@ if ($compileErrors) { throw "Generated project contains C# errors. Log=$compileL
 
 $playExit = Invoke-UnityEditor -EditorPath $Editor -Arguments @(
     "-batchmode", "-nographics", "-runTests", "-projectPath", $projectPath,
-    "-testPlatform", "PlayMode", "-testFilter", "FiringProviderPlayModeTests;FirearmAdapterPlayModeTests",
+    "-testPlatform", "PlayMode", "-testFilter",
+    "FiringProviderPlayModeTests;FirearmAdapterPlayModeTests;ReloadProviderPlayModeTests",
     "-testResults", $testResults, "-logFile", $playLog)
 if (-not (Test-Path -LiteralPath $testResults)) {
     throw "Unity produced no Play Mode results. Exit=$playExit Log=$playLog"
 }
 [xml]$results = Get-Content -Raw -LiteralPath $testResults
 $run = $results."test-run"
-if ($playExit -ne 0 -or [int]$run.failed -ne 0 -or [int]$run.passed -lt 6) {
+# 3 R3 + 3 Slice 4 cases, then one R4 case per reload shooter plus no-provider.
+$expectedPassed = 6 + $reloadShooters.Count + 1
+if ($playExit -ne 0 -or [int]$run.failed -ne 0 -or [int]$run.passed -lt $expectedPassed) {
     throw ("Firing-provider Play Mode tests failed. Exit=$playExit Passed=$($run.passed) " +
         "Failed=$($run.failed) Log=$playLog Results=$testResults")
 }
 $markers = @("FIRING_PROVIDER_SHARED_GATE_PASS", "FIRING_PROVIDER_POOL_PASS",
              "FIRING_PROVIDER_NO_PROVIDER_PASS", "FIREARM_FALLBACK_PASS",
-             "FIREARM_ANIM_EVENT_PASS", "FIREARM_INCOMPATIBLE_PASS")
-$proof = @(Select-String -Path $testResults -Pattern ($markers -join "|") |
+             "FIREARM_ANIM_EVENT_PASS", "FIREARM_INCOMPATIBLE_PASS",
+             "RELOAD_PROVIDER_NO_PROVIDER_PASS")
+$proof = @(Select-String -Path $testResults -Pattern (($markers + "RELOAD_PROVIDER_VARIANT_PASS") -join "|") |
     ForEach-Object { $_.Line.Trim() })
 foreach ($marker in $markers) {
     if (-not ($proof | Where-Object { $_ -match $marker })) {
         throw "Missing runtime proof record $marker. Results=$testResults"
+    }
+}
+foreach ($shooter in $reloadShooters) {
+    $pattern = "RELOAD_PROVIDER_VARIANT_PASS shooter=$shooter "
+    if (-not ($proof | Where-Object { $_.Contains($pattern) })) {
+        throw "Missing runtime proof record for reload shooter $shooter. Results=$testResults"
     }
 }
 
@@ -128,6 +144,7 @@ $global:FiringProviderAcceptance = [pscustomobject]@{
     UnityEditor = $Editor
     GeneratedProject = $projectPath
     UnityCompileErrors = 0
+    ReloadShooters = $reloadShooters -join ","
     PlayModePassed = [int]$run.passed
     PlayModeFailed = [int]$run.failed
     PlayModeLog = $playLog

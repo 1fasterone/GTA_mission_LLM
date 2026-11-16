@@ -2987,12 +2987,12 @@ class UnityProjectGenerator:
         self.last_atom_binding_report = stamp_atom_bindings(schema, self.last_atom_bindings)
         for _msg in self.last_atom_binding_report.warnings:
             _log.warning("[atom bindings] %s", _msg)
-        # A lowered atom that resolves the firing contract (Shoot, R3) must
-        # compile even where no composed controller implements it. The
-        # controller micro emits the contract beside any implementing class;
-        # only when no micro emitted it, emit the same contract alone, so the
-        # atom compiles and refuses at runtime with FireResult.NoProvider
-        # (warned above). A shooting controller off the Player still emitted
+        # A lowered atom that resolves the firing contract (Shoot R3, Reload
+        # R4) must compile even where no composed controller implements it.
+        # The controller micro emits the contract beside any implementing
+        # class; only when no micro emitted it, emit the same contract alone,
+        # so the atom compiles and refuses at runtime with NoProvider (warned
+        # above). A shooting controller off the Player still emitted
         # it, and a second copy would be a duplicate type (CS0101).
         if not firing_contract_emitted(composed_units) and any(
                 binding.runtime_provider is not None

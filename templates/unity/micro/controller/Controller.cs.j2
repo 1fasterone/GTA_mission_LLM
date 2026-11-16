@@ -796,8 +796,11 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         vel2.x = h * speed;
         _rb.linearVelocity = vel2;
         _grounded = CheckGrounded2D();
+{% if "jump" in s.abilities or "double_jump" in s.abilities %}
+        // Gated like the jumpForce field it reads (a 2D brawler may not jump).
         if (jumpPressed && _grounded)
             _rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);
+{% endif %}
 {% if variant == "2d_fighting" %}
         if (Mathf.Abs(h) > 0.01f) _facing = Mathf.Sign(h);
 {% endif %}
@@ -1104,10 +1107,10 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
 {% if has_firearm_adapter %}        UpdateGeneratedFirearmRecoil();
         ReleaseExpiredFirearmShots();
 {% endif %}
-        // Fire input asks the same gate the Shoot atom does (IFiringProvider).
+        // Fire and reload input ask the same gates the Shoot and Reload atoms
+        // do (IFiringProvider).
         if (fireDown) TryFire();
-        if (reloadDown && !_isReloading && _currentAmmo < weaponMagazineSize[_weaponIndex])
-            StartCoroutine(ReloadRoutine());
+        if (reloadDown) TryReload();
 {% endif %}
 {% if "cycle_weapon" in s.abilities %}
 {% if s.input_backend == "input_system" %}
@@ -2008,6 +2011,20 @@ public class {{ s.name }} : MonoBehaviour{% if variant.startswith("vehicle_") %}
         return transform;
 {% endif %}    }
 {% endif %}
+    /// <summary>The one reload gate (IFiringProvider). Reload input and the
+    /// Reload atom both call it; nothing else starts ReloadRoutine(). A
+    /// refused reload changes no state and names its reason.</summary>
+    public ReloadResult TryReload()
+    {
+        if (_isReloading) return ReloadResult.AlreadyReloading;
+        if (_currentAmmo >= weaponMagazineSize[_weaponIndex]) return ReloadResult.MagazineFull;
+        if (_reserveAmmo <= 0) return ReloadResult.NoReserveAmmo;
+        StartCoroutine(ReloadRoutine());
+        return ReloadResult.Started;
+    }
+
+    /// <summary>Runs one accepted reload: after the weapon's reload_time it
+    /// moves rounds from reserve into the magazine. Only TryReload() starts it.</summary>
     private IEnumerator ReloadRoutine()
     {
         _isReloading = true;

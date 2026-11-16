@@ -15,7 +15,7 @@ import re
 import textwrap
 from collections import Counter
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, NamedTuple
 
 from .. import firing_provider
 from .backends import unity
@@ -213,55 +213,124 @@ def _optional_token_ref(relative: str, token: str) -> str | None:
         return None
 
 
-def _firing_seam() -> tuple[str | None, str | None, list[str]]:
-    """Prove Shoot and fire input reach the one TryFire gate (R3, S5).
+class _FiringGateProof(NamedTuple):
+    """What proves one atom reaches its controller gate through the provider."""
 
-    Returns ``(lifecycle_seam, missing_seam, provenance)``. Each proof is read
-    from live source: the lowered Shoot C#, the contract template, the
-    controller template and the micro that emits the contract. Any gap leaves
-    the route without a seam, which validation rejects.
+    # Tokens that must exist: the contract member, its resolver and the
+    # controller's gate, plus the input line that calls the same gate.
+    tokens: tuple[tuple[str, str], ...]
+    # The controller gate method's declaration line.
+    gate_signature: str
+    # The private routine past the gate, and its own declaration (excluded
+    # when counting call sites).
+    routine_call: str
+    routine_declaration: str
+    # The input that shares the gate, for the seam description.
+    input_name: str
+
+
+_FIRING_GATE_PROOFS: dict[str, _FiringGateProof] = {
+    # R3 (S5).
+    "Shoot": _FiringGateProof(
+        tokens=(
+            (_FIRING_TEMPLATE, "FireResult TryFire();"),
+            (_FIRING_TEMPLATE, "public static FireResult FirePlayer()"),
+            (_CONTROLLER_TEMPLATE, "if (fireDown) TryFire();"),
+            (_CONTROLLER_TEMPLATE,
+             "return TryShoot() ? FireResult.Fired : FireResult.NoProjectile;"),
+        ),
+        gate_signature="public FireResult TryFire()",
+        routine_call="TryShoot()",
+        routine_declaration="bool TryShoot()",
+        input_name="fire",
+    ),
+    # R4 (S6).
+    "Reload": _FiringGateProof(
+        tokens=(
+            (_FIRING_TEMPLATE, "ReloadResult TryReload();"),
+            (_FIRING_TEMPLATE, "public static ReloadResult ReloadPlayer()"),
+            (_CONTROLLER_TEMPLATE, "if (reloadDown) TryReload();"),
+        ),
+        gate_signature="public ReloadResult TryReload()",
+        routine_call="ReloadRoutine()",
+        routine_declaration="IEnumerator ReloadRoutine()",
+        input_name="reload",
+    ),
+}
+# What every provider-lowered atom shares: the resolver finds the contract on
+# the Player, the micro emits the contract, and the implementer sits there.
+_FIRING_SHARED_TOKENS: tuple[tuple[str, str], ...] = (
+    (_FIRING_TEMPLATE, f'GameObject.FindWithTag("{firing_provider.HOST}")'),
+    (_FIRING_TEMPLATE, f"GetComponent<{firing_provider.CONTRACT}>()"),
+    ("src/micro/controller.py", "env.get_template(firing_provider.TEMPLATE)"),
+    ("templates/unity/scene.unity.j2", f"m_TagString: {firing_provider.HOST}"),
+    # The implementer must sit where the resolver looks: the scene puts
+    # exactly the player-target units on the Player-tagged object.
+    ("templates/unity/scene.unity.j2",
+     f'selectattr("target", "equalto", "{firing_provider.HOST_TARGET}")'),
+    ("src/atom_bindings.py", "== firing_provider.HOST_TARGET"),
+)
+
+
+def _method_body(lines: list[str], signature: str) -> list[str] | None:
+    """The lines of the first method declared by ``signature``, or None.
+
+    Template methods sit at class-member indentation (four spaces), so the
+    body ends at the first line that is exactly the closing ``    }``.
     """
+    for start, line in enumerate(lines):
+        if signature in line and not line.lstrip().startswith("//"):
+            for end in range(start + 1, len(lines)):
+                if lines[end].rstrip() == "    }":
+                    return lines[start:end + 1]
+            return None
+    return None
+
+
+def _firing_seam(atom: str) -> tuple[str | None, str | None, list[str]]:
+    """Prove ``atom`` and its player input reach one firing-provider gate.
+
+    R3 (S5) proved Shoot -> TryFire; R4 (S6) proves Reload -> TryReload the
+    same way. Returns ``(lifecycle_seam, missing_seam, provenance)``. Each
+    proof is read from live source: the lowered C#, the contract template, the
+    controller template and the micro that emits the contract. The gate is
+    shared only if its private routine is reached from exactly one call site,
+    inside the gate. Any gap leaves the route without a seam, which validation
+    rejects.
+    """
+    proof = _FIRING_GATE_PROOFS[atom]
+    call = firing_provider.ATOM_CALLS[atom]
+    gate = firing_provider.ATOM_GATES[atom]
     gaps: list[str] = []
     provenance: list[str] = []
-    handler = unity._SNIPPETS.get("Shoot")
-    if handler is None or firing_provider.RESOLVER_CALL not in handler({}):
-        gaps.append(f"the Shoot lowerer does not call {firing_provider.RESOLVER_CALL}")
-    for relative, token in [
-        (_FIRING_TEMPLATE, "FireResult TryFire();"),
-        (_FIRING_TEMPLATE, "public static FireResult FirePlayer()"),
-        (_FIRING_TEMPLATE, f'GameObject.FindWithTag("{firing_provider.HOST}")'),
-        (_FIRING_TEMPLATE, f"GetComponent<{firing_provider.CONTRACT}>()"),
-        (_CONTROLLER_TEMPLATE, "public FireResult TryFire()"),
-        (_CONTROLLER_TEMPLATE, "if (fireDown) TryFire();"),
-        (_CONTROLLER_TEMPLATE, "return TryShoot() ? FireResult.Fired : FireResult.NoProjectile;"),
-        ("src/micro/controller.py", "env.get_template(firing_provider.TEMPLATE)"),
-        ("templates/unity/scene.unity.j2", f"m_TagString: {firing_provider.HOST}"),
-        # The implementer must sit where the resolver looks: the scene puts
-        # exactly the player-target units on the Player-tagged object.
-        ("templates/unity/scene.unity.j2",
-         f'selectattr("target", "equalto", "{firing_provider.HOST_TARGET}")'),
-        ("src/atom_bindings.py", "== firing_provider.HOST_TARGET"),
-    ]:
+    handler = unity._SNIPPETS.get(atom)
+    if handler is None or call not in handler({}):
+        gaps.append(f"the {atom} lowerer does not call {call}")
+    for relative, token in (*proof.tokens,
+                            (_CONTROLLER_TEMPLATE, proof.gate_signature),
+                            *_FIRING_SHARED_TOKENS):
         reference = _optional_token_ref(relative, token)
         if reference is None:
             gaps.append(f"{relative} lacks {token!r}")
         else:
             provenance.append(reference)
-    # The gate is shared only if nothing else reaches the shot past it.
-    shot_calls = [
-        line for line in (ROOT / _CONTROLLER_TEMPLATE).read_text(encoding="utf-8").splitlines()
-        if "TryShoot()" in line and not line.lstrip().startswith("//")
-        and "bool TryShoot()" not in line
+    # The gate is shared only if nothing else reaches the routine past it.
+    lines = (ROOT / _CONTROLLER_TEMPLATE).read_text(encoding="utf-8").splitlines()
+    routine_calls = [
+        line for line in lines
+        if proof.routine_call in line and not line.lstrip().startswith("//")
+        and proof.routine_declaration not in line
     ]
-    if len(shot_calls) != 1:
-        gaps.append(f"{_CONTROLLER_TEMPLATE} reaches TryShoot() from {len(shot_calls)} "
-                    "call sites; only TryFire() may")
+    body = _method_body(lines, proof.gate_signature) or []
+    if len(routine_calls) != 1 or routine_calls[0] not in body:
+        gaps.append(f"{_CONTROLLER_TEMPLATE} reaches {proof.routine_call} from "
+                    f"{len(routine_calls)} call sites; only {gate}() may")
     if gaps:
         return None, "; ".join(gaps), provenance
     return (
-        f"atom route coroutine -> {firing_provider.RESOLVER_CALL} -> "
-        f"{firing_provider.HOST} {firing_provider.CONTRACT}.TryFire, "
-        "the gate Update fire input also calls",
+        f"atom route coroutine -> {call} -> "
+        f"{firing_provider.HOST} {firing_provider.CONTRACT}.{gate}, "
+        f"the gate Update {proof.input_name} input also calls",
         None,
         provenance,
     )
@@ -437,9 +506,9 @@ def _descriptor_producers() -> list[dict[str, Any]]:
 
 
 def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]]:
-    from ..atom_bindings import derive_atom_bindings, runtime_provider, stamp_atom_bindings
+    from ..atom_bindings import derive_atom_bindings, stamp_atom_bindings
     from ..micro import REGISTRY
-    from ..micro.controller import ControllerPipeline, provides_firing
+    from ..micro.controller import ControllerPipeline
     from ..micro.unity_base import UnityMicroPipeline
     from ..unity_compose import MicroComposer
     from ..unity_generator import UnityProjectGenerator
@@ -465,9 +534,7 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
         raise OwnershipEvidenceError("patrol descriptor no longer resolves MoveTo")
     if REGISTRY.get("controller") is not ControllerPipeline:
         raise OwnershipEvidenceError("controller registry no longer selects ControllerPipeline")
-    shoot_debt = baseline["missing_lowerers"].get("unity:Shoot", {})
     firing_owners = _firing_owner_candidates()
-    firing_seam, firing_gap, firing_provenance = _firing_seam()
 
     return [
         _connection(
@@ -563,30 +630,43 @@ def _representative_connections(baseline: dict[str, Any]) -> list[dict[str, Any]
             ],
             template_owner_preserved="ControllerPipeline",
         ),
-        _connection(
-            # R3 (S5): Shoot and the fire input share one firing provider.
-            descriptor="unity:AtomDef:Shoot",
-            mode="shared_firing_provider",
-            selection=_assignment_ref("src/atoms/controller.py", "CONTROLLER_ATOMS"),
-            provider=(
-                _source_ref(unity._SNIPPETS["Shoot"])
-                if "Shoot" in unity._SNIPPETS else None
-            ),
-            owner_candidates=sorted(set(firing_owners.values())),
-            generated_host=firing_provider.HOST if firing_seam else None,
-            lifecycle_seam=firing_seam,
-            missing_seam=firing_gap,
-            provenance=[
-                _token_ref("src/atoms/controller.py", 'name="Shoot"'),
-                _source_ref(runtime_provider),
-                _source_ref(provides_firing),
-                *firing_owners,
-                *firing_provenance,
-            ],
-            next_slice=shoot_debt.get("next_slice"),
-            template_owner_preserved="ControllerPipeline",
-        ),
+        # R3 (S5) Shoot and R4 (S6) Reload: each atom and its player input
+        # share one firing-provider gate.
+        *[_firing_connection(atom, baseline, firing_owners)
+          for atom in firing_provider.ATOM_CALLS],
     ]
+
+
+def _firing_connection(atom: str, baseline: dict[str, Any],
+                       firing_owners: dict[str, str]) -> dict[str, Any]:
+    """The ``shared_firing_provider`` route of one provider-lowered atom."""
+    from ..atom_bindings import runtime_provider
+    from ..micro.controller import provides_firing
+
+    seam, gap, provenance = _firing_seam(atom)
+    debt = baseline["missing_lowerers"].get(f"unity:{atom}", {})
+    return _connection(
+        descriptor=f"unity:AtomDef:{atom}",
+        mode="shared_firing_provider",
+        selection=_assignment_ref("src/atoms/controller.py", "CONTROLLER_ATOMS"),
+        provider=(
+            _source_ref(unity._SNIPPETS[atom])
+            if atom in unity._SNIPPETS else None
+        ),
+        owner_candidates=sorted(set(firing_owners.values())),
+        generated_host=firing_provider.HOST if seam else None,
+        lifecycle_seam=seam,
+        missing_seam=gap,
+        provenance=[
+            _token_ref("src/atoms/controller.py", f'name="{atom}"'),
+            _source_ref(runtime_provider),
+            _source_ref(provides_firing),
+            *firing_owners,
+            *provenance,
+        ],
+        next_slice=debt.get("next_slice"),
+        template_owner_preserved="ControllerPipeline",
+    )
 
 
 def _protected_template_owners() -> list[dict[str, Any]]:
