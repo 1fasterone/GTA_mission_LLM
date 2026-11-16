@@ -237,11 +237,10 @@ Evidence (local, this branch):
   AlreadyReloading (with fire refused as Reloading) and NoReserveAmmo, and
   checks the refill amounts.
 
-Found, not fixed here: `EntityBehavior.cs.j2` restarts any entity atom
-sequence that does not end in `Despawn`, before yielding, so a sequence of
-only instant atoms recurses synchronously without bound in one frame. The
-first acceptance run hit it with `[Reload]`. The acceptance host uses
-`[Reload, Despawn]`; the template needs its own fix.
+Found and fixed separately: the first acceptance run, with `[Reload]` alone,
+exposed `EntityBehavior.cs.j2` re-entering a looping sequence of instant atoms
+within one frame. #302 fixed the template. The acceptance host keeps
+`[Reload, Despawn]` so it runs exactly once.
 
 Not covered: hardware reload input in Play Mode (batchmode cannot drive it;
 the `Update -> TryReload` call is proven structurally).

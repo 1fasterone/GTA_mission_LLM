@@ -100,9 +100,9 @@ RELOAD_OPTIONS = {
     }],
 }
 # The entity whose atoms route hosts the lowered Reload atom. Its sequence
-# ends in Despawn (of itself), so EntityBehavior runs it once: a sequence that
-# does not end in Despawn restarts, and one with no yielding atom restarts
-# synchronously inside the same frame (a separate EntityBehavior defect).
+# ends in Despawn (of itself), so EntityBehavior runs it exactly once; a
+# sequence that does not end in Despawn loops (one pass per frame since #302),
+# which would ask for a reload every frame.
 RELOAD_ENTITY = "Armory"
 RELOAD_ENTITY_ATOMS = [AtomInvocation(atom="Reload"),
                        AtomInvocation(atom="Despawn", args={"entity": RELOAD_ENTITY})]
@@ -227,9 +227,12 @@ def emit(project_path: Path) -> dict[str, str]:
     written[f"{behavior}.cs"] = files[f"{PROJECT}/Assets/Scripts/{behavior}.cs"]
     if firing_provider.RELOAD_CALL not in written[f"{behavior}.cs"]:
         raise RuntimeError(f"{behavior} does not lower Reload through the provider")
-    # Start() starts the sequence once; a second StartCoroutine(Run()) is the restart.
-    if written[f"{behavior}.cs"].count("StartCoroutine(Run())") != 1:
-        raise RuntimeError(f"{behavior} restarts its sequence; the acceptance needs one run")
+    # Start() starts the sequence once. A loop (`while (true)` since #302) or a
+    # second StartCoroutine(Run()) would repeat it; the acceptance needs one run.
+    behavior_source = written[f"{behavior}.cs"]
+    if (behavior_source.count("StartCoroutine(Run())") != 1
+            or "while (true)" in behavior_source):
+        raise RuntimeError(f"{behavior} repeats its sequence; the acceptance needs one run")
 
     destination = project_path / DESTINATION
     destination.mkdir(parents=True, exist_ok=True)

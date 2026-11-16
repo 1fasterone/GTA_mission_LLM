@@ -283,12 +283,11 @@ variant through the lowered atom, hosted by the generated `ArmoryBehavior`
 (`entities[Armory].atoms` = `[Reload, Despawn]`), and through the provider's
 own gate.
 
-Found, not fixed here: `EntityBehavior.cs.j2` restarts every entity atom
-sequence that does not end in `Despawn`, and it restarts before yielding. A
-sequence of only instant atoms (`[Reload]`, `[Shoot]`, `[PlaySound]`, …)
-therefore recurses synchronously without bound inside one frame. The first
-acceptance run hit exactly this. The acceptance host ends in `Despawn` so it
-runs once; the template defect needs its own fix.
+The first acceptance run used `[Reload]` alone and exposed an
+`EntityBehavior.cs.j2` defect: a looping sequence of only instant atoms
+re-entered itself within one frame. #302 fixed it (one coroutine, a frame
+yield per pass). The acceptance host ends in `Despawn` so it runs exactly once;
+a looping host would reload every frame.
 
 Scope limit: the controller stays template-owned (`protected_template_owners`)
 until every S6 behavior is covered. R4 shares one more gate; the other 23
