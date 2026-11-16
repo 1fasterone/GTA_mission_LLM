@@ -35,6 +35,8 @@ from __future__ import annotations
 import json
 import re
 
+from .llm_budgets import ENTITY_QUERIES, capped_chat
+
 
 _SYSTEM = """\
 You are an art director for a game asset pipeline that sources real 3D models
@@ -99,7 +101,10 @@ def translate_concept(concept_text: str, entities: list, llm, seed: int = 0) -> 
         return 0
 
     try:
-        raw = llm.chat(
+        raw = capped_chat(
+            llm,
+            purpose="Sketchfab entity queries",
+            max_tokens=ENTITY_QUERIES.tokens(len(entities)),
             system=_SYSTEM,
             user=_USER_TMPL.format(
                 concept=concept_text.strip(),
@@ -110,6 +115,8 @@ def translate_concept(concept_text: str, entities: list, llm, seed: int = 0) -> 
             seed=seed or None,
         )
     except Exception:  # noqa: BLE001
+        return 0
+    if raw is None:
         return 0
 
     try:

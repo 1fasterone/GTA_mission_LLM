@@ -23,6 +23,7 @@ import json
 import re
 from pathlib import Path
 
+from ..llm_budgets import AUDIO_CUES, capped_chat
 from .synth import keyword_archetype
 
 ROUTES     = ("synth", "gen", "tts", "library")
@@ -221,7 +222,10 @@ def extract_cues(concept: str, llm, *, n: int = 10,
         f"Game concept (extract {n} diegetic sound cues):\n\n{concept.strip()}"
     )
     try:
-        raw = llm.chat(
+        raw = capped_chat(
+            llm,
+            purpose="diegetic audio cues",
+            max_tokens=AUDIO_CUES.tokens(n),
             system=_EXTRACT_SYSTEM,
             user=user_prompt,
             temperature=0.0,
@@ -229,6 +233,8 @@ def extract_cues(concept: str, llm, *, n: int = 10,
             seed=seed or None,
         )
     except Exception:  # noqa: BLE001
+        return []
+    if raw is None:
         return []
 
     try:

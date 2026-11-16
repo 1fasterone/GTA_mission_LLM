@@ -17,6 +17,7 @@ import json
 import re
 from typing import Any
 
+from ..llm_budgets import DIALOG_DEFAULT_LINES, DIALOG_LINES, capped_chat
 from .higgs import SUPPORTED_EMOTIONS, SUPPORTED_LANGUAGES, SUPPORTED_STYLES
 from .lang import normalize_lang
 
@@ -170,7 +171,10 @@ def extract_dialog_lines(
         f"{concept.strip()}"
     )
     try:
-        raw = llm.chat(
+        raw = capped_chat(
+            llm,
+            purpose=f"NPC dialog lines for {speaker}",
+            max_tokens=DIALOG_LINES.tokens(count if count and count > 0 else DIALOG_DEFAULT_LINES),
             system=_EXTRACT_SYSTEM,
             user=user_prompt,
             temperature=0.0,
@@ -178,6 +182,8 @@ def extract_dialog_lines(
             seed=seed or None,
         )
     except Exception:  # noqa: BLE001
+        return []
+    if raw is None:
         return []
 
     try:
