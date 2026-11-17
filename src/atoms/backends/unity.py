@@ -429,6 +429,22 @@ def _shoot(args: dict) -> str:
     )
 
 
+def _reload(args: dict) -> str:
+    # R4 (S6): Reload owns no weapon state either. It asks the Player's one
+    # firing provider (IFiringProvider.TryReload), the same gate the
+    # controller's reload input calls, so the loadout's reload_time and
+    # magazine_size stay authoritative. A refusal changes no state and is
+    # reported by its ReloadResult, never swallowed.
+    return (
+        f"var _reload = {firing_provider.RELOAD_CALL};\n"
+        "if (_reload == ReloadResult.NoProvider)\n"
+        "    Debug.LogError(\"[atom.Reload] no IFiringProvider on the Player: "
+        "compose a controller with the shoot ability\");\n"
+        "else if (_reload != ReloadResult.Started)\n"
+        "    Debug.LogWarning(\"[atom.Reload] the firing provider refused the reload: \" + _reload);"
+    )
+
+
 # ── HUD atoms ─────────────────────────────────────────────────────────────────
 
 def _show_hud(args: dict) -> str:
@@ -1120,6 +1136,7 @@ _SNIPPETS: dict[str, Any] = {
     "Crouch":             _crouch,
     "Look":               _look,
     "Shoot":              _shoot,
+    "Reload":             _reload,
     # hud
     "ShowHUD":            _show_hud,
     "HideHUD":            _hide_hud,

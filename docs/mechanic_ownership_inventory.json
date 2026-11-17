@@ -5,7 +5,7 @@
         "src/capability_resolver.py:260",
         "src/capability_resolver.py:317",
         "src/unity_generator.py:2484",
-        "src/atom_bindings.py:295"
+        "src/atom_bindings.py:297"
       ],
       "producer": "UnitySchema.atoms",
       "source": "src/unity_schema.py:1301"
@@ -22,7 +22,7 @@
       "consumers": [
         "src/unity_resolver.py:307",
         "src/unity_generator.py:2484",
-        "src/atom_bindings.py:295"
+        "src/atom_bindings.py:297"
       ],
       "descriptor_source": "src/atoms/behavior_map.py:29",
       "producer": "EntitySpec.atoms and behavior map",
@@ -32,7 +32,7 @@
       "consumers": [
         "src/unity_resolver.py:307",
         "src/unity_generator.py:2484",
-        "src/atom_bindings.py:295"
+        "src/atom_bindings.py:297"
       ],
       "producer": "UnityScript.atoms",
       "source": "src/unity_schema.py:1221"
@@ -92,7 +92,7 @@
       "owner": "ControllerPipeline",
       "ownership": "template_owned",
       "runtime_acceptance": "unverified",
-      "source": "src/micro/controller.py:688"
+      "source": "src/micro/controller.py:689"
     },
     {
       "mechanic": "board",
@@ -111,7 +111,7 @@
       "source": "src/micro/rules.py:137"
     },
     {
-      "attachment": "templates/unity/micro/controller/Controller.cs.j2:1562",
+      "attachment": "templates/unity/micro/controller/Controller.cs.j2:1565",
       "mechanic": "projectile",
       "migrated": false,
       "owner": "ControllerPipeline controller/projectile templates",
@@ -134,8 +134,8 @@
         "GameSequencer"
       ],
       "provenance": [
-        "src/atom_bindings.py:295",
-        "src/atom_bindings.py:441",
+        "src/atom_bindings.py:297",
+        "src/atom_bindings.py:443",
         "src/unity_generator.py:2484",
         "templates/unity/GameSequencer.cs.j2:12",
         "templates/unity/scene.unity.j2:1282"
@@ -187,7 +187,7 @@
         "templates/unity/compose/GameWiring.cs.j2:40",
         "templates/unity/scene.unity.j2:1384"
       ],
-      "provider": "src/atoms/backends/unity.py:765",
+      "provider": "src/atoms/backends/unity.py:781",
       "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_compose.py:893",
@@ -231,7 +231,7 @@
         "src/unity_compose.py:440",
         "templates/unity/scene.unity.j2:1431"
       ],
-      "provider": "src/micro/controller.py:1015",
+      "provider": "src/micro/controller.py:1016",
       "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/unity_compose.py:326",
@@ -250,23 +250,57 @@
         "ControllerPipeline"
       ],
       "provenance": [
-        "src/atom_bindings.py:127",
-        "src/atom_bindings.py:280",
+        "src/atom_bindings.py:128",
+        "src/atom_bindings.py:282",
         "src/atoms/controller.py:201",
-        "src/micro/controller.py:1041",
+        "src/micro/controller.py:1043",
         "src/micro/controller.py:162",
-        "templates/unity/micro/controller/Controller.cs.j2:1108",
-        "templates/unity/micro/controller/Controller.cs.j2:1520",
-        "templates/unity/micro/controller/Controller.cs.j2:1525",
+        "templates/unity/micro/controller/Controller.cs.j2:1112",
+        "templates/unity/micro/controller/Controller.cs.j2:1523",
+        "templates/unity/micro/controller/Controller.cs.j2:1528",
         "templates/unity/micro/controller/Controller.cs.j2:30",
-        "templates/unity/micro/controller/FiringProvider.cs.j2:29",
-        "templates/unity/micro/controller/FiringProvider.cs.j2:42",
-        "templates/unity/micro/controller/FiringProvider.cs.j2:43",
-        "templates/unity/micro/controller/FiringProvider.cs.j2:47",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:45",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:61",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:62",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:66",
         "templates/unity/scene.unity.j2:1378",
         "templates/unity/scene.unity.j2:430"
       ],
       "provider": "src/atoms/backends/unity.py:416",
+      "retired_by": null,
+      "runtime_acceptance": "unverified",
+      "selection": "src/atoms/controller.py:19",
+      "template_owner_preserved": "ControllerPipeline"
+    },
+    {
+      "classification": "connected_and_owned",
+      "descriptor": "unity:AtomDef:Reload",
+      "diagnostic": "connected and owned by ControllerPipeline through atom route coroutine -> FiringProviders.ReloadPlayer() -> Player IFiringProvider.TryReload, the gate Update reload input also calls",
+      "generated_host": "Player",
+      "lifecycle_seam": "atom route coroutine -> FiringProviders.ReloadPlayer() -> Player IFiringProvider.TryReload, the gate Update reload input also calls",
+      "missing_seam": null,
+      "mode": "shared_firing_provider",
+      "next_slice": null,
+      "owner_candidates": [
+        "ControllerPipeline"
+      ],
+      "provenance": [
+        "src/atom_bindings.py:128",
+        "src/atom_bindings.py:282",
+        "src/atoms/controller.py:230",
+        "src/micro/controller.py:1043",
+        "src/micro/controller.py:162",
+        "templates/unity/micro/controller/Controller.cs.j2:1113",
+        "templates/unity/micro/controller/Controller.cs.j2:2017",
+        "templates/unity/micro/controller/Controller.cs.j2:30",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:48",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:61",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:62",
+        "templates/unity/micro/controller/FiringProvider.cs.j2:73",
+        "templates/unity/scene.unity.j2:1378",
+        "templates/unity/scene.unity.j2:430"
+      ],
+      "provider": "src/atoms/backends/unity.py:432",
       "retired_by": null,
       "runtime_acceptance": "unverified",
       "selection": "src/atoms/controller.py:19",
@@ -276,7 +310,7 @@
   "runtime_acceptance": "unverified",
   "scope_limit": "Representative structural closure. Per-build typed atom-route bindings are persisted in schema.meta.atom_bindings by src/atom_bindings.py (R2/S4); this report makes no runtime migration, compilation claim, or advancing runtime acceptance.",
   "summary": {
-    "connected_and_owned": 5,
+    "connected_and_owned": 6,
     "retired": 1
   }
 }

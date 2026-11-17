@@ -121,7 +121,8 @@ public sealed class FiringProviderPlayModeTests
         Assert.AreEqual(3, hits.Hits);
 
         // A reload in progress refuses; finishing it refills from reserve.
-        shooter.StartCoroutine("ReloadRoutine");
+        // R4 (S6): the reload starts through its own gate, as the R key does.
+        Assert.AreEqual(ReloadResult.Started, provider.TryReload());
         Assert.IsTrue(provider.IsReloading);
         Assert.AreEqual(FireResult.Reloading, FiringProviders.FirePlayer());
         yield return new WaitForSeconds(0.45f);

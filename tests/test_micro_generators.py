@@ -2598,3 +2598,24 @@ class TestRunawayBodyCapLeavesParseableCode:
 
     def test_escaped_quote_does_not_swallow_the_rest(self):
         assert self._depth('var s = "he said \\"hi\\""; {') == 1
+
+
+@pytest.mark.parametrize("variant", ["2d_platformer", "2d_fighting"])
+def test_2d_jump_line_is_gated_like_the_jump_force_field(dummy_config, variant):
+    """Regression (found by R4's per-variant Roslyn gate): the 2D movement
+    branch read jumpForce unconditionally while the field is declared only for
+    jump/double_jump, so a 2D controller without jump shipped CS0103."""
+    p = ControllerPipeline(dummy_config)
+    tpl = p.jinja().get_template("Controller.cs.j2")
+
+    grounded = p.default_fix(ControllerSchema(name="X", abilities=["shoot"]), variant)
+    cs = tpl.render(s=grounded, variant=variant)
+    assert "jumpForce" not in cs
+    assert "_grounded = CheckGrounded2D();" in cs
+    assert cs.count("{") == cs.count("}")
+
+    for ability in ("jump", "double_jump"):
+        jumping = p.default_fix(ControllerSchema(name="X", abilities=[ability]), variant)
+        cs = tpl.render(s=jumping, variant=variant)
+        assert "private float jumpForce" in cs
+        assert "_rb.linearVelocity = new Vector2(_rb.linearVelocity.x, jumpForce);" in cs

@@ -37,7 +37,8 @@ Reviewed on main `1d75000`.
 | Untouched-brief preflight | Done | #291 |
 | S4 typed bindings | Done (R2) | `meta.atom_bindings` v1 (`src/atom_bindings.py`); ownership audit: 4 `connected_and_owned`, 1 `retired`, 1 `missing_provider`, 0 `connected_but_not_attached` |
 | S5 shared firing provider | Done (R3) | `Shoot` lowered through `IFiringProvider.TryFire`; ownership audit: 5 `connected_and_owned`, 1 `retired`, 0 `missing_provider`; support audit: Unity 72 executable / 24 descriptive; Play Mode acceptance passed (see R3) |
-| S6-S8 | Not started | 24 baseline entries name S6; board and rules remain `protected_template_owners` |
+| S6 controller migration | In progress (R4) | `Reload` lowered through `IFiringProvider.TryReload` in all 12 firing variants; 23 baseline entries still name S6; controller stays in `protected_template_owners` |
+| S7-S8 | Not started | Board and rules remain `protected_template_owners` |
 
 ## Remaining plan
 
@@ -139,13 +140,16 @@ Remaining, recorded rather than silently kept:
   carry the rejection instead.
 - `_auto_declare_undeclared_scalars` still consults `_MB_COMMON_MEMBERS` /
   `_STATIC_CLASS_ALLOW` so it never declares `transform` as a float. It adds
-  fields rather than erasing; moving it onto Roslyn CS0103 sites is R2 work.
+  fields rather than erasing. Moving it onto Roslyn CS0103 sites was noted
+  here as R2 work, but R2's scope (#299) did not include it, so it is still
+  open and not yet assigned to a step.
 - `_VARIANT_FIELDS` (HUD field collision) is still a per-variant table.
 
-Exit criterion status: no copied project API table remains; framework
+Exit criterion met: no copied project API table remains; framework
 semantics come from real assemblies. ruff, mypy, full pytest and both audits
-pass locally. The real Unity Editor compile gate (`pytest -m unity_compile`,
-`unity-validation.yml`) must still be run on this branch before merge.
+passed locally, and the real Unity Editor compile gate (`unity-validation.yml`,
+the "Unity generated-project compile" check) passed in CI on #292 before it
+merged.
 
 ### R2 progress
 
@@ -199,6 +203,47 @@ Not covered: hardware fire input in Play Mode (batchmode cannot drive it; the
 `Update -> TryFire` call is proven structurally). The firearm presentation
 adapter from `codex/projectile-slice4-firearm-adapter` was ported afterwards
 in its own PR (see open decisions).
+
+### R4 progress
+
+Branch `codex/r4-s6-reload`, the first S6 behavior. `unity:Reload` left the
+baseline (23 S6 entries remain). The controller stays in
+`protected_template_owners` until every S6 behavior is covered.
+
+| Item | Change |
+| --- | --- |
+| One gate | `Controller.cs.j2` gains `TryReload()` on `IFiringProvider`: it refuses AlreadyReloading, then MagazineFull, then NoReserveAmmo, and is the only caller of `ReloadRoutine()`. `Update`'s reload input is `if (reloadDown) TryReload();`. |
+| Contract | `FiringProvider.cs.j2` adds `ReloadResult`, `TryReload()` and `FiringProviders.ReloadPlayer()`. `src/firing_provider.py` names each provider-lowered atom's call and gate (`ATOM_CALLS`, `ATOM_GATES`). |
+| Lowerer | `_reload` emits only `FiringProviders.ReloadPlayer()`. `NoProvider` is a logged error; any other refusal is a logged warning naming its `ReloadResult`. |
+| Vocabulary | `Reload` takes no parameters (`reload_time` duplicated the weapon loadout); passed args are named per build in `ignored_args`. `duration` is `instant`. |
+| Behavior fix | A reload with no reserve ammunition is refused (`NoReserveAmmo`). The old input check started it anyway, which blocked firing for `reload_time` and refilled nothing. |
+| Ownership audit | `_firing_seam(atom)` and `_firing_connection` prove each provider atom separately. `unity:AtomDef:Reload` is `shared_firing_provider` / `connected_and_owned`. The routine must be reached from one call site inside its gate. |
+| Incidental compile fix | The per-variant Roslyn gate found CS0103 on `main`: 2d_platformer and 2d_fighting read `jumpForce` without the jump ability. The 2D jump line is now gated like the field (regression test in `tests/test_micro_generators.py`). |
+
+Evidence (local, this branch):
+
+- `tests/test_reload_provider.py`: 65 tests. Per variant: the gate in all 12
+  firing variants, its absence plus the no-implementer warning and
+  contract-only copy in all 5 others, and a Roslyn compile of each firing
+  variant's controller with the lowered `Reload` and `Shoot`. The compile runs
+  against the real Unity 6000.1.4f1 reference assemblies.
+- `tools/run_firing_provider_acceptance.ps1`: a clean Unity 6000.1.4f1 project
+  compiled the emitted sources with 0 C# errors, and all 19 Play Mode tests
+  passed. That is 6 for R3 and Slice 4, plus 13 for R4:
+  `RELOAD_PROVIDER_VARIANT_PASS` for each of the 12 firing variants, and
+  `RELOAD_PROVIDER_NO_PROVIDER_PASS`. Each variant case runs the lowered atom
+  through the generated `ArmoryBehavior` (`entities[Armory].atoms`) and calls
+  the provider's gate directly. It walks MagazineFull, Started,
+  AlreadyReloading (with fire refused as Reloading) and NoReserveAmmo, and
+  checks the refill amounts.
+
+Found and fixed separately: the first acceptance run, with `[Reload]` alone,
+exposed `EntityBehavior.cs.j2` re-entering a looping sequence of instant atoms
+within one frame. #302 fixed the template. The acceptance host keeps
+`[Reload, Despawn]` so it runs exactly once.
+
+Not covered: hardware reload input in Play Mode (batchmode cannot drive it;
+the `Update -> TryReload` call is proven structurally).
 
 ## Trace answer
 

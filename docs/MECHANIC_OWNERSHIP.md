@@ -1,4 +1,4 @@
-# Mechanic descriptor ownership audit (S3, R2, R3)
+# Mechanic descriptor ownership audit (S3, R2, R3, R4)
 
 S3 validates structural connection and ownership. It does not migrate gameplay,
 add public atom vocabulary, or claim compile/runtime proof. R2 (S4) attached or
@@ -66,6 +66,14 @@ fails validation too: every representative route has a provider.
   `ControllerPipeline`. A lowerer that bypasses the provider loses its seam and
   fails validation. A second implementer makes the owner ambiguous rather than
   picked. The controller/projectile templates remain the runtime owners.
+- Unity `Reload` lowers to `FiringProviders.ReloadPlayer()`, which calls
+  `IFiringProvider.TryReload` on the Player: the same gate the controller's
+  `Update` reload input calls (R4, S6). Its route is built by the same
+  `_firing_connection` helper as `Shoot` and is `connected_and_owned` by
+  `ControllerPipeline`. The seam also requires `ReloadRoutine()` to be reached
+  from exactly one call site, inside `TryReload()`: an auto-reload that starts
+  the routine elsewhere, or a gate that no longer starts it, loses the seam.
+  Each atom is proven separately, so breaking one route leaves the other owned.
 
 ## Authority boundary
 

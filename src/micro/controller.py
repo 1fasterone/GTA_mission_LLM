@@ -162,10 +162,11 @@ def controller_template(variant: str) -> str:
 def provides_firing(abilities: "list[str]", variant: str) -> bool:
     """True when the rendered controller class implements IFiringProvider.
 
-    The one firing provider (R3, S5, src/firing_provider.py): Controller.cs.j2
-    renders the shooting section, gated on the "shoot" ability, and implements
-    the contract there; the Shoot atom fires through it. The other templates
-    render no firing code, so a "shoot" ability there provides nothing.
+    The one firing provider (R3, S5; R4, S6; src/firing_provider.py):
+    Controller.cs.j2 renders the shooting section, gated on the "shoot"
+    ability, and implements the contract there; the Shoot atom fires and the
+    Reload atom reloads through it. The other templates render no firing code,
+    so a "shoot" ability there provides nothing.
     """
     return "shoot" in abilities and controller_template(variant) == "Controller.cs.j2"
 
@@ -1034,9 +1035,10 @@ class ControllerPipeline(UnityMicroPipeline):
             count += 1
 
         if provides_firing(schema.abilities, variant):
-            # The contract the class implements and the Shoot atom fires
-            # through. The generator emits a contract-only copy instead when
-            # a Shoot atom is lowered and no composed controller provides it.
+            # The contract the class implements and the Shoot and Reload
+            # atoms reach it through. The generator emits a contract-only
+            # copy instead when such an atom is lowered and no composed
+            # controller provides it.
             (scripts_dir / firing_provider.SCRIPT).write_text(
                 env.get_template(firing_provider.TEMPLATE).render(
                     emitter="Unity Micro Pipeline"),

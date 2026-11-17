@@ -1,13 +1,26 @@
-"""Emit R3 (S5) firing-provider sources into a disposable Unity acceptance project.
+"""Emit firing-provider sources into a disposable Unity acceptance project.
 
-Every C# file written here comes from a production emitter: two controllers
-from ``MicroComposer.compose`` (one hitscan, one pooled ``projectile_3d``), the
-``IInputReader`` interface the controller reads, copied verbatim from the real
-input micro's emission, and the ``GameSequencer`` that ``UnityProjectGenerator``
-renders for a schema whose ``atoms`` is ``[Shoot]``. The schemas are
-engineer-authored acceptance fixtures, never Pipeline LLM output.
+R3 (S5) proved the Shoot atom and the fire input share one gate; R4 (S6) proves
+the Reload atom and the reload input share one gate, in every controller
+variant that implements the provider.
 
-Only the Play Mode test (tests/unity_firing_provider/) is hand-written.
+Every C# file written here comes from a production emitter:
+
+- three R3 controllers from ``MicroComposer.compose`` (one hitscan, one pooled
+  ``projectile_3d``, one Slice 4 firearm);
+- one R4 reload shooter per firing variant (``reload_variants()``), each from
+  ``MicroComposer.compose`` with the same small loadout;
+- the ``IInputReader`` interface the controllers read, copied verbatim from the
+  real input micro's emission;
+- ``IClimbingState``, rendered from the project generator's own template (the
+  project generator, not the micro, emits it beside a climbing controller);
+- the ``GameSequencer`` and ``ArmoryBehavior`` that ``UnityProjectGenerator``
+  renders for a schema whose ``atoms`` is ``[Shoot]`` and whose one entity's
+  ``atoms`` is ``[Reload, Despawn]``.
+
+The schemas are engineer-authored acceptance fixtures, never Pipeline LLM
+output. Only the Play Mode tests (tests/unity_firing_provider/) are
+hand-written.
 """
 from __future__ import annotations
 
@@ -25,9 +38,15 @@ if str(REPOSITORY_ROOT) not in sys.path:
 from src import firing_provider  # noqa: E402
 from src.atoms.base import AtomInvocation  # noqa: E402
 from src.intent.projectile import physical_projectile_contract_for  # noqa: E402
+from src.micro.controller import (  # noqa: E402
+    VARIANTS,
+    ControllerPipeline,
+    ControllerSchema,
+    provides_firing,
+)
 from src.unity_compose import MicroComposer, Subsystem, subsystems_for  # noqa: E402
-from src.unity_generator import UnityProjectGenerator  # noqa: E402
-from src.unity_schema import UnitySchema  # noqa: E402
+from src.unity_generator import UnityProjectGenerator, entity_behavior_class_name  # noqa: E402
+from src.unity_schema import EntitySpec, UnitySchema  # noqa: E402
 
 PROJECT = "FiringProviderAcceptance"
 DESTINATION = Path("Assets") / "FiringProviderAcceptance"
@@ -64,7 +83,65 @@ INPUT = Subsystem(kind="input", variant="keyboard_mouse", target="systems",
 # brief's closed fast_round contract handed through subsystems_for.
 RIFLE_BRIEF = "An automatic rifle firing visible physical bullets."
 
+# R4 (S6) reload shooters. Two rounds a magazine and three in reserve walk
+# Started, AlreadyReloading, MagazineFull and NoReserveAmmo. fire_rate 0 keeps
+# cadence out of the reload proof. reload_time is a full second, so a reload
+# is still running after the two frames the atom host needs to start, however
+# long a batchmode frame takes (Time.maximumDeltaTime caps one at 1/3 s); the
+# test waits 1.3 s for it to finish.
+RELOAD_OPTIONS = {
+    "input_backend": "legacy",
+    "abilities": ["shoot", "reload"],
+    "starting_reserve_ammo": 3,
+    "weapons": [{
+        "name": "Sidearm", "damage": 10.0, "fire_rate": 0.0,
+        "magazine_size": 2, "reload_time": 1.0, "shoot_range": 50.0,
+        "delivery": "hitscan",
+    }],
+}
+# The entity whose atoms route hosts the lowered Reload atom. Its sequence
+# ends in Despawn (of itself), so EntityBehavior runs it exactly once; a
+# sequence that does not end in Despawn loops (one pass per frame since #302),
+# which would ask for a reload every frame.
+RELOAD_ENTITY = "Armory"
+RELOAD_ENTITY_ATOMS = [AtomInvocation(atom="Reload"),
+                       AtomInvocation(atom="Despawn", args={"entity": RELOAD_ENTITY})]
+
 _INTERFACE = re.compile(r"^public interface IInputReader\s*\{.*?^\}", re.S | re.M)
+_CONFIG = {
+    "lm_studio": {"base_url": "http://localhost:1234/v1", "model": "acceptance"},
+    "unity_pipeline": {"unity_template_dir": str(REPOSITORY_ROOT / "templates" / "unity")},
+}
+
+
+def reload_variants() -> list[str]:
+    """Every controller variant whose rendered class implements the provider.
+
+    Read through the same predicate the controller micro and the atom
+    bindings use, after the same ``default_fix`` pruning, so a variant that
+    starts (or stops) implementing the provider changes this list.
+    """
+    pipeline = ControllerPipeline(_CONFIG)
+    variants = []
+    for variant in VARIANTS:
+        schema = pipeline.default_fix(
+            ControllerSchema(name="Probe", variant=variant,
+                             input_backend="legacy",
+                             abilities=list(RELOAD_OPTIONS["abilities"])),
+            variant)
+        if provides_firing(schema.abilities, variant):
+            variants.append(variant)
+    return variants
+
+
+def reload_shooter_name(variant: str) -> str:
+    """The class name of a variant's reload shooter (``2d_platformer`` -> ``Reload2dPlatformer``)."""
+    return "Reload" + "".join(part[:1].upper() + part[1:] for part in variant.split("_"))
+
+
+def _reload_subsystem(variant: str) -> Subsystem:
+    return Subsystem(kind="controller", variant=variant, target="player",
+                     name=reload_shooter_name(variant), options=deepcopy(RELOAD_OPTIONS))
 
 
 def _firearm_subsystem() -> Subsystem:
@@ -93,16 +170,22 @@ def emit(project_path: Path) -> dict[str, str]:
     written: dict[str, str] = {}
     shared: dict[str, str] = {}
     controller_units = []
+    controllers = [HITSCAN, BALLISTIC, _firearm_subsystem(),
+                   *(_reload_subsystem(variant) for variant in reload_variants())]
     with tempfile.TemporaryDirectory(prefix="firing-provider-") as temp_dir:
-        for index, subsystem in enumerate((HITSCAN, BALLISTIC, _firearm_subsystem())):
+        for index, subsystem in enumerate(controllers):
             sources, units = _compose(subsystem, Path(temp_dir) / f"c{index}" / "Assets")
-            controller_units.extend(unit for unit in units if unit.kind == "controller")
+            composed = [unit for unit in units if unit.kind == "controller"]
+            if [unit.class_name for unit in composed] != [subsystem.name]:
+                raise RuntimeError(f"{subsystem.name} composed as "
+                                   f"{[unit.class_name for unit in composed]}")
+            controller_units.extend(composed)
             for name, source in sources.items():
                 if name == f"{subsystem.name}.cs":
                     written[name] = source
                 elif shared.setdefault(name, source) != source:
-                    # Both controllers ship the same helpers; a divergence would
-                    # mean the acceptance compiled one and not the other.
+                    # Every controller ships the same helpers; a divergence would
+                    # mean the acceptance compiled one and not another.
                     raise RuntimeError(f"controllers emitted different {name}")
         reader, _ = _compose(INPUT, Path(temp_dir) / "input" / "Assets")
 
@@ -118,19 +201,38 @@ def emit(project_path: Path) -> dict[str, str]:
         "// of that file needs the Input System package this project does not carry.\n"
         + interface + "\n")
 
+    generator = UnityProjectGenerator(str(REPOSITORY_ROOT / "templates" / "unity"))
+    if "climbing" in reload_variants():
+        # The project generator emits this contract beside a climbing
+        # controller (its climbing_contract branch); the template takes no
+        # context, so it is rendered directly from the generator's own env.
+        written["IClimbingState.cs"] = generator._render("scripts/IClimbingState.cs.j2", {})
+
     schema = UnitySchema(project_name=PROJECT, game_type="3D", platform="PC",
                          render_pipeline="URP", scenes=["Main"],
-                         atoms=[AtomInvocation(atom="Shoot")])
-    generator = UnityProjectGenerator(str(REPOSITORY_ROOT / "templates" / "unity"))
+                         atoms=[AtomInvocation(atom="Shoot")],
+                         entities=[EntitySpec(name=RELOAD_ENTITY, kind="prop", count=1,
+                                              atoms=list(RELOAD_ENTITY_ATOMS))])
     files = generator.generate(schema, {}, composed_units=controller_units[:1])
-    route = generator.last_atom_bindings.route("atoms")
-    binding = route.atoms[0] if route is not None and route.atoms else None
-    if (binding is None or binding.runtime_provider is None
-            or binding.runtime_provider.implementer != HITSCAN.name):
-        raise RuntimeError(f"Shoot did not bind to {HITSCAN.name}: {binding!r}")
+    for source, atom in (("atoms", "Shoot"), (f"entities[{RELOAD_ENTITY}].atoms", "Reload")):
+        route = generator.last_atom_bindings.route(source)
+        binding = route.atoms[0] if route is not None and route.atoms else None
+        if (binding is None or binding.atom != atom or binding.runtime_provider is None
+                or binding.runtime_provider.implementer != HITSCAN.name):
+            raise RuntimeError(f"{atom} did not bind to {HITSCAN.name}: {binding!r}")
     if f"{PROJECT}/Assets/Scripts/{firing_provider.SCRIPT}" in files:
         raise RuntimeError("a contract-only copy was emitted beside an implementer")
     written["GameSequencer.cs"] = files[f"{PROJECT}/Assets/Scripts/GameSequencer.cs"]
+    behavior = entity_behavior_class_name(RELOAD_ENTITY)
+    written[f"{behavior}.cs"] = files[f"{PROJECT}/Assets/Scripts/{behavior}.cs"]
+    if firing_provider.RELOAD_CALL not in written[f"{behavior}.cs"]:
+        raise RuntimeError(f"{behavior} does not lower Reload through the provider")
+    # Start() starts the sequence once. A loop (`while (true)` since #302) or a
+    # second StartCoroutine(Run()) would repeat it; the acceptance needs one run.
+    behavior_source = written[f"{behavior}.cs"]
+    if (behavior_source.count("StartCoroutine(Run())") != 1
+            or "while (true)" in behavior_source):
+        raise RuntimeError(f"{behavior} repeats its sequence; the acceptance needs one run")
 
     destination = project_path / DESTINATION
     destination.mkdir(parents=True, exist_ok=True)
@@ -146,6 +248,8 @@ def main() -> int:
     args = parser.parse_args()
     written = emit(args.project_path)
     print("firing_provider_sources=" + ",".join(sorted(written)))
+    # The runner requires one RELOAD_PROVIDER_VARIANT_PASS per shooter named here.
+    print("reload_shooters=" + ",".join(reload_shooter_name(v) for v in reload_variants()))
     return 0
 
 

@@ -162,7 +162,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:306"
+        "src/atoms/controller.py:310"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -204,7 +204,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:404"
+        "src/atoms/controller.py:408"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -355,7 +355,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:236"
+        "src/atoms/controller.py:240"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -441,7 +441,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:318"
+        "src/atoms/controller.py:322"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -548,7 +548,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:333"
+        "src/atoms/controller.py:337"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -592,7 +592,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:349"
+        "src/atoms/controller.py:353"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -719,7 +719,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:261"
+        "src/atoms/controller.py:265"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -806,7 +806,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:416"
+        "src/atoms/controller.py:420"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -827,7 +827,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:371"
+        "src/atoms/controller.py:375"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -848,7 +848,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:381"
+        "src/atoms/controller.py:385"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -869,7 +869,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:391"
+        "src/atoms/controller.py:395"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -1000,7 +1000,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:278"
+        "src/atoms/controller.py:282"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -1042,7 +1042,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:224"
+        "src/atoms/controller.py:229"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -1189,7 +1189,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:292"
+        "src/atoms/controller.py:296"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -1561,7 +1561,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:248"
+        "src/atoms/controller.py:252"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -1692,7 +1692,7 @@
       "category": "controller",
       "classification": "unsupported",
       "definitions": [
-        "src/atoms/controller.py:361"
+        "src/atoms/controller.py:365"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2157,7 +2157,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:306"
+        "src/atoms/controller.py:310"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2199,7 +2199,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:404"
+        "src/atoms/controller.py:408"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2350,7 +2350,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:236"
+        "src/atoms/controller.py:240"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2436,7 +2436,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:318"
+        "src/atoms/controller.py:322"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2543,7 +2543,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:333"
+        "src/atoms/controller.py:337"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2587,7 +2587,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:349"
+        "src/atoms/controller.py:353"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2714,7 +2714,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:261"
+        "src/atoms/controller.py:265"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2801,7 +2801,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:416"
+        "src/atoms/controller.py:420"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2822,7 +2822,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:371"
+        "src/atoms/controller.py:375"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2843,7 +2843,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:381"
+        "src/atoms/controller.py:385"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2864,7 +2864,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:391"
+        "src/atoms/controller.py:395"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -2995,7 +2995,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:278"
+        "src/atoms/controller.py:282"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -3035,14 +3035,14 @@
       "atom": "Reload",
       "backend": "unity",
       "category": "controller",
-      "classification": "descriptive",
+      "classification": "executable",
       "definitions": [
-        "src/atoms/controller.py:224"
+        "src/atoms/controller.py:229"
       ],
       "emission_fixture": "AtomDef defaults",
-      "emission_smoke": "not_applicable",
-      "evidence": "no lowerer",
-      "handler": null,
+      "emission_smoke": "passed",
+      "evidence": "deterministic default-argument emission only",
+      "handler": "src/atoms/backends/unity.py:_reload",
       "runtime_acceptance": "unverified",
       "structural_fixture": "tests/test_atom_support_audit.py"
     },
@@ -3184,7 +3184,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:292"
+        "src/atoms/controller.py:296"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -3556,7 +3556,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:248"
+        "src/atoms/controller.py:252"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -3687,7 +3687,7 @@
       "category": "controller",
       "classification": "descriptive",
       "definitions": [
-        "src/atoms/controller.py:361"
+        "src/atoms/controller.py:365"
       ],
       "emission_fixture": "AtomDef defaults",
       "emission_smoke": "not_applicable",
@@ -5266,8 +5266,8 @@
       "unsupported": 70
     },
     "unity": {
-      "descriptive": 24,
-      "executable": 72
+      "descriptive": 23,
+      "executable": 73
     }
   }
 }
